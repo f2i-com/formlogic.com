@@ -6,6 +6,8 @@ import {
   type FormLogicConfigView,
   type OAuthLinkStatus,
 } from './api';
+import { useConfirm } from './ConfirmDialog';
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon } from './Icons';
 import { useToast } from './Toasts';
 
 /**
@@ -30,6 +32,7 @@ export default function FormLogicCloudSection() {
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
+  const { confirm: requestConfirm } = useConfirm();
   const seqRef = useRef(0);
   const seededRef = useRef(false);
   const pollRef = useRef<number | null>(null);
@@ -151,7 +154,16 @@ export default function FormLogicCloudSection() {
   }, []);
 
   const unlink = useCallback(async () => {
-    if (!confirm('Unlink this desktop from FormLogic Cloud? The headless flow runtime stops.')) return;
+    if (
+      !(await requestConfirm({
+        title: 'Unlink FormLogic Cloud?',
+        body: 'The headless flow runtime stops.',
+        confirmLabel: 'Unlink',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       await formlogic.disconnect();
@@ -165,7 +177,7 @@ export default function FormLogicCloudSection() {
     } finally {
       setBusy(false);
     }
-  }, [refresh, toast]);
+  }, [refresh, requestConfirm, toast]);
 
   if (!isTauri()) return null;
 
@@ -186,7 +198,12 @@ export default function FormLogicCloudSection() {
         approve access; the scoped key it mints is stored on this machine only (config dir).
       </p>
 
-      {error && <div className="banner banner-err">⚠ {error}</div>}
+      {error && (
+        <div className="banner banner-err">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </div>
+      )}
 
       <label className="form-row">
         <span>Base URL</span>
@@ -203,7 +220,7 @@ export default function FormLogicCloudSection() {
       </label>
 
       {!linked && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '10px 0 4px' }}>
+        <div className="inline-actions-spaced">
           {!linking ? (
             <button className="btn btn-primary" disabled={busy || baseUrl.trim() === ''} onClick={() => void link()}>
               Link FormLogic account
@@ -218,13 +235,15 @@ export default function FormLogicCloudSection() {
 
       {oauth && (oauth.inProgress || oauth.phase === 'error' || oauth.phase === 'cancelled') && (
         <div className={`banner ${oauth.phase === 'error' ? 'banner-err' : 'banner-pending'}`}>
-          {oauth.phase === 'error' ? '⚠ ' : oauth.inProgress ? '… ' : ''}
+          {oauth.phase === 'error' && (
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          )}
           {oauth.message ?? phaseLabel(oauth.phase)}
         </div>
       )}
 
       {linked && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '10px 0 8px' }}>
+        <div className="inline-actions-spaced">
           <button className="btn btn-ghost" disabled={busy} onClick={() => void test()}>
             Test connection
           </button>
@@ -236,13 +255,17 @@ export default function FormLogicCloudSection() {
 
       {testResult && (
         <div className={`banner ${testResult.ok ? 'banner-pending' : 'banner-err'}`}>
-          {testResult.ok ? '✓ ' : '⚠ '}
+          {testResult.ok ? (
+            <CheckIcon className="inline-icon icon-leading" size={14} />
+          ) : (
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          )}
           {testResult.msg}
         </div>
       )}
 
       {status && linked && (
-        <div className="settings-grid" style={{ marginTop: 10 }}>
+        <div className="settings-grid section-spacer-sm">
           {cfg?.deviceName && (
             <div className="settings-row">
               <span className="settings-label">Device</span>
@@ -291,16 +314,19 @@ export default function FormLogicCloudSection() {
       )}
 
       {/* Advanced: manual key entry — the fallback for offline/air-gapped setups. */}
-      <div style={{ marginTop: 14 }}>
+      <div className="section-spacer-top">
         <button
           className="btn btn-tiny"
           onClick={() => setShowAdvanced((v) => !v)}
           aria-expanded={showAdvanced}
         >
-          {showAdvanced ? '▾' : '▸'} Advanced — paste an API key manually
+          <span className="icon-button-label">
+            {showAdvanced ? <ChevronDownIcon size={13} /> : <ChevronRightIcon size={13} />}
+            Advanced — paste an API key manually
+          </span>
         </button>
         {showAdvanced && (
-          <div style={{ marginTop: 10 }}>
+          <div className="section-spacer-sm">
             <p className="form-hint" style={{ marginBottom: 8 }}>
               Create a scoped key (<code className="path-code">flk_…</code>) in FormLogic → Settings → API
               keys with the <code className="path-code">flows:read</code>, <code className="path-code">flows:write</code>,{' '}
@@ -320,7 +346,7 @@ export default function FormLogicCloudSection() {
                 disabled={busy}
               />
             </label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            <div className="inline-actions-compact">
               <button
                 className="btn btn-primary"
                 disabled={busy || baseUrl.trim() === '' || apiKey.trim() === ''}

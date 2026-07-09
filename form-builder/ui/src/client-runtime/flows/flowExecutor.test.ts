@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeFlow, validateWorkflowGraph } from './flowExecutor';
+import { defaultRunTimeoutMs, executeFlow, validateWorkflowGraph } from './flowExecutor';
 import type { FlowExecutorDeps } from './nodes';
 import type { WorkflowGraph } from '../../types/flows';
 
@@ -268,5 +268,49 @@ describe('executeFlow — logic_block/condition per-node timeoutMs (docs §4)', 
     });
     expect(outcome.status).toBe('error');
     expect(outcome.error?.message).toMatch(/condition budget exceeded/);
+  });
+});
+
+describe('defaultRunTimeoutMs — adaptive run deadline', () => {
+  const graphWith = (types: string[]): WorkflowGraph => ({
+    nodes: types.map((type, i) => ({ id: `n${i}`, type })),
+    edges: [],
+  });
+
+  it('gives plain data/logic flows the standard 30s budget', () => {
+    expect(defaultRunTimeoutMs(graphWith(['input', 'template', 'output']))).toBe(30000);
+    expect(defaultRunTimeoutMs({ nodes: [], edges: [] })).toBe(30000);
+    expect(defaultRunTimeoutMs(null)).toBe(30000);
+  });
+
+  it('gives flows containing AI/service nodes a 3-minute budget (browser LLM calls are slow)', () => {
+    expect(defaultRunTimeoutMs(graphWith(['input', 'llm_chat', 'output']))).toBe(180000);
+    expect(defaultRunTimeoutMs(graphWith(['stt_transcribe']))).toBe(180000);
+    expect(defaultRunTimeoutMs(graphWith(['tts_speak']))).toBe(180000);
+    expect(defaultRunTimeoutMs(graphWith(['image_gen']))).toBe(180000);
+    expect(defaultRunTimeoutMs(graphWith(['browser_action']))).toBe(180000);
+  });
+
+  it('an explicit timeoutMs still always wins over the adaptive default', async () => {
+    // A hanging llm_chat with an explicit tiny budget must time out at ~that budget,
+    // proving the 3-minute default does not override explicit caller values.
+    const deps = {
+      evaluateBoolean: vi.fn(async () => true),
+      evaluateExpression: vi.fn(async () => null),
+      listResponses: vi.fn(async () => []),
+      submitResponse: vi.fn(async () => ({})),
+      updateResponse: vi.fn(async () => ({})),
+      connectorRequest: vi.fn(async () => ({})),
+      fetchFn: (() => new Promise(() => {})) as unknown as typeof fetch,
+      resolveAiProvider: async () => ({ name: 'p', kind: 'custom' as const, url: 'https://x.test/v1/chat/completions', headers: {} }),
+    } as unknown as FlowExecutorDeps;
+    const graph: WorkflowGraph = {
+      nodes: [{ id: 'a', type: 'llm_chat', data: { prompt: 'hi', provider: 'p1' } }],
+      edges: [],
+    };
+    const started = Date.now();
+    const outcome = await executeFlow(graph, { deps, timeoutMs: 200 });
+    expect(outcome.status).toBe('timeout');
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 });

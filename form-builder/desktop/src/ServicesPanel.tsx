@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   appConfig,
   openExternal,
@@ -10,6 +10,8 @@ import {
   type ServiceStatus,
   type ServiceTemplateInput,
 } from './api';
+import { useConfirm } from './ConfirmDialog';
+import { AlertTriangleIcon, DownloadIcon, TrashIcon, UploadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { useToast } from './Toasts';
 
@@ -31,6 +33,7 @@ export default function ServicesPanel() {
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const toast = useToast();
+  const { confirm: requestConfirm } = useConfirm();
   // Track previous status per service so we fire toasts on transition,
   // not every poll. Skip the first poll's transitions to avoid spam on
   // first load (every service starts as Stopped, and we don't want
@@ -43,6 +46,7 @@ export default function ServicesPanel() {
   // Monotonic request id so a slow poll response that lands after a newer one
   // can't clobber state out of order.
   const reqSeqRef = useRef(0);
+  const cancelledInstallIdsRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     const seq = ++reqSeqRef.current;
@@ -68,6 +72,11 @@ export default function ServicesPanel() {
               body: `port ${svc.port}`,
             });
           } else if (svc.status === 'stopped' && prev === 'installing') {
+            const cancelled = cancelledInstallIdsRef.current.delete(svc.id);
+            if (!svc.installed || cancelled) {
+              seen.set(svc.id, svc.status);
+              continue;
+            }
             toast.push({
               kind: 'success',
               title: `${svc.name} installed`,
@@ -194,14 +203,17 @@ export default function ServicesPanel() {
       )}
       {actionError && (
         <div className="banner banner-err banner-dismissable">
-          <span>⚠ {actionError}</span>
+          <span>
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            {actionError}
+          </span>
           <button
             type="button"
             className="banner-dismiss"
             aria-label="Dismiss error"
             onClick={() => setActionError(null)}
           >
-            ×
+            <XIcon size={14} />
           </button>
         </div>
       )}
@@ -251,12 +263,20 @@ export default function ServicesPanel() {
               }
               onStart={() => runAction(() => services.start(svc.id), svc.id)}
               onStop={() => runAction(() => services.stop(svc.id), svc.id)}
-              onInstall={() => runAction(() => services.install(svc.id), svc.id)}
-              onUninstall={() => {
+              onInstall={() =>
+                runAction(async () => {
+                  cancelledInstallIdsRef.current.delete(svc.id);
+                  await services.install(svc.id);
+                }, svc.id)
+              }
+              onUninstall={async () => {
                 if (
-                  confirm(
-                    `Uninstall "${svc.name}"? This removes its installed files (binaries) so you can reinstall cleanly. Your models and flows are not touched.`,
-                  )
+                  await requestConfirm({
+                    title: `Uninstall "${svc.name}"?`,
+                    body: 'This removes its installed files (binaries) so you can reinstall cleanly. Your models and flows are not touched.',
+                    confirmLabel: 'Uninstall',
+                    danger: true,
+                  })
                 ) {
                   runAction(async () => {
                     const r = await services.uninstall(svc.id);
@@ -268,13 +288,21 @@ export default function ServicesPanel() {
                   }, svc.id);
                 }
               }}
-              onCancelInstall={() => runAction(() => services.cancelInstall(svc.id), svc.id)}
+              onCancelInstall={() =>
+                runAction(async () => {
+                  await services.cancelInstall(svc.id);
+                  cancelledInstallIdsRef.current.add(svc.id);
+                }, svc.id)
+              }
               onExport={() => exportPackage(svc.id, svc.name)}
-              onDelete={() => {
+              onDelete={async () => {
                 if (
-                  confirm(
-                    `Remove the "${svc.name}" service template? The on-disk JSON will be deleted too.`,
-                  )
+                  await requestConfirm({
+                    title: `Remove "${svc.name}"?`,
+                    body: 'The on-disk service template JSON will be deleted too.',
+                    confirmLabel: 'Remove',
+                    danger: true,
+                  })
                 ) {
                   runAction(() => services.delete(svc.id), svc.id);
                 }
@@ -300,7 +328,7 @@ export default function ServicesPanel() {
             onError={(msg) => setActionError(msg)}
           />
         ) : (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className="inline-actions">
             <button
               className="btn btn-secondary"
               onClick={() => setShowAddForm(true)}
@@ -312,7 +340,10 @@ export default function ServicesPanel() {
               onClick={() => importInputRef.current?.click()}
               title="Import a self-contained service package (.json with bundled scripts)"
             >
-              ⤓ Import package
+              <span className="icon-button-label">
+                <DownloadIcon size={14} />
+                Import package
+              </span>
             </button>
             <input
               ref={importInputRef}
@@ -501,16 +532,6 @@ interface CardProps {
   onDelete: () => void;
 }
 
-/** Shared flex-row layout for both Model selectors (keeps them in lockstep). */
-const MODEL_SELECTOR_ROW_STYLE: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  marginTop: 8,
-  flexWrap: 'wrap',
-  fontSize: '0.9em',
-};
-
 // The GPU list is machine-global — fetch it once and cache so every card's picker shares it
 // (avoids one nvidia-smi per card).
 let gpusCache: GpuInfo[] | null = null;
@@ -554,8 +575,8 @@ function GpuSelector({ serviceId, currentGpu }: { serviceId: string; currentGpu:
   // user can switch back to Auto to clear it.
   const pinnedMissing = currentGpu != null && !gpus.some((g) => g.index === currentGpu);
   return (
-    <div style={MODEL_SELECTOR_ROW_STYLE}>
-      <label style={{ opacity: 0.8 }}>GPU</label>
+    <div className="service-config-row">
+      <label className="service-config-label">GPU</label>
       <select
         value={value}
         disabled={pending}
@@ -577,7 +598,7 @@ function GpuSelector({ serviceId, currentGpu }: { serviceId: string; currentGpu:
             setPending(false);
           }
         }}
-        style={{ flex: 1, minWidth: 150 }}
+        className="service-config-control"
       >
         <option value="">Auto (default placement)</option>
         {gpus.map((g) => (
@@ -589,8 +610,13 @@ function GpuSelector({ serviceId, currentGpu }: { serviceId: string; currentGpu:
           <option value={String(currentGpu)}>GPU {currentGpu} (unavailable)</option>
         )}
       </select>
-      <span style={{ opacity: 0.6, fontSize: '0.85em' }}>applies on next start</span>
-      {error && <span className="service-error">⚠ {error}</span>}
+      <span className="service-config-note">applies on next start</span>
+      {error && (
+        <span className="service-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </span>
+      )}
     </div>
   );
 }
@@ -654,11 +680,8 @@ function LlamaModelSelector({ running }: { running: boolean }) {
   const baseName = (p: string) => p.split(/[/\\]/).pop() || p;
 
   return (
-    <div
-      className="llama-model"
-      style={MODEL_SELECTOR_ROW_STYLE}
-    >
-      <span style={{ fontWeight: 600 }}>Model</span>
+    <div className="llama-model service-config-row">
+      <span className="service-config-label">Model</span>
       {customMode ? (
         <>
           <input
@@ -667,7 +690,7 @@ function LlamaModelSelector({ running }: { running: boolean }) {
             placeholder="C:\path\to\model.gguf"
             value={customPath}
             onChange={(e) => setCustomPath(e.target.value)}
-            style={{ minWidth: 240 }}
+            className="service-config-control-wide"
           />
           <button
             className="btn btn-secondary"
@@ -707,14 +730,19 @@ function LlamaModelSelector({ running }: { running: boolean }) {
           <option value="__custom__">Custom path…</option>
         </select>
       )}
-      <span style={{ opacity: 0.7 }}>
+      <span className="service-config-note">
         {!current && !customMode
           ? "Pick a model — the service has no default and won't start without one."
           : running
             ? 'Restart the service to load a different model.'
             : 'Loads when a flow starts the service.'}
       </span>
-      {error && <span className="service-error">⚠ {error}</span>}
+      {error && (
+        <span className="service-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </span>
+      )}
     </div>
   );
 }
@@ -783,11 +811,8 @@ function OllamaModelSelector() {
   };
 
   return (
-    <div
-      className="ollama-model"
-      style={MODEL_SELECTOR_ROW_STYLE}
-    >
-      <span style={{ fontWeight: 600 }}>Model</span>
+    <div className="ollama-model service-config-row">
+      <span className="service-config-label">Model</span>
       {customMode ? (
         <>
           <input
@@ -796,7 +821,7 @@ function OllamaModelSelector() {
             placeholder="e.g. llama3.1:8b"
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
-            style={{ minWidth: 180 }}
+            className="service-config-control-medium"
           />
           <button
             className="btn btn-secondary"
@@ -831,11 +856,16 @@ function OllamaModelSelector() {
           <option value="__custom__">Custom name…</option>
         </select>
       )}
-      <span style={{ opacity: 0.7 }}>
+      <span className="service-config-note">
         {current ? `Sends model "${current}".` : 'Sends the default qwen2.5:0.5b.'}
       </span>
-      {note && <span style={{ opacity: 0.7 }}>{note}</span>}
-      {error && <span className="service-error">⚠ {error}</span>}
+      {note && <span className="service-config-note">{note}</span>}
+      {error && (
+        <span className="service-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </span>
+      )}
     </div>
   );
 }
@@ -897,7 +927,10 @@ function ServiceCard({
             )}
           </div>
           {service.error && (
-            <div className="service-error">⚠ {service.error}</div>
+            <div className="service-error">
+              <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+              {service.error}
+            </div>
           )}
           {service.id === 'llama-cpp' && (
             <LlamaModelSelector
@@ -962,7 +995,10 @@ function ServiceCard({
             className="btn btn-ghost"
             title="Export as a self-contained package (.json with bundled scripts)"
           >
-            ⤴ Export
+            <span className="icon-button-label">
+              <UploadIcon size={14} />
+              Export
+            </span>
           </button>
           <button
             onClick={onDelete}
@@ -973,7 +1009,7 @@ function ServiceCard({
             title="Delete this service template (stop it first)"
             aria-label="Delete service template"
           >
-            <span aria-hidden="true">🗑</span>
+            <TrashIcon size={15} />
           </button>
         </div>
       </div>

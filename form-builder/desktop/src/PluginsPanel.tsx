@@ -7,6 +7,7 @@ import {
   type PluginState,
   type PluginsListResponse,
 } from './api';
+import { AlertTriangleIcon, CheckIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { useToast } from './Toasts';
 
@@ -114,14 +115,17 @@ export default function PluginsPanel() {
       )}
       {actionError && (
         <div className="banner banner-err banner-dismissable">
-          <span>⚠ {actionError}</span>
+          <span>
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            {actionError}
+          </span>
           <button
             type="button"
             className="banner-dismiss"
             aria-label="Dismiss error"
             onClick={() => setActionError(null)}
           >
-            ×
+            <XIcon size={14} />
           </button>
         </div>
       )}
@@ -230,7 +234,10 @@ function BuiltinCard({
             the same folder.
           </div>
           {builtin.incompatible && (
-            <div className="service-error">⚠ {builtin.incompatible}</div>
+            <div className="service-error">
+              <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+              {builtin.incompatible}
+            </div>
           )}
         </div>
         <div className="service-actions">
@@ -312,12 +319,18 @@ function PluginCard({
               <> · started {new Date(plugin.startedAt).toLocaleTimeString()}</>
             )}
             {plugin.restartAttempts > 0 && (
-              <> · auto-restarted ×{plugin.restartAttempts}</>
+              <> · auto-restarted x{plugin.restartAttempts}</>
             )}
           </div>
           {plugin.lastHealth && active && (
             <div className="service-meta">
-              health: {plugin.lastHealth.ok ? '✓' : '⚠'} {plugin.lastHealth.status}
+              health:{' '}
+              {plugin.lastHealth.ok ? (
+                <CheckIcon className="inline-icon icon-leading" size={13} />
+              ) : (
+                <AlertTriangleIcon className="inline-icon icon-leading" size={13} />
+              )}
+              {plugin.lastHealth.status}
               {plugin.lastHealth.detail ? ` — ${plugin.lastHealth.detail}` : ''}
               {' · '}
               {new Date(plugin.lastHealth.at).toLocaleTimeString()}
@@ -325,7 +338,8 @@ function PluginCard({
           )}
           {plugin.reason && (
             <div className="service-error">
-              ⚠ {plugin.reason}
+              <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+              {plugin.reason}
               {plugin.state === 'disabled' && plugin.minDesktopVersion && (
                 <> (requires Desktop ≥ {plugin.minDesktopVersion})</>
               )}
@@ -403,6 +417,8 @@ interface AokieConnectorSettings {
   ttsVoice: string;
   aiModel: string;
   aiEndpoint: string;
+  sttEndpoint: string;
+  ttsEndpoint: string;
   sttEndpointMs: number;
   bargeIn: boolean;
   bargeSensitivity: number;
@@ -419,6 +435,8 @@ const AOKIE_SETTINGS_DEFAULTS: AokieConnectorSettings = {
   ttsVoice: '',
   aiModel: '',
   aiEndpoint: '',
+  sttEndpoint: '',
+  ttsEndpoint: '',
   sttEndpointMs: 450,
   bargeIn: false,
   bargeSensitivity: 650,
@@ -461,6 +479,8 @@ function withAokieDefaults(raw: unknown): AokieConnectorSettings {
     ttsVoice: typeof src.ttsVoice === 'string' ? src.ttsVoice : d.ttsVoice,
     aiModel: typeof src.aiModel === 'string' ? src.aiModel : d.aiModel,
     aiEndpoint: typeof src.aiEndpoint === 'string' ? src.aiEndpoint : d.aiEndpoint,
+    sttEndpoint: typeof src.sttEndpoint === 'string' ? src.sttEndpoint : d.sttEndpoint,
+    ttsEndpoint: typeof src.ttsEndpoint === 'string' ? src.ttsEndpoint : d.ttsEndpoint,
     sttEndpointMs:
       typeof src.sttEndpointMs === 'number' && Number.isFinite(src.sttEndpointMs)
         ? src.sttEndpointMs
@@ -575,7 +595,12 @@ function AokieCard({ running, devMode }: { running: boolean; devMode: boolean })
           <AokieSettingsForm running={running} />
         </>
       )}
-      {error && <div className="service-error">⚠ {error}</div>}
+      {error && (
+        <div className="service-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -763,6 +788,29 @@ function AokieSettingsForm({ running }: { running: boolean }) {
                   onChange={(e) => setSettings((s) => ({ ...s, aiEndpoint: e.target.value }))}
                 />
               </label>
+              <label className="form-row">
+                <span>Speech-to-text endpoint</span>
+                <input
+                  type="text"
+                  placeholder="blank = built-in engine"
+                  value={settings.sttEndpoint}
+                  onChange={(e) => setSettings((s) => ({ ...s, sttEndpoint: e.target.value }))}
+                />
+              </label>
+              <label className="form-row">
+                <span>Text-to-speech endpoint</span>
+                <input
+                  type="text"
+                  placeholder="blank = built-in engine"
+                  value={settings.ttsEndpoint}
+                  onChange={(e) => setSettings((s) => ({ ...s, ttsEndpoint: e.target.value }))}
+                />
+              </label>
+              <p className="form-hint">
+                Optional OpenAI-compatible speech endpoints (e.g. the Aokie Voice service:
+                http://127.0.0.1:17920/v1/audio/transcriptions and /v1/audio/speech). Blank uses the
+                plugin's built-in engines; on endpoint failure it falls back automatically.
+              </p>
             </div>
 
             <div>
@@ -878,7 +926,12 @@ function AokieSettingsForm({ running }: { running: boolean }) {
             </div>
           </form>
         ))}
-      {error && <div className="service-error">⚠ {error}</div>}
+      {error && (
+        <div className="service-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </div>
+      )}
     </div>
   );
 }

@@ -14,6 +14,32 @@ import type { SelectorScope } from './selectors';
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
+/**
+ * Node types whose single call can legitimately take minutes in the browser — a local
+ * LLM generating tokens, speech synthesis/transcription, image generation, or a driven
+ * browser session. A flow containing any of these gets the longer default deadline.
+ */
+const LONG_RUNNING_NODE_TYPES = new Set(['llm_chat', 'stt_transcribe', 'tts_speak', 'image_gen', 'browser_action']);
+
+/** Default run deadline when the graph contains a long-running (AI/service) node. */
+const AI_DEFAULT_TIMEOUT_MS = 180000;
+
+/**
+ * The default wall-clock deadline for a run with NO explicit timeoutMs: 30s for plain
+ * data/logic flows, 3 minutes when the graph contains an AI/service node (an LLM reply
+ * on a local model alone can take well over 30s in the browser). An explicit binding /
+ * caller timeoutMs always wins — e.g. the Aokie call bindings stay on their tight
+ * budgets. (The desktop Rust runner keeps its flat 30s default: desktop runs arrive via
+ * bindings, which declare explicit timeouts — this is a browser-run default, not a node
+ * semantics change, so runner parity is unaffected.)
+ */
+export function defaultRunTimeoutMs(graph: WorkflowGraph | null | undefined): number {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  return nodes.some((n) => n && typeof n.type === 'string' && LONG_RUNNING_NODE_TYPES.has(n.type))
+    ? AI_DEFAULT_TIMEOUT_MS
+    : DEFAULT_TIMEOUT_MS;
+}
+
 export interface FlowRunOutcome {
   status: 'done' | 'error' | 'timeout' | 'cancelled';
   /** Present when status === 'done'. */
@@ -165,9 +191,10 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
   }
 
   // Deadline: an internal controller aborts on timeout; an external signal chains in and
-  // maps to 'cancelled' instead of 'timeout'.
+  // maps to 'cancelled' instead of 'timeout'. No explicit timeoutMs → adaptive default
+  // (longer for AI/service flows — see defaultRunTimeoutMs).
   const controller = new AbortController();
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? defaultRunTimeoutMs(graph);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -182,7 +209,7 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
   const abortOutcome = (): FlowRunOutcome => ({
     status: timedOut ? 'timeout' : 'cancelled',
     error: timedOut
-      ? { code: 'timeout', message: `Flow run exceeded ${timeoutMs}ms` }
+      ? { code: 'timeout', message: `Flow run exceeded ${timeoutMs}ms — a trigger's timeoutMs can raise the budget for slow steps` }
       : { code: 'cancelled', message: 'Flow run was cancelled' },
     nodesExecuted,
   });

@@ -9,6 +9,7 @@ import {
   type FlowExecutorDeps,
   type FlowNodeContext,
 } from './nodes';
+import type { ResolvedAiProvider } from './aiProviders';
 import type { WorkflowGraphNode } from '../../types/flows';
 import type { SelectorScope } from './selectors';
 
@@ -515,6 +516,108 @@ describe('llm_chat endpoint resolution', () => {
     await expect(executeNode(ctxFor(llmNode({ endpoint: 'https://evil.example.com/v1/chat/completions' }), deps)))
       .rejects.toMatchObject({ code: 'capability_denied' });
   });
+
+  it('uses a browser AI provider before endpoint/Desktop/app-base resolution', async () => {
+    const provider: ResolvedAiProvider = {
+      name: 'Browser OpenAI',
+      kind: 'openai',
+      url: 'https://api.openai.test/v1/chat/completions',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer sk-test' },
+      model: 'provider-model',
+      responsePath: 'reply.text',
+    };
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ reply: { text: 'provider pong' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ) as unknown as typeof fetch;
+    const resolveAiProvider = vi.fn(async () => provider);
+    const deps = fakeDeps({
+      fetchFn,
+      resolveAiProvider,
+      resolveDesktopLlmEndpoint: vi.fn(async () => null),
+      getAppAiBase: () => null,
+    });
+
+    const out = await executeNode(ctxFor(llmNode({ provider: 'p1', prompt: 'hi {{inputs.name}}' }), deps, {
+      scope: { inputs: { name: 'Ada' } },
+    }));
+
+    expect(out).toEqual({ content: 'provider pong', raw: { reply: { text: 'provider pong' } } });
+    expect(resolveAiProvider).toHaveBeenCalledWith('chat', 'p1');
+    expect(fetchFn).toHaveBeenCalledWith('https://api.openai.test/v1/chat/completions', expect.objectContaining({
+      method: 'POST',
+      headers: provider.headers,
+      body: expect.any(String),
+    }));
+    const body = JSON.parse(((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe('provider-model');
+    expect(body.messages).toEqual([{ role: 'user', content: 'hi Ada' }]);
+  });
+
+  it('renders a browser provider requestTemplate instead of the default chat body', async () => {
+    const provider: ResolvedAiProvider = {
+      name: 'Custom',
+      kind: 'custom',
+      url: 'https://custom.example.test/chat',
+      headers: { 'Content-Type': 'application/json' },
+      model: 'custom-model',
+      requestTemplate: '{"m": {{model}}, "q": {{prompt}}, "msgs": {{messages}}}',
+      responsePath: 'answer',
+    };
+    const fetchFn = vi.fn(async () => jsonResponse({ answer: 'templated' })) as unknown as typeof fetch;
+    const deps = fakeDeps({ fetchFn, resolveAiProvider: vi.fn(async () => provider) });
+
+    const out = await executeNode(ctxFor(llmNode({ provider: 'custom', prompt: 'Use "quotes"' }), deps));
+
+    expect(out).toMatchObject({ content: 'templated' });
+    const body = JSON.parse(((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({
+      m: 'custom-model',
+      q: 'Use "quotes"',
+      msgs: [{ role: 'user', content: 'Use "quotes"' }],
+    });
+  });
+
+  it('fails actionably when a referenced browser AI provider is not configured', async () => {
+    const deps = fakeDeps({ resolveAiProvider: vi.fn(async () => null) });
+    await expect(executeNode(ctxFor(llmNode({ provider: 'missing' }), deps))).rejects.toMatchObject({
+      code: 'node_failed',
+      message: expect.stringMatching(/not configured in this browser.*Flows -> AI services/),
+    });
+  });
+
+  it('keeps legacy resolution when no provider field is present', async () => {
+    const fetchFn = okFetch();
+    const resolveAiProvider = vi.fn(async () => {
+      throw new Error('should not be called');
+    });
+    const deps = fakeDeps({
+      fetchFn,
+      resolveAiProvider,
+      resolveDesktopLlmEndpoint: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:11434/v1/chat/completions', service: 'ollama' })),
+      getAppAiBase: () => null,
+    });
+
+    await executeNode(ctxFor(llmNode({ model: 'm' }), deps));
+
+    expect(resolveAiProvider).not.toHaveBeenCalled();
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://127.0.0.1:11434/v1/chat/completions');
+  });
+
+  it('falls through to legacy resolution when provider is set but the runtime has no browser provider resolver', async () => {
+    const fetchFn = okFetch();
+    const deps = fakeDeps({
+      fetchFn,
+      resolveDesktopLlmEndpoint: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:11434/v1/chat/completions', service: 'ollama' })),
+      getAppAiBase: () => null,
+    });
+
+    await executeNode(ctxFor(llmNode({ provider: 'browser-only', model: 'm' }), deps));
+
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://127.0.0.1:11434/v1/chat/completions');
+  });
 });
 
 // ── Desktop-service-backed nodes (docs §4) ─────────────────────────────────────────────────
@@ -703,6 +806,40 @@ describe('stt_transcribe', () => {
     expect(out.text).toBe('hello there');
   });
 
+  it('uses a browser AI provider before endpoint/service resolution', async () => {
+    const provider: ResolvedAiProvider = {
+      name: 'Speech Provider',
+      kind: 'openai',
+      url: 'https://api.openai.test/v1/audio/transcriptions',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer sk-test' },
+      model: 'whisper-provider',
+    };
+    const fetchFn = vi.fn(async () => jsonResponse({ text: 'provider transcript' })) as unknown as typeof fetch;
+    const resolveAiProvider = vi.fn(async () => provider);
+    const deps = fakeDeps({ fetchFn, resolveAiProvider });
+    const node: WorkflowGraphNode = {
+      id: 'stt',
+      type: 'stt_transcribe',
+      data: {
+        provider: 'p-stt',
+        endpoint: 'https://evil.example/v1/audio/transcriptions',
+        audio: '$inputs.rec',
+      },
+    };
+
+    const out = (await executeNode(ctxFor(node, deps, { scope: { inputs: { rec: 'data:audio/wav;base64,AA' } } }))) as Record<string, unknown>;
+
+    expect(out.text).toBe('provider transcript');
+    expect(resolveAiProvider).toHaveBeenCalledWith('transcription', 'p-stt');
+    expect(fetchFn).toHaveBeenCalledWith('https://api.openai.test/v1/audio/transcriptions', expect.objectContaining({
+      method: 'POST',
+      headers: provider.headers,
+      body: expect.any(String),
+    }));
+    const body = JSON.parse(((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ audio: 'data:audio/wav;base64,AA', file: 'data:audio/wav;base64,AA', model: 'whisper-provider' });
+  });
+
   it('fails with an actionable (never "coming soon") message when no endpoint/service is set', async () => {
     const node: WorkflowGraphNode = { id: 'stt', type: 'stt_transcribe', data: { audio: '$inputs.rec' } };
     await executeNode(ctxFor(node, fakeDeps(), { scope: { inputs: { rec: 'data:audio/wav;base64,AA' } } })).catch((err: FlowExecError) => {
@@ -711,6 +848,27 @@ describe('stt_transcribe', () => {
       expect(err.message).not.toMatch(/coming soon/i);
     });
     await expect(executeNode(ctxFor(node, fakeDeps(), { scope: { inputs: { rec: 'x' } } }))).rejects.toBeInstanceOf(FlowExecError);
+  });
+
+  it("defaults to the Desktop 'aokie-voice' speech service when no endpoint/service is set (parity with flows/runner.rs)", async () => {
+    const fetchFn = routedFetch({ '/v1/audio/transcriptions': { text: 'default service transcript' } });
+    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:17920');
+    const node: WorkflowGraphNode = { id: 'stt', type: 'stt_transcribe', data: { audio: '$inputs.rec' } };
+    const out = (await executeNode(
+      ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase }), { scope: { inputs: { rec: 'data:audio/wav;base64,AA' } } })
+    )) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-voice');
+    expect(out.text).toBe('default service transcript');
+  });
+
+  it('an explicitly named service that fails to resolve still errors — never silently substitutes the default', async () => {
+    const resolveDesktopServiceBase = vi.fn(async (id: string) => (id === 'aokie-voice' ? 'http://127.0.0.1:17920' : null));
+    const node: WorkflowGraphNode = { id: 'stt', type: 'stt_transcribe', data: { service: 'my-whisper', audio: '$inputs.rec' } };
+    await expect(
+      executeNode(ctxFor(node, fakeDeps({ resolveDesktopServiceBase }), { scope: { inputs: { rec: 'x' } } }))
+    ).rejects.toMatchObject({ code: 'node_failed' });
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('my-whisper');
+    expect(resolveDesktopServiceBase).not.toHaveBeenCalledWith('aokie-voice');
   });
 
   it('rejects a non-allow-listed endpoint', async () => {
@@ -738,6 +896,31 @@ describe('tts_speak', () => {
     expect(out.audioUrl).toBe('http://127.0.0.1:9001/a.mp3');
   });
 
+  it('uses a browser AI provider URL and headers for speech', async () => {
+    const provider: ResolvedAiProvider = {
+      name: 'Speech Provider',
+      kind: 'openai',
+      url: 'https://api.openai.test/v1/audio/speech',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer sk-test' },
+      model: 'tts-provider',
+    };
+    const fetchFn = vi.fn(async () => jsonResponse({ audioUrl: 'https://cdn.example.test/a.mp3' })) as unknown as typeof fetch;
+    const resolveAiProvider = vi.fn(async () => provider);
+    const node: WorkflowGraphNode = { id: 'tts', type: 'tts_speak', data: { provider: 'p-tts', voice: 'alloy', text: 'hi {{inputs.name}}' } };
+
+    const out = (await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveAiProvider }), { scope: { inputs: { name: 'Ada' } } }))) as Record<string, unknown>;
+
+    expect(out.audioUrl).toBe('https://cdn.example.test/a.mp3');
+    expect(resolveAiProvider).toHaveBeenCalledWith('speech', 'p-tts');
+    expect(fetchFn).toHaveBeenCalledWith('https://api.openai.test/v1/audio/speech', expect.objectContaining({
+      method: 'POST',
+      headers: provider.headers,
+      body: expect.any(String),
+    }));
+    const body = JSON.parse(((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ input: 'hi Ada', model: 'tts-provider', voice: 'alloy' });
+  });
+
   it('fails with an actionable (never "coming soon") message when no endpoint/service is set', async () => {
     const node: WorkflowGraphNode = { id: 'tts', type: 'tts_speak', data: { text: 'hi' } };
     await executeNode(ctxFor(node, fakeDeps())).catch((err: FlowExecError) => {
@@ -746,5 +929,15 @@ describe('tts_speak', () => {
       expect(err.message).not.toMatch(/coming soon/i);
     });
     await expect(executeNode(ctxFor(node, fakeDeps()))).rejects.toBeInstanceOf(FlowExecError);
+  });
+
+  it("defaults to the Desktop 'aokie-voice' speech service when no endpoint/service is set (parity with flows/runner.rs)", async () => {
+    const fetchFn = vi.fn(async () => new Response(new Uint8Array([65, 66, 67]), { status: 200, headers: { 'Content-Type': 'audio/wav' } })) as unknown as typeof fetch;
+    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:17920');
+    const node: WorkflowGraphNode = { id: 'tts', type: 'tts_speak', data: { text: 'hi' } };
+    const out = (await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase })))) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-voice');
+    expect(out.audioUrl).toBe('data:audio/wav;base64,QUJD');
+    expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:17920/v1/audio/speech', expect.anything());
   });
 });

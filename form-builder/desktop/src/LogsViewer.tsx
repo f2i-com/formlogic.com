@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LogLine } from './api';
+import { AlertTriangleIcon, XIcon } from './Icons';
 
 /**
  * Reusable log tail viewer. Polls a loader fn every 1.5s and auto-scrolls
@@ -89,7 +90,7 @@ export default function LogsViewer({ load, title, onClose }: Props) {
         <span className="logs-title">{title}</span>
         {onClose && (
           <button className="logs-close" onClick={onClose} aria-label="close logs">
-            ✕
+            <XIcon size={14} />
           </button>
         )}
       </div>
@@ -101,7 +102,12 @@ export default function LogsViewer({ load, title, onClose }: Props) {
         aria-live="polite"
         aria-label={`${title} output`}
       >
-        {error && <div className="logs-error">⚠ {error}</div>}
+        {error && (
+          <div className="logs-error">
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            {error}
+          </div>
+        )}
         {lines.length === 0 && !error && (
           <div className="logs-empty">No output yet.</div>
         )}

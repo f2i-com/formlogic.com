@@ -5,10 +5,10 @@
 // canvas, node palette, properties, autosave). Right: measured-width inline panels or the shared
 // slide-over drawer for triggers/history/test-run. Deep-linked by
 // ?flow=<id> from the app-level Flows panel.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Search, Trash2, Workflow, X,
+  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, Workflow, X,
 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -48,6 +48,7 @@ interface FlowGroup {
 
 const BELOW_MD_QUERY = '(max-width: 767.98px)';
 const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
+const AiServicesDialog = lazy(() => import('../../components/flows/AiServicesDialog'));
 
 function mediaMatches(query: string, fallback: boolean): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
@@ -70,6 +71,7 @@ export function FlowsWorkspace() {
   // Library scope filter: 'all' | 'workspace' | an app id.
   const [libraryScope, setLibraryScope] = useState('all');
   const [showNew, setShowNew] = useState(false);
+  const [showAiServices, setShowAiServices] = useState(false);
   const [newFlowInitialTemplate, setNewFlowInitialTemplate] = useState<FlowStarterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
   const [rightPanel, setRightPanel] = useState<'history' | 'test' | 'triggers' | null>(null);
@@ -280,6 +282,12 @@ export function FlowsWorkspace() {
     return () => { cancelled = true; };
   }, [loadInitialData]);
 
+  useEffect(() => {
+    const openAiServices = () => setShowAiServices(true);
+    window.addEventListener('formlogic:open-ai-services', openAiServices);
+    return () => window.removeEventListener('formlogic:open-ai-services', openAiServices);
+  }, []);
+
   const selectFlow = (id: string | null) => {
     setSelectedId(id);
     setRightPanel(null);
@@ -435,6 +443,7 @@ export function FlowsWorkspace() {
         actions={
           <>
             <DesktopPresenceChip presence={desktopPresence} />
+            <AiServicesChip onClick={() => setShowAiServices(true)} />
             <Button size="sm" onClick={() => openNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
               <span className="hidden sm:inline">New flow</span>
               <span className="sm:hidden">New</span>
@@ -525,6 +534,7 @@ export function FlowsWorkspace() {
                 desktopPresence={desktopPresence}
                 availableConnectorIds={availableConnectorIds}
                 onNewFlow={openNewFlow}
+                onOpenAiServices={() => setShowAiServices(true)}
                 onOpenRunFlow={(flowId) => {
                   selectFlow(flowId);
                   setRightPanel('history');
@@ -607,6 +617,15 @@ export function FlowsWorkspace() {
         apps={apps}
         initialTemplate={newFlowInitialTemplate}
       />
+      <Suspense fallback={null}>
+        {showAiServices && (
+          <AiServicesDialog
+            isOpen={showAiServices}
+            onClose={() => setShowAiServices(false)}
+            desktopPresence={desktopPresence}
+          />
+        )}
+      </Suspense>
       <ConfirmDialog
         isOpen={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
@@ -617,6 +636,25 @@ export function FlowsWorkspace() {
         variant="danger"
       />
     </div>
+  );
+}
+
+function AiServicesChip({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Open AI services"
+      title="AI services"
+      className={cn(
+        'inline-flex h-8 max-w-[11rem] items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+        'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 dark:hover:bg-primary-500/15',
+      )}
+    >
+      <Sparkles className="h-3.5 w-3.5 flex-none" />
+      <span className="hidden sm:inline">AI services</span>
+      <span className="sm:hidden">AI</span>
+    </button>
   );
 }
 

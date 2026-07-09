@@ -7,7 +7,7 @@
 // description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
-import { Plus, Search, Trash2, Zap } from 'lucide-react';
+import { Plus, Search, Sparkles, Trash2, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
@@ -27,8 +27,10 @@ import {
 } from './nodeCatalog';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
+import { AI_PROVIDER_PRESETS, listProviders, providerSupports, type AiProviderConfig } from '../../../client-runtime/flows/aiProviders';
 import { desktopClient, type DesktopServiceSnapshot } from '../../../client-runtime/desktop/desktopClient';
 import { mergeKnownConnectorCommands } from '../flowEventCatalog';
+import { useAuthStore } from '../../../stores/authStore';
 
 type MonacoEditor = import('monaco-editor').editor.IStandaloneCodeEditor;
 
@@ -598,6 +600,77 @@ function DesktopServicePickerField({
   );
 }
 
+function AiProviderPickerField({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const userId = useAuthStore((state) => state.user?.id);
+  // Only offer services that declare this node's capability (a custom service may be
+  // chat-only / speech-only). The currently-selected service always stays listed —
+  // flagged below — so a mismatch is visible and fixable, never silently dropped.
+  const capability = spec.capability ?? 'chat';
+  const [providers, setProviders] = useState<AiProviderConfig[]>(() =>
+    listProviders(userId).filter((provider) => provider.enabled && providerSupports(provider, capability))
+  );
+  const raw = typeof value === 'string' ? value : '';
+  const refresh = useCallback(() => {
+    const all = listProviders(userId);
+    const usable = all.filter((provider) => provider.enabled && providerSupports(provider, capability));
+    const selected = raw ? all.find((provider) => provider.id === raw) ?? null : null;
+    setProviders(selected && !usable.some((provider) => provider.id === selected.id) ? [...usable, selected] : usable);
+  }, [raw, userId, capability]);
+
+  useEffect(() => {
+    refresh();
+    window.addEventListener('formlogic:ai-services-changed', refresh);
+    return () => window.removeEventListener('formlogic:ai-services-changed', refresh);
+  }, [refresh]);
+
+  const openManager = () => {
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('formlogic:open-ai-services'));
+  };
+
+  const known = providers.some((provider) => provider.id === raw);
+
+  return (
+    <div className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <select
+        value={raw}
+        onFocus={refresh}
+        onMouseDown={refresh}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        className={INPUT_CLS + ' cursor-pointer'}
+      >
+        <option value="">Auto (Desktop/app default)</option>
+        {providers.map((provider) => {
+          const flags = [
+            provider.enabled ? '' : ' (disabled)',
+            providerSupports(provider, capability) ? '' : ` (no ${capability})`,
+          ].join('');
+          return (
+            <option key={provider.id} value={provider.id}>
+              {provider.name} - {AI_PROVIDER_PRESETS[provider.kind].label}{flags}
+            </option>
+          );
+        })}
+        {raw !== '' && !known && <option value={raw}>{raw} (missing)</option>}
+      </select>
+      <div className="mt-1 flex flex-col gap-2">
+        {spec.help && <p className={HELP_CLS + ' mt-0'}>{spec.help}</p>}
+        <Button type="button" variant="outline" size="sm" onClick={openManager} leftIcon={<Sparkles className="h-3.5 w-3.5" />}>
+          Manage AI services...
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Append-a-field helper under an answers editor: a datalist of the form's field ids. */
 function AnswersFieldAdder({
   nodeId,
@@ -956,6 +1029,9 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 }
                 if (p.type === 'desktopService') {
                   return <DesktopServicePickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
+                }
+                if (p.type === 'aiProvider') {
+                  return <AiProviderPickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
                 }
                 // http_request's `url` becomes a PATH (not an absolute URL) once a `service` is
                 // chosen above it — swap the help/placeholder to say so, purely presentational

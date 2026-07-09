@@ -8,6 +8,8 @@ import {
   type MigratePlan,
   type MigrationProgress,
 } from './api';
+import { useConfirm } from './ConfirmDialog';
+import { AlertTriangleIcon, CheckIcon } from './Icons';
 import PairingSection from './PairingSection';
 import FormLogicCloudSection from './FormLogicCloudSection';
 import { useToast } from './Toasts';
@@ -51,6 +53,7 @@ export default function SettingsPanel() {
   const [hfInput, setHfInput] = useState('');
   const [hfBusy, setHfBusy] = useState(false);
   const toast = useToast();
+  const { confirm: requestConfirm } = useConfirm();
 
   const refresh = useCallback(async () => {
     try {
@@ -334,7 +337,12 @@ export default function SettingsPanel() {
 
   return (
     <div className="panel">
-      {error && <div className="banner banner-err">⚠ {error}</div>}
+      {error && (
+        <div className="banner banner-err">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </div>
+      )}
 
       <section className="model-section">
         <h3 className="section-title">Data folder</h3>
@@ -378,11 +386,13 @@ export default function SettingsPanel() {
                 <div className="form-actions" style={{ marginTop: 8 }}>
                   <button
                     className="btn btn-primary"
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        confirm(
-                          'Restart now? Any running services and in-progress downloads will be stopped.',
-                        )
+                        await requestConfirm({
+                          title: 'Restart FormLogic Desktop?',
+                          body: 'Any running services and in-progress downloads will be stopped.',
+                          confirmLabel: 'Restart now',
+                        })
                       )
                         appConfig.restart();
                     }}
@@ -484,7 +494,8 @@ export default function SettingsPanel() {
               </>
             ) : mig?.done && !mig.error ? (
               <span>
-                ✓ Brought {mig.filesDone} file(s) over. Restart FormLogic
+                <CheckIcon className="inline-icon icon-leading" size={14} />
+                Brought {mig.filesDone} file(s) over. Restart FormLogic
                 Desktop (button above) to start using the new folder.
               </span>
             ) : (
@@ -572,11 +583,13 @@ export default function SettingsPanel() {
                 <div className="form-actions" style={{ marginTop: 8 }}>
                   <button
                     className="btn btn-primary"
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        confirm(
-                          'Restart now? Any running services and in-progress downloads will be stopped.',
-                        )
+                        await requestConfirm({
+                          title: 'Restart FormLogic Desktop?',
+                          body: 'Any running services and in-progress downloads will be stopped.',
+                          confirmLabel: 'Restart now',
+                        })
                       )
                         appConfig.restart();
                     }}

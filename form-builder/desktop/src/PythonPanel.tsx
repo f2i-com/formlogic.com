@@ -6,6 +6,8 @@ import {
   python,
   type PythonSnapshot,
 } from './api';
+import { useConfirm } from './ConfirmDialog';
+import { AlertTriangleIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { useToast } from './Toasts';
 
@@ -30,6 +32,7 @@ export default function PythonPanel() {
   const [newReqs, setNewReqs] = useState('');
 
   const toast = useToast();
+  const { confirm: requestConfirm } = useConfirm();
   // Track the previous job ID + finishedAt so we fire the "done" toast
   // exactly once on a job completing, not on every poll while finished.
   const seenFinishedRef = useRef<string | null>(null);
@@ -141,19 +144,25 @@ export default function PythonPanel() {
     <div className="panel">
       {error && (
         <div className="banner banner-err">
-          <span>⚠ Couldn't reach FormLogic Desktop: {error}</span>
+          <span>
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            Couldn't reach FormLogic Desktop: {error}
+          </span>
         </div>
       )}
       {actionError && (
         <div className="banner banner-err banner-dismissable">
-          <span>⚠ {actionError}</span>
+          <span>
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            {actionError}
+          </span>
           <button
             type="button"
             className="banner-dismiss"
             aria-label="Dismiss error"
             onClick={() => setActionError(null)}
           >
-            ×
+            <XIcon size={14} />
           </button>
         </div>
       )}
@@ -302,12 +311,19 @@ export default function PythonPanel() {
               </button>
               <button
                 className="btn btn-ghost btn-danger"
-                onClick={() => {
+                onClick={async () => {
                   let msg = `Delete venv ${v.name}? This removes ${formatBytes(v.sizeBytes)} from disk.`;
                   if (v.boundServices.length > 0) {
                     msg += ' This will break: ' + v.boundServices.join(', ') + '.';
                   }
-                  if (confirm(msg)) {
+                  if (
+                    await requestConfirm({
+                      title: `Delete venv ${v.name}?`,
+                      body: msg.replace(`Delete venv ${v.name}? `, ''),
+                      confirmLabel: 'Delete',
+                      danger: true,
+                    })
+                  ) {
                     runAction(() => python.deleteVenv(v.name));
                   }
                 }}
@@ -345,7 +361,10 @@ export default function PythonPanel() {
             )}
           </div>
           {snapshot.currentJob.error && (
-            <div className="dl-error">⚠ {snapshot.currentJob.error}</div>
+            <div className="dl-error">
+              <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+              {snapshot.currentJob.error}
+            </div>
           )}
           {showLogs && (
             <LogsViewer

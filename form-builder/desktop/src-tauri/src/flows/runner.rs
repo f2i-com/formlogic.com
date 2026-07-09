@@ -1256,6 +1256,7 @@ const BROWSER_SERVICE: &str = "playwright-browser";
 const BROWSER_HUMAN: &str = "Playwright Browser";
 const IMAGE_SERVICE: &str = "krea2";
 const IMAGE_HUMAN: &str = "Krea-2 Turbo (Text-to-Image)";
+const SPEECH_SERVICE: &str = "aokie-voice";
 
 /// Resolve the browser service BASE: node `endpoint` override (allow-listed) or the registry.
 fn resolve_browser_base(node: &GraphNode, deps: &RunDeps) -> Result<String, FlowError> {
@@ -1426,8 +1427,9 @@ async fn run_image_gen(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) 
     ))
 }
 
-/// Resolve a CONFIGURED OpenAI-compatible endpoint for stt/tts: node `endpoint` (allow-listed)
-/// or a `service` id resolved on the registry + `default_path`. No candidate → actionable failure.
+/// Resolve an OpenAI-compatible endpoint for stt/tts: node `endpoint` (allow-listed), a
+/// `service` id resolved on the registry + `default_path`, else the bundled 'aokie-voice'
+/// speech service. No candidate → actionable failure.
 fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &str, human: &str) -> Result<String, FlowError> {
     let data = node_data(node);
     if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
@@ -1444,6 +1446,13 @@ fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &
         if let Some(base) = resolve_service_base(deps, service) {
             return Ok(format!("{base}{default_path}"));
         }
+    } else if let Some(base) = resolve_service_base(deps, SPEECH_SERVICE) {
+        // No endpoint/service configured: fall back to the bundled 'aokie-voice'
+        // speech service — the same default-service pattern as browser_action
+        // (playwright-browser) / image_gen (krea2). Mirrored in the browser
+        // executor (ui/src/client-runtime/flows/nodes.ts). An explicitly named
+        // service that fails to resolve still errors (no silent substitution).
+        return Ok(format!("{base}{default_path}"));
     }
     Err(desktop_service_unavailable(node, human, false))
 }

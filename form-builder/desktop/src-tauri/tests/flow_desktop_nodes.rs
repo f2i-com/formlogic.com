@@ -259,6 +259,41 @@ async fn tts_speak_bytes_become_a_data_url() {
 }
 
 #[tokio::test]
+async fn stt_transcribe_defaults_to_the_aokie_voice_service() {
+    // No endpoint/service on the node: resolves the bundled 'aokie-voice' speech
+    // service (same default-service pattern as browser_action/image_gen).
+    let addr = spawn_stub().await;
+    let deps = deps_with_services(&format!("http://{addr}"), &["aokie-voice"]);
+    let flow = single_node_flow("stt_transcribe", json!({ "audio": "data:audio/wav;base64,AA" }));
+    let out = execute_flow(&flow, &deps, &opts()).await;
+    assert_eq!(out.status, "done", "{:?}", out.error);
+    assert_eq!(out.result.unwrap()["text"], json!("hello world"));
+}
+
+#[tokio::test]
+async fn tts_speak_defaults_to_the_aokie_voice_service() {
+    let addr = spawn_stub().await;
+    let deps = deps_with_services(&format!("http://{addr}"), &["aokie-voice"]);
+    let flow = single_node_flow("tts_speak", json!({ "text": "hi" }));
+    let out = execute_flow(&flow, &deps, &opts()).await;
+    assert_eq!(out.status, "done", "{:?}", out.error);
+    assert_eq!(out.result.unwrap()["audioUrl"], json!("data:audio/mpeg;base64,QUJD"));
+}
+
+#[tokio::test]
+async fn stt_explicitly_named_missing_service_still_errors_no_silent_default() {
+    // An EXPLICIT service id that doesn't resolve must error actionably, never
+    // silently substitute the default speech service.
+    let addr = spawn_stub().await;
+    let deps = deps_with_services(&format!("http://{addr}"), &["aokie-voice"]);
+    let flow = single_node_flow("stt_transcribe", json!({ "service": "my-whisper", "audio": "x" }));
+    let out = execute_flow(&flow, &deps, &opts()).await;
+    let e = out.error.unwrap();
+    assert_eq!(e.code, FlowErrorCode::NodeFailed);
+    assert!(e.message.contains("speech-to-text"), "message: {}", e.message);
+}
+
+#[tokio::test]
 async fn tts_speak_no_endpoint_is_actionable_never_coming_soon() {
     let flow = single_node_flow("tts_speak", json!({ "text": "hi" }));
     let out = execute_flow(&flow, &empty_deps(), &opts()).await;

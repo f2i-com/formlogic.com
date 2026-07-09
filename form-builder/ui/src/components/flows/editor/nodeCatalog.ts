@@ -76,6 +76,8 @@ export type FieldType =
   | 'connector'
   /** Connector command — a datalist of the chosen connector's known commands, else free text. */
   | 'connectorCommand'
+  /** Browser-stored AI service id from client-runtime/flows/aiProviders.ts. */
+  | 'aiProvider'
   /**
    * Desktop service id — a select of all services advertised by the paired Desktop (fetched live
    * via `desktopClient.services.list()`), else free text when Desktop is unpaired/unreachable.
@@ -137,6 +139,11 @@ export interface NodePropertySpec {
    * by `getReferenceSyntax` (a `code` field with `quickjs: true` → 'quickjs', else 'selector').
    */
   referenceSyntax?: ReferenceSyntax;
+  /**
+   * For `aiProvider` fields: which capability the node consumes. The picker only offers
+   * browser AI services that declare it (a custom service may be chat-only, speech-only, …).
+   */
+  capability?: 'chat' | 'transcription' | 'speech';
 }
 
 /**
@@ -482,6 +489,14 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         help: '{{...}} templating against the run scope.',
         referenceSyntax: 'template',
       },
+      {
+        key: 'provider',
+        label: 'AI service',
+        type: 'aiProvider',
+        capability: 'chat',
+        help:
+          "Route this step through an AI service configured in this browser (Flows -> AI services). Leave on Auto to use a paired FormLogic Desktop service or the app's AI base. When the flow runs on FormLogic Desktop, the desktop's own services are used.",
+      },
       { key: 'advanced', label: 'Show model & endpoint options', type: 'boolean', help: 'Reveal the model, sampling and endpoint override. Leave off to use the default provider.' },
       {
         key: 'model',
@@ -799,10 +814,17 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'endpoint', label: 'Endpoint', type: 'text', required: true, placeholder: 'http://127.0.0.1:PORT/v1/audio/transcriptions', help: 'A local OpenAI-compatible transcription endpoint.' },
+      {
+        key: 'provider',
+        label: 'AI service',
+        type: 'aiProvider',
+        capability: 'transcription',
+        help: 'Route transcription through an AI service configured in this browser. Leave on Auto to use the default Desktop speech service, a selected Desktop service id, or an endpoint override.',
+      },
+      { key: 'endpoint', label: 'Endpoint', type: 'text', required: false, placeholder: '(auto) Desktop aokie-voice speech service', help: 'Optional. A local/OpenAI-compatible transcription endpoint; blank uses the default Desktop speech service unless an AI service is selected.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'whisper-1', help: 'Optional.' },
       { key: 'audio', label: 'Audio (selector)', type: 'text', required: true, placeholder: '$inputs.recording', help: 'A data URL, URL or base64 audio string.' },
-      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
+      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from; blank can use the default aokie-voice speech service.' },
     ],
   },
   {
@@ -817,11 +839,18 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'endpoint', label: 'Endpoint', type: 'text', required: true, placeholder: 'http://127.0.0.1:PORT/v1/audio/speech', help: 'A local OpenAI-compatible speech endpoint.' },
+      {
+        key: 'provider',
+        label: 'AI service',
+        type: 'aiProvider',
+        capability: 'speech',
+        help: 'Route speech synthesis through an AI service configured in this browser. Leave on Auto to use the default Desktop speech service, a selected Desktop service id, or an endpoint override.',
+      },
+      { key: 'endpoint', label: 'Endpoint', type: 'text', required: false, placeholder: '(auto) Desktop aokie-voice speech service', help: 'Optional. A local/OpenAI-compatible speech endpoint; blank uses the default Desktop speech service unless an AI service is selected.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'tts-1', help: 'Optional.' },
       { key: 'voice', label: 'Voice', type: 'text', placeholder: 'alloy', help: 'Optional.' },
       { key: 'text', label: 'Text', type: 'textarea', required: true, placeholder: 'Hello {{inputs.name}} ({{...}} ok)', help: 'The text to speak.', referenceSyntax: 'template' },
-      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
+      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from; blank can use the default aokie-voice speech service.' },
     ],
   },
 ];

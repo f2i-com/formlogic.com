@@ -5,6 +5,8 @@ import {
   type PairingRequestInfo,
   type TrustedOrigin,
 } from './api';
+import { useConfirm } from './ConfirmDialog';
+import { AlertTriangleIcon } from './Icons';
 import { useToast } from './Toasts';
 
 /**
@@ -22,6 +24,7 @@ export default function PairingSection() {
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const toast = useToast();
+  const { confirm: requestConfirm } = useConfirm();
   const reqSeqRef = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -79,7 +82,12 @@ export default function PairingSection() {
         website (origin) a private token — nothing else on your machine or the
         web can use it. Revoke an origin any time to cut it off.
       </p>
-      {error && <div className="banner banner-err">⚠ {error}</div>}
+      {error && (
+        <div className="banner banner-err">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </div>
+      )}
 
       {requests && requests.length > 0 && (
         <div className="settings-grid" style={{ marginBottom: 14 }}>
@@ -154,11 +162,14 @@ export default function PairingSection() {
                   className="btn-tiny"
                   disabled={busyIds.has(o.origin)}
                   title="Delete this origin's tokens — it must pair again to reconnect"
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      confirm(
-                        `Revoke "${o.origin}"? It loses access to local plugins until it pairs again.`,
-                      )
+                      await requestConfirm({
+                        title: `Revoke ${o.origin}?`,
+                        body: 'It loses access to local plugins until it pairs again.',
+                        confirmLabel: 'Revoke',
+                        danger: true,
+                      })
                     ) {
                       act(o.origin, async () => {
                         const res = await trustedOrigins.revoke(o.origin);

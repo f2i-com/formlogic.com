@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { API_BASE, openExternal } from './api';
-import { applyTheme, initialTheme, type ThemeMode } from './theme';
+import { applyTheme, initialTheme, watchSystemTheme, type ThemeMode } from './theme';
 import ServicesPanel from './ServicesPanel';
 import PluginsPanel from './PluginsPanel';
 import ModelsPanel from './ModelsPanel';
 import PythonPanel from './PythonPanel';
 import SettingsPanel from './SettingsPanel';
+import { ExternalLinkIcon } from './Icons';
 
 /**
  * FormLogic Desktop top-level UI — a tray-resident dashboard with five tabs:
@@ -47,6 +48,8 @@ export default function App() {
     setThemeState(next);
     applyTheme(next);
   };
+
+  useEffect(() => watchSystemTheme(setThemeState), []);
 
   useEffect(() => {
     let id: number | undefined;
@@ -126,7 +129,10 @@ export default function App() {
               openExternal('https://formlogic.com');
             }}
           >
-            formlogic.com ↗
+            <span className="icon-button-label">
+              formlogic.com
+              <ExternalLinkIcon size={12} />
+            </span>
           </a>
           <code>{API_BASE}</code>
           {health ? (

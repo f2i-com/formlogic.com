@@ -112,7 +112,8 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
       const result = await executeFlow(flow.flowJson ?? { nodes: [], edges: [] }, {
         inputs,
         deps: buildWorkspaceExecutorDeps(),
-        timeoutMs: 15000,
+        // No explicit deadline: the executor's adaptive default applies (30s for plain
+        // flows, 3 min for flows with AI/service nodes — a browser LLM call can be slow).
         capabilities: flow.nodeCapabilities,
         flowSlug: flow.slug,
         onNodeStatus: (id, status, info) => {

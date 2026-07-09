@@ -5,6 +5,7 @@ import {
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
+import { XIcon } from './Icons';
 
 /**
  * Tiny in-app toast system — zero dependencies, no portal gymnastics.
@@ -131,7 +132,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               onClick={() => dismiss(t.id)}
               aria-label="dismiss"
             >
-              ✕
+              <XIcon size={14} />
             </button>
           </div>
         ))}

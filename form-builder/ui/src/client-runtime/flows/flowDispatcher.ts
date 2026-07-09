@@ -18,6 +18,7 @@
 import { api, newIdempotencyKey } from '../../lib/api';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay } from '../../lib/demoLocal';
 import { logger } from '../../lib/logger';
+import { useAuthStore } from '../../stores/authStore';
 import type {
   FlowBinding,
   FlowDefinition,
@@ -30,6 +31,7 @@ import type {
 } from '../../types/flows';
 import { subscribeDesktopEvents } from '../desktop/desktopEvents';
 import type { DesktopEventEnvelope } from '../desktop/desktopTypes';
+import { resolveProviderRequest } from './aiProviders';
 import { resolveDesktopLlmEndpoint } from './desktopLlm';
 import { resolveDesktopServiceBase } from './desktopService';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
@@ -207,6 +209,7 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
     },
     ...buildKvDeps(),
     resolveDesktopLlmEndpoint: () => resolveDesktopLlmEndpoint(),
+    resolveAiProvider: (capability, providerId) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId),
     getAppAiBase: () => {
       const v = appContext.aiBaseUrl;
       return typeof v === 'string' && v !== '' ? v : null;
@@ -264,6 +267,7 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
       return out;
     },
     resolveDesktopLlmEndpoint: () => resolveDesktopLlmEndpoint(),
+    resolveAiProvider: (capability, providerId) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId),
     getAppAiBase: () => null,
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
   };
@@ -844,7 +848,8 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
     const outcome = await executeFlow(flow.flowJson, {
       inputs: options.input ?? {},
       app: d.getAppContext(),
-      timeoutMs: options.timeoutMs ?? 30000,
+      // Undefined → the executor's adaptive default (longer for AI/service flows).
+      timeoutMs: options.timeoutMs,
       deps: d.executorDeps,
       capabilities: flow.nodeCapabilities,
       flowSlug: flow.slug,

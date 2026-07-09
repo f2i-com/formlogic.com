@@ -11,6 +11,8 @@ import {
   type DownloadStatus,
   type ModelsSnapshot,
 } from './api';
+import { useConfirm } from './ConfirmDialog';
+import { AlertTriangleIcon, CheckIcon, XIcon } from './Icons';
 import { useToast } from './Toasts';
 
 /**
@@ -35,6 +37,7 @@ export default function ModelsPanel() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const toast = useToast();
+  const { confirm: requestConfirm } = useConfirm();
   // Track status of each download across renders so we can fire a toast
   // on the active→completed (or →failed) transition exactly once.
   const seenStatusRef = useRef<Map<string, DownloadStatus>>(new Map());
@@ -246,14 +249,17 @@ export default function ModelsPanel() {
         </form>
         {actionError && (
           <div className="banner banner-err banner-dismissable">
-            <span>⚠ {actionError}</span>
+            <span>
+              <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+              {actionError}
+            </span>
             <button
               type="button"
               className="banner-dismiss"
               aria-label="Dismiss error"
               onClick={() => setActionError(null)}
             >
-              ×
+              <XIcon size={14} />
             </button>
           </div>
         )}
@@ -291,7 +297,10 @@ export default function ModelsPanel() {
                       </div>
                       {onDisk ? (
                         <button className="btn btn-ghost" disabled>
-                          ✓ On disk
+                          <span className="icon-button-label">
+                            <CheckIcon size={14} />
+                            On disk
+                          </span>
                         </button>
                       ) : active ? (
                         <button className="btn btn-ghost" disabled>
@@ -370,8 +379,15 @@ export default function ModelsPanel() {
               </button>
               <button
                 className="btn btn-ghost btn-danger"
-                onClick={() => {
-                  if (confirm(`Delete ${m.name}?`)) {
+                onClick={async () => {
+                  if (
+                    await requestConfirm({
+                      title: `Delete ${m.name}?`,
+                      body: 'This removes the model file from disk.',
+                      confirmLabel: 'Delete',
+                      danger: true,
+                    })
+                  ) {
                     onAction(() => models.delete(m.name));
                   }
                 }}
@@ -403,6 +419,7 @@ interface RowProps {
 }
 
 function DownloadRow({ dl, onPause, onResume, onCancel }: RowProps) {
+  const { confirm: requestConfirm } = useConfirm();
   const pct =
     dl.bytesTotal && dl.bytesTotal > 0
       ? Math.min(100, (dl.bytesDownloaded / dl.bytesTotal) * 100)
@@ -446,7 +463,12 @@ function DownloadRow({ dl, onPause, onResume, onCancel }: RowProps) {
           style={{ width: indeterminate ? '40%' : `${pct}%` }}
         />
       </div>
-      {dl.error && <div className="dl-error">⚠ {dl.error}</div>}
+      {dl.error && (
+        <div className="dl-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {dl.error}
+        </div>
+      )}
       <div className="dl-actions">
         {dl.status === 'active' && onPause && (
           <button className="btn-tiny" onClick={onPause}>
@@ -465,13 +487,17 @@ function DownloadRow({ dl, onPause, onResume, onCancel }: RowProps) {
           onCancel && (
             <button
               className="btn-tiny btn-danger"
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  confirm(
-                    `Cancel the download of ${dl.filename}? Partial data will be discarded.`,
-                  )
-                )
+                  await requestConfirm({
+                    title: `Cancel ${dl.filename}?`,
+                    body: 'Partial data will be discarded.',
+                    confirmLabel: 'Cancel download',
+                    danger: true,
+                  })
+                ) {
                   onCancel();
+                }
               }}
             >
               Cancel

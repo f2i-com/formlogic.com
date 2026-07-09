@@ -4,9 +4,11 @@
 // shows recent owner-wide runs, and lets authors start from the same templates as NewFlowDialog.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, FileText, Laptop, Loader2, MessageSquare, PhoneIncoming, Plus, RefreshCw, type LucideIcon } from 'lucide-react';
+import { ClipboardList, FileText, Laptop, Loader2, MessageSquare, PhoneIncoming, Plus, RefreshCw, Sparkles, type LucideIcon } from 'lucide-react';
+import { listProviders } from '../../client-runtime/flows/aiProviders';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../ui/Button';
 import { formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
@@ -29,6 +31,7 @@ interface FlowsOverviewProps {
   desktopPresence: FlowsDesktopPresence;
   onNewFlow: (template?: FlowStarterTemplate) => void;
   onOpenRunFlow: (flowId: string) => void;
+  onOpenAiServices: () => void;
   availableConnectorIds?: readonly string[];
 }
 
@@ -37,10 +40,12 @@ function RunStatusChip({ run }: { run: FlowRunLog }) {
   return <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>;
 }
 
-export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow, availableConnectorIds = [] }: FlowsOverviewProps) {
+export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow, onOpenAiServices, availableConnectorIds = [] }: FlowsOverviewProps) {
   const [runs, setRuns] = useState<FlowRunLog[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [loadingRuns, setLoadingRuns] = useState(false);
+  const userId = useAuthStore((state) => state.user?.id);
+  const [providerCount, setProviderCount] = useState(() => listProviders(userId).length);
   const flowById = useMemo(() => new Map(flows.map((flow) => [flow.id, flow])), [flows]);
   const flowBySlug = useMemo(() => {
     const map = new Map<string, FlowDefinition>();
@@ -73,6 +78,17 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
     return () => { cancelled = true; };
   }, [loadRuns]);
 
+  useEffect(() => {
+    const refresh = () => setProviderCount(listProviders(userId).length);
+    refresh();
+    window.addEventListener('formlogic:ai-services-changed', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('formlogic:ai-services-changed', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [userId]);
+
   const resolveFlow = (run: FlowRunLog): FlowDefinition | null => {
     if (run.flowDefinitionId) {
       const byId = flowById.get(run.flowDefinitionId);
@@ -98,6 +114,7 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
         </section>
 
         <DesktopStatusCard presence={desktopPresence} />
+        <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
 
         <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -180,6 +197,52 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
         </section>
       </div>
     </div>
+  );
+}
+
+function AiServicesStatusCard({
+  providerCount,
+  presence,
+  onOpen,
+}: {
+  providerCount: number;
+  presence: FlowsDesktopPresence;
+  onOpen: () => void;
+}) {
+  const speechLabel =
+    presence.kind === 'local'
+      ? 'Default Desktop speech ready'
+      : presence.kind === 'remote'
+        ? 'Linked Desktop speech online'
+        : 'Desktop speech offline';
+  const speechCopy =
+    presence.kind === 'local'
+      ? 'Speech nodes use the Desktop aokie-voice service by default when no API service or endpoint is selected.'
+      : presence.kind === 'remote'
+        ? 'The linked Desktop is online; browser service enumeration is only available for local pairing.'
+        : 'Link FormLogic Desktop to use the default speech service, or choose a browser-stored API service on AI nodes.';
+
+  return (
+    <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">AI services</h3>
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              {providerCount} API {providerCount === 1 ? 'service' : 'services'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs font-medium text-gray-700 dark:text-slate-200">{speechLabel}</p>
+          <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">{speechCopy}</p>
+          <Button variant="outline" size="sm" className="mt-3" onClick={onOpen}>
+            Open
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -41,6 +41,10 @@ const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
         "krea2.json",
         include_str!("../../resources/templates/krea2.json"),
     ),
+    (
+        "aokie-voice.json",
+        include_str!("../../resources/templates/aokie-voice.json"),
+    ),
 ];
 
 const BUILTIN_SCRIPTS: &[(&str, &str)] = &[
@@ -1987,6 +1991,30 @@ mod tests {
             body.contains("${modelsDir}/krea2/checkpoints"),
             "krea2 checkpoint should live under the central models dir"
         );
+    }
+
+    #[test]
+    fn aokie_voice_is_a_speech_service_riding_the_plugin_install() {
+        let (_, body) = super::BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "aokie-voice.json")
+            .expect("aokie-voice.json builtin");
+        let t: super::ServiceTemplate = serde_json::from_str(body).expect("aokie-voice deserializes");
+        assert_eq!(t.id, "aokie-voice");
+        assert_eq!(t.category, "Speech");
+        // The server binary ships WITH the Aokie plugin (dropped next to
+        // aokie-plugin.exe) — no install spec of its own; `installed` derives
+        // from the run exe existing under the plugin dir.
+        assert!(
+            matches!(t.install, super::InstallSpec::None),
+            "aokie-voice must not declare its own installer"
+        );
+        assert!(
+            t.run.command.starts_with("${dataDir}/plugins/aokie/"),
+            "run command should live in the aokie plugin dir, got {}",
+            t.run.command
+        );
+        assert!(t.health.is_some(), "aokie-voice should declare a health check");
     }
 
     #[test]

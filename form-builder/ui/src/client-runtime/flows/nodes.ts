@@ -10,6 +10,7 @@
 // in the full F2I editor degrade loudly, never silently.
 import { getDesktopBaseUrl } from '../desktop/desktopTypes';
 import type { FlowRunErrorCode, WorkflowGraphNode } from '../../types/flows';
+import { extractByPath, renderRequestTemplate, type AiCapability, type ResolvedAiProvider } from './aiProviders';
 import {
   interpolateTemplate,
   resolveDeep,
@@ -155,6 +156,11 @@ export interface FlowExecutorDeps {
    * unpaired, or runs no suitable service.
    */
   resolveDesktopLlmEndpoint?(): Promise<{ endpoint: string; service: string } | null>;
+  /**
+   * Browser-only AI provider registry lookup. `data.provider` is a browser-execution routing
+   * hint; the desktop Rust runner intentionally ignores it and uses its own service resolution.
+   */
+  resolveAiProvider?(capability: AiCapability, providerId: string): Promise<ResolvedAiProvider | null>;
   /** Configured app-level OpenAI-compatible AI base URL, when the app provides one. */
   getAppAiBase?(): string | null;
   /**
@@ -461,10 +467,13 @@ async function resolveLlmChatEndpoint(ctx: FlowNodeContext): Promise<string> {
 async function discoverDefaultModel(
   chatEndpoint: string,
   doFetch: typeof fetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  headers?: HeadersInit
 ): Promise<string | null> {
   try {
-    const res = await doFetch(chatEndpoint.replace('/chat/completions', '/models'), { signal });
+    const init: RequestInit = { signal };
+    if (headers) init.headers = headers;
+    const res = await doFetch(chatEndpoint.replace('/chat/completions', '/models'), init);
     if (!res.ok) return null;
     const payload = (await res.json()) as { data?: Array<{ id?: unknown }> };
     const id = payload?.data?.find((m) => typeof m?.id === 'string')?.id;
@@ -474,14 +483,43 @@ async function discoverDefaultModel(
   }
 }
 
+async function resolveNodeAiProvider(ctx: FlowNodeContext, capability: AiCapability): Promise<ResolvedAiProvider | null> {
+  const data = nodeData(ctx.node);
+  const providerId = typeof data.provider === 'string' ? data.provider.trim() : '';
+  if (providerId === '' || !ctx.deps.resolveAiProvider) return null;
+  const provider = await ctx.deps.resolveAiProvider(capability, providerId);
+  if (!provider) {
+    throw new FlowExecError(
+      'node_failed',
+      `Node '${ctx.node.id}' AI service '${providerId}' is not configured in this browser for ${capability} -- open Flows -> AI services and add or enable it (and check its capabilities).`,
+      ctx.node.id
+    );
+  }
+  return provider;
+}
+
+function providerKeyBlockedHint(provider: ResolvedAiProvider | null): string {
+  return provider?.keyBlocked
+    ? ' The saved API key was not sent because the provider uses unencrypted HTTP on a non-loopback host.'
+    : '';
+}
+
+function appendProviderKeyBlockedHint(message: string, provider: ResolvedAiProvider | null): string {
+  const hint = providerKeyBlockedHint(provider);
+  return hint ? `${message}.${hint}` : message;
+}
+
 async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   const { node, deps } = ctx;
   const data = nodeData(node);
-  const endpoint = await resolveLlmChatEndpoint(ctx);
+  const provider = await resolveNodeAiProvider(ctx, 'chat');
+  const endpoint = provider?.url ?? await resolveLlmChatEndpoint(ctx);
   const templateCtx = scopeToContext(ctx.scope);
   const messages: Array<{ role: string; content: string }> = [];
+  let systemText = '';
   if (typeof data.system === 'string' && data.system !== '') {
-    messages.push({ role: 'system', content: interpolateTemplate(data.system, templateCtx) });
+    systemText = interpolateTemplate(data.system, templateCtx);
+    messages.push({ role: 'system', content: systemText });
   }
   if (Array.isArray(data.messages)) {
     for (const m of data.messages) {
@@ -491,8 +529,10 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
       }
     }
   }
+  let promptText = '';
   if (typeof data.prompt === 'string' && data.prompt !== '') {
-    messages.push({ role: 'user', content: interpolateTemplate(data.prompt, templateCtx) });
+    promptText = interpolateTemplate(data.prompt, templateCtx);
+    messages.push({ role: 'user', content: promptText });
   }
   if (messages.length === 0) {
     throw new FlowExecError('invalid_flow', `Node '${node.id}' llm_chat has no prompt/messages`, node.id);
@@ -503,11 +543,13 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   const modelStr = typeof data.model === 'string' ? interpolateTemplate(data.model, templateCtx).trim() : '';
   if (modelStr) {
     body.model = modelStr;
+  } else if (provider?.model) {
+    body.model = provider.model;
   } else {
     // Ollama (and other strict OpenAI-compatible servers) reject a model-less
     // request. If the flow didn't pin a model, use the first the service
     // advertises so model-less flows work out of the box.
-    const fallback = await discoverDefaultModel(endpoint, doFetch, ctx.signal);
+    const fallback = await discoverDefaultModel(endpoint, doFetch, ctx.signal, provider?.headers);
     if (fallback) body.model = fallback;
   }
   if (typeof data.temperature === 'number') body.temperature = data.temperature;
@@ -518,13 +560,25 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
     Object.assign(body, data.extraBody as Record<string, unknown>);
   }
 
+  const requestBody = provider?.requestTemplate
+    ? renderRequestTemplate(provider.requestTemplate, {
+        model: body.model,
+        prompt: promptText,
+        system: systemText,
+        messages,
+        temperature: data.temperature,
+        maxTokens: data.maxTokens,
+        input: promptText,
+        apiKey: provider.apiKey,
+      })
+    : body;
 
   let res: Response;
   try {
     res = await doFetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      headers: provider?.headers ?? { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
       signal: ctx.signal,
     });
   } catch (err) {
@@ -535,7 +589,7 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
     );
   }
   if (!res.ok) {
-    throw new FlowExecError('node_failed', `Node '${node.id}' llm_chat responded ${res.status}`, node.id);
+    throw new FlowExecError('node_failed', appendProviderKeyBlockedHint(`Node '${node.id}' llm_chat responded ${res.status}`, provider), node.id);
   }
   let payload: unknown;
   try {
@@ -543,7 +597,7 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   } catch {
     throw new FlowExecError('node_failed', `Node '${node.id}' llm_chat returned a non-JSON body`, node.id);
   }
-  const content = (payload as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
+  const content = extractByPath(payload, provider?.responsePath ?? 'choices.0.message.content');
   return { content: typeof content === 'string' ? content : null, raw: payload };
 }
 
@@ -699,6 +753,38 @@ async function serviceFetchJson(
     return body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   } catch {
     throw new FlowExecError('node_failed', `Node '${node.id}': ${humanName} service returned a non-JSON body`, node.id);
+  }
+}
+
+async function providerFetchJson(
+  ctx: FlowNodeContext,
+  provider: ResolvedAiProvider,
+  init: RequestInit,
+  humanName: string
+): Promise<Record<string, unknown>> {
+  const doFetch = ctx.deps.fetchFn ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(provider.url, { ...init, signal: ctx.signal });
+  } catch (err) {
+    throw new FlowExecError(
+      'node_failed',
+      `Node '${ctx.node.id}': ${humanName} provider '${provider.name}' unreachable: ${err instanceof Error ? err.message : String(err)}`,
+      ctx.node.id
+    );
+  }
+  if (!res.ok) {
+    throw new FlowExecError(
+      'node_failed',
+      appendProviderKeyBlockedHint(`Node '${ctx.node.id}': ${humanName} provider '${provider.name}' responded ${res.status}`, provider),
+      ctx.node.id
+    );
+  }
+  try {
+    const body = (await res.json()) as unknown;
+    return body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  } catch {
+    throw new FlowExecError('node_failed', `Node '${ctx.node.id}': ${humanName} provider '${provider.name}' returned a non-JSON body`, ctx.node.id);
   }
 }
 
@@ -870,9 +956,15 @@ async function runImageGen(ctx: FlowNodeContext): Promise<unknown> {
   throw new FlowExecError('node_failed', `Node '${node.id}': image_gen response had no image (expected imageUrl or data[].url / data[].b64_json)`, node.id);
 }
 
+/** The bundled Desktop speech service (Parakeet STT + pocket-tts TTS) — stt/tts's default. */
+const SPEECH_SERVICE = 'aokie-voice';
+
 /**
- * Resolve a CONFIGURED OpenAI-compatible endpoint for stt/tts (no bundled service): the node's
- * own data.endpoint (allow-listed), else a data.service resolved on the paired Desktop + defaultPath.
+ * Resolve an OpenAI-compatible endpoint for stt/tts: the node's own data.endpoint
+ * (allow-listed), a data.service resolved on the paired Desktop + defaultPath, else the
+ * bundled 'aokie-voice' speech service — the same default-service pattern as
+ * browser_action/image_gen, mirrored in the desktop runner (flows/runner.rs). An explicitly
+ * named service that fails to resolve still errors (no silent substitution).
  * No candidate → the actionable node_failed (unbundled service).
  */
 async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: string, humanName: string): Promise<string> {
@@ -885,10 +977,12 @@ async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: stri
     }
     return endpoint;
   }
-  if (typeof data.service === 'string' && data.service !== '' && deps.resolveDesktopServiceBase) {
+  const explicitService = typeof data.service === 'string' && data.service !== '' ? data.service : null;
+  if (deps.resolveDesktopServiceBase) {
+    const serviceId = explicitService ?? SPEECH_SERVICE;
     let base: string | null = null;
     try {
-      base = await deps.resolveDesktopServiceBase(data.service);
+      base = await deps.resolveDesktopServiceBase(serviceId);
     } catch {
       base = null;
     }
@@ -905,13 +999,17 @@ async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: stri
 async function runSttTranscribe(ctx: FlowNodeContext): Promise<unknown> {
   const { node, scope } = ctx;
   const data = nodeData(node);
-  const endpoint = await resolveConfiguredEndpoint(ctx, '/v1/audio/transcriptions', 'speech-to-text');
+  const provider = await resolveNodeAiProvider(ctx, 'transcription');
+  const endpoint = provider?.url ?? await resolveConfiguredEndpoint(ctx, '/v1/audio/transcriptions', 'speech-to-text');
   const audioRef = resolveSelector(data.audio, scope);
   const audio = typeof audioRef === 'string' ? audioRef : '';
   if (audio === '') throw new FlowExecError('invalid_flow', `Node '${node.id}' stt_transcribe needs 'audio' (a data URL / URL / base64)`, node.id);
   const body: Record<string, unknown> = { audio, file: audio };
   if (typeof data.model === 'string' && data.model !== '') body.model = data.model;
-  const r = await serviceFetchJson(ctx, endpoint, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'speech-to-text', false);
+  else if (provider?.model) body.model = provider.model;
+  const r = provider
+    ? await providerFetchJson(ctx, provider, { method: 'POST', headers: provider.headers, body: JSON.stringify(body) }, 'speech-to-text')
+    : await serviceFetchJson(ctx, endpoint, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'speech-to-text', false);
   const text = typeof r.text === 'string' ? r.text : typeof r.result === 'string' ? r.result : '';
   return { text };
 }
@@ -924,20 +1022,26 @@ async function runSttTranscribe(ctx: FlowNodeContext): Promise<unknown> {
 async function runTtsSpeak(ctx: FlowNodeContext): Promise<unknown> {
   const { node, scope } = ctx;
   const data = nodeData(node);
-  const endpoint = await resolveConfiguredEndpoint(ctx, '/v1/audio/speech', 'text-to-speech');
+  const provider = await resolveNodeAiProvider(ctx, 'speech');
+  const endpoint = provider?.url ?? await resolveConfiguredEndpoint(ctx, '/v1/audio/speech', 'text-to-speech');
   const input = interpolateTemplate(requireString(node, data, ['text', 'input']), scopeToContext(scope));
   const body: Record<string, unknown> = { input };
   if (typeof data.model === 'string' && data.model !== '') body.model = data.model;
+  else if (provider?.model) body.model = provider.model;
   if (typeof data.voice === 'string' && data.voice !== '') body.voice = data.voice;
 
   const doFetch = ctx.deps.fetchFn ?? fetch;
   let res: Response;
   try {
-    res = await doFetch(endpoint, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body), signal: ctx.signal });
+    res = await doFetch(endpoint, { method: 'POST', headers: provider?.headers ?? JSON_HEADERS, body: JSON.stringify(body), signal: ctx.signal });
   } catch {
+    if (provider) throw new FlowExecError('node_failed', `Node '${node.id}': text-to-speech provider '${provider.name}' unreachable`, node.id);
     throw desktopServiceUnavailable(node, 'text-to-speech', false);
   }
-  if (!res.ok) throw new FlowExecError('node_failed', `Node '${node.id}': text-to-speech service responded ${res.status}`, node.id);
+  if (!res.ok) {
+    const target = provider ? `provider '${provider.name}'` : 'service';
+    throw new FlowExecError('node_failed', appendProviderKeyBlockedHint(`Node '${node.id}': text-to-speech ${target} responded ${res.status}`, provider), node.id);
+  }
 
   const contentType = res.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
