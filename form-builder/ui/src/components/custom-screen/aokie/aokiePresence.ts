@@ -151,6 +151,8 @@ export interface RemoteCallSnapshot {
   from?: string;
   callerName?: string;
   state: 'ringing' | 'active' | 'ended';
+  /** Parsed started_at (falling back to submittedAt), for the Live Call stage's mm:ss timer. Null when neither parses. */
+  startedAtMs: number | null;
 }
 
 /**
@@ -164,15 +166,16 @@ export function deriveRemoteCall(rows: ResponseRowLike[], now: number = Date.now
   const a = row.answers ?? {};
   const status = String(a.status ?? '');
   let state: RemoteCallSnapshot['state'] = status === 'incoming' ? 'ringing' : status === 'answered' ? 'active' : 'ended';
-  if (state !== 'ended') {
-    const started = parseDbTimestamp(a.started_at) ?? parseDbTimestamp(row.submittedAt);
-    if (started !== null && now - started > REMOTE_CALL_LIVE_WINDOW_MS) state = 'ended';
+  const startedAtMs = parseDbTimestamp(a.started_at) ?? parseDbTimestamp(row.submittedAt);
+  if (state !== 'ended' && startedAtMs !== null && now - startedAtMs > REMOTE_CALL_LIVE_WINDOW_MS) {
+    state = 'ended';
   }
   return {
     callId: String(a.call_id || row.id),
     from: typeof a.caller_phone === 'string' && a.caller_phone !== '' ? a.caller_phone : undefined,
     callerName: typeof a.caller_name === 'string' && a.caller_name !== '' ? a.caller_name : undefined,
     state,
+    startedAtMs,
   };
 }
 

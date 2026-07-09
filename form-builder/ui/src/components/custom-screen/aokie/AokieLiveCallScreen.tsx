@@ -16,11 +16,20 @@
 // desktop-claimed flow run as the member-visible fallback), this screen turns into a
 // read-only monitor — the setup/simulate card hides, the call card + transcript render
 // from stored Calls/Transcript Turns records, and both refresh every 10s while visible.
+//
+// LAYOUT ("the screen rings", 2026-07): driven by CALL STATE, not by presence mode. At idle
+// a thin standby bar says where the receptionist is listening (local / remote via relay /
+// demo bridge); the moment a call rings or is live, a single call-stage card takes its place
+// and pulses in the primary token while ringing. Presence mode only changes strings and one
+// footer hairline on that stage — local, remote and demo share one control set (CallControls
+// below), routed through ONE dispatcher keyed off remoteMode so the three modes can't drift
+// out of sync with each other.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Cast,
   Laptop,
+  Loader2,
   Mic,
   Phone,
   PhoneCall,
@@ -32,14 +41,16 @@ import { EmptyState, useConnector, useConnectorPermission, useForms, usePermissi
 import { useAppRuntimeStore } from '../../../stores/appRuntimeStore';
 import { toast } from '../../../stores/toastStore';
 import { api } from '../../../lib/api';
+import { cn } from '../../../lib/utils';
 import { subscribeDesktopEvents } from '../../../client-runtime/desktop/desktopEvents';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../../client-runtime/desktop/desktopDetection';
-import { isDesktopPaired } from '../../../client-runtime/desktop/desktopPairing';
 import { simulateIncomingCall } from '../../../client-runtime/connectors/aokieConnector';
 import type { DesktopEventEnvelope } from '../../../client-runtime/desktop/desktopTypes';
 import {
   REMOTE_RECORDS_POLL_MS,
   deriveRemoteCall,
+  describeLastSeen,
+  parseDbTimestamp,
   selectTurnsForCall,
   showSimulateSetup,
 } from './aokiePresence';
@@ -69,6 +80,15 @@ interface TranscriptTurn {
   occurredAt: string;
 }
 
+/** The minimal shape both LiveCall (local) and RemoteCallSnapshot (remote) satisfy — all the
+ *  call stage / controls need to render, regardless of which presence mode produced it. */
+interface StageCall {
+  callId: string;
+  from?: string;
+  callerName?: string;
+  state: 'ringing' | 'active' | 'ended';
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -83,9 +103,107 @@ function callFromEventData(callId: string, data: Record<string, unknown>, state:
   };
 }
 
+/** mm:ss, rolling to h:mm:ss past an hour — the call stage timer and nothing else needs this. */
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+/** Speaker → label + color. The palette carries meaning: caller is neutral, the receptionist's
+ *  own voice (AI or the operator standing in for it) is brand-colored. */
+function describeSpeaker(speaker: string): { label: string; className: string } {
+  if (speaker === 'caller') return { label: 'Caller', className: 'text-gray-500 dark:text-slate-400' };
+  if (speaker === 'operator') return { label: 'You', className: 'text-primary-600 dark:text-primary-400' };
+  return { label: 'Aokie', className: 'text-primary-600 dark:text-primary-400' };
+}
+
+function turnBodyClass(speaker: string): string {
+  return speaker === 'caller' ? 'text-gray-700 dark:text-slate-300' : 'text-primary-700 dark:text-primary-300';
+}
+
+function formatTurnTime(occurredAt: string): string | null {
+  const ms = parseDbTimestamp(occurredAt);
+  return ms === null ? null : new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 const card = 'bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60';
 const actionBtn =
   'inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-45';
+// Same traffic-light treatment as actionBtn, scaled up for the call stage's one urgent decision.
+const stageActionBtn =
+  'inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-45';
+
+const LOCAL_COMMAND_LABEL: Record<string, string> = {
+  'call.answer': 'Call answered',
+  'call.reject': 'Call rejected',
+  'call.hangup': 'Call ended',
+};
+
+// The one control set both local and remote (and, implicitly, demo) call stages render. Answer
+// is the single solid-fill action (the one urgent decision); reject/hang up keep the tinted
+// amber/red treatment. Every button is gated by the SAME canRunCommand predicate the relay path
+// always used — unifying the branches means local and remote can no longer drift out of sync.
+function CallControls({
+  active,
+  can,
+  roleAllowsOperating,
+  busyCommand,
+  onCommand,
+}: {
+  active: StageCall;
+  can: (command: string) => boolean;
+  roleAllowsOperating: boolean;
+  busyCommand: string | null;
+  onCommand: (command: string, callId: string, payload?: Record<string, unknown>) => void;
+}) {
+  const isRinging = active.state === 'ringing';
+  const answerDisabled = !canRunCommand('call.answer', { can, roleAllowsOperating }) || !isRinging || busyCommand !== null;
+  const rejectAllowed = isRinging && canRunCommand('call.reject', { can, roleAllowsOperating });
+  const hangupDisabled = !canRunCommand('call.hangup', { can, roleAllowsOperating }) || busyCommand !== null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      {isRinging && (
+        <button
+          type="button"
+          onClick={() => onCommand('call.answer', active.callId, { callId: active.callId })}
+          disabled={answerDisabled}
+          className={`${stageActionBtn} border-transparent bg-emerald-600 text-white hover:bg-emerald-500`}
+        >
+          {busyCommand === 'call.answer' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Phone className="h-4 w-4" />}
+          {busyCommand === 'call.answer' ? 'Answering…' : 'Answer'}
+        </button>
+      )}
+      {rejectAllowed && (
+        <button
+          type="button"
+          onClick={() => onCommand('call.reject', active.callId, { callId: active.callId })}
+          disabled={busyCommand !== null}
+          className={`${stageActionBtn} border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20`}
+        >
+          {busyCommand === 'call.reject' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
+          {busyCommand === 'call.reject' ? 'Rejecting…' : 'Reject'}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => onCommand('call.hangup', active.callId, { callId: active.callId })}
+        disabled={hangupDisabled}
+        className={`${stageActionBtn} border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20`}
+      >
+        {busyCommand === 'call.hangup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
+        {busyCommand === 'call.hangup' ? 'Hanging up…' : 'Hang up'}
+      </button>
+      {!roleAllowsOperating && (
+        <span className="text-xs text-gray-400 dark:text-slate-500">Your role can view calls but not operate them.</span>
+      )}
+    </div>
+  );
+}
 
 export function AokieLiveCallScreen({ params }: { params?: Record<string, unknown> }) {
   const callsFormId = typeof params?.formId === 'string' ? params.formId : undefined;
@@ -97,10 +215,10 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   const navigate = useNavigate();
 
   const [desktop, setDesktop] = useState(() => getDesktopInfo());
-  const [paired, setPaired] = useState(() => isDesktopPaired());
   const [call, setCall] = useState<LiveCall | null>(null);
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [speakText, setSpeakText] = useState('');
+  const [pendingSpeak, setPendingSpeak] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   // Remote-mode relay: optimistic call-state overlay, in-flight command, and last round-trip latency.
@@ -127,7 +245,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   // (no submit_responses on the Calls form) see everything but can't drive the phone.
   const roleAllowsOperating = callsFormId ? canSubmitCalls(callsFormId) : permissions.appLevel.includes('manage_app');
 
-  useEffect(() => subscribeDesktopStatus((info) => { setDesktop(info); setPaired(isDesktopPaired()); }), []);
+  useEffect(() => subscribeDesktopStatus((info) => setDesktop(info)), []);
 
   // Poll call.current so a refreshed page picks up an in-flight call (permission-aware).
   const refreshCall = useCallback(async () => {
@@ -218,15 +336,18 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
     });
   }, []);
 
+  // Local dispatch — straight to the connector client (the relay is only for remote runtimes).
+  // Returns success/failure so callers (the speak composer) can react without a rethrow.
   const runCommand = useCallback(
-    async (command: string, payload?: Record<string, unknown>, doneMessage?: string) => {
+    async (command: string, payload?: Record<string, unknown>, doneMessage?: string): Promise<boolean> => {
       setBusy(command);
       try {
-        // Local bridge: straight to the connector client (the relay is only for remote runtimes).
         await dispatchCallCommand({ remote: false, connector }, command, undefined, payload);
         if (doneMessage) toast.success(doneMessage);
+        return true;
       } catch (err) {
         toast.error('Aokie command failed', err instanceof Error ? err.message : String(err));
+        return false;
       } finally {
         setBusy(null);
       }
@@ -234,21 +355,14 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
     [connector]
   );
 
-  const handleSpeak = useCallback(async () => {
-    const text = speakText.trim();
-    if (!text) return;
-    await runCommand('call.operatorSpeak', { text }, 'Sent to the caller');
-    setSpeakText('');
-  }, [runCommand, speakText]);
-
   // Remote-runtime path: the receptionist is on another machine, so controls go through the relay
   // (enqueue → the owner's FormLogic Desktop claims/completes → poll back) instead of the local
   // connector. Optimistic overlay while in flight; reload records on success; revert + toast on
-  // failure/expiry (expiry ⇒ "no desktop online").
+  // failure/expiry (expiry ⇒ "no desktop online"). Returns success/failure like runCommand.
   const relayDeviceName = presence.kind === 'remote' ? presence.deviceName : undefined;
   const runRelay = useCallback(
-    async (command: string, callId: string | undefined, payload?: Record<string, unknown>) => {
-      if (!appSlug || relayBusy) return;
+    async (command: string, callId: string | undefined, payload?: Record<string, unknown>): Promise<boolean> => {
+      if (!appSlug || relayBusy) return false;
       setRelayBusy(command);
       const startedAt = Date.now();
       try {
@@ -258,10 +372,15 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
         });
         setLatencyMs(Date.now() - startedAt);
         const t = describeRelayOutcome(command, outcome, relayDeviceName);
-        if (t.kind === 'success') toast.success(t.title, t.message);
-        else toast.error(t.title, t.message);
+        if (t.kind === 'success') {
+          toast.success(t.title, t.message);
+          return true;
+        }
+        toast.error(t.title, t.message);
+        return false;
       } catch (err) {
         toast.error('Could not reach FormLogic Desktop', err instanceof Error ? err.message : String(err));
+        return false;
       } finally {
         setRelayBusy(null);
       }
@@ -269,12 +388,38 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
     [appSlug, relayBusy, relayDeviceName]
   );
 
+  // The ONE dispatcher CallControls calls — keyed off remoteMode so local/remote/demo can never
+  // fork into two different behaviours for the same button.
+  const onCommand = useCallback(
+    (command: string, callId: string, payload?: Record<string, unknown>) => {
+      if (remoteMode) {
+        void runRelay(command, callId, payload);
+      } else {
+        void runCommand(command, payload, LOCAL_COMMAND_LABEL[command]);
+      }
+    },
+    [remoteMode, runRelay, runCommand]
+  );
+
+  const handleSpeak = useCallback(async () => {
+    const text = speakText.trim();
+    if (!text) return;
+    setSpeakText('');
+    setPendingSpeak(text);
+    const ok = await runCommand('call.operatorSpeak', { text }, 'Sent to the caller');
+    setPendingSpeak(null);
+    if (!ok) setSpeakText(text); // don't discard the operator's words on failure
+  }, [runCommand, speakText]);
+
   const handleRelaySpeak = useCallback(
     async (callId: string | undefined) => {
       const text = speakText.trim();
       if (!text) return;
       setSpeakText('');
-      await runRelay('call.operatorSpeak', callId, { text });
+      setPendingSpeak(text);
+      const ok = await runRelay('call.operatorSpeak', callId, { text });
+      setPendingSpeak(null);
+      if (!ok) setSpeakText(text); // don't discard the operator's words on failure
     },
     [runRelay, speakText]
   );
@@ -289,8 +434,6 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
       setSimulating(false);
     }
   }, [simulating]);
-
-  const mockOnly = !desktop.available || !paired;
 
   // Remote mode derives the "current call" + transcript from stored records (newest call
   // auto-selected); local mode keeps the hub-event-driven state untouched. An in-flight relay
@@ -310,61 +453,97 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   );
   const shownTurns = remoteMode ? remoteTurns : turns;
 
-  const active = remoteMode
+  const active: StageCall | null = remoteMode
     ? (remoteCall && remoteCall.state !== 'ended' ? remoteCall : null)
     : (call && call.state !== 'ended' ? call : null);
-  const stateBadge = useMemo(() => {
-    if (!active) return null;
-    const isRinging = active.state === 'ringing';
-    return (
-      <span
-        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-          isRinging
-            ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20'
-            : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
-        }`}
-      >
-        {isRinging ? 'Ringing' : 'Live'}
-      </span>
-    );
-  }, [active]);
+  const isCallUp = active !== null;
+  const isRinging = active?.state === 'ringing';
+  const busyCommand = remoteMode ? relayBusy : busy;
+
+  // The call stage timer: one mechanism for both ringing and active (it runs from the moment
+  // the call started either way), ticking every second while a call is up.
+  const startedAtMs = !active
+    ? null
+    : remoteMode
+      ? (remoteCall?.startedAtMs ?? null)
+      : parseDbTimestamp(call?.startedAt);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isCallUp) return;
+    setNowTick(Date.now());
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isCallUp]);
+  const elapsedLabel = startedAtMs !== null ? formatDuration(Math.max(0, nowTick - startedAtMs)) : null;
+
+  const transcriptHeading = active ? 'Conversation' : remoteMode ? 'Latest call' : 'Last call';
+
+  // Speak composer gating: the placeholder explains WHY it's disabled instead of just hiding.
+  const speakGateReason = !active
+    ? null
+    : active.state === 'ringing'
+      ? 'Answer the call to speak'
+      : !roleAllowsOperating
+        ? 'Your role can view calls but not operate them'
+        : !can('call.operatorSpeak')
+          ? 'Speaking is not granted to this app'
+          : null;
+  const speakPlaceholder = speakGateReason ?? 'Speak to the caller as the operator…';
+  const speakDisabled = speakGateReason !== null || busyCommand !== null;
+
+  // Standby bar's last-call time (idle state only — the stage has its own live timer).
+  const lastCallRow = recent.rows[0];
+  const lastCallAt = lastCallRow ? parseDbTimestamp(lastCallRow.answers.started_at ?? lastCallRow.submittedAt) : null;
+  const lastCallLabel = lastCallAt !== null
+    ? `Last call ${new Date(lastCallAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : null;
+  const seenLabel = presence.kind === 'remote' ? describeLastSeen(presence.lastSeenAt) : null;
+
+  // Transcript auto-scroll: stays pinned to the newest turn while a call is up. Also re-fires
+  // when the pending "sending…" ghost turn appears/clears, so it doesn't sit below the fold
+  // in a long transcript between the operator sending it and the real turn landing.
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isCallUp) return;
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [shownTurns.length, isCallUp, pendingSpeak]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <PhoneCall className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-          <h1 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Live Call</h1>
-        </div>
-        <span className="text-xs text-gray-400 dark:text-slate-500">
-          {remoteMode
-            ? `Remote viewer · updates every ${REMOTE_RECORDS_POLL_MS / 1000}s`
-            : mockOnly
-              ? 'Demo phone bridge (no FormLogic Desktop)'
-              : `FormLogic Desktop v${desktop.version ?? '?'} · paired`}
-        </span>
+      <div className="flex items-center gap-3">
+        <PhoneCall className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+        <h1 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Live Call</h1>
       </div>
 
-      {/* Remote runtime banner: the receptionist is running headless elsewhere. */}
-      {presence.kind === 'remote' && (
-        <div className={`${card} p-5`}>
-          <div className="flex items-start gap-3">
-            <Cast className="mt-0.5 h-5 w-5 shrink-0 text-primary-600 dark:text-primary-400" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-900 dark:text-white">
-                Receptionist running on {presence.deviceName}
-              </p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                Your receptionist runs in FormLogic Desktop on that machine. Manage calls here from
-                anywhere — Answer, Reject, Hang up and Speak relay to it. Records and transcript refresh
-                every {REMOTE_RECORDS_POLL_MS / 1000} seconds while this screen is open.
-              </p>
-            </div>
-          </div>
+      {/* IDLE: a thin standby bar — where the receptionist is listening, and when it last rang. */}
+      {!active && (
+        <div className="flex items-center gap-2.5 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 px-4 py-2.5 text-sm">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              presence.kind === 'local'
+                ? 'bg-emerald-500 animate-pulse'
+                : presence.kind === 'remote'
+                  ? 'bg-primary-500 animate-pulse'
+                  : 'bg-gray-300 dark:bg-slate-600'
+            }`}
+          />
+          <span className="min-w-0 truncate font-medium text-gray-900 dark:text-white">
+            {presence.kind === 'local'
+              ? `Listening — FormLogic Desktop v${desktop.version ?? '?'}`
+              : presence.kind === 'remote'
+                ? `Listening on ${presence.deviceName} — via relay`
+                : 'Demo bridge — no desktop connected'}
+          </span>
+          <span className="ml-auto shrink-0 text-xs text-gray-400 dark:text-slate-500">
+            {presence.kind === 'remote'
+              ? `Updates every ${REMOTE_RECORDS_POLL_MS / 1000}s${seenLabel ? ` · seen ${seenLabel}` : ''}`
+              : (lastCallLabel ?? '')}
+          </span>
         </div>
       )}
 
-      {showSimulateSetup(presence) && (
+      {showSimulateSetup(presence) && !active && (
         <div className={`${card} p-5`}>
           <div className="flex items-start gap-3">
             <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-gray-400 dark:text-slate-500" />
@@ -388,149 +567,78 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
         </div>
       )}
 
-      {/* Current call card */}
-      <div className={`${card} p-5`}>
-        {active ? (
+      {/* RINGING / ACTIVE: the call stage takes over. Ring-pulse while ringing (static primary
+          halo under reduced motion — see .call-ring in index.css); a steady ring once answered. */}
+      {active && (
+        <div
+          className={cn(
+            card,
+            'p-6 border-2',
+            isRinging
+              ? 'call-ring border-primary-300 dark:border-primary-500/40'
+              : 'border-primary-200 dark:border-primary-500/30 ring-1 ring-primary-500/20'
+          )}
+        >
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold text-gray-900 dark:text-white">
-                  {active.callerName || active.from || 'Unknown caller'}
-                </p>
-                <p className="text-sm text-gray-500 dark:text-slate-400">
-                  {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
-                </p>
-              </div>
-              {stateBadge}
+            <div className="flex items-center justify-between gap-3">
+              <span
+                className={`text-xs font-semibold uppercase tracking-wider ${
+                  isRinging ? 'text-primary-600 dark:text-primary-400' : 'text-emerald-600 dark:text-emerald-400'
+                }`}
+              >
+                {isRinging ? 'Incoming call' : 'Live'}
+              </span>
+              {elapsedLabel && (
+                <span className="font-mono text-xl tabular-nums text-gray-900 dark:text-white">{elapsedLabel}</span>
+              )}
             </div>
-            {remoteMode ? (
-              <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void runRelay('call.answer', active.callId, { callId: active.callId })}
-                    disabled={!canRunCommand('call.answer', { can, roleAllowsOperating }) || active.state !== 'ringing' || relayBusy !== null}
-                    className={`${actionBtn} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20`}
-                  >
-                    <Phone className="h-4 w-4" /> {relayBusy === 'call.answer' ? 'Answering…' : 'Answer'}
-                  </button>
-                  {active.state === 'ringing' && canRunCommand('call.reject', { can, roleAllowsOperating }) && (
-                    <button
-                      type="button"
-                      onClick={() => void runRelay('call.reject', active.callId, { callId: active.callId })}
-                      disabled={relayBusy !== null}
-                      className={`${actionBtn} border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20`}
-                    >
-                      <PhoneOff className="h-4 w-4" /> {relayBusy === 'call.reject' ? 'Rejecting…' : 'Reject'}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void runRelay('call.hangup', active.callId, { callId: active.callId })}
-                    disabled={!canRunCommand('call.hangup', { can, roleAllowsOperating }) || relayBusy !== null}
-                    className={`${actionBtn} border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20`}
-                  >
-                    <PhoneOff className="h-4 w-4" /> {relayBusy === 'call.hangup' ? 'Hanging up…' : 'Hang up'}
-                  </button>
-                  {!roleAllowsOperating && (
-                    <span className="text-xs text-gray-400 dark:text-slate-500">Your role can view calls but not operate them.</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={speakText}
-                    onChange={(e) => setSpeakText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void handleRelaySpeak(active.callId); }}
-                    placeholder="Say something to the caller as the operator…"
-                    disabled={!canRunCommand('call.operatorSpeak', { can, roleAllowsOperating }) || active.state !== 'active' || relayBusy !== null}
-                    className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleRelaySpeak(active.callId)}
-                    disabled={!canRunCommand('call.operatorSpeak', { can, roleAllowsOperating }) || active.state !== 'active' || !speakText.trim() || relayBusy !== null}
-                    className={`${actionBtn} border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-400 dark:hover:bg-primary-500/20`}
-                  >
-                    <Send className="h-4 w-4" /> {relayBusy === 'call.operatorSpeak' ? 'Sending…' : 'Speak'}
-                  </button>
-                </div>
-                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-400 dark:text-slate-500">
-                  <Cast className="h-3 w-3" />
-                  Commands run on {relayDeviceName ?? 'the hosting desktop'}
-                  {relayBusy !== null
-                    ? ' · sending…'
-                    : latencyMs !== null
-                      ? ` · last round-trip ${(latencyMs / 1000).toFixed(1)}s`
-                      : ''}
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void runCommand('call.answer', { callId: active.callId }, 'Call answered')}
-                    disabled={!roleAllowsOperating || !can('call.answer') || active.state !== 'ringing' || busy !== null}
-                    className={`${actionBtn} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20`}
-                  >
-                    <Phone className="h-4 w-4" /> Answer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void runCommand('call.hangup', { callId: active.callId }, 'Call ended')}
-                    disabled={!roleAllowsOperating || !can('call.hangup') || busy !== null}
-                    className={`${actionBtn} border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20`}
-                  >
-                    <PhoneOff className="h-4 w-4" /> Hang up
-                  </button>
-                  {!roleAllowsOperating && (
-                    <span className="text-xs text-gray-400 dark:text-slate-500">Your role can view calls but not operate them.</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={speakText}
-                    onChange={(e) => setSpeakText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void handleSpeak(); }}
-                    placeholder="Say something to the caller as the operator…"
-                    disabled={!roleAllowsOperating || !can('call.operatorSpeak') || active.state !== 'active'}
-                    className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleSpeak()}
-                    disabled={!roleAllowsOperating || !can('call.operatorSpeak') || active.state !== 'active' || !speakText.trim() || busy !== null}
-                    className={`${actionBtn} border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-400 dark:hover:bg-primary-500/20`}
-                  >
-                    <Send className="h-4 w-4" /> Speak
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="py-6 text-center">
-            <Phone className="mx-auto mb-2 h-8 w-8 text-gray-300 dark:text-slate-600" />
-            <p className="text-sm font-medium text-gray-900 dark:text-white">No call in progress</p>
-            <p className="mx-auto mt-1 max-w-md text-xs text-gray-500 dark:text-slate-400">
-              {remoteMode
-                ? `Your receptionist runs in FormLogic Desktop on ${relayDeviceName ?? 'another machine'}. Manage calls here from anywhere — the next incoming call appears the moment it rings.`
-                : 'Incoming calls appear here the moment the Aokie plugin sees them ring.'}
-            </p>
-          </div>
-        )}
-      </div>
 
-      {/* Live transcript (remote mode: the newest call's STORED turns — no local hub here) */}
+            <div className="min-w-0">
+              <p className="truncate text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
+                {active.callerName || active.from || 'Unknown caller'}
+              </p>
+              <p className="mt-1 font-mono text-sm tabular-nums text-gray-500 dark:text-slate-400">
+                {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
+              </p>
+            </div>
+
+            <CallControls
+              active={active}
+              can={can}
+              roleAllowsOperating={roleAllowsOperating}
+              busyCommand={busyCommand}
+              onCommand={onCommand}
+            />
+
+            <div className="flex items-center gap-1.5 border-t border-gray-100 dark:border-slate-800 pt-3 text-[11px] text-gray-400 dark:text-slate-500">
+              {remoteMode ? (
+                <>
+                  <Cast className="h-3 w-3 shrink-0" />
+                  <span>
+                    Commands run on {relayDeviceName ?? 'the hosting desktop'}
+                    {relayBusy !== null
+                      ? ' · sending…'
+                      : latencyMs !== null
+                        ? ` · last round-trip ${(latencyMs / 1000).toFixed(1)}s`
+                        : ''}
+                  </span>
+                </>
+              ) : presence.kind === 'local' ? (
+                <span>Direct bridge · FormLogic Desktop v{desktop.version ?? '?'}</span>
+              ) : (
+                <span>Simulated call — demo bridge</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transcript (remote mode: the newest call's STORED turns — no local hub here) + composer */}
       <div className={`${card} p-5`}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Mic className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-            <h2 className="text-sm font-medium text-gray-900 dark:text-white">
-              {remoteMode ? 'Latest call transcript' : 'Live transcript'}
-            </h2>
+            <h2 className="text-sm font-medium text-gray-900 dark:text-white">{transcriptHeading}</h2>
           </div>
           {remoteMode && (
             <span className="text-[11px] text-gray-400 dark:text-slate-500">
@@ -538,27 +646,67 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
             </span>
           )}
         </div>
-        {shownTurns.length === 0 ? (
+        {shownTurns.length === 0 && pendingSpeak === null ? (
           <p className="text-sm text-gray-400 dark:text-slate-500">
             {remoteMode
               ? 'No transcript recorded for the latest call yet.'
               : 'Final transcript turns stream in here during a call.'}
           </p>
         ) : (
-          <ul className="space-y-2">
-            {shownTurns.map((t) => (
-              <li key={t.key} className="flex gap-3 text-sm">
-                <span
-                  className={`w-16 shrink-0 text-xs font-semibold uppercase tracking-wide ${
-                    t.speaker === 'caller' ? 'text-sky-600 dark:text-sky-400' : 'text-primary-600 dark:text-primary-400'
-                  }`}
-                >
-                  {t.speaker}
-                </span>
-                <span className="min-w-0 text-gray-700 dark:text-slate-300">{t.text}</span>
-              </li>
-            ))}
-          </ul>
+          <div ref={transcriptRef} className="max-h-96 space-y-3 overflow-y-auto">
+            {shownTurns.map((t) => {
+              const speaker = describeSpeaker(t.speaker);
+              const time = formatTurnTime(t.occurredAt);
+              return (
+                <div key={t.key}>
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-xs font-medium ${speaker.className}`}>{speaker.label}</span>
+                    {time && <span className="font-mono text-[11px] tabular-nums text-gray-400 dark:text-slate-500">{time}</span>}
+                  </div>
+                  <p className={`text-sm leading-relaxed ${turnBodyClass(t.speaker)}`}>{t.text}</p>
+                </div>
+              );
+            })}
+            {pendingSpeak !== null && (
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-medium text-primary-600 dark:text-primary-400">You</span>
+                  <span className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500">
+                    {remoteMode && <Cast className="h-3 w-3" />} sending…
+                  </span>
+                </div>
+                <p className="text-sm italic leading-relaxed text-primary-600/80 dark:text-primary-400/80">{pendingSpeak}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Speak composer — only while a call is up; an ended call's transcript is a record, not a conversation. */}
+        {active && (
+          <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3 dark:border-slate-800">
+            <input
+              type="text"
+              value={speakText}
+              onChange={(e) => setSpeakText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || speakDisabled || !speakText.trim()) return;
+                if (remoteMode) void handleRelaySpeak(active.callId);
+                else void handleSpeak();
+              }}
+              placeholder={speakPlaceholder}
+              disabled={speakDisabled}
+              className="min-w-0 flex-1 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500"
+            />
+            <button
+              type="button"
+              onClick={() => { if (remoteMode) void handleRelaySpeak(active.callId); else void handleSpeak(); }}
+              disabled={speakDisabled || !speakText.trim()}
+              aria-label="Send to caller"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-600 text-primary-foreground transition-colors hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </div>
         )}
       </div>
 

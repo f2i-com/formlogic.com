@@ -312,6 +312,16 @@
     100% { background-position: -200% 0; }
   }
 
+  /* Aokie Live Call — "the screen rings": an expanding primary-token pulse around the call
+     stage card while a call is ringing. rgb(var(--primary-500) / …) means it rings indigo by
+     day, lime by night, automatically — no hardcoded hue. */
+  .call-ring { animation: callRing 1.5s ease-out infinite; }
+  @keyframes callRing {
+    0%   { box-shadow: 0 0 0 0 rgb(var(--primary-500) / 0.4); }
+    75%  { box-shadow: 0 0 0 14px rgb(var(--primary-500) / 0); }
+    100% { box-shadow: 0 0 0 0 rgb(var(--primary-500) / 0); }
+  }
+
   /* Flows editor "Live Wire" run-beam — a travelling dash pattern along an executed edge's path,
      source → target (negative offset = draws in the path's own direction). Color comes from the
      edge's own `!stroke-primary-*` class (FlowEdge); this only supplies the motion. Period 14 =
@@ -349,6 +359,12 @@
        highlight (FlowEdge's primary/40 'done' stroke) already tells the rest of the story. */
     .flow-beam {
       stroke-dasharray: none !important;
+    }
+    /* Static fallback: a solid primary halo instead of an expanding pulse — ringing still
+       reads at a glance, it just doesn't move. */
+    .call-ring {
+      animation: none !important;
+      box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.35) !important;
     }
   }
 }

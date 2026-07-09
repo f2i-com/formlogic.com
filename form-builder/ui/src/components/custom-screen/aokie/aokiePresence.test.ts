@@ -174,19 +174,23 @@ describe('remote-mode render gating', () => {
     expect(showSimulateSetup({ kind: 'local' })).toBe(false);
   });
 
-  it('AokieLiveCallScreen gates the setup card via showSimulateSetup and drives remote controls via the relay', () => {
+  it('AokieLiveCallScreen gates the call stage/setup card and drives remote controls via the relay', () => {
     // No DOM runner in this suite (vitest env: node) — pin the gating at source level, the
     // same technique the pack test uses for registerSdkScreen ids.
     const source = readFileSync(join(__dirname, 'AokieLiveCallScreen.tsx'), 'utf8');
-    expect(source).toContain('showSimulateSetup(presence) && (');
-    // The old always-on gate must not have crept back in front of the setup card.
-    expect(source).not.toMatch(/\{mockOnly && \(/);
-    // Remote mode now renders live controls that go through the relay (not the local connector).
+    // The setup/simulate card only shows in the 'none' state, and never once a call takes over the stage.
+    expect(source).toContain('showSimulateSetup(presence) && !active && (');
+    // The old always-on/mock-only gate must not have crept back in front of the setup card.
+    expect(source).not.toContain('mockOnly');
+    // The stage's per-mode footer still branches on remoteMode first (local vs demo second).
     expect(source).toContain('remoteMode ? (');
-    expect(source).toContain("runRelay('call.answer'");
-    expect(source).toContain("runRelay('call.hangup'");
+    // Local and remote controls are unified through ONE dispatcher keyed off remoteMode — not two
+    // forked branches — so answer/reject/hangup can never drift out of sync between the two modes.
+    expect(source).toContain('if (remoteMode) {');
+    expect(source).toContain('void runRelay(command, callId, payload)');
+    expect(source).toContain('void runCommand(command, payload,');
     expect(source).toContain('Commands run on');
-    // Every remote control stays gated on the SAME connector grant + operating role as the local path.
+    // Every control stays gated on the SAME connector grant + operating role as before.
     expect(source).toContain("canRunCommand('call.answer', { can, roleAllowsOperating })");
   });
 });
@@ -265,10 +269,20 @@ describe('remote record derivation (stored rows replace the hub feed)', () => {
 
   it('newest Calls row maps incoming/answered to a live snapshot', () => {
     expect(deriveRemoteCall([callsRow({ call_id: 'c-9', caller_phone: '+61 4', caller_name: 'Ada', status: 'incoming', started_at: mysqlTs(NOW - 10_000) })], NOW))
-      .toEqual({ callId: 'c-9', from: '+61 4', callerName: 'Ada', state: 'ringing' });
+      .toEqual({ callId: 'c-9', from: '+61 4', callerName: 'Ada', state: 'ringing', startedAtMs: NOW - 10_000 });
     expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered', started_at: mysqlTs(NOW - 10_000) })], NOW)?.state).toBe('active');
     expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'completed' })], NOW)?.state).toBe('ended');
     expect(deriveRemoteCall([], NOW)).toBeNull();
+  });
+
+  it('startedAtMs carries the parsed started_at (or submittedAt fallback) for the Live Call stage timer', () => {
+    // started_at present → used directly.
+    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered', started_at: mysqlTs(NOW - 45_000) })], NOW)?.startedAtMs).toBe(NOW - 45_000);
+    // No started_at recorded — falls back to submittedAt so the timer still has something to anchor on.
+    const submittedAt = mysqlTs(NOW - 5_000);
+    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered' }, submittedAt)], NOW)?.startedAtMs).toBe(NOW - 5_000);
+    // Neither timestamp parses — startedAtMs is null so the UI can hide the timer rather than show garbage.
+    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered' }, 'not-a-date')], NOW)?.startedAtMs).toBeNull();
   });
 
   it('a stuck non-terminal row past the live window reads as ended', () => {
