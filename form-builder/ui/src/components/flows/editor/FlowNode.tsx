@@ -11,11 +11,10 @@
 // Test Run's onNodeStatus, via FlowNodeSignalsContext) draws a slim primary rail down the card's
 // left edge and demotes the status pill to an icon-only glyph — the wire delivering into this
 // node (FlowEdge) now carries the duration, so the card doesn't need to repeat it.
-import { memo, useContext } from 'react';
+import { memo, useContext, useState, type ReactNode } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { AlertTriangle, Check, HelpCircle, Loader2, MonitorDown, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { Tooltip } from '../../ui/Tooltip';
 import { getNodeSpec } from './nodeCatalog';
 import { describeNode, declaredInputNames } from './nodeSummary';
 import { FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
@@ -28,6 +27,41 @@ const HANDLE_TONE: Record<string, string> = {
   true: '!bg-emerald-500',
   false: '!bg-red-500',
 };
+
+function BadgePopover({ content, label, className, children }: { content: ReactNode; label: string; className: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      className="nodrag nopan relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        className={cn(className, 'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500')}
+      >
+        {children}
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute bottom-full right-0 z-50 mb-2 block max-w-[240px] rounded-lg bg-gray-800 px-2.5 py-1.5 text-left text-xs font-medium text-white shadow-lg dark:bg-slate-700"
+        >
+          {content}
+          <span className="absolute right-3 top-full h-0 w-0 border-4 border-transparent border-t-gray-800 dark:border-t-slate-700" />
+        </span>
+      )}
+    </span>
+  );
+}
 
 /**
  * The run-status glyph (idle = nothing). Running/done are icon-only now — the run rail down the
@@ -56,11 +90,13 @@ function StatusPill({ run }: { run: NodeRunStatus | undefined }) {
     );
   }
   return (
-    <Tooltip content={run.error || 'Failed'} position="top">
-      <span className="inline-flex cursor-default items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-red-700 dark:bg-red-500/15 dark:text-red-300">
-        <X className="h-2.5 w-2.5" /> Error
-      </span>
-    </Tooltip>
+    <BadgePopover
+      label={run.error || 'Failed'}
+      content={<span className="block max-w-[220px] whitespace-normal">{run.error || 'Failed'}</span>}
+      className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-red-700 dark:bg-red-500/15 dark:text-red-300"
+    >
+      <X className="h-2.5 w-2.5" /> Error
+    </BadgePopover>
   );
 }
 
@@ -68,8 +104,8 @@ function StatusPill({ run }: { run: NodeRunStatus | undefined }) {
 function LintBadge({ issues }: { issues: string[] }) {
   if (issues.length === 0) return null;
   return (
-    <Tooltip
-      position="top"
+    <BadgePopover
+      label={`${issues.length} issue${issues.length === 1 ? '' : 's'}: ${issues.join('; ')}`}
       content={
         <span className="block max-w-[220px] space-y-0.5 text-left">
           {issues.map((issue, i) => (
@@ -77,14 +113,10 @@ function LintBadge({ issues }: { issues: string[] }) {
           ))}
         </span>
       }
+      className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300"
     >
-      <span
-        className="nodrag inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300"
-        aria-label={`${issues.length} issue${issues.length === 1 ? '' : 's'}: ${issues.join('; ')}`}
-      >
-        <AlertTriangle className="h-2.5 w-2.5" />
-      </span>
-    </Tooltip>
+      <AlertTriangle className="h-2.5 w-2.5" />
+    </BadgePopover>
   );
 }
 

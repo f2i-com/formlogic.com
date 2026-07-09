@@ -629,7 +629,7 @@ export function BindingEditor({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center justify-between border-t border-gray-200/80 bg-white/95 px-4 py-3 dark:border-slate-700/60 dark:bg-slate-900/95">
         <div className="flex items-center gap-3">
           <Switch checked={draft.enabled} onChange={(v) => patch({ enabled: v })} label="Enabled" size="sm" />
           <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete binding">

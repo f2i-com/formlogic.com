@@ -9,6 +9,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, Check, Loader2, PlayCircle, ServerCog, X } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { PanelHeader } from './PanelHeader';
 import { toast } from '../../stores/toastStore';
 import { executeFlow, type FlowRunOutcome } from '../../client-runtime/flows/flowExecutor';
 import { buildWorkspaceExecutorDeps } from '../../client-runtime/flows/flowDispatcher';
@@ -161,15 +162,16 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
 
   return (
     <div className="flex h-full min-h-0 w-full max-w-md flex-col border-l border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900">
-      <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-slate-700/60 px-4 py-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Test run</h3>
-          <p className="truncate font-mono text-[11px] text-gray-400 dark:text-slate-500">{flow.slug}</p>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close test run">
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
+      <PanelHeader
+        icon={PlayCircle}
+        title="Test run"
+        subtitle={flow.slug}
+        actions={(
+          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close test run">
+            <X className="h-4 w-4" />
+          </Button>
+        )}
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
         <div>

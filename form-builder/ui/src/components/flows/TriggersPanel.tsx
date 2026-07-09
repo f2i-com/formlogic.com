@@ -12,6 +12,7 @@ import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Switch } from '../ui/Switch';
+import { PanelHeader } from './PanelHeader';
 import { BindingEditor, bindingToPayload, type BindingDraft } from './bindings/BindingEditor';
 import { FLOW_EVENT_CATALOG } from './flowEventCatalog';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './editor/nodeCatalog';
@@ -129,13 +130,15 @@ export function TriggersPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60">
-        <Zap className="h-4 w-4 text-primary-600 dark:text-primary-400" />
-        <h4 className="flex-1 text-sm font-medium text-gray-700 dark:text-slate-300">Triggers</h4>
-        <Button variant="outline" size="sm" onClick={() => { setAdding(true); setEditingId(null); }} leftIcon={<Plus className="h-3.5 w-3.5" />}>
-          Add trigger
-        </Button>
-      </div>
+      <PanelHeader
+        icon={Zap}
+        title="Triggers"
+        actions={(
+          <Button variant="outline" size="sm" onClick={() => { setAdding(true); setEditingId(null); }} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+            Add trigger
+          </Button>
+        )}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {isWorkspaceFlow && (
@@ -219,7 +222,7 @@ export function TriggersPanel({
 
             {bindings.length === 0 && !adding && (
               <p className="px-1 py-3 text-xs text-gray-400 dark:text-slate-500">
-                No triggers yet. Add one to run this flow from an event.
+                No triggers yet. Add one so this flow runs itself — on a call, an SMS, or a form submission.
               </p>
             )}
           </div>

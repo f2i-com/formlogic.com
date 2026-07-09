@@ -4,9 +4,10 @@
 // timestamps, runtime ownership, expandable input/result/error, and paged loading. Bindings,
 // queued-run claims, ctx.flows.run intents and server test runs all land here.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, History, RefreshCw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
+import { PanelHeader } from './PanelHeader';
 import { getNodeSpec } from './editor/nodeCatalog';
 import { formatAbsoluteTimeTitle, formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
@@ -136,20 +137,26 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60">
-        <h4 className="flex-1 text-sm font-medium text-gray-700 dark:text-slate-300">Run history</h4>
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as FlowRunStatus | 'all')}
-          aria-label="Filter runs by status"
-          className="cursor-pointer rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
-        >
-          {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
-        </select>
-        <Button variant="ghost" size="sm" onClick={() => void loadRuns()} isLoading={loading} disabled={loading} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
-          <span className="hidden sm:inline">Refresh</span>
-        </Button>
-      </div>
+      <PanelHeader
+        icon={History}
+        title="Run history"
+        count={runs === null ? undefined : total}
+        actions={(
+          <>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as FlowRunStatus | 'all')}
+              aria-label="Filter runs by status"
+              className="cursor-pointer rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+            >
+              {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
+            </select>
+            <Button variant="ghost" size="sm" onClick={() => void loadRuns()} isLoading={loading} disabled={loading} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
+              <span className="hidden sm:inline">Refresh</span>
+            </Button>
+          </>
+        )}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto">
         {loadError && runs !== null && runs.length === 0 ? (
@@ -168,7 +175,7 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
         ) : runs === null || loading ? (
           <p className="px-3 py-4 text-xs text-gray-400 dark:text-slate-500">Loading...</p>
         ) : runs.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-gray-400 dark:text-slate-500">No runs yet - bindings, queued claims and test runs appear here.</p>
+          <p className="px-3 py-4 text-xs text-gray-400 dark:text-slate-500">No runs yet. Trigger the flow or use Test run.</p>
         ) : (
           <>
             <table className="w-full text-sm">

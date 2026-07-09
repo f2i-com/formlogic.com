@@ -275,7 +275,7 @@ export function FlowCanvas({
           nodeClassName={miniMapNodeClassName}
           pannable
           zoomable
-          className="!bg-white dark:!bg-slate-900 !border !border-gray-200 dark:!border-slate-700 rounded-lg"
+          className="hidden rounded-lg !border !border-gray-200 !bg-white dark:!border-slate-700 dark:!bg-slate-900 sm:block"
           maskColor="rgb(148 163 184 / 0.15)"
         />
       </ReactFlow>

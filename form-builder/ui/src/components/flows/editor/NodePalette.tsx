@@ -76,9 +76,12 @@ interface NodePaletteProps {
   /** Collapsed to a narrow icon-only rail (space-reclaiming; never hides the panel's existence). */
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  /** Mobile bottom sheets reuse the same palette without drag affordances or fixed rail width. */
+  draggable?: boolean;
+  className?: string;
 }
 
-function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: string) => void }) {
+function PaletteItem({ spec, onAddNode, draggable = true }: { spec: NodeSpec; onAddNode: (type: string) => void; draggable?: boolean }) {
   const Icon = spec.icon;
   const disabled = !spec.executable;
   const desktop = spec.requiresDesktopService;
@@ -105,9 +108,9 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
     <button
       ref={btnRef}
       type="button"
-      draggable={!disabled}
+      draggable={draggable && !disabled}
       onDragStart={(e) => {
-        if (disabled) return;
+        if (disabled || !draggable) return;
         closeDoc();
         e.dataTransfer.setData(PALETTE_DND_MIME, spec.type);
         e.dataTransfer.effectAllowed = 'move';
@@ -125,7 +128,10 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
         'border-transparent',
         disabled
           ? 'cursor-not-allowed opacity-55'
-          : 'cursor-grab bg-white hover:border-primary-300 hover:bg-primary-50/50 dark:bg-slate-800/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+          : cn(
+              draggable ? 'cursor-grab' : 'cursor-pointer',
+              'bg-white hover:border-primary-300 hover:bg-primary-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:bg-slate-800/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10',
+            ),
         degraded && !disabled && 'opacity-60',
       )}
     >
@@ -154,7 +160,7 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
   );
 }
 
-export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, collapsed = false, onToggleCollapsed }: NodePaletteProps) {
+export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, collapsed = false, onToggleCollapsed, draggable = true, className }: NodePaletteProps) {
   const [query, setQuery] = useState('');
 
   // Collapsing swaps in a whole different (icon-rail) subtree, which unmounts the results list —
@@ -180,7 +186,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
 
   if (collapsed) {
     return (
-      <div className="flex h-full min-h-0 w-14 flex-none flex-col items-center gap-2 bg-gray-100/50 dark:bg-slate-900/50 py-2.5">
+      <div className={cn('flex h-full min-h-0 w-14 flex-none flex-col items-center gap-2 bg-gray-100/50 py-2.5 dark:bg-slate-900/50', className)}>
         <Button
           variant="ghost"
           size="iconOnly"
@@ -196,7 +202,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
   }
 
   return (
-    <div className="flex h-full min-h-0 w-64 flex-none flex-col bg-gray-100/50 dark:bg-slate-900/50">
+    <div className={cn('flex h-full min-h-0 w-64 flex-none flex-col bg-gray-100/50 dark:bg-slate-900/50', className)}>
       <div className="flex items-center gap-1.5 p-2.5">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
@@ -237,7 +243,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
             </div>
             <div className="space-y-1.5">
               {specs.map((spec) => (
-                <PaletteItem key={spec.type} spec={spec} onAddNode={onAddNode} />
+                <PaletteItem key={spec.type} spec={spec} onAddNode={onAddNode} draggable={draggable} />
               ))}
             </div>
           </div>

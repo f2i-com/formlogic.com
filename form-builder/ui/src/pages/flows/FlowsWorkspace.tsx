@@ -5,10 +5,10 @@
 // canvas, node palette, properties, autosave). Right (lg+): run history for the selected flow +
 // a Test Run drawer that executes the flow through the browser executor. Deep-linked by
 // ?flow=<id> from the app-level Flows panel.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Search, Trash2, Workflow,
+  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Search, Trash2, Workflow, X,
 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -329,7 +329,7 @@ export function FlowsWorkspace() {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-4rem)] flex-col overflow-hidden md:h-screen">
+    <div className="flex h-[calc(100dvh-4rem-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
       <Header
         title="Flows"
         actions={
@@ -456,6 +456,35 @@ export function FlowsWorkspace() {
         )}
       </div>
 
+      {selectedFlow && rightPanel === 'triggers' && (
+        <FlowMobileDrawer title="Triggers" onClose={() => setRightPanel(null)}>
+          <TriggersPanel
+            flow={selectedFlow}
+            bindings={selectedFlowBindings}
+            loading={!!flowBindingsLoading[selectedFlow.id]}
+            forms={forms}
+            context={editorContext}
+            onRefresh={() => fetchFlowBindings(selectedFlow)}
+          />
+        </FlowMobileDrawer>
+      )}
+      {selectedFlow && rightPanel === 'history' && (
+        <FlowMobileDrawer title="Run history" onClose={() => setRightPanel(null)}>
+          <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} refreshKey={historyKey} />
+        </FlowMobileDrawer>
+      )}
+      {selectedFlow && rightPanel === 'test' && (
+        <FlowMobileDrawer title="Test run" onClose={() => setRightPanel(null)}>
+          <TestRunDrawer
+            flow={selectedFlow}
+            onClose={() => setRightPanel(null)}
+            onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
+            onRunStart={() => setNodeStatus({})}
+            onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
+          />
+        </FlowMobileDrawer>
+      )}
+
       <NewFlowDialog
         isOpen={showNew}
         onClose={() => {
@@ -574,6 +603,30 @@ function DesktopPresenceChip({ presence }: { presence: FlowsDesktopPresence }) {
   );
 }
 
+function FlowMobileDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="lg:hidden">
+      <div className="fixed inset-0 z-[80] bg-gray-900/35 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="fixed inset-y-0 right-0 z-[90] flex w-full max-w-md flex-col bg-white shadow-2xl dark:bg-slate-900"
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={`Close ${title}`}
+          className="absolute right-2 top-2 z-10 rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <div className="min-h-0 flex-1 overflow-hidden [&>div>div:first-child]:pr-12 [&>div>div:nth-child(2)]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
+      </aside>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Library
 // ---------------------------------------------------------------------------
@@ -670,9 +723,10 @@ function FlowLibrary({
         ) : (
           filtered.map((g) => (
             <div key={g.app?.id ?? 'workspace'}>
-              <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
-                {g.app ? g.app.name : 'Workspace'}
-              </p>
+              <div className="mb-1.5 flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
+                <p className="min-w-0 flex-1 truncate">{g.app ? g.app.name : 'Workspace'}</p>
+                <span className="flex-none text-gray-400 dark:text-slate-500">· {g.flows.length}</span>
+              </div>
               <div className="space-y-1">
                 {g.flows.map((flow) => (
                   <FlowRow
@@ -751,7 +805,9 @@ function FlowRow({ flow, selected, onSelect, onDuplicate, onRename, onToggleEnab
                 </span>
               )}
             </span>
-            <p className="truncate font-mono text-[10px] text-gray-400 dark:text-slate-500">{flow.slug} - v{flow.version}</p>
+            <p className={cn('truncate font-mono text-[10px] text-gray-400 dark:text-slate-500', !flow.enabled && 'opacity-60')}>
+              {flow.slug} · v{flow.version}
+            </p>
           </button>
         )}
         <div className="relative flex-none">

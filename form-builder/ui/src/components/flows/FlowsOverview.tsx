@@ -81,8 +81,9 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
         <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">Flows</h2>
+            <div className="mt-2 h-0.5 w-32 rounded-full bg-gradient-to-r from-primary-500 via-primary-400 to-transparent dark:from-primary-300 dark:via-primary-400 dark:to-transparent" />
             <p className="mt-1 max-w-xl text-sm text-gray-600 dark:text-slate-400">
-              Build event-driven automations that connect forms, app events, Aokie calls, and Desktop-powered actions.
+              Flows run your busywork: when a call comes in, a form is submitted, or on demand — they look up records, draft replies, and speak on the line.
             </p>
           </div>
           <Button size="sm" onClick={() => onNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>

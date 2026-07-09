@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
@@ -11,8 +12,39 @@ export function DemoBanner() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const isDemo = !!user?.isDemo;
 
-  if (!user?.isDemo) return null;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!isDemo) {
+      root.style.setProperty('--fl-demo-banner-h', '0px');
+      return;
+    }
+
+    const update = () => {
+      const height = bannerRef.current?.getBoundingClientRect().height ?? 0;
+      root.style.setProperty('--fl-demo-banner-h', `${Math.ceil(height)}px`);
+    };
+    update();
+
+    if (typeof ResizeObserver === 'undefined' || !bannerRef.current) {
+      window.addEventListener('resize', update);
+      return () => {
+        window.removeEventListener('resize', update);
+        root.style.setProperty('--fl-demo-banner-h', '0px');
+      };
+    }
+
+    const observer = new ResizeObserver(update);
+    observer.observe(bannerRef.current);
+    return () => {
+      observer.disconnect();
+      root.style.setProperty('--fl-demo-banner-h', '0px');
+    };
+  }, [isDemo]);
+
+  if (!isDemo) return null;
 
   // Signup and the marketing landing are logged-out routes, so leave the demo first.
   const go = async (path: string) => {
@@ -21,7 +53,7 @@ export function DemoBanner() {
   };
 
   return (
-    <div className="sticky top-0 z-40 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-gradient-to-r from-primary-600 to-primary-700 px-4 py-2 text-center text-sm text-primary-foreground">
+    <div ref={bannerRef} className="sticky top-0 z-40 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-gradient-to-r from-primary-600 to-primary-700 px-4 py-2 text-center text-sm text-primary-foreground">
       <span className="inline-flex items-center gap-1.5 font-medium">
         <Sparkles className="h-4 w-4" />
         You're exploring the live demo — changes are shared and reset periodically.

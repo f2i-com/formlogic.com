@@ -5,18 +5,19 @@
 // stored WorkflowGraph. Rendered keyed by flow id so switching flows remounts with fresh state.
 // Node capabilities are kept in sync on save (a storage_set/formlogic node auto-declares its
 // required capability) so an authored flow can actually execute.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ReactFlowProvider,
   addEdge,
   reconnectEdge,
+  useReactFlow,
   useEdgesState,
   useNodesState,
   type Connection,
   type EdgeChange,
   type NodeChange,
 } from '@xyflow/react';
-import { Check, Loader2, PlayCircle, Plus, Redo2, Save, Undo2, History, Zap } from 'lucide-react';
+import { Check, Loader2, PlayCircle, Plus, Redo2, Save, Undo2, History, X, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
@@ -74,6 +75,9 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [failedSaveGraph, setFailedSaveGraph] = useState<string | null>(null);
+  const reactFlow = useReactFlow<FlowRFNode, FlowRFEdge>();
+  const canvasHostRef = useRef<HTMLDivElement | null>(null);
+  const [mobilePaletteOpen, setMobilePaletteOpen] = useState(false);
   // Opt-in space reclaim: collapse the palette to a narrow rail once you don't need it (e.g. a node
   // is selected and Test Run/History is open). Defaults open — today's layout, unchanged.
   const [paletteCollapsed, setPaletteCollapsed] = usePersistentBoolean('flows.paletteCollapsed', false);
@@ -160,10 +164,11 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
   }, [setNodes, pushHistory]);
 
   const addNodeCenter = useCallback((type: string) => {
-    // Cascade so successive clicks don't stack exactly. Flow-space centre-ish default.
-    const k = (nodes.length % 8) * 32;
-    addNodeAt(type, { x: 260 + k, y: 160 + k });
-  }, [addNodeAt, nodes.length]);
+    const rect = canvasHostRef.current?.getBoundingClientRect();
+    const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    addNodeAt(type, reactFlow.screenToFlowPosition({ x, y }));
+  }, [addNodeAt, reactFlow]);
 
   const patchSelected = useCallback((patch: Record<string, unknown>) => {
     if (!selectedId) return;
@@ -356,23 +361,41 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
     <FlowNodeSignalsContext.Provider value={nodeSignals}>
     <div className="flex h-full min-h-0 flex-col">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b border-gray-200/80 dark:border-slate-700/60 bg-white/70 dark:bg-slate-900/50 px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
-          <p className="truncate font-mono text-[11px] text-gray-400 dark:text-slate-500">
-            {flow.appId ? 'app flow' : 'workspace flow'} · {flow.slug} · {nodes.length} node{nodes.length === 1 ? '' : 's'}
-          </p>
+      <div className="flex items-center gap-2 overflow-hidden border-b border-gray-200/80 bg-white/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/50">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
+            <p className="hidden truncate font-mono text-[11px] text-gray-400 dark:text-slate-500 sm:block">
+              {flow.appId ? 'app flow' : 'workspace flow'} · {flow.slug} · {nodes.length} node{nodes.length === 1 ? '' : 's'}
+            </p>
+          </div>
+          <div className="hidden flex-none md:flex">
+            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} />
+          </div>
         </div>
 
-        <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} />
-
-        <div className="flex items-center gap-1">
+        <ToolbarDivider />
+        <div className="flex flex-none items-center gap-1 whitespace-nowrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMobilePaletteOpen(true)}
+            leftIcon={<Plus className="h-4 w-4" />}
+            className="whitespace-nowrap lg:hidden"
+            aria-label="Add node"
+          >
+            <span className="hidden sm:inline">Add node</span>
+          </Button>
           <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
             <Undo2 className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
             <Redo2 className="h-4 w-4" />
           </Button>
+        </div>
+
+        <ToolbarDivider />
+        <div className="flex flex-none items-center gap-1 whitespace-nowrap">
           <Button
             variant={triggersOpen ? 'secondary' : 'ghost'}
             size="sm"
@@ -380,6 +403,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             disabled={!onToggleTriggers}
             leftIcon={<Zap className="h-4 w-4" />}
             aria-pressed={triggersOpen}
+            aria-label="Triggers"
           >
             <span className="hidden lg:inline">Triggers</span>
             <span className="ml-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
@@ -392,14 +416,19 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             onClick={onToggleHistory}
             leftIcon={<History className="h-4 w-4" />}
             aria-pressed={historyOpen}
+            aria-label="History"
           >
             <span className="hidden lg:inline">History</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="whitespace-nowrap">
+          <Button variant="outline" size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="whitespace-nowrap" aria-label="Test run">
             <span className="hidden sm:inline">Test run</span>
           </Button>
-          <Button size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />}>
-            Save
+        </div>
+
+        <ToolbarDivider />
+        <div className="flex flex-none items-center gap-1 whitespace-nowrap">
+          <Button size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />} aria-label="Save flow">
+            <span className="hidden sm:inline">Save</span>
           </Button>
         </div>
       </div>
@@ -415,13 +444,26 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             onToggleCollapsed={() => setPaletteCollapsed((c) => !c)}
           />
         </div>
-        <div className="relative min-w-0 flex-1">
+        <div ref={canvasHostRef} className="relative min-w-0 flex-1">
           {nodes.length === 0 && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-              <div className="pointer-events-none rounded-xl border border-dashed border-gray-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60 px-5 py-4 text-center">
-                <Plus className="mx-auto mb-1 h-5 w-5 text-gray-400" />
-                <p className="text-sm font-medium text-gray-600 dark:text-slate-300">Drag a node from the palette</p>
-                <p className="text-xs text-gray-400 dark:text-slate-500">or click one to drop it on the canvas</p>
+              <div className="pointer-events-none rounded-xl border border-gray-200/80 bg-white/80 px-5 py-4 text-center shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+                <div className="mb-3 flex items-center justify-center">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
+                    <Zap className="h-4 w-4" />
+                  </span>
+                  <span className="relative h-0.5 w-12 bg-gradient-to-r from-primary-400 via-primary-500 to-primary-300 dark:from-primary-300 dark:via-primary-400 dark:to-primary-200">
+                    <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-500 dark:bg-primary-300" />
+                  </span>
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+                    <Check className="h-4 w-4" />
+                  </span>
+                </div>
+                <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Wire up your first step</p>
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                  <span className="hidden lg:inline">Drag a node from the palette</span>
+                  <span className="lg:hidden">Tap Add node</span>
+                </p>
               </div>
             </div>
           )}
@@ -458,11 +500,69 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           </div>
         )}
       </div>
+      <FlowBottomSheet title="Add node" open={mobilePaletteOpen} onClose={() => setMobilePaletteOpen(false)}>
+        <NodePalette
+          onAddNode={(type) => {
+            addNodeCenter(type);
+            setMobilePaletteOpen(false);
+          }}
+          context={context}
+          draggable={false}
+          className="w-full bg-white dark:bg-slate-900"
+        />
+      </FlowBottomSheet>
+      {selectedNode && (
+        <FlowBottomSheet title={`${getNodeSpec(String(selectedNode.type))?.label ?? String(selectedNode.type)} settings`} open onClose={() => setSelectedId(null)}>
+          <NodeProperties
+            nodeId={selectedNode.id}
+            type={String(selectedNode.type)}
+            data={(selectedNode.data ?? {}) as Record<string, unknown>}
+            onPatch={patchSelected}
+            onDelete={deleteSelected}
+            forms={forms}
+            context={context}
+            insertHints={insertHints}
+            className="w-full border-l-0 bg-white dark:bg-slate-900"
+          />
+        </FlowBottomSheet>
+      )}
     </div>
     </FlowNodeSignalsContext.Provider>
     </FlowTriggerBindingsContext.Provider>
     </FlowDesktopPresenceContext.Provider>
     </FlowFormsContext.Provider>
+  );
+}
+
+function ToolbarDivider() {
+  return <div className="h-4 w-px flex-none bg-gray-200 dark:bg-slate-700" aria-hidden="true" />;
+}
+
+function FlowBottomSheet({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="lg:hidden">
+      <div className="fixed inset-0 z-[80] bg-gray-900/30 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="fixed inset-x-0 bottom-0 z-[90] flex max-h-[70dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+      >
+        <div className="flex items-center justify-between border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60">
+          <h4 className="truncate text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={`Close ${title}`}
+            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden [&>div>div:last-child]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
+      </section>
+    </div>
   );
 }
 

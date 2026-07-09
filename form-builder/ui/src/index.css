@@ -343,6 +343,35 @@
   .fl-mm-done { fill: rgb(var(--primary-500) / 0.55) !important; }
   .fl-mm-error { fill: rgb(239 68 68 / 0.9) !important; }
 
+  /* React Flow chrome sits inside the canvas, so theme the library controls directly instead of
+     letting their default white buttons float over the dark Live Wire surface. */
+  .dark .react-flow__controls {
+    border: 1px solid rgb(71 85 105) !important;
+    background: rgb(15 23 42 / 0.95) !important;
+    box-shadow: 0 10px 25px rgb(0 0 0 / 0.35) !important;
+  }
+  .dark .react-flow__controls-button {
+    border-bottom: 1px solid rgb(71 85 105) !important;
+    background: rgb(30 41 59 / 0.95) !important;
+    color: rgb(203 213 225) !important;
+  }
+  .dark .react-flow__controls-button:hover {
+    background: rgb(51 65 85) !important;
+  }
+  .dark .react-flow__controls-button svg {
+    fill: currentColor !important;
+  }
+  .dark .react-flow__minimap {
+    background: rgb(15 23 42) !important;
+    border-color: rgb(51 65 85) !important;
+  }
+  .dark .react-flow__minimap-mask {
+    fill: rgb(15 23 42 / 0.68) !important;
+  }
+  .dark .react-flow__minimap-node {
+    stroke: rgb(71 85 105 / 0.75) !important;
+  }
+
   /* Respect prefers-reduced-motion */
   @media (prefers-reduced-motion: reduce) {
     .animate-slide-in,

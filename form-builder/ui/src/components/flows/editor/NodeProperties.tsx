@@ -8,6 +8,7 @@
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import { Plus, Search, Trash2 } from 'lucide-react';
+import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
 import { CodeEditor } from '../../ui/CodeEditor';
@@ -115,6 +116,7 @@ interface NodePropertiesProps {
   context: FlowEditorContext;
   /** Selectors this node can reference (from the Trigger + prior nodes), shown as copyable chips. */
   insertHints?: string[];
+  className?: string;
 }
 
 // ── Flows-specific widgets ─────────────────────────────────────────────────────────────────
@@ -844,7 +846,7 @@ function InsertHints({ hints, onInsert }: { hints: string[]; onInsert: (h: strin
   );
 }
 
-export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [] }: NodePropertiesProps) {
+export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], className }: NodePropertiesProps) {
   const spec = getNodeSpec(type);
   // The selected form's fields power the filter-field select + the answers datalist (static form only).
   const formId = staticFormId(data.form);
@@ -879,7 +881,7 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
   const visibleProps = spec ? spec.properties.filter((p) => evalShowIf(p.showIf, effective) || fieldHasValue(data[p.key])) : [];
 
   return (
-    <div className="flex h-full min-h-0 w-72 flex-none flex-col border-l border-gray-200/80 dark:border-slate-700/60 bg-gray-50/60 dark:bg-slate-900/40">
+    <div className={cn('flex h-full min-h-0 w-72 flex-none flex-col border-l border-gray-200/80 bg-gray-50/60 dark:border-slate-700/60 dark:bg-slate-900/40', className)}>
       <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-slate-700/60 px-3 py-2.5">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{spec?.label ?? type}</p>
