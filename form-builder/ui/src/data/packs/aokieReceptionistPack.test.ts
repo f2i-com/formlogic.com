@@ -59,7 +59,7 @@ describe('aokieReceptionistPack — forms', () => {
   it('ships the plan §12.2 record set', () => {
     for (const key of [
       'customers', 'calls', 'transcript-turns', 'sms-threads', 'sms-messages',
-      'appointments', 'orders', 'follow-up-tasks', 'flow-runs', 'hardware-events',
+      'appointments', 'orders', 'follow-up-tasks', 'hardware-events',
     ]) {
       expect(FORM_IDS.has(key), `missing form '${key}'`).toBe(true);
     }

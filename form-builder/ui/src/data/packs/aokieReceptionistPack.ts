@@ -319,6 +319,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var callId = String(inputs.callId || '');
   var wantsBooking = intent === 'appointment';
   var hasAppointment = wantsBooking && !!service && validDate;
+  var hasOrder = intent === 'order';
   var appointment = {
     service: service || 'Appointment',
     date: dateStr,
@@ -335,8 +336,16 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     : intent === 'message'
       ? 'Message from ' + caller + ': ' + summary
       : 'Call back ' + caller + ': ' + summary;
+  var order = {
+    status: 'new',
+    source: 'call',
+    notes: 'Order taken from call ' + callId + '
+Caller: ' + caller + (phone ? ' (' + phone + ')' : '') + '
+Details: ' + summary
+  };
+  if (knownId) order.customer_link = knownId;
   return {
-    summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + summary,
+    summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + summary,
     hasCustomerCreate: hasCustomerCreate,
     customer: {
       name: name || caller,
@@ -347,6 +356,8 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     },
     hasAppointment: hasAppointment,
     appointment: appointment,
+    hasOrder: hasOrder,
+    order: order,
     hasTask: needTask,
     task: { summary: taskSummary.slice(0, 180), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium' }
   };
@@ -965,55 +976,6 @@ export const aokieReceptionistPack: PackData = {
       },
     },
 
-    // ── 9. Flow Runs (log mirror) ─────────────────────────────────────────
-    {
-      packFormId: 'flow-runs',
-      title: 'Flow Runs',
-      icon: 'Workflow',
-      description: 'A human-readable mirror of notable flow runs (the authoritative run log lives in the Flows panel).',
-      settings: { ...defaultSettings },
-      theme: { ...defaultTheme },
-      fields: [
-        { id: 'run_id', type: 'short_text', label: 'Run ID', required: false, properties: {} },
-        { id: 'flow_name', type: 'short_text', label: 'Flow', required: true, properties: { placeholder: 'Flow name/slug' } },
-        { id: 'trigger_event', type: 'short_text', label: 'Trigger Event', required: false, properties: { placeholder: 'aokie.call.ended' } },
-        {
-          id: 'status',
-          type: 'dropdown',
-          label: 'Status',
-          required: true,
-          properties: {
-            options: [
-              { id: 'done', label: 'Done', value: 'done' },
-              { id: 'error', label: 'Error', value: 'error' },
-              { id: 'timeout', label: 'Timeout', value: 'timeout' },
-              { id: 'cancelled', label: 'Cancelled', value: 'cancelled' },
-            ],
-          },
-        },
-        { id: 'started_at', type: 'short_text', label: 'Started At', required: false, properties: {} },
-        { id: 'finished_at', type: 'short_text', label: 'Finished At', required: false, properties: {} },
-        { id: 'error', type: 'long_text', label: 'Error', required: false, properties: {} },
-        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls' } },
-      ],
-      customScreen: {
-        enabled: true,
-        allowNewResponses: true,
-        kind: 'dashboard',
-        dashboard: {
-          version: 1,
-          cols: 12,
-          widgets: [
-            { id: 'k1', title: 'Runs logged', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:flow-runs', viz: 'kpi', measure: { fn: 'count' } } },
-            { id: 'k2', title: 'Errors', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:flow-runs', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'error' }] } },
-            { id: 'c1', title: 'Status share', layout: { x: 6, y: 0, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:flow-runs', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 4 } },
-            { id: 'c2', title: 'Runs by flow', layout: { x: 0, y: 1, w: 6, h: 2 }, kind: 'report', spec: { formId: '@pack:flow-runs', viz: 'bar', groupBy: { field: 'flow_name', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 6 } },
-            { id: 'l1', title: 'Recent runs', layout: { x: 0, y: 3, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:flow-runs', titleField: 'flow_name', subtitleField: 'status', limit: 6 } },
-          ],
-        },
-      },
-    },
-
     // ── 10. Hardware Events (Device Setup SDK screen) ─────────────────────
     {
       packFormId: 'hardware-events',
@@ -1190,7 +1152,6 @@ export const aokieReceptionistPack: PackData = {
         { packFormId: 'orders', displayName: 'Orders', sortOrder: 6, isVisible: true },
         { packFormId: 'follow-up-tasks', displayName: 'Follow-ups', sortOrder: 7, isVisible: true },
         { packFormId: 'transcript-turns', displayName: 'Transcript Turns', sortOrder: 8, isVisible: true },
-        { packFormId: 'flow-runs', displayName: 'Flow Runs', sortOrder: 9, isVisible: true },
         { packFormId: 'hardware-events', displayName: 'Device Setup', sortOrder: 10, isVisible: true },
         { packFormId: 'receptionist-settings', displayName: 'Receptionist Settings', sortOrder: 11, isVisible: true },
       ],
@@ -1300,8 +1261,6 @@ export const aokieReceptionistPack: PackData = {
             { packFormId: 'follow-up-tasks', permission: 'submit_responses' },
             { packFormId: 'follow-up-tasks', permission: 'view_all_responses' },
             { packFormId: 'follow-up-tasks', permission: 'edit_responses' },
-            { packFormId: 'flow-runs', permission: 'submit_responses' },
-            { packFormId: 'flow-runs', permission: 'view_all_responses' },
             { packFormId: 'hardware-events', permission: 'submit_responses' },
             { packFormId: 'hardware-events', permission: 'view_all_responses' },
             // Declarative connector/flow intent (plan §12.6) — see the note above.
@@ -1329,7 +1288,6 @@ export const aokieReceptionistPack: PackData = {
             { packFormId: 'appointments', permission: 'view_all_responses' },
             { packFormId: 'orders', permission: 'view_all_responses' },
             { packFormId: 'follow-up-tasks', permission: 'view_all_responses' },
-            { packFormId: 'flow-runs', permission: 'view_all_responses' },
             { packFormId: 'hardware-events', permission: 'view_all_responses' },
           ],
         },
@@ -1587,7 +1545,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'After-Call Actions (Auto-Book)',
       slug: 'after-call-actions',
       description:
-        'The automation that makes it a real receptionist: async after aokie.call.ended, read this call\'s transcript turns, have the local LLM extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Malformed model output degrades to a follow-up task, never a bad record.',
+        'The automation that makes it a real receptionist: async after aokie.call.ended, read this call\'s transcript turns, have the local LLM extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Malformed model output degrades to a follow-up task, never a bad record.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -1623,6 +1581,8 @@ export const aokieReceptionistPack: PackData = {
                 customer: '$nodes.plan.customer',
                 hasAppointment: '$nodes.plan.hasAppointment',
                 appointment: '$nodes.plan.appointment',
+                hasOrder: '$nodes.plan.hasOrder',
+                order: '$nodes.plan.order',
                 hasTask: '$nodes.plan.hasTask',
                 task: '$nodes.plan.task',
               },
@@ -1762,6 +1722,7 @@ export const aokieReceptionistPack: PackData = {
       outputActions: [
         { type: 'formlogic.submitResponse', form: '@pack:customers', when: '$result.hasCustomerCreate', answers: '$result.customer' },
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
+        { type: 'formlogic.submitResponse', form: '@pack:orders', when: '$result.hasOrder', answers: '$result.order' },
         { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
         { type: 'formlogic.toast', message: 'After-call: {{result.summaryLine}}' },
       ],
