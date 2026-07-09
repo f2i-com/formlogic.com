@@ -284,13 +284,16 @@ const FLOW_AFTER_CALL_CTX = `(function () {
   var lines = [];
   for (var k = 0; k < turns.length; k++) lines.push(turns[k].line);
   var now = new Date();
+  // LOCAL date for the ISO hint - toISOString() is UTC and reports yesterday
+  // during the morning in UTC+ timezones, making 'tomorrow' resolve off by one.
+  var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
   return {
     hasTranscript: lines.length > 0,
     transcript: lines.join('\\n'),
     phone: phone,
     customerId: hit ? hit.id : null,
     customerName: hit ? String((hit.answers || {}).name || '') : '',
-    today: now.toDateString() + ' (' + now.toISOString().slice(0, 10) + ')'
+    today: now.toDateString() + ' (' + isoLocal + ')'
   };
 })()`;
 
@@ -318,7 +321,9 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var caller = name || String(ctx.customerName || '') || (phone ? 'Caller ' + phone : 'Unknown caller');
   var callId = String(inputs.callId || '');
   var wantsBooking = intent === 'appointment';
-  var hasAppointment = wantsBooking && !!service && validDate;
+  // A named service is NOT required - 'an appointment tomorrow at 10' books
+  // as service 'Appointment' (verified live: extractor gives service null).
+  var hasAppointment = wantsBooking && validDate;
   var hasOrder = intent === 'order';
   var appointment = {
     service: service || 'Appointment',
@@ -332,7 +337,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var hasCustomerCreate = !knownId && !!name && !!phone && ctx.hasTranscript === true;
   var needTask = callback || intent === 'message' || (wantsBooking && !hasAppointment);
   var taskSummary = wantsBooking && !hasAppointment
-    ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - date/time unclear on the call'
+    ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - the date was unclear on the call (' + summary + ')'
     : intent === 'message'
       ? 'Message from ' + caller + ': ' + summary
       : 'Call back ' + caller + ': ' + summary;
