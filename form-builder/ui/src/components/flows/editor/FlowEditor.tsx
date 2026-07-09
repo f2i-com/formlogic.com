@@ -5,7 +5,7 @@
 // stored WorkflowGraph. Rendered keyed by flow id so switching flows remounts with fresh state.
 // Node capabilities are kept in sync on save (a storage_set/formlogic node auto-declares its
 // required capability) so an authored flow can actually execute.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlowProvider,
   addEdge,
@@ -17,10 +17,11 @@ import {
   type EdgeChange,
   type NodeChange,
 } from '@xyflow/react';
-import { Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, X, Zap } from 'lucide-react';
+import { Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
+import { BottomSheet } from '../../ui/BottomSheet';
 import { FlowCanvas } from './FlowCanvas';
 import { EMPTY_DESKTOP_PRESENCE, FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
 import { NodePalette } from './NodePalette';
@@ -411,6 +412,13 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
 
   // Selectors the SELECTED node can reference: the Trigger's declared inputs ($inputs.*), the raw
   // $event, and any other node's output ($nodes.<id>). Surfaced as copyable chips in the panel.
+  // Open-only variant of the Triggers toggle for the Trigger node's "Manage triggers" affordance
+  // (a toggle would close an already-open panel, which reads as a broken link).
+  const openTriggersPanel = useMemo(
+    () => (onToggleTriggers ? () => { if (!triggersOpen) onToggleTriggers(); } : undefined),
+    [onToggleTriggers, triggersOpen],
+  );
+
   const insertHints = useMemo(() => {
     if (!selectedId) return [];
     const hints: string[] = [];
@@ -566,11 +574,12 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
               forms={forms}
               context={context}
               insertHints={insertHints}
+              onOpenTriggers={openTriggersPanel}
             />
           </div>
         )}
       </div>
-      <FlowBottomSheet title="Add node" open={mobilePaletteOpen} onClose={() => setMobilePaletteOpen(false)}>
+      <BottomSheet title="Add node" open={mobilePaletteOpen} onClose={() => setMobilePaletteOpen(false)}>
         <NodePalette
           onAddNode={(type) => {
             addNodeCenter(type);
@@ -580,9 +589,9 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           draggable={false}
           className="w-full bg-white dark:bg-slate-900"
         />
-      </FlowBottomSheet>
+      </BottomSheet>
       {selectedNode && editorLayout.properties === 'sheet' && (
-        <FlowBottomSheet title={`${getNodeSpec(String(selectedNode.type))?.label ?? String(selectedNode.type)} settings`} open onClose={() => setSelectedId(null)}>
+        <BottomSheet title={`${getNodeSpec(String(selectedNode.type))?.label ?? String(selectedNode.type)} settings`} open onClose={() => setSelectedId(null)}>
           <NodeProperties
             nodeId={selectedNode.id}
             type={String(selectedNode.type)}
@@ -592,9 +601,10 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             forms={forms}
             context={context}
             insertHints={insertHints}
+            onOpenTriggers={openTriggersPanel ? () => { setSelectedId(null); openTriggersPanel(); } : undefined}
             className="w-full border-l-0 bg-white dark:bg-slate-900"
           />
-        </FlowBottomSheet>
+        </BottomSheet>
       )}
     </div>
     </FlowNodeSignalsContext.Provider>
@@ -606,34 +616,6 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
 
 function ToolbarDivider() {
   return <div className="hidden h-4 w-px flex-none bg-gray-200 dark:bg-slate-700 sm:block" aria-hidden="true" />;
-}
-
-function FlowBottomSheet({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: ReactNode }) {
-  if (!open) return null;
-  return (
-    <div>
-      <div className="fixed inset-0 z-[80] bg-gray-900/30 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="fixed inset-x-0 bottom-0 z-[90] flex max-h-[70dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
-      >
-        <div className="flex items-center justify-between border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60">
-          <h4 className="truncate text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={`Close ${title}`}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden [&>div>div:last-child]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
-      </section>
-    </div>
-  );
 }
 
 function SaveStatus({

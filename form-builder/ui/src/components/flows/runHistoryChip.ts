@@ -18,7 +18,7 @@ export function hasActionErrors(run: FlowRunLog): boolean {
 /**
  * Status→{class, label} mapping for the run-history chip. 'done' with action errors gets its
  * own amber/warning variant (consistent with the amber "sync binding" callout in
- * FormFlowBindings.tsx) instead of the plain emerald "done" chip, which would otherwise be
+ * FormFlowsPanel.tsx) instead of the plain emerald "done" chip, which would otherwise be
  * indistinguishable from a clean success.
  */
 export function statusChipStyle(run: FlowRunLog): { cls: string; label: string } {

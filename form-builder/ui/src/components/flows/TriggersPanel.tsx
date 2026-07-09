@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { api } from '../../lib/api';
+import { demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
@@ -59,6 +60,7 @@ export function TriggersPanel({
   const [pendingDelete, setPendingDelete] = useState<FlowBinding | null>(null);
   const [savedHint, setSavedHint] = useState(false);
   const isWorkspaceFlow = flow.appId === null;
+  const appReadOnly = api.isDemoMode() && !isWorkspaceFlow;
   const editorFlows = useMemo(() => [flow], [flow]);
   const editorContext = isWorkspaceFlow ? EMPTY_FLOW_EDITOR_CONTEXT : context;
 
@@ -71,6 +73,15 @@ export function TriggersPanel({
         return null;
       }
       body.event = 'form.submitted';
+      if (api.isDemoMode()) {
+        const demoBody = { ...body, flowDefinitionId: flow.id };
+        const saved = binding
+          ? await demoUpdateFormBinding(formId, binding.id, demoBody)
+          : await demoCreateFormBinding(formId, demoBody);
+        await onRefresh();
+        setSavedHint(true);
+        return saved ?? (binding ? { ...binding, ...demoBody, formId, flowDefinitionId: flow.id } : null);
+      }
       const result = binding
         ? await api.updateFormFlowBinding(formId, binding.id, body)
         : await api.createFormFlowBinding(formId, body);
@@ -84,6 +95,10 @@ export function TriggersPanel({
     }
 
     if (!flow.appId) return null;
+    if (appReadOnly) {
+      toast.info('Demo read-only', 'App-scoped triggers are read-only in the demo.');
+      return null;
+    }
     const result = binding
       ? await api.updateFlowBinding(flow.appId, binding.id, body)
       : await api.createFlowBinding(flow.appId, body);
@@ -97,7 +112,17 @@ export function TriggersPanel({
   };
 
   const toggleEnabled = async (binding: FlowBinding, enabled: boolean) => {
+    if (appReadOnly) {
+      toast.info('Demo read-only', 'App-scoped triggers are read-only in the demo.');
+      return;
+    }
     const payload = { ...bindingToPayload(binding), enabled };
+    if (api.isDemoMode() && !flow.appId && binding.formId) {
+      await demoUpdateFormBinding(binding.formId, binding.id, { ...payload, flowDefinitionId: flow.id });
+      await onRefresh();
+      setSavedHint(true);
+      return;
+    }
     const result = flow.appId
       ? await api.updateFlowBinding(flow.appId, binding.id, payload)
       : binding.formId
@@ -115,6 +140,17 @@ export function TriggersPanel({
     const binding = pendingDelete;
     setPendingDelete(null);
     if (!binding) return;
+    if (appReadOnly) {
+      toast.info('Demo read-only', 'App-scoped triggers are read-only in the demo.');
+      return;
+    }
+    if (api.isDemoMode() && !flow.appId && binding.formId) {
+      await demoDeleteFormBinding(binding.formId, binding.id);
+      if (editingId === binding.id) setEditingId(null);
+      await onRefresh();
+      setSavedHint(true);
+      return;
+    }
     const result = flow.appId
       ? await api.deleteFlowBinding(flow.appId, binding.id)
       : binding.formId
@@ -135,7 +171,7 @@ export function TriggersPanel({
         icon={Zap}
         title="Triggers"
         actions={(
-          <Button variant="outline" size="sm" onClick={() => { setAdding(true); setEditingId(null); }} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+          <Button variant="outline" size="sm" disabled={appReadOnly} onClick={() => { setAdding(true); setEditingId(null); }} leftIcon={<Plus className="h-3.5 w-3.5" />}>
             Add trigger
           </Button>
         )}
@@ -145,6 +181,11 @@ export function TriggersPanel({
         {isWorkspaceFlow && (
           <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-snug text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
             Workspace flows can only use form.submitted triggers here; connector/event triggers need an app-scoped flow.
+          </p>
+        )}
+        {appReadOnly && (
+          <p className="mb-3 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-xs text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200">
+            Demo app-scoped triggers are read-only. Workspace form triggers save in this browser.
           </p>
         )}
         {savedHint && (
@@ -178,15 +219,15 @@ export function TriggersPanel({
                       {binding.mode} - {conditionSummary(binding)}{formLabel(binding, forms) ? ` - ${formLabel(binding, forms)}` : ''}
                     </p>
                   </div>
-                  <Switch checked={binding.enabled} onChange={(enabled) => void toggleEnabled(binding, enabled)} label="Enabled" size="sm" />
-                  <Button variant="ghost" size="iconOnly" onClick={() => { setEditingId((id) => (id === binding.id ? null : binding.id)); setAdding(false); }} aria-label="Edit trigger">
+                  <Switch checked={binding.enabled} onChange={(enabled) => void toggleEnabled(binding, enabled)} label="Enabled" size="sm" disabled={appReadOnly} />
+                  <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => { setEditingId((id) => (id === binding.id ? null : binding.id)); setAdding(false); }} aria-label="Edit trigger">
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="iconOnly" onClick={() => setPendingDelete(binding)} aria-label="Delete trigger">
+                  <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => setPendingDelete(binding)} aria-label="Delete trigger">
                     <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
                   </Button>
                 </div>
-                {editingId === binding.id && (
+                {!appReadOnly && editingId === binding.id && (
                   <div className="mt-3">
                     <BindingEditor
                       binding={binding}

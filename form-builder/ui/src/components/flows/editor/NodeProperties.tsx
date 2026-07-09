@@ -7,7 +7,7 @@
 // description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { Plus, Search, Trash2, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
@@ -116,6 +116,8 @@ interface NodePropertiesProps {
   context: FlowEditorContext;
   /** Selectors this node can reference (from the Trigger + prior nodes), shown as copyable chips. */
   insertHints?: string[];
+  /** Opens the flow's Triggers panel — surfaced on the Trigger node so events are definable from here. */
+  onOpenTriggers?: () => void;
   className?: string;
 }
 
@@ -850,7 +852,7 @@ function InsertHints({ hints, onInsert }: { hints: string[]; onInsert: (h: strin
   );
 }
 
-export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], className }: NodePropertiesProps) {
+export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], onOpenTriggers, className }: NodePropertiesProps) {
   const spec = getNodeSpec(type);
   // The selected form's fields power the filter-field select + the answers datalist (static form only).
   const formId = staticFormId(data.form);
@@ -910,6 +912,16 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
               <p className="rounded-lg bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
                 Requires the <span className="font-mono">{spec.capability}</span> capability — declare it in the flow's node capabilities.
               </p>
+            )}
+            {type === 'input' && onOpenTriggers && (
+              <div className="rounded-lg border border-primary-200/80 bg-primary-50/60 px-2.5 py-2 dark:border-primary-500/25 dark:bg-primary-500/10">
+                <p className="text-[11px] leading-snug text-primary-700 dark:text-primary-200">
+                  Events that run this flow are defined as triggers.
+                </p>
+                <Button variant="outline" size="sm" className="mt-2 w-full" leftIcon={<Zap className="h-3.5 w-3.5" />} onClick={onOpenTriggers}>
+                  Manage triggers
+                </Button>
+              </div>
             )}
             {type !== 'input' && <InsertHints hints={insertHints} onInsert={insertOrCopy} />}
             {visibleProps.length === 0 ? (

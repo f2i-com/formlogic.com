@@ -79,7 +79,7 @@ export function AppsDashboard() {
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} title="Share a temporary MCP link so your own AI can build a new app">
-              Hand to an AI
+              Connect an AI
             </Button>
             <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} title="Import an app from a .json bundle exported from FormLogic">
               Import

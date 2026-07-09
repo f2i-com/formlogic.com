@@ -789,7 +789,7 @@ export function Dashboard() {
                   Create app
                 </Button>
                 <Button variant="outline" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />}>
-                  Hand to an AI
+                  Connect an AI
                 </Button>
               </>
             )}

@@ -18,7 +18,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { usePersistentBoolean } from '../../hooks/usePersistentBoolean';
 import { api } from '../../lib/api';
-import { demoApplyFlowOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
+import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
 import { resolveEditorLayout, sameResolvedEditorLayout } from '../../components/flows/editor/flowEditorLogic';
@@ -52,6 +52,10 @@ const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
 function mediaMatches(query: string, fallback: boolean): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
   return window.matchMedia(query).matches;
+}
+
+function bindingReferencesFlow(binding: FlowBinding, flow: FlowDefinition): boolean {
+  return binding.flowDefinitionId === flow.id || binding.flow === flow.slug;
 }
 
 export function FlowsWorkspace() {
@@ -168,15 +172,28 @@ export function FlowsWorkspace() {
     const res = await api.listFlowBindingsForFlow(flow.id);
     setFlowBindingsLoading((map) => ({ ...map, [flow.id]: false }));
     if (res.error || !res.data) {
+      if (api.isDemoMode() && flow.appId === null) {
+        const localBindings = (await Promise.all(forms.map(async (form) => (
+          await demoApplyFormBindingOverlay(form.id, [])
+        )))).flat().filter((binding) => bindingReferencesFlow(binding, flow));
+        setFlowBindingsById((map) => ({ ...map, [flow.id]: localBindings }));
+        return;
+      }
       if (!api.isDemoMode()) {
         toast.error('Failed to load triggers', typeof res.error === 'string' ? res.error : undefined);
       }
       setFlowBindingsById((map) => ({ ...map, [flow.id]: [] }));
       return;
     }
-    const loaded = res.data.bindings;
+    const serverBindings = res.data.bindings;
+    const loaded = api.isDemoMode() && flow.appId === null
+      ? (await Promise.all(forms.map(async (form) => {
+        const serverRows = serverBindings.filter((binding) => binding.formId === form.id);
+        return demoApplyFormBindingOverlay(form.id, serverRows);
+      }))).flat().filter((binding) => bindingReferencesFlow(binding, flow))
+      : serverBindings;
     setFlowBindingsById((map) => ({ ...map, [flow.id]: loaded }));
-  }, []);
+  }, [forms]);
 
   useEffect(() => {
     if (!selectedFlow) return;
@@ -236,14 +253,24 @@ export function FlowsWorkspace() {
         }))
       );
       setLoading(false);
-      const target = new URLSearchParams(window.location.search).get('flow');
+      const params = new URLSearchParams(window.location.search);
+      const target = params.get('flow');
       if (target && nextGroups.some((group) => group.flows.some((flow) => flow.id === target))) setSelectedId(target);
+      // ?new=1 (the mobile + quick menu) opens the New-flow dialog straight away, once.
+      if (params.get('new') === '1') {
+        setShowNew(true);
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('new');
+          return next;
+        }, { replace: true });
+      }
     } catch (error) {
       if (isCancelled()) return;
       setLoading(false);
       setLoadError(error instanceof Error ? error.message : 'Failed to load flows');
     }
-  }, []);
+  }, [setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -553,6 +580,7 @@ export function FlowsWorkspace() {
         <FlowMobileDrawer title="Test run" onClose={() => setRightPanel(null)}>
           <TestRunDrawer
             flow={selectedFlow}
+            hideClose
             onClose={() => setRightPanel(null)}
             onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
             onRunStart={() => setNodeStatus({})}

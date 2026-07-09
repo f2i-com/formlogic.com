@@ -44,6 +44,54 @@ export const FLOW_STARTER_TEMPLATES: FlowStarterTemplate[] = [
     },
   },
   {
+    id: 'form-submission',
+    name: 'Form submission',
+    slug: 'form-submission',
+    description:
+      'Run after a form response is submitted. The Trigger provides formId, responseId, and the submitted answers so the flow can summarize or route the submission.',
+    summary: 'Starts from form.submitted and returns a short submission summary.',
+    nodeCapabilities: [],
+    flowJson: {
+      nodes: [
+        {
+          id: 'trigger',
+          type: 'input',
+          position: { x: 80, y: 180 },
+          data: {
+            inputs: [
+              { name: 'formId', example: 'form_123' },
+              { name: 'responseId', example: 'response_123' },
+              { name: 'answers', example: { name: 'Ada Lovelace' } },
+            ],
+          },
+        },
+        {
+          id: 'summary',
+          type: 'template',
+          position: { x: 360, y: 180 },
+          data: { template: 'New form submission {{inputs.responseId}} for {{inputs.formId}}' },
+        },
+        {
+          id: 'out',
+          type: 'output',
+          position: { x: 640, y: 180 },
+          data: {
+            value: {
+              formId: '$inputs.formId',
+              responseId: '$inputs.responseId',
+              answers: '$inputs.answers',
+              summary: '$nodes.summary',
+            },
+          },
+        },
+      ],
+      edges: [
+        { source: 'trigger', target: 'summary' },
+        { source: 'summary', target: 'out' },
+      ],
+    },
+  },
+  {
     id: 'caller-lookup',
     name: 'Caller lookup',
     slug: 'caller-lookup',

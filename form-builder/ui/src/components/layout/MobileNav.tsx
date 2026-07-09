@@ -34,6 +34,11 @@ export function MobileNav() {
     closeMenu();
     navigate('/apps/new');
   };
+  const handleNewFlow = () => {
+    closeMenu();
+    // ?new=1 tells the flows workspace to open the New-flow dialog immediately.
+    navigate('/flows?new=1');
+  };
   const handleHandToAi = () => {
     closeMenu();
     setShowHandToAi(true);
@@ -66,7 +71,8 @@ export function MobileNav() {
         >
           <QuickMenuItem icon={FilePlus2} label="New form" onClick={handleNewForm} />
           <QuickMenuItem icon={Boxes} label="New app" onClick={handleNewApp} />
-          <QuickMenuItem icon={Plug} label="Hand to an AI" onClick={handleHandToAi} />
+          <QuickMenuItem icon={Workflow} label="New flow" onClick={handleNewFlow} />
+          <QuickMenuItem icon={Plug} label="Connect an AI" onClick={handleHandToAi} />
         </div>
       </>
     )}

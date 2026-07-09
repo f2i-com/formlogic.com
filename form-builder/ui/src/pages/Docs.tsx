@@ -423,7 +423,7 @@ export function Docs() {
               <H2 id="mcp" icon={Plug}>Build with your AI (MCP)</H2>
               <P>Point your <strong className="text-gray-900 dark:text-white">own</strong> AI — Claude Desktop, Claude Code, Cursor, anything that speaks <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) — at FormLogic and let it build and edit forms, write <a href="#apps" className="text-primary-600 dark:text-primary-400 hover:underline">custom screens</a>, and wire up an app. Bring your own (frontier) model instead of the built-in one. It works over a <strong className="text-gray-900 dark:text-white">temporary, scoped connection</strong> you can revoke any time.</P>
               <Steps items={[
-                <>Open <strong className="text-gray-900 dark:text-white">Connect an AI</strong> — from <C>Settings</C> (all your apps), an app's <C>Manage</C> tab (that app only), or <strong className="text-gray-900 dark:text-white">"Hand to an AI"</strong> on the Apps page (creates a blank app + a link to it).</>,
+                <>Open <strong className="text-gray-900 dark:text-white">Connect an AI</strong> — from <C>Settings</C> (all your apps), an app's <C>Manage</C> tab (that app only), or <strong className="text-gray-900 dark:text-white">"Connect an AI"</strong> on the Apps page or Dashboard (the AI creates the app itself).</>,
                 <>Click <strong className="text-gray-900 dark:text-white">Generate connection</strong> and copy the URL + token (shown <strong className="text-gray-900 dark:text-white">once</strong>).</>,
                 <>Add it to your MCP client as a <strong className="text-gray-900 dark:text-white">remote / HTTP MCP server</strong> using the generated config.</>,
               ]} />

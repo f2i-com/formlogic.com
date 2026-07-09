@@ -394,7 +394,7 @@ export function AppCreateWizard() {
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
                     <Plug className="h-4 w-4" />
                   </div>
-                  <div className="text-sm font-medium leading-snug text-gray-900 dark:text-white">Hand to an AI</div>
+                  <div className="text-sm font-medium leading-snug text-gray-900 dark:text-white">Connect an AI</div>
                 </div>
                 <p className="text-xs text-gray-500 dark:text-slate-400">Let your AI create the app with a secure connection.</p>
               </button>

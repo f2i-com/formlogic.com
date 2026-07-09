@@ -47,9 +47,16 @@ describe('flow starter templates', () => {
       'call-summary',
       'sms-auto-draft',
     ]);
-    expect(flowStarterTemplatesForConnectors([]).map((template) => template.id)).toEqual(['blank']);
-    expect(flowStarterTemplatesForConnectors(['stripe']).map((template) => template.id)).toEqual(['blank']);
+    expect(flowStarterTemplatesForConnectors([]).map((template) => template.id)).toEqual(['blank', 'form-submission']);
+    expect(flowStarterTemplatesForConnectors(['stripe']).map((template) => template.id)).toEqual(['blank', 'form-submission']);
     expect(flowStarterTemplatesForConnectors(['aokie']).map((template) => template.id)).toEqual(FLOW_STARTER_TEMPLATES.map((template) => template.id));
+  });
+
+  it('ships a connector-free form submission starter', () => {
+    const t = FLOW_STARTER_TEMPLATES.find((x) => x.id === 'form-submission')!;
+    expect(t.requiresConnector).toBeUndefined();
+    expect(triggerInputNames(t.flowJson)).toEqual(['formId', 'responseId', 'answers']);
+    expect(t.flowJson.nodes.map((node) => node.type)).toEqual(['input', 'template', 'output']);
   });
 });
 

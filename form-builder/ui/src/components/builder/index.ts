@@ -13,7 +13,7 @@ export { SortableFieldCard } from './SortableFieldCard';
 export { FieldSettingsPanel } from './FieldSettingsPanel';
 export { LinkedRecordSettings } from './LinkedRecordSettings';
 export { WebhookManager } from './WebhookManager';
-export { FormFlowBindings } from './FormFlowBindings';
+export { FormFlowsPanel } from './FormFlowsPanel';
 export { NigoDashboard } from './NigoDashboard';
 export { PackImportModal } from './PackImportModal';
 export { PackDetailView } from './PackDetailView';

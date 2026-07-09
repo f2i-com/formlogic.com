@@ -1,35 +1,67 @@
-import { HelpCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { HelpCircle, Search } from 'lucide-react';
 import { FIELD_TYPE_INFO, type FieldType } from '../../types/form';
 import { ICON_MAP } from './fieldIcons';
 
-export function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => void }) {
-  const categories = {
-    text: 'Text inputs',
-    datetime: 'Date & time',
-    choice: 'Choices',
-    rating: 'Rating & scale',
-    advanced: 'Advanced',
-    layout: 'Layout',
-  };
+const FIELD_CATEGORIES = {
+  text: 'Text inputs',
+  datetime: 'Date & time',
+  choice: 'Choices',
+  rating: 'Rating & scale',
+  advanced: 'Advanced',
+  layout: 'Layout',
+};
 
-  const fieldsByCategory = Object.entries(FIELD_TYPE_INFO).reduce(
-    (acc, [type, info]) => {
-      if (!acc[info.category]) acc[info.category] = [];
-      acc[info.category].push({ type: type as FieldType, ...info });
-      return acc;
-    },
-    {} as Record<string, Array<{ type: FieldType; label: string; icon: string }>>
+export function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => void }) {
+  const [query, setQuery] = useState('');
+
+  const fieldsByCategory = useMemo(
+    () => Object.entries(FIELD_TYPE_INFO).reduce(
+      (acc, [type, info]) => {
+        if (!acc[info.category]) acc[info.category] = [];
+        acc[info.category].push({ type: type as FieldType, ...info });
+        return acc;
+      },
+      {} as Record<string, Array<{ type: FieldType; label: string; icon: string }>>
+    ),
+    [],
   );
+
+  const grouped = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return Object.entries(FIELD_CATEGORIES).map(([category, title]) => ({
+      category,
+      title,
+      fields: (fieldsByCategory[category] ?? []).filter((field) => (
+        q === '' ||
+        field.label.toLowerCase().includes(q) ||
+        field.type.toLowerCase().includes(q)
+      )),
+    })).filter((group) => group.fields.length > 0);
+  }, [fieldsByCategory, query]);
 
   return (
     <div className="p-4 space-y-5">
-      {Object.entries(categories).map(([category, title]) => (
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search fields"
+          aria-label="Search field types"
+          className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+        />
+      </div>
+      {grouped.length === 0 && (
+        <p className="text-xs text-gray-400 dark:text-slate-500">No fields match "{query}".</p>
+      )}
+      {grouped.map(({ category, title, fields }) => (
         <div key={category}>
           <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-2">
             {title}
           </h3>
           <div className="grid grid-cols-2 gap-1.5">
-            {fieldsByCategory[category]?.map((field) => {
+            {fields.map((field) => {
               const IconComponent = ICON_MAP[field.icon] || HelpCircle;
               return (
                 <button

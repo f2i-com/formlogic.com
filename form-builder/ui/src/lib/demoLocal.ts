@@ -14,7 +14,8 @@ export type DemoRecord = {
 const DB_NAME = 'formlogic-demo';
 const STORE = 'records'; // key: formId → DemoRecord[]
 const FLOWS_STORE = 'flows'; // fixed keys: 'created' | 'edits' | 'deleted' (see the flows overlay below)
-const DB_VERSION = 2;
+const FORM_BINDINGS_STORE = 'formFlowBindings'; // per-form keys below; demo overlay for /forms/{id}/flow-bindings
+const DB_VERSION = 3;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -25,6 +26,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!req.result.objectStoreNames.contains(FLOWS_STORE)) {
         req.result.createObjectStore(FLOWS_STORE);
+      }
+      if (!req.result.objectStoreNames.contains(FORM_BINDINGS_STORE)) {
+        req.result.createObjectStore(FORM_BINDINGS_STORE);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -89,6 +93,34 @@ async function writeFlowsKey(key: string, value: unknown): Promise<void> {
   }
 }
 
+async function readFormBindingsKey<T>(formId: string, key: string, fallback: T): Promise<T> {
+  try {
+    const db = await openDb();
+    return await new Promise<T>((resolve, reject) => {
+      const tx = db.transaction(FORM_BINDINGS_STORE, 'readonly');
+      const rq = tx.objectStore(FORM_BINDINGS_STORE).get(`${formId}:${key}`);
+      rq.onsuccess = () => resolve(rq.result === undefined ? fallback : (rq.result as T));
+      rq.onerror = () => reject(rq.error);
+    });
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeFormBindingsKey(formId: string, key: string, value: unknown): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(FORM_BINDINGS_STORE, 'readwrite');
+      tx.objectStore(FORM_BINDINGS_STORE).put(value, `${formId}:${key}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 function uuid(): string {
   try {
     return crypto.randomUUID();
@@ -108,9 +140,10 @@ export async function clearDemoRecords(): Promise<void> {
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE, FLOWS_STORE], 'readwrite');
+      const tx = db.transaction([STORE, FLOWS_STORE, FORM_BINDINGS_STORE], 'readwrite');
       tx.objectStore(STORE).clear();
       tx.objectStore(FLOWS_STORE).clear();
+      tx.objectStore(FORM_BINDINGS_STORE).clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -166,10 +199,12 @@ export async function deleteDemoRecord(formId: string, id: string): Promise<void
 //   'created' → DemoFlow[]                (new flows this visitor authored)
 //   'edits'   → Record<flowId, Partial>   (field overrides for seeded flows)
 //   'deleted' → string[]                  (ids of seeded flows this visitor removed)
-import type { FlowDefinition } from '../types/flows';
+import type { FlowBinding, FlowBindingMode, FlowDefinition } from '../types/flows';
 
 type DemoFlow = FlowDefinition & { _local: true };
 type FlowEdits = Record<string, Partial<FlowDefinition>>;
+type DemoFormBinding = FlowBinding & { _local: true };
+type FormBindingEdits = Record<string, Partial<FlowBinding>>;
 
 /** Input shape shared by create/duplicate (mirrors the api.createWorkspaceFlow/createFlow body). */
 export interface DemoFlowInput {
@@ -266,4 +301,151 @@ export async function demoDeleteFlow(flow: FlowDefinition): Promise<void> {
     delete edits[flow.id];
     await Promise.all([writeFlowsKey('deleted', deleted), writeFlowsKey('edits', edits)]);
   }
+}
+
+// â”€â”€ Form flow-binding overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Demo form-flow bindings mirror the flow overlay but are keyed per formId. They cover only
+// workspace-scope /forms/{id}/flow-bindings rows; app-scoped bindings stay server-read-only.
+function formBindingCreatedKey() { return 'created'; }
+function formBindingEditsKey() { return 'edits'; }
+function formBindingDeletedKey() { return 'deleted'; }
+
+function asBindingMode(value: unknown): FlowBindingMode | undefined {
+  return value === 'sync' || value === 'async' || value === 'background' || value === 'manual' ? value : undefined;
+}
+
+function asRecordOrNull(value: unknown): Record<string, unknown> | null | undefined {
+  if (value === null) return null;
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function asArrayOrNull<T>(value: unknown): T[] | null | undefined {
+  if (value === null) return null;
+  return Array.isArray(value) ? value as T[] : undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function formBindingPatchFromPayload(formId: string, payload: Record<string, unknown>): Partial<FlowBinding> {
+  const patch: Partial<FlowBinding> = { appId: null, formId };
+  if (typeof payload.connectorId === 'string' || payload.connectorId === null) patch.connectorId = payload.connectorId;
+  if (typeof payload.flowDefinitionId === 'string') patch.flowDefinitionId = payload.flowDefinitionId;
+  if (typeof payload.flow === 'string') patch.flow = payload.flow;
+  if (typeof payload.event === 'string') patch.event = payload.event;
+  const mode = asBindingMode(payload.mode);
+  if (mode) patch.mode = mode;
+  const condition = asRecordOrNull(payload.condition);
+  if (condition !== undefined) patch.condition = condition as FlowBinding['condition'];
+  const inputMap = asRecordOrNull(payload.inputMap);
+  if (inputMap !== undefined) patch.inputMap = inputMap;
+  const outputActions = asArrayOrNull<NonNullable<FlowBinding['outputActions']>[number]>(payload.outputActions);
+  if (outputActions !== undefined) patch.outputActions = outputActions as FlowBinding['outputActions'];
+  const timeoutMs = numberOrUndefined(payload.timeoutMs);
+  if (timeoutMs !== undefined) patch.timeoutMs = timeoutMs;
+  const retryPolicy = asRecordOrNull(payload.retryPolicy);
+  if (retryPolicy !== undefined) patch.retryPolicy = retryPolicy as FlowBinding['retryPolicy'];
+  const fallbackPolicy = asRecordOrNull(payload.fallbackPolicy);
+  if (fallbackPolicy !== undefined) patch.fallbackPolicy = fallbackPolicy as FlowBinding['fallbackPolicy'];
+  if (typeof payload.enabled === 'boolean') patch.enabled = payload.enabled;
+  const sortOrder = numberOrUndefined(payload.sortOrder);
+  if (sortOrder !== undefined) patch.sortOrder = sortOrder;
+  return patch;
+}
+
+/** Pure per-form binding overlay merge. Local creates first, then seeded rows with deletes/edits. */
+export function mergeFormBindingOverlay(
+  formId: string,
+  serverRows: FlowBinding[],
+  overlay: { created: FlowBinding[]; edits: FormBindingEdits; deleted: string[] },
+): FlowBinding[] {
+  const deletedSet = new Set(overlay.deleted);
+  const seeded = serverRows
+    .filter((binding) => !deletedSet.has(binding.id))
+    .map((binding) => (overlay.edits[binding.id] ? { ...binding, ...overlay.edits[binding.id] } : binding));
+  const local = overlay.created.filter((binding) => binding.formId === formId && !deletedSet.has(binding.id));
+  return [...local, ...seeded];
+}
+
+/** Merge server-seeded standalone form bindings with this browser's demo overlay. */
+export async function demoApplyFormBindingOverlay(formId: string, serverRows: FlowBinding[]): Promise<FlowBinding[]> {
+  const [edits, deleted, created] = await Promise.all([
+    readFormBindingsKey<FormBindingEdits>(formId, formBindingEditsKey(), {}),
+    readFormBindingsKey<string[]>(formId, formBindingDeletedKey(), []),
+    readFormBindingsKey<DemoFormBinding[]>(formId, formBindingCreatedKey(), []),
+  ]);
+  return mergeFormBindingOverlay(formId, serverRows, { created, edits, deleted });
+}
+
+/** Persist a new standalone form binding locally and return the synthetic binding. */
+export async function demoCreateFormBinding(formId: string, payload: Record<string, unknown>): Promise<FlowBinding> {
+  const now = new Date().toISOString();
+  const patch = formBindingPatchFromPayload(formId, payload);
+  const flow = patch.flow ?? patch.flowDefinitionId ?? '';
+  const binding: DemoFormBinding = {
+    id: 'demolocal_' + uuid(),
+    appId: null,
+    formId,
+    connectorId: patch.connectorId ?? null,
+    flowDefinitionId: patch.flowDefinitionId ?? flow,
+    flow,
+    event: patch.event ?? 'form.submitted',
+    mode: patch.mode ?? 'async',
+    condition: patch.condition ?? null,
+    inputMap: patch.inputMap ?? null,
+    outputActions: patch.outputActions ?? null,
+    timeoutMs: patch.timeoutMs ?? 30000,
+    retryPolicy: patch.retryPolicy ?? null,
+    fallbackPolicy: patch.fallbackPolicy ?? null,
+    enabled: patch.enabled ?? true,
+    sortOrder: patch.sortOrder ?? 0,
+    createdAt: now,
+    updatedAt: now,
+    _local: true,
+  };
+  const created = await readFormBindingsKey<DemoFormBinding[]>(formId, formBindingCreatedKey(), []);
+  created.push(binding);
+  await writeFormBindingsKey(formId, formBindingCreatedKey(), created);
+  return binding;
+}
+
+/** Apply a local patch to a standalone form binding; seeded rows store patch overrides. */
+export async function demoUpdateFormBinding(formId: string, bindingId: string, payload: Record<string, unknown>): Promise<FlowBinding | null> {
+  const updatedAt = new Date().toISOString();
+  const patch: Partial<FlowBinding> = { ...formBindingPatchFromPayload(formId, payload), updatedAt };
+  if (isDemoLocalId(bindingId)) {
+    const created = await readFormBindingsKey<DemoFormBinding[]>(formId, formBindingCreatedKey(), []);
+    const i = created.findIndex((binding) => binding.id === bindingId);
+    if (i === -1) return null;
+    created[i] = { ...created[i], ...patch, updatedAt, _local: true };
+    await writeFormBindingsKey(formId, formBindingCreatedKey(), created);
+    return created[i];
+  }
+
+  const edits = await readFormBindingsKey<FormBindingEdits>(formId, formBindingEditsKey(), {});
+  edits[bindingId] = { ...(edits[bindingId] ?? {}), ...patch };
+  await writeFormBindingsKey(formId, formBindingEditsKey(), edits);
+  return null;
+}
+
+/** Delete a standalone form binding: remove local rows or tombstone seeded rows. */
+export async function demoDeleteFormBinding(formId: string, bindingId: string): Promise<void> {
+  if (isDemoLocalId(bindingId)) {
+    const created = await readFormBindingsKey<DemoFormBinding[]>(formId, formBindingCreatedKey(), []);
+    await writeFormBindingsKey(formId, formBindingCreatedKey(), created.filter((binding) => binding.id !== bindingId));
+    return;
+  }
+
+  const [deleted, edits] = await Promise.all([
+    readFormBindingsKey<string[]>(formId, formBindingDeletedKey(), []),
+    readFormBindingsKey<FormBindingEdits>(formId, formBindingEditsKey(), {}),
+  ]);
+  if (!deleted.includes(bindingId)) deleted.push(bindingId);
+  delete edits[bindingId];
+  await Promise.all([
+    writeFormBindingsKey(formId, formBindingDeletedKey(), deleted),
+    writeFormBindingsKey(formId, formBindingEditsKey(), edits),
+  ]);
 }

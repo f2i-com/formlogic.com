@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -13,17 +13,19 @@ import {
   Keyboard,
   History,
   MoreVertical,
-  Layers,
   Cloud,
   Check,
   Loader2,
   HardDrive,
+  Rocket,
   X,
   SlidersHorizontal,
   Undo2,
   Redo2,
   MonitorPlay,
   LayoutDashboard,
+  Workflow,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   DndContext,
@@ -44,19 +46,25 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconPicker } from '../components/ui/IconPicker';
-import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, useFormPreview } from '../components/builder';
+import { BottomSheet } from '../components/ui/BottomSheet';
+import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, FormFlowsPanel, useFormPreview } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { ScreenModal } from '../components/custom-screen/ScreenModal';
 import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
-import { type PackData } from '../lib/api';
+import { api, type PackData } from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
 import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
 import { FormVersionHistory } from '../components/builder/FormVersionHistory';
 import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHelp';
+import { resolveBuilderChrome, type BuilderChromeTier } from '../components/builder/builderChrome';
+import { resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
+import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
+import { demoApplyFormBindingOverlay } from '../lib/demoLocal';
 import { useFormStore } from '../stores/formStore';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
+import { usePersistentBoolean } from '../hooks/usePersistentBoolean';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAiAvailable } from '../hooks/useAiAvailable';
@@ -122,6 +130,135 @@ function buildFormPack(
   };
 }
 
+interface BuilderHeaderAction {
+  id: string;
+  label: string;
+  title?: string;
+  icon: LucideIcon;
+  onSelect: () => void;
+  badgeDot?: boolean;
+  countBadge?: number;
+  disabled?: boolean;
+  domId?: string;
+}
+
+function BuilderToolbarDivider() {
+  return <div className="hidden h-4 w-px flex-none bg-gray-200 dark:bg-slate-700 sm:block" aria-hidden="true" />;
+}
+
+function BuilderSaveIndicator({ isSaving, storageMode, compact = false }: { isSaving: boolean; storageMode: string; compact?: boolean }) {
+  const savedToCloud = storageMode === 'api';
+  const label = isSaving ? 'Saving' : savedToCloud ? 'Saved to cloud' : 'Saved locally';
+  const icon = isSaving
+    ? <Loader2 className="h-3 w-3 animate-spin" />
+    : (
+      <>
+        {savedToCloud ? <Cloud className="h-3 w-3" /> : <HardDrive className="h-3 w-3" />}
+        <Check className="h-3 w-3" />
+      </>
+    );
+
+  if (compact) {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        aria-label={label}
+        title={label}
+        className="flex h-8 w-8 flex-none items-center justify-center gap-0.5 text-gray-400 dark:text-slate-500"
+      >
+        {icon}
+      </span>
+    );
+  }
+
+  return (
+    <span role="status" aria-live="polite" aria-label={label} title={label} className="flex flex-none items-center gap-1 text-xs text-gray-400 dark:text-slate-500">
+      {icon}
+      {isSaving && <span>Saving</span>}
+    </span>
+  );
+}
+
+function BuilderHeaderButton({
+  action,
+  showLabel,
+  variant = 'outline',
+}: {
+  action: BuilderHeaderAction;
+  showLabel: boolean;
+  variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
+}) {
+  const Icon = action.icon;
+  return (
+    <Button
+      id={action.domId}
+      variant={variant}
+      size="sm"
+      onClick={action.onSelect}
+      disabled={action.disabled}
+      title={action.title ?? action.label}
+      // The descriptive title IS the accessible name (pre-redesign behavior — e2e and SR
+      // users rely on names like "Backend Logic Script", not the short visual label).
+      aria-label={action.title ?? action.label}
+      className="whitespace-nowrap"
+    >
+      <Icon className="h-4 w-4" />
+      {showLabel && <span>{action.label}</span>}
+      {action.badgeDot && <span className="h-2 w-2 rounded-full bg-green-500" aria-label="Configured" />}
+      {typeof action.countBadge === 'number' && (
+        <span className="ml-0.5 min-w-[1.1rem] rounded-full bg-primary-100 px-1.5 py-0.5 text-center text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
+          {action.countBadge}
+        </span>
+      )}
+    </Button>
+  );
+}
+
+function BuilderAiButton({ showLabel, onClick }: { showLabel: boolean; onClick: () => void }) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      title="Generate with AI"
+      aria-label="Generate with AI"
+      className="whitespace-nowrap border-primary-200 bg-primary-50 text-primary-700 hover:border-primary-300 hover:bg-primary-100 hover:text-primary-800 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200 dark:hover:border-primary-400/50 dark:hover:bg-primary-500/15"
+    >
+      <Sparkles className="h-4 w-4 text-primary-500 dark:text-primary-300" />
+      {showLabel && <span>AI</span>}
+    </Button>
+  );
+}
+
+const BUILDER_BELOW_MD_QUERY = '(max-width: 767.98px)';
+
+function mediaMatches(query: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
+  return window.matchMedia(query).matches;
+}
+
+async function countFlowBindingsForForm(formId: string): Promise<number> {
+  const demoMode = api.isDemoMode();
+  const [workspaceRes, contextsRes] = await Promise.all([
+    api.listFormFlowBindings(formId),
+    api.getFormAppContexts(formId),
+  ]);
+  const serverWorkspaceBindings = workspaceRes.data?.bindings.filter((binding) => binding.event === FORM_SUBMITTED_EVENT) ?? [];
+  const workspaceBindings = demoMode
+    ? await demoApplyFormBindingOverlay(formId, serverWorkspaceBindings)
+    : serverWorkspaceBindings;
+  const workspaceCount = workspaceBindings.length;
+  const contexts = contextsRes.data?.contexts ?? [];
+  const appCounts = await Promise.all(contexts.map(async (context) => {
+    const res = await api.listFlowBindings(context.appId);
+    return res.data?.bindings.filter((binding) => (
+      binding.event === FORM_SUBMITTED_EVENT && binding.formId === formId
+    )).length ?? 0;
+  }));
+  return workspaceCount + appCounts.reduce((sum, count) => sum + count, 0);
+}
+
 // Main Form Builder Component
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
@@ -135,22 +272,37 @@ export default function FormBuilder() {
   // it stays stable while the publish dialog is open rather than rebuilding on each edit).
   const [packToPublish, setPackToPublish] = useState<PackData | null>(null);
   const authorName = useAuthStore((s) => s.user?.name) || 'Unknown';
-  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showOverflowMenu, setShowOverflowMenu] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const mobileMenuRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
+  const headerWidthRef = useRef<number | null>(null);
+  const [builderChrome, setBuilderChrome] = useState<BuilderChromeTier>(() => resolveBuilderChrome(null));
+  const builderChromeRef = useRef(builderChrome);
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
   // Toolbar dock toggles — focus returns here when a panel is collapsed via its X,
   // so keyboard/SR users land on the control that reopens it.
   const addFieldToggleRef = useRef<HTMLButtonElement>(null);
   const settingsToggleRef = useRef<HTMLButtonElement>(null);
-  // Desktop dockable panels: the Fields palette is hidden until "Add Field"; the
-  // field-settings panel auto-opens when a field is selected (collapsible via X).
-  // The canvas takes the freed space when either is collapsed.
-  // On a wide screen there's room for the full 3-pane layout, so open the Fields
-  // palette by default (paired with auto-selecting the first field below, so the
-  // settings dock shows too). Both stay collapsible.
-  const WIDE_BUILDER = typeof window !== 'undefined' && window.innerWidth >= 1280;
-  const [paletteOpen, setPaletteOpen] = useState(WIDE_BUILDER);
-  const [settingsCollapsed, setSettingsCollapsed] = useState(false);
+  // User dock preferences are persisted, then layered under measured-width forced
+  // states by resolveBuilderLayout. Collapsing a dock changes preference; resize
+  // pressure only changes the derived layout tier.
+  const [paletteOpenPref, setPaletteOpenPref] = usePersistentBoolean('builder.paletteOpen', true);
+  const [settingsCollapsed, setSettingsCollapsed] = usePersistentBoolean('builder.settingsCollapsed', false);
+  const [paletteSheetOpen, setPaletteSheetOpen] = useState(false);
+  const [flowsOpen, setFlowsOpen] = useState(false);
+  const [flowBindingCount, setFlowBindingCount] = useState(0);
+  const builderBodyRef = useRef<HTMLDivElement | null>(null);
+  const builderWidthRef = useRef<number | null>(null);
+  const builderLayoutObserverRef = useRef<ResizeObserver | null>(null);
+  const [belowMd, setBelowMd] = useState(() => mediaMatches(BUILDER_BELOW_MD_QUERY, false));
+  const [builderLayout, setBuilderLayout] = useState<ResolvedBuilderLayout>(() => resolveBuilderLayout({
+    builderWidth: null,
+    belowMd: mediaMatches(BUILDER_BELOW_MD_QUERY, false),
+    paletteOpenPref,
+    settingsWanted: false,
+  }));
+  const builderLayoutRef = useRef(builderLayout);
 
   const {
     getForm,
@@ -175,15 +327,54 @@ export default function FormBuilder() {
   const canUndo = (fieldHistory?.past.length ?? 0) > 0;
   const canRedo = (fieldHistory?.future.length ?? 0) > 0;
 
-  const { isMobile, setIsMobile, mobilePanel, setMobilePanel } = useUIStore();
+  const { setIsMobile } = useUIStore();
+  const isMobile = belowMd;
 
-  // Keep isMobile in sync with window size (FormBuilder is outside AppShell)
+  // Keep isMobile in sync with the same below-md media query the measured layout uses.
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia(BUILDER_BELOW_MD_QUERY);
+    const apply = () => {
+      const next = query.matches;
+      setBelowMd((current) => (current === next ? current : next));
+      setIsMobile(next);
+    };
+    void (async () => {
+      await Promise.resolve();
+      apply();
+    })();
+    query.addEventListener('change', apply);
+    return () => query.removeEventListener('change', apply);
   }, [setIsMobile]);
+
+  const applyBuilderChrome = useCallback((width: number | null = headerWidthRef.current) => {
+    const next = resolveBuilderChrome(width);
+    if (builderChromeRef.current === next) return;
+    builderChromeRef.current = next;
+    setBuilderChrome(next);
+  }, []);
+
+  // Attach the observer via a CALLBACK ref, not a mount effect: the `if (!form)` loader renders
+  // before the header exists, so a mount-time effect sees a null ref and never observes — the
+  // chrome tier would freeze at its initial window-width guess (user-reported).
+  const chromeObserverRef = useRef<ResizeObserver | null>(null);
+  const observeHeader = useCallback((el: HTMLElement | null) => {
+    chromeObserverRef.current?.disconnect();
+    chromeObserverRef.current = null;
+    headerRef.current = el;
+    if (!el) return;
+    headerWidthRef.current = el.getBoundingClientRect().width;
+    applyBuilderChrome(headerWidthRef.current);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width !== 'number') return;
+      headerWidthRef.current = width;
+      applyBuilderChrome(width);
+    });
+    observer.observe(el);
+    chromeObserverRef.current = observer;
+  }, [applyBuilderChrome]);
 
   // Load full form data (with fields) from API when entering the builder.
   // Track completion so a fresh/direct navigation (empty store) shows a loader
@@ -223,14 +414,21 @@ export default function FormBuilder() {
   useEffect(() => {
     if (!loadFinished || !formId || isMobile) return;
     if (autoSelectedFor.current === formId) return;
+    if (builderWidthRef.current === null) return;
+    const spacious = resolveBuilderLayout({
+      builderWidth: builderWidthRef.current,
+      belowMd,
+      paletteOpenPref,
+      settingsWanted: true,
+    });
+    if (spacious.palette !== 'inline' || spacious.settings !== 'inline') return;
     autoSelectedFor.current = formId;
-    if (typeof window === 'undefined' || window.innerWidth < 1280) return;
     const f = getForm(formId);
     if (!f || f.fields.length === 0) return;
     if (useFormStore.getState().selectedFieldId) return; // respect an existing selection
     const first = f.fields.find((ff) => !['welcome_screen', 'thank_you', 'statement'].includes(ff.type)) || f.fields[0];
     setSelectedField(first.id);
-  }, [loadFinished, formId, isMobile, getForm, setSelectedField]);
+  }, [belowMd, builderLayout, loadFinished, formId, isMobile, getForm, paletteOpenPref, setSelectedField]);
 
   const form = formId ? getForm(formId) : undefined;
   useDocumentTitle(form ? `${form.title} — Builder` : 'Form Builder');
@@ -239,9 +437,7 @@ export default function FormBuilder() {
   const [localTitle, setLocalTitle] = useState(form?.title ?? '');
   const titleSyncedFromForm = useRef(form?.title);
   // Sync local title when form title changes externally (e.g., AI generation, undo)
-  // eslint-disable-next-line react-hooks/refs -- official "adjust state during render" pattern: titleSyncedFromForm tracks the last-synced title to gate the re-seed, not read for render output
   if (form && form.title !== titleSyncedFromForm.current) {
-    // eslint-disable-next-line react-hooks/refs -- record the title we just synced so this block re-runs only on the next external title change
     titleSyncedFromForm.current = form.title;
     setLocalTitle(form.title);
   }
@@ -258,7 +454,6 @@ export default function FormBuilder() {
 
   // Flush title to store on unmount
   const flushRef = useRef(flushTitle);
-  // eslint-disable-next-line react-hooks/refs -- mirror ref for latest flushTitle read only by the unmount effect below; not read during render output
   flushRef.current = flushTitle;
   useEffect(() => () => { flushRef.current(); }, []);
 
@@ -279,45 +474,102 @@ export default function FormBuilder() {
   const selectedField = form?.fields.find((f) => f.id === selectedFieldId);
   const selectedFieldIndex = form?.fields.findIndex((f) => f.id === selectedFieldId) ?? -1;
   const formFields = useMemo(() => form?.fields ?? [], [form]);
+  const currentFormId = form?.id;
+  // Flows work for ANY saved cloud form — draft or published (the binding routes gate on
+  // ownership only). The disabled title must name the REAL blocker: a generic "save first"
+  // message on a local-mode draft read as "flows need a published form" (user-reported).
+  const formFlowsDisabledReason = !form
+    ? 'Save the form first to add flows'
+    : storageMode !== 'api'
+        ? 'Switch to Cloud storage to use flows (drafts work too)'
+        : null;
+  const canUseFormFlows = formFlowsDisabledReason === null;
+  const fieldSettingsWanted = !!selectedField && !settingsCollapsed && !flowsOpen;
+  const rightDockWanted = flowsOpen || fieldSettingsWanted;
 
-  // Selecting a field opens its settings: the settings tab on mobile, or the docked
-  // settings panel on desktop (un-collapse it).
+  const applyBuilderLayout = useCallback((width: number | null = builderWidthRef.current) => {
+    const next = resolveBuilderLayout({
+      builderWidth: width,
+      belowMd,
+      paletteOpenPref,
+      settingsWanted: rightDockWanted,
+    });
+    if (sameResolvedBuilderLayout(builderLayoutRef.current, next)) return;
+    builderLayoutRef.current = next;
+    setBuilderLayout(next);
+  }, [belowMd, paletteOpenPref, rightDockWanted]);
+
+  const observeBuilderBody = useCallback((el: HTMLDivElement | null) => {
+    builderLayoutObserverRef.current?.disconnect();
+    builderLayoutObserverRef.current = null;
+    builderBodyRef.current = el;
+    if (!el) return;
+    builderWidthRef.current = el.getBoundingClientRect().width;
+    applyBuilderLayout(builderWidthRef.current);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width !== 'number') return;
+      builderWidthRef.current = width;
+      applyBuilderLayout(width);
+    });
+    observer.observe(el);
+    builderLayoutObserverRef.current = observer;
+  }, [applyBuilderLayout]);
+
+  useEffect(() => {
+    applyBuilderLayout();
+  }, [applyBuilderLayout]);
+
+  useEffect(() => {
+    if (builderLayout.palette !== 'inline' || !paletteSheetOpen) return;
+    void (async () => {
+      await Promise.resolve();
+      setPaletteSheetOpen(false);
+    })();
+  }, [builderLayout.palette, paletteSheetOpen]);
+
+  useEffect(() => {
+    if (!currentFormId || !canUseFormFlows) return;
+    let cancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      const count = await countFlowBindingsForForm(currentFormId);
+      if (!cancelled) setFlowBindingCount(count);
+    })();
+    return () => { cancelled = true; };
+  }, [canUseFormFlows, currentFormId]);
+
+  // Selecting a field opens its settings through the measured layout resolver.
   const handleSelectField = useCallback((fieldId: string) => {
     setSelectedField(fieldId);
-    if (isMobile) {
-      setMobilePanel('settings');
-    } else {
-      setSettingsCollapsed(false);
-      // Avoid a 3-column crush on a narrow desktop (<lg): give settings the room.
-      if (window.innerWidth < 1024) setPaletteOpen(false);
-    }
-  }, [setSelectedField, isMobile, setMobilePanel]);
+    setFlowsOpen(false);
+    setPaletteSheetOpen(false);
+    setSettingsCollapsed(false);
+  }, [setSelectedField, setSettingsCollapsed]);
 
-  // Open the Fields palette (the mobile tab, or the desktop dock). On a narrow
-  // desktop (<lg) collapse the settings dock so we never show 3 columns at once.
+  // Open the Fields palette inline when the measured width allows it, otherwise as a sheet.
   const openPalette = useCallback(() => {
-    if (isMobile) {
-      setMobilePanel('palette');
-      return;
-    }
-    setPaletteOpen(true);
-    if (window.innerWidth < 1024) setSettingsCollapsed(true);
-  }, [isMobile, setMobilePanel]);
+    setPaletteOpenPref(true);
+    if (builderLayout.palette === 'hidden') setPaletteSheetOpen(true);
+  }, [builderLayout.palette, setPaletteOpenPref]);
 
   // Toolbar dock toggles — flip a panel and, on a narrow desktop, keep at most two
   // columns so the canvas stays usable (768–1023px would otherwise crush it).
   const toggleDock = useCallback((which: 'palette' | 'settings') => {
-    const narrow = window.innerWidth < 1024;
     if (which === 'palette') {
-      const opening = !paletteOpen;
-      setPaletteOpen(opening);
-      if (opening && narrow) setSettingsCollapsed(true);
+      const opening = !paletteOpenPref;
+      setPaletteOpenPref(opening);
+      setPaletteSheetOpen(opening && builderLayout.palette === 'hidden');
     } else {
       const opening = settingsCollapsed;
       setSettingsCollapsed(!settingsCollapsed);
-      if (opening && narrow) setPaletteOpen(false);
+      if (opening) {
+        setFlowsOpen(false);
+        setPaletteSheetOpen(false);
+      }
     }
-  }, [paletteOpen, settingsCollapsed]);
+  }, [builderLayout.palette, paletteOpenPref, setPaletteOpenPref, setSettingsCollapsed, settingsCollapsed]);
 
   // Add field handler (defined first for use in shortcuts)
   const handleAddField = useCallback((type: FieldType) => {
@@ -378,15 +630,11 @@ export default function FormBuilder() {
 
     setSelectedField(field.id);
 
-    // On mobile, switch to canvas to show the newly added field; on desktop, open
-    // its settings (the new field is selected) so it's ready to edit.
-    if (isMobile) {
-      setMobilePanel('canvas');
-    } else {
-      setSettingsCollapsed(false);
-      if (window.innerWidth < 1024) setPaletteOpen(false);
-    }
-  }, [form, addField, setSelectedField, isMobile, setMobilePanel]);
+    // Close the add-field sheet; the selected field's settings reopen through the resolver.
+    setPaletteSheetOpen(false);
+    setFlowsOpen(false);
+    setSettingsCollapsed(false);
+  }, [form, addField, setSelectedField, setSettingsCollapsed]);
 
   // Keyboard shortcuts
   const handleSave = useCallback(() => {
@@ -489,22 +737,60 @@ export default function FormBuilder() {
 
   useKeyboardShortcuts({ shortcuts });
 
-  // Close mobile menu on outside click or Escape
+  const closeOverflowMenu = useCallback((restoreFocus = true) => {
+    setShowOverflowMenu(false);
+    if (restoreFocus) requestAnimationFrame(() => overflowButtonRef.current?.focus());
+  }, []);
+
+  const overflowMenuItems = useCallback(() => (
+    Array.from(overflowMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])
+  ), []);
+
+  const focusOverflowItem = useCallback((index: number) => {
+    const items = overflowMenuItems();
+    if (items.length === 0) return;
+    const next = ((index % items.length) + items.length) % items.length;
+    items[next]?.focus();
+  }, [overflowMenuItems]);
+
+  const handleOverflowMenuKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = overflowMenuItems();
+    const current = items.findIndex((item) => item === document.activeElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      focusOverflowItem(current < 0 ? 0 : current + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      focusOverflowItem(current < 0 ? items.length - 1 : current - 1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      focusOverflowItem(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      focusOverflowItem(items.length - 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeOverflowMenu();
+    }
+  }, [closeOverflowMenu, focusOverflowItem, overflowMenuItems]);
+
+  // Close the all-width overflow menu on outside click or Escape.
   useEffect(() => {
-    if (!showMobileMenu) return;
+    if (!showOverflowMenu) return;
+    requestAnimationFrame(() => focusOverflowItem(0));
     const handleClickOutside = (e: MouseEvent) => {
-      if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target as Node)) {
-        setShowMobileMenu(false);
+      if (overflowMenuRef.current && !overflowMenuRef.current.contains(e.target as Node)) {
+        closeOverflowMenu(false);
       }
     };
-    const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowMobileMenu(false); };
+    const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') closeOverflowMenu(); };
     document.addEventListener('mousedown', handleClickOutside);
     document.addEventListener('keydown', handleEscape);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [showMobileMenu]);
+  }, [closeOverflowMenu, focusOverflowItem, showOverflowMenu]);
 
   useEffect(() => {
     // Only redirect once the load attempt has finished and the form is genuinely
@@ -533,6 +819,25 @@ export default function FormBuilder() {
     setPendingDeleteId(null);
     toast.success('Deleted', 'Field deleted');
   }, [form, pendingDeleteId, deleteField]);
+
+  const handlePublishPack = useCallback(() => {
+    if (!form) return;
+    if ((form.fields?.length ?? 0) === 0) {
+      toast.warning('Add a field first', 'Build your form before publishing it as a pack.');
+      return;
+    }
+    setPackToPublish(buildFormPack(form, authorName));
+    setActiveModal('publishPack');
+  }, [authorName, form]);
+
+  const handleFlowsSelect = useCallback(() => {
+    if (!canUseFormFlows) return;
+    setPaletteSheetOpen(false);
+    setFlowsOpen((open) => {
+      const next = !open;
+      return next;
+    });
+  }, [canUseFormFlows]);
 
   if (!form) {
     return (
@@ -593,204 +898,146 @@ export default function FormBuilder() {
   };
 
   const closeModal = () => setActiveModal(null);
+  const showHeaderLabels = builderChrome === 'full';
+  const foldMiddleClusters = builderChrome === 'tiny';
+  const designActions: BuilderHeaderAction[] = [
+    { id: 'theme', label: 'Theme', title: 'Theme Customization', icon: Palette, onSelect: () => setActiveModal('theme') },
+    { id: 'screen', label: 'Screen', title: 'Custom screen (Beta)', icon: MonitorPlay, onSelect: () => navigate(`/forms/${form.id}/screen/edit`) },
+    ...(form.customScreen?.enabled ? [{ id: 'dashboard', label: 'Dashboard', title: 'View dashboard', icon: LayoutDashboard, onSelect: () => setActiveModal('screen') }] : []),
+  ];
+  const dataActions: BuilderHeaderAction[] = [
+    { id: 'settings', label: 'Settings', title: 'Form Settings', icon: Settings, onSelect: () => setActiveModal('settings') },
+    { id: 'script', label: 'Script', title: 'Backend Logic Script', icon: Code2, onSelect: () => setActiveModal('script'), badgeDot: !!form.logicScript },
+    {
+      id: 'flows',
+      label: 'Flows',
+      title: canUseFormFlows ? 'Flows for this form' : 'Save the form first to add flows',
+      icon: Workflow,
+      onSelect: handleFlowsSelect,
+      countBadge: canUseFormFlows ? flowBindingCount : 0,
+      disabled: !canUseFormFlows,
+      domId: 'builder-flows-button',
+    },
+  ];
+  const previewActions: BuilderHeaderAction[] = [
+    { id: 'preview', label: 'Preview', title: 'Preview (opens in a new tab)', icon: Eye, onSelect: handlePreview },
+    { id: 'share', label: 'Share', title: 'Share & Embed', icon: Share2, onSelect: () => setActiveModal('embed') },
+  ];
+  const overflowActions: BuilderHeaderAction[] = [
+    ...(foldMiddleClusters ? [...designActions, ...dataActions] : []),
+    { id: 'versions', label: 'Versions', title: 'Version History', icon: History, onSelect: () => setActiveModal('versions') },
+    { id: 'shortcuts', label: 'Shortcuts', title: 'Keyboard Shortcuts (Ctrl+?)', icon: Keyboard, onSelect: () => setActiveModal('shortcuts') },
+    { id: 'publish-pack', label: 'Publish as pack', icon: Package, onSelect: handlePublishPack },
+  ];
+  const chooseOverflowAction = (action: BuilderHeaderAction) => {
+    setShowOverflowMenu(false);
+    action.onSelect();
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-hidden">
+      <header ref={observeHeader} className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {/* Hidden on phones so the title input keeps usable width (the header is
-              a single tight row on mobile). */}
+              a single tight row on mobile). OUTSIDE the clipped block: its popover is
+              absolute-positioned and an overflow-hidden ancestor would clip the whole
+              icon grid invisible (user-reported). */}
           <div className="hidden sm:block flex-shrink-0">
             <IconPicker
               value={form.icon}
               onChange={(icon) => updateForm(form.id, { icon: icon ?? undefined })}
             />
           </div>
-          <Input
-            value={localTitle}
-            onChange={(e) => setLocalTitle(e.target.value)}
-            onBlur={flushTitle}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-            aria-label="Form title"
-            className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 min-w-0 w-full sm:w-48 md:w-auto"
-          />
-          {/* Save indicator — reflects the real storage mode (cloud vs local) and
-              is announced to screen readers. Shown only on wide screens so it never
-              crowds the action buttons; the left group also clips (overflow-hidden)
-              so it can never overlap the right group on a tight header. */}
-          <span role="status" aria-live="polite" className="hidden lg:flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 flex-shrink-0">
-            {isSaving ? (
-              <><Loader2 className="h-3 w-3 animate-spin" />Saving</>
-            ) : storageMode === 'api' ? (
-              <><Cloud className="h-3 w-3" /><Check className="h-3 w-3" /><span className="sr-only">Saved to cloud</span></>
-            ) : (
-              <><HardDrive className="h-3 w-3" /><Check className="h-3 w-3" /><span className="sr-only">Saved locally</span></>
-            )}
-          </span>
+          {/* Only the title + save indicator are clipped — they're what can collide with
+              the right-side clusters when the header is squeezed. */}
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 overflow-hidden">
+            <Input
+              value={localTitle}
+              onChange={(e) => setLocalTitle(e.target.value)}
+              onBlur={flushTitle}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              aria-label="Form title"
+              className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 min-w-0 w-full sm:w-48 md:w-auto"
+            />
+            {/* Save indicator — reflects the real storage mode (cloud vs local) and
+                is announced to screen readers. Full at lg+, compact below, and clipped
+                with the title so it can never overlap the right group. */}
+            <div className="hidden flex-none lg:flex">
+              <BuilderSaveIndicator isSaving={isSaving} storageMode={storageMode} />
+            </div>
+            <div className="flex flex-none lg:hidden">
+              <BuilderSaveIndicator isSaving={isSaving} storageMode={storageMode} compact />
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-          {/* AI Generator — hidden when the in-app AI is off (AI_ENABLED=false) or unconfigured. */}
-          {aiAvailable && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setActiveModal('ai')}
-            title="Generate with AI"
-            aria-label="Generate with AI"
-            className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/30 hover:border-purple-400"
-          >
-            <Sparkles className="h-4 w-4 text-purple-400" />
-            <span className="hidden xl:inline ml-2 text-purple-600 dark:text-purple-300">AI</span>
-          </Button>
+          {aiAvailable && <BuilderAiButton showLabel={showHeaderLabels} onClick={() => setActiveModal('ai')} />}
+          {aiAvailable && <BuilderToolbarDivider />}
+
+          {!foldMiddleClusters && (
+            <>
+              <div className="flex flex-none items-center gap-1 whitespace-nowrap">
+                {designActions.map((action) => <BuilderHeaderButton key={action.id} action={action} showLabel={showHeaderLabels} />)}
+              </div>
+              <BuilderToolbarDivider />
+              <div className="flex flex-none items-center gap-1 whitespace-nowrap">
+                {dataActions.map((action) => <BuilderHeaderButton key={action.id} action={action} showLabel={showHeaderLabels} />)}
+              </div>
+              <BuilderToolbarDivider />
+            </>
           )}
 
-          {/* Settings - hidden on smallest screens */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setActiveModal('settings')}
-            title="Form Settings"
-            aria-label="Form Settings"
-            className="hidden sm:flex"
-          >
-            <Settings className="h-4 w-4" />
-            <span className="hidden xl:inline ml-2">Settings</span>
-          </Button>
+          <div className="flex flex-none items-center gap-1 whitespace-nowrap">
+            {previewActions.map((action) => <BuilderHeaderButton key={action.id} action={action} showLabel={showHeaderLabels} />)}
+          </div>
 
-          {/* Theme - hidden on small screens */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setActiveModal('theme')}
-            title="Theme Customization"
-            aria-label="Theme Customization"
-            className="hidden md:flex"
-          >
-            <Palette className="h-4 w-4" />
-            <span className="hidden xl:inline ml-2">Theme</span>
-          </Button>
-
-          {/* Script - hidden on small screens */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setActiveModal('script')}
-            title="Backend Logic Script"
-            aria-label="Backend Logic Script"
-            className="hidden md:flex"
-          >
-            <Code2 className="h-4 w-4" />
-            <span className="hidden xl:inline ml-2">Script</span>
-            {form.logicScript && <span className="ml-1 h-2 w-2 rounded-full bg-green-500" />}
-          </Button>
-
-          {/* Preview — opens in a new tab, in app context when the form belongs to an app */}
-          <Button variant="outline" size="sm" onClick={handlePreview} title="Preview (opens in a new tab)" aria-label="Preview form">
-            <Eye className="h-4 w-4" />
-            <span className="hidden xl:inline ml-2">Preview</span>
-          </Button>
-
-          {/* Custom Screen (Beta) — AI-built sandboxed frontend over this form's data */}
-          <Button variant="outline" size="sm" onClick={() => navigate(`/forms/${form.id}/screen/edit`)} title="Custom screen (Beta)" aria-label="Custom screen">
-            <MonitorPlay className="h-4 w-4" />
-            <span className="hidden xl:inline ml-2">Screen</span>
-          </Button>
-
-          {/* View the custom screen as a flexible popup dashboard (only when one is enabled) */}
-          {form.customScreen?.enabled && (
-            <Button variant="outline" size="sm" onClick={() => setActiveModal('screen')} title="View dashboard" aria-label="View dashboard">
-              <LayoutDashboard className="h-4 w-4" />
-              <span className="hidden xl:inline ml-2">Dashboard</span>
-            </Button>
-          )}
-
-          {/* Share - hidden on smallest screens */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setActiveModal('embed')}
-            title="Share & Embed"
-            aria-label="Share & Embed"
-            className="hidden sm:flex"
-          >
-            <Share2 className="h-4 w-4" />
-            <span className="hidden xl:inline ml-2">Share</span>
-          </Button>
-
-          {/* Version history - hidden on smallest screens */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setActiveModal('versions')}
-            title="Version History"
-            aria-label="Version History"
-            className="hidden sm:flex"
-          >
-            <History className="h-4 w-4" />
-          </Button>
-
-          {/* Keyboard shortcuts - hidden on mobile */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setActiveModal('shortcuts')}
-            title="Keyboard Shortcuts (Ctrl+?)"
-            aria-label="Keyboard Shortcuts"
-            className="hidden sm:flex"
-          >
-            <Keyboard className="h-4 w-4" />
-          </Button>
-
-          {/* Mobile overflow menu */}
-          <div className="relative sm:hidden" ref={mobileMenuRef}>
+          <div className="relative flex-none" ref={overflowMenuRef}>
             <Button
+              ref={overflowButtonRef}
               variant="ghost"
               size="sm"
-              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              onClick={() => setShowOverflowMenu((open) => !open)}
               aria-label="More options"
               aria-haspopup="menu"
-              aria-expanded={showMobileMenu}
+              aria-expanded={showOverflowMenu}
+              title="More options"
             >
               <MoreVertical className="h-4 w-4" />
             </Button>
-            {showMobileMenu && (
-              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 py-1 z-50 animate-scale-in origin-top-right">
-                {[
-                  { label: 'Form Settings', icon: Settings, modal: 'settings' as ModalType },
-                  { label: 'Theme', icon: Palette, modal: 'theme' as ModalType },
-                  { label: 'Script', icon: Code2, modal: 'script' as ModalType, badge: !!form?.logicScript },
-                  { label: 'Share & Embed', icon: Share2, modal: 'embed' as ModalType },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    onClick={() => { setActiveModal(item.modal); setShowMobileMenu(false); }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                  >
-                    <item.icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                    {item.label}
-                    {item.badge && <span className="ml-auto h-2 w-2 rounded-full bg-green-500" />}
-                  </button>
-                ))}
-                <button
-                  onClick={() => {
-                    if ((form.fields?.length ?? 0) === 0) {
-                      toast.warning('Add a field first', 'Build your form before publishing it as a pack.');
-                      return;
-                    }
-                    setPackToPublish(buildFormPack(form, authorName));
-                    setActiveModal('publishPack');
-                    setShowMobileMenu(false);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                >
-                  <Package className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                  Publish as pack
-                </button>
+            {showOverflowMenu && (
+              <div
+                role="menu"
+                aria-label="More builder actions"
+                onKeyDown={handleOverflowMenuKeyDown}
+                className="absolute right-0 top-full z-50 mt-1.5 w-56 origin-top-right animate-scale-in rounded-xl border border-gray-200/80 bg-white py-1 shadow-xl shadow-gray-900/10 dark:border-slate-700/60 dark:bg-slate-900 dark:shadow-black/30"
+              >
+                {overflowActions.map((action) => {
+                  const Icon = action.icon;
+                  return (
+                    <button
+                      key={action.id}
+                      type="button"
+                      role="menuitem"
+                      disabled={action.disabled}
+                      onClick={() => chooseOverflowAction(action)}
+                      className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 focus:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+                    >
+                      <Icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" />
+                      <span className="min-w-0 flex-1 truncate">{action.label}</span>
+                      {action.badgeDot && <span className="h-2 w-2 rounded-full bg-green-500" aria-label="Configured" />}
+                      {typeof action.countBadge === 'number' && (
+                        <span className="rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
+                          {action.countBadge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -799,6 +1046,9 @@ export default function FormBuilder() {
               live link so first-time users know it worked and where it lives. */}
           <Button
             size="sm"
+            title={form.status === 'published' ? 'Published' : 'Publish'}
+            aria-label={form.status === 'published' ? 'Published' : 'Publish'}
+            leftIcon={<Rocket className="h-4 w-4" />}
             onClick={async () => {
               if ((form.fields?.length ?? 0) === 0) {
                 toast.warning('Add a field first', 'Your form needs at least one field before publishing.');
@@ -830,44 +1080,20 @@ export default function FormBuilder() {
               }
             }}
           >
-            <span>{form.status === 'published' ? 'Published' : 'Publish'}</span>
+            {showHeaderLabels && <span>{form.status === 'published' ? 'Published' : 'Publish'}</span>}
           </Button>
         </div>
       </header>
 
-      {/* Mobile Tabs */}
+      {/* Mobile controls */}
       {isMobile && (
         <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-3 py-2 flex-shrink-0 flex items-center gap-2">
-          <div className="flex-1 flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
-            {([
-              { key: 'palette' as const, label: 'Fields', icon: Plus },
-              { key: 'canvas' as const, label: 'Canvas', icon: Layers, badge: formFields.length || undefined },
-              { key: 'settings' as const, label: 'Settings', icon: Settings, disabled: !selectedField },
-            ]).map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setMobilePanel(tab.key)}
-                disabled={tab.disabled}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-medium rounded-md transition-all ${
-                  mobilePanel === tab.key
-                    ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-500 dark:text-slate-400'
-                } ${tab.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-              >
-                <tab.icon className="h-4 w-4" />
-                {tab.label}
-                {tab.badge && (
-                  <span className={`text-xs rounded-full px-1.5 min-w-[1.25rem] text-center ${
-                    mobilePanel === tab.key
-                      ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300'
-                      : 'bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-400'
-                  }`}>
-                    {tab.badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          <Button size="sm" variant="outline" onClick={openPalette} leftIcon={<Plus className="h-4 w-4" />} className="flex-shrink-0">
+            Add Field
+          </Button>
+          <span className="min-w-0 flex-1 text-center text-xs text-gray-400 dark:text-slate-500">
+            {formFields.length} field{formFields.length === 1 ? '' : 's'}
+          </span>
           <div className="flex items-center gap-0.5 flex-shrink-0">
             <button onClick={handleUndo} disabled={!canUndo} aria-label="Undo" className="inline-flex items-center justify-center min-h-10 min-w-10 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
               <Undo2 className="h-4 w-4" />
@@ -880,15 +1106,14 @@ export default function FormBuilder() {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Field Palette — mobile tab, or desktop dock (opened via "Add Field").
-            Hidden by default on desktop so the canvas gets the room. */}
-        {(isMobile ? mobilePanel === 'palette' : paletteOpen) && (
-          <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left">
+      <div ref={observeBuilderBody} className="flex-1 flex overflow-hidden">
+        {/* Field Palette — inline when there is room, otherwise opened as a sheet. */}
+        {builderLayout.palette === 'inline' && (
+          <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left motion-safe:transition-[width] motion-safe:duration-200">
             <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
               <h2 className="font-semibold text-gray-900 dark:text-white">Add a field</h2>
               <button
-                onClick={() => { setPaletteOpen(false); addFieldToggleRef.current?.focus(); }}
+                onClick={() => { setPaletteOpenPref(false); addFieldToggleRef.current?.focus(); }}
                 className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 aria-label="Collapse fields panel"
                 title="Collapse"
@@ -903,19 +1128,18 @@ export default function FormBuilder() {
           </aside>
         )}
 
-        {/* Canvas — always on desktop; the active tab on mobile */}
-        {(isMobile ? mobilePanel === 'canvas' : true) && (
-          <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Canvas */}
+        <div className="flex-1 flex flex-col overflow-hidden">
             {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
             <div className="hidden md:flex items-center justify-between gap-3 px-6 py-2.5 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Button
                   ref={addFieldToggleRef}
                   size="sm"
-                  variant={paletteOpen ? 'secondary' : 'outline'}
+                  variant={builderLayout.palette === 'inline' ? 'secondary' : 'outline'}
                   onClick={() => toggleDock('palette')}
                   leftIcon={<Plus className="h-4 w-4" />}
-                  aria-pressed={paletteOpen}
+                  aria-pressed={builderLayout.palette === 'inline'}
                 >
                   Add Field
                 </Button>
@@ -934,10 +1158,18 @@ export default function FormBuilder() {
               <Button
                 ref={settingsToggleRef}
                 size="sm"
-                variant={selectedField && !settingsCollapsed ? 'secondary' : 'ghost'}
-                onClick={() => { if (selectedField) toggleDock('settings'); }}
+                variant={fieldSettingsWanted && builderLayout.settings === 'inline' ? 'secondary' : 'ghost'}
+                onClick={() => {
+                  if (!selectedField) return;
+                  if (flowsOpen) {
+                    setFlowsOpen(false);
+                    setSettingsCollapsed(false);
+                    return;
+                  }
+                  toggleDock('settings');
+                }}
                 disabled={!selectedField}
-                aria-pressed={!!selectedField && !settingsCollapsed}
+                aria-pressed={fieldSettingsWanted && builderLayout.settings === 'inline'}
                 aria-label="Toggle field settings"
                 title={selectedField ? 'Toggle field settings' : 'Select a field to edit its settings'}
               >
@@ -947,7 +1179,7 @@ export default function FormBuilder() {
             </div>
 
             {/* Own scroll, independent of the side panels */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6">
+            <div className="flex-1 overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:p-6">
               <div className="max-w-2xl mx-auto">
                 {form.fields.length === 0 ? (
                   <div className="text-center py-12 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
@@ -956,7 +1188,7 @@ export default function FormBuilder() {
                       Add your first field
                     </h3>
                     <p className="text-gray-500 dark:text-slate-400 mb-4">
-                      {isMobile ? 'Tap the Fields tab above to get started' : 'Click “Add Field” to choose a field type.'}
+                      {isMobile ? 'Tap Add Field to get started' : 'Click "Add Field" to choose a field type.'}
                     </p>
                     <div className="flex items-center justify-center gap-2 flex-wrap">
                       <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />}>
@@ -965,11 +1197,8 @@ export default function FormBuilder() {
                       {aiAvailable && (
                         <>
                           <span className="text-gray-400 dark:text-slate-500">or</span>
-                          <Button
-                            onClick={() => setActiveModal('ai')}
-                            className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
-                          >
-                            <Sparkles className="h-4 w-4 mr-2" />
+                          <Button onClick={() => setActiveModal('ai')}>
+                            <Sparkles className="mr-2 h-4 w-4 text-primary-foreground/90" />
                             Generate with AI
                           </Button>
                         </>
@@ -1013,12 +1242,11 @@ export default function FormBuilder() {
                 )}
               </div>
             </div>
-          </div>
-        )}
+        </div>
 
-        {/* Settings Panel — mobile tab, or desktop dock (auto-opens on field select) */}
-        {(isMobile ? mobilePanel === 'settings' : (!!selectedField && !settingsCollapsed)) && (
-          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right">
+        {/* Settings Panel — inline when there is room, otherwise opened as a sheet. */}
+        {fieldSettingsWanted && builderLayout.settings === 'inline' && (
+          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200">
             <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
               <div className="min-w-0">
                 <h2 className="font-semibold text-gray-900 dark:text-white">Field settings</h2>
@@ -1053,7 +1281,66 @@ export default function FormBuilder() {
             </div>
           </aside>
         )}
+
+        {canUseFormFlows && flowsOpen && builderLayout.settings === 'inline' && (
+          <FormFlowsPanel
+            formId={form.id}
+            formTitle={form.title}
+            fields={form.fields}
+            onCountChange={setFlowBindingCount}
+            onClose={() => {
+              setFlowsOpen(false);
+              document.getElementById('builder-flows-button')?.focus();
+            }}
+          />
+        )}
       </div>
+
+      <BottomSheet title="Add a field" open={paletteSheetOpen} onClose={() => setPaletteSheetOpen(false)}>
+        <div className="h-full min-h-0 overflow-y-auto pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <FieldPalette onAddField={handleAddField} />
+        </div>
+      </BottomSheet>
+
+      {selectedField && (
+        <BottomSheet
+          title="Field settings"
+          open={fieldSettingsWanted && builderLayout.settings === 'sheet' && !paletteSheetOpen}
+          onClose={() => {
+            setSettingsCollapsed(true);
+            settingsToggleRef.current?.focus();
+          }}
+        >
+          <div className="h-full min-h-0 overflow-y-auto pb-[calc(1rem+env(safe-area-inset-bottom))] [&_[role=tabpanel]]:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            <FieldSettingsPanel
+              key={selectedField.id}
+              field={selectedField}
+              allFields={form.fields}
+              onUpdate={handleUpdateField}
+            />
+          </div>
+        </BottomSheet>
+      )}
+
+      {canUseFormFlows && (
+        <BottomSheet
+          title="Flows"
+          open={flowsOpen && builderLayout.settings === 'sheet' && !paletteSheetOpen}
+          onClose={() => {
+            setFlowsOpen(false);
+            document.getElementById('builder-flows-button')?.focus();
+          }}
+        >
+          <FormFlowsPanel
+            formId={form.id}
+            formTitle={form.title}
+            fields={form.fields}
+            onCountChange={setFlowBindingCount}
+            onClose={() => setFlowsOpen(false)}
+            variant="sheet"
+          />
+        </BottomSheet>
+      )}
 
       {/* Script Editor Modal */}
       <ScriptEditor
@@ -1120,7 +1407,6 @@ export default function FormBuilder() {
         onClose={closeModal}
         settings={form.settings}
         formId={form.id}
-        fields={form.fields}
         onSave={(settings) => updateForm(form.id, { settings })}
       />
 

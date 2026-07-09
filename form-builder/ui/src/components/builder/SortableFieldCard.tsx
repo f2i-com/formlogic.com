@@ -102,12 +102,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           onClick={handleDuplicate}
           aria-label={`Duplicate ${field.label || 'field'}`}
           title="Duplicate field"
-          className={cn(
-            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
-            isSelected
-              ? 'text-gray-400 dark:text-slate-500 opacity-100'
-              : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 max-sm:opacity-60'
-          )}
+          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-300 dark:text-slate-600 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:text-primary-600 dark:focus-visible:text-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500"
         >
           <Copy className="h-4 w-4" />
         </button>
@@ -116,12 +111,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           onClick={handleDelete}
           aria-label={`Delete ${field.label || 'field'}`}
           title="Delete field"
-          className={cn(
-            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
-            isSelected
-              ? 'text-gray-400 dark:text-slate-500 opacity-100'
-              : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 max-sm:opacity-60'
-          )}
+          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:text-red-500 dark:focus-visible:text-red-400 focus-visible:ring-2 focus-visible:ring-red-500"
         >
           <Trash2 className="h-4 w-4" />
         </button>

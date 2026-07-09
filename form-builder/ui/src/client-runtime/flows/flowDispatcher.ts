@@ -16,6 +16,7 @@
 // All browser bindings (api / store / QuickJS / connector client / toasts) are injected
 // through a deps object so the whole pipeline is unit-testable without a DOM.
 import { api, newIdempotencyKey } from '../../lib/api';
+import { demoApplyFlowOverlay, demoApplyFormBindingOverlay } from '../../lib/demoLocal';
 import { logger } from '../../lib/logger';
 import type {
   FlowBinding,
@@ -309,7 +310,10 @@ function buildDefaultDeps(): FlowDispatcherDeps {
       // 409 (already claimed) and every other failure mean the same thing here: not ours.
       return { claimed: !res.error && !!res.data };
     },
-    fetchWorkspaceFlows: async () => (await api.listWorkspaceFlows()).data?.flows ?? [],
+    fetchWorkspaceFlows: async () => {
+      const flows = (await api.listWorkspaceFlows()).data?.flows ?? [];
+      return api.isDemoMode() ? demoApplyFlowOverlay(null, flows) : flows;
+    },
     listWorkspaceQueuedRuns: async (limit) => (await api.listMyQueuedFlowRuns(limit)).data?.runs ?? [],
     claimWorkspaceRun: async (runId, payload) => {
       const res = await api.claimMyFlowRun(runId, payload);
@@ -319,7 +323,10 @@ function buildDefaultDeps(): FlowDispatcherDeps {
       const res = await api.completeMyFlowRun(runId, payload);
       if (res.error) logger.warn('[flows] completeWorkspaceRun failed:', res.error);
     },
-    fetchFormBindings: async (formId) => (await api.listFormFlowBindings(formId)).data?.bindings ?? [],
+    fetchFormBindings: async (formId) => {
+      const bindings = (await api.listFormFlowBindings(formId)).data?.bindings ?? [];
+      return api.isDemoMode() ? demoApplyFormBindingOverlay(formId, bindings) : bindings;
+    },
     workspaceExecutorDeps: buildWorkspaceExecutorDeps(),
   };
 }

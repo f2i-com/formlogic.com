@@ -43,8 +43,8 @@ interface UIState {
   // Mobile
   isMobile: boolean;
   setIsMobile: (isMobile: boolean) => void;
-  mobilePanel: 'palette' | 'canvas' | 'settings';
-  setMobilePanel: (panel: 'palette' | 'canvas' | 'settings') => void;
+  mobilePanel: 'palette' | 'canvas' | 'settings' | 'flows';
+  setMobilePanel: (panel: 'palette' | 'canvas' | 'settings' | 'flows') => void;
 
   // Theme
   theme: 'light' | 'dark';

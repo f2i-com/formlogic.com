@@ -60,7 +60,7 @@ function PhaseGlyph({ phase }: { phase: NodeRunPhase }) {
   return <X className="h-3.5 w-3.5 flex-none text-red-500" />;
 }
 
-export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus }: {
+export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus, hideClose = false }: {
   flow: FlowDefinition;
   onClose: () => void;
   /** Called after a successful server test-run (app flows) so the caller can refresh history. */
@@ -69,6 +69,8 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   onRunStart?: () => void;
   /** Forwarded executor onNodeStatus events so the caller can light up the canvas node pills. */
   onNodeStatus?: (nodeId: string, status: NodeRunPhase, info?: { output?: unknown; error?: string }) => void;
+  /** The mobile slide-over supplies its own close — suppress the header's to avoid two X buttons. */
+  hideClose?: boolean;
 }) {
   const [inputText, setInputText] = useState(() => initialInputsJson(flow.flowJson));
   const [running, setRunning] = useState(false);
@@ -166,7 +168,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         icon={PlayCircle}
         title="Test run"
         subtitle={flow.slug}
-        actions={(
+        actions={hideClose ? undefined : (
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close test run">
             <X className="h-4 w-4" />
           </Button>
