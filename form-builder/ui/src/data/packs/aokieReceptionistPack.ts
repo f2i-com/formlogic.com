@@ -339,9 +339,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var order = {
     status: 'new',
     source: 'call',
-    notes: 'Order taken from call ' + callId + '
-Caller: ' + caller + (phone ? ' (' + phone + ')' : '') + '
-Details: ' + summary
+    notes: 'Order taken from call ' + callId + '\\nCaller: ' + caller + (phone ? ' (' + phone + ')' : '') + '\\nDetails: ' + summary
   };
   if (knownId) order.customer_link = knownId;
   return {
@@ -369,7 +367,7 @@ Details: ' + summary
 // appended from the input in case its Transcript Turns row hasn't landed yet
 // (the app-logic writer and this flow both fire on the same turn.final event).
 const DEFAULT_PERSONA =
-  'You are a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving.';
+  'You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving.';
 
 const FLOW_LIVE_CONTEXT = `(function () {
   var callId = String(inputs.callId || '');
