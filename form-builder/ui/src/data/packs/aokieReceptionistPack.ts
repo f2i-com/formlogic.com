@@ -309,6 +309,13 @@ const FLOW_LIVE_CONTEXT = `(function () {
 // which live-reconfigures the running receptionist). This is what makes the AI
 // receptionist configurable from FormLogic — edit the Settings form and the next
 // call uses the new persona, greeting, voice and model, no flow-graph or code edits.
+//
+// aiReceptionist (reply_mode) is the one exception: the plugin only reads it once when
+// its radio thread starts, so pushing it here persists to settings.json but does NOT
+// change the call currently using the running radio — only the NEXT Aokie reconnect.
+// Default-safe: 'agent' or absent/blank (incl. records saved before this field existed)
+// → true, matching the deployed settings.json (aiReceptionist: true) today; only the
+// exact value 'flow' turns it off.
 const FLOW_AGENT_CONFIG = `(function () {
   // formlogic_list_responses returns the array directly on the desktop f2i runner
   // (nodes.settings) but {responses:[...]} in the TS executor — handle both.
@@ -328,11 +335,13 @@ const FLOW_AGENT_CONFIG = `(function () {
       ? 'Thank you for calling ' + business + '! How can I help you today?'
       : 'Thanks for calling! How can I help you today?';
   }
+  var replyMode = String(cfg.reply_mode || '').trim();
   return {
     persona: persona,
     greeting: greeting,
     voice: String(cfg.voice || '').trim(),
-    model: String(cfg.model || '').trim()
+    model: String(cfg.model || '').trim(),
+    aiReceptionist: replyMode !== 'flow'
   };
 })()`;
 
@@ -955,7 +964,7 @@ export const aokieReceptionistPack: PackData = {
       title: 'Receptionist Settings',
       icon: 'Settings',
       description:
-        'Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so changes take effect on the next caller turn.',
+        'Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so persona/greeting/voice/model changes take effect on the next caller turn. Reply mode is the one exception — see its own field description below.',
       settings: { ...defaultSettings },
       theme: { ...defaultTheme },
       fields: [
@@ -996,6 +1005,26 @@ export const aokieReceptionistPack: PackData = {
             ],
           },
         },
+        {
+          id: 'reply_mode',
+          type: 'dropdown',
+          label: 'Reply mode',
+          required: false,
+          // Blank/unanswered (and any record from before this field existed) must resolve to
+          // 'agent' — the live settings.json today has aiReceptionist: true, so a new field
+          // must never silently flip an existing deployment into flow mode. 'agent' is the
+          // first option for the same reason: it's the safe default this field always falls
+          // back to. Unlike persona/greeting/voice/model below, this one is NOT live-reconfigurable
+          // mid-call — see the description for why.
+          description:
+            "Which side answers the caller: the built-in in-plugin AI agent, or this app's \"Live Reply\" flow. Unlike the fields above, this only takes effect the next time Aokie reconnects — not on the current or next call — because the plugin reads it once when it starts, not per call.",
+          properties: {
+            options: [
+              { id: 'agent', label: 'Built-in AI agent (fast, in-app)', value: 'agent' },
+              { id: 'flow', label: 'Custom flow (edit the Live Reply flow)', value: 'flow' },
+            ],
+          },
+        },
         { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
       ],
       customScreen: {
@@ -1006,7 +1035,7 @@ export const aokieReceptionistPack: PackData = {
           version: 1,
           cols: 12,
           widgets: [
-            { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona.' } },
+            { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call.' } },
             { id: 'l1', title: 'Current settings', layout: { x: 0, y: 1, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:receptionist-settings', titleField: 'business_name', subtitleField: 'model', metaField: 'active', limit: 5 } },
           ],
         },
@@ -1269,7 +1298,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Configure Receptionist',
       slug: 'configure-receptionist',
       description:
-        "On each incoming call, read the newest Receptionist Settings record and push its persona, greeting, voice and model to the Aokie plugin (settings.set), which live-reconfigures the in-plugin AI receptionist. This is what makes the receptionist configurable from FormLogic — edit the Settings form and the next call uses the new config, no flow-graph or code changes. Safe + idempotent (settings.set just updates config), so it never double-answers the caller.",
+        "On each incoming call, read the newest Receptionist Settings record and push its persona, greeting, voice, model and reply mode to the Aokie plugin (settings.set). persona/greeting/voice/model live-reconfigure the in-plugin AI receptionist immediately, so the next call uses the new config, no flow-graph or code changes. Reply mode (aiReceptionist — built-in agent vs. this app's own Live Reply flow) is different: the plugin only reads it once when its radio starts, so this push persists the choice but only takes effect on the NEXT Aokie reconnect, not the current or next call. Safe + idempotent (settings.set just updates config), so it never double-answers the caller.",
       nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.settings.set'],
       flowJson: {
         nodes: [
@@ -1282,12 +1311,16 @@ export const aokieReceptionistPack: PackData = {
             data: {
               connectorId: 'aokie',
               command: 'settings.set',
-              // Keys the plugin maps to the live voice agent (persona/greeting/voice/model).
+              // Keys the plugin maps to the live voice agent (persona/greeting/voice/model
+              // live-reconfigure immediately). aiReceptionist is the odd one out: the plugin
+              // only reads it once at radio start, so this persists to settings.json but
+              // only takes effect on the next Aokie reconnect (see the flow description).
               payload: {
                 persona: '$nodes.cfg.persona',
                 greeting: '$nodes.cfg.greeting',
                 ttsVoice: '$nodes.cfg.voice',
                 aiModel: '$nodes.cfg.model',
+                aiReceptionist: '$nodes.cfg.aiReceptionist',
               },
             },
           },
@@ -1471,7 +1504,12 @@ export const aokieReceptionistPack: PackData = {
       mode: 'sync',
       timeoutMs: 3000,
       inputMap: { callId: '$event.data.callId', from: '$event.data.from' },
-      fallbackPolicy: { onError: 'log_and_continue' },
+      // Runs first (sortOrder 0), before anything has spoken to the caller yet - if it fails or
+      // times out, the plugin keeps its last-known config (safe, log_and_continue), but per
+      // docs/FORMLOGIC_FLOWS.md §"sync bindings... should use fallbackPolicy.fallbackReply" a
+      // live-call sync binding still needs a spoken fallback so the caller is never left in
+      // silence if the whole chain stalls here.
+      fallbackPolicy: { onError: 'log_and_continue', fallbackReply: 'Thanks for calling! How can I help you today?' },
       sortOrder: 0,
     },
     {

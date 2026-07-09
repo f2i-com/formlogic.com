@@ -14,7 +14,7 @@ const bindings = aokieReceptionistPack.flowBindings ?? [];
 describe('aokie pack flows', () => {
   it('has all starter flows', () => {
     expect(flows.map((f) => f.slug).sort()).toEqual(
-      ['call-summary-follow-up', 'hardware-error-alert', 'incoming-caller-lookup', 'live-reply', 'missed-call-follow-up', 'sms-auto-reply-draft'],
+      ['call-summary-follow-up', 'configure-receptionist', 'hardware-error-alert', 'incoming-caller-lookup', 'live-reply', 'missed-call-follow-up', 'sms-auto-reply-draft'],
     );
   });
 

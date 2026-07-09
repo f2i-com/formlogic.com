@@ -199,6 +199,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   it('ships the starter flows on valid v0 graphs', () => {
     expect([...FLOW_SLUGS].sort()).toEqual([
       'call-summary-follow-up',
+      'configure-receptionist',
       'hardware-error-alert',
       'incoming-caller-lookup',
       'live-reply',
@@ -230,7 +231,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(6);
+    expect(pack.flowBindings?.length).toBe(7);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -254,6 +255,75 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       expect(action.type).not.toBe('formlogic.submitResponse');
       expect(action.type).not.toBe('formlogic.updateResponse');
     }
+  });
+});
+
+describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
+  const settingsForm = pack.forms.find((f) => f.packFormId === 'receptionist-settings')!;
+  const replyModeField = settingsForm.fields.find((f) => f.id === 'reply_mode');
+  const configureFlow = (pack.flows ?? []).find((f) => f.slug === 'configure-receptionist')!;
+
+  it('Receptionist Settings has a reply_mode dropdown with exactly the agent/flow options, agent first', () => {
+    expect(replyModeField, 'reply_mode field').toBeDefined();
+    expect(replyModeField!.type).toBe('dropdown');
+    const options = (replyModeField!.properties as { options?: Array<{ value: string; label: string }> }).options ?? [];
+    expect(options.map((o) => o.value)).toEqual(['agent', 'flow']);
+    expect(options.map((o) => o.label)).toEqual([
+      'Built-in AI agent (fast, in-app)',
+      'Custom flow (edit the Live Reply flow)',
+    ]);
+  });
+
+  it("reply_mode's own description states the reconnect-required caveat, distinct from the form's next-caller-turn claim", () => {
+    // The two claims must not contradict on the same screen: persona/greeting/voice/model
+    // (described at the form level) apply next caller turn; reply_mode does not.
+    expect(settingsForm.description).toMatch(/next caller turn/);
+    expect(replyModeField!.description ?? '').toMatch(/reconnect/i);
+    expect(replyModeField!.description ?? '').not.toMatch(/next caller turn/);
+  });
+
+  it("Configure Receptionist flow's push node payload sends aiReceptionist alongside the existing keys", () => {
+    const push = configureFlow.flowJson.nodes.find((n) => n.id === 'push')!;
+    const payload = (push.data as { payload?: Record<string, unknown> }).payload ?? {};
+    expect(payload.aiReceptionist).toBe('$nodes.cfg.aiReceptionist');
+    expect(payload.persona).toBe('$nodes.cfg.persona');
+    expect(payload.greeting).toBe('$nodes.cfg.greeting');
+    expect(payload.ttsVoice).toBe('$nodes.cfg.voice');
+    expect(payload.aiModel).toBe('$nodes.cfg.model');
+  });
+
+  it('declares connector.aokie.settings.set — the same command, so no capability change is needed for the richer payload', () => {
+    // The runtime capability gate (desktop runner.rs connector_request / TS nodes.ts
+    // requireConnectorCapability) matches on exact `connector.<id>.<command>` or the
+    // wildcard `connector.<id>.*` — it never inspects individual payload keys — so adding
+    // aiReceptionist to settings.set's payload needs no new nodeCapabilities entry.
+    expect(configureFlow.nodeCapabilities).toContain('connector.aokie.settings.set');
+  });
+
+  // FLOW_AGENT_CONFIG is an inline (unexported) logic_block expression string; evaluate it
+  // exactly as the executor does — as a plain JS expression with `nodes` in scope — rather
+  // than re-deriving its logic, so this test exercises the real shipped source.
+  function runAgentConfig(answers: Record<string, unknown> | null): { aiReceptionist: boolean } {
+    const cfgNode = configureFlow.flowJson.nodes.find((n) => n.id === 'cfg')!;
+    const expr = (cfgNode.data as { expr: string }).expr;
+    const nodes = { settings: { responses: answers ? [{ answers }] : [] } };
+    // eslint-disable-next-line no-new-func -- evaluating the pack's own shipped expression string
+    const fn = new Function('nodes', `return ${expr};`);
+    return fn(nodes);
+  }
+
+  it('aiReceptionist: reply_mode "agent" -> true', () => {
+    expect(runAgentConfig({ reply_mode: 'agent' }).aiReceptionist).toBe(true);
+  });
+
+  it('aiReceptionist: reply_mode "flow" -> false', () => {
+    expect(runAgentConfig({ reply_mode: 'flow' }).aiReceptionist).toBe(false);
+  });
+
+  it('aiReceptionist: reply_mode absent/blank -> true (preserves today\'s deployed default)', () => {
+    expect(runAgentConfig({}).aiReceptionist).toBe(true);
+    expect(runAgentConfig({ reply_mode: '' }).aiReceptionist).toBe(true);
+    expect(runAgentConfig(null).aiReceptionist).toBe(true); // no settings record at all yet
   });
 });
 
