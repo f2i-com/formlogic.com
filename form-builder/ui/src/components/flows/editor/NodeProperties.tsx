@@ -27,7 +27,7 @@ import {
 } from './nodeCatalog';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
-import { AI_PROVIDER_PRESETS, listProviders, providerSupports, type AiProviderConfig } from '../../../client-runtime/flows/aiProviders';
+import { AI_PROVIDER_PRESETS, listProviders, providerSupports } from '../../../client-runtime/flows/aiProviders';
 import { desktopClient, type DesktopServiceSnapshot } from '../../../client-runtime/desktop/desktopClient';
 import { mergeKnownConnectorCommands } from '../flowEventCatalog';
 import { useAuthStore } from '../../../stores/authStore';
@@ -614,19 +614,21 @@ function AiProviderPickerField({
   // chat-only / speech-only). The currently-selected service always stays listed —
   // flagged below — so a mismatch is visible and fixable, never silently dropped.
   const capability = spec.capability ?? 'chat';
-  const [providers, setProviders] = useState<AiProviderConfig[]>(() =>
-    listProviders(userId).filter((provider) => provider.enabled && providerSupports(provider, capability))
-  );
   const raw = typeof value === 'string' ? value : '';
-  const refresh = useCallback(() => {
+  // The list lives in localStorage (an external store): derive it during render and
+  // invalidate by bumping `version` — from the ai-services-changed event and from
+  // focus/open on the select — instead of mirroring into state via effects.
+  const [version, setVersion] = useState(0);
+  const refresh = useCallback(() => setVersion((v) => v + 1), []);
+  const providers = useMemo(() => {
     const all = listProviders(userId);
     const usable = all.filter((provider) => provider.enabled && providerSupports(provider, capability));
     const selected = raw ? all.find((provider) => provider.id === raw) ?? null : null;
-    setProviders(selected && !usable.some((provider) => provider.id === selected.id) ? [...usable, selected] : usable);
-  }, [raw, userId, capability]);
+    return selected && !usable.some((provider) => provider.id === selected.id) ? [...usable, selected] : usable;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- version invalidates the localStorage read
+  }, [raw, userId, capability, version]);
 
   useEffect(() => {
-    refresh();
     window.addEventListener('formlogic:ai-services-changed', refresh);
     return () => window.removeEventListener('formlogic:ai-services-changed', refresh);
   }, [refresh]);

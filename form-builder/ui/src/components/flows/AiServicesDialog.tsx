@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, Eye, EyeOff, Laptop, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
 import { desktopClient, type DesktopServiceSnapshot } from '../../client-runtime/desktop/desktopClient';
@@ -248,22 +248,33 @@ function createProvider(kind: AiProviderKind = 'openai'): AiProviderConfig {
 
 export default function AiServicesDialog({ isOpen, onClose, desktopPresence }: AiServicesDialogProps) {
   const userId = useAuthStore((state) => state.user?.id);
-  const [providers, setProviders] = useState<AiProviderConfig[]>([]);
+  // The provider list lives in localStorage (an external store) — derive it during
+  // render and re-derive by bumping `providersVersion` after every mutation, instead
+  // of mirroring it into state from effects (react-hooks/set-state-in-effect).
+  const [providersVersion, setProvidersVersion] = useState(0);
+  const refreshProviders = useCallback(() => setProvidersVersion((v) => v + 1), []);
+  const providers = useMemo(
+    () => (isOpen ? listProviders(userId) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- providersVersion invalidates the localStorage read
+    [isOpen, userId, providersVersion]
+  );
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AiProviderConfig | null>(null);
   const [importText, setImportText] = useState('');
   const [importMessage, setImportMessage] = useState<AsyncMessage>({ kind: 'idle', message: '' });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Monotonic remount key for the editor (a fresh key = fresh editor state); a ref
+  // counter keeps the handlers pure (Date.now() in render-adjacent code is impure).
+  const editorSeq = useRef(0);
 
-  const refreshProviders = () => setProviders(listProviders(userId));
-
-  useEffect(() => {
-    if (!isOpen) return;
-    refreshProviders();
-  }, [isOpen, userId]);
-
-  const openAdd = () => setEditor({ provider: null, key: Date.now() });
-  const openEdit = (provider: AiProviderConfig) => setEditor({ provider, key: Date.now() });
+  const openAdd = () => {
+    editorSeq.current += 1;
+    setEditor({ provider: null, key: editorSeq.current });
+  };
+  const openEdit = (provider: AiProviderConfig) => {
+    editorSeq.current += 1;
+    setEditor({ provider, key: editorSeq.current });
+  };
   const onSaved = () => {
     refreshProviders();
     notifyAiServicesChanged();
@@ -352,7 +363,8 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence }: A
           </div>
         ) : (
         <div className="space-y-4 p-4 sm:p-6">
-          <DesktopServicesSection presence={desktopPresence} />
+          {/* Keyed by presence.kind: a presence change remounts with fresh loading state. */}
+          <DesktopServicesSection key={desktopPresence.kind} presence={desktopPresence} />
 
           <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -451,20 +463,19 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence }: A
   );
 }
 
+/**
+ * Rendered with `key={presence.kind}` by the dialog, so a presence change remounts it
+ * with fresh null state — the effect only performs the async fetch (setState happens
+ * in the async callback, never synchronously in the effect body).
+ */
 function DesktopServicesSection({ presence }: { presence: FlowsDesktopPresence }) {
   const navigate = useNavigate();
   const [services, setServices] = useState<DesktopServiceSnapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (presence.kind !== 'local') {
-      setServices(null);
-      setError(null);
-      return;
-    }
+    if (presence.kind !== 'local') return;
     let cancelled = false;
-    setServices(null);
-    setError(null);
     desktopClient.services.list().then((res) => {
       if (cancelled) return;
       if (res.ok) {
