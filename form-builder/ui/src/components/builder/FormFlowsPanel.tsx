@@ -342,7 +342,7 @@ export function FormFlowsPanel({
       className={cn(
         'bg-white dark:bg-slate-900 flex flex-col flex-shrink-0',
         variant === 'dock'
-          ? 'w-full md:w-80 border-l border-gray-200 dark:border-slate-800 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200'
+          ? 'w-full md:w-96 border-l border-gray-200 dark:border-slate-800 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200'
           : 'h-full w-full',
       )}
     >

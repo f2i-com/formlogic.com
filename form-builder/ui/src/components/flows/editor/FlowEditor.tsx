@@ -80,9 +80,11 @@ interface FlowEditorProps {
   desktopPresence?: FlowsDesktopPresence;
   /** Bindings targeting this flow, rendered as Trigger node chips (view state only). */
   bindings?: FlowBinding[];
+  /** Human scope line for the subtitle — the owning app's NAME (e.g. "Aokie Receptionist flow"). */
+  scopeLabel?: string;
 }
 
-function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [] }: FlowEditorProps) {
+function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel }: FlowEditorProps) {
   // Seed React Flow state once (the parent renders this keyed by flow.id, so a flow switch
   // remounts with a fresh initial graph). A lazy useState initializer runs exactly on mount.
   const [initialGraph] = useState(() => graphToReactFlow(flow.flowJson ?? { nodes: [], edges: [] }));
@@ -444,7 +446,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
             <p className="hidden truncate font-mono text-[11px] text-gray-400 dark:text-slate-500 sm:block">
-              {flow.appId ? 'app flow' : 'workspace flow'} · {flow.slug} · {nodes.length} node{nodes.length === 1 ? '' : 's'}
+              {scopeLabel ?? (flow.appId ? 'app flow' : 'workspace flow')} · {flow.slug} · {nodes.length} node{nodes.length === 1 ? '' : 's'}
             </p>
           </div>
           <div className="flex flex-none">

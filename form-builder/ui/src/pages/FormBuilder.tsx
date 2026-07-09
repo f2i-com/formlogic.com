@@ -59,7 +59,7 @@ import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
 import { FormVersionHistory } from '../components/builder/FormVersionHistory';
 import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHelp';
 import { resolveBuilderChrome, type BuilderChromeTier } from '../components/builder/builderChrome';
-import { resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
+import { BUILDER_FLOWS_W, BUILDER_SETTINGS_W, resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
 import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
 import { demoApplyFormBindingOverlay } from '../lib/demoLocal';
 import { useFormStore } from '../stores/formStore';
@@ -493,11 +493,12 @@ export default function FormBuilder() {
       belowMd,
       paletteOpenPref,
       settingsWanted: rightDockWanted,
+      rightDockWidth: flowsOpen ? BUILDER_FLOWS_W : BUILDER_SETTINGS_W,
     });
     if (sameResolvedBuilderLayout(builderLayoutRef.current, next)) return;
     builderLayoutRef.current = next;
     setBuilderLayout(next);
-  }, [belowMd, paletteOpenPref, rightDockWanted]);
+  }, [belowMd, paletteOpenPref, rightDockWanted, flowsOpen]);
 
   const observeBuilderBody = useCallback((el: HTMLDivElement | null) => {
     builderLayoutObserverRef.current?.disconnect();

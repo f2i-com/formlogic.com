@@ -67,6 +67,8 @@ export function FlowsWorkspace() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Library scope filter: 'all' | 'workspace' | an app id.
+  const [libraryScope, setLibraryScope] = useState('all');
   const [showNew, setShowNew] = useState(false);
   const [newFlowInitialTemplate, setNewFlowInitialTemplate] = useState<FlowStarterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
@@ -448,6 +450,8 @@ export function FlowsWorkspace() {
           loading={loading}
           query={query}
           onQuery={setQuery}
+          scope={libraryScope}
+          onScope={setLibraryScope}
           selectedId={selectedId}
           onSelect={selectFlow}
           onDuplicate={duplicateFlow}
@@ -491,6 +495,9 @@ export function FlowsWorkspace() {
                   nodeStatus={nodeStatus}
                   desktopPresence={desktopPresence}
                   bindings={selectedFlowBindings}
+                  scopeLabel={selectedFlow.appId
+                    ? `${groups.find((g) => g.app?.id === selectedFlow.appId)?.app?.name ?? 'app'} flow`
+                    : 'workspace flow'}
                 />
               </div>
             </>
@@ -736,12 +743,15 @@ function FlowMobileDrawer({ title, onClose, children }: { title: string; onClose
 // ---------------------------------------------------------------------------
 
 function FlowLibrary({
-  groups, loading, query, onQuery, selectedId, onSelect, onDuplicate, onRename, onToggleEnabled, onDelete, onNew, collapsed = false, onToggleCollapsed, className,
+  groups, loading, query, onQuery, scope, onScope, selectedId, onSelect, onDuplicate, onRename, onToggleEnabled, onDelete, onNew, collapsed = false, onToggleCollapsed, className,
 }: {
   groups: FlowGroup[];
   loading: boolean;
   query: string;
   onQuery: (q: string) => void;
+  /** Scope filter: 'all', 'workspace', or an app id — refines the library when flows pile up. */
+  scope: string;
+  onScope: (scope: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDuplicate: (flow: FlowDefinition) => void;
@@ -755,10 +765,14 @@ function FlowLibrary({
   className?: string;
 }) {
   const q = query.trim().toLowerCase();
-  const filtered = groups
+  const scoped = scope === 'all'
+    ? groups
+    : groups.filter((g) => (scope === 'workspace' ? g.app === null : g.app?.id === scope));
+  const filtered = scoped
     .map((g) => ({ ...g, flows: g.flows.filter((f) => q === '' || f.name.toLowerCase().includes(q) || f.slug.toLowerCase().includes(q)) }))
     .filter((g) => g.flows.length > 0);
   const total = groups.reduce((n, g) => n + g.flows.length, 0);
+  const scopedTotal = scoped.reduce((n, g) => n + g.flows.length, 0);
 
   // Collapsing swaps in a whole different (icon-rail) subtree, which unmounts the flow list —
   // restore its scroll offset on re-expand rather than snapping back to the top every time.
@@ -808,6 +822,26 @@ function FlowLibrary({
         )}
       </div>
 
+      {/* Scope filter — refine to Workspace or one app when flows pile up. Hidden with a
+          single group since there is nothing to refine. */}
+      {groups.length > 1 && (
+        <div className="px-2.5 pb-2">
+          <select
+            value={scope}
+            onChange={(e) => onScope(e.target.value)}
+            aria-label="Filter flows by scope"
+            className="w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          >
+            <option value="all">All scopes · {total}</option>
+            {groups.map((g) => (
+              <option key={g.app?.id ?? 'workspace'} value={g.app?.id ?? 'workspace'}>
+                {g.app ? g.app.name : 'Workspace'} · {g.flows.length}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div
         ref={listRef}
         onScroll={(e) => { listScrollTop.current = e.currentTarget.scrollTop; }}
@@ -823,7 +857,9 @@ function FlowLibrary({
             <Button size="sm" onClick={onNew} leftIcon={<Plus className="h-4 w-4" />}>New flow</Button>
           </div>
         ) : filtered.length === 0 ? (
-          <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No flows match "{query}".</p>
+          <p className="px-1 text-xs text-gray-400 dark:text-slate-500">
+            {scopedTotal === 0 ? 'No flows in this scope yet.' : `No flows match "${query}".`}
+          </p>
         ) : (
           filtered.map((g) => (
             <div key={g.app?.id ?? 'workspace'}>

@@ -5,7 +5,8 @@
 // save via /api/apps/{id}/flow-bindings; workspace flows save only form.submitted triggers via
 // /api/forms/{formId}/flow-bindings.
 import { useMemo, useState } from 'react';
-import { Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ExternalLink, FileText, Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { api } from '../../lib/api';
 import { demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
@@ -55,6 +56,7 @@ export function TriggersPanel({
   context = EMPTY_FLOW_EDITOR_CONTEXT,
   onRefresh,
 }: TriggersPanelProps) {
+  const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<FlowBinding | null>(null);
@@ -179,7 +181,7 @@ export function TriggersPanel({
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {isWorkspaceFlow && (
-          <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-snug text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
             Workspace flows can only use form.submitted triggers here; connector/event triggers need an app-scoped flow.
           </p>
         )}
@@ -216,16 +218,34 @@ export function TriggersPanel({
                     <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{eventLabel(binding.event)}</p>
                     <p className="truncate font-mono text-[11px] text-gray-500 dark:text-slate-400">{binding.event}</p>
                     <p className="mt-1 truncate text-xs text-gray-500 dark:text-slate-400">
-                      {binding.mode} - {conditionSummary(binding)}{formLabel(binding, forms) ? ` - ${formLabel(binding, forms)}` : ''}
+                      {binding.mode} - {conditionSummary(binding)}
                     </p>
+                    {binding.formId && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/builder/${binding.formId}`)}
+                        title="Open this form in the builder"
+                        className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-primary-100 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-200"
+                      >
+                        <FileText className="h-3 w-3 flex-none" />
+                        <span className="truncate">{formLabel(binding, forms) ?? 'Open form'}</span>
+                        <ExternalLink className="h-2.5 w-2.5 flex-none opacity-60" />
+                      </button>
+                    )}
                   </div>
+                  <div className="flex flex-none items-center">
+                    <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => { setEditingId((id) => (id === binding.id ? null : binding.id)); setAdding(false); }} aria-label="Edit trigger">
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => setPendingDelete(binding)} aria-label="Delete trigger">
+                      <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
+                    </Button>
+                  </div>
+                </div>
+                {/* The switch gets its own uncramped row (same pattern as the library's flow rows) —
+                    sharing the title row clipped its label in the rail/drawer widths. */}
+                <div className="mt-2">
                   <Switch checked={binding.enabled} onChange={(enabled) => void toggleEnabled(binding, enabled)} label="Enabled" size="sm" disabled={appReadOnly} />
-                  <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => { setEditingId((id) => (id === binding.id ? null : binding.id)); setAdding(false); }} aria-label="Edit trigger">
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => setPendingDelete(binding)} aria-label="Delete trigger">
-                    <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
-                  </Button>
                 </div>
                 {!appReadOnly && editingId === binding.id && (
                   <div className="mt-3">

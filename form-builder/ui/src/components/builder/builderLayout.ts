@@ -6,6 +6,8 @@
 export const BUILDER_CANVAS_FLOOR = 420;
 export const BUILDER_PALETTE_W = 288;
 export const BUILDER_SETTINGS_W = 320;
+/** The Flows dock is wider than field settings (its binding editor needs the room). */
+export const BUILDER_FLOWS_W = 384;
 
 export type BuilderPalettePlacement = 'inline' | 'hidden';
 export type BuilderSettingsPlacement = 'inline' | 'sheet' | 'hidden';
@@ -15,6 +17,8 @@ export interface BuilderLayoutInput {
   belowMd: boolean;
   paletteOpenPref: boolean;
   settingsWanted: boolean;
+  /** Width of whichever right dock is open (field settings 320 / flows 384). */
+  rightDockWidth?: number;
 }
 
 export interface ResolvedBuilderLayout {
@@ -31,6 +35,7 @@ export function resolveBuilderLayout({
   belowMd,
   paletteOpenPref,
   settingsWanted,
+  rightDockWidth = BUILDER_SETTINGS_W,
 }: BuilderLayoutInput): ResolvedBuilderLayout {
   if (belowMd) {
     return {
@@ -40,11 +45,11 @@ export function resolveBuilderLayout({
   }
 
   if (settingsWanted) {
-    if (!fits(builderWidth, BUILDER_SETTINGS_W)) {
+    if (!fits(builderWidth, rightDockWidth)) {
       return { palette: 'hidden', settings: 'sheet' };
     }
     return {
-      palette: paletteOpenPref && fits(builderWidth, BUILDER_SETTINGS_W + BUILDER_PALETTE_W) ? 'inline' : 'hidden',
+      palette: paletteOpenPref && fits(builderWidth, rightDockWidth + BUILDER_PALETTE_W) ? 'inline' : 'hidden',
       settings: 'inline',
     };
   }
