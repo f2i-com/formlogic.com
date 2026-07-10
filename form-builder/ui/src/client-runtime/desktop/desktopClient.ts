@@ -118,6 +118,24 @@ export interface DesktopInstanceInfo {
   pluginApiVersion?: number;
   /** Stable id of this Desktop install, when the build provides one. */
   instanceId?: string;
+  /** Headless flow runtime status (linked, errors, relay poll). */
+  flowRuntime?: {
+    linked?: boolean;
+    errors?: number;
+    lastError?: string | null;
+    relayPollOk?: boolean | null;
+  };
+  /**
+   * The aokie plugin's last TRUTHFUL health report (audit INT-006/C-15):
+   * status 'ok' | 'degraded' | 'error' | 'unreachable' with the reasons —
+   * lets "Listening" say why the receptionist is impaired.
+   */
+  aokiePluginHealth?: {
+    ok?: boolean;
+    status?: string;
+    detail?: string | null;
+    at?: string;
+  };
 }
 
 /** A template-declared call contract for a Desktop-managed service (ServiceSnapshot.node). */

@@ -44,6 +44,7 @@ import { api } from '../../../lib/api';
 import { cn } from '../../../lib/utils';
 import { subscribeDesktopEvents } from '../../../client-runtime/desktop/desktopEvents';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../../client-runtime/desktop/desktopDetection';
+import { desktopClient } from '../../../client-runtime/desktop/desktopClient';
 import { simulateIncomingCall } from '../../../client-runtime/connectors/aokieConnector';
 import type { DesktopEventEnvelope } from '../../../client-runtime/desktop/desktopTypes';
 import {
@@ -246,6 +247,29 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   const roleAllowsOperating = callsFormId ? canSubmitCalls(callsFormId) : permissions.appLevel.includes('manage_app');
 
   useEffect(() => subscribeDesktopStatus((info) => setDesktop(info)), []);
+
+  // Truthful readiness (audit INT-006/C-15): while the LOCAL bridge is the
+  // presence source, poll the desktop's info card for the aokie plugin's
+  // computed health — "Listening" must not read green when the plugin says
+  // it cannot answer or speak (no radio, no voice output, dead outbox rows).
+  const [pluginHealth, setPluginHealth] = useState<{ status?: string; detail?: string | null } | null>(null);
+  useEffect(() => {
+    if (presence.kind !== 'local') {
+      setPluginHealth(null);
+      return;
+    }
+    let cancelled = false;
+    const probe = async () => {
+      const res = await desktopClient.info();
+      if (!cancelled) setPluginHealth(res.ok ? (res.data?.aokiePluginHealth ?? null) : null);
+    };
+    void probe();
+    const timer = setInterval(() => void probe(), 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [presence.kind]);
+  const degradedDetail = presence.kind === 'local' && pluginHealth && pluginHealth.status && pluginHealth.status !== 'ok'
+    ? (pluginHealth.detail || `receptionist ${pluginHealth.status}`)
+    : null;
 
   // Poll call.current so a refreshed page picks up an in-flight call (permission-aware).
   const refreshCall = useCallback(async () => {
@@ -516,13 +540,17 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
         <h1 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Live Call</h1>
       </div>
 
-      {/* IDLE: a thin standby bar — where the receptionist is listening, and when it last rang. */}
+      {/* IDLE: a thin standby bar — where the receptionist is listening, and when it last rang.
+          Truthful (audit INT-006/C-15): a degraded plugin turns the dot amber and says WHY,
+          instead of a green "Listening" over a receptionist that cannot answer or speak. */}
       {!active && (
         <div className="flex items-center gap-2.5 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 px-4 py-2.5 text-sm">
           <span
             className={`h-2 w-2 shrink-0 rounded-full ${
               presence.kind === 'local'
-                ? 'bg-emerald-500 animate-pulse'
+                ? degradedDetail
+                  ? 'bg-amber-500 animate-pulse'
+                  : 'bg-emerald-500 animate-pulse'
                 : presence.kind === 'remote'
                   ? 'bg-primary-500 animate-pulse'
                   : 'bg-gray-300 dark:bg-slate-600'
@@ -530,7 +558,9 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
           />
           <span className="min-w-0 truncate font-medium text-gray-900 dark:text-white">
             {presence.kind === 'local'
-              ? `Listening — FormLogic Desktop v${desktop.version ?? '?'}`
+              ? degradedDetail
+                ? `Degraded — ${degradedDetail}`
+                : `Listening — FormLogic Desktop v${desktop.version ?? '?'}`
               : presence.kind === 'remote'
                 ? `Listening on ${presence.deviceName} — via relay`
                 : 'Demo bridge — no desktop connected'}

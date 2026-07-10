@@ -477,6 +477,13 @@ impl FlowRuntime {
         self.snapshot.lock().ok().and_then(|g| g.as_ref().map(f))
     }
 
+    /// The last recorded health report for a plugin (audit INT-006): lets
+    /// `/api/desktop/info` surface the aokie plugin's TRUTHFUL health so the
+    /// web UI's "Listening" state can reflect a degraded receptionist.
+    pub fn plugin_health(&self, id: &str) -> Option<crate::plugins::registry::HealthReport> {
+        self.host.last_health(id).flatten()
+    }
+
     /// Route a connector's events to ONE app (audit INT-004/C-13): the
     /// assigned app wins; with no assignment, exactly one candidate app
     /// (holding `connector.<id>.*` grants) is implicitly it; two or more is

@@ -192,6 +192,12 @@ async fn desktop_info(State(state): State<AppState>) -> impl IntoResponse {
     let mut v = serde_json::to_value(desktop_info_body()).unwrap_or_default();
     if let Some(rt) = &state.flow_runtime {
         v["flowRuntime"] = serde_json::to_value(rt.status()).unwrap_or(serde_json::Value::Null);
+        // Truthful readiness (audit INT-006/C-15): the aokie plugin's last
+        // health report — computed, never a constant ok — so "Listening" in
+        // the web UI can say WHY the receptionist is degraded.
+        if let Some(h) = rt.plugin_health("aokie") {
+            v["aokiePluginHealth"] = serde_json::to_value(h).unwrap_or(serde_json::Value::Null);
+        }
     }
     Json(v)
 }
