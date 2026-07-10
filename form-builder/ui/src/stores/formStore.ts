@@ -79,6 +79,9 @@ function generateFieldId(label: string, existingIds: string[]): string {
 // Storage mode: 'local' for localStorage, 'api' for backend
 type StorageMode = 'local' | 'api';
 
+// The independently-debounced slices of a form's server save (debounce key `${formId}-${part}`).
+export type SavePart = 'fields' | 'settings' | 'theme' | 'meta';
+
 // A form changed BOTH offline and in the cloud (since it was last in sync) — the user must pick
 // which version to keep when reconnecting.
 export interface SyncConflict {
@@ -100,6 +103,10 @@ interface FormState {
   isInitialized: boolean;
   // Per-form count of in-flight saves (field/settings/theme/meta can overlap)
   savingFormIds: Record<string, number>;
+  // Per-form parts whose last server save FAILED (audit FL-SAVE-001) — sticky until a
+  // later save of that part succeeds, so the builder shows a truthful 'Not saved' state
+  // instead of flipping back to 'Saved to cloud' after an error toast scrolls away.
+  saveErrors: Record<string, SavePart[]>;
   // Per-form undo/redo stacks of prior field-array states (ephemeral)
   fieldHistory: Record<string, { past: FormField[][]; future: FormField[][] }>;
 
@@ -135,6 +142,13 @@ interface FormState {
   // Settings & Theme
   updateFormSettings: (formId: string, settings: Partial<FormSettings>) => void;
   updateFormTheme: (formId: string, theme: Partial<FormTheme>) => void;
+
+  // Immediately re-save every part whose last sync failed. True when nothing failed
+  // (or everything now saved); false when at least one part is still unsaved.
+  retryFormSaves: (formId: string) => Promise<boolean>;
+  // LOCAL-ONLY mutation — no server sync is scheduled. For truthful rollback (e.g.
+  // reverting an optimistic publish the server never acknowledged), never for edits.
+  setFormLocal: (id: string, updates: Partial<Form>) => void;
 
   // Sync
   syncToApi: () => Promise<{ success: boolean; synced: number; unchanged: number; deleted: number; conflicts: SyncConflict[]; errors: string[] }>;
@@ -219,6 +233,18 @@ export async function flushDebouncedSave(formId: string): Promise<void> {
   }
 }
 
+/**
+ * Flush a form's pending saves AND report the truth (audit FL-SAVE-001): run any pending
+ * debounced saves now, then immediately retry any part whose save failed (this call or an
+ * earlier one). `ok: false` means at least one slice of this form is NOT on the server —
+ * callers that are about to announce success (publish, preview, navigation) must not.
+ */
+export async function flushFormSaves(formId: string): Promise<{ ok: boolean }> {
+  await flushDebouncedSave(formId);
+  const ok = await useFormStore.getState().retryFormSaves(formId);
+  return { ok };
+}
+
 export const useFormStore = create<FormState>()(
   persist(
     (set, get) => {
@@ -239,6 +265,65 @@ export const useFormStore = create<FormState>()(
       });
     };
 
+    // Track the outcome of the last save of each part (FL-SAVE-001): a failure is STICKY in
+    // saveErrors until a later save of the same part succeeds, so the UI can stay truthful.
+    const recordSaveResult = (formId: string, part: SavePart, ok: boolean) => {
+      set((s) => {
+        const current = s.saveErrors[formId] ?? [];
+        const next = ok ? current.filter((p) => p !== part) : current.includes(part) ? current : [...current, part];
+        if (next.length === current.length && next.every((p, i) => p === current[i])) {
+          return {};
+        }
+        const saveErrors = { ...s.saveErrors };
+        if (next.length === 0) {
+          delete saveErrors[formId];
+        } else {
+          saveErrors[formId] = next;
+        }
+        return { saveErrors };
+      });
+    };
+
+    // THE one server write for a form slice — every debounced sync and every retry/flush
+    // funnels through here so success/failure is recorded exactly once per attempt.
+    // api.updateForm returns { error } as a VALUE on HTTP/network/quota failure (it doesn't
+    // throw), so failures are checked explicitly — otherwise they were silent and the
+    // indicator falsely flipped to "saved" while the optimistic edit (not persisted in API
+    // mode; dropped on reload) was lost.
+    const saveFormPart = async (formId: string, part: SavePart): Promise<boolean> => {
+      const form = get().forms.find((f) => f.id === formId);
+      if (!form) {
+        return true; // deleted meanwhile — nothing left to save
+      }
+      try {
+        let result;
+        if (part === 'meta') {
+          // Send ALL editable meta fields, not just title/description/status/icon.
+          // The Theme/Settings/Script/AI editors all route through updateForm, so
+          // omitting theme/settings/logicScript/logicPrompt here silently dropped
+          // them server-side (data loss + false "saved" toast). `fields` are synced
+          // separately via the `-fields` debounce, so they are intentionally excluded.
+          const { title, description, status, icon, theme, settings, logicScript, logicPrompt } = form;
+          result = await api.updateForm(formId, { title, description, status, icon, theme, settings, logicScript, logicPrompt });
+        } else {
+          result = await api.updateForm(formId, { [part]: form[part] });
+        }
+        if (result.error) {
+          logger.error(`Failed to save form ${part} to server:`, result.error);
+          toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
+          recordSaveResult(formId, part, false);
+          return false;
+        }
+        recordSaveResult(formId, part, true);
+        return true;
+      } catch (error) {
+        logger.error(`Failed to save form ${part} to server:`, error);
+        toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
+        recordSaveResult(formId, part, false);
+        return false;
+      }
+    };
+
     const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
       // Demo overlay writes nothing to the server; the optimistic edit lives in the (persisted) store.
       if (get().storageMode === 'api' && !api.isDemoMode()) {
@@ -252,22 +337,7 @@ export const useFormStore = create<FormState>()(
         }
         debouncedSave(key, async () => {
           try {
-            const form = get().forms.find((f) => f.id === formId);
-            if (form) {
-              // api.updateForm returns { error } as a VALUE on HTTP/network/quota
-              // failure (it doesn't throw), so a failed save must be checked here —
-              // otherwise it was silent and the indicator falsely flipped to "saved"
-              // while the optimistic edit (not persisted; dropped on reload in API
-              // mode) was lost.
-              const result = await api.updateForm(formId, { [field]: form[field] });
-              if (result.error) {
-                logger.error('Failed to sync form field to server:', result.error);
-                toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
-              }
-            }
-          } catch (error) {
-            logger.error('Failed to sync form field to server:', error);
-            toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
+            await saveFormPart(formId, field);
           } finally {
             markSaving(formId, false);
           }
@@ -319,6 +389,7 @@ export const useFormStore = create<FormState>()(
       pendingDeletions: [],
       isInitialized: false,
       savingFormIds: {} as Record<string, number>,
+      saveErrors: {} as Record<string, SavePart[]>,
 
       initialize: async () => {
         const state = get();
@@ -478,31 +549,35 @@ export const useFormStore = create<FormState>()(
           }
           debouncedSave(key, async () => {
             try {
-              const currentForm = get().forms.find((f) => f.id === id);
-              if (currentForm) {
-                // Send ALL editable meta fields, not just title/description/status/icon.
-                // The Theme/Settings/Script/AI editors all route through updateForm, so
-                // omitting theme/settings/logicScript/logicPrompt here silently dropped
-                // them server-side (data loss + false "saved" toast). `fields` are synced
-                // separately via the `-fields` debounce, so they are intentionally excluded.
-                const { title, description, status, icon, theme, settings, logicScript, logicPrompt } = currentForm;
-                // Errors come back as a VALUE (request() never throws on HTTP/
-                // network failure), so the old catch-only handling was dead code for
-                // real failures — check result.error explicitly.
-                const result = await api.updateForm(id, { title, description, status, icon, theme, settings, logicScript, logicPrompt });
-                if (result.error) {
-                  logger.error('Failed to update form on server:', result.error);
-                  toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
-                }
-              }
-            } catch (error) {
-              logger.error('Failed to update form on server:', error);
-              toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
+              await saveFormPart(id, 'meta');
             } finally {
               markSaving(id, false);
             }
           });
         }
+      },
+
+      retryFormSaves: async (id) => {
+        const failed = get().saveErrors[id] ?? [];
+        if (failed.length === 0) {
+          return true;
+        }
+        if (get().storageMode !== 'api' || api.isDemoMode()) {
+          return true; // nothing syncs to a server in these modes
+        }
+        markSaving(id, true);
+        try {
+          const results = await Promise.all(failed.map((part) => saveFormPart(id, part)));
+          return results.every(Boolean);
+        } finally {
+          markSaving(id, false);
+        }
+      },
+
+      setFormLocal: (id, updates) => {
+        set((s) => ({
+          forms: s.forms.map((form) => (form.id === id ? { ...form, ...updates } : form)),
+        }));
       },
 
       deleteForm: async (id) => {
@@ -515,13 +590,16 @@ export const useFormStore = create<FormState>()(
         clearDebounceTimer(`${id}-theme`);
         clearDebounceTimer(`${id}-meta`);
 
-        // Optimistic update (also drop any in-session undo history for the form)
+        // Optimistic update (also drop any in-session undo history + sticky save errors)
         set((s) => {
           const fieldHistory = { ...s.fieldHistory };
           delete fieldHistory[id];
+          const saveErrors = { ...s.saveErrors };
+          delete saveErrors[id];
           return {
             forms: s.forms.filter((form) => form.id !== id),
             activeFormId: s.activeFormId === id ? null : s.activeFormId,
+            saveErrors,
             fieldHistory,
           };
         });

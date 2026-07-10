@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { api } from '../../lib/api';
-import { flushDebouncedSave, useFormStore } from '../../stores/formStore';
+import { flushFormSaves, useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 import { PreviewContextChooser } from './PreviewContextChooser';
 import { appFormPreviewUrl, openPreviewPlaceholder, openPreviewTab, standalonePreviewUrl } from './previewRouting';
 import type { FormAppContext } from '../../types/app';
@@ -46,7 +47,16 @@ export function useFormPreview(): UseFormPreviewResult {
     const tab = openPreviewPlaceholder();
     void (async () => {
       // Push any pending debounced edit to the server BEFORE the preview tab loads it.
-      await flushDebouncedSave(formId);
+      // FL-SAVE-001: the preview tab renders the SERVER copy, so a failed flush means it
+      // will show the last saved revision, not the just-typed one — say so instead of
+      // letting a silent failure masquerade as an up-to-date preview.
+      const { ok } = await flushFormSaves(formId);
+      if (!ok) {
+        toast.warning(
+          'Previewing the last saved version',
+          'Your newest edits could not be saved to the server — retry from the save indicator to preview them.'
+        );
+      }
       let contexts: FormAppContext[];
       try {
         const res = await api.getFormAppContexts(formId);

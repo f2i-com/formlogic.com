@@ -13,6 +13,7 @@ import {
   Keyboard,
   History,
   MoreVertical,
+  AlertTriangle,
   Check,
   Loader2,
   Save,
@@ -62,7 +63,7 @@ import { resolveBuilderChrome, type BuilderChromeTier } from '../components/buil
 import { BUILDER_FLOWS_W, BUILDER_SETTINGS_W, resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
 import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
 import { demoApplyFormBindingOverlay } from '../lib/demoLocal';
-import { useFormStore } from '../stores/formStore';
+import { flushFormSaves, useFormStore } from '../stores/formStore';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { usePersistentBoolean } from '../hooks/usePersistentBoolean';
 import { toast } from '../stores/toastStore';
@@ -146,18 +147,60 @@ function BuilderToolbarDivider() {
   return <div className="hidden h-4 w-px flex-none bg-gray-200 dark:bg-slate-700 sm:block" aria-hidden="true" />;
 }
 
-function BuilderSaveIndicator({ isSaving, storageMode, compact = false }: { isSaving: boolean; storageMode: string; compact?: boolean }) {
+function BuilderSaveIndicator({
+  isSaving,
+  hasSaveError,
+  onRetry,
+  storageMode,
+  compact = false,
+}: {
+  isSaving: boolean;
+  hasSaveError: boolean;
+  onRetry: () => void;
+  storageMode: string;
+  compact?: boolean;
+}) {
   const savedToCloud = storageMode === 'api';
-  const label = isSaving ? 'Saving' : savedToCloud ? 'Saved to cloud' : 'Saved locally';
+  // Failure outranks everything (FL-SAVE-001): after a failed sync the indicator must NOT
+  // drift back to 'Saved to cloud' — it stays 'Not saved' (clickable retry) until a save of
+  // the failed slice actually succeeds.
+  const label = hasSaveError && !isSaving
+    ? 'Not saved — click to retry'
+    : isSaving
+      ? 'Saving'
+      : savedToCloud
+        ? 'Saved to cloud'
+        : 'Saved locally';
   // The floppy disk IS the save glyph (user request) — the title still says where it went.
-  const icon = isSaving
-    ? <Loader2 className="h-3 w-3 animate-spin" />
-    : (
-      <>
-        <Save className="h-3 w-3" />
-        <Check className="h-3 w-3" />
-      </>
+  const icon = hasSaveError && !isSaving
+    ? <AlertTriangle className="h-3 w-3" />
+    : isSaving
+      ? <Loader2 className="h-3 w-3 animate-spin" />
+      : (
+        <>
+          <Save className="h-3 w-3" />
+          <Check className="h-3 w-3" />
+        </>
+      );
+
+  if (hasSaveError && !isSaving) {
+    return (
+      <button
+        type="button"
+        onClick={onRetry}
+        aria-label={label}
+        title={label}
+        className={
+          compact
+            ? 'flex h-8 w-8 flex-none cursor-pointer items-center justify-center text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300'
+            : 'flex flex-none cursor-pointer items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300'
+        }
+      >
+        {icon}
+        {!compact && <span>Not saved — retry</span>}
+      </button>
     );
+  }
 
   if (compact) {
     return (
@@ -322,6 +365,28 @@ export default function FormBuilder() {
     redoFields,
   } = useFormStore();
   const isSaving = useFormStore((s) => formId ? !!s.savingFormIds[formId] : false);
+  const hasSaveError = useFormStore((s) => (formId ? (s.saveErrors[formId]?.length ?? 0) > 0 : false));
+  const retrySaves = useCallback(() => {
+    if (!formId) return;
+    void flushFormSaves(formId).then(({ ok }) => {
+      if (ok) {
+        toast.success('Saved', 'All changes are on the server now.');
+      } else {
+        toast.error('Still not saved', 'Check your connection and try again.');
+      }
+    });
+  }, [formId]);
+  // FL-SAVE-001: edits sync on a debounce, so closing/reloading the tab inside that window
+  // (or with a failed save outstanding) silently discards them - warn before unload.
+  useEffect(() => {
+    if (!isSaving && !hasSaveError) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isSaving, hasSaveError]);
   const storageMode = useFormStore((s) => s.storageMode);
   // Subscribe to this form's history so the undo/redo buttons re-render as it changes.
   const fieldHistory = useFormStore((s) => (formId ? s.fieldHistory[formId] : undefined));
@@ -969,10 +1034,10 @@ export default function FormBuilder() {
                 is announced to screen readers. Full at lg+, compact below, and clipped
                 with the title so it can never overlap the right group. */}
             <div className="hidden flex-none lg:flex">
-              <BuilderSaveIndicator isSaving={isSaving} storageMode={storageMode} />
+              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} />
             </div>
             <div className="flex flex-none lg:hidden">
-              <BuilderSaveIndicator isSaving={isSaving} storageMode={storageMode} compact />
+              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} compact />
             </div>
           </div>
         </div>
@@ -1057,7 +1122,25 @@ export default function FormBuilder() {
                 return;
               }
               const alreadyLive = form.status === 'published';
+              const previousStatus = form.status;
               await updateForm(form.id, { status: 'published' });
+              // FL-SAVE-001: updateForm only SCHEDULES the server write - flush it and
+              // require acknowledgement before announcing anything. On failure, roll the
+              // optimistic status back so the header does not claim 'Published' for a
+              // version the server never accepted.
+              if (storageMode === 'api' && !api.isDemoMode()) {
+                const { ok } = await flushFormSaves(form.id);
+                if (!ok) {
+                  if (!alreadyLive) {
+                    useFormStore.getState().setFormLocal(form.id, { status: previousStatus });
+                  }
+                  toast.error(
+                    alreadyLive ? 'Changes not published' : 'Not published',
+                    'Your changes could not be saved to the server, so nothing went live. Retry from the save indicator.'
+                  );
+                  return;
+                }
+              }
               // Only cloud-stored forms have a public link / embed; a local form
               // isn't on the server, so don't claim a shareable link for it.
               if (storageMode === 'api') {
