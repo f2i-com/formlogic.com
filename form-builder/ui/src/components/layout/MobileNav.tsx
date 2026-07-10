@@ -67,7 +67,7 @@ export function MobileNav() {
         <div
           role="menu"
           aria-label="Create menu"
-          className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] left-1/2 z-[60] w-56 -translate-x-1/2 rounded-xl border border-gray-200/80 bg-white py-1 shadow-lg animate-scale-in dark:border-slate-800 dark:bg-slate-900 md:hidden"
+          className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] left-1/2 z-[60] w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl border border-gray-200/80 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-scale-in dark:border-slate-800 dark:bg-slate-900 dark:ring-white/[0.06] md:hidden"
         >
           <QuickMenuItem icon={FilePlus2} label="New form" onClick={handleNewForm} />
           <QuickMenuItem icon={Boxes} label="New app" onClick={handleNewApp} />
@@ -134,9 +134,13 @@ function QuickMenuItem({ icon: Icon, label, onClick }: { icon: typeof Plus; labe
       type="button"
       onClick={onClick}
       role="menuitem"
-      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800"
+      // cursor-pointer is explicit: Tailwind's preflight leaves buttons at cursor:default,
+      // so desktop/responsive testing never showed the hand cursor here.
+      className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium text-gray-700 transition-colors hover:bg-primary-50 hover:text-primary-700 active:bg-primary-100 dark:text-slate-200 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
     >
-      <Icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-gray-100 text-gray-500 transition-colors group-hover:bg-primary-100 group-hover:text-primary-600 dark:bg-slate-800 dark:text-slate-400 dark:group-hover:bg-primary-500/20 dark:group-hover:text-primary-300">
+        <Icon className="h-5 w-5" />
+      </span>
       {label}
     </button>
   );

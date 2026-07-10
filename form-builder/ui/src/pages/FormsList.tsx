@@ -825,41 +825,74 @@ export function FormsList() {
     );
   }, [appGroups, searchQuery, appMemberMatches]);
 
+  const compareForms = useCallback((a: Form, b: Form): number => {
+    switch (sortBy) {
+      case 'name':
+        return a.title.localeCompare(b.title);
+      case 'responses': {
+        const ca = storageMode === 'api' ? (a.responseCount ?? 0) : getResponsesByFormId(a.id).length;
+        const cb = storageMode === 'api' ? (b.responseCount ?? 0) : getResponsesByFormId(b.id).length;
+        return cb - ca;
+      }
+      case 'modified':
+      default:
+        return parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime();
+    }
+  }, [sortBy, storageMode, getResponsesByFormId]);
+
+  const matchesPackFilter = useCallback((form: Form): boolean => {
+    if (packFilter === 'all') return true;
+    if (packFilter === 'none') return !formPackIdMap[form.id];
+    return formPackIdMap[form.id] === packFilter;
+  }, [packFilter, formPackIdMap]);
+
   const filteredForms = useMemo(() =>
-    viewForms
-      .filter((form) => {
-        const q = searchQuery.trim().toLowerCase();
-        if (q && !form.title.toLowerCase().includes(q) && !(form.description ?? '').toLowerCase().includes(q)) {
-          return false;
-        }
-        if (packFilter === 'all') return true;
-        if (packFilter === 'none') return !formPackIdMap[form.id];
-        return formPackIdMap[form.id] === packFilter;
-      })
-      .sort((a, b) => {
-        switch (sortBy) {
-          case 'name':
-            return a.title.localeCompare(b.title);
-          case 'responses': {
-            const ca = storageMode === 'api' ? (a.responseCount ?? 0) : getResponsesByFormId(a.id).length;
-            const cb = storageMode === 'api' ? (b.responseCount ?? 0) : getResponsesByFormId(b.id).length;
-            return cb - ca;
-          }
-          case 'modified':
-          default:
-            return parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime();
-        }
-      }),
-    [viewForms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap, storageMode]
+    viewForms.filter(matchesPackFilter).sort(compareForms),
+    [viewForms, compareForms, matchesPackFilter]
+  );
+
+  // GLOBAL search (free search — nothing is scoped away): every owned form, standalone AND
+  // inside apps, grouped standalone-first then per app. Typing a query switches the page to
+  // these results, so an item can never be "missing" just because a scope was selected.
+  const searchActive = searchQuery.trim() !== '';
+  const globalFormGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const matches = forms
+      .filter((form) =>
+        (form.title.toLowerCase().includes(q) || (form.description ?? '').toLowerCase().includes(q))
+        && matchesPackFilter(form))
+      .sort(compareForms);
+    const standalone: Form[] = [];
+    const byApp = new Map<string, { name: string; forms: Form[] }>();
+    for (const form of matches) {
+      const app = formToApp[form.id];
+      if (!app) {
+        standalone.push(form);
+        continue;
+      }
+      const entry = byApp.get(app.id) ?? { name: app.name, forms: [] };
+      entry.forms.push(form);
+      byApp.set(app.id, entry);
+    }
+    const groups: { key: string; label: string | null; forms: Form[] }[] = [];
+    if (standalone.length > 0) groups.push({ key: 'standalone', label: null, forms: standalone });
+    for (const [appId, entry] of byApp) groups.push({ key: appId, label: entry.name, forms: entry.forms });
+    return groups;
+  }, [forms, searchQuery, matchesPackFilter, compareForms, formToApp]);
+  const globalFormCount = useMemo(
+    () => globalFormGroups.reduce((n, g) => n + g.forms.length, 0),
+    [globalFormGroups]
   );
 
   const draftForms = useMemo(() => filteredForms.filter((f) => f.status === 'draft'), [filteredForms]);
   const publishedForms = useMemo(() => filteredForms.filter((f) => f.status === 'published'), [filteredForms]);
   const archivedForms = useMemo(() => filteredForms.filter((f) => f.status === 'archived'), [filteredForms]);
 
-  // Shared across all tabs: when a search or pack filter is active, an empty tab offers
-  // to clear the filters instead of claiming there are no forms of that status.
-  const filtersActive = searchQuery.trim() !== '' || packFilter !== 'all';
+  // Shared across all tabs: when a pack filter is active, an empty tab offers to clear the
+  // filters instead of claiming there are no forms of that status (search now switches the
+  // whole page to global results, so it never empties a tab).
+  const filtersActive = packFilter !== 'all';
   const clearFiltersEmptyState = (
     <EmptyState
       icon={Search}
@@ -873,6 +906,48 @@ export function FormsList() {
       }
     />
   );
+
+  const renderAppTile = (g: (typeof appGroups)[number]) => {
+    // appMemberMatches already excludes apps with an obvious own-name/description
+    // match (see its definition above), so no need to re-derive that here.
+    const memberMatches = appMemberMatches[g.id];
+    return (
+      <button
+        key={g.id}
+        onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
+        className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50/70 dark:hover:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-600 transition-colors duration-200 text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+      >
+        <AppIdentityTile
+          logoUrl={g.logoUrl}
+          icon={g.icon}
+          accent={g.accent}
+          className="h-9 w-9 rounded-lg"
+          iconClassName="h-5 w-5"
+        />
+        <div className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{g.name}</span>
+          <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
+          {memberMatches && memberMatches.length > 0 ? (
+            <span
+              className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-primary-600 dark:text-primary-400"
+              title={`Contains matching form${memberMatches.length === 1 ? '' : 's'}: ${memberMatches.join(', ')}`}
+            >
+              <Search className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                in app: "{memberMatches[0]}"{memberMatches.length > 1 ? ` +${memberMatches.length - 1} more` : ''}
+              </span>
+            </span>
+          ) : appPackMap[g.id] && (
+            <span className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500" title={`From the ${appPackMap[g.id]} pack`}>
+              <Package className="h-3 w-3 shrink-0" />
+              <span className="truncate">{appPackMap[g.id]}</span>
+            </span>
+          )}
+        </div>
+        <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
+      </button>
+    );
+  };
 
   const renderFormCard = (form: Form) => (
     <FormCard
@@ -974,87 +1049,11 @@ export function FormsList() {
           </div>
         )}
 
-        {/* Apps grouping (top level only). While apps load, skeleton space is reserved only when
-            the cached hint says this user had apps — zero-apps users never see a skeleton vanish. */}
-        {!selectedAppId && storageMode === 'api' && ((appsLoading && hadAppsHint) || appGroups.length > 0) && (
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
-              Apps
-              {appsLoading
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-slate-500" />
-                : <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>}
-            </h2>
-            {appsLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" aria-busy="true">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 motion-safe:animate-pulse">
-                    <div className="h-9 w-9 rounded-lg bg-gray-200 dark:bg-slate-700 shrink-0" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-3.5 w-2/3 rounded bg-gray-200 dark:bg-slate-700" />
-                      <div className="h-3 w-1/3 rounded bg-gray-200 dark:bg-slate-700" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : filteredApps.length === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-slate-400">No apps match your search.</p>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {filteredApps.slice(0, appLimit).map((g) => {
-                    // appMemberMatches already excludes apps with an obvious own-name/description
-                    // match (see its definition above), so no need to re-derive that here.
-                    const memberMatches = appMemberMatches[g.id];
-                    return (
-                    <button
-                      key={g.id}
-                      onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
-                      className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50/70 dark:hover:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-600 transition-colors duration-200 text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
-                    >
-                      <AppIdentityTile
-                        logoUrl={g.logoUrl}
-                        icon={g.icon}
-                        accent={g.accent}
-                        className="h-9 w-9 rounded-lg"
-                        iconClassName="h-5 w-5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{g.name}</span>
-                        <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
-                        {memberMatches && memberMatches.length > 0 ? (
-                          <span
-                            className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-primary-600 dark:text-primary-400"
-                            title={`Contains matching form${memberMatches.length === 1 ? '' : 's'}: ${memberMatches.join(', ')}`}
-                          >
-                            <Search className="h-3 w-3 shrink-0" />
-                            <span className="truncate">
-                              in app: "{memberMatches[0]}"{memberMatches.length > 1 ? ` +${memberMatches.length - 1} more` : ''}
-                            </span>
-                          </span>
-                        ) : appPackMap[g.id] && (
-                          <span className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500" title={`From the ${appPackMap[g.id]} pack`}>
-                            <Package className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{appPackMap[g.id]}</span>
-                          </span>
-                        )}
-                      </div>
-                      <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
-                    </button>
-                    );
-                  })}
-                </div>
-                <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
-              </>
-            )}
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-2.5">Standalone forms</h2>
-          </div>
-        )}
-
-        {/* Search, sort and pack filter: search grows on the left, the filter controls sit as a
-            right-aligned group on desktop and share one row on mobile. */}
+        {/* Search first (free search): typing switches the page to GLOBAL results across every
+            app and form — nothing is scoped away. Sort/view/pack controls sit to the right. */}
         <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
           <Input
-            placeholder="Search..."
+            placeholder="Search all forms and apps..."
             aria-label="Search forms and apps"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -1115,6 +1114,92 @@ export function FormsList() {
             )}
           </div>
         </div>
+
+        {/* GLOBAL search results — the whole workspace, grouped standalone-first then per app. */}
+        {searchActive ? (
+          <div>
+            {storageMode === 'api' && filteredApps.length > 0 && (
+              <div className="mb-6">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
+                  Apps
+                  <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {filteredApps.slice(0, appLimit).map(renderAppTile)}
+                </div>
+                <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
+              </div>
+            )}
+            {globalFormCount === 0 && (storageMode !== 'api' || filteredApps.length === 0) ? (
+              <EmptyState
+                icon={Search}
+                title={`No matches for "${searchQuery.trim()}"`}
+                description="Search covers every app and form you own — try a different term, or clear the search."
+                className={EMPTY_SHELL_CLASS}
+                action={
+                  <Button variant="outline" onClick={() => { setSearchQuery(''); setPackFilter('all'); }}>
+                    Clear search
+                  </Button>
+                }
+              />
+            ) : (
+              globalFormGroups.map((group) => (
+                <div key={group.key} className="mb-6">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-1.5">
+                    {group.label ? (
+                      <>
+                        <Boxes className="h-3.5 w-3.5" />
+                        <span className="normal-case tracking-normal">{group.label}</span>
+                      </>
+                    ) : (
+                      'Standalone forms'
+                    )}
+                    <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{group.forms.length}</span>
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                    {renderFormsView(group.forms)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          <>
+        {/* Apps grouping (top level only). While apps load, skeleton space is reserved only when
+            the cached hint says this user had apps — zero-apps users never see a skeleton vanish. */}
+        {!selectedAppId && storageMode === 'api' && ((appsLoading && hadAppsHint) || appGroups.length > 0) && (
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
+              Apps
+              {appsLoading
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-slate-500" />
+                : <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>}
+            </h2>
+            {appsLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" aria-busy="true">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 motion-safe:animate-pulse">
+                    <div className="h-9 w-9 rounded-lg bg-gray-200 dark:bg-slate-700 shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 w-2/3 rounded bg-gray-200 dark:bg-slate-700" />
+                      <div className="h-3 w-1/3 rounded bg-gray-200 dark:bg-slate-700" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : filteredApps.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-slate-400">No apps match your search.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {filteredApps.slice(0, appLimit).map(renderAppTile)}
+                </div>
+                <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
+              </>
+            )}
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-2.5">Standalone forms</h2>
+          </div>
+        )}
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={(tab) => { setActiveTab(tab); setFormLimit(FORMS_PAGE); }}>
@@ -1225,6 +1310,8 @@ export function FormsList() {
             <ShowMore shown={Math.min(formLimit, archivedForms.length)} total={archivedForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
           </TabsContent>
         </Tabs>
+          </>
+        )}
       </div>
 
       {/* Embed Modal */}
