@@ -334,6 +334,42 @@ mod tests {
         serde_json::from_str(json).expect("body parses")
     }
 
+    /// Audit CROSS-COMPAT-001: this repo's Aokie artifacts are locked to the
+    /// SHARED contract fixture (byte-identical copy in the aokie repo, locked
+    /// there against contract.rs). A unilateral contract change fails one
+    /// repo's CI until the fixture is updated in a coordinated PR set.
+    #[test]
+    fn cross_repo_contract_fixture_matches_bundled_artifacts() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../docs/contracts/aokie-connector-contract.v1.json"
+        ))
+        .expect("contract fixture parses");
+        let bundled: serde_json::Value = serde_json::from_str(include_str!(
+            "../resources/plugins/aokie/manifest.json"
+        ))
+        .expect("bundled aokie manifest parses");
+
+        assert_eq!(
+            fixture["events"], bundled["events"],
+            "bundled aokie manifest events drifted from the contract fixture"
+        );
+        assert_eq!(
+            fixture["commands"], bundled["connectors"][0]["commands"],
+            "bundled aokie manifest commands drifted from the contract fixture"
+        );
+        assert_eq!(
+            fixture["pluginApiVersion"], bundled["pluginApiVersion"],
+            "pluginApiVersion drifted"
+        );
+        for err in fixture["errors"].as_array().expect("errors array") {
+            let code = err.as_str().unwrap();
+            assert!(
+                VALID_ERROR_CODES.contains(&code),
+                "fixture error '{code}' missing from VALID_ERROR_CODES"
+            );
+        }
+    }
+
     #[test]
     fn body_validation() {
         // Minimal valid body (connectorId comes from the URL).

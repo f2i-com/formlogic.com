@@ -30,6 +30,19 @@ const eventEntries = (): FlowTriggerEventEntry[] =>
   FLOW_EVENT_CATALOG.filter((entry): entry is FlowTriggerEventEntry => entry.kind === 'event');
 
 describe('flowEventCatalog parity', () => {
+  // Audit CROSS-COMPAT-001: the UI's Aokie surface is locked to the SHARED
+  // cross-repo contract fixture (byte-identical copy in the aokie repo,
+  // locked there against contract.rs). A unilateral contract change fails
+  // one repo's CI until the fixture is updated in a coordinated PR set.
+  it('matches the shared cross-repo contract fixture', () => {
+    const fixture = JSON.parse(
+      readFileSync(join(__dirname, '../../../../../docs/contracts/aokie-connector-contract.v1.json'), 'utf8')
+    ) as { contractVersion: number; events: string[]; commands: string[] };
+    expect(fixture.contractVersion).toBe(1);
+    expect([...AOKIE_EVENT_NAMES]).toEqual(fixture.events);
+    expect([...AOKIE_CONNECTOR_COMMANDS]).toEqual(fixture.commands);
+  });
+
   it('covers every Aokie manifest event exactly once', () => {
     const declaredEvents = manifest().events;
     const declared = new Set(declaredEvents);
