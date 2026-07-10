@@ -522,6 +522,8 @@ class AuthController
         }
 
         try {
+            $failedApps = 0;
+            $failedForms = 0;
             // Delete apps the user owns (membership of other people's apps is
             // removed via the user FK cascade on the users delete).
             if ($this->appService) {
@@ -531,6 +533,7 @@ class AuthController
                         try {
                             $this->appService->deleteApp((string) $app['id']);
                         } catch (\Throwable $e) {
+                            $failedApps++;
                             $this->logger->error('Account deletion: failed to delete app', ['appId' => $app['id'], 'userId' => $userId, 'error' => $e->getMessage()]);
                         }
                     }
@@ -540,31 +543,57 @@ class AuthController
             // uploaded files). getAllForms defaults to 50, so loop until empty —
             // re-querying offset 0 each pass since rows are being removed. Without
             // this, forms beyond 50 leave orphaned SQLite DBs + PII files on disk
-            // after a GDPR-erasure request.
+            // after a GDPR-erasure request. A pass that makes NO progress stops the
+            // loop (a persistently-failing form must not spin the guard to 1000).
             if ($this->formService) {
                 $guard = 0;
                 do {
                     $batch = $this->formService->getAllForms($userId, ['limit' => 1000, 'offset' => 0]);
+                    $deletedThisPass = 0;
+                    $failedForms = 0; // per-pass: only the FINAL pass's failures matter
                     foreach ($batch as $form) {
                         if (!empty($form['id'])) {
                             try {
                                 $this->formService->deleteForm((string) $form['id']);
+                                $deletedThisPass++;
                             } catch (\Throwable $e) {
+                                $failedForms++;
                                 $this->logger->error('Account deletion: failed to delete form', ['formId' => $form['id'], 'userId' => $userId, 'error' => $e->getMessage()]);
                             }
                         }
                     }
-                } while (count($batch) > 0 && ++$guard < 1000);
+                } while (count($batch) > 0 && $deletedThisPass > 0 && ++$guard < 1000);
+            }
+
+            // Truthful completion (audit FL-005/FL-01): NEVER drop the user row while
+            // owned resources remain — per-form SQLite databases and uploads live on
+            // DISK, and deleting the account row first would orphan that PII with no
+            // owner left to retry as. Every per-resource delete is idempotent, so a
+            // failed erasure is RESUMABLE: the account stays intact and the user (or
+            // support) simply retries.
+            $remainingForms = $this->formService
+                ? count($this->formService->getAllForms($userId, ['limit' => 1, 'offset' => 0]))
+                : 0;
+            if ($failedApps > 0 || $failedForms > 0 || $remainingForms > 0) {
+                $this->audit($request, 'auth.account_delete_incomplete', 'user', $userId);
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'status' => 'failed',
+                    'retryable' => true,
+                    'failedApps' => $failedApps,
+                    'failedForms' => $failedForms,
+                    'message' => 'Some of your data could not be deleted, so your account was NOT closed. Nothing is lost — please retry; deletion resumes where it left off.',
+                ], 503);
             }
 
             $this->authService->deleteAccount($userId);
             $this->audit($request, 'auth.account_delete', 'user', $userId);
 
             $response = $this->clearAuthCookie($response);
-            return $this->jsonResponse($response, ['message' => 'Your account has been deleted.']);
+            return $this->jsonResponse($response, ['status' => 'completed', 'message' => 'Your account has been deleted.']);
         } catch (\Exception $e) {
             $this->logger->error('Account deletion error', ['exception' => $e->getMessage()]);
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to delete account'], 500);
+            return $this->jsonResponse($response, ['error' => true, 'status' => 'failed', 'retryable' => true, 'message' => 'Failed to delete account — nothing was finalized; please retry.'], 500);
         }
     }
 
