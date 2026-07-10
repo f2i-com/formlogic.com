@@ -884,8 +884,16 @@ class ResponseService
                 'completion_time' => $data['completionTime'] ?? null,
             ]);
         } catch (\Exception $mysqlErr) {
-            // Compensating delete on SQLite if MySQL insert fails
-            $db->exec("DELETE FROM responses WHERE id = " . $db->quote($id));
+            // Compensating delete on SQLite if MySQL insert fails. Step 4/5 may
+            // already have written child rows (computed/tags/script_logs) keyed
+            // by this response id — remove them too, or the failed submission
+            // leaves orphaned computed values, tags and a script log with no
+            // parent response (SQLite FKs are not enforced by default).
+            $qid = $db->quote($id);
+            $db->exec("DELETE FROM computed WHERE response_id = $qid");
+            $db->exec("DELETE FROM tags WHERE response_id = $qid");
+            $db->exec("DELETE FROM script_logs WHERE response_id = $qid");
+            $db->exec("DELETE FROM responses WHERE id = $qid");
             throw $mysqlErr;
         }
 
