@@ -172,11 +172,14 @@ function connectIfReady(): void {
   abortController = controller;
   connectedToken = token;
 
-  const url = `${getDesktopBaseUrl()}/api/events?token=${encodeURIComponent(token)}`;
+  // Fetch-based SSE can set headers, so the pairing token travels as a
+  // Bearer header like every other desktop call — never in the URL, where
+  // it would land in server/proxy logs (audit FL-008).
+  const url = `${getDesktopBaseUrl()}/api/events`;
   void fetch(url, {
     credentials: 'omit',
     cache: 'no-store',
-    headers: { Accept: 'text/event-stream' },
+    headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` },
     signal: controller.signal,
   })
     .then(async (res) => {

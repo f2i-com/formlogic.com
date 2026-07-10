@@ -34,7 +34,7 @@ use axum::{
     extract::{Path, Query, Request, State},
     http::{
         header::{AUTHORIZATION, ORIGIN},
-        HeaderMap, Method, StatusCode, Uri,
+        HeaderMap, Method, StatusCode,
     },
     middleware::{self, Next},
     response::{
@@ -612,15 +612,10 @@ fn is_desktop_api_path(path: &str) -> bool {
         || path.starts_with("/api/desktop/pairing-requests/")
 }
 
-/// `?token=` fallback — allowed ONLY for `/api/events`, because the browser
-/// `EventSource` API cannot set an Authorization header.
-fn query_token(uri: &Uri) -> Option<String> {
-    uri.query()?.split('&').find_map(|kv| {
-        kv.strip_prefix("token=")
-            .filter(|v| !v.is_empty())
-            .map(str::to_owned)
-    })
-}
+// The former `?token=` fallback for `/api/events` is GONE (audit FL-008):
+// the web client streams SSE via fetch(), which can send a normal
+// Authorization header — a pairing token must never appear in a URL, where
+// it would land in server/proxy logs and browser history.
 
 /// Pure decision core of [`plugin_auth_guard`], split out for tests.
 /// Precedence: the headless server token and the GUI's own webview always
@@ -667,7 +662,6 @@ async fn plugin_auth_guard(
     if req.method() == Method::OPTIONS {
         return next.run(req).await;
     }
-    let path = req.uri().path();
     let origin = req
         .headers()
         .get(ORIGIN)
@@ -679,10 +673,7 @@ async fn plugin_auth_guard(
     );
     let gui_webview_ok = st.auth.gui_mode
         && matches!(origin.as_deref(), Some(o) if is_allowed_origin_privileged(o));
-    let mut presented = bearer_token(&req);
-    if presented.is_none() && path == "/api/events" {
-        presented = query_token(req.uri());
-    }
+    let presented = bearer_token(&req);
     let pairing = presented
         .as_deref()
         .map(|t| st.pairing.check(t, origin.as_deref()));
@@ -1690,10 +1681,10 @@ pub async fn serve(
 mod tests {
     use super::{
         connector_failure_status, desktop_auth_decision, desktop_info_body, health_body,
-        is_desktop_api_path, is_restricted_read_path, privileged_allowed, query_token,
+        is_desktop_api_path, is_restricted_read_path, privileged_allowed,
     };
     use crate::pairing::TokenCheck;
-    use axum::http::{StatusCode, Uri};
+    use axum::http::StatusCode;
 
     #[test]
     fn health_reports_new_and_legacy_identity() {
@@ -1799,17 +1790,6 @@ mod tests {
         assert_eq!((status, code), (StatusCode::UNAUTHORIZED, "auth_required"));
     }
 
-    #[test]
-    fn query_token_extraction() {
-        let uri: Uri = "/api/events?token=abc123&x=1".parse().unwrap();
-        assert_eq!(query_token(&uri).as_deref(), Some("abc123"));
-        let uri: Uri = "/api/events?x=1".parse().unwrap();
-        assert_eq!(query_token(&uri), None);
-        let uri: Uri = "/api/events?token=".parse().unwrap();
-        assert_eq!(query_token(&uri), None);
-        let uri: Uri = "/api/events".parse().unwrap();
-        assert_eq!(query_token(&uri), None);
-    }
 
     #[test]
     fn connector_failure_statuses_match_codes() {

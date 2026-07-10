@@ -258,13 +258,23 @@ pub struct SpawnSpec<'a> {
 pub fn spawn_plugin(spec: &SpawnSpec<'_>, logs: LogRing) -> std::io::Result<PluginProcess> {
     // Resolve the program: a command that exists inside the plugin dir runs
     // from there (Windows' CreateProcess resolves relative paths against the
-    // PARENT's cwd, not the child's, so we must join explicitly); a bare name
-    // that doesn't ("node") falls through to the normal PATH lookup.
+    // PARENT's cwd, not the child's, so we must join explicitly). A bare name
+    // that doesn't ("node") resolves via PATH ONLY in dev mode (audit FL-008):
+    // an installed plugin runs exactly the binaries it ships — a manifest must
+    // not be able to launch whatever happens to sit on the operator's PATH.
     let in_dir = spec.plugin_dir.join(spec.command);
     let program: OsString = if in_dir.is_file() {
         in_dir.into_os_string()
-    } else {
+    } else if spec.dev_mode {
         OsString::from(spec.command)
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "plugin entry '{}' is not a file inside the plugin directory (PATH lookup is dev-mode only)",
+                spec.command
+            ),
+        ));
     };
 
     let mut cmd = tokio::process::Command::new(program);

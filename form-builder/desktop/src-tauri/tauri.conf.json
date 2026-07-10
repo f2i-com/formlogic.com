@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:17872 http://localhost:17872 ws://127.0.0.1:17872; object-src 'none'; base-uri 'self'; frame-src 'none'"
     }
   },
   "bundle": {
@@ -38,7 +38,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Local models, flows, plugins, and hardware for FormLogic apps",
-    "longDescription": "FormLogic Desktop is a tray-resident desktop app that manages local models, flows, plugins, and hardware for FormLogic apps — running local AI services (Ollama, ComfyUI, custom Python) and exposing them to FormLogic and the flow editor via a localhost API."
+    "longDescription": "FormLogic Desktop is a tray-resident desktop app that manages local models, flows, plugins, and hardware for FormLogic apps \u2014 running local AI services (Ollama, ComfyUI, custom Python) and exposing them to FormLogic and the flow editor via a localhost API."
   },
   "plugins": {}
 }
