@@ -1805,9 +1805,14 @@ export const aokieReceptionistPack: PackData = {
       timeoutMs: 60000,
       condition: { type: 'expression', expr: "event && event.data ? Number(event.data.durationSeconds || 0) > 5 : false" },
       inputMap: { callId: '$event.data.callId' },
+      // This binding OWNS the Calls summary only. Follow-up tasks are created
+      // solely by the after-call-actions binding, whose structured needTask
+      // (callback / message / booking) is the authoritative signal — so a booking
+      // call gets ONE actionable task, not a duplicate generic one. (The decide
+      // block still computes followUpRequired/followUpTask; they are intentionally
+      // no longer wired to an output action.)
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCall', responseId: '$result.responseId', answers: '$result.callUpdate' },
-        { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.followUpRequired', answers: '$result.followUpTask' },
       ],
       retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
       fallbackPolicy: { onError: 'log_and_continue' },
