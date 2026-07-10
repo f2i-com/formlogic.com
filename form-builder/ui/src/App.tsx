@@ -9,6 +9,7 @@ import { Landing } from './pages/Landing';
 import { NotFound } from './pages/NotFound';
 import { OpenInApp } from './pages/OpenInApp';
 import { DeviceCheck } from './pages/DeviceCheck';
+import { DownloadPage } from './pages/DownloadPage';
 import { LegalPage } from './pages/LegalPage';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { ForgotPassword } from './pages/ForgotPassword';
@@ -224,6 +225,7 @@ const PUBLIC_PATHS = [
   '/privacy',
   '/terms',
   '/app/:appSlug/*',
+  '/download',
   // OAuth consent renders signed-out too (it routes through login and back) — don't bounce
   // a mid-flow visitor to the landing page on logout/session expiry.
   '/oauth/authorize',
@@ -280,6 +282,8 @@ function AppRoutes() {
         <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
         {/* Device connector check (phone abilities) — works in browser + native runtime */}
         <Route path="/device-check" element={<DeviceCheck />} />
+        {/* Platform-aware app download page — the launch-page "Get the app" fallback (FL-NATIVE-001) */}
+        <Route path="/download" element={<DownloadPage />} />
         {/* App runtime - accessible with platform auth */}
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
@@ -343,6 +347,7 @@ function AppRoutes() {
         <Route path="/terms" element={<LegalPage type="terms" />} />
         <Route path="/form/:formId" element={<FormResponse />} />
         <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
+        <Route path="/download" element={<DownloadPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
         {/* 404 catch-all */}
@@ -416,6 +421,7 @@ function AppRoutes() {
 
       {/* Native-runtime App Link fallback (see signed-out block). */}
       <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
+      <Route path="/download" element={<DownloadPage />} />
       {/* App runtime (full screen, separate layout) */}
       <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 

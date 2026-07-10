@@ -354,6 +354,18 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
               Require the native runtime
             </label>
           </div>
+          {/* FL-NATIVE-001: make the lockout consequences of require-native explicit before saving. */}
+          {requireNativeRuntime && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+              <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                The launch page will steer every visitor to the native app instead of the web app.
+                {installUrl.trim()
+                  ? ' Visitors without it are sent to your install URL.'
+                  : ' No install URL is set, so visitors without it are sent to the generic FormLogic download page — set your store listing above for a branded path.'}{' '}
+                A “continue in your browser” recovery link stays available so nobody is locked out.
+              </p>
+            </div>
+          )}
           <div className="flex items-center justify-end gap-3">
             {hasErrors && <span className="text-[11px] text-red-500 dark:text-red-400">Fix the highlighted fields to save.</span>}
             <Button size="sm" onClick={save} isLoading={saving} disabled={saving || hasErrors}>Save native settings</Button>

@@ -79,9 +79,11 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
   // Show the native CTA when the launch page opts in, when the domain flags it, or when the app REQUIRES
   // the runtime (in which case it becomes the primary way in).
   const showNativeCta = landing.showInstallNative || !!native?.showNativeCta || requireNative;
-  // Prefer the domain's own install URL (store listing / white-label build); fall back to the platform
-  // download page only when the domain didn't set one.
-  const nativeInstallUrl = native?.installUrl || 'https://formlogic.com/download';
+  // Prefer the domain's own install URL (store listing / white-label build); fall back to the
+  // platform-aware /download page when the domain didn't set one. RELATIVE on purpose
+  // (FL-NATIVE-001): it resolves on this very host — custom domains serve the SPA for every
+  // non-root path — so the fallback works self-hosted and never depends on formlogic.com.
+  const nativeInstallUrl = native?.installUrl || '/download';
 
   async function install() {
     if (!installPrompt) return;
@@ -233,6 +235,18 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
                   </a>
                 )}
               </div>
+              {/* FL-NATIVE-001: even a require-native app must never dead-end a visitor who can't
+                  install right now. The web app at /app/{slug} is directly reachable regardless
+                  (requireNative only changes what this page promotes), so offering it quietly is
+                  honesty, not a new hole. */}
+              {requireNative && (
+                <p className="mt-2 text-center text-[11px] text-gray-400 dark:text-slate-500">
+                  Can't install right now?{' '}
+                  <a href={openUrl} className="underline hover:no-underline">
+                    Continue in your browser
+                  </a>
+                </p>
+              )}
             </div>
           )}
         </div>
