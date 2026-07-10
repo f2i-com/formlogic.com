@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { RelatedRecordsPanel } from '../components/app-runtime/RelatedRecordsPanel';
 import {
   Search,
   Trash2,
@@ -1396,6 +1397,24 @@ function FormResponses() {
                   )}
                 </div>
               </div>
+
+              {/* Related records (owner-scoped): records in the owner's other forms that link
+                  here through a linked_record field — view + delete inline; Add is via the app
+                  runtime (prefilled), so it's not offered in this owner admin view. */}
+              {formId && storageMode === 'api' && (
+                <RelatedRecordsPanel
+                  appSlug=""
+                  formId={formId}
+                  responseId={selectedResponse.id}
+                  fetchRelated={(opts) =>
+                    api.getOwnerRelatedRecords(formId, selectedResponse.id, opts)
+                      .then((r) => ({ related: r.data?.related, error: typeof r.error === 'string' ? r.error : undefined }))}
+                  deleteRecord={async (fid, rid) => { const r = await api.deleteResponse(fid, rid); return !r.error; }}
+                  canAddFn={() => false}
+                  canDeleteFn={() => true}
+                  onOpenRecord={(fid, rid) => { setIsViewModalOpen(false); navigate(`/responses/${fid}?open=${rid}`); }}
+                />
+              )}
             </div>
             <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsViewModalOpen(false)}>

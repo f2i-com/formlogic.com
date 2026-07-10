@@ -14,6 +14,14 @@ interface RelatedRecordsPanelProps {
   appSlug: string;
   formId: string;
   responseId: string;
+  // Owner-mode overrides (the builder responses page): when provided, the panel uses these
+  // instead of the app-runtime store + app routes. All absent = the app-runtime behavior.
+  fetchRelated?: (opts: { limit: number; offset: number }) => Promise<{ related?: Record<string, RelatedRecordGroup>; error?: string }>;
+  deleteRecord?: (formId: string, recordId: string) => Promise<boolean>;
+  canAddFn?: (formId: string) => boolean;
+  canDeleteFn?: (formId: string) => boolean;
+  onOpenRecord?: (formId: string, recordId: string) => void;
+  onAddRecord?: (group: RelatedRecordGroup) => void;
 }
 
 /** Render one related-record cell value: arrays join, empty shows an em dash. */
@@ -24,9 +32,10 @@ function formatCell(value: unknown): string {
   return String(value);
 }
 
-export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedRecordsPanelProps) {
+export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
+  const { appSlug, formId, responseId } = props;
   const navigate = useNavigate();
-  const { canSubmit, canDelete, deleteResponse } = useAppRuntimeStore();
+  const store = useAppRuntimeStore();
   const [related, setRelated] = useState<Record<string, RelatedRecordGroup>>({});
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -37,19 +46,29 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   const [deleteTarget, setDeleteTarget] = useState<{ formId: string; id: string; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Resolve the data/CRUD/nav sources — the app-runtime store + app routes by default,
+  // or the owner-mode overrides when provided.
+  const doFetch = useCallback(
+    (opts: { limit: number; offset: number }) =>
+      props.fetchRelated
+        ? props.fetchRelated(opts)
+        : api.getRelatedRecords(appSlug, formId, responseId, opts).then((r) => ({ related: r.data?.related, error: r.error })),
+    [props, appSlug, formId, responseId]
+  );
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: status reset must be synchronous when deps change
     setLoading(true);
     setError(null);
     setOffset(0);
     let cancelled = false;
-    api.getRelatedRecords(appSlug, formId, responseId, { limit: PAGE_SIZE, offset: 0 }).then((result) => {
+    doFetch({ limit: PAGE_SIZE, offset: 0 }).then((result) => {
       if (cancelled) return;
       if (result.error) {
         setError(result.error);
-      } else if (result.data?.related) {
-        setRelated(result.data.related);
-        const totalRecords = Object.values(result.data.related).reduce((sum, g) => sum + g.records.length, 0);
+      } else if (result.related) {
+        setRelated(result.related);
+        const totalRecords = Object.values(result.related).reduce((sum, g) => sum + g.records.length, 0);
         setHasMore(totalRecords >= PAGE_SIZE);
       }
       setLoading(false);
@@ -59,17 +78,18 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [appSlug, formId, responseId, refreshTick]);
+  }, [doFetch, refreshTick]);
 
   const loadMore = useCallback(async () => {
     const nextOffset = offset + PAGE_SIZE;
     setLoadingMore(true);
     try {
-      const result = await api.getRelatedRecords(appSlug, formId, responseId, { limit: PAGE_SIZE, offset: nextOffset });
-      if (result.data?.related) {
+      const result = await doFetch({ limit: PAGE_SIZE, offset: nextOffset });
+      if (result.related) {
+        const more = result.related;
         setRelated((prev) => {
           const merged = { ...prev };
-          for (const [key, group] of Object.entries(result.data!.related)) {
+          for (const [key, group] of Object.entries(more)) {
             if (merged[key]) {
               merged[key] = { ...merged[key], records: [...merged[key].records, ...group.records], count: merged[key].count + group.count };
             } else {
@@ -78,7 +98,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
           }
           return merged;
         });
-        const newRecords = Object.values(result.data.related).reduce((sum, g) => sum + g.records.length, 0);
+        const newRecords = Object.values(more).reduce((sum, g) => sum + g.records.length, 0);
         setHasMore(newRecords >= PAGE_SIZE);
         setOffset(nextOffset);
       } else {
@@ -88,30 +108,33 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
       // silently fail on load more
     }
     setLoadingMore(false);
-  }, [appSlug, formId, responseId, offset]);
+  }, [doFetch, offset]);
 
   const openRecord = useCallback((groupFormId: string, recordId: string) => {
-    navigate(`/app/${appSlug}/form/${groupFormId}/responses/${recordId}`);
-  }, [appSlug, navigate]);
+    if (props.onOpenRecord) props.onOpenRecord(groupFormId, recordId);
+    else navigate(`/app/${appSlug}/form/${groupFormId}/responses/${recordId}`);
+  }, [props, appSlug, navigate]);
 
   const addRelated = useCallback((group: RelatedRecordGroup) => {
+    if (props.onAddRecord) { props.onAddRecord(group); return; }
     if (!group.fieldId) return;
-    // Deep-link into the source form's entry with the link back to THIS record
-    // pre-seeded (AppFormView reads linkField/linkTo).
     navigate(`/app/${appSlug}/form/${group.formId}?new=1&linkField=${encodeURIComponent(group.fieldId)}&linkTo=${encodeURIComponent(responseId)}`);
-  }, [appSlug, responseId, navigate]);
+  }, [props, appSlug, responseId, navigate]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    const ok = await deleteResponse(deleteTarget.formId, deleteTarget.id);
+    const del = props.deleteRecord ?? store.deleteResponse;
+    const ok = await del(deleteTarget.formId, deleteTarget.id);
     setDeleting(false);
     if (ok) {
       setDeleteTarget(null);
-      setRefreshTick((t) => t + 1); // reload the panel so counts + rows stay truthful
+      setRefreshTick((t) => t + 1); // reload so counts + rows stay truthful
     }
-  }, [deleteTarget, deleteResponse]);
+  }, [deleteTarget, props, store]);
 
+  const canAdd = props.canAddFn ?? store.canSubmit;
+  const canDel = props.canDeleteFn ?? store.canDelete;
   const groups = Object.values(related);
 
   if (loading) {
@@ -142,8 +165,8 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
 
       {groups.map((group) => {
         const cols = group.columns && group.columns.length ? group.columns : null;
-        const mayAdd = !!group.fieldId && group.allowAdd !== false && canSubmit(group.formId);
-        const mayDelete = group.allowDelete !== false && canDelete(group.formId);
+        const mayAdd = !!group.fieldId && group.allowAdd !== false && canAdd(group.formId);
+        const mayDelete = group.allowDelete !== false && canDel(group.formId);
         return (
           <div key={group.formId} className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
             <div className="px-5 py-2.5 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">

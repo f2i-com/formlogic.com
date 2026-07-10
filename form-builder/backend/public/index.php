@@ -960,6 +960,10 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->show($request, $response, $getArgs($request));
     })->add($authRequired);
+    // Owner-scoped inverse related records (linked-records feature).
+    $group->get('/{id}/related', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ResponseController::class)->getRelatedRecords($request, $response, $getArgs($request));
+    })->add($authRequired);
     $group->put('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->update($request, $response, $getArgs($request));
     })->add($authRequired);

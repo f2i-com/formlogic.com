@@ -1212,6 +1212,148 @@ class ResponseController
     }
 
     /**
+     * Owner-scoped inverse related-records (linked-records feature): the records in the
+     * owner's OTHER forms that link to this response through a linked_record field. Mirrors
+     * AppPublicController::getRelatedRecords but scoped by ownership (the owner owns all their
+     * forms — no app/role permissions); only source forms owned by the SAME user are included.
+     * GET /api/forms/{formId}/responses/{id}/related?limit=&offset=
+     */
+    public function getRelatedRecords(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+        $responseId = $args['id'];
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if ($this->mysql === null) {
+            return $this->jsonResponse($response, ['related' => []]);
+        }
+        if (!$this->responseService->getResponse($formId, $responseId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
+        }
+
+        $q = $request->getQueryParams();
+        $limit = max(1, min((int) ($q['limit'] ?? 50), 200));
+        $offset = max(0, (int) ($q['offset'] ?? 0));
+
+        $stmt = $this->mysql->prepare(
+            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :tf AND target_response_id = :tr ORDER BY source_form_id, source_response_id, field_id LIMIT :lim OFFSET :off"
+        );
+        $stmt->bindValue('tf', $formId);
+        $stmt->bindValue('tr', $responseId);
+        $stmt->bindValue('lim', $limit, PDO::PARAM_INT);
+        $stmt->bindValue('off', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        $links = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($links)) {
+            return $this->jsonResponse($response, ['related' => []]);
+        }
+
+        $linksByForm = [];
+        foreach ($links as $link) { $linksByForm[$link['source_form_id']][] = $link; }
+
+        $related = [];
+        foreach ($linksByForm as $sourceFormId => $formLinks) {
+            $sourceForm = $this->formService->getForm($sourceFormId);
+            // Cross-tenant guard: only forms the same owner holds.
+            if (!$sourceForm || ($sourceForm['userId'] ?? null) !== $userId) { continue; }
+
+            $fieldId = $formLinks[0]['field_id'];
+            $fieldLabel = $fieldId;
+            $displayFieldIds = [];
+            $allowMultiple = false;
+            $relatedHidden = false;
+            $relatedAllowAdd = true;
+            $relatedAllowDelete = true;
+            foreach ($sourceForm['fields'] as $f) {
+                if ($f['id'] === $fieldId) {
+                    $props = $f['properties'] ?? [];
+                    $fieldLabel = $f['label'] ?? $fieldId;
+                    $displayFieldIds = $props['displayFieldIds'] ?? [];
+                    $allowMultiple = !empty($props['allowMultiple']);
+                    $relatedHidden = !empty($props['relatedHidden']);
+                    $relatedAllowAdd = ($props['relatedAllowAdd'] ?? true) !== false;
+                    $relatedAllowDelete = ($props['relatedAllowDelete'] ?? true) !== false;
+                    break;
+                }
+            }
+            if ($relatedHidden) { continue; }
+
+            $columnFieldIds = $displayFieldIds;
+            if (empty($columnFieldIds)) {
+                $c = 0;
+                foreach ($sourceForm['fields'] as $f) {
+                    if ($c >= 3) break;
+                    if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number', 'dropdown', 'date'], true)) {
+                        $columnFieldIds[] = $f['id'];
+                        $c++;
+                    }
+                }
+            }
+            $columnDefs = [];
+            foreach ($sourceForm['fields'] as $f) {
+                if (in_array($f['id'], $columnFieldIds, true)) {
+                    $columnDefs[$f['id']] = ['id' => $f['id'], 'label' => $f['label'] ?? $f['id'], 'type' => $f['type']];
+                }
+            }
+            $columns = [];
+            foreach ($columnFieldIds as $cfid) {
+                if (isset($columnDefs[$cfid])) $columns[] = $columnDefs[$cfid];
+            }
+
+            $sourceResponseIds = array_unique(array_column($formLinks, 'source_response_id'));
+            $sourceResponses = $this->responseService->getResponsesByIds($sourceFormId, $sourceResponseIds);
+
+            $matchingRecords = [];
+            foreach ($sourceResponses as $sr) {
+                $answers = $sr['answers'] ?? [];
+                $parts = [];
+                foreach ($displayFieldIds as $dfid) {
+                    $val = $answers[$dfid] ?? null;
+                    if ($val !== null) $parts[] = is_array($val) ? implode(', ', $val) : (string) $val;
+                }
+                if (empty($parts)) {
+                    $cc = 0;
+                    foreach ($sourceForm['fields'] as $f) {
+                        if ($cc >= 2) break;
+                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number'], true)) {
+                            $val = $answers[$f['id']] ?? null;
+                            if ($val !== null) { $parts[] = (string) $val; $cc++; }
+                        }
+                    }
+                }
+                $recFields = [];
+                foreach ($columnFieldIds as $cfid) { $recFields[$cfid] = $answers[$cfid] ?? null; }
+                $matchingRecords[] = [
+                    'id' => $sr['id'],
+                    'display' => implode(' - ', $parts) ?: ('Record ' . substr($sr['id'], 0, 8)),
+                    'submittedAt' => $sr['submittedAt'] ?? '',
+                    'fields' => $recFields,
+                ];
+            }
+
+            if (!empty($matchingRecords)) {
+                $related[$sourceFormId] = [
+                    'formId' => $sourceFormId,
+                    'displayName' => $sourceForm['title'] ?? $sourceFormId,
+                    'fieldLabel' => $fieldLabel,
+                    'fieldId' => $fieldId,
+                    'allowMultiple' => $allowMultiple,
+                    'allowAdd' => $relatedAllowAdd,
+                    'allowDelete' => $relatedAllowDelete,
+                    'columns' => $columns,
+                    'records' => $matchingRecords,
+                    'count' => count($matchingRecords),
+                ];
+            }
+        }
+
+        return $this->jsonResponse($response, ['related' => $related]);
+    }
+
+    /**
      * Get form analytics
      * GET /api/forms/{formId}/analytics
      */

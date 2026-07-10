@@ -1852,6 +1852,16 @@ class ApiClient {
     return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}/related${qs ? `?${qs}` : ''}`);
   }
 
+  /** Owner-scoped inverse related records (the builder responses page). Same shape as
+   *  getRelatedRecords, but authorized by form ownership rather than an app membership. */
+  async getOwnerRelatedRecords(formId: string, responseId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ related: Record<string, RelatedRecordGroup> }>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    const qs = params.toString();
+    return this.request(`/forms/${formId}/responses/${responseId}/related${qs ? `?${qs}` : ''}`);
+  }
+
   // Get app responses with resolve option
   async getAppResponsesResolved(slug: string, formId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
     const params = new URLSearchParams();
