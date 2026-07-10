@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Constants\AppPermissions;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
@@ -58,8 +59,10 @@ class FlowController
     }
 
     /**
-     * Resolve a runtime request: published app by slug + an ACTIVE member (flows execute with the
-     * viewer's session; every formlogic.* write still goes through the normal permission-checked API).
+     * Resolve a runtime request: published app by slug + an ACTIVE member holding the
+     * execute_flows permission (audit FL-AUTH-001 — membership alone no longer exposes flow
+     * definitions, run reservation/claiming or the shared flow-KV store). Flows still execute
+     * with the viewer's session; every formlogic.* write goes through the permission-checked API.
      * @return array{0:?array,1:?string,2:?Response} [app, userId, errorResponse]
      */
     private function resolveRuntime(Request $request, Response $response, string $slug): array
@@ -79,7 +82,38 @@ class FlowController
         if (!$appUser || $appUser['status'] !== 'active') {
             return [null, null, $this->jsonResponse($response, ['error' => true, 'message' => 'Not a member of this app'], 403)];
         }
+        // hasPermission() returns true for the app owner unconditionally.
+        if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::EXECUTE_FLOWS)) {
+            return [null, null, $this->jsonResponse($response, ['error' => true, 'message' => 'You do not have permission to run flows in this app'], 403)];
+        }
         return [$app, $userId, null];
+    }
+
+    /**
+     * Snapshot visibility for a member on the runtime surface (audit FL-AUTH-001): a run tied
+     * to a form carries that form's submission answers in its input snapshot, so a non-owner
+     * needs view_all_responses on that form to list/claim it (queued runs are usually OTHER
+     * members' submissions). Runs without a formId (connector/script intents) are visible to
+     * any execute_flows holder. Results are memoised per request via $permCache.
+     * @param array<string, bool> $permCache keyed by formId
+     */
+    private function canSeeRunSnapshot(array $app, string $userId, ?string $formId, array &$permCache): bool
+    {
+        if (($app['ownerId'] ?? null) === $userId) {
+            return true;
+        }
+        if ($formId === null || $formId === '') {
+            return true;
+        }
+        if (!array_key_exists($formId, $permCache)) {
+            $permCache[$formId] = $this->appUserService->hasPermission(
+                $app['id'],
+                $userId,
+                AppPermissions::VIEW_ALL_RESPONSES,
+                $formId
+            );
+        }
+        return $permCache[$formId];
     }
 
     // ── Owner: flow definitions ──────────────────────────────────────────────────────────────
@@ -494,6 +528,9 @@ class FlowController
             if ($e->getMessage() === 'already_finalized') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This run is already finalized'], 409);
             }
+            if ($e->getMessage() === 'claimed_elsewhere') {
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'claimed_elsewhere', 'message' => 'This run was claimed by another runtime instance'], 409);
+            }
             throw $e;
         }
         if (!$run) {
@@ -620,6 +657,9 @@ class FlowController
             if ($e->getMessage() === 'already_finalized') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This run is already finalized'], 409);
             }
+            if ($e->getMessage() === 'claimed_elsewhere') {
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'claimed_elsewhere', 'message' => 'This run was claimed by another runtime instance'], 409);
+            }
             throw $e;
         }
         if (!$run) {
@@ -628,29 +668,55 @@ class FlowController
         return $this->jsonResponse($response, ['run' => $run]);
     }
 
-    /** Claimable queued runs for this app (member-gated), oldest first. */
+    /**
+     * Claimable queued runs for this app (execute_flows-gated), oldest first. Data
+     * minimization (audit FL-AUTH-001): non-owners only see runs whose snapshot they may
+     * read (canSeeRunSnapshot), and the listing NEVER carries input snapshots — the full
+     * run (snapshot included) is returned by a successful claim, to the one claimant that
+     * actually executes it.
+     */
     public function queuedRuns(Request $request, Response $response, array $args): Response
     {
-        [$app, , $error] = $this->resolveRuntime($request, $response, $args['slug'] ?? '');
+        [$app, $userId, $error] = $this->resolveRuntime($request, $response, $args['slug'] ?? '');
         if ($error) {
             return $error;
         }
         $q = $request->getQueryParams();
-        return $this->jsonResponse($response, ['runs' => $this->flows->listQueuedRuns($app['id'], (int) ($q['limit'] ?? 50))]);
+        $runs = $this->flows->listQueuedRuns($app['id'], (int) ($q['limit'] ?? 50));
+        if (($app['ownerId'] ?? null) !== $userId) {
+            $permCache = [];
+            $runs = array_values(array_filter(
+                $runs,
+                fn (array $run) => $this->canSeeRunSnapshot($app, $userId, $run['formId'] ?? null, $permCache)
+            ));
+            foreach ($runs as &$run) {
+                $run['inputSnapshot'] = null;
+            }
+            unset($run);
+        }
+        return $this->jsonResponse($response, ['runs' => $runs]);
     }
 
     /**
      * Claim a queued run for this app's runtime (queued→running exactly once via the atomic
-     * UPDATE): 200 {run, claimed:true} | 409 when another runtime got there first.
+     * UPDATE): 200 {run, claimed:true} | 409 when another runtime got there first. A run whose
+     * snapshot the member may not read (canSeeRunSnapshot) is a non-enumerating 404 — claiming
+     * is how the snapshot is delivered, so visibility is enforced BEFORE the claim.
      */
     public function claimRun(Request $request, Response $response, array $args): Response
     {
-        [$app, , $error] = $this->resolveRuntime($request, $response, $args['slug'] ?? '');
+        [$app, $userId, $error] = $this->resolveRuntime($request, $response, $args['slug'] ?? '');
         if ($error) {
             return $error;
         }
+        $runId = (string) ($args['runId'] ?? '');
+        $permCache = [];
+        $existing = $this->flows->getRun($app['id'], $runId);
+        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $existing['formId'] ?? null, $permCache)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
+        }
         try {
-            $run = $this->flows->claimRun($app['id'], (string) ($args['runId'] ?? ''), $request->getParsedBody() ?? []);
+            $run = $this->flows->claimRun($app['id'], $runId, $request->getParsedBody() ?? []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {

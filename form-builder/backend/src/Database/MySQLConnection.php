@@ -1389,6 +1389,26 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE app_role_permissions MODIFY COLUMN permission VARCHAR(191) COLLATE utf8mb4_unicode_ci NOT NULL");
         }
 
+        // FL-AUTH-001: flow execution used to be implicit in app membership; the runtime flow
+        // surface (definitions/reserve/claim/complete/flow-KV) now requires the explicit
+        // execute_flows permission. Backfill it onto every EXISTING role exactly once so
+        // deployed apps keep working, then let owners revoke it per role. Guarded by a
+        // system_meta flag rather than the md5 stamp: a later re-migration (any schema edit
+        // re-runs this method) must never silently re-grant what an owner revoked.
+        $backfilled = $pdo->query("SELECT meta_value FROM system_meta WHERE meta_key = 'execute_flows_backfilled'")->fetchColumn();
+        if ($backfilled === false) {
+            $pdo->exec("
+                INSERT INTO app_role_permissions (id, role_id, form_id, permission)
+                SELECT UUID(), r.id, NULL, 'execute_flows'
+                FROM app_roles r
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM app_role_permissions p
+                    WHERE p.role_id = r.id AND p.permission = 'execute_flows'
+                )
+            ");
+            $pdo->exec("INSERT INTO system_meta (meta_key, meta_value) VALUES ('execute_flows_backfilled', '1')");
+        }
+
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
         $this->seedFirstPartyOAuthClients($pdo);
     }

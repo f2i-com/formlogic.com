@@ -197,6 +197,19 @@ class PackService
                             $permissions[] = ['formId' => null, 'permission' => $perm['permission']];
                         }
                     }
+                    // Packs ship working flows: their roles predate the execute_flows permission
+                    // (FL-AUTH-001), so grant it to every imported role that gets ANY permissions
+                    // unless the pack says otherwise. Owners can revoke it in the role editor.
+                    $hasExecuteFlows = false;
+                    foreach ($permissions as $p) {
+                        if (($p['permission'] ?? null) === \FormLogic\Constants\AppPermissions::EXECUTE_FLOWS) {
+                            $hasExecuteFlows = true;
+                            break;
+                        }
+                    }
+                    if (!empty($permissions) && !$hasExecuteFlows) {
+                        $permissions[] = ['formId' => null, 'permission' => \FormLogic\Constants\AppPermissions::EXECUTE_FLOWS];
+                    }
 
                     if (!empty($packRole['system'])) {
                         if ($sysRolesByName === null) {

@@ -287,6 +287,7 @@ export type PermissionAction =
   | 'manage_users'
   | 'manage_roles'
   | 'view_analytics'
+  | 'execute_flows'
   | 'submit_responses'
   | 'view_own_responses'
   | 'view_all_responses'
@@ -389,6 +390,7 @@ export const APP_PERMISSION_LABELS: Record<PermissionAction, string> = {
   manage_users: 'Manage users',
   manage_roles: 'Manage roles',
   view_analytics: 'View analytics',
+  execute_flows: 'Run flows',
   submit_responses: 'Submit responses',
   view_own_responses: 'View own responses',
   view_all_responses: 'View all responses',
@@ -402,6 +404,9 @@ export const APP_LEVEL_PERMISSIONS: PermissionAction[] = [
   'manage_users',
   'manage_roles',
   'view_analytics',
+  // FL-AUTH-001: gates the runtime flow surface (definitions, run claiming, shared flow-KV).
+  // App-wide only (form_id NULL) — the backend does not treat it as an admin-style permission.
+  'execute_flows',
 ];
 
 export const FORM_LEVEL_PERMISSIONS: PermissionAction[] = [

@@ -166,7 +166,9 @@ class FlowKvController
     }
 
     /**
-     * Published app by slug + ACTIVE member — the same runtime gate as FlowController.
+     * Published app by slug + ACTIVE member holding execute_flows — the same runtime gate as
+     * FlowController (audit FL-AUTH-001: the shared flow-KV store is flow-execution state, so
+     * membership alone must not read or write it).
      * @return array{0: ?array, 1: ?Response} [app, errorResponse]
      */
     private function resolveRuntime(Request $request, Response $response, string $slug): array
@@ -185,6 +187,10 @@ class FlowKvController
         $appUser = $this->appUserService->getAppUser($app['id'], $userId);
         if (!$appUser || $appUser['status'] !== 'active') {
             return [null, $this->jsonResponse($response, ['error' => true, 'message' => 'Not a member of this app'], 403)];
+        }
+        // hasPermission() returns true for the app owner unconditionally.
+        if (!$this->appUserService->hasPermission($app['id'], $userId, \FormLogic\Constants\AppPermissions::EXECUTE_FLOWS)) {
+            return [null, $this->jsonResponse($response, ['error' => true, 'message' => 'You do not have permission to run flows in this app'], 403)];
         }
         return [$app, null];
     }

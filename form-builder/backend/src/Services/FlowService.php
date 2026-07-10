@@ -777,16 +777,25 @@ class FlowService
      * Complete a run: transition 'running'/'queued' → a terminal status per flow-run-result.schema.json,
      * stamping finished_at. Returns the updated run, null when not found, or throws:
      *   \InvalidArgumentException — invalid payload,
-     *   \RuntimeException('already_finalized') — the run is already terminal (controller → 409).
+     *   \RuntimeException('already_finalized') — the run is already terminal (controller → 409),
+     *   \RuntimeException('claimed_elsewhere') — a DIFFERENT instance claimed this run (→ 409).
+     *
+     * Claimant binding (audit FL-AUTH-001): a CLAIMED run (claimed_by set at claim time) may
+     * only be completed by a caller presenting the same instanceId. A completion that omits
+     * instanceId is still accepted (already-deployed runtimes never sent one — rejecting them
+     * would silently lose results, because their complete() swallows 409 as success), but every
+     * current client sends it, so two live claim loops can no longer stomp each other's lease.
      */
     public function completeRun(string $appId, string $runId, array $data): ?array
     {
         $clean = $this->sanitizeCompletion($data);
+        $instanceId = $this->sanitizeCompletionInstanceId($data);
 
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs
             SET status = :s, result_json = :result, error_json = :error, output_actions_json = :actions, finished_at = NOW()
             WHERE id = :id AND app_id = :a AND status IN ('running', 'queued')
+              AND (claimed_by IS NULL OR :cb1 IS NULL OR claimed_by = :cb2)
         ");
         $stmt->execute([
             's' => $clean['status'],
@@ -795,12 +804,17 @@ class FlowService
             'actions' => $clean['actionsJson'],
             'id' => $runId,
             'a' => $appId,
+            'cb1' => $instanceId,
+            'cb2' => $instanceId,
         ]);
 
         if ($stmt->rowCount() === 0) {
             $existing = $this->getRun($appId, $runId);
             if ($existing === null) {
                 return null;
+            }
+            if (in_array($existing['status'], self::RUN_ACTIVE_STATUSES, true)) {
+                throw new \RuntimeException('claimed_elsewhere');
             }
             throw new \RuntimeException('already_finalized');
         }
@@ -810,11 +824,13 @@ class FlowService
 
     /**
      * Owner-scoped complete (workspace runs + any run of a flow the caller owns — the surface
-     * FormLogic Desktop uses over API keys). Same payload/transitions as completeRun.
+     * FormLogic Desktop uses over API keys). Same payload/transitions/claimant-binding rules
+     * as completeRun.
      */
     public function completeOwnerRun(string $ownerUserId, string $runId, array $data): ?array
     {
         $clean = $this->sanitizeCompletion($data);
+        $instanceId = $this->sanitizeCompletionInstanceId($data);
 
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs r
@@ -822,6 +838,7 @@ class FlowService
             SET r.status = :s, r.result_json = :result, r.error_json = :error,
                 r.output_actions_json = :actions, r.finished_at = NOW()
             WHERE r.id = :id AND f.owner_user_id = :o AND r.status IN ('running', 'queued')
+              AND (r.claimed_by IS NULL OR :cb1 IS NULL OR r.claimed_by = :cb2)
         ");
         $stmt->execute([
             's' => $clean['status'],
@@ -830,6 +847,8 @@ class FlowService
             'actions' => $clean['actionsJson'],
             'id' => $runId,
             'o' => $ownerUserId,
+            'cb1' => $instanceId,
+            'cb2' => $instanceId,
         ]);
 
         if ($stmt->rowCount() === 0) {
@@ -837,10 +856,27 @@ class FlowService
             if ($existing === null) {
                 return null;
             }
+            if (in_array($existing['status'], self::RUN_ACTIVE_STATUSES, true)) {
+                throw new \RuntimeException('claimed_elsewhere');
+            }
             throw new \RuntimeException('already_finalized');
         }
 
         return $this->getOwnerRun($ownerUserId, $runId);
+    }
+
+    /**
+     * Optional completion instanceId (claimant binding — see completeRun). @throws \InvalidArgumentException
+     */
+    private function sanitizeCompletionInstanceId(array $data): ?string
+    {
+        if (!isset($data['instanceId']) || $data['instanceId'] === null || $data['instanceId'] === '') {
+            return null;
+        }
+        if (!is_string($data['instanceId']) || strlen($data['instanceId']) > 120) {
+            throw new \InvalidArgumentException('instanceId must be a string ≤ 120 chars');
+        }
+        return $data['instanceId'];
     }
 
     /**

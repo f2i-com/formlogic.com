@@ -1612,7 +1612,7 @@ class ApiClient {
   async completeFlowRun(
     slug: string,
     runId: string,
-    payload: { status: FlowRunStatus; result?: Record<string, unknown> | null; error?: FlowRunError | null }
+    payload: { status: FlowRunStatus; result?: Record<string, unknown> | null; error?: FlowRunError | null; instanceId?: string }
   ): Promise<ApiResponse<{ run: FlowRunLog }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/${encodeURIComponent(runId)}`, {
       method: 'PATCH',
@@ -1735,7 +1735,7 @@ class ApiClient {
   /** Complete a run (owner scope) — running/queued → terminal, per flow-run-result.schema.json. */
   async completeMyFlowRun(
     runId: string,
-    payload: { status: FlowRunStatus; result?: Record<string, unknown> | null; error?: FlowRunError | null }
+    payload: { status: FlowRunStatus; result?: Record<string, unknown> | null; error?: FlowRunError | null; instanceId?: string }
   ): Promise<ApiResponse<{ run: FlowRunLog }>> {
     return this.request(`/flow-runs/${encodeURIComponent(runId)}`, {
       method: 'PATCH',

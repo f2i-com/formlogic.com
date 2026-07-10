@@ -1251,6 +1251,9 @@ impl FlowRuntime {
     async fn complete(&self, client: &FormLogicClient, run_id: &str, outcome: &FlowOutcome, action_errors: &[String]) {
         let mut payload = Map::new();
         payload.insert("status".into(), json!(outcome.status));
+        // Claimant binding (FL-AUTH-001): the server only accepts a claimed run's completion
+        // from the instance that claimed it. Harmless on unclaimed (direct-reserved) runs.
+        payload.insert("instanceId".into(), json!(self.instance_id));
         if outcome.status == "done" {
             let mut result = match &outcome.result {
                 Some(Value::Object(m)) => m.clone(),

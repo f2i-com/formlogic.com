@@ -106,7 +106,7 @@ export interface FlowDispatcherDeps {
   completeRun(
     slug: string,
     runId: string,
-    payload: { status: 'done' | 'error' | 'timeout' | 'cancelled'; result?: Record<string, unknown> | null; error?: FlowRunError | null }
+    payload: { status: 'done' | 'error' | 'timeout' | 'cancelled'; result?: Record<string, unknown> | null; error?: FlowRunError | null; instanceId?: string }
   ): Promise<void>;
   /** Sandboxed condition evaluation (QuickJS — never eval). */
   evaluateCondition(expr: string, ctx: Record<string, unknown>): Promise<boolean>;
@@ -119,15 +119,17 @@ export interface FlowDispatcherDeps {
   // ── Queued-run claiming (docs §10) ────────────────────────────────────────────────────
   /** Claimable 'queued' runs for the active app, oldest first. */
   listQueuedRuns(slug: string, limit?: number): Promise<FlowRunLog[]>;
-  /** Claim one queued run; {claimed:false} on 409 (another runtime won) or any error. */
-  claimRun(slug: string, runId: string, payload: { runtime: FlowRuntimeKind; instanceId?: string }): Promise<{ claimed: boolean }>;
+  /** Claim one queued run; {claimed:false} on 409 (another runtime won) or any error.
+   *  `run` is the server's authoritative copy — the queued LIST omits input snapshots
+   *  for non-owner members (FL-AUTH-001), so executors must prefer this over the listing. */
+  claimRun(slug: string, runId: string, payload: { runtime: FlowRuntimeKind; instanceId?: string }): Promise<{ claimed: boolean; run?: FlowRunLog }>;
   // ── Workspace scope (the /flows page claim loop — docs §8/§10) ────────────────────────
   fetchWorkspaceFlows(): Promise<FlowDefinition[]>;
   listWorkspaceQueuedRuns(limit?: number): Promise<FlowRunLog[]>;
-  claimWorkspaceRun(runId: string, payload: { runtime: FlowRuntimeKind; instanceId?: string }): Promise<{ claimed: boolean }>;
+  claimWorkspaceRun(runId: string, payload: { runtime: FlowRuntimeKind; instanceId?: string }): Promise<{ claimed: boolean; run?: FlowRunLog }>;
   completeWorkspaceRun(
     runId: string,
-    payload: { status: 'done' | 'error' | 'timeout' | 'cancelled'; result?: Record<string, unknown> | null; error?: FlowRunError | null }
+    payload: { status: 'done' | 'error' | 'timeout' | 'cancelled'; result?: Record<string, unknown> | null; error?: FlowRunError | null; instanceId?: string }
   ): Promise<void>;
   /** Standalone-form bindings (GET /api/forms/{id}/flow-bindings) for workspace binding runs. */
   fetchFormBindings(formId: string): Promise<FlowBinding[]>;
@@ -328,7 +330,7 @@ function buildDefaultDeps(): FlowDispatcherDeps {
     claimRun: async (slug, runId, payload) => {
       const res = await api.claimAppFlowRun(slug, runId, payload);
       // 409 (already claimed) and every other failure mean the same thing here: not ours.
-      return { claimed: !res.error && !!res.data };
+      return { claimed: !res.error && !!res.data, run: res.data?.run };
     },
     fetchWorkspaceFlows: async () => {
       const flows = (await api.listWorkspaceFlows()).data?.flows ?? [];
@@ -337,7 +339,7 @@ function buildDefaultDeps(): FlowDispatcherDeps {
     listWorkspaceQueuedRuns: async (limit) => (await api.listMyQueuedFlowRuns(limit)).data?.runs ?? [],
     claimWorkspaceRun: async (runId, payload) => {
       const res = await api.claimMyFlowRun(runId, payload);
-      return { claimed: !res.error && !!res.data };
+      return { claimed: !res.error && !!res.data, run: res.data?.run };
     },
     completeWorkspaceRun: async (runId, payload) => {
       const res = await api.completeMyFlowRun(runId, payload);
@@ -1074,22 +1076,28 @@ export async function claimQueuedAppRuns(): Promise<number> {
         continue; // desktop-first: its claim loop picks this up; we take over only when its heartbeat is stale
       }
       let claimed = false;
+      let claimedRun = run;
       try {
-        claimed = (await d.claimRun(slug, run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() })).claimed;
+        const claimRes = await d.claimRun(slug, run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() });
+        claimed = claimRes.claimed;
+        // The queued LIST omits input snapshots for non-owner members (FL-AUTH-001);
+        // the claim response is the authoritative run — execute from it.
+        if (claimRes.run) claimedRun = claimRes.run;
       } catch (err) {
         logger.warn(`[flows] claim ${run.runId} failed:`, err);
       }
       if (!claimed) continue; // 409 — another tab/Desktop won the race
-      const binding = run.bindingId ? runtime.bindings.find((b) => b.id === run.bindingId) ?? null : null;
-      const flow = run.flow ? findFlow(run.flow) ?? null : null;
+      const binding = claimedRun.bindingId ? runtime.bindings.find((b) => b.id === claimedRun.bindingId) ?? null : null;
+      const flow = claimedRun.flow ? findFlow(claimedRun.flow) ?? null : null;
       await executeClaimedRun({
-        run,
+        run: claimedRun,
         flow,
         binding,
         app: d.getAppContext(),
         executorDeps: d.executorDeps,
         actionDeps: appActionDeps(),
-        complete: (payload) => d.completeRun(slug, run.runId, payload),
+        // instanceId binds the completion to OUR claim — the server 409s any other instance.
+        complete: (payload) => d.completeRun(slug, claimedRun.runId, { ...payload, instanceId: getClaimInstanceId() }),
       });
       executed += 1;
     }
@@ -1127,27 +1135,30 @@ export function startWorkspaceClaimLoop(): () => void {
       for (const run of runs) {
         if (stopped) return;
         let claimed = false;
+        let claimedRun = run;
         try {
-          claimed = (await d.claimWorkspaceRun(run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() })).claimed;
+          const claimRes = await d.claimWorkspaceRun(run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() });
+          claimed = claimRes.claimed;
+          if (claimRes.run) claimedRun = claimRes.run;
         } catch (err) {
           logger.warn(`[flows] workspace claim ${run.runId} failed:`, err);
         }
         if (!claimed) continue;
         let binding: FlowBinding | null = null;
-        if (run.bindingId && run.formId) {
-          if (!bindingsByForm.has(run.formId)) {
+        if (claimedRun.bindingId && claimedRun.formId) {
+          if (!bindingsByForm.has(claimedRun.formId)) {
             try {
-              bindingsByForm.set(run.formId, await d.fetchFormBindings(run.formId));
+              bindingsByForm.set(claimedRun.formId, await d.fetchFormBindings(claimedRun.formId));
             } catch {
-              bindingsByForm.set(run.formId, []);
+              bindingsByForm.set(claimedRun.formId, []);
             }
           }
-          binding = bindingsByForm.get(run.formId)?.find((b) => b.id === run.bindingId) ?? null;
+          binding = bindingsByForm.get(claimedRun.formId)?.find((b) => b.id === claimedRun.bindingId) ?? null;
         }
-        const flow = (run.flow ? bySlug.get(run.flow) : undefined) ?? null;
+        const flow = (claimedRun.flow ? bySlug.get(claimedRun.flow) : undefined) ?? null;
         const wsDeps = d.workspaceExecutorDeps;
         await executeClaimedRun({
-          run,
+          run: claimedRun,
           flow,
           binding,
           app: {},
@@ -1159,7 +1170,7 @@ export function startWorkspaceClaimLoop(): () => void {
             toast: d.toast,
             kvSet: wsDeps.kvSet?.bind(wsDeps),
           },
-          complete: (payload) => d.completeWorkspaceRun(run.runId, payload),
+          complete: (payload) => d.completeWorkspaceRun(claimedRun.runId, { ...payload, instanceId: getClaimInstanceId() }),
         });
       }
     } catch (err) {

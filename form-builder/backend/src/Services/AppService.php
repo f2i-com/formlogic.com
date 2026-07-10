@@ -29,7 +29,7 @@ class AppService
         // Back-office console: members review everyone's records.
         'admin-console' => [
             'Admin' => [
-                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS, AppPermissions::EXECUTE_FLOWS,
                 AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
                 AppPermissions::EDIT_RESPONSES, AppPermissions::DELETE_RESPONSES,
                 AppPermissions::EXPORT_RESPONSES,
@@ -37,35 +37,36 @@ class AppService
             'Member' => [
                 AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
                 AppPermissions::EDIT_RESPONSES, AppPermissions::EXPORT_RESPONSES,
+                AppPermissions::EXECUTE_FLOWS,
             ],
         ],
         // Client portal: members submit + see only their OWN records.
         'client-portal' => [
             'Admin' => [
-                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS, AppPermissions::EXECUTE_FLOWS,
                 AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
                 AppPermissions::EDIT_RESPONSES, AppPermissions::EXPORT_RESPONSES,
             ],
-            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES],
+            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES, AppPermissions::EXECUTE_FLOWS],
         ],
         // Field/staff app: staff submit on the go + see their own submissions.
         'staff-field-app' => [
             'Admin' => [
-                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS, AppPermissions::EXECUTE_FLOWS,
                 AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
                 AppPermissions::SUBMIT_RESPONSES, AppPermissions::EDIT_RESPONSES,
                 AppPermissions::EXPORT_RESPONSES,
             ],
-            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES],
+            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES, AppPermissions::EXECUTE_FLOWS],
         ],
         // Public intake: members only submit — they never see stored records.
         'public-intake' => [
             'Admin' => [
-                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS, AppPermissions::EXECUTE_FLOWS,
                 AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
                 AppPermissions::EXPORT_RESPONSES,
             ],
-            'Member' => [AppPermissions::SUBMIT_RESPONSES],
+            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::EXECUTE_FLOWS],
         ],
     ];
 

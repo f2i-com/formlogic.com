@@ -12,6 +12,14 @@ class AppPermissions
     public const MANAGE_ROLES = 'manage_roles';
     public const VIEW_ANALYTICS = 'view_analytics';
 
+    // Flow execution (audit FL-AUTH-001): required for the app-runtime flow surface —
+    // definitions, reserve/claim/complete, queued-run listing and the shared flow-KV store.
+    // Stored app-level (form_id NULL) but deliberately NOT in APP_LEVEL: flows execute with
+    // the member's own session (every formlogic.* write still passes the permission-checked
+    // APIs), so granting it is not an admin-style escalation and must not make a role
+    // unassignable for delegated MANAGE_USERS holders (see AppUserService::roleGrantsAppLevel).
+    public const EXECUTE_FLOWS = 'execute_flows';
+
     // Per-form permissions
     public const SUBMIT_RESPONSES = 'submit_responses';
     public const VIEW_OWN_RESPONSES = 'view_own_responses';
@@ -41,6 +49,7 @@ class AppPermissions
         self::MANAGE_USERS,
         self::MANAGE_ROLES,
         self::VIEW_ANALYTICS,
+        self::EXECUTE_FLOWS,
         self::SUBMIT_RESPONSES,
         self::VIEW_OWN_RESPONSES,
         self::VIEW_ALL_RESPONSES,
