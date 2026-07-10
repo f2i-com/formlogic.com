@@ -1088,7 +1088,15 @@ export const useFormStore = create<FormState>()(
             const existingResult = await api.getForm(form.id);
             const serverForm = existingResult.data?.form;
 
-            if (existingResult.error || !serverForm) {
+            // FL-SYNC-001: only a DEFINITIVE 404 means "new form made offline". A 401/5xx/
+            // network failure is unknowable — creating here could duplicate or overwrite a
+            // form that exists; leave it untouched and let the next sync retry.
+            if (existingResult.error && existingResult.status !== 404) {
+              errors.push(`Could not check "${form.title}" on the server (${existingResult.error}) — left untouched for the next sync`);
+              continue;
+            }
+
+            if (!serverForm) {
               // New form made offline → create it on the server.
               const createResult = await api.createForm(form);
               if (createResult.error) {
@@ -1146,14 +1154,21 @@ export const useFormStore = create<FormState>()(
         }
 
         // Propagate offline deletions: remove from the server the forms deleted while offline, so
-        // they don't reappear on reload. A non-2xx (e.g. 404 — never reached the server) still counts
-        // as handled and is cleared; only a network failure keeps it queued for the next sync.
+        // they don't reappear on reload. FL-SYNC-001: only success or a definitive 404 (already
+        // gone) clears the entry — a 401/5xx/network failure used to be silently DROPPED from
+        // the outbox, so the form resurrected on the next reload; now it stays queued and is
+        // retried on the next sync.
         let deleted = 0;
         const stillPending: string[] = [];
         for (const delId of get().pendingDeletions) {
           try {
             const res = await api.deleteForm(delId);
-            if (!res.error) deleted++;
+            if (!res.error) {
+              deleted++;
+            } else if (res.status !== 404) {
+              stillPending.push(delId);
+              errors.push(`Could not remove a deleted form from the server (${res.error}) — will retry on the next sync`);
+            }
           } catch (e) {
             stillPending.push(delId);
             errors.push(`Error removing a deleted form: ${e}`);
@@ -1172,24 +1187,50 @@ export const useFormStore = create<FormState>()(
       },
 
       resolveSyncConflicts: async (decisions) => {
+        // FL-SYNC-001: a conflict only counts as RESOLVED when its chosen operation was
+        // acknowledged. Failures keep the conflict (and both copies) intact for a retry,
+        // and a reconnect only switches to cloud once every conflict actually resolved —
+        // a failed 'keep mine' must never be followed by a server reload that clobbers it.
         const { syncConflicts: conflicts, syncSwitchAfter: switchAfter } = get();
+        const unresolved: SyncConflict[] = [];
+        const failures: string[] = [];
         for (const c of conflicts ?? []) {
           const choice = decisions[c.id] ?? 'mine';
           try {
             if (choice === 'mine') {
               // Keep the offline version → push it over the cloud copy.
               const form = get().forms.find((f) => f.id === c.id);
-              if (form) await api.updateForm(form.id, form);
+              if (form) {
+                const result = await api.updateForm(form.id, form);
+                if (result.error) {
+                  unresolved.push(c);
+                  failures.push(`"${c.title}": ${result.error}`);
+                  continue;
+                }
+              }
             } else {
               // Keep the cloud version → pull it into the local store so it reflects the choice.
               const res = await api.getForm(c.id);
-              if (res.data?.form) {
-                set((s) => ({ forms: s.forms.map((f) => (f.id === c.id ? (res.data!.form as Form) : f)) }));
+              if (res.error || !res.data?.form) {
+                unresolved.push(c);
+                failures.push(`"${c.title}": ${res.error ?? 'cloud copy unavailable'}`);
+                continue;
               }
+              set((s) => ({ forms: s.forms.map((f) => (f.id === c.id ? (res.data!.form as Form) : f)) }));
             }
           } catch (e) {
             logger.error(`Failed to resolve conflict for "${c.title}":`, e);
+            unresolved.push(c);
+            failures.push(`"${c.title}": ${e instanceof Error ? e.message : 'network error'}`);
           }
+        }
+        if (unresolved.length > 0) {
+          set({ syncConflicts: unresolved });
+          toast.error(
+            'Some conflicts could not be applied',
+            `${unresolved.length} form${unresolved.length === 1 ? '' : 's'} failed — both copies are untouched. Retry, or dismiss to keep working offline. (${failures[0]})`
+          );
+          return;
         }
         set({ syncConflicts: null, syncSwitchAfter: false });
         // For a reconnect, finish switching to cloud (reloads everything from the server).

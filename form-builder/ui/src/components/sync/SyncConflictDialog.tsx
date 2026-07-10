@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CloudOff, Cloud, AlertTriangle } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 import { formatDate } from '../../lib/utils';
 
 type Choice = 'mine' | 'cloud';
@@ -26,8 +27,15 @@ export function SyncConflictDialog() {
   const resolveSyncConflicts = useFormStore((s) => s.resolveSyncConflicts);
   const [decisions, setDecisions] = useState<Record<string, Choice>>({});
   const [applying, setApplying] = useState(false);
+  // FL-SYNC-001: Escape/backdrop/X must be NON-MUTATING — it used to apply the default
+  // resolution (push every offline copy over the cloud). Dismissing now just postpones:
+  // both copies stay untouched and the conflicts resurface on the next sync/reconnect.
+  const [postponed, setPostponed] = useState(false);
+  useEffect(() => {
+    setPostponed(false); // a fresh conflict set (next sync attempt) re-opens the dialog
+  }, [conflicts]);
 
-  const open = !!conflicts && conflicts.length > 0;
+  const open = !!conflicts && conflicts.length > 0 && !postponed;
   const choiceFor = (id: string): Choice => decisions[id] ?? 'mine';
 
   const setAll = (v: Choice) => {
@@ -42,11 +50,21 @@ export function SyncConflictDialog() {
     const full: Record<string, Choice> = {};
     conflicts.forEach((c) => { full[c.id] = choiceFor(c.id); });
     try {
+      // Failures keep their conflicts in the store, so the dialog simply stays open
+      // showing what's left (the store toasts the operation-level report).
       await resolveSyncConflicts(full);
     } finally {
       setApplying(false);
-      setDecisions({});
     }
+  };
+
+  const postpone = () => {
+    if (applying) return;
+    setPostponed(true);
+    toast.info(
+      'Sync conflicts postponed',
+      'Nothing was changed — your offline and cloud copies are both untouched. They will come up again on the next sync.'
+    );
   };
 
   const choiceBtn = (active: boolean) =>
@@ -59,8 +77,8 @@ export function SyncConflictDialog() {
   return (
     <Modal
       isOpen={open}
-      // Closing keeps the current choices (default: keep mine) so the user is never stuck mid-reconnect.
-      onClose={() => { void apply(); }}
+      // Non-mutating close (FL-SYNC-001): dismissal postpones, it never applies defaults.
+      onClose={postpone}
       title="Resolve sync conflicts"
       size="lg"
     >
@@ -94,7 +112,8 @@ export function SyncConflictDialog() {
           ))}
         </div>
 
-        <div className="flex justify-end pt-1">
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button variant="outline" onClick={postpone} disabled={applying}>Decide later</Button>
           <Button onClick={apply} isLoading={applying}>Apply</Button>
         </div>
       </div>

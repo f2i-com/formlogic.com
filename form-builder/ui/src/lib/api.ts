@@ -28,6 +28,10 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 interface ApiResponse<T> {
   data?: T;
   error?: string;
+  /** HTTP status of an error response (FL-SYNC-001): lets callers tell a definitive
+   *  404 apart from a transport/server failure. Undefined on network errors and on
+   *  success — never branch on it without also checking `error`. */
+  status?: number;
 }
 
 /** Result of running an onSubmit script via the test endpoint (mirrors ScriptResult). */
@@ -310,7 +314,7 @@ class ApiClient {
           if (response.status === 401) {
             this.handleUnauthorized();
           }
-          return { error: `Server error (${response.status})` };
+          return { error: `Server error (${response.status})`, status: response.status };
         }
         return { error: 'Invalid response from server' };
       }
@@ -327,7 +331,7 @@ class ApiClient {
           const fieldMsgs = Object.values(d.errors as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
           if (fieldMsgs.length > 0) message = `${message}: ${fieldMsgs.join('; ')}`;
         }
-        return { error: message };
+        return { error: message, status: response.status };
       }
 
       return { data };
