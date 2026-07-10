@@ -1,0 +1,160 @@
+import { useState, useEffect, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Loader2, Inbox } from 'lucide-react';
+import type { DashboardWidget } from '../../types/app';
+import type { WidgetDataForm } from './widgetData';
+
+interface Col { id: string; label: string; type: string }
+
+const SIMPLE_TYPES = ['short_text', 'long_text', 'email', 'phone', 'url', 'number', 'dropdown', 'date', 'checkbox'];
+
+/** Columns for the grid: the widget's chosen fields, else the form's first few simple fields. */
+function deriveColumns(form: WidgetDataForm | undefined, columnFieldIds?: string[]): Col[] {
+  const fields = (form?.fields ?? []) as Array<{ id: string; label?: string; type?: string }>;
+  if (columnFieldIds && columnFieldIds.length) {
+    return columnFieldIds.map((id) => {
+      const f = fields.find((x) => x.id === id);
+      return { id, label: f?.label ?? id, type: f?.type ?? 'text' };
+    });
+  }
+  return fields
+    .filter((f) => SIMPLE_TYPES.includes(f.type ?? ''))
+    .slice(0, 4)
+    .map((f) => ({ id: f.id, label: f.label ?? f.id, type: f.type ?? 'text' }));
+}
+
+function cell(v: unknown): string {
+  if (v == null || v === '') return '—';
+  if (Array.isArray(v)) return v.length ? v.map((x) => String(x)).join(', ') : '—';
+  if (typeof v === 'object') return '—';
+  return String(v);
+}
+
+type GridRow = { id?: unknown; answers?: Record<string, unknown> };
+
+interface RecordsGridWidgetProps {
+  widget: DashboardWidget;
+  form?: WidgetDataForm;
+  /** Runtime only: server-paginated page fetch. Absent on the builder canvas → static preview. */
+  fetchPage?: (formId: string, opts: { limit: number; offset: number }) => Promise<{ rows: unknown[]; total: number }>;
+  onOpenRecord?: (formId: string, recordId: string) => void;
+}
+
+export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: RecordsGridWidgetProps) {
+  const cfg = widget.grid;
+  const formId = cfg?.formId ?? '';
+  const pageSize = Math.max(1, Math.min(cfg?.pageSize ?? 10, 50));
+  const cols = useMemo(() => deriveColumns(form, cfg?.columnFieldIds), [form, cfg?.columnFieldIds]);
+  const [page, setPage] = useState(0);
+  const [rows, setRows] = useState<GridRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset to page 0 when the form/page-size changes.
+  useEffect(() => { setPage(0); }, [formId, pageSize]);
+
+  useEffect(() => {
+    if (!fetchPage || !formId) { setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchPage(formId, { limit: pageSize, offset: page * pageSize }).then((r) => {
+      if (cancelled) return;
+      setRows((r.rows ?? []) as GridRow[]);
+      setTotal(r.total ?? 0);
+      setLoading(false);
+    }).catch((e) => {
+      if (cancelled) return;
+      setError(e instanceof Error ? e.message : 'Failed to load records');
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [fetchPage, formId, pageSize, page]);
+
+  const headerRow = (
+    <tr className="text-left text-xs font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-100 dark:border-slate-700/40">
+      {cols.length ? cols.map((c) => <th key={c.id} className="px-4 py-2 font-semibold whitespace-nowrap">{c.label}</th>)
+        : <th className="px-4 py-2 font-semibold">Record</th>}
+    </tr>
+  );
+
+  // Builder canvas: no runtime fetch — show the column shape so the author sees the layout.
+  if (!fetchPage) {
+    return (
+      <div className="flex-1 min-h-0 overflow-auto px-2 pb-3">
+        <table className="w-full text-sm"><thead>{headerRow}</thead>
+          <tbody>
+            <tr><td colSpan={Math.max(cols.length, 1)} className="px-4 py-6 text-center text-xs text-gray-400 dark:text-slate-500">
+              {formId ? 'Records appear here in the app.' : 'Pick a form in the widget settings.'}
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  const from = total === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min((page + 1) * pageSize, total);
+  const canPrev = page > 0;
+  const canNext = (page + 1) * pageSize < total;
+  const clickable = !!onOpenRecord;
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 overflow-auto px-2">
+        {loading && rows.length === 0 ? (
+          <div className="flex items-center justify-center py-8 text-gray-400" role="status" aria-label="Loading records">
+            <Loader2 className="h-5 w-5 motion-safe:animate-spin" />
+          </div>
+        ) : error && rows.length === 0 ? (
+          <p className="text-center text-sm text-red-500 dark:text-red-400 py-6">{error}</p>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-gray-400 dark:text-slate-500">
+            <Inbox className="h-6 w-6 opacity-70" />
+            <span className="mt-1 text-xs">No records yet</span>
+          </div>
+        ) : (
+          <table className={`w-full text-sm ${loading ? 'opacity-50' : ''}`}>
+            <thead>{headerRow}</thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+              {rows.map((r) => {
+                const id = String(r.id ?? '');
+                const answers = r.answers ?? {};
+                return (
+                  <tr
+                    key={id}
+                    onClick={() => clickable && onOpenRecord!(formId, id)}
+                    className={`${clickable ? 'cursor-pointer' : ''} transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 app-ring-primary`}
+                    tabIndex={clickable ? 0 : undefined}
+                    onKeyDown={(e) => { if (clickable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenRecord!(formId, id); } }}
+                  >
+                    {cols.length ? cols.map((c, i) => (
+                      <td key={c.id} className={`px-4 py-2.5 text-gray-700 dark:text-slate-300 max-w-[14rem] truncate ${i === 0 ? 'font-medium' : ''}`}>
+                        {cell(answers[c.id])}
+                      </td>
+                    )) : <td className="px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{`Record ${id.slice(0, 8)}`}</td>}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {total > pageSize && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 border-t border-gray-100 dark:border-slate-700/40 shrink-0">
+          <span className="text-xs text-gray-400 dark:text-slate-500 tabular-nums">{from}–{to} of {total}</span>
+          <div className="flex items-center gap-1">
+            <button type="button" aria-label="Previous page" disabled={!canPrev || loading} onClick={() => setPage((x) => Math.max(0, x - 1))}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-default cursor-pointer">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button type="button" aria-label="Next page" disabled={!canNext || loading} onClick={() => setPage((x) => x + 1)}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-default cursor-pointer">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -20,7 +20,7 @@ export function AppSectionDashboard({ formId, dashboard, allowNew, onNew }: {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const {
-    config, runReport, runReportBatch, fetchRecentRows, canViewOwn, canViewAll, saveFormDashboard, isOwner: checkOwner,
+    config, runReport, runReportBatch, fetchRecentRows, fetchResponsePage, canViewOwn, canViewAll, saveFormDashboard, isOwner: checkOwner,
   } = useAppRuntimeStore();
   const [editing, setEditing] = useState(false);
 
@@ -69,6 +69,7 @@ export function AppSectionDashboard({ formId, dashboard, allowNew, onNew }: {
           canViewForm={(id) => canViewOwn(id) || canViewAll(id)}
           onOpenRecords={(fid) => navigate(`/app/${appSlug}/form/${fid}/responses`)}
           onOpenRecord={(fid, rid) => navigate(`/app/${appSlug}/form/${fid}/responses/${rid}`)}
+          fetchPage={(id, opts) => fetchResponsePage(id, opts)}
         />
       </div>
 

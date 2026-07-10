@@ -13,7 +13,7 @@ export function AppWidgetDashboard({ dashboard }: { dashboard: DashboardScreen }
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const {
-    config, permissions, runReport, runReportBatch, fetchRecentRows,
+    config, permissions, runReport, runReportBatch, fetchRecentRows, fetchResponsePage,
     canViewOwn, canViewAll, canSubmit,
   } = useAppRuntimeStore();
 
@@ -45,6 +45,7 @@ export function AppWidgetDashboard({ dashboard }: { dashboard: DashboardScreen }
         onOpenForm={(id) => navigate(`/app/${appSlug}/form/${id}?new=1`)}
         onOpenRecords={(id) => navigate(`/app/${appSlug}/form/${id}/responses`)}
         onOpenRecord={(id, rid) => navigate(`/app/${appSlug}/form/${id}/responses/${rid}`)}
+        fetchPage={(id, opts) => fetchResponsePage(id, opts)}
       />
     </div>
   );

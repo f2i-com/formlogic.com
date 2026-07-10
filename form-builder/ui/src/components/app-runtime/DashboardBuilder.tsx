@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Plus, Trash2, Settings2, GripVertical, Save, Loader2,
   BarChart3, PieChart, Hash, Table2, List as ListIcon, Type, Zap, Activity,
-  AreaChart, TrendingUp, ListOrdered, Target, Copy,
+  AreaChart, TrendingUp, ListOrdered, Target, Copy, Rows3,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -36,6 +36,7 @@ const overlaps = (a: Layout, b: Layout) => a.x < b.x + b.w && a.x + a.w > b.x &&
  *  'kpi-trend'/'target' gallery presets, both shipped at h:2) and needs the same 2-row floor. */
 function minHeightFor(w: DashboardWidget): number {
   if (w.kind === 'list' || w.kind === 'activity') return 2;
+  if (w.kind === 'grid') return 3; // header + a few rows + pagination
   if (w.kind === 'report') return w.spec?.viz === 'kpi' && !w.spec?.sparkline && !w.spec?.target ? 1 : 2;
   return 1; // text, actions
 }
@@ -168,6 +169,7 @@ const GALLERY: GalleryPreset[] = [
     spec: (form) => defaultSpec(form, 'table'),
   },
   { key: 'list', label: 'Recent list', desc: 'A compact list of the latest records.', Icon: ListIcon, kind: 'list', w: 4, h: 3 },
+  { key: 'grid', label: 'Records grid', desc: 'A paginated grid of records; rows open their record.', Icon: Rows3, kind: 'grid', w: 6, h: 4 },
   { key: 'text', label: 'Text', desc: 'A note or section heading.', Icon: Type, kind: 'text', w: 6, h: 1 },
   { key: 'actions', label: 'Quick actions', desc: 'New-record buttons for every form.', Icon: Zap, kind: 'actions', w: 12, h: 1, appOnly: true },
   { key: 'activity', label: 'Recent activity', desc: 'Latest records across all forms.', Icon: Activity, kind: 'activity', w: 4, h: 3, appOnly: true },
@@ -308,7 +310,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   const addWidget = (preset: GalleryPreset) => {
     const form = targetForm;
     // A data widget must never be created with an empty formId (its query could never run).
-    if ((preset.kind === 'report' || preset.kind === 'list') && !form?.formId) return;
+    if ((preset.kind === 'report' || preset.kind === 'list' || preset.kind === 'grid') && !form?.formId) return;
     setAddOpen(false);
     const maxBottom = widgets.reduce((m, w) => Math.max(m, w.layout.y + w.layout.h), 0);
     const w: DashboardWidget = {
@@ -319,11 +321,12 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     };
     if (preset.kind === 'report') w.spec = preset.spec?.(form) ?? defaultSpec(form, 'bar');
     else if (preset.kind === 'list') w.list = { formId: form?.formId ?? '', limit: 6 };
+    else if (preset.kind === 'grid') w.grid = { formId: form?.formId ?? '', pageSize: 10 };
     else if (preset.kind === 'text') w.text = { body: '' };
     setWidgets((ws) => [...ws, w]);
     setSelectedId(w.id);
-    // Report + list + text widgets open their config immediately so they're never left blank.
-    if (preset.kind === 'report' || preset.kind === 'list' || preset.kind === 'text') setConfigId(w.id);
+    // Report + list + grid + text widgets open their config immediately so they're never left blank.
+    if (preset.kind === 'report' || preset.kind === 'list' || preset.kind === 'grid' || preset.kind === 'text') setConfigId(w.id);
   };
 
   /**
@@ -534,7 +537,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
           <div className="p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
             {GALLERY.filter((p) => !p.appOnly || scope === 'app').map((p) => {
               // Data presets need a target form — with none available they can't create a widget.
-              const needsForm = p.kind === 'report' || p.kind === 'list';
+              const needsForm = p.kind === 'report' || p.kind === 'list' || p.kind === 'grid';
               const blocked = needsForm && !targetForm?.formId;
               return (
                 <button
@@ -638,15 +641,17 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
   // Fall back to the first available form when the stored formId no longer matches one in
   // `forms` (e.g. the form was removed from the app) — otherwise the select shows no matching
   // option and a save silently keeps the dead reference.
-  const storedListFormId = widget.list?.formId;
+  const storedFormId = widget.list?.formId ?? widget.grid?.formId;
   const [formId, setFormId] = useState(
-    storedListFormId && forms.some((f) => f.formId === storedListFormId) ? storedListFormId : forms[0]?.formId ?? ''
+    storedFormId && forms.some((f) => f.formId === storedFormId) ? storedFormId : forms[0]?.formId ?? ''
   );
   const [titleField, setTitleField] = useState(widget.list?.titleField ?? '');
   const [subtitleField, setSubtitleField] = useState(widget.list?.subtitleField ?? '');
   const [metaField, setMetaField] = useState(widget.list?.metaField ?? '');
   const [linkToRecords, setLinkToRecords] = useState(widget.list?.linkToRecords === true);
   const [limit, setLimit] = useState(widget.list?.limit ?? 6);
+  const [gridColumns, setGridColumns] = useState<string[]>(widget.grid?.columnFieldIds ?? []);
+  const [gridPageSize, setGridPageSize] = useState(widget.grid?.pageSize ?? 10);
   const [body, setBody] = useState(widget.text?.body ?? '');
 
   const flds = fieldsOf(forms.find((f) => f.formId === formId));
@@ -666,11 +671,18 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
         ...(linkToRecords ? { linkToRecords: true } : {}),
       };
     }
+    if (widget.kind === 'grid') {
+      patch.grid = {
+        formId,
+        columnFieldIds: gridColumns.length ? gridColumns : undefined,
+        pageSize: Math.max(1, Math.min(gridPageSize, 50)),
+      };
+    }
     if (widget.kind === 'text') patch.text = { body };
     onSave(patch);
   };
 
-  const kindLabel = widget.kind === 'list' ? 'Record list' : widget.kind === 'text' ? 'Text note' : widget.kind === 'actions' ? 'Quick actions' : 'Recent activity';
+  const kindLabel = widget.kind === 'list' ? 'Record list' : widget.kind === 'grid' ? 'Records grid' : widget.kind === 'text' ? 'Text note' : widget.kind === 'actions' ? 'Quick actions' : 'Recent activity';
 
   return (
     <Modal isOpen onClose={onClose} title={`Configure · ${kindLabel}`} size="md">
@@ -724,6 +736,39 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
             </>
           )}
 
+          {widget.kind === 'grid' && (
+            <>
+              <div>
+                <label className={lbl}>Records from</label>
+                <select value={formId} onChange={(e) => { setFormId(e.target.value); setGridColumns([]); }} className={`mt-1.5 ${sel}`}>
+                  {forms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={lbl}>Columns <span className="normal-case font-normal text-gray-400">(none = automatic)</span></label>
+                <div className="mt-1.5 max-h-44 overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 divide-y divide-gray-100 dark:divide-slate-800">
+                  {flds.length === 0 ? (
+                    <p className="px-3 py-2 text-sm text-gray-400">This form has no fields.</p>
+                  ) : flds.map((f) => (
+                    <label key={f.id} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                      <input
+                        type="checkbox"
+                        className="app-accent rounded"
+                        checked={gridColumns.includes(f.id)}
+                        onChange={(e) => setGridColumns((prev) => (e.target.checked ? [...prev, f.id] : prev.filter((x) => x !== f.id)))}
+                      />
+                      {f.label ?? f.id}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="w-32">
+                <label className={lbl}>Rows per page</label>
+                <input type="number" min={1} max={50} value={gridPageSize} onChange={(e) => setGridPageSize(Number(e.target.value) || 10)} className={`mt-1.5 ${sel}`} />
+              </div>
+            </>
+          )}
+
           {widget.kind === 'text' && (
             <div>
               <label className={lbl}>Text</label>
@@ -759,6 +804,7 @@ function copyableWidgets(widgets: DashboardWidget[], formIds: Set<string>, scope
   return widgets.filter((w) => {
     if (w.kind === 'report') return !!w.spec?.formId && formIds.has(w.spec.formId);
     if (w.kind === 'list') return !!w.list?.formId && formIds.has(w.list.formId);
+    if (w.kind === 'grid') return !!w.grid?.formId && formIds.has(w.grid.formId);
     if (w.kind === 'text') return true;
     return scope === 'app';
   });

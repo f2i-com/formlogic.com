@@ -310,7 +310,7 @@ class AppReportService
         foreach (array_slice($widgets, 0, self::MAX_WIDGETS) as $w) {
             if (!is_array($w)) { continue; }
             $kind = (string) ($w['kind'] ?? '');
-            if (!in_array($kind, ['report', 'list', 'text', 'actions', 'activity'], true)) { continue; }
+            if (!in_array($kind, ['report', 'list', 'grid', 'text', 'actions', 'activity'], true)) { continue; }
 
             $layout = is_array($w['layout'] ?? null) ? $w['layout'] : [];
             $ww = max(1, min((int) ($layout['w'] ?? 4), $cols));
@@ -341,6 +341,19 @@ class AppReportService
                 }
                 if (is_bool($w['list']['linkToRecords'] ?? null)) { $list['linkToRecords'] = $w['list']['linkToRecords']; }
                 $clean['list'] = $list;
+            } elseif ($kind === 'grid') {
+                // Records grid: base form must be in scope; columns must be real fields; page size clamped.
+                $fid = (string) ($w['grid']['formId'] ?? '');
+                if (!isset($formFields[$fid])) { continue; }
+                $grid = ['formId' => $fid, 'pageSize' => max(1, min((int) ($w['grid']['pageSize'] ?? 10), 50))];
+                $colsIn = is_array($w['grid']['columnFieldIds'] ?? null) ? $w['grid']['columnFieldIds'] : [];
+                $validCols = [];
+                foreach ($colsIn as $cfid) {
+                    $cfid = (string) $cfid;
+                    if ($cfid !== '' && isset($formFields[$fid][$cfid])) { $validCols[] = $cfid; }
+                }
+                if ($validCols) { $grid['columnFieldIds'] = $validCols; }
+                $clean['grid'] = $grid;
             } elseif ($kind === 'text') {
                 $clean['text'] = ['body' => $this->clamp($w['text']['body'] ?? null, self::TEXT_BODY_MAX) ?? ''];
             }

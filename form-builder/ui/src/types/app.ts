@@ -227,7 +227,7 @@ export interface WidgetLayout {
   h: number;
 }
 
-export type DashboardWidgetKind = 'report' | 'list' | 'text' | 'actions' | 'activity';
+export type DashboardWidgetKind = 'report' | 'list' | 'grid' | 'text' | 'actions' | 'activity';
 
 /** A single tile on a configurable dashboard. */
 export interface DashboardWidget {
@@ -240,6 +240,9 @@ export interface DashboardWidget {
   /** kind 'list' — a compact recent-records list from one form. `metaField` renders a trailing
    *  meta value per row; `linkToRecords` makes rows navigate to the record (default off). */
   list?: { formId: string; titleField?: string; subtitleField?: string; metaField?: string; limit?: number; linkToRecords?: boolean };
+  /** kind 'grid' — a paginated records grid from one form. `columnFieldIds` picks the
+   *  columns (default: the form's first few simple fields); rows open their record. */
+  grid?: { formId: string; columnFieldIds?: string[]; pageSize?: number };
   /** kind 'text' — a static note / section heading. */
   text?: { body: string };
   // kind 'actions' | 'activity' — app-scope built-ins derived from the app (no extra config).

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Activity as ActivityGlyph, AlertCircle, ArrowRight, ChevronRight, Inbox, LayoutGrid, Loader2, Plus, RotateCw, Zap } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { ReportResultView } from './ReportResultView';
+import { RecordsGridWidget } from './RecordsGridWidget';
 import { formatRelativeTime } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -49,6 +50,8 @@ export interface WidgetDashboardProps extends WidgetDataDeps {
   onOpenForm?: (formId: string) => void;
   onOpenRecords?: (formId: string) => void;
   onOpenRecord?: (formId: string, recordId: string) => void;
+  /** Grid widgets: server-paginated page fetch (store.fetchResponsePage). */
+  fetchPage?: (formId: string, opts: { limit: number; offset: number }) => Promise<{ rows: unknown[]; total: number }>;
   className?: string;
   /** Owner/builder affordance: failed report widgets show a "Details" disclosure (the sanitized
    *  server message) and a per-widget Retry. When omitted it defaults by scope: 'app' → the runtime
@@ -243,6 +246,7 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
               onOpenForm={props.onOpenForm}
               onOpenRecords={props.onOpenRecords}
               onOpenRecord={props.onOpenRecord}
+              fetchPage={props.fetchPage}
               onPointClick={drillFor(w)}
             />
           </div>
@@ -287,6 +291,8 @@ export interface WidgetViewProps {
   onOpenRecord?: (formId: string, recordId: string) => void;
   /** Report widgets only: makes chart marks clickable (drill-down). Absent = inert charts (builder). */
   onPointClick?: (point: { label: string; series?: string }) => void;
+  /** Grid widgets: server-paginated page fetch. Absent on the builder canvas → static preview. */
+  fetchPage?: (formId: string, opts: { limit: number; offset: number }) => Promise<{ rows: unknown[]; total: number }>;
 }
 
 export function WidgetView(p: WidgetViewProps) {
@@ -390,6 +396,15 @@ export function WidgetView(p: WidgetViewProps) {
           </ul>
         )}
       </div>
+    );
+  } else if (w.kind === 'grid') {
+    body = (
+      <RecordsGridWidget
+        widget={w}
+        form={p.forms.find((f) => f.formId === w.grid?.formId)}
+        fetchPage={p.fetchPage}
+        onOpenRecord={p.onOpenRecord}
+      />
     );
   } else if (w.kind === 'actions') {
     const forms = p.submittableForms ?? [];
