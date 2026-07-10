@@ -204,6 +204,35 @@ export function LinkedRecordSettings({
           description="Let users select more than one record"
         />
       )}
+
+      {/* Related records grid — how these records appear on the TARGET record's page. */}
+      {targetFormId && (
+        <div className="pt-3 border-t border-gray-100 dark:border-slate-800 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">On the linked record</p>
+          <Switch
+            checked={!(properties.relatedHidden ?? false)}
+            onChange={(checked) => onChange({ ...properties, relatedHidden: !checked })}
+            label="Show as a related grid"
+            description="List these records on the linked record's page (the Display Fields above become the columns)"
+          />
+          {!(properties.relatedHidden ?? false) && (
+            <>
+              <Switch
+                checked={properties.relatedAllowAdd ?? true}
+                onChange={(checked) => onChange({ ...properties, relatedAllowAdd: checked })}
+                label="Allow adding"
+                description="Show an Add button that pre-links the new record here"
+              />
+              <Switch
+                checked={properties.relatedAllowDelete ?? true}
+                onChange={(checked) => onChange({ ...properties, relatedAllowDelete: checked })}
+                label="Allow deleting"
+                description="Show a delete action on each related row"
+              />
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

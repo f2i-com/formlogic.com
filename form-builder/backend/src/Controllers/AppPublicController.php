@@ -1860,14 +1860,24 @@ class AppPublicController
             $fieldLabel = $fieldId;
             $displayFieldIds = [];
             $allowMultiple = false;
+            $relatedHidden = false;
+            $relatedAllowAdd = true;
+            $relatedAllowDelete = true;
             foreach ($sourceForm['fields'] as $f) {
                 if ($f['id'] === $fieldId) {
+                    $props = $f['properties'] ?? [];
                     $fieldLabel = $f['label'] ?? $fieldId;
-                    $displayFieldIds = isset($f['properties']) ? ($f['properties']['displayFieldIds'] ?? []) : [];
-                    $allowMultiple = !empty($f['properties']['allowMultiple']);
+                    $displayFieldIds = $props['displayFieldIds'] ?? [];
+                    $allowMultiple = !empty($props['allowMultiple']);
+                    // Per-relationship sub-grid config (linked-records feature phase 4).
+                    $relatedHidden = !empty($props['relatedHidden']);
+                    $relatedAllowAdd = ($props['relatedAllowAdd'] ?? true) !== false;
+                    $relatedAllowDelete = ($props['relatedAllowDelete'] ?? true) !== false;
                     break;
                 }
             }
+            // The author hid this relationship's sub-grid — omit it entirely.
+            if ($relatedHidden) { continue; }
 
             // Columns for the related grid (linked-records feature): the linked field's
             // displayFieldIds, or a fallback of the first few simple fields. Sent so the
@@ -1945,6 +1955,8 @@ class AppPublicController
                     'fieldLabel' => $fieldLabel,
                     'fieldId' => $fieldId,
                     'allowMultiple' => $allowMultiple,
+                    'allowAdd' => $relatedAllowAdd,
+                    'allowDelete' => $relatedAllowDelete,
                     'columns' => $columns,
                     'records' => $matchingRecords,
                     'count' => count($matchingRecords),

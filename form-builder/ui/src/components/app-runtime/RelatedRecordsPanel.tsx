@@ -142,8 +142,8 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
 
       {groups.map((group) => {
         const cols = group.columns && group.columns.length ? group.columns : null;
-        const mayAdd = !!group.fieldId && canSubmit(group.formId);
-        const mayDelete = canDelete(group.formId);
+        const mayAdd = !!group.fieldId && group.allowAdd !== false && canSubmit(group.formId);
+        const mayDelete = group.allowDelete !== false && canDelete(group.formId);
         return (
           <div key={group.formId} className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
             <div className="px-5 py-2.5 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">

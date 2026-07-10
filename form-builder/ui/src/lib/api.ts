@@ -2367,6 +2367,10 @@ interface RelatedRecordGroup {
   fieldId?: string;
   /** Whether that link field accepts multiple targets (array-valued answer). */
   allowMultiple?: boolean;
+  /** Per-relationship sub-grid CRUD toggles (default true) — combined with the
+   *  viewer's form permissions to decide whether Add / Delete show. */
+  allowAdd?: boolean;
+  allowDelete?: boolean;
   /** Columns to render in the related grid (the link's displayFieldIds, or a
    *  fallback of simple fields). */
   columns?: Array<{ id: string; label: string; type: string }>;
