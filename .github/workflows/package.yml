@@ -59,6 +59,7 @@ jobs:
           composer install --no-interaction --prefer-dist --no-progress
           find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
           composer test
+          composer analyse
           composer audit
 
       - name: Set up Node

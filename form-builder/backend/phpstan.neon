@@ -1,0 +1,20 @@
+# PHP static analysis gate (audit FL-CI-001). Level 3 is the current clean
+# baseline — levels 4/5 carry ~94/~108 findings and are the documented
+# burn-down, raised deliberately, never by weakening this file.
+parameters:
+    level: 3
+    paths:
+        - src
+    ignoreErrors:
+        # symfony/mailer is an OPTIONAL runtime dependency (self-host installs
+        # without SMTP never load it; the /doctor page reports its absence).
+        # EmailService only touches these classes behind class_exists guards.
+        -
+            identifier: class.notFound
+            path: src/Services/EmailService.php
+        # $curlOptions conditionally carries CURLOPT_POSTFIELDS; unsetting a
+        # maybe-absent key on a redirect downgrade is the intended RFC 7231
+        # behaviour, not a bug.
+        -
+            identifier: unset.offset
+            path: src/Services/FormLogicRuntime.php

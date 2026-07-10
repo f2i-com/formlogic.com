@@ -53,6 +53,11 @@ jobs:
       - name: Tests (unit + DB integration)
         run: composer test
 
+      # Static analysis gate (audit FL-CI-001): phpstan level 3 (clean
+      # baseline; 4/5 are the documented burn-down).
+      - name: Static analysis (phpstan)
+        run: composer analyse
+
       # Hard gate: any composer advisory fails CI. Accept an unavoidable one explicitly via
       # composer.json "config.audit.ignore" with a documented reason.
       - name: Security audit

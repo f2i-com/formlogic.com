@@ -1443,7 +1443,10 @@ class ResponseController
         // Match the export's RFC-4180 escaping (fputcsv with '' escape) so export→edit→re-import
         // round-trips symmetrically, and pass the arg explicitly to silence the PHP 8.4 deprecation.
         $headers = fgetcsv($handle, 0, ',', '"', '');
-        if ($headers === false || empty($headers)) {
+        // fgetcsv returns a non-empty array or false, so `empty($headers)`
+        // was dead code (a blank first line is [null], which is not empty()
+        // either — it falls through to column mapping exactly as before).
+        if ($headers === false) {
             fclose($handle);
             return $this->jsonResponse($response, [
                 'error' => true,

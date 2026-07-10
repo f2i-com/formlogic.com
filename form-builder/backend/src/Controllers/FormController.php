@@ -189,8 +189,9 @@ class FormController
         $forms = $this->formService->getAllForms($userId, $options);
 
         // Build next cursor from the last form in the result set
+        // ($limit is clamped >= 1 above, so count === $limit implies non-empty).
         $nextCursor = null;
-        if (count($forms) === $limit && !empty($forms)) {
+        if (count($forms) === $limit) {
             $last = $forms[count($forms) - 1];
             $nextCursor = ($last['updatedAt'] ?? '') . '|' . ($last['id'] ?? '');
         }
