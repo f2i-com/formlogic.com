@@ -544,19 +544,26 @@ class AuthService
             throw new \InvalidArgumentException($pwError);
         }
         $tokenHash = hash('sha256', trim($token));
-        $stmt = $this->mysql->prepare("
-            SELECT id, user_id FROM password_resets
-            WHERE token_hash = :hash AND used_at IS NULL AND expires_at > NOW()
-            LIMIT 1
-        ");
-        $stmt->execute(['hash' => $tokenHash]);
-        $row = $stmt->fetch();
-        if (!$row) {
-            throw new \RuntimeException('This reset link is invalid or has expired.');
-        }
 
+        // Atomic single-use claim (audit FL-AUTH-002): the conditional UPDATE is the gate —
+        // only one concurrent redemption can flip used_at from NULL, so a raced duplicate
+        // fails here instead of changing the password again after the winner. The claim
+        // lives INSIDE the transaction, so a later failure (e.g. the users update) rolls
+        // it back and the token survives for a clean retry.
         $this->mysql->beginTransaction();
         try {
+            $claim = $this->mysql->prepare("
+                UPDATE password_resets SET used_at = NOW()
+                WHERE token_hash = :hash AND used_at IS NULL AND expires_at > NOW()
+            ");
+            $claim->execute(['hash' => $tokenHash]);
+            if ($claim->rowCount() === 0) {
+                $this->mysql->rollBack();
+                throw new \RuntimeException('This reset link is invalid or has expired.');
+            }
+            $stmt = $this->mysql->prepare("SELECT user_id FROM password_resets WHERE token_hash = :hash LIMIT 1");
+            $stmt->execute(['hash' => $tokenHash]);
+            $userId = (string) $stmt->fetchColumn();
             $this->mysql->prepare("
                 UPDATE users
                 SET password_hash = :hash, token_version = token_version + 1, updated_at = :now
@@ -564,10 +571,8 @@ class AuthService
             ")->execute([
                 'hash' => password_hash($newPassword, PASSWORD_DEFAULT),
                 'now' => date('Y-m-d H:i:s'),
-                'uid' => $row['user_id'],
+                'uid' => $userId,
             ]);
-            $this->mysql->prepare("UPDATE password_resets SET used_at = NOW() WHERE id = :id")
-                ->execute(['id' => $row['id']]);
             $this->mysql->commit();
         } catch (\Throwable $e) {
             if ($this->mysql->inTransaction()) {
