@@ -335,7 +335,12 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var summary = (String(data.summary || '').trim() || 'Call ended - no summary available.').slice(0, 600);
   var callback = data.callback_requested === true;
   var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
-  var validTime = /^\\d{2}:\\d{2}$/.test(timeStr);
+  // Time must be a REAL clock time, not just HH:MM-shaped (audit sweep): the
+  // date got a real-calendar guard but the sibling time field didn't, so
+  // '29:70' would auto-book. Bound hours <= 23 and minutes <= 59; an
+  // out-of-range time is simply dropped (the appointment books date-only).
+  var validTime = /^\\d{2}:\\d{2}$/.test(timeStr)
+    && Number(timeStr.slice(0, 2)) <= 23 && Number(timeStr.slice(3, 5)) <= 59;
   // PACK-002: an impossible or past date must never auto-book. Rebuild the
   // date from its parts (2026-02-31 rolls over and stops matching = not a
   // real calendar date) and compare LOCAL ISO strings for the past check
@@ -372,7 +377,12 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   };
   if (validTime) appointment.time = timeStr;
   if (knownId) appointment.customer_link = knownId;
-  var hasCustomerCreate = !knownId && !!name && !!phone && ctx.hasTranscript === true;
+  // Only auto-create a Customer with a PHONE-FORMAT number (audit sweep): a
+  // withheld/sentinel caller id ('unknown', 'Private') would otherwise be
+  // written to the required phone-format field and silently reject the whole
+  // Customers row on the async binding - same guard LOGIC_CALL_INCOMING uses.
+  var custPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone) ? phone : '';
+  var hasCustomerCreate = !knownId && !!name && !!custPhone && ctx.hasTranscript === true;
   // Audit AK-009/C-16: the receptionist tells callers 'someone will confirm
   // with you' - so EVERY booking intent leaves a human a confirmation task,
   // including the ones that DID create an appointment (status 'requested').
@@ -395,7 +405,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     hasCustomerCreate: hasCustomerCreate,
     customer: {
       name: name || caller,
-      phone: phone,
+      phone: custPhone,
       preferred_service: service,
       status: 'active',
       notes: 'Added automatically from call ' + callId + '. ' + summary

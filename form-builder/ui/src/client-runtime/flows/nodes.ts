@@ -1154,12 +1154,17 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // is never silently missed. Every filter still applies client-side
       // below (frozen contract unchanged); pushdown only changes WHICH rows
       // come back. Mirrors pushdown_eq_filters in the Rust runner.
+      // Only STRING values push down (review sweep): the client-side filter
+      // below uses loose (stringified) equality, but the server's json_extract
+      // eq is stricter for non-string stored values, so pushing a number/bool
+      // could fetch a narrower set the client filter can't rescue. Every eq
+      // lookup in practice (call_id, phone) is a string; number/bool eq stays
+      // fully client-side, identically to the Rust runner.
       const answersEq: Record<string, string> = {};
       for (const f of parseResponseFilters(data.filters)) {
         if (f.op !== 'eq' || !/^[A-Za-z0-9_]{1,64}$/.test(f.field)) continue;
         const resolved = resolveSelector(f.value, ctx.scope);
         if (typeof resolved === 'string') answersEq[f.field] = resolved;
-        else if (typeof resolved === 'number' || typeof resolved === 'boolean') answersEq[f.field] = String(resolved);
       }
       const raw = await deps.listResponses(formId, Object.keys(answersEq).length > 0 ? { limit, answersEq } : { limit });
       const rows: FlowResponseRow[] = [];

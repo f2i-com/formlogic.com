@@ -303,12 +303,19 @@ async fn apply_update(
                     // Server-side equality pushdown (audit AOK-FLOW-001): the
                     // lifecycle upserts match Calls rows by call_id — a call
                     // older than the scan window must still be FOUND, or the
-                    // upsert double-creates. Scalar values become an
-                    // answers.<field> query; the local find_map stays as the
-                    // exact-equality check over whatever came back.
+                    // upsert double-creates. Only STRING values push down (the
+                    // find_map below is exact `==`, so a server eq narrower
+                    // than that for a numeric value could miss the row it must
+                    // match); call_id is always a string. Field length-bounded
+                    // to the server's {1,64} machine-key regex.
                     let pushdown: Vec<(String, String)> = match value {
-                        Value::String(v) => vec![(format!("answers.{field}"), v.clone())],
-                        Value::Number(n) => vec![(format!("answers.{field}"), n.to_string())],
+                        Value::String(v)
+                            if !field.is_empty()
+                                && field.len() <= 64
+                                && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+                        {
+                            vec![(format!("answers.{field}"), v.clone())]
+                        }
                         _ => Vec::new(),
                     };
                     match client.list_responses(form_id, RESPONSE_SCAN_LIMIT, &pushdown).await {

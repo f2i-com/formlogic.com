@@ -488,29 +488,36 @@ struct ResponseFilter {
     value: Value,
 }
 
-/// Server-side pushdown (audit AOK-FLOW-001): the eq filters whose resolved
-/// value is a scalar become `answers.<field>=<value>` query params, so an
-/// exact lookup (call_id, phone, …) is answered by the DATABASE — a match
-/// beyond the fetch limit is never silently missed. Every filter is still
-/// applied client-side afterwards (frozen contract unchanged); pushdown only
+/// Server-side pushdown (audit AOK-FLOW-001): eq filters whose resolved value
+/// is a STRING become `answers.<field>=<value>` query params, so an exact
+/// lookup (call_id, phone, …) is answered by the DATABASE — a match beyond
+/// the fetch limit is never silently missed. Every filter is still applied
+/// client-side afterwards, so the frozen contract is unchanged; pushdown only
 /// changes WHICH rows come back.
+///
+/// Only STRING values push down (review sweep): the client-side filter uses
+/// loose (stringified) equality, but the server's json_extract eq is stricter
+/// for non-string stored values — a numeric `5` vs `"5"`, `42.0` vs `42`,
+/// bool coercions — so pushing a number/bool could fetch a NARROWER set than
+/// the client filter would accept, and the client filter can't rescue a row
+/// the server never returned. Every eq lookup in practice (call_id, phone) is
+/// a string; number/bool eq stays fully client-side, identically in both
+/// runners. The field name is also length-bounded to match the server's
+/// `{1,64}` machine-key regex (a longer field the server would ignore is not
+/// sent). Mirrors the browser executor (nodes.ts).
 fn pushdown_eq_filters(filters_raw: Option<&Value>, scope: &SelectorScope) -> Vec<(String, String)> {
     parse_response_filters(filters_raw)
         .iter()
         .filter(|f| f.op == FilterOp::Eq)
         .filter_map(|f| {
-            let resolved = resolve_selector(&f.value, scope);
-            let scalar = match &resolved {
-                Value::String(v) => Some(v.clone()),
-                Value::Number(n) => Some(n.to_string()),
-                Value::Bool(b) => Some(b.to_string()),
-                _ => None,
-            }?;
-            // Field ids are machine keys; the server ignores anything else.
-            f.field
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                .then(|| (format!("answers.{}", f.field), scalar))
+            let scalar = match resolve_selector(&f.value, scope) {
+                Value::String(v) => v,
+                _ => return None,
+            };
+            (!f.field.is_empty()
+                && f.field.len() <= 64
+                && f.field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+            .then(|| (format!("answers.{}", f.field), scalar))
         })
         .collect()
 }
