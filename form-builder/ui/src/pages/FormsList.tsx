@@ -27,6 +27,8 @@ import {
   Loader2,
   ExternalLink,
   Settings,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -451,6 +453,95 @@ const FormCard = memo(function FormCard({
   );
 });
 
+// Compact list-mode row (the data-browsing view): clicking the row opens the form's
+// RECORDS, with explicit quick actions for Edit / Analytics / Preview. The full action
+// menu (duplicate, embed, archive, delete…) stays on the card view.
+const FormListRow = memo(function FormListRow({
+  form,
+  responseCount,
+  packName,
+  onNavigate,
+  onPreview,
+}: {
+  form: Form;
+  responseCount: number;
+  packName: string | null;
+  onNavigate: (path: string) => void;
+  onPreview: (formId: string) => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onNavigate(`/responses/${form.id}`)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(`/responses/${form.id}`); } }}
+      title="View records"
+      className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{form.title}</span>
+          {packName && (
+            <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-slate-400 flex-none">
+              <Package className="h-3 w-3" /> {packName}
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
+          <span className="inline-flex items-center gap-1" title={`${responseCount} response${responseCount === 1 ? '' : 's'}`}>
+            <Inbox className="h-3.5 w-3.5 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+            <span className="tabular-nums">{responseCount}</span>
+            <span className="sr-only">{` response${responseCount === 1 ? '' : 's'}`}</span>
+          </span>
+          <span className="hidden sm:inline-flex items-center gap-1 min-w-0" title={`Updated ${formatRelativeTime(form.updatedAt)}`}>
+            <Clock className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+            <span className="truncate">{formatRelativeTime(form.updatedAt)}</span>
+          </span>
+        </div>
+      </div>
+      <StatusPill status={form.status} />
+      <div className="flex items-center gap-0.5 flex-none" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={() => onNavigate(`/responses/${form.id}`)}
+          title="View records"
+          aria-label={`View records for ${form.title}`}
+          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+        >
+          <Table className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onNavigate(`/analytics/${form.id}`)}
+          title="Analytics"
+          aria-label={`Analytics for ${form.title}`}
+          className="hidden sm:block p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+        >
+          <BarChart3 className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onNavigate(`/builder/${form.id}`)}
+          title="Edit form"
+          aria-label={`Edit ${form.title}`}
+          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+        >
+          <Pencil className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onPreview(form.id)}
+          title="Preview"
+          aria-label={`Preview ${form.title}`}
+          className="hidden sm:block p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+        >
+          <Eye className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+});
+
 export function FormsList() {
   useDocumentTitle('My Forms');
   const navigate = useNavigate();
@@ -467,6 +558,14 @@ export function FormsList() {
     storageMode === 'api' ? (form.responseCount ?? 0) : getResponsesByFormId(form.id).length;
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'modified' | 'name' | 'responses'>('modified');
+  // Grid (cards) vs list (compact data-browsing rows) — remembered across visits.
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    try { return localStorage.getItem('formsList.viewMode') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+  });
+  const changeViewMode = (mode: 'grid' | 'list') => {
+    setViewMode(mode);
+    try { localStorage.setItem('formsList.viewMode', mode); } catch { /* ignore */ }
+  };
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string; status: Form['status'] } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -794,6 +893,27 @@ export function FormsList() {
     />
   );
 
+  // Render a set of forms in the active view mode. Cards fill the surrounding grid;
+  // the list renders as one full-width block inside it (col-span-full), so the tabs'
+  // skeleton/empty-state plumbing works unchanged for both modes.
+  const renderFormsView = (list: Form[]) =>
+    viewMode === 'grid' ? (
+      list.map(renderFormCard)
+    ) : (
+      <div className="col-span-full overflow-hidden rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 divide-y divide-gray-100 dark:divide-slate-800">
+        {list.map((form) => (
+          <FormListRow
+            key={form.id}
+            form={form}
+            responseCount={responseCountOf(form)}
+            packName={formPackMap[form.id] ?? null}
+            onNavigate={handleNavigate}
+            onPreview={handlePreview}
+          />
+        ))}
+      </div>
+    );
+
   return (
     <div className="min-h-screen">
       <Header
@@ -934,7 +1054,7 @@ export function FormsList() {
             right-aligned group on desktop and share one row on mobile. */}
         <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
           <Input
-            placeholder={!selectedAppId && appGroups.length > 0 ? 'Search forms and apps...' : 'Search forms...'}
+            placeholder="Search..."
             aria-label="Search forms and apps"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -942,6 +1062,33 @@ export function FormsList() {
             className="w-full sm:max-w-md"
           />
           <div className="flex gap-3 sm:ml-auto">
+            {/* Grid / list view toggle */}
+            <div className="flex flex-none rounded-lg border border-gray-300 dark:border-slate-700 overflow-hidden" role="group" aria-label="View mode">
+              <button
+                type="button"
+                onClick={() => changeViewMode('grid')}
+                aria-pressed={viewMode === 'grid'}
+                title="Card view"
+                className={`px-3 py-2.5 transition-colors cursor-pointer ${viewMode === 'grid'
+                  ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400'
+                  : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                <span className="sr-only">Card view</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => changeViewMode('list')}
+                aria-pressed={viewMode === 'list'}
+                title="List view"
+                className={`px-3 py-2.5 border-l border-gray-300 dark:border-slate-700 transition-colors cursor-pointer ${viewMode === 'list'
+                  ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400'
+                  : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
+              >
+                <List className="h-4 w-4" />
+                <span className="sr-only">List view</span>
+              </button>
+            </div>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
@@ -1006,7 +1153,7 @@ export function FormsList() {
                   )}
                 </div>
               ) : (
-                filteredForms.slice(0, formLimit).map(renderFormCard)
+                renderFormsView(filteredForms.slice(0, formLimit))
               )}
             </div>
             <ShowMore shown={Math.min(formLimit, filteredForms.length)} total={filteredForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
@@ -1028,7 +1175,7 @@ export function FormsList() {
                   )}
                 </div>
               ) : (
-                publishedForms.slice(0, formLimit).map(renderFormCard)
+                renderFormsView(publishedForms.slice(0, formLimit))
               )}
             </div>
             <ShowMore shown={Math.min(formLimit, publishedForms.length)} total={publishedForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
@@ -1050,7 +1197,7 @@ export function FormsList() {
                   )}
                 </div>
               ) : (
-                draftForms.slice(0, formLimit).map(renderFormCard)
+                renderFormsView(draftForms.slice(0, formLimit))
               )}
             </div>
             <ShowMore shown={Math.min(formLimit, draftForms.length)} total={draftForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
@@ -1072,7 +1219,7 @@ export function FormsList() {
                   )}
                 </div>
               ) : (
-                archivedForms.slice(0, formLimit).map(renderFormCard)
+                renderFormsView(archivedForms.slice(0, formLimit))
               )}
             </div>
             <ShowMore shown={Math.min(formLimit, archivedForms.length)} total={archivedForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
