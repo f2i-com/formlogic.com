@@ -232,7 +232,10 @@ const FLOW_CALL_CONTEXT = `(function () {
 
 const FLOW_SUMMARY_DECIDE = `(function () {
   var content = String(((nodes.summary || {}).content) || '').trim();
-  var summary = content || 'Call ended (no transcript summary available).';
+  // The FOLLOW-UP marker line is flow plumbing, not prose - strip it from
+  // what lands on the Calls record (seen live: 'FOLLOW-UP: no' in the summary).
+  var summary = content.replace(/\\n?\\s*FOLLOW-UP:\\s*(yes|no)\\s*$/i, '').trim()
+    || 'Call ended (no transcript summary available).';
   return {
     responseId: (nodes.context || {}).responseId || null,
     hasCall: !!((nodes.context || {}).responseId),

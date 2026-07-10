@@ -3435,7 +3435,7 @@
               "id": "decide",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var content = String(((nodes.summary || {}).content) || '').trim();\n  var summary = content || 'Call ended (no transcript summary available).';\n  return {\n    responseId: (nodes.context || {}).responseId || null,\n    hasCall: !!((nodes.context || {}).responseId),\n    callUpdate: { summary: summary },\n    followUpRequired: /FOLLOW-UP:\\s*yes/i.test(content),\n    followUpTask: {\n      summary: 'Follow up after call: ' + summary.slice(0, 140),\n      status: 'open',\n      priority: 'medium'\n    }\n  };\n})()"
+                "expr": "(function () {\n  var content = String(((nodes.summary || {}).content) || '').trim();\n  // The FOLLOW-UP marker line is flow plumbing, not prose - strip it from\n  // what lands on the Calls record (seen live: 'FOLLOW-UP: no' in the summary).\n  var summary = content.replace(/\\n?\\s*FOLLOW-UP:\\s*(yes|no)\\s*$/i, '').trim()\n    || 'Call ended (no transcript summary available).';\n  return {\n    responseId: (nodes.context || {}).responseId || null,\n    hasCall: !!((nodes.context || {}).responseId),\n    callUpdate: { summary: summary },\n    followUpRequired: /FOLLOW-UP:\\s*yes/i.test(content),\n    followUpTask: {\n      summary: 'Follow up after call: ' + summary.slice(0, 140),\n      status: 'open',\n      priority: 'medium'\n    }\n  };\n})()"
               }
             },
             {
