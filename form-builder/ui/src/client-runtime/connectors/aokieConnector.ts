@@ -9,17 +9,21 @@
 //      (capability_denied, command_failed, a genuine connector_unavailable from the
 //      gateway) surface as typed ConnectorErrors and are NEVER masked with mock data
 //      (the same FALLBACKABLE_CODES policy as the native bridge, spec §41).
-//   2. mock fallback — when Desktop is absent/unpaired (or its side reports the
-//      fallbackable absent-ish codes), a demo-grade mock answers the MVP commands so
-//      the Aokie Receptionist app is explorable with no hardware. The mock can also
-//      push a scripted incoming-call event sequence into the desktop event hub
-//      (simulateIncomingCall) for demos/tests — clearly marked, local-only.
+//   2. explicit simulator (audit FL-CONN-001) — the demo-grade mock answers ONLY inside a
+//      deliberate simulator session: the shared Demo account, the "Simulate incoming call"
+//      buttons (which start a session), or the formlogic.aokieSimulator dev flag. It is
+//      NEVER a fallback: with no simulator session, an absent/unpaired Desktop is a typed
+//      connector_unavailable — and once a REAL desktop route was attempted, NOTHING falls
+//      back to the mock (faking success for an answer/hangup/SMS that never reached the
+//      phone is worse than failing). Simulator responses carry `simulated: true` and
+//      simulator events stamp `data.simulated: true` for provenance.
 //
 // The composed connector registers in BROWSER_CONNECTORS, so the existing routing
-// (native bridge → browser connector → mock) and the connector.<id>.<command>
+// (native bridge → browser connector) and the connector.<id>.<command>
 // permission model apply unchanged.
 import type { BrowserConnector, ConnectorStatusInfo } from './connectorTypes';
-import { ConnectorError, FALLBACKABLE_CODES, type ConnectorErrorCode } from './connectorTypes';
+import { ConnectorError, type ConnectorErrorCode } from './connectorTypes';
+import { api } from '../../lib/api';
 import { desktopClient } from '../desktop/desktopClient';
 import { getDesktopInfo } from '../desktop/desktopDetection';
 import { isDesktopPaired } from '../desktop/desktopPairing';
@@ -48,6 +52,42 @@ const AOKIE_COMMANDS = [
   'settings.get',
   'settings.set',
 ];
+
+// ---------------------------------------------------------------------------
+// Explicit simulator session (audit FL-CONN-001).
+// ---------------------------------------------------------------------------
+
+// Turned on by simulateIncomingCall() (the explicit "Simulate…" buttons) for the rest of
+// this page session. The Demo account and the dev flag count as standing opt-ins.
+let simulatorSession = false;
+
+/** Start a deliberate simulator session (page-lifetime). */
+export function enableAokieSimulator(): void {
+  simulatorSession = true;
+}
+
+/** True only inside a deliberate simulator session — the ONLY state where the mock answers. */
+export function isAokieSimulatorActive(): boolean {
+  if (simulatorSession) return true;
+  if (api.isDemoMode()) return true;
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('formlogic.aokieSimulator') === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Test-only. */
+export function __resetAokieSimulatorForTests(): void {
+  simulatorSession = false;
+}
+
+/** Provenance stamp for everything the simulator answers (audit FL-CONN-001). */
+function markSimulated(data: unknown): unknown {
+  return typeof data === 'object' && data !== null && !Array.isArray(data)
+    ? { ...(data as Record<string, unknown>), simulated: true }
+    : data;
+}
 
 // ---------------------------------------------------------------------------
 // Mock layer (like mockVehicleConnector) — demo data, no hardware, no Desktop.
@@ -274,7 +314,9 @@ function aokieEnvelope(
     correlationId,
     idempotencyKey,
     occurredAt: new Date().toISOString(),
-    data,
+    // Simulator provenance (FL-CONN-001): every event this module fabricates says so, so a
+    // record written from it can never masquerade as a real call/SMS.
+    data: markSimulated(data),
     pluginId: 'aokie',
     connectorId: 'aokie',
   };
@@ -296,6 +338,8 @@ export interface SimulateIncomingCallOptions {
  * Resolves with the correlationId once the whole sequence has been emitted.
  */
 export async function simulateIncomingCall(options: SimulateIncomingCallOptions = {}): Promise<string> {
+  // The explicit opt-in: from here on this page session may use the simulated bridge.
+  enableAokieSimulator();
   const stepDelayMs = options.stepDelayMs ?? 1200;
   const from = options.from ?? '+61400555666';
   const callerName = options.callerName ?? 'Alex Morgan (demo)';
@@ -365,7 +409,7 @@ export async function simulateIncomingCall(options: SimulateIncomingCallOptions 
 }
 
 // ---------------------------------------------------------------------------
-// Composed connector: desktop first, mock ONLY when Desktop is absent/unpaired.
+// Composed connector: desktop first; the simulator ONLY in an explicit session.
 // ---------------------------------------------------------------------------
 
 /** Desktop is a candidate route only when detected AND this origin holds a pairing token. */
@@ -380,7 +424,17 @@ export const aokieConnector: BrowserConnector = {
   commands: AOKIE_COMMANDS,
 
   async status(): Promise<ConnectorStatusInfo> {
-    if (!desktopRouteAvailable()) return mockAokieConnector.status();
+    if (!desktopRouteAvailable()) {
+      if (isAokieSimulatorActive()) return mockAokieConnector.status();
+      return {
+        id: 'aokie',
+        kind: 'aokie_phone',
+        available: false,
+        source: 'mock',
+        label: 'Aokie phone bridge',
+        detail: 'FormLogic Desktop is not connected — connect and pair it to use the phone bridge.',
+      };
+    }
     const res = await desktopClient.connectors.status('aokie');
     if (res.ok) {
       const s = res.data;
@@ -394,11 +448,8 @@ export const aokieConnector: BrowserConnector = {
         detail: s?.detail ?? 'Served by FormLogic Desktop.',
       };
     }
-    // Absent-ish failures (unreachable / token dropped / plugin not installed) degrade to
-    // the mock's status; a REAL desktop error is reported as unavailable, never masked.
-    if (res.transportFailure || res.error.code === 'auth_required' || FALLBACKABLE_CODES.has(res.error.code as ConnectorErrorCode)) {
-      return mockAokieConnector.status();
-    }
+    // FL-CONN-001: a desktop that WAS routable and now fails is reported unavailable —
+    // never re-painted with the simulator's healthy-looking status.
     return {
       id: 'aokie',
       kind: 'aokie_phone',
@@ -410,23 +461,32 @@ export const aokieConnector: BrowserConnector = {
   },
 
   async request(command: string, payload?: unknown): Promise<unknown> {
-    if (!desktopRouteAvailable()) return mockAokieConnector.request(command, payload);
+    if (!desktopRouteAvailable()) {
+      // FL-CONN-001: the simulator answers ONLY inside an explicit session. Otherwise an
+      // absent/unpaired Desktop is a typed failure — a call/SMS command must never
+      // pretend to succeed against hardware that isn't there.
+      if (isAokieSimulatorActive()) {
+        return markSimulated(await mockAokieConnector.request(command, payload));
+      }
+      throw new ConnectorError(
+        'connector_unavailable',
+        `FormLogic Desktop is not connected — "${command}" was not performed. Connect and pair FormLogic Desktop to use the phone bridge.`
+      );
+    }
 
     const res = await desktopClient.connectors.request('aokie', command, payload);
     if (res.ok) return res.data;
 
-    // transportFailure = the CLIENT could not reach Desktop at all (network/timeout) —
-    // Desktop is effectively absent, so the mock may answer. auth_required = the pairing
-    // token was rejected+dropped (handled before the connector layer per contract §3) —
-    // now unpaired, so the mock may answer. Otherwise the SAME fallback policy as the
-    // native bridge applies: only connector_missing/ipc_unavailable (Desktop up, aokie
-    // side absent) fall back; capability_denied / command_failed / origin_denied / a
-    // desktop-returned connector_unavailable are REAL errors and must surface (spec §41).
-    if (res.transportFailure || res.error.code === 'auth_required') {
-      return mockAokieConnector.request(command, payload);
-    }
-    if (FALLBACKABLE_CODES.has(res.error.code as ConnectorErrorCode)) {
-      return mockAokieConnector.request(command, payload);
+    // FL-CONN-001: once a REAL desktop route was attempted, NOTHING falls back to the
+    // simulator — not on transport failure, not on auth_required, not on the old
+    // "fallbackable" absent-ish codes. Faking success for a mutation (answer/hangup/
+    // operatorSpeak/sms.send) that never reached the phone is strictly worse than a
+    // typed, actionable failure.
+    if (res.transportFailure) {
+      throw new ConnectorError(
+        'connector_unavailable',
+        `FormLogic Desktop did not respond — "${command}" was not performed. ${res.error?.message ?? ''}`.trim()
+      );
     }
     throw new ConnectorError(res.error.code as ConnectorErrorCode, res.error.message);
   },

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { aokieConnector, mockAokieConnector, simulateIncomingCall } from './aokieConnector';
+import {
+  __resetAokieSimulatorForTests,
+  aokieConnector,
+  enableAokieSimulator,
+  mockAokieConnector,
+  simulateIncomingCall,
+} from './aokieConnector';
 import {
   __resetDesktopDetectionForTests,
   __setDesktopInfoForTests,
@@ -7,9 +13,10 @@ import {
 import { clearDesktopToken, storeDesktopToken } from '../desktop/desktopPairing';
 import { __resetDesktopEventsForTests, subscribeDesktopEvents } from '../desktop/desktopEvents';
 
-// Aokie connector routing: desktop present+paired → the Desktop gateway; desktop
-// absent/unpaired → the mock; REAL desktop errors (capability_denied, command_failed,
-// desktop-returned connector_unavailable) surface and are never masked by the mock.
+// Aokie connector routing (FL-CONN-001): desktop present+paired → the Desktop gateway;
+// desktop absent/unpaired → the simulator ONLY inside an explicit simulator session,
+// otherwise a typed connector_unavailable; and once a real desktop route was attempted,
+// NOTHING falls back to the mock — every failure surfaces typed.
 
 function jsonResponse(body: unknown, status = 200): Promise<Response> {
   return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response);
@@ -28,6 +35,7 @@ function desktopPairedAndDetected(): void {
 afterEach(() => {
   __resetDesktopDetectionForTests();
   __resetDesktopEventsForTests();
+  __resetAokieSimulatorForTests();
   clearDesktopToken();
   vi.restoreAllMocks();
   delete (globalThis as unknown as { fetch?: unknown }).fetch;
@@ -45,22 +53,36 @@ describe('aokieConnector.request routing', () => {
     expect(url).toBe('http://127.0.0.1:17872/api/connectors/aokie/request');
   });
 
-  it('serves the mock when Desktop is absent (no fetch at all)', async () => {
+  it('Desktop absent WITHOUT a simulator session: typed connector_unavailable, never the mock', async () => {
     const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('should not be called'))));
 
-    const result = (await aokieConnector.request('dongle.list')) as { dongles: unknown[] };
-
-    expect(Array.isArray(result.dongles)).toBe(true);
-    expect(result.dongles.length).toBeGreaterThan(0);
+    await expect(aokieConnector.request('sms.send', { to: '+61400000000', body: 'hi' })).rejects.toMatchObject({
+      name: 'ConnectorError',
+      code: 'connector_unavailable',
+    });
+    await expect(aokieConnector.request('dongle.list')).rejects.toMatchObject({ code: 'connector_unavailable' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('serves the mock when Desktop is detected but NOT paired', async () => {
+  it('serves the simulator when Desktop is absent AND a simulator session is active, stamped simulated', async () => {
+    enableAokieSimulator();
+    const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('should not be called'))));
+
+    const result = (await aokieConnector.request('dongle.list')) as { dongles: unknown[]; simulated?: boolean };
+
+    expect(Array.isArray(result.dongles)).toBe(true);
+    expect(result.simulated).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('Desktop detected but NOT paired behaves like absent (simulator session required)', async () => {
     __setDesktopInfoForTests({ available: true, companion: 'formlogic-desktop' });
     const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('should not be called'))));
 
-    const result = (await aokieConnector.request('sms.threads')) as { threads: unknown[] };
+    await expect(aokieConnector.request('sms.threads')).rejects.toMatchObject({ code: 'connector_unavailable' });
 
+    enableAokieSimulator();
+    const result = (await aokieConnector.request('sms.threads')) as { threads: unknown[] };
     expect(Array.isArray(result.threads)).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -82,36 +104,43 @@ describe('aokieConnector.request routing', () => {
     await expect(aokieConnector.request('phone.status')).rejects.toMatchObject({ code: 'connector_unavailable' });
   });
 
-  it('falls back to the mock on a NETWORK failure (Desktop effectively absent)', async () => {
+  it('a NETWORK failure on a real attempt is a typed failure — even mid simulator session', async () => {
     desktopPairedAndDetected();
+    enableAokieSimulator(); // the session must NOT let a real mutation fall into the mock
     setFetch(vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))));
 
-    const result = (await aokieConnector.request('dongle.list')) as { dongles: unknown[] };
-
-    expect(Array.isArray(result.dongles)).toBe(true);
+    await expect(aokieConnector.request('call.hangup', { callId: 'call_1' })).rejects.toMatchObject({
+      name: 'ConnectorError',
+      code: 'connector_unavailable',
+    });
   });
 
-  it('falls back to the mock on connector_missing (Desktop up, aokie plugin not installed)', async () => {
+  it('connector_missing (Desktop up, aokie plugin not installed) surfaces typed, never mocked', async () => {
     desktopPairedAndDetected();
     setFetch(vi.fn(() => jsonResponse({ ok: false, error: { code: 'connector_missing', message: 'no aokie plugin' } }, 404)));
 
-    const result = (await aokieConnector.request('phone.status')) as { connected: boolean };
-
-    expect(result.connected).toBe(true); // the mock's demo phone
+    await expect(aokieConnector.request('phone.status')).rejects.toMatchObject({ code: 'connector_missing' });
   });
 
-  it('falls back to the mock when the pairing token is rejected (auth_required → unpaired)', async () => {
+  it('a rejected pairing token (auth_required) surfaces typed, never mocked', async () => {
     desktopPairedAndDetected();
     setFetch(vi.fn(() => jsonResponse({ message: 'unauthorized' }, 401)));
 
-    const result = (await aokieConnector.request('sms.threads')) as { threads: unknown[] };
-
-    expect(Array.isArray(result.threads)).toBe(true);
+    await expect(aokieConnector.request('sms.threads')).rejects.toMatchObject({
+      name: 'ConnectorError',
+    });
   });
 });
 
 describe('aokieConnector.status', () => {
-  it('reports the mock source when Desktop is absent', async () => {
+  it('Desktop absent without a simulator session: honestly unavailable', async () => {
+    const status = await aokieConnector.status();
+    expect(status).toMatchObject({ id: 'aokie', available: false, source: 'mock' });
+    expect(status.detail).toContain('not connected');
+  });
+
+  it('reports the simulator status inside an explicit simulator session', async () => {
+    enableAokieSimulator();
     const status = await aokieConnector.status();
     expect(status).toMatchObject({ id: 'aokie', available: true, source: 'mock' });
   });
