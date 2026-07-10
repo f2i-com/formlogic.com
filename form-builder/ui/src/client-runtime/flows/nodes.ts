@@ -1148,7 +1148,20 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // client-side, and return { responses, count, first, found }. Fails loudly on a missing form.
       const formId = resolveFormRef(node, data, ctx);
       const limit = clampListLimit(data.limit);
-      const raw = await deps.listResponses(formId, { limit });
+      // Server-side pushdown (audit AOK-FLOW-001): eq filters with scalar
+      // resolved values become answers.<field> query params, so an exact
+      // lookup is answered by the database — a match beyond the fetch limit
+      // is never silently missed. Every filter still applies client-side
+      // below (frozen contract unchanged); pushdown only changes WHICH rows
+      // come back. Mirrors pushdown_eq_filters in the Rust runner.
+      const answersEq: Record<string, string> = {};
+      for (const f of parseResponseFilters(data.filters)) {
+        if (f.op !== 'eq' || !/^[A-Za-z0-9_]{1,64}$/.test(f.field)) continue;
+        const resolved = resolveSelector(f.value, ctx.scope);
+        if (typeof resolved === 'string') answersEq[f.field] = resolved;
+        else if (typeof resolved === 'number' || typeof resolved === 'boolean') answersEq[f.field] = String(resolved);
+      }
+      const raw = await deps.listResponses(formId, Object.keys(answersEq).length > 0 ? { limit, answersEq } : { limit });
       const rows: FlowResponseRow[] = [];
       for (const item of Array.isArray(raw) ? raw : []) {
         const row = normalizeResponseRow(item);

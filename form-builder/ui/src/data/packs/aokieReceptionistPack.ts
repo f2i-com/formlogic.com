@@ -1505,8 +1505,11 @@ export const aokieReceptionistPack: PackData = {
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }] } },
-          { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 200 } },
-          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200 } },
+          // call_id filters push the lookup into the DATABASE (audit
+          // AOK-FLOW-001) — a call older than the fetch window is still
+          // found. The context script's own scan stays as belt-and-braces.
+          { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'context', type: 'logic_block', data: { expr: FLOW_CALL_CONTEXT } },
           {
             id: 'summary',
@@ -1592,7 +1595,7 @@ export const aokieReceptionistPack: PackData = {
             data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'text', example: 'Are you open on Sunday?' }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
-          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200 } },
+          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'context', type: 'logic_block', data: { expr: FLOW_LIVE_CONTEXT } },
           {
             id: 'reply',
@@ -1638,8 +1641,10 @@ export const aokieReceptionistPack: PackData = {
             type: 'input',
             data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'callerPhone', example: '+61400000000' }] },
           },
+          // customers stays a client-side scan: its match is a fuzzy
+          // digits-tail comparison no equality filter can express.
           { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
-          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200 } },
+          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },
           {
             id: 'extract',

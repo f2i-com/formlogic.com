@@ -247,10 +247,20 @@ class ResponseController
         }
 
         $queryParams = $request->getQueryParams();
+        // Server-side answer-equality filters (audit AOK-FLOW-001):
+        // ?answers.<fieldId>=<value>, ANDed. PHP parses '.' in query keys
+        // to '_', so both spellings arrive here.
+        $answersEq = [];
+        foreach ($queryParams as $qk => $qv) {
+            if (is_string($qv) && (str_starts_with((string) $qk, 'answers.') || str_starts_with((string) $qk, 'answers_'))) {
+                $answersEq[substr((string) $qk, 8)] = $qv;
+            }
+        }
         $options = [
             'status' => $queryParams['status'] ?? null,
             'from' => $queryParams['from'] ?? null,
             'to' => $queryParams['to'] ?? null,
+            'answersEq' => $answersEq,
             'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 1000)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];

@@ -571,7 +571,7 @@ class ApiClient {
   // Response endpoints
   async getResponses(
     formId: string,
-    options?: { status?: string; from?: string; to?: string; limit?: number; offset?: number }
+    options?: { status?: string; from?: string; to?: string; limit?: number; offset?: number; answersEq?: Record<string, string> }
   ): Promise<ApiResponse<{ responses: FormResponse[]; count: number }>> {
     const params = new URLSearchParams();
     if (options?.status) params.set('status', options.status);
@@ -579,6 +579,10 @@ class ApiClient {
     if (options?.to) params.set('to', options.to);
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
+    // Server-side equality lookups (audit AOK-FLOW-001).
+    for (const [field, value] of Object.entries(options?.answersEq ?? {})) {
+      params.set(`answers.${field}`, value);
+    }
 
     const query = params.toString();
     return this.request(`/forms/${formId}/responses${query ? `?${query}` : ''}`);
@@ -1369,10 +1373,14 @@ class ApiClient {
     });
   }
 
-  async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
+  async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number; answersEq?: Record<string, string> }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
     const params = new URLSearchParams();
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
+    // Server-side equality lookups (audit AOK-FLOW-001).
+    for (const [field, value] of Object.entries(options?.answersEq ?? {})) {
+      params.set(`answers.${field}`, value);
+    }
     const query = params.toString();
     const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);
     return this._demoMode ? this._mergeDemoResponses(res, formId) : res;

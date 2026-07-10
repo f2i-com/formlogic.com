@@ -3398,7 +3398,14 @@
               "data": {
                 "form": "@pack:calls",
                 "return": "all",
-                "limit": 200
+                "limit": 200,
+                "filters": [
+                  {
+                    "field": "call_id",
+                    "op": "eq",
+                    "value": "$inputs.callId"
+                  }
+                ]
               }
             },
             {
@@ -3407,7 +3414,14 @@
               "data": {
                 "form": "@pack:transcript-turns",
                 "return": "all",
-                "limit": 200
+                "limit": 200,
+                "filters": [
+                  {
+                    "field": "call_id",
+                    "op": "eq",
+                    "value": "$inputs.callId"
+                  }
+                ]
               }
             },
             {
@@ -3596,7 +3610,14 @@
               "data": {
                 "form": "@pack:transcript-turns",
                 "return": "all",
-                "limit": 200
+                "limit": 200,
+                "filters": [
+                  {
+                    "field": "call_id",
+                    "op": "eq",
+                    "value": "$inputs.callId"
+                  }
+                ]
               }
             },
             {
@@ -3712,7 +3733,14 @@
               "data": {
                 "form": "@pack:transcript-turns",
                 "return": "all",
-                "limit": 200
+                "limit": 200,
+                "filters": [
+                  {
+                    "field": "call_id",
+                    "op": "eq",
+                    "value": "$inputs.callId"
+                  }
+                ]
               }
             },
             {
