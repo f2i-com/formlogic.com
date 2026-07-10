@@ -121,6 +121,16 @@ its own Windows CI running the plugin's full test suite plus the voice-feature c
   account, and runs the suite nightly + on demand (`workflow_dispatch`), uploading traces on failure.
   Remaining (follow-ups): app-RBAC / export / billing-disabled golden paths.
 
+- [ ] **Desktop/Aokie installer signing (audit PKG-001)** — the pipelines are in place
+  (`package.yml` `desktop` job: verify-gated NSIS+MSI via `tauri build`, SHA256SUMS, release
+  attach; aokie.com `ci.yml` `plugin-release` job: helper-hash-pinned voice plugin bundle +
+  checksums), but artifacts ship **UNSIGNED** until a Windows code-signing certificate exists.
+  To close: buy an OV/EV cert, add `WINDOWS_CERT_PFX_B64` + `WINDOWS_CERT_PASSWORD` secrets to
+  BOTH repos — the sign steps then activate on the next tag. Note the pinned-helper caveat in the
+  aokie job: a signed helper changes bytes, so a signed release must rebuild the plugin with the
+  post-sign hash (documented in the workflow; automate when the cert lands). Until signed,
+  SmartScreen warns on install — do not ship to external users.
+
 ## P1 — security & data-integrity hardening
 
 - [x] **Webhook SSRF tests** — `WebhookSecurityTest` covers blocked hosts / private IPs / schemes.

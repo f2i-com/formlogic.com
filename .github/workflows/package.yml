@@ -70,6 +70,95 @@ jobs:
           node scripts/check-pack-screens.mjs
           node scripts/check-security-invariants.mjs
 
+  # Audit PKG-001 (best-effort until signing infrastructure exists): build the
+  # Windows desktop installers (NSIS + MSI via `tauri build`), run the desktop
+  # test suite on the exact release SHA first, hash everything, sign when a
+  # certificate is configured, and publish. UNSIGNED artifacts are loudly
+  # flagged — SmartScreen will warn users — and the gap closes the day the
+  # WINDOWS_CERT_PFX_B64 / WINDOWS_CERT_PASSWORD secrets are added.
+  desktop:
+    name: Build Windows desktop installer
+    runs-on: windows-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: form-builder/desktop/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: form-builder/desktop/src-tauri
+
+      - name: Desktop tests (release gate on the exact SHA)
+        working-directory: form-builder/desktop/src-tauri
+        run: cargo test --lib
+
+      - name: Build installers (NSIS + MSI)
+        working-directory: form-builder/desktop
+        run: |
+          npm ci
+          npm run tauri build -- --features gui
+
+      - name: Sign installers (when a certificate is configured)
+        shell: pwsh
+        working-directory: form-builder/desktop/src-tauri/target/release/bundle
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_B64 }}
+          CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $env:CERT_B64) {
+            Write-Warning "PKG-001: no signing certificate configured — shipping UNSIGNED installers (SmartScreen will warn). Add the WINDOWS_CERT_PFX_B64 + WINDOWS_CERT_PASSWORD secrets to close the gap."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          Get-ChildItem -Recurse -Include *.exe,*.msi | ForEach-Object {
+            & $signtool.FullName sign /f $pfx /p $env:CERT_PASS /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signing failed for $($_.Name)" }
+          }
+          Remove-Item $pfx
+
+      # Integrity even without a signature: a published SHA256SUMS lets anyone
+      # verify a downloaded installer wasn't tampered with in transit.
+      - name: Checksums
+        shell: pwsh
+        working-directory: form-builder/desktop/src-tauri/target/release/bundle
+        run: |
+          $files = Get-ChildItem -Recurse -Include *.exe,*.msi
+          $files | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: formlogic-desktop-windows
+          path: |
+            form-builder/desktop/src-tauri/target/release/bundle/**/*.exe
+            form-builder/desktop/src-tauri/target/release/bundle/**/*.msi
+            form-builder/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach installers to the GitHub release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = Get-ChildItem -Recurse form-builder/desktop/src-tauri/target/release/bundle -Include *.exe,*.msi,SHA256SUMS.txt | ForEach-Object FullName
+          gh release upload "$env:GITHUB_REF_NAME" @files --repo "$env:GITHUB_REPOSITORY" --clobber
+
   package:
     name: Build distributable zip
     runs-on: ubuntu-latest
