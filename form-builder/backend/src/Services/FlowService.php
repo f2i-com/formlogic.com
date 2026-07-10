@@ -1721,6 +1721,10 @@ class FlowService
                 'app' => ['id' => $row['id'], 'slug' => $row['slug'], 'name' => $row['name']],
                 'customLogic' => $this->decodeJson($row['custom_logic']),
                 'forms' => $forms,
+                // Connector ids this app holds grants for (audit INT-004): the
+                // desktop routes a connector's events only to the ASSIGNED app,
+                // or to the single candidate app when no assignment exists.
+                'connectors' => $this->appConnectorIds($row['id']),
             ];
         }
         return $out;
@@ -2265,6 +2269,96 @@ class FlowService
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],
         ];
+    }
+
+    // ── Connector→app assignments (audit INT-004/C-13) ─────────────────────────
+
+    /**
+     * The owner's connector→app assignments plus, per connector, every CANDIDATE
+     * app (any app holding a connector.<id>.* role grant). Runtimes route a
+     * connector's events to the assigned app; with no assignment they may fall
+     * back to a SINGLE candidate, and must reject ambiguous (2+) fan-out.
+     */
+    public function getConnectorAssignments(string $ownerUserId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT ca.connector_id, ca.app_id, a.name AS app_name, a.slug AS app_slug
+            FROM connector_assignments ca
+            JOIN apps a ON a.id = ca.app_id
+            WHERE ca.owner_user_id = :o
+            ORDER BY ca.connector_id ASC
+        ");
+        $stmt->execute(['o' => $ownerUserId]);
+        $assignments = array_map(static fn (array $r) => [
+            'connectorId' => $r['connector_id'],
+            'appId' => $r['app_id'],
+            'appName' => $r['app_name'],
+            'appSlug' => $r['app_slug'],
+        ], $stmt->fetchAll());
+
+        $stmt = $this->mysql->prepare("
+            SELECT DISTINCT SUBSTRING_INDEX(SUBSTRING(arp.permission, 11), '.', 1) AS connector_id,
+                   ar.app_id, a.name AS app_name
+            FROM app_role_permissions arp
+            JOIN app_roles ar ON ar.id = arp.role_id
+            JOIN apps a ON a.id = ar.app_id
+            WHERE a.owner_id = :o AND arp.permission LIKE 'connector.%'
+            ORDER BY connector_id ASC, a.created_at ASC
+        ");
+        $stmt->execute(['o' => $ownerUserId]);
+        $candidates = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $candidates[$r['connector_id']][] = ['appId' => $r['app_id'], 'appName' => $r['app_name']];
+        }
+        return ['assignments' => $assignments, 'candidates' => $candidates];
+    }
+
+    /**
+     * Assign a connector to ONE of the owner's apps (upsert), or clear the
+     * assignment with appId null. Throws InvalidArgumentException on a bad
+     * connector id or an app the owner does not own.
+     */
+    public function setConnectorAssignment(string $ownerUserId, string $connectorId, ?string $appId): array
+    {
+        if (!preg_match('/^[a-z0-9][a-z0-9_-]{0,63}$/', $connectorId)) {
+            throw new \InvalidArgumentException('Invalid connector id');
+        }
+        if ($appId === null || $appId === '') {
+            $stmt = $this->mysql->prepare(
+                'DELETE FROM connector_assignments WHERE owner_user_id = :o AND connector_id = :c'
+            );
+            $stmt->execute(['o' => $ownerUserId, 'c' => $connectorId]);
+            return $this->getConnectorAssignments($ownerUserId);
+        }
+        $stmt = $this->mysql->prepare('SELECT id FROM apps WHERE id = :a AND owner_id = :o');
+        $stmt->execute(['a' => $appId, 'o' => $ownerUserId]);
+        if (!$stmt->fetch()) {
+            throw new \InvalidArgumentException('App not found or not owned by you');
+        }
+        $stmt = $this->mysql->prepare("
+            INSERT INTO connector_assignments (id, owner_user_id, connector_id, app_id)
+            VALUES (:id, :o, :c, :a)
+            ON DUPLICATE KEY UPDATE app_id = VALUES(app_id)
+        ");
+        $stmt->execute(['id' => $this->uuidV4(), 'o' => $ownerUserId, 'c' => $connectorId, 'a' => $appId]);
+        return $this->getConnectorAssignments($ownerUserId);
+    }
+
+    /** Distinct connector ids an app holds `connector.<id>.*` role grants for. */
+    private function appConnectorIds(string $appId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT DISTINCT SUBSTRING_INDEX(SUBSTRING(arp.permission, 11), '.', 1) AS connector_id
+            FROM app_role_permissions arp
+            JOIN app_roles ar ON ar.id = arp.role_id
+            WHERE ar.app_id = :a AND arp.permission LIKE 'connector.%'
+            ORDER BY connector_id ASC
+        ");
+        $stmt->execute(['a' => $appId]);
+        return array_values(array_filter(array_map(
+            static fn (array $r) => (string) $r['connector_id'],
+            $stmt->fetchAll()
+        )));
     }
 
     private function decodeJson(?string $json): ?array

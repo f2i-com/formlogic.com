@@ -191,6 +191,25 @@ impl FormLogicClient {
         Ok(array_field(&v, "apps"))
     }
 
+    /// Connector→app assignments (audit INT-004): connector id → assigned app id.
+    pub async fn connector_assignments(
+        &self,
+    ) -> FlResult<std::collections::HashMap<String, String>> {
+        let (_, v) = self
+            .send(reqwest::Method::GET, "connector-assignments", &[], None)
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        for a in array_field(&v, "assignments") {
+            if let (Some(c), Some(app)) = (
+                a.get("connectorId").and_then(Value::as_str),
+                a.get("appId").and_then(Value::as_str),
+            ) {
+                map.insert(c.to_string(), app.to_string());
+            }
+        }
+        Ok(map)
+    }
+
     // ── run lifecycle (reserve / queue / claim / complete) ────────────────────
 
     /// Reserve a run BEFORE executing it (idempotency key dedupes cross-runtime).

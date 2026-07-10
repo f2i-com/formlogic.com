@@ -659,6 +659,26 @@ class MySQLConnection
                 INDEX idx_desktop_command_poll (owner_user_id, status, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Connector→app assignment (audit INT-004/C-13): which ONE app under an owner
+        // receives a local connector's events (and, later, may issue its commands).
+        // Without a row, runtimes fall back to "exactly one candidate app" — two
+        // candidate apps with no assignment is ambiguous and must be REJECTED, never
+        // double-processed.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS connector_assignments (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                connector_id VARCHAR(64) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_connector_assignment (owner_user_id, connector_id),
+                INDEX idx_connector_assignment_owner (owner_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 
     /**

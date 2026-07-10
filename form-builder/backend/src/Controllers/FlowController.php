@@ -421,6 +421,41 @@ class FlowController
         return $this->jsonResponse($response, ['apps' => $this->flows->getOwnerAppLogic($userId, $selector)]);
     }
 
+    /**
+     * Connector→app assignments (GET /api/v1/connector-assignments — audit INT-004).
+     * Returns the owner's explicit assignments plus per-connector candidate apps so
+     * runtimes and future UI can route/reject deterministically. flows:read scoped.
+     */
+    public function listConnectorAssignments(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        return $this->jsonResponse($response, $this->flows->getConnectorAssignments($userId));
+    }
+
+    /**
+     * Assign a connector to one app / clear the assignment
+     * (PUT /api/v1/connector-assignments {connectorId, appId|null}). flows:write scoped.
+     */
+    public function putConnectorAssignment(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $body = $request->getParsedBody() ?? [];
+        $connectorId = (string) ($body['connectorId'] ?? '');
+        $appId = array_key_exists('appId', $body) && $body['appId'] !== null ? (string) $body['appId'] : null;
+        try {
+            $result = $this->flows->setConnectorAssignment($userId, $connectorId, $appId);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        return $this->jsonResponse($response, $result);
+    }
+
     /** Claim a queued run (queued→running exactly once): 200 {run, claimed:true} | 409 when taken. */
     public function claimOwnerRun(Request $request, Response $response, array $args): Response
     {

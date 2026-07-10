@@ -90,7 +90,84 @@ struct CachedSnapshot {
     flows: Vec<Value>,
     bindings: Vec<Value>,
     applogic: Vec<Value>,
+    /// connector id → assigned app id (audit INT-004/C-13). Empty on servers
+    /// that predate the endpoint — routing then falls back per-connector to
+    /// "single candidate app" / legacy unrestricted.
+    assignments: HashMap<String, String>,
     fetched_at: Instant,
+}
+
+/// Which app may handle a connector's event (audit INT-004/C-13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectorRouting {
+    /// No connector on the envelope (or no routing metadata at all): the
+    /// pre-assignment behaviour.
+    Unrestricted,
+    /// Exactly this app — explicitly assigned, or the single candidate.
+    App(String),
+    /// A connector event no app holds grants for: app-logic is skipped;
+    /// app-less workspace flows may still bind.
+    NoCandidates,
+    /// Two or more candidate apps and no assignment: the event must be
+    /// REJECTED (visibly), never processed by both.
+    Ambiguous(Vec<String>),
+}
+
+impl ConnectorRouting {
+    /// May this app's `onConnectorEvent` bundle run?
+    fn allows_app(&self, app_id: Option<&str>) -> bool {
+        match self {
+            ConnectorRouting::Unrestricted => true,
+            ConnectorRouting::App(a) => app_id == Some(a.as_str()),
+            ConnectorRouting::NoCandidates | ConnectorRouting::Ambiguous(_) => false,
+        }
+    }
+
+    /// May a flow with this `appId` fire? App-less (workspace) flows always may.
+    fn allows_flow(&self, flow_app_id: Option<&str>) -> bool {
+        match (self, flow_app_id) {
+            (ConnectorRouting::Unrestricted, _) => true,
+            (_, None) => true,
+            (ConnectorRouting::App(a), Some(f)) => f == a,
+            (ConnectorRouting::NoCandidates | ConnectorRouting::Ambiguous(_), Some(_)) => false,
+        }
+    }
+}
+
+/// Decide the routing for `connector` from the explicit assignments and the
+/// app-logic bundles' `connectors` metadata. Legacy servers (no assignments
+/// AND no `connectors` field on any bundle) yield [`ConnectorRouting::Unrestricted`]
+/// so an old backend keeps the old behaviour.
+fn route_connector_event(
+    connector: &str,
+    assignments: &HashMap<String, String>,
+    bundles: &[Value],
+) -> ConnectorRouting {
+    if let Some(app) = assignments.get(connector) {
+        return ConnectorRouting::App(app.clone());
+    }
+    if assignments.is_empty() && bundles.iter().all(|b| b.get("connectors").is_none()) {
+        return ConnectorRouting::Unrestricted;
+    }
+    let candidates: Vec<String> = bundles
+        .iter()
+        .filter(|b| {
+            b.get("connectors")
+                .and_then(Value::as_array)
+                .is_some_and(|cs| cs.iter().any(|c| c.as_str() == Some(connector)))
+        })
+        .filter_map(|b| {
+            b.get("app")
+                .and_then(|a| a.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    match candidates.len() {
+        0 => ConnectorRouting::NoCandidates,
+        1 => ConnectorRouting::App(candidates.into_iter().next().unwrap()),
+        _ => ConnectorRouting::Ambiguous(candidates),
+    }
 }
 
 /// The desktop flow runtime. Cheaply cloneable via `Arc`.
@@ -369,6 +446,12 @@ impl FlowRuntime {
         let flows = client.list_flows(None, false).await;
         let bindings = client.list_bindings(None).await;
         let applogic = client.app_logic(None).await;
+        // Best-effort (audit INT-004): a server without the endpoint just
+        // means no explicit assignments — never fail the whole snapshot.
+        let assignments = client
+            .connector_assignments()
+            .await
+            .unwrap_or_default();
         match (flows, bindings, applogic) {
             (Ok(flows), Ok(bindings), Ok(applogic)) => {
                 self.note_ok();
@@ -376,6 +459,7 @@ impl FlowRuntime {
                     flows,
                     bindings,
                     applogic,
+                    assignments,
                     fetched_at: Instant::now(),
                 });
                 true
@@ -391,6 +475,18 @@ impl FlowRuntime {
 
     fn with_snapshot<T>(&self, f: impl FnOnce(&CachedSnapshot) -> T) -> Option<T> {
         self.snapshot.lock().ok().and_then(|g| g.as_ref().map(f))
+    }
+
+    /// Route a connector's events to ONE app (audit INT-004/C-13): the
+    /// assigned app wins; with no assignment, exactly one candidate app
+    /// (holding `connector.<id>.*` grants) is implicitly it; two or more is
+    /// ambiguous and must be REJECTED, never double-processed.
+    fn route_for(&self, connector: Option<&str>) -> ConnectorRouting {
+        let Some(connector) = connector.filter(|c| !c.is_empty()) else {
+            return ConnectorRouting::Unrestricted;
+        };
+        self.with_snapshot(|s| route_connector_event(connector, &s.assignments, &s.applogic))
+            .unwrap_or(ConnectorRouting::Unrestricted)
     }
 
     // ── event loop ──────────────────────────────────────────────────────────────
@@ -417,8 +513,26 @@ impl FlowRuntime {
             s.last_event_at = Some(now_iso());
         }
 
+        // App/connector routing (audit INT-004/C-13): one connector's events
+        // belong to ONE app. Ambiguity is a rejection, loudly visible — the
+        // owner must set an assignment (PUT /api/v1/connector-assignments).
+        let connector = envelope
+            .get("connectorId")
+            .and_then(Value::as_str)
+            .or_else(|| envelope.get("source").and_then(Value::as_str))
+            .map(str::to_string);
+        let routing = self.route_for(connector.as_deref());
+        if let ConnectorRouting::Ambiguous(apps) = &routing {
+            self.note_error(format!(
+                "event {name} rejected: {} apps use connector '{}' and none is assigned — set an assignment (PUT /api/v1/connector-assignments)",
+                apps.len(),
+                connector.as_deref().unwrap_or("?"),
+            ));
+            return;
+        }
+
         // (1) App-logic onConnectorEvent — the raw record writes.
-        self.run_app_logic(&envelope, &client).await;
+        self.run_app_logic(&envelope, &client, &routing).await;
 
         // (2) Binding fan-out — browser parity (FL-002/audit C-04). Bindings
         // arrive server-ordered by sortOrder (stable-sorted again here in
@@ -430,22 +544,36 @@ impl FlowRuntime {
         bindings.sort_by_key(|b| b.get("sortOrder").and_then(Value::as_i64).unwrap_or(0));
         for binding in bindings {
             if binding.get("mode").and_then(Value::as_str) == Some("sync") {
-                self.run_binding(&binding, &envelope, &client).await;
+                self.run_binding(&binding, &envelope, &client, &routing).await;
             } else {
                 let rt = self.clone();
                 let client = client.clone();
                 let event = envelope.clone();
+                let routing = routing.clone();
                 tokio::spawn(async move {
-                    rt.run_binding(&binding, &event, &client).await;
+                    rt.run_binding(&binding, &event, &client, &routing).await;
                 });
             }
         }
     }
 
-    /// Apply every linked app's `onConnectorEvent` scripts to this event.
-    async fn run_app_logic(&self, envelope: &Value, client: &FormLogicClient) {
+    /// Apply the ROUTED app's `onConnectorEvent` scripts to this event
+    /// (audit INT-004: never every linked app's).
+    async fn run_app_logic(
+        &self,
+        envelope: &Value,
+        client: &FormLogicClient,
+        routing: &ConnectorRouting,
+    ) {
         let apps: Vec<Value> = self.with_snapshot(|s| s.applogic.clone()).unwrap_or_default();
         for entry in &apps {
+            let entry_app_id = entry
+                .get("app")
+                .and_then(|a| a.get("id"))
+                .and_then(Value::as_str);
+            if !routing.allows_app(entry_app_id) {
+                continue;
+            }
             let Some(app) = AppLogicApp::from_bundle(entry) else { continue };
             let app_id = app.app_id.clone();
             // Own each app's in-process storage map for the duration of the call.
@@ -513,7 +641,13 @@ impl FlowRuntime {
     }
 
     /// One binding: condition → reserve (idempotent) → execute → outputActions → complete.
-    async fn run_binding(self: &Arc<Self>, binding: &Value, event: &Value, client: &Arc<FormLogicClient>) {
+    async fn run_binding(
+        self: &Arc<Self>,
+        binding: &Value,
+        event: &Value,
+        client: &Arc<FormLogicClient>,
+        routing: &ConnectorRouting,
+    ) {
         // Condition (fail-safe: absent → true; error/false → skip).
         if let Some(expr) = binding.get("condition").and_then(|c| c.get("expr")).and_then(Value::as_str) {
             let ctx = json!({ "event": event });
@@ -530,6 +664,12 @@ impl FlowRuntime {
             None => return,
         };
         let app_id = flow.get("appId").and_then(Value::as_str).map(str::to_string);
+        // INT-004/C-13: a flow belonging to an app OTHER than the connector's
+        // routed app must not fire for this event (app-less workspace flows
+        // stay unrestricted).
+        if !routing.allows_flow(app_id.as_deref()) {
+            return;
+        }
         let app_ctx = self.app_context(app_id.as_deref());
 
         let scope = SelectorScope { event: Some(event.clone()), app: app_ctx.clone(), ..Default::default() };
@@ -1315,6 +1455,79 @@ mod tests {
         FlowRuntime::new(host, None, FormLogicConfig { base_url: String::new(), api_key: String::new() })
     }
 
+    // ── Connector→app routing (audit INT-004/C-13) ─────────────────────────
+
+    fn bundle(app_id: &str, connectors: Option<Vec<&str>>) -> Value {
+        let mut b = json!({ "app": { "id": app_id, "slug": app_id, "name": app_id } });
+        if let Some(cs) = connectors {
+            b["connectors"] = json!(cs);
+        }
+        b
+    }
+
+    #[test]
+    fn routing_prefers_the_explicit_assignment() {
+        let mut assignments = HashMap::new();
+        assignments.insert("aokie".to_string(), "app-b".to_string());
+        // Even with app-a as a candidate, the assignment wins.
+        let bundles = vec![bundle("app-a", Some(vec!["aokie"])), bundle("app-b", Some(vec!["aokie"]))];
+        assert_eq!(
+            route_connector_event("aokie", &assignments, &bundles),
+            ConnectorRouting::App("app-b".to_string())
+        );
+    }
+
+    #[test]
+    fn routing_single_candidate_is_implicitly_assigned() {
+        let bundles = vec![bundle("app-a", Some(vec!["aokie"])), bundle("app-x", Some(vec!["vehicle"]))];
+        assert_eq!(
+            route_connector_event("aokie", &HashMap::new(), &bundles),
+            ConnectorRouting::App("app-a".to_string())
+        );
+        assert_eq!(
+            route_connector_event("printer", &HashMap::new(), &bundles),
+            ConnectorRouting::NoCandidates
+        );
+    }
+
+    #[test]
+    fn routing_two_candidates_without_assignment_is_ambiguous_never_both() {
+        let bundles = vec![bundle("app-a", Some(vec!["aokie"])), bundle("app-b", Some(vec!["aokie"]))];
+        let routing = route_connector_event("aokie", &HashMap::new(), &bundles);
+        assert_eq!(
+            routing,
+            ConnectorRouting::Ambiguous(vec!["app-a".to_string(), "app-b".to_string()])
+        );
+        // Neither app-logic nor either app's flows may run; app-less flows may.
+        assert!(!routing.allows_app(Some("app-a")));
+        assert!(!routing.allows_app(Some("app-b")));
+        assert!(!routing.allows_flow(Some("app-a")));
+        assert!(routing.allows_flow(None));
+    }
+
+    #[test]
+    fn routing_legacy_server_without_metadata_stays_unrestricted() {
+        // No assignments AND no `connectors` field on any bundle → pre-INT-004
+        // server: keep the old run-everything behaviour.
+        let bundles = vec![bundle("app-a", None), bundle("app-b", None)];
+        assert_eq!(
+            route_connector_event("aokie", &HashMap::new(), &bundles),
+            ConnectorRouting::Unrestricted
+        );
+    }
+
+    #[test]
+    fn routing_filters_apps_and_flows() {
+        let routing = ConnectorRouting::App("app-a".to_string());
+        assert!(routing.allows_app(Some("app-a")));
+        assert!(!routing.allows_app(Some("app-b")));
+        assert!(routing.allows_flow(Some("app-a")));
+        assert!(!routing.allows_flow(Some("app-b")));
+        assert!(routing.allows_flow(None), "workspace flows are app-less");
+        assert!(!ConnectorRouting::NoCandidates.allows_app(Some("app-a")));
+        assert!(ConnectorRouting::NoCandidates.allows_flow(None));
+    }
+
     // Redirect-hop re-validation (see `flow_redirect_policy`): a redirect must stay on the same
     // origin as the request that was already allow-list-checked. Without this, reqwest's default
     // policy would follow a redirect from an already-allowed origin to an arbitrary third-party
@@ -1390,6 +1603,7 @@ mod tests {
         let default_enabled = json!({ "id": "b-default", "mode": "async", "event": "aokie.call.incoming" });
         let disabled = json!({ "id": "b-disabled", "mode": "async", "event": "aokie.call.incoming", "enabled": false });
         *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+                assignments: HashMap::new(),
             flows: vec![],
             bindings: vec![enabled, default_enabled, disabled],
             applogic: vec![],
@@ -1489,6 +1703,7 @@ mod tests {
 
             let rt = runtime();
             *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+                assignments: HashMap::new(),
                 flows: vec![json!({ "slug": "echo", "flowJson": flow_json, "enabled": true })],
                 bindings: vec![],
                 applogic: vec![],
@@ -1546,7 +1761,7 @@ mod tests {
                 "fallbackPolicy": { "onError": "log_and_continue", "fallbackReply": "One moment please." },
             });
 
-            rt.run_binding(&binding, &call_event(), &client).await;
+            rt.run_binding(&binding, &call_event(), &client, &ConnectorRouting::Unrestricted).await;
 
             // Persisted status is untouched: the flow graph itself succeeded.
             {
@@ -1588,7 +1803,7 @@ mod tests {
                 "fallbackPolicy": { "fallbackReply": "Sorry, please hold." },
             });
 
-            rt.run_binding(&binding, &call_event(), &client).await;
+            rt.run_binding(&binding, &call_event(), &client, &ConnectorRouting::Unrestricted).await;
 
             {
                 let completed = stub.completed.lock().unwrap();
@@ -1613,7 +1828,7 @@ mod tests {
             let (rt, client, stub) = harness(broken_flow()).await;
             let binding = json!({ "id": "b-no-policy", "flow": "echo", "mode": "sync" });
 
-            rt.run_binding(&binding, &call_event(), &client).await;
+            rt.run_binding(&binding, &call_event(), &client, &ConnectorRouting::Unrestricted).await;
 
             assert_eq!(stub.completed.lock().unwrap().len(), 1);
             assert_eq!(rt.status().errors, 0);
@@ -1633,7 +1848,7 @@ mod tests {
                 "fallbackPolicy": { "onError": "surface_error" },
             });
 
-            rt.run_binding(&binding, &call_event(), &client).await;
+            rt.run_binding(&binding, &call_event(), &client, &ConnectorRouting::Unrestricted).await;
 
             assert_eq!(stub.completed.lock().unwrap().len(), 1);
             let status = rt.status();

@@ -55,9 +55,10 @@ const LOGIC_CALL_INCOMING = `function run(ctx) {
   // Withheld/unknown caller id: never put a non-number ('unknown') in the
   // phone field - format validation would reject the WHOLE Calls row.
   if (!/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) phone = '';
+  // Business write FIRST, seen-marker after (audit C-04/FL-001): a failed
+  // write must not be marked handled.
   return {
     effects: [
-      { type: 'storage.set', key: key, value: 1 },
       { type: 'formlogic.submitResponse', formKey: 'Calls', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         caller_phone: phone,
@@ -65,6 +66,7 @@ const LOGIC_CALL_INCOMING = `function run(ctx) {
         status: 'incoming',
         started_at: String(ev.occurredAt || '')
       } },
+      { type: 'storage.set', key: key, value: 1 },
       { type: 'ui.toast', level: 'info', message: 'Incoming call' + (phone ? ' from ' + phone : '') }
     ]
   };
@@ -98,7 +100,6 @@ const LOGIC_CALL_TURN = `function run(ctx) {
   if (['caller', 'aokie', 'operator', 'system'].indexOf(speaker) < 0) speaker = 'system';
   return {
     effects: [
-      { type: 'storage.set', key: key, value: 1 },
       { type: 'formlogic.submitResponse', formKey: 'Transcript Turns', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         turn_index: Number(d.turn || 0),
@@ -106,7 +107,8 @@ const LOGIC_CALL_TURN = `function run(ctx) {
         text: String(d.text || ''),
         timestamp: String(ev.occurredAt || ''),
         source: 'stt'
-      } }
+      } },
+      { type: 'storage.set', key: key, value: 1 }
     ]
   };
 }`;
@@ -146,7 +148,6 @@ const LOGIC_SMS_RECEIVED = `function run(ctx) {
   if (d.displayName) thread.display_name = String(d.displayName);
   return {
     effects: [
-      { type: 'storage.set', key: key, value: 1 },
       { type: 'formlogic.updateResponse', formKey: 'SMS Threads', upsert: true,
         match: { field: 'phone', value: phone }, answers: thread },
       { type: 'formlogic.submitResponse', formKey: 'Messages', answers: {
@@ -158,6 +159,7 @@ const LOGIC_SMS_RECEIVED = `function run(ctx) {
         status: 'received',
         approval_status: 'not_required'
       } },
+      { type: 'storage.set', key: key, value: 1 },
       { type: 'ui.toast', level: 'info', message: 'New SMS' + (phone ? ' from ' + phone : '') }
     ]
   };
@@ -173,7 +175,6 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
   if (['info', 'warning', 'error'].indexOf(severity) < 0) severity = 'error';
   return {
     effects: [
-      { type: 'storage.set', key: key, value: 1 },
       { type: 'formlogic.submitResponse', formKey: 'Device Setup', answers: {
         event_id: String(ev.idempotencyKey || ''),
         event_name: String(d.event || ev.name || ''),
@@ -183,6 +184,7 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
         occurred_at: String(ev.occurredAt || ''),
         payload_json: JSON.stringify(d)
       } },
+      { type: 'storage.set', key: key, value: 1 },
       { type: 'ui.toast', level: 'error', message: 'Aokie hardware issue: ' + String(d.message || 'see Device Setup') }
     ]
   };

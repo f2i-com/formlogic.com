@@ -1530,6 +1530,17 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowController::class)->ownerAppLogic($request, $response);
     })->add($flowsReadAuth);
 
+    // Connector→app assignment (audit INT-004/C-13): which ONE app receives a local
+    // connector's events. Desktop reads it with its snapshot; ambiguous routing
+    // (2+ candidate apps, no assignment) is rejected by runtimes until set here.
+    $group->get('/connector-assignments', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listConnectorAssignments($request, $response);
+    })->add($flowsReadAuth);
+
+    $group->put('/connector-assignments', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->putConnectorAssignment($request, $response);
+    })->add($flowsWriteAuth);
+
     $group->post('/flow-runs/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->claimOwnerRun($request, $response, $getArgs($request));
     })->add($flowsWriteAuth);
