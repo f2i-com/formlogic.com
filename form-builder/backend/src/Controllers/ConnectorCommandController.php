@@ -61,6 +61,11 @@ class ConnectorCommandController
         }
         $token = bin2hex(random_bytes(32));
         $ownerId = (string) ($app['ownerId'] ?? $app['owner_id'] ?? '');
+        // Opportunistic hygiene: expired tokens are already unusable (introspection
+        // filters on expires_at), this just stops the table growing without bound.
+        $this->db->getConnection()->exec(
+            "DELETE FROM connector_capabilities WHERE expires_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)"
+        );
         $stmt = $this->db->getConnection()->prepare(
             "INSERT INTO connector_capabilities
                 (id, token_hash, owner_user_id, user_id, app_id, connector_id, grants_json, expires_at)
