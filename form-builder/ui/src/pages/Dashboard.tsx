@@ -26,6 +26,7 @@ import {
   Boxes,
   ChevronRight,
   Plug,
+  Search,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -486,6 +487,174 @@ function FormActionsDropdown({
   );
 }
 
+// Quick find: type-ahead over every form — jump straight to a form's records,
+// builder, or analytics without scrolling the lists. "/" focuses it from
+// anywhere on the page; ↑/↓ + Enter opens the highlighted form's records.
+function QuickFind({
+  forms,
+  countOf,
+  appOfForm,
+}: {
+  forms: Form[];
+  countOf: (form: Form) => number;
+  appOfForm: Record<string, string>;
+}) {
+  const navigate = useNavigate();
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'archived'>('all');
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // "/" focuses the quick find unless the user is already typing somewhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key === '/' && t && !['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) && !t.isContentEditable) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Clicking outside closes the results panel.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const results = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return forms
+      .filter((f) => statusFilter === 'all' || f.status === statusFilter)
+      .filter((f) => !t || f.title.toLowerCase().includes(t) || (appOfForm[f.id] ?? '').toLowerCase().includes(t))
+      .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
+      .slice(0, 8);
+  }, [forms, q, statusFilter, appOfForm]);
+  // Clamp the keyboard highlight instead of resetting it in an effect.
+  const hi = Math.min(highlight, Math.max(0, results.length - 1));
+
+  const openRecords = (form: Form) => { setOpen(false); navigate(`/responses/${form.id}`); };
+
+  return (
+    <div ref={wrapRef} className="relative mb-8 max-w-2xl">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
+        <input
+          ref={inputRef}
+          type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-label="Quick find a form"
+          placeholder="Search..."
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHighlight(Math.min(hi + 1, results.length - 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(Math.max(hi - 1, 0)); }
+            else if (e.key === 'Enter' && open && results[hi]) { e.preventDefault(); openRecords(results[hi]); }
+            else if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur(); }
+          }}
+          className="w-full pl-10 pr-16 py-3 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/60 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 transition-colors shadow-sm"
+        />
+        <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-400 dark:text-slate-500">/</kbd>
+      </div>
+
+      {open && (
+        <div className="absolute z-40 mt-2 w-full rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl shadow-gray-900/10 dark:shadow-black/40 overflow-hidden">
+          {/* Status filter chips */}
+          <div className="flex items-center gap-1.5 px-3 pt-3 pb-2 border-b border-gray-100 dark:border-slate-800">
+            {(['all', 'published', 'draft', 'archived'] as const).map((sf) => (
+              <button
+                key={sf}
+                type="button"
+                onClick={() => { setStatusFilter(sf); inputRef.current?.focus(); }}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium capitalize transition-colors cursor-pointer ${statusFilter === sf
+                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300'
+                  : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+              >
+                {sf === 'all' ? 'All' : sf}
+              </button>
+            ))}
+          </div>
+          {results.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-gray-400 dark:text-slate-500">No forms match.</p>
+          ) : (
+            <ul role="listbox" aria-label="Matching forms" className="max-h-80 overflow-y-auto divide-y divide-gray-50 dark:divide-slate-800/60">
+              {results.map((form, i) => {
+                const count = countOf(form);
+                const appName = appOfForm[form.id];
+                return (
+                  <li key={form.id} role="option" aria-selected={i === hi}>
+                    <div
+                      onMouseEnter={() => setHighlight(i)}
+                      onClick={() => openRecords(form)}
+                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer ${i === hi ? 'bg-gray-50 dark:bg-slate-800/60' : ''}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{form.title}</span>
+                          {appName && (
+                            <span className="hidden sm:inline-flex flex-none items-center rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-slate-400">
+                              {appName}
+                            </span>
+                          )}
+                        </div>
+                        <span className="block text-xs text-gray-400 dark:text-slate-500 capitalize">
+                          {form.status} · {count} record{count === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-0.5 flex-none" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => openRecords(form)}
+                          title="View records"
+                          aria-label={`View records for ${form.title}`}
+                          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+                        >
+                          <Table className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setOpen(false); navigate(`/builder/${form.id}`); }}
+                          title="Edit form"
+                          aria-label={`Edit ${form.title}`}
+                          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setOpen(false); navigate(`/analytics/${form.id}`); }}
+                          title="Analytics"
+                          aria-label={`Analytics for ${form.title}`}
+                          className="hidden sm:block p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+                        >
+                          <BarChart3 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <p className="px-4 py-2 border-t border-gray-100 dark:border-slate-800 text-[11px] text-gray-400 dark:text-slate-500">
+            Enter opens the records · click a result to browse its data
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard() {
   useDocumentTitle('Dashboard');
   const navigate = useNavigate();
@@ -852,6 +1021,15 @@ export function Dashboard() {
             </Button>
           </div>
         </div>
+
+        {/* Quick find — jump straight to any form's records/builder/analytics. */}
+        {forms.length > 0 && (
+          <QuickFind
+            forms={forms}
+            countOf={(f) => (storageMode === 'api' ? (responseCounts[f.id] ?? f.responseCount ?? 0) : getResponsesByFormId(f.id).length)}
+            appOfForm={appOfForm}
+          />
+        )}
 
         {/* Getting Started Section for New Users */}
         {showGettingStarted && (
