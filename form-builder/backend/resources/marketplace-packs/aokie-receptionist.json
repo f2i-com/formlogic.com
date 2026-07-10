@@ -3423,7 +3423,12 @@
               "data": {
                 "system": "You are the note-taker for a small-business phone receptionist. Be brief and factual.",
                 "prompt": "Summarise this phone call in at most two sentences. Then on a new line write \"FOLLOW-UP: yes\" if the business must contact the caller again, otherwise \"FOLLOW-UP: no\".\n\nTranscript:\n{{nodes.context.transcript}}",
-                "maxTokens": 220
+                "maxTokens": 220,
+                "extraBody": {
+                  "chat_template_kwargs": {
+                    "enable_thinking": false
+                  }
+                }
               }
             },
             {
@@ -3507,7 +3512,12 @@
               "data": {
                 "system": "You draft short, friendly SMS replies for a small-business receptionist. Reply with the SMS text only — no preamble.",
                 "prompt": "Draft a reply to this SMS from {{inputs.from}}:\n\n{{inputs.body}}",
-                "maxTokens": 120
+                "maxTokens": 120,
+                "extraBody": {
+                  "chat_template_kwargs": {
+                    "enable_thinking": false
+                  }
+                }
               }
             },
             {

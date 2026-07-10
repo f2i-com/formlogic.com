@@ -1513,6 +1513,11 @@ export const aokieReceptionistPack: PackData = {
               prompt:
                 'Summarise this phone call in at most two sentences. Then on a new line write "FOLLOW-UP: yes" if the business must contact the caller again, otherwise "FOLLOW-UP: no".\n\nTranscript:\n{{nodes.context.transcript}}',
               maxTokens: 220,
+              // Qwen3-class models otherwise burn the WHOLE budget in a hidden
+              // <think> block and return empty content — seen as 'no transcript
+              // summary available' on every live call while the extractor
+              // (which has this override) worked fine.
+              extraBody: { chat_template_kwargs: { enable_thinking: false } },
             },
           },
           { id: 'decide', type: 'logic_block', data: { expr: FLOW_SUMMARY_DECIDE } },
@@ -1556,6 +1561,8 @@ export const aokieReceptionistPack: PackData = {
               system: 'You draft short, friendly SMS replies for a small-business receptionist. Reply with the SMS text only — no preamble.',
               prompt: 'Draft a reply to this SMS from {{inputs.from}}:\n\n{{inputs.body}}',
               maxTokens: 120,
+              // Same Qwen3 thinking-mode guard as every other llm_chat node.
+              extraBody: { chat_template_kwargs: { enable_thinking: false } },
             },
           },
           { id: 'build', type: 'logic_block', data: { expr: FLOW_SMS_DRAFT_BUILD } },
