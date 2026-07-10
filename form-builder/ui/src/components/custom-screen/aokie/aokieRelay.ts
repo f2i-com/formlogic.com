@@ -23,8 +23,16 @@ export function isTerminalStatus(status: ConnectorCommandStatus): status is Rela
   return status === 'done' || status === 'failed' || status === 'expired';
 }
 
+/**
+ * What the caller learns. `uncertain` (audit INT-005/C-14) is CLIENT-derived: the
+ * command was CLAIMED by a desktop but hadn't reported back when we gave up — the
+ * phone may well have acted, so the UI must say "outcome uncertain", never fake a
+ * clean failure.
+ */
+export type RelayOutcomeStatus = RelayTerminalStatus | 'uncertain';
+
 export interface RelayOutcome {
-  status: RelayTerminalStatus;
+  status: RelayOutcomeStatus;
   result?: Record<string, unknown> | null;
   error?: Record<string, unknown> | null;
   commandId?: string;
@@ -76,7 +84,11 @@ export async function runRelayCommand(
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? (() => Date.now());
 
-  const enq = await api.enqueueConnectorCommand(slug, { connectorId: 'aokie', command, payload });
+  // Client intent id (audit INT-005/C-14): ONE key per operator action, minted
+  // here — any transport-level retry of this enqueue dedupes server-side
+  // instead of creating a second command.
+  const idempotencyKey = `ui-${command}-${crypto.randomUUID()}`;
+  const enq = await api.enqueueConnectorCommand(slug, { connectorId: 'aokie', command, payload, idempotencyKey });
   if (enq.error || !enq.data) {
     throw new Error(enq.error || 'Failed to reach the desktop runtime');
   }
@@ -86,15 +98,21 @@ export async function runRelayCommand(
   }
 
   const startedAt = now();
+  let lastStatus: ConnectorCommandStatus = enq.data.status;
   for (;;) {
     await sleep(pollMs);
     const res = await api.getConnectorCommand(slug, commandId);
     const cmd = res.data?.command;
-    if (cmd && isTerminalStatus(cmd.status)) {
-      return { status: cmd.status, result: cmd.result, error: cmd.error, commandId };
+    if (cmd) {
+      lastStatus = cmd.status;
+      if (isTerminalStatus(cmd.status)) {
+        return { status: cmd.status, result: cmd.result, error: cmd.error, commandId };
+      }
     }
     if (now() - startedAt >= timeoutMs) {
-      return { status: 'expired', commandId };
+      // Give-up semantics must stay truthful: a command a desktop CLAIMED may
+      // have executed on the phone — that is 'uncertain', not a failure.
+      return { status: lastStatus === 'claimed' ? 'uncertain' : 'expired', commandId };
     }
   }
 }
@@ -230,6 +248,17 @@ export interface OutcomeToast {
 export function describeRelayOutcome(command: string, outcome: RelayOutcome, deviceName?: string): OutcomeToast {
   if (outcome.status === 'done') {
     return { kind: 'success', title: COMMAND_SUCCESS_LABEL[command] ?? 'Command sent' };
+  }
+  if (outcome.status === 'uncertain') {
+    // Audit INT-005: claimed but unreported when we gave up — the phone may
+    // have acted. Say so plainly; the record view is the source of truth.
+    return {
+      kind: 'error',
+      title: 'Outcome uncertain',
+      message: deviceName
+        ? `${deviceName} picked this up but has not reported back — check the call state before retrying.`
+        : 'A desktop picked this up but has not reported back — check the call state before retrying.',
+    };
   }
   if (outcome.status === 'expired') {
     return {

@@ -178,6 +178,10 @@ class ConnectorCommandController
             if ($e->getMessage() === 'not_claimed') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This command is not in a claimed state'], 409);
             }
+            if ($e->getMessage() === 'claimed_elsewhere') {
+                // Audit INT-005/C-14: the completing desktop is NOT the claimant.
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'This command was claimed by a different desktop instance'], 409);
+            }
             throw $e;
         }
         if (!$command) {

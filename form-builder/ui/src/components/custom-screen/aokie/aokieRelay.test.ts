@@ -132,6 +132,33 @@ describe('runRelayCommand — enqueue → poll → terminal', () => {
     expect(outcome.status).toBe('expired');
   });
 
+  // Audit INT-005/C-14: a CLAIMED command may have executed on the phone —
+  // giving up must read 'uncertain', never a clean failure/expiry.
+  it("gives up as 'uncertain' when the command was claimed but never reported back", async () => {
+    const { api } = scriptedApi({ poll: [command('claimed')] }); // claimed, never completes
+    let clock = 0;
+    const outcome = await runRelayCommand(api, 'slug', 'call.hangup', undefined, {
+      sleep: immediateSleep,
+      now: () => (clock += 1000),
+      timeoutMs: 3000,
+    });
+    expect(outcome.status).toBe('uncertain');
+    const t = describeRelayOutcome('call.hangup', outcome, 'Office PC');
+    expect(t.kind).toBe('error');
+    expect(t.title).toBe('Outcome uncertain');
+    expect(t.message).toContain('Office PC');
+  });
+
+  // Audit INT-005: ONE client intent id per operator action, minted at enqueue —
+  // a transport retry of the same action dedupes server-side.
+  it('sends a client intent idempotencyKey with the enqueue', async () => {
+    const { api, enqueue } = scriptedApi({ enqueueStatus: 'done' });
+    await runRelayCommand(api, 'slug', 'call.answer', { callId: 'call_1' }, { sleep: immediateSleep });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    const arg = enqueue.mock.calls[0][1] as { idempotencyKey?: string };
+    expect(arg.idempotencyKey).toMatch(/^ui-call\.answer-/);
+  });
+
   it('throws when the enqueue call itself fails', async () => {
     const { api } = scriptedApi({ enqueueError: 'forbidden' });
     await expect(runRelayCommand(api, 'slug', 'call.answer', undefined, { sleep: immediateSleep })).rejects.toThrow('forbidden');

@@ -23,6 +23,9 @@ class DesktopCommandService
 {
     /** Pending commands are short-lived: a call the receptionist must pick up now, not in an hour. */
     public const COMMAND_TTL_SECONDS = 60;
+    /** Call-control commands go stale with the CALL (audit INT-005/C-14): an answer/reject/hangup
+     *  no desktop picked up within seconds must expire, never fire against a later call state. */
+    public const CALL_COMMAND_TTL_SECONDS = 15;
     /** expireStale()'s 'claimed' staleness threshold — see that method's docblock for the reasoning. */
     public const CLAIMED_STALE_SECONDS = 300;
     public const MAX_PAYLOAD_BYTES = 16384;    // 16 KiB request payload
@@ -102,7 +105,7 @@ class DesktopCommandService
                 'payload' => $payloadJson,
                 'key' => $idempotencyKey,
                 'req' => $requestedByUserId,
-                'exp' => date('Y-m-d H:i:s', time() + self::COMMAND_TTL_SECONDS),
+                'exp' => date('Y-m-d H:i:s', time() + $this->ttlFor($command)),
             ]);
         } catch (\PDOException $e) {
             if (!$this->isDuplicateKey($e)) {
@@ -244,6 +247,17 @@ class DesktopCommandService
             throw new \InvalidArgumentException('status must be one of: ' . implode(', ', self::COMPLETE_STATUSES));
         }
 
+        // Claimant binding (audit INT-005/C-14): when the completer identifies itself,
+        // it must be the SAME instance that claimed the command — a second desktop
+        // under the owner can never complete (or overwrite) another's claim.
+        $instanceId = null;
+        if (isset($data['instanceId']) && $data['instanceId'] !== null && $data['instanceId'] !== '') {
+            if (!is_string($data['instanceId']) || strlen($data['instanceId']) > 120) {
+                throw new \InvalidArgumentException('instanceId must be a string ≤ 120 chars');
+            }
+            $instanceId = $data['instanceId'];
+        }
+
         $resultJson = null;
         if (isset($data['result']) && $data['result'] !== null) {
             $json = json_encode($data['result']);
@@ -261,21 +275,45 @@ class DesktopCommandService
             $errorJson = $json;
         }
 
+        // The claimant filter applies only when the completer identifies itself AND the
+        // claim recorded an identity — legacy desktops (no instanceId on either side)
+        // keep working unchanged.
+        $claimantSql = $instanceId !== null ? ' AND (claimed_by IS NULL OR claimed_by = :cb)' : '';
+        $params = ['s' => $status, 'result' => $resultJson, 'error' => $errorJson, 'id' => $id, 'o' => $ownerUserId];
+        if ($instanceId !== null) {
+            $params['cb'] = $instanceId;
+        }
         $stmt = $this->mysql->prepare("
             UPDATE desktop_commands
             SET status = :s, result_json = :result, error_json = :error, finished_at = NOW()
-            WHERE id = :id AND owner_user_id = :o AND status = 'claimed'
+            WHERE id = :id AND owner_user_id = :o AND status = 'claimed'{$claimantSql}
         ");
-        $stmt->execute(['s' => $status, 'result' => $resultJson, 'error' => $errorJson, 'id' => $id, 'o' => $ownerUserId]);
+        $stmt->execute($params);
 
         if ($stmt->rowCount() === 0) {
             $existing = $this->get($id, $ownerUserId);
             if ($existing === null) {
                 return null;
             }
+            if (
+                $instanceId !== null
+                && ($existing['status'] ?? '') === 'claimed'
+                && ($existing['claimedBy'] ?? null) !== null
+                && $existing['claimedBy'] !== $instanceId
+            ) {
+                throw new \RuntimeException('claimed_elsewhere');
+            }
             throw new \RuntimeException('not_claimed');
         }
         return $this->get($id, $ownerUserId);
+    }
+
+    /** Seconds a freshly-enqueued command stays claimable (audit INT-005: call control is short). */
+    private function ttlFor(string $command): int
+    {
+        return str_starts_with($command, 'call.')
+            ? self::CALL_COMMAND_TTL_SECONDS
+            : self::COMMAND_TTL_SECONDS;
     }
 
     /**

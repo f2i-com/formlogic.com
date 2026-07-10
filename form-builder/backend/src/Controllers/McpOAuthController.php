@@ -262,6 +262,18 @@ class McpOAuthController
             return $this->oauthError($response, 'server_error', 'Desktop linking is not available', 500);
         }
         $userId = (string) $grant['userId'];
+        // Fail CLOSED on app-restricted grants (audit SEC-001/C-08): the desktop key is
+        // account-wide by design (the headless runner serves every owner app), so an
+        // authorization carrying an app limit must be REFUSED rather than silently
+        // widened into an account-wide credential.
+        if (isset($grant['appId']) && $grant['appId'] !== null && $grant['appId'] !== '') {
+            return $this->oauthError(
+                $response,
+                'invalid_grant',
+                'Desktop linking requires an account-wide grant; an app-restricted authorization cannot mint a desktop key',
+                400
+            );
+        }
         $device = isset($grant['deviceLabel']) && $grant['deviceLabel'] !== null ? (string) $grant['deviceLabel'] : null;
         // The granted scopes are already the DESKTOP_SCOPES subset (validated at authorize time), so
         // every one is a valid ApiKeyService scope. Name the key for the device.

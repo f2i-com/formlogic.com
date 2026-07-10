@@ -430,11 +430,23 @@ impl FormLogicClient {
         }
     }
 
-    /// Complete a claimed command (`{status:'done'|'failed', result?, error?}`). A
-    /// 409 (no longer claimed — e.g. re-completed) is swallowed as success.
-    pub async fn complete_command(&self, id: &str, payload: &Value) -> FlResult<()> {
+    /// Complete a claimed command (`{status:'done'|'failed', result?, error?}`),
+    /// identifying THIS instance so the server can verify we are the claimant
+    /// (audit INT-005/C-14). A 409 (no longer claimed / claimed elsewhere) is
+    /// swallowed as success — the side effect already ran and re-reporting
+    /// cannot improve anything.
+    pub async fn complete_command(
+        &self,
+        id: &str,
+        payload: &Value,
+        instance_id: &str,
+    ) -> FlResult<()> {
+        let mut body = payload.clone();
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("instanceId".to_string(), json!(instance_id));
+        }
         match self
-            .send(reqwest::Method::POST, &format!("connector-commands/{id}/complete"), &[], Some(payload))
+            .send(reqwest::Method::POST, &format!("connector-commands/{id}/complete"), &[], Some(&body))
             .await
         {
             Ok(_) | Err(FlError::Conflict) => Ok(()),

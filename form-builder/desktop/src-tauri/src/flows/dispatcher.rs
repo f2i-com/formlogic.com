@@ -1409,7 +1409,8 @@ impl FlowRuntime {
             },
             |id, payload| {
                 let client = client.clone();
-                async move { client.complete_command(&id, &payload).await }
+                let instance = instance.clone();
+                async move { client.complete_command(&id, &payload, &instance).await }
             },
         )
         .await;
