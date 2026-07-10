@@ -2479,7 +2479,7 @@
             "widgets": [
               {
                 "id": "k1",
-                "title": "Today's calls",
+                "title": "Calls today",
                 "layout": {
                   "x": 0,
                   "y": 0,
@@ -2503,7 +2503,7 @@
               },
               {
                 "id": "k2",
-                "title": "Missed calls",
+                "title": "Missed today",
                 "layout": {
                   "x": 3,
                   "y": 0,
@@ -2532,7 +2532,7 @@
               },
               {
                 "id": "k3",
-                "title": "Bookings",
+                "title": "Bookings today",
                 "layout": {
                   "x": 6,
                   "y": 0,
@@ -2545,12 +2545,18 @@
                   "viz": "kpi",
                   "measure": {
                     "fn": "count"
-                  }
+                  },
+                  "filters": [
+                    {
+                      "field": "__submitted_at",
+                      "op": "today"
+                    }
+                  ]
                 }
               },
               {
                 "id": "k4",
-                "title": "Orders",
+                "title": "Orders today",
                 "layout": {
                   "x": 9,
                   "y": 0,
@@ -2563,12 +2569,18 @@
                   "viz": "kpi",
                   "measure": {
                     "fn": "count"
-                  }
+                  },
+                  "filters": [
+                    {
+                      "field": "__submitted_at",
+                      "op": "today"
+                    }
+                  ]
                 }
               },
               {
                 "id": "k5",
-                "title": "Avg call (sec)",
+                "title": "Avg call today (sec)",
                 "layout": {
                   "x": 0,
                   "y": 1,
@@ -2582,7 +2594,13 @@
                   "measure": {
                     "fn": "avg",
                     "field": "duration_seconds"
-                  }
+                  },
+                  "filters": [
+                    {
+                      "field": "__submitted_at",
+                      "op": "today"
+                    }
+                  ]
                 }
               },
               {
@@ -2637,7 +2655,7 @@
               },
               {
                 "id": "k8",
-                "title": "Customers",
+                "title": "Customers (all time)",
                 "layout": {
                   "x": 9,
                   "y": 1,

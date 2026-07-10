@@ -1222,15 +1222,22 @@ export const aokieReceptionistPack: PackData = {
           // Auto-refresh so calls appear on the home screen as they happen without
           // a manual reload (the widget dashboard re-runs its reports every 30s).
           refreshInterval: 30,
+          // KPI rows (audit AOK-DASH-001): row 1 is TODAY's operational
+          // activity (every tile shares the 'today' window in the business
+          // timezone — ReportService buckets/filters agree on the boundary);
+          // row 2 is CURRENT-STATE gauges (open work + totals) that are
+          // deliberately NOT time-windowed and say so in their titles. Mixing
+          // today's counts with all-time totals in one unlabelled row was the
+          // finding. Every KPI drills to its matching records.
           widgets: [
-            { id: 'k1', title: "Today's calls", layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
-            { id: 'k2', title: 'Missed calls', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'missed' }, { field: '__submitted_at', op: 'today' }] } },
-            { id: 'k3', title: 'Bookings', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointments', viz: 'kpi', measure: { fn: 'count' } } },
-            { id: 'k4', title: 'Orders', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:orders', viz: 'kpi', measure: { fn: 'count' } } },
-            { id: 'k5', title: 'Avg call (sec)', layout: { x: 0, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'avg', field: 'duration_seconds' } } },
+            { id: 'k1', title: 'Calls today', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
+            { id: 'k2', title: 'Missed today', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'missed' }, { field: '__submitted_at', op: 'today' }] } },
+            { id: 'k3', title: 'Bookings today', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointments', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
+            { id: 'k4', title: 'Orders today', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:orders', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
+            { id: 'k5', title: 'Avg call today (sec)', layout: { x: 0, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'avg', field: 'duration_seconds' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
             { id: 'k6', title: 'Open follow-ups', layout: { x: 3, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:follow-up-tasks', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'open' }] } },
             { id: 'k7', title: 'Pending SMS approvals', layout: { x: 6, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:sms-messages', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'approval_status', op: 'eq', value: 'pending_approval' }] } },
-            { id: 'k8', title: 'Customers', layout: { x: 9, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:customers', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k8', title: 'Customers (all time)', layout: { x: 9, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:customers', viz: 'kpi', measure: { fn: 'count' } } },
             { id: 'c1', title: 'Calls by status', layout: { x: 0, y: 2, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 6 } },
             { id: 'c2', title: 'Calls over time', layout: { x: 6, y: 2, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'day' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 14 } },
             { id: 'l1', title: 'Recent calls', layout: { x: 0, y: 5, w: 4, h: 3 }, kind: 'list', list: { formId: '@pack:calls', titleField: 'caller_phone', subtitleField: 'status', limit: 6 } },
