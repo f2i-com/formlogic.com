@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, type ElementType, type ReactNode } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick } from 'lucide-react';
+import { Download, Users, Clock, CheckCircle, TrendingUp, TrendingDown, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LabelList } from 'recharts';
 import { useUIStore } from '../stores/uiStore';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
@@ -8,7 +8,6 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
-import { StatCard } from '../components/ui/StatCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
@@ -607,56 +606,41 @@ export default function FormAnalytics() {
           backLabel="Back"
         />
 
-        {/* Stats Cards — shared StatCard so they match the Dashboard tiles */}
-        <div className={cn('grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4', typeof totalStarts === 'number' ? 'lg:grid-cols-6' : 'lg:grid-cols-5')}>
-          <StatCard
-            icon={Eye}
-            iconBg="bg-sky-500/10"
-            iconColor="text-sky-500"
-            value={hasServerAnalytics ? totalViews : '—'}
-            subtext={hasServerAnalytics ? undefined : 'Cloud analytics only'}
-            label="Views"
-          />
-          {typeof totalStarts === 'number' && (
-            <StatCard
-              icon={MousePointerClick}
-              iconBg="bg-teal-500/10"
-              iconColor="text-teal-500"
-              value={totalStarts}
-              label="Starts"
-            />
-          )}
-          <StatCard
-            icon={Users}
-            iconBg="bg-blue-500/10"
-            iconColor="text-blue-500"
-            value={totalResponses}
-            label="Responses"
-          />
-          <StatCard
-            icon={CheckCircle}
-            iconBg="bg-green-500/10"
-            iconColor="text-green-500"
-            value={hasServerAnalytics ? `${Math.round(completionRate)}%` : '—'}
-            subtext={hasServerAnalytics ? undefined : 'Cloud analytics only'}
-            label="Completion"
-          />
-          <StatCard
-            icon={Clock}
-            iconBg="bg-purple-500/10"
-            iconColor="text-purple-500"
-            value={avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s`}
-            label="Avg. Time"
-          />
-          <StatCard
-            icon={TrendingUp}
-            iconBg="bg-orange-500/10"
-            iconColor="text-orange-500"
-            value={weeklyTrend.thisWeek}
-            label="This Week"
-            trend={{ pct: weeklyTrend.pct, label: 'vs last week' }}
-          />
-        </div>
+        {/* Metrics — one divided card (gap-px hairlines) instead of separate tiles, so up to
+            six numbers stay readable at every width: 2-up on phones, 3-up on tablets, 6-up on
+            desktop. The icon is a small inline label, not a chip that steals the number's room. */}
+        <Card className="overflow-hidden">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px bg-gray-100 dark:bg-slate-800/80">
+            {([
+              { icon: Eye, iconColor: 'text-sky-500', label: 'Views', value: hasServerAnalytics ? totalViews : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only' },
+              ...(typeof totalStarts === 'number' ? [{ icon: MousePointerClick, iconColor: 'text-teal-500', label: 'Starts', value: totalStarts }] : []),
+              { icon: Users, iconColor: 'text-blue-500', label: 'Responses', value: totalResponses },
+              { icon: CheckCircle, iconColor: 'text-green-500', label: 'Completion', value: hasServerAnalytics ? `${Math.round(completionRate)}%` : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only' },
+              { icon: Clock, iconColor: 'text-purple-500', label: 'Avg. time', value: avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s` },
+              { icon: TrendingUp, iconColor: 'text-orange-500', label: 'This week', value: weeklyTrend.thisWeek, trend: { pct: weeklyTrend.pct, label: 'vs last' } },
+            ] as Array<{ icon: ElementType; iconColor: string; label: string; value: ReactNode; subtext?: string; trend?: { pct: number | null; label?: string } }>).map((m) => (
+              <div key={m.label} className="bg-white dark:bg-slate-900/50 p-3.5 sm:p-4 min-w-0">
+                <div className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500">
+                  <m.icon className={cn('h-3.5 w-3.5 flex-none', m.iconColor)} aria-hidden="true" />
+                  <span className="text-[11px] font-medium uppercase tracking-wide truncate">{m.label}</span>
+                </div>
+                <p className="mt-1 text-xl sm:text-2xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums leading-tight break-words">{m.value}</p>
+                {m.trend && (
+                  <span className={cn('mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
+                    m.trend.pct === null ? 'bg-gray-500/10 text-gray-500 dark:text-slate-400'
+                      : m.trend.pct >= 0 ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                        : 'bg-red-500/10 text-red-600 dark:text-red-400')}>
+                    {m.trend.pct !== null && (m.trend.pct >= 0
+                      ? <TrendingUp className="h-3 w-3" aria-hidden="true" />
+                      : <TrendingDown className="h-3 w-3" aria-hidden="true" />)}
+                    {m.trend.pct === null ? 'New' : `${m.trend.pct >= 0 ? '+' : ''}${m.trend.pct}%`}
+                  </span>
+                )}
+                {m.subtext && <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5 truncate">{m.subtext}</p>}
+              </div>
+            ))}
+          </div>
+        </Card>
 
         {/* Chart */}
         <Card>
