@@ -573,32 +573,50 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
       })
     : body;
 
-  let res: Response;
-  try {
-    res = await doFetch(endpoint, {
-      method: 'POST',
-      headers: provider?.headers ?? { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-      signal: ctx.signal,
-    });
-  } catch (err) {
-    throw new FlowExecError(
-      'node_failed',
-      `Node '${node.id}' llm_chat endpoint unreachable: ${err instanceof Error ? err.message : String(err)}`,
-      node.id
-    );
+  // One bounded retry (seen live on the desktop runner: a concurrent LLM
+  // request got an EMPTY completion). Transport errors, non-2xx and empty
+  // replies each get exactly one more attempt; a still-empty SECOND
+  // completion returns normally so flow-level fallback text applies.
+  // Mirrors the Rust runner (flows/runner.rs run_llm_chat).
+  let failure: FlowExecError | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
+    let res: Response;
+    try {
+      res = await doFetch(endpoint, {
+        method: 'POST',
+        headers: provider?.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: ctx.signal,
+      });
+    } catch (err) {
+      if (ctx.signal?.aborted) throw err; // deliberate cancel — never retry
+      failure = new FlowExecError(
+        'node_failed',
+        `Node '${node.id}' llm_chat endpoint unreachable: ${err instanceof Error ? err.message : String(err)}`,
+        node.id
+      );
+      continue;
+    }
+    if (!res.ok) {
+      failure = new FlowExecError('node_failed', appendProviderKeyBlockedHint(`Node '${node.id}' llm_chat responded ${res.status}`, provider), node.id);
+      continue;
+    }
+    let payload: unknown;
+    try {
+      payload = await res.json();
+    } catch {
+      failure = new FlowExecError('node_failed', `Node '${node.id}' llm_chat returned a non-JSON body`, node.id);
+      continue;
+    }
+    const content = extractByPath(payload, provider?.responsePath ?? 'choices.0.message.content');
+    const text = typeof content === 'string' ? content : null;
+    if (attempt === 0 && (text === null || text.trim() === '')) {
+      continue; // empty completion — retry once
+    }
+    return { content: text, raw: payload };
   }
-  if (!res.ok) {
-    throw new FlowExecError('node_failed', appendProviderKeyBlockedHint(`Node '${node.id}' llm_chat responded ${res.status}`, provider), node.id);
-  }
-  let payload: unknown;
-  try {
-    payload = await res.json();
-  } catch {
-    throw new FlowExecError('node_failed', `Node '${node.id}' llm_chat returned a non-JSON body`, node.id);
-  }
-  const content = extractByPath(payload, provider?.responsePath ?? 'choices.0.message.content');
-  return { content: typeof content === 'string' ? content : null, raw: payload };
+  throw failure ?? new FlowExecError('node_failed', `Node '${node.id}' llm_chat failed`, node.id);
 }
 
 async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {

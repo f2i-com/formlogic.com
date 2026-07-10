@@ -95,6 +95,7 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'sms.send',
   'settings.get',
   'settings.set',
+  'outbox.redrive',
 ] as const;
 
 export type AokieEventName = (typeof AOKIE_EVENT_NAMES)[number];

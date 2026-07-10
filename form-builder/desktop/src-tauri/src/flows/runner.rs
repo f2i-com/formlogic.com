@@ -1143,24 +1143,55 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
             obj.insert(k.clone(), v.clone());
         }
     }
-    let resp = deps
-        .http
-        .post(&endpoint)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::to_vec(&body).unwrap_or_default())
-        .send()
-        .await
-        .map_err(|e| client_err(node, format!("llm_chat endpoint unreachable: {e}")))?;
-    if !resp.status().is_success() {
-        let s = resp.status();
-        return Err(FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' llm_chat responded {}", node.id, s.as_u16()), Some(node.id.clone())));
+    // One bounded retry (seen live: the call-summary flow hit the LLM
+    // concurrently with the after-call extractor and got an EMPTY completion).
+    // Transport errors, non-2xx and empty replies each get exactly one more
+    // attempt; a still-empty SECOND completion returns Ok so flow-level
+    // fallback text applies (failing the node would fail the whole flow over
+    // a cosmetic field). Mirrored in the browser executor (nodes.ts).
+    let mut failure: Option<FlowError> = None;
+    for attempt in 0..2u32 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        }
+        let resp = match deps
+            .http
+            .post(&endpoint)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(serde_json::to_vec(&body).unwrap_or_default())
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                failure = Some(client_err(node, format!("llm_chat endpoint unreachable: {e}")));
+                continue;
+            }
+        };
+        if !resp.status().is_success() {
+            let s = resp.status();
+            failure = Some(FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' llm_chat responded {}", node.id, s.as_u16()), Some(node.id.clone())));
+            continue;
+        }
+        let text = resp.text().await.unwrap_or_default();
+        let payload: Value = match serde_json::from_str(&text) {
+            Ok(p) => p,
+            Err(_) => {
+                failure = Some(FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' llm_chat returned a non-JSON body", node.id), Some(node.id.clone())));
+                continue;
+            }
+        };
+        let content = payload.get("choices").and_then(Value::as_array).and_then(|a| a.first())
+            .and_then(|c| c.get("message")).and_then(|m| m.get("content")).and_then(Value::as_str);
+        if attempt == 0 && content.map(str::trim).unwrap_or("").is_empty() {
+            eprintln!("[flows] llm_chat node '{}' returned an empty completion — retrying once", node.id);
+            continue;
+        }
+        return Ok(json!({ "content": content, "raw": payload }));
     }
-    let text = resp.text().await.unwrap_or_default();
-    let payload: Value = serde_json::from_str(&text)
-        .map_err(|_| FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' llm_chat returned a non-JSON body", node.id), Some(node.id.clone())))?;
-    let content = payload.get("choices").and_then(Value::as_array).and_then(|a| a.first())
-        .and_then(|c| c.get("message")).and_then(|m| m.get("content")).and_then(Value::as_str);
-    Ok(json!({ "content": content, "raw": payload }))
+    Err(failure.unwrap_or_else(|| {
+        FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' llm_chat failed", node.id), Some(node.id.clone()))
+    }))
 }
 
 // ── Desktop-service-backed nodes (docs §4) ─────────────────────────────────────────────────
