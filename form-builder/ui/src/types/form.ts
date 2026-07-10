@@ -70,10 +70,12 @@ export interface FieldProperties {
   displayFieldIds?: string[];
   searchFieldIds?: string[];
   // Related-records sub-grid (shown on the TARGET record's view, listing the records
-  // that link here through this field). Defaults: shown, add + delete allowed.
+  // that link here through this field). Defaults: shown, add + delete allowed,
+  // 8 rows before the "Show all" expander.
   relatedHidden?: boolean;
   relatedAllowAdd?: boolean;
   relatedAllowDelete?: boolean;
+  relatedPageSize?: number;
   // Location properties
   showMap?: boolean;
 }

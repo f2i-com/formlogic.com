@@ -45,6 +45,8 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
   const [refreshTick, setRefreshTick] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<{ formId: string; id: string; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Per-group "Show all" expansion (keyed by the source form id).
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // Resolve the data/CRUD/nav sources — the app-runtime store + app routes by default,
   // or the owner-mode overrides when provided.
@@ -167,6 +169,17 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
         const cols = group.columns && group.columns.length ? group.columns : null;
         const mayAdd = !!group.fieldId && group.allowAdd !== false && canAdd(group.formId);
         const mayDelete = group.allowDelete !== false && canDel(group.formId);
+        // Newest first (link-table order is effectively random), capped at the
+        // relationship's configured page size behind a per-group "Show all".
+        const sorted = [...group.records].sort((a, b) => {
+          const ta = a.submittedAt ? parseServerDate(a.submittedAt).getTime() : 0;
+          const tb = b.submittedAt ? parseServerDate(b.submittedAt).getTime() : 0;
+          return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+        });
+        const cap = Math.max(1, group.pageSize ?? 8);
+        const isExpanded = !!expanded[group.formId];
+        const visible = isExpanded ? sorted : sorted.slice(0, cap);
+        const hiddenCount = sorted.length - visible.length;
         return (
           <div key={group.formId} className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
             <div className="px-5 py-2.5 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
@@ -201,7 +214,7 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-slate-700/30">
-                  {group.records.map((record) => (
+                  {visible.map((record) => (
                     <tr
                       key={record.id}
                       className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group/row"
@@ -234,6 +247,17 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
                 </tbody>
               </table>
             </div>
+            {(hiddenCount > 0 || (isExpanded && sorted.length > cap)) && (
+              <div className="px-5 py-2 border-t border-gray-100 dark:border-slate-700/30">
+                <button
+                  type="button"
+                  onClick={() => setExpanded((prev) => ({ ...prev, [group.formId]: !isExpanded }))}
+                  className="text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded px-1 py-0.5"
+                >
+                  {isExpanded ? 'Show fewer' : `Show all ${sorted.length}`}
+                </button>
+              </div>
+            )}
           </div>
         );
       })}

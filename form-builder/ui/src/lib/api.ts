@@ -2381,6 +2381,8 @@ interface RelatedRecordGroup {
    *  viewer's form permissions to decide whether Add / Delete show. */
   allowAdd?: boolean;
   allowDelete?: boolean;
+  /** Rows shown per group before the "Show all" expander (relatedPageSize, default 8). */
+  pageSize?: number;
   /** Columns to render in the related grid (the link's displayFieldIds, or a
    *  fallback of simple fields). */
   columns?: Array<{ id: string; label: string; type: string }>;

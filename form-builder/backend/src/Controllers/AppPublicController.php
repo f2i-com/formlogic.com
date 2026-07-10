@@ -1863,6 +1863,7 @@ class AppPublicController
             $relatedHidden = false;
             $relatedAllowAdd = true;
             $relatedAllowDelete = true;
+            $relatedPageSize = 8;
             foreach ($sourceForm['fields'] as $f) {
                 if ($f['id'] === $fieldId) {
                     $props = $f['properties'] ?? [];
@@ -1873,6 +1874,9 @@ class AppPublicController
                     $relatedHidden = !empty($props['relatedHidden']);
                     $relatedAllowAdd = ($props['relatedAllowAdd'] ?? true) !== false;
                     $relatedAllowDelete = ($props['relatedAllowDelete'] ?? true) !== false;
+                    if (is_numeric($props['relatedPageSize'] ?? null)) {
+                        $relatedPageSize = max(1, min((int) $props['relatedPageSize'], 50));
+                    }
                     break;
                 }
             }
@@ -1957,6 +1961,7 @@ class AppPublicController
                     'allowMultiple' => $allowMultiple,
                     'allowAdd' => $relatedAllowAdd,
                     'allowDelete' => $relatedAllowDelete,
+                    'pageSize' => $relatedPageSize,
                     'columns' => $columns,
                     'records' => $matchingRecords,
                     'count' => count($matchingRecords),

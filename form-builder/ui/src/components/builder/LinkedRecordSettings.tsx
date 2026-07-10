@@ -229,6 +229,25 @@ export function LinkedRecordSettings({
                 label="Allow deleting"
                 description="Show a delete action on each related row"
               />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
+                  Rows shown initially
+                </label>
+                <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
+                  Newest first; more collapse behind a &ldquo;Show all&rdquo; button (default 8)
+                </p>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={properties.relatedPageSize ?? 8}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    onChange({ ...properties, relatedPageSize: Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 50) : undefined });
+                  }}
+                  className="w-28 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
             </>
           )}
         </div>
