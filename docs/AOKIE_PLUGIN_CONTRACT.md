@@ -28,6 +28,13 @@ Post-MVP (declared in the manifest only when implemented): `phone.syncContacts`,
 
 Payload/response shapes follow the legacy Tauri commands they wrap (e.g. `sms.send {to, body}` → `{messageId, status:"queued"}`); each command handler validates its payload and rejects unknown fields.
 
+**Truthful health + safety gates (audit INT-006/PRIV-001):**
+
+- `plugin.health` is COMPUTED, never a constant ok: `{status: ok|degraded, detail?, components: {voice, devMode, radio: {present, initialized, phoneConnected, callActive, staleSttResults, error}, outbox: {pending, failed, dead}}}`. No voice output compiled, radio down in real mode, or dead outbox rows ⇒ `degraded` with the reasons in `detail`.
+- `autoAnswer` defaults **OFF** — only an explicit `autoAnswer: true` setting arms the receptionist, and a build without the voice feature can never auto-answer (it would answer into silence) or return `spoken: true` from `call.operatorSpeak`.
+- `settings.set` classifies `aiEndpoint`/`sttEndpoint`/`ttsEndpoint` BEFORE persisting (`aokie_core::url_classification`): loopback ok; private-LAN ok with a disclosure log; cloud-metadata, link-local and unparseable hosts are refused; a public endpoint must be `https://`.
+- Conversation content (caller transcripts, agent replies) appears in stderr logs only as lengths unless `AOKIE_LOG_CONTENT=1` is set explicitly.
+
 **Canonical call-control shapes** (single source: `crates/aokie-plugin/src/contract.rs` in the aokie repo; test-locked against the manifest and both mocks):
 
 - `call.answer` / `call.reject` / `call.hangup` accept `{callId?}`; `call.operatorSpeak` accepts `{text, callId?}`. When `callId` is present it MUST equal the plugin's current call id, else the typed **`stale_call`** error is returned and the phone is NOT touched (a stale browser tab can never control a newer call). An omitted `callId` acts on the current call (compatibility for flow/desktop callers).
