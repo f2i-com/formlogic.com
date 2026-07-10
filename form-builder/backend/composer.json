@@ -2,6 +2,7 @@
     "name": "formlogic/api",
     "description": "FormLogic Form Builder API",
     "type": "project",
+    "license": "proprietary",
     "minimum-stability": "dev",
     "prefer-stable": true,
     "require": {
