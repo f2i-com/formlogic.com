@@ -82,6 +82,7 @@ const AppUserManager = lazyWithRetry(() => import('./pages/apps/AppUserManager')
 const AppRoleEditor = lazyWithRetry(() => import('./pages/apps/AppRoleEditor').then(m => ({ default: m.AppRoleEditor })));
 const AppDeploySettings = lazyWithRetry(() => import('./pages/apps/AppDeploySettings').then(m => ({ default: m.AppDeploySettings })));
 const AppRelationsManager = lazyWithRetry(() => import('./pages/apps/AppRelationsManager').then(m => ({ default: m.AppRelationsManager })));
+const AppRecords = lazyWithRetry(() => import('./pages/apps/AppRecords').then(m => ({ default: m.AppRecords })));
 
 // Lazy load app runtime
 const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
@@ -321,6 +322,7 @@ function AppRoutes() {
           <Route path="/apps/:appId/users" element={<AppUserManager />} />
           <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
           <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
+          <Route path="/apps/:appId/records" element={<AppRecords />} />
           <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
         </Route>
 
@@ -371,6 +373,7 @@ function AppRoutes() {
         <Route path="/apps/:appId/users" element={<AppUserManager />} />
         <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
         <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
+        <Route path="/apps/:appId/records" element={<AppRecords />} />
         <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
       </Route>
 

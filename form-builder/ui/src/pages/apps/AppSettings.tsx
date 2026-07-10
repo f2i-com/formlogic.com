@@ -1,6 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers } from 'lucide-react';
+import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -487,6 +487,7 @@ export function AppSettings() {
           <TabsContent value="manage">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
+              { label: 'Records', desc: 'Browse the data in every form of this app', icon: Table, path: 'records' },
               { label: 'Forms', desc: 'Add, remove, and reorder forms', icon: LayoutGrid, path: 'forms' },
               { label: 'Companion app', desc: 'A second app — e.g. an admin console — over these same forms and data', icon: Layers, path: 'forms' },
               { label: 'Users', desc: 'Manage users and invitations', icon: Users, path: 'users' },
