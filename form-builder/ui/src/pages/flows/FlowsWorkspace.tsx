@@ -6,13 +6,13 @@
 // slide-over drawer for triggers/history/test-run. Deep-linked by
 // ?flow=<id> from the app-level Flows panel.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, Workflow, X,
+  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Play, Plus, Power, RefreshCw, Search, Sparkles, Trash2, Workflow, X,
 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
-import { Switch } from '../../components/ui/Switch';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
@@ -80,6 +80,9 @@ export function FlowsWorkspace() {
   const [libraryCollapsed, setLibraryCollapsed] = usePersistentBoolean('flows.libraryCollapsed', false);
   const [historyKey, setHistoryKey] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<FlowDefinition | null>(null);
+  // Enable/disable goes through an explicit confirm (no accidental sidebar toggles —
+  // disabling a flow stops real automation).
+  const [pendingToggle, setPendingToggle] = useState<FlowDefinition | null>(null);
   // Live per-node run status from the Test Run drawer's onNodeStatus — lights up the canvas pills.
   // Owned here (not in the drawer) so the editor + drawer, which are siblings, share one source.
   const [nodeStatus, setNodeStatus] = useState<NodeStatusMap>({});
@@ -403,6 +406,14 @@ export function FlowsWorkspace() {
     upsertFlow(res.data.flow);
   };
 
+  const confirmToggleEnabled = async () => {
+    const flow = pendingToggle;
+    setPendingToggle(null);
+    if (!flow) return;
+    await toggleEnabled(flow, !flow.enabled);
+    toast.success(flow.enabled ? 'Flow disabled' : 'Flow enabled', flow.name);
+  };
+
   const toggleEnabled = async (flow: FlowDefinition, enabled: boolean) => {
     if (api.isDemoMode()) {
       upsertFlow(await demoUpdateFlow(flow, { enabled }));
@@ -465,7 +476,7 @@ export function FlowsWorkspace() {
           onSelect={selectFlow}
           onDuplicate={duplicateFlow}
           onRename={renameFlow}
-          onToggleEnabled={toggleEnabled}
+          onRequestToggleEnabled={setPendingToggle}
           onDelete={setPendingDelete}
           onNew={() => openNewFlow()}
           collapsed={effectiveLibraryCollapsed}
@@ -635,6 +646,19 @@ export function FlowsWorkspace() {
         confirmLabel="Delete"
         variant="danger"
       />
+      <ConfirmDialog
+        isOpen={pendingToggle !== null}
+        onClose={() => setPendingToggle(null)}
+        onConfirm={confirmToggleEnabled}
+        title={pendingToggle?.enabled ? 'Disable flow' : 'Enable flow'}
+        message={pendingToggle
+          ? pendingToggle.enabled
+            ? `Disable "${pendingToggle.name}"? Its triggers stop running until you enable it again.`
+            : `Enable "${pendingToggle.name}"? Its triggers start running immediately.`
+          : ''}
+        confirmLabel={pendingToggle?.enabled ? 'Disable' : 'Enable'}
+        variant={pendingToggle?.enabled ? 'danger' : 'default'}
+      />
     </div>
   );
 }
@@ -770,7 +794,9 @@ function FlowMobileDrawer({ title, onClose, children }: { title: string; onClose
         >
           <X className="h-4 w-4" />
         </button>
-        <div className="min-h-0 flex-1 overflow-hidden [&>div>div:first-child]:pr-12 [&>div>div:nth-child(2)]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
+        {/* flex-col + forced flex-1 children (not h-full percentage chains): the panels inside
+            must size as flex items so their inner lists scroll instead of clipping on iOS. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>div>div:first-child]:pr-12 [&>div>div:nth-child(2)]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
       </aside>
     </div>
   );
@@ -781,7 +807,7 @@ function FlowMobileDrawer({ title, onClose, children }: { title: string; onClose
 // ---------------------------------------------------------------------------
 
 function FlowLibrary({
-  groups, loading, query, onQuery, scope, onScope, selectedId, onSelect, onDuplicate, onRename, onToggleEnabled, onDelete, onNew, collapsed = false, onToggleCollapsed, className,
+  groups, loading, query, onQuery, scope, onScope, selectedId, onSelect, onDuplicate, onRename, onRequestToggleEnabled, onDelete, onNew, collapsed = false, onToggleCollapsed, className,
 }: {
   groups: FlowGroup[];
   loading: boolean;
@@ -794,7 +820,8 @@ function FlowLibrary({
   onSelect: (id: string) => void;
   onDuplicate: (flow: FlowDefinition) => void;
   onRename: (flow: FlowDefinition, name: string) => void;
-  onToggleEnabled: (flow: FlowDefinition, enabled: boolean) => void;
+  /** Opens the enable/disable confirm for this flow (the actual toggle happens on confirm). */
+  onRequestToggleEnabled: (flow: FlowDefinition) => void;
   onDelete: (flow: FlowDefinition) => void;
   onNew: () => void;
   /** Collapsed to a narrow icon-only rail (space-reclaiming; never hides the panel's existence). */
@@ -883,7 +910,7 @@ function FlowLibrary({
       <div
         ref={listRef}
         onScroll={(e) => { listScrollTop.current = e.currentTarget.scrollTop; }}
-        className="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
+        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
       >
         {loading ? (
           <p className="px-1 text-xs text-gray-400 dark:text-slate-500">Loading…</p>
@@ -914,7 +941,7 @@ function FlowLibrary({
                     onSelect={() => onSelect(flow.id)}
                     onDuplicate={() => onDuplicate(flow)}
                     onRename={(name) => onRename(flow, name)}
-                    onToggleEnabled={(v) => onToggleEnabled(flow, v)}
+                    onRequestToggleEnabled={() => onRequestToggleEnabled(flow)}
                     onDelete={() => onDelete(flow)}
                   />
                 ))}
@@ -927,18 +954,26 @@ function FlowLibrary({
   );
 }
 
-function FlowRow({ flow, selected, onSelect, onDuplicate, onRename, onToggleEnabled, onDelete }: {
+// Approximate height of the tallest row menu — used to flip the portal menu above the
+// trigger when it would clip past the bottom of the viewport (mirrors FormCard's menu).
+const FLOW_MENU_HEIGHT = 210;
+const FLOW_MENU_WIDTH = 176; // w-44
+
+function FlowRow({ flow, selected, onSelect, onDuplicate, onRename, onRequestToggleEnabled, onDelete }: {
   flow: FlowDefinition;
   selected: boolean;
   onSelect: () => void;
   onDuplicate: () => void;
   onRename: (name: string) => void;
-  onToggleEnabled: (v: boolean) => void;
+  /** Opens the enable/disable confirm (the flow's current state decides the direction). */
+  onRequestToggleEnabled: () => void;
   onDelete: () => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(flow.name);
+  const menuOpen = menuRect !== null;
+  const closeMenu = () => setMenuRect(null);
 
   const commitRename = () => {
     setRenaming(false);
@@ -988,31 +1023,63 @@ function FlowRow({ flow, selected, onSelect, onDuplicate, onRename, onToggleEnab
             </p>
           </button>
         )}
+        {/* Enabled indicator — one glance says whether the flow runs; click to toggle (confirmed). */}
+        <button
+          type="button"
+          onClick={onRequestToggleEnabled}
+          aria-label={flow.enabled ? `Disable ${flow.name}` : `Enable ${flow.name}`}
+          title={flow.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+          className={cn(
+            'flex-none cursor-pointer rounded p-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            flow.enabled
+              ? 'text-emerald-500 hover:bg-emerald-50 hover:text-emerald-600 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
+              : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500 dark:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-400',
+          )}
+        >
+          <Power className="h-4 w-4" />
+        </button>
         <div className="relative flex-none">
           <button
             type="button"
-            onClick={() => setMenuOpen((o) => !o)}
+            onClick={(e) => setMenuRect(menuOpen ? null : e.currentTarget.getBoundingClientRect())}
             aria-label={`Flow actions for ${flow.name}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className="cursor-pointer rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <MoreVertical className="h-4 w-4" />
           </button>
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden="true" />
-              <div role="menu" className="absolute right-0 z-20 mt-1 w-40 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 shadow-lg">
-                <MenuItem icon={Pencil} label="Rename" onClick={() => { setMenuOpen(false); setName(flow.name); setRenaming(true); }} />
-                <MenuItem icon={Copy} label="Duplicate" onClick={() => { setMenuOpen(false); onDuplicate(); }} />
-                <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setMenuOpen(false); onDelete(); }} />
+          {/* Portal + fixed positioning: the library list scrolls (overflow-y-auto), which
+              clipped an in-flow absolute menu for the LAST rows — the menu now escapes the
+              scroll container and flips above the trigger when the viewport bottom is near. */}
+          {menuRect && createPortal(
+            <div className="fixed inset-0 z-[70]" onClick={closeMenu}>
+              <div
+                role="menu"
+                aria-label={`Flow actions for ${flow.name}`}
+                onClick={(e) => e.stopPropagation()}
+                className="absolute w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900 dark:ring-white/[0.06]"
+                style={{
+                  ...(menuRect.bottom + FLOW_MENU_HEIGHT > window.innerHeight
+                    ? { bottom: window.innerHeight - menuRect.top + 4 }
+                    : { top: menuRect.bottom + 4 }),
+                  left: Math.min(Math.max(8, menuRect.right - FLOW_MENU_WIDTH), window.innerWidth - FLOW_MENU_WIDTH - 8),
+                }}
+              >
+                <MenuItem
+                  icon={flow.enabled ? Power : Play}
+                  label={flow.enabled ? 'Disable…' : 'Enable…'}
+                  onClick={() => { closeMenu(); onRequestToggleEnabled(); }}
+                />
+                <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                <MenuItem icon={Pencil} label="Rename" onClick={() => { closeMenu(); setName(flow.name); setRenaming(true); }} />
+                <MenuItem icon={Copy} label="Duplicate" onClick={() => { closeMenu(); onDuplicate(); }} />
+                <MenuItem icon={Trash2} label="Delete" danger onClick={() => { closeMenu(); onDelete(); }} />
               </div>
-            </>
+            </div>,
+            document.body,
           )}
         </div>
-      </div>
-      <div className="mt-1.5 flex items-center justify-between">
-        <Switch checked={flow.enabled} onChange={onToggleEnabled} label="Enabled" size="sm" />
       </div>
     </div>
   );
@@ -1025,7 +1092,7 @@ function MenuItem({ icon: Icon, label, onClick, danger }: { icon: typeof Pencil;
       role="menuitem"
       onClick={onClick}
       className={cn(
-        'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
+        'flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
         danger
           ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10'
           : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800',

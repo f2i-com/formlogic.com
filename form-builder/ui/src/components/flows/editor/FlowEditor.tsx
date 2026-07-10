@@ -589,7 +589,9 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           }}
           context={context}
           draggable={false}
-          className="w-full bg-white dark:bg-slate-900"
+          // h-auto + flex-1/min-h-0: size as a flex item of the sheet body (see BottomSheet)
+          // so the node list scrolls instead of being clipped at the sheet's max height.
+          className="h-auto min-h-0 w-full flex-1 bg-white dark:bg-slate-900"
         />
       </BottomSheet>
       {selectedNode && editorLayout.properties === 'sheet' && (

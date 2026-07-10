@@ -230,7 +230,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
       <div
         ref={resultsRef}
         onScroll={(e) => { resultsScrollTop.current = e.currentTarget.scrollTop; }}
-        className="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
+        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
       >
         {grouped.length === 0 && (
           <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>

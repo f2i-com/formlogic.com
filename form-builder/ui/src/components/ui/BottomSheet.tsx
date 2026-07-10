@@ -35,7 +35,11 @@ export function BottomSheet({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-hidden [&>div>div:last-child]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
+        {/* flex-col (not a plain block): children size as flex items, so a child using
+            `min-h-0 flex-1` + an inner overflow-y-auto list scrolls reliably — `h-full`
+            percentage chains were flaky inside the sheet on iOS Safari, which clipped
+            tall content (e.g. the flow node palette) with no way to scroll. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>div>div:last-child]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
       </section>
     </div>
   );

@@ -4,7 +4,7 @@
 // shows recent owner-wide runs, and lets authors start from the same templates as NewFlowDialog.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, FileText, Laptop, Loader2, MessageSquare, PhoneIncoming, Plus, RefreshCw, Sparkles, type LucideIcon } from 'lucide-react';
+import { ClipboardList, FileText, Laptop, Loader2, MessageSquare, PhoneIncoming, Plus, RefreshCw, Sparkles, Workflow, Zap, type LucideIcon } from 'lucide-react';
 import { listProviders } from '../../client-runtime/flows/aiProviders';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -97,24 +97,58 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
     return run.flow ? flowBySlug.get(run.flow) ?? null : null;
   };
 
+  const enabledCount = flows.filter((flow) => flow.enabled).length;
+
   return (
-    <div className="h-full min-h-0 overflow-auto p-4 sm:p-8">
+    <div className="scrollbar-thin h-full min-h-0 overflow-auto p-4 sm:p-8">
       <div className="mx-auto flex max-w-3xl flex-col gap-5">
-        <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">Flows</h2>
-            <div className="mt-2 h-0.5 w-32 rounded-full bg-gradient-to-r from-primary-500 via-primary-400 to-transparent dark:from-primary-300 dark:via-primary-400 dark:to-transparent" />
-            <p className="mt-1 max-w-xl text-sm text-gray-600 dark:text-slate-400">
-              Flows run your busywork: when a call comes in, a form is submitted, or on demand — they look up records, draft replies, and speak on the line.
-            </p>
+        {/* Hero — one glance: what flows are, how many are live, and the way in. */}
+        <section className="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 h-32 opacity-[0.07] blur-2xl dark:opacity-[0.12]"
+            style={{ background: 'radial-gradient(70% 100% at 20% 0%, rgb(var(--primary-500)) 0%, transparent 70%)' }}
+          />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3.5">
+              <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-600 text-primary-foreground shadow-sm">
+                <Workflow className="h-6 w-6" />
+              </span>
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">Flows</h2>
+                <p className="mt-1 max-w-xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">
+                  Flows run your busywork: when a call comes in, a form is submitted, or on demand — they look up records, draft replies, and speak on the line.
+                </p>
+              </div>
+            </div>
+            <Button size="sm" onClick={() => onNewFlow()} leftIcon={<Plus className="h-4 w-4" />} className="flex-none self-start">
+              New flow
+            </Button>
           </div>
-          <Button size="sm" onClick={() => onNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
-            New flow
-          </Button>
+          {flows.length > 0 && (
+            <div className="relative mt-4 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+                <Workflow className="h-3.5 w-3.5" /> {flows.length} flow{flows.length === 1 ? '' : 's'}
+              </span>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
+                  enabledCount > 0
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+                    : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400',
+                )}
+              >
+                <Zap className="h-3.5 w-3.5" /> {enabledCount} enabled
+              </span>
+            </div>
+          )}
         </section>
 
-        <DesktopStatusCard presence={desktopPresence} />
-        <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
+        {/* Readiness — side by side once there's room; they answer the same question. */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-4">
+          <DesktopStatusCard presence={desktopPresence} />
+          <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
+        </div>
 
         <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -147,8 +181,8 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
                     disabled={!flow}
                     onClick={() => { if (flow) onOpenRunFlow(flow.id); }}
                     className={cn(
-                      'grid w-full grid-cols-[1fr,auto] gap-2 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 sm:grid-cols-[minmax(0,1fr),auto,auto]',
-                      flow ? 'hover:bg-gray-50 dark:hover:bg-slate-800/50' : 'cursor-default',
+                      'grid w-full grid-cols-[1fr,auto] gap-2 rounded-lg px-1.5 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 sm:grid-cols-[minmax(0,1fr),auto,auto]',
+                      flow ? 'cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/50' : 'cursor-default',
                     )}
                   >
                     <span className="min-w-0">
@@ -181,9 +215,9 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
                   key={template.id}
                   type="button"
                   onClick={() => onNewFlow(template)}
-                  className="group flex items-start gap-3 rounded-lg border border-gray-200 p-3 text-left transition-colors hover:border-gray-300 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800/50"
+                  className="group flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10"
                 >
-                  <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-gray-100 text-gray-500 group-hover:text-gray-700 dark:bg-slate-800 dark:text-slate-300 dark:group-hover:text-white">
+                  <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:group-hover:bg-primary-500/20">
                     <Icon className="h-4 w-4" />
                   </span>
                   <span className="min-w-0 flex-1">
