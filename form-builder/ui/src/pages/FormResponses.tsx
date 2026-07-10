@@ -1,6 +1,11 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { RelatedRecordsPanel } from '../components/app-runtime/RelatedRecordsPanel';
+import { LinkedRecordChips } from '../components/responses/recordDisplay';
+import { renderEditField } from '../components/responses/renderEditField';
+import {
+  asResolvedList, formatValue, linkedText,
+  STATUS_OPTIONS, type ResolvedLink,
+} from '../components/responses/recordFormat';
 import {
   Search,
   Trash2,
@@ -27,9 +32,7 @@ import {
   Timer,
   Upload,
   RefreshCw,
-  Link2,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
@@ -40,20 +43,16 @@ import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
-import { api, resolveFileUrl } from '../lib/api';
+import { api } from '../lib/api';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { toast } from '../stores/toastStore';
 import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
 import { Badge } from '../components/ui/Badge';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { CsvImportWizard } from '../components/builder';
-import type { Form, FormField, LocalFormResponse } from '../types/form';
+import type { Form, LocalFormResponse } from '../types/form';
 
 const ITEMS_PER_PAGE = 10;
-
-// A linked_record value resolved server-side into a human label. `targetFormId` lets the
-// UI open the referenced record on demand (the owner owns it, so it's fetchable directly).
-type ResolvedLink = { id: string; display: string; targetFormId?: string };
 
 interface ResponseWithStatus extends LocalFormResponse {
   status?: string;
@@ -97,189 +96,6 @@ async function fetchAllApiResponses(
   return { responses: all, truncated };
 }
 
-// Format a single answer for display. Pure over its args (no component state) so it's shared
-// by the table, the CSV export, the detail drawer, and the linked-record peek.
-function formatValue(value: unknown, fieldType?: string, options?: Array<{ value: string; label?: string }>): string {
-  if (value === null || value === undefined) return '-';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  // File upload: show filenames
-  if (fieldType === 'file_upload' && Array.isArray(value)) {
-    return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
-  }
-  // Signature: a typed signature is stored as "typed:<name>" — show the name; a drawn
-  // signature is a data:image URL — show a marker, never the raw base64.
-  if (fieldType === 'signature') {
-    if (typeof value === 'string' && value.startsWith('typed:')) {
-      const name = value.slice(6).trim();
-      return name || '-';
-    }
-    return value ? '[signature]' : '-';
-  }
-  // Linked record: stored as the target response id(s). Prefer resolved labels at the call
-  // site (see linkedText); this fallback only fires when nothing was resolved.
-  if (fieldType === 'linked_record') {
-    const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
-    return n === 0 ? '-' : n === 1 ? '[linked record]' : `[${n} linked records]`;
-  }
-  // Choice fields: map stored option values (e.g. "option_2") to their human labels.
-  if (options && options.length && (fieldType === 'dropdown' || fieldType === 'multiple_choice' || fieldType === 'checkboxes')) {
-    const labelFor = (v: unknown) => options.find((o) => o.value === v)?.label ?? String(v);
-    return Array.isArray(value) ? value.map(labelFor).join(', ') : labelFor(value);
-  }
-  // Location: show coordinates
-  if (fieldType === 'location' && value && typeof value === 'object' && 'latitude' in (value as Record<string, unknown>)) {
-    const loc = value as Record<string, number>;
-    return `${loc.latitude?.toFixed(6)}, ${loc.longitude?.toFixed(6)}`;
-  }
-  // Date/time locale formatting (guard against Invalid Date rather than swallowing it)
-  if (typeof value === 'string' && value) {
-    if (fieldType === 'date') {
-      const d = new Date(value + 'T00:00:00');
-      return isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    } else if (fieldType === 'time') {
-      const [h, m] = value.split(':').map(Number);
-      const d = new Date(2000, 0, 1, h, m);
-      return isNaN(d.getTime()) ? value : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    } else if (fieldType === 'datetime') {
-      const d = new Date(value);
-      return isNaN(d.getTime()) ? value : d.toLocaleString();
-    }
-  }
-  if (Array.isArray(value)) return value.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
-}
-
-// Normalize the server's _resolved value (single object or array) into a list.
-function asResolvedList(v: ResolvedLink | ResolvedLink[] | undefined): ResolvedLink[] {
-  if (!v) return [];
-  return Array.isArray(v) ? v : [v];
-}
-
-// Plain-text join of resolved linked-record labels — for tooltips, CSV, and non-interactive rows.
-function linkedText(items: ResolvedLink[]): string {
-  return items.length ? items.map((i) => i.display).join(', ') : '-';
-}
-
-// Target-form definitions are cached so the peek doesn't refetch field labels for every chip.
-const linkedFormCache = new Map<string, Form>();
-
-// Renders resolved linked records as chips. Each real record is clickable and opens a peek
-// with the referenced record's details. Used where the row is NOT already a button.
-function LinkedRecordChips({ items }: { items: ResolvedLink[] }) {
-  const [peek, setPeek] = useState<ResolvedLink | null>(null);
-  if (!items.length) return <span className="text-gray-300 dark:text-slate-600">—</span>;
-  return (
-    <>
-      <span className="flex flex-wrap items-center gap-1 max-w-full min-w-0">
-        {items.map((it, i) => {
-          const clickable = !!it.targetFormId && it.display !== 'Record not found';
-          return (
-            <button
-              key={it.id + i}
-              type="button"
-              disabled={!clickable}
-              onClick={(e) => { e.stopPropagation(); if (clickable) setPeek(it); }}
-              title={clickable ? `${it.display} — click to view` : it.display}
-              className={cn(
-                'inline-flex items-center gap-1 max-w-full min-w-0 rounded-full border px-2 py-0.5 text-xs font-medium leading-5 transition-colors',
-                clickable
-                  ? 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 cursor-pointer'
-                  : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 cursor-default'
-              )}
-            >
-              <Link2 className="h-3 w-3 flex-shrink-0" />
-              <span className="truncate">{it.display}</span>
-            </button>
-          );
-        })}
-      </span>
-      {peek && <LinkedRecordPeek item={peek} onClose={() => setPeek(null)} />}
-    </>
-  );
-}
-
-// A modal that lazily loads and displays a single linked record (the owner owns the target
-// form, so it's fetched directly). Kept lightweight — a read-only peek, not the full editor.
-function LinkedRecordPeek({ item, onClose }: { item: ResolvedLink; onClose: () => void }) {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState<Form | null>(null);
-  const [answers, setAnswers] = useState<Record<string, unknown>>({});
-  const [resolved, setResolved] = useState<Record<string, ResolvedLink | ResolvedLink[]>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const tfid = item.targetFormId ?? '';
-        let f = linkedFormCache.get(tfid) ?? null;
-        if (!f) {
-          const fr = await api.getForm(tfid);
-          f = fr.data?.form ?? null;
-          if (f) linkedFormCache.set(tfid, f);
-        }
-        const rr = await api.getResponse(tfid, item.id);
-        if (cancelled) return;
-        setForm(f);
-        setAnswers((rr.data?.response?.answers as Record<string, unknown>) ?? {});
-        setResolved((rr.data?.response as { _resolved?: Record<string, ResolvedLink | ResolvedLink[]> })?._resolved ?? {});
-      } catch {
-        if (!cancelled) setError('Could not load this record.');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => { cancelled = true; };
-  }, [item]);
-
-  const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
-
-  return (
-    <Modal isOpen onClose={onClose} title={form?.title || 'Linked record'} description={item.display} size="md">
-      <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
-        {loading ? (
-          <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-        ) : error ? (
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-        ) : fields.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-slate-400">This record has no displayable fields.</p>
-        ) : (
-          fields.map((field) => {
-            let content: ReactNode;
-            if (field.type === 'linked_record') {
-              content = linkedText(asResolvedList(resolved[field.id]));
-            } else if (field.type === 'file_upload' && Array.isArray(answers[field.id]) && (answers[field.id] as unknown[]).length > 0) {
-              content = (
-                <span className="inline-flex flex-wrap gap-2">
-                  {(answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
-                    f && f.url
-                      ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
-                      : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
-                  ))}
-                </span>
-              );
-            } else {
-              content = formatValue(answers[field.id], field.type, field.properties?.options);
-            }
-            const empty = content === '' || content === '-' || content == null;
-            return (
-              <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-3 last:border-0 last:pb-0">
-                <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
-                <div className="text-sm text-gray-900 dark:text-white break-words">
-                  {empty ? <span className="text-gray-400 dark:text-slate-500 italic">No answer</span> : content}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'] as const;
 
 // Status pills render via the shared <Badge> (statusBadgeVariant in lib/utils),
 // so the responses table, response detail, and members list stay in one palette.
@@ -291,7 +107,7 @@ function FormResponses() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const storageMode = useFormStore((state) => state.storageMode);
   const getForm = useFormStore((state) => state.getForm);
   const refreshForms = useFormStore((state) => state.refreshForms);
@@ -305,7 +121,6 @@ function FormResponses() {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedResponse, setSelectedResponse] = useState<ResponseWithStatus | null>(null);
-  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editedAnswers, setEditedAnswers] = useState<Record<string, unknown>>({});
@@ -425,28 +240,16 @@ function FormResponses() {
   }, [exportMenuOpen]);
 
   // Deep-link support: /responses/:formId?open=<responseId> (e.g. from Analytics'
-  // Recent Responses rows) opens that record's view modal once loaded, then clears
-  // the param so refresh/back doesn't re-open it.
+  // Recent Responses rows) — redirect to the record's own page (replace, so
+  // back returns to wherever the caller came from, not this transient URL).
   const openParamHandled = useRef(false);
   useEffect(() => {
-    if (openParamHandled.current || isLoading) return;
+    if (openParamHandled.current || !formId) return;
     const openId = searchParams.get('open');
     if (!openId) return;
     openParamHandled.current = true;
-    const target = responses.find((r) => r.id === openId);
-    if (target) {
-      setSelectedResponse(target);
-      setIsViewModalOpen(true);
-    }
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete('open');
-        return next;
-      },
-      { replace: true }
-    );
-  }, [isLoading, responses, searchParams, setSearchParams]);
+    navigate(`/responses/${formId}/${openId}`, { replace: true });
+  }, [formId, searchParams, navigate]);
 
   // Get display fields (first few meaningful fields)
   const displayFields = useMemo(() => {
@@ -562,10 +365,9 @@ function FormResponses() {
     if (currentPage > tp) setCurrentPage(tp);
   }, [filteredResponses.length, currentPage]);
 
-  // Handle view response
+  // Open the record's own page (the view modal is retired — records are full pages now).
   const handleView = (response: ResponseWithStatus) => {
-    setSelectedResponse(response);
-    setIsViewModalOpen(true);
+    navigate(`/responses/${formId}/${response.id}`);
   };
 
   // Handle edit response
@@ -640,41 +442,6 @@ function FormResponses() {
     } finally {
       setIsDeleting(false);
     }
-  };
-
-  // Change a response's review status (submitted/reviewed/approved/rejected/archived).
-  // Persisted server-side in API mode; in-memory only for local-storage forms.
-  const handleStatusChange = async (responseId: string, newStatus: string) => {
-    const prevStatus = responses.find((r) => r.id === responseId)?.status ?? 'submitted';
-    setResponses((prev) => prev.map((r) => (r.id === responseId ? { ...r, status: newStatus } : r)));
-    setSelectedResponse((prev) => (prev && prev.id === responseId ? { ...prev, status: newStatus } : prev));
-    if (storageMode === 'api' && formId) {
-      const result = await api.updateResponse(formId, responseId, { status: newStatus } as Parameters<typeof api.updateResponse>[2]);
-      if (result.error) {
-        toast.error('Failed to update status', result.error);
-        // Roll the optimistic change back in both the list and the open modal.
-        setResponses((prev) => prev.map((r) => (r.id === responseId ? { ...r, status: prevStatus } : r)));
-        setSelectedResponse((prev) => (prev && prev.id === responseId ? { ...prev, status: prevStatus } : prev));
-      }
-    }
-  };
-
-  // Re-run the form's logic script against a stored response (owner/API mode).
-  const handleRecompute = async (responseId: string) => {
-    if (!formId) return;
-    const result = await api.recomputeResponse(formId, responseId);
-    // The endpoint returns 200 with {success:false, error} when the script
-    // itself fails — surface that instead of a misleading success toast.
-    if (result.error || result.data?.success === false) {
-      toast.error('Re-run failed', result.error || result.data?.error || 'Script error');
-      return;
-    }
-    toast.success('Logic re-run', 'The response was recomputed with the latest script.');
-    try {
-      const { responses: all } = await fetchAllApiResponses(formId);
-      setResponses(all);
-    } catch { /* will refresh on next load */ }
-    setIsViewModalOpen(false);
   };
 
   // Client-side export of exactly what's shown (the search + status filter).
@@ -1287,158 +1054,6 @@ function FormResponses() {
         )}
       </div>
 
-      {/* View Modal */}
-      <Modal
-        isOpen={isViewModalOpen}
-        onClose={() => setIsViewModalOpen(false)}
-        title="Response Details"
-        description={selectedResponse ? `Submitted ${formatDate(selectedResponse.submittedAt)}` : undefined}
-        size="lg"
-      >
-        {selectedResponse && (
-          <>
-            <div className="p-6 space-y-4">
-              {form.fields
-                .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-                .map((field) => (
-                  <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
-                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
-                    <div className="text-gray-900 dark:text-white">
-                      {field.type === 'linked_record' ? (
-                        <LinkedRecordChips items={linksFor(selectedResponse, field.id)} />
-                      ) : field.type === 'file_upload' && Array.isArray(selectedResponse.answers[field.id]) && (selectedResponse.answers[field.id] as unknown[]).length > 0 ? (
-                        <div className="flex flex-col gap-1">
-                          {(selectedResponse.answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
-                            f && f.url
-                              ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
-                              : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
-                          ))}
-                        </div>
-                      ) : (
-                        formatValue(selectedResponse.answers[field.id], field.type, field.properties?.options) || (
-                          <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
-                        )
-                      )}
-                    </div>
-                  </div>
-                ))}
-              {/* Computed values (set by the form's logic script) */}
-              {selectedResponse.computed && Object.keys(selectedResponse.computed).length > 0 && (
-                <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                  <h3 className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Computed</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    {Object.entries(selectedResponse.computed).map(([key, value]) => (
-                      <div key={key} className="min-w-0">
-                        <p className="text-xs text-gray-500 dark:text-slate-400 truncate" title={key}>{key}</p>
-                        <p className="text-gray-900 dark:text-white break-words mt-0.5">
-                          {value === null || value === undefined
-                            ? '—'
-                            : typeof value === 'object'
-                              ? JSON.stringify(value)
-                              : String(value)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {/* Metadata */}
-              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                <h3 className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Metadata</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-gray-500 dark:text-slate-400">Response ID</p>
-                    <p className="text-gray-700 dark:text-slate-300 font-mono text-xs bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded mt-1">
-                      {selectedResponse.id}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-gray-500 dark:text-slate-400">Completion Time</p>
-                    <p className="text-gray-900 dark:text-white mt-1">
-                      {formatDuration(selectedResponse.completionTime || 0)}
-                    </p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-gray-500 dark:text-slate-400 mb-1">Status</p>
-                    {storageMode === 'api' ? (
-                      <select
-                        value={selectedResponse.status || 'submitted'}
-                        onChange={(e) => handleStatusChange(selectedResponse.id, e.target.value)}
-                        aria-label="Response status"
-                        className="px-2.5 py-1 rounded-lg text-sm border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
-                      >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <Badge variant={statusBadgeVariant(selectedResponse.status || 'submitted')} className="rounded-full">
-                        {formatStatusLabel(selectedResponse.status || 'submitted')}
-                      </Badge>
-                    )}
-                  </div>
-                  {selectedResponse.tags && selectedResponse.tags.length > 0 && (
-                    <div className="col-span-2">
-                      <p className="text-gray-500 dark:text-slate-400 mb-1">Tags</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedResponse.tags.map((tag) => (
-                          <Badge key={tag}>{tag}</Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {selectedResponse.metadata?.userAgent && (
-                    <div className="col-span-2">
-                      <p className="text-gray-500 dark:text-slate-400">User Agent</p>
-                      <p className="text-gray-900 dark:text-white text-xs truncate mt-1">
-                        {selectedResponse.metadata.userAgent}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Related records (owner-scoped): records in the owner's other forms that link
-                  here through a linked_record field — view + delete inline; Add is via the app
-                  runtime (prefilled), so it's not offered in this owner admin view. */}
-              {formId && storageMode === 'api' && (
-                <RelatedRecordsPanel
-                  appSlug=""
-                  formId={formId}
-                  responseId={selectedResponse.id}
-                  fetchRelated={(opts) =>
-                    api.getOwnerRelatedRecords(formId, selectedResponse.id, opts)
-                      .then((r) => ({ related: r.data?.related, error: typeof r.error === 'string' ? r.error : undefined }))}
-                  deleteRecord={async (fid, rid) => { const r = await api.deleteResponse(fid, rid); return !r.error; }}
-                  canAddFn={() => false}
-                  canDeleteFn={() => true}
-                  onOpenRecord={(fid, rid) => { setIsViewModalOpen(false); navigate(`/responses/${fid}?open=${rid}`); }}
-                />
-              )}
-            </div>
-            <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setIsViewModalOpen(false)}>
-                Close
-              </Button>
-              {storageMode === 'api' && form.logicScript && (
-                <Button variant="outline" onClick={() => handleRecompute(selectedResponse.id)}>
-                  Re-run logic
-                </Button>
-              )}
-              <Button
-                onClick={() => {
-                  setIsViewModalOpen(false);
-                  handleEdit(selectedResponse);
-                }}
-              >
-                <Edit2 className="h-4 w-4 mr-2" />
-                Edit
-              </Button>
-            </div>
-          </>
-        )}
-      </Modal>
-
       {/* Edit Modal */}
       <Modal
         isOpen={isEditModalOpen}
@@ -1539,209 +1154,6 @@ function FormResponses() {
       />
     </div>
   );
-}
-
-// Helper function to render edit field based on type
-function renderEditField(
-  field: FormField,
-  value: unknown,
-  onChange: (value: unknown) => void
-) {
-  const currentValue = value ?? '';
-  const inputClasses = "w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white";
-  const disabledClasses = "w-full px-3 py-2.5 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-500 dark:text-slate-400 cursor-not-allowed";
-
-  // Read-only for calculated + hidden fields (values are computed/script-set, not user-edited)
-  if (field.type === 'calculated' || field.type === 'hidden') {
-    return (
-      <input
-        type="text"
-        value={String(currentValue)}
-        disabled
-        className={disabledClasses}
-      />
-    );
-  }
-
-  switch (field.type) {
-    case 'short_text':
-    case 'email':
-    case 'phone':
-    case 'url':
-      return (
-        <input
-          type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClasses}
-        />
-      );
-
-    case 'long_text':
-      return (
-        <textarea
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          rows={4}
-          className={inputClasses}
-        />
-      );
-
-    case 'number':
-    case 'rating':
-    case 'scale':
-      return (
-        <input
-          type="number"
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-          className={inputClasses}
-        />
-      );
-
-    case 'date':
-      return (
-        <input
-          type="date"
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClasses}
-        />
-      );
-
-    case 'time':
-      return (
-        <input
-          type="time"
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClasses}
-        />
-      );
-
-    case 'datetime':
-      return (
-        <input
-          type="datetime-local"
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClasses}
-        />
-      );
-
-    case 'dropdown':
-    case 'multiple_choice':
-      return (
-        <select
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClasses}
-        >
-          <option value="">Select...</option>
-          {field.properties.options?.map((opt) => (
-            <option key={opt.id} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      );
-
-    case 'checkboxes': {
-      const selectedValues = Array.isArray(currentValue) ? currentValue : [];
-      return (
-        <div className="space-y-2">
-          {field.properties.options?.map((opt) => (
-            <label key={opt.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 dark:hover:bg-slate-800 rounded-lg cursor-pointer">
-              <input
-                type="checkbox"
-                checked={selectedValues.includes(opt.value)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    onChange([...selectedValues, opt.value]);
-                  } else {
-                    onChange(selectedValues.filter((v: string) => v !== opt.value));
-                  }
-                }}
-                className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
-              />
-              <span className="text-gray-700 dark:text-slate-300">{opt.label}</span>
-            </label>
-          ))}
-        </div>
-      );
-    }
-
-    case 'file_upload':
-      // File uploads are not editable inline — show read-only summary
-      if (Array.isArray(currentValue) && currentValue.length > 0) {
-        return (
-          <div className="text-sm text-gray-600 dark:text-slate-400 space-y-1">
-            {currentValue.map((f: Record<string, unknown>, i: number) => (
-              <div key={i} className="flex items-center gap-2">
-                <span>{String(f.originalFilename || 'File')}</span>
-              </div>
-            ))}
-          </div>
-        );
-      }
-      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No files uploaded</p>;
-
-    case 'location':
-      if (currentValue && typeof currentValue === 'object' && 'latitude' in (currentValue as Record<string, unknown>)) {
-        const loc = currentValue as Record<string, number>;
-        return (
-          <p className="text-sm text-gray-600 dark:text-slate-400">
-            {loc.latitude?.toFixed(6)}, {loc.longitude?.toFixed(6)}
-            {loc.accuracy ? ` (~${loc.accuracy}m)` : ''}
-          </p>
-        );
-      }
-      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No location captured</p>;
-
-    case 'signature':
-      // A signature is a data-URL — editing it as text would corrupt it. Show a
-      // read-only preview; the value is preserved untouched on save.
-      if (typeof currentValue === 'string' && currentValue.startsWith('data:image')) {
-        return (
-          <div className="space-y-1">
-            <img src={currentValue} alt="Signature" className="max-h-24 rounded-lg border border-gray-200 dark:border-slate-700 bg-white" />
-            <p className="text-xs text-gray-400 dark:text-slate-500 italic">Signatures can't be edited here — value preserved.</p>
-          </div>
-        );
-      }
-      if (typeof currentValue === 'string' && currentValue.startsWith('typed:')) {
-        const typedName = currentValue.slice(6).trim();
-        if (typedName) {
-          return (
-            <div className="space-y-1">
-              <p className="text-base text-gray-900 dark:text-white" style={{ fontFamily: 'cursive' }}>{typedName}</p>
-              <p className="text-xs text-gray-400 dark:text-slate-500 italic">Typed signature — value preserved.</p>
-            </div>
-          );
-        }
-      }
-      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No signature captured</p>;
-
-    case 'linked_record':
-      // Linked records reference other responses and are only editable in the
-      // app runtime. Preserve the value rather than clobbering it as text.
-      return (
-        <p className="text-sm text-gray-500 dark:text-slate-400">
-          {currentValue ? String(Array.isArray(currentValue) ? currentValue.join(', ') : currentValue) : '—'}
-          <span className="block text-xs text-gray-400 dark:text-slate-500 italic mt-0.5">Linked records can't be edited here — value preserved.</span>
-        </p>
-      );
-
-    default:
-      return (
-        <input
-          type="text"
-          value={String(currentValue)}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClasses}
-        />
-      );
-  }
 }
 
 export default FormResponses;

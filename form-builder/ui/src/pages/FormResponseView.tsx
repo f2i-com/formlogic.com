@@ -1,0 +1,398 @@
+// Full-page owner record view (linked-records feature): replaces the responses
+// table's view MODAL. Shows every answer, computed values, metadata, status and
+// tags, plus the related-records grids — and edits inline. Route:
+// /responses/:formId/:responseId (owner-scoped; local-storage forms supported).
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Check, Edit2, RefreshCw, Trash2, X } from 'lucide-react';
+import { Header } from '../components/layout/Header';
+import { Button } from '../components/ui/Button';
+import { Badge } from '../components/ui/Badge';
+import { Skeleton } from '../components/ui/Skeleton';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { RelatedRecordsPanel } from '../components/app-runtime/RelatedRecordsPanel';
+import { LinkedRecordChips } from '../components/responses/recordDisplay';
+import { renderEditField } from '../components/responses/renderEditField';
+import {
+  asResolvedList, formatValue,
+  STATUS_OPTIONS, type ResolvedLink,
+} from '../components/responses/recordFormat';
+import { useFormStore } from '../stores/formStore';
+import { useResponseStore } from '../stores/responseStore';
+import { api, resolveFileUrl } from '../lib/api';
+import { toast } from '../stores/toastStore';
+import { statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
+import type { Form } from '../types/form';
+
+interface RecordData {
+  id: string;
+  answers: Record<string, unknown>;
+  submittedAt: string;
+  status?: string;
+  tags?: string[];
+  computed?: Record<string, unknown>;
+  metadata?: { completionTime?: number; userAgent?: string };
+  _resolved?: Record<string, ResolvedLink | ResolvedLink[]>;
+}
+
+/** A human title for the record: its first non-empty simple answer. */
+function recordTitle(form: Form | null, answers: Record<string, unknown>): string {
+  for (const f of form?.fields ?? []) {
+    if (!['short_text', 'email', 'phone', 'url', 'dropdown', 'number'].includes(f.type)) continue;
+    const v = answers[f.id];
+    if (v != null && v !== '' && typeof v !== 'object') return String(v);
+  }
+  return 'Record';
+}
+
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds <= 0) return '—';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function FormResponseView() {
+  const { formId, responseId } = useParams<{ formId: string; responseId: string }>();
+  const navigate = useNavigate();
+  const storageMode = useFormStore((s) => s.storageMode);
+  const getStoredForm = useFormStore((s) => s.getForm);
+  const getLocalResponses = useResponseStore((s) => s.getResponsesByFormId);
+  const updateLocalResponse = useResponseStore((s) => s.updateResponse);
+  const deleteLocalResponse = useResponseStore((s) => s.deleteResponse);
+
+  const [form, setForm] = useState<Form | null>(null);
+  const [record, setRecord] = useState<RecordData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [recomputing, setRecomputing] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  useEffect(() => {
+    if (!formId || !responseId) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    const run = async () => {
+      try {
+        if (storageMode === 'api') {
+          const [fr, rr] = await Promise.all([api.getForm(formId), api.getResponse(formId, responseId)]);
+          if (cancelled) return;
+          if (!fr.data?.form) { setLoadError(fr.error || 'Form not found'); return; }
+          if (!rr.data?.response) { setLoadError(rr.error || 'Record not found'); return; }
+          const raw = rr.data.response as unknown as RecordData & { completionTime?: number };
+          setForm(fr.data.form);
+          setRecord(raw);
+        } else {
+          const f = getStoredForm(formId) ?? null;
+          const local = getLocalResponses(formId).find((r) => r.id === responseId);
+          if (cancelled) return;
+          if (!f) { setLoadError('Form not found'); return; }
+          if (!local) { setLoadError('Record not found'); return; }
+          setForm(f);
+          setRecord({ id: local.id, answers: local.answers ?? {}, submittedAt: local.submittedAt });
+        }
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load this record');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [formId, responseId, storageMode, getStoredForm, getLocalResponses, reloadTick]);
+
+  const startEdit = useCallback(() => {
+    if (!record) return;
+    setDraft({ ...record.answers });
+    setEditing(true);
+  }, [record]);
+
+  const saveEdit = useCallback(async () => {
+    if (!formId || !record) return;
+    setSaving(true);
+    try {
+      if (storageMode === 'api') {
+        const result = await api.updateResponse(formId, record.id, { answers: draft });
+        if (result.error) { toast.error('Failed to update record', result.error); return; }
+      } else {
+        updateLocalResponse(record.id, draft);
+      }
+      setRecord((prev) => (prev ? { ...prev, answers: draft } : prev));
+      setEditing(false);
+      toast.success('Record updated', 'Changes saved successfully');
+    } catch {
+      toast.error('Failed to save', 'An error occurred while saving');
+    } finally {
+      setSaving(false);
+    }
+  }, [formId, record, draft, storageMode, updateLocalResponse]);
+
+  const changeStatus = useCallback(async (newStatus: string) => {
+    if (!formId || !record) return;
+    const prevStatus = record.status ?? 'submitted';
+    setRecord((prev) => (prev ? { ...prev, status: newStatus } : prev));
+    if (storageMode === 'api') {
+      const result = await api.updateResponse(formId, record.id, { status: newStatus } as Parameters<typeof api.updateResponse>[2]);
+      if (result.error) {
+        toast.error('Failed to update status', result.error);
+        setRecord((prev) => (prev ? { ...prev, status: prevStatus } : prev));
+      }
+    }
+  }, [formId, record, storageMode]);
+
+  const recompute = useCallback(async () => {
+    if (!formId || !record) return;
+    setRecomputing(true);
+    const result = await api.recomputeResponse(formId, record.id);
+    setRecomputing(false);
+    if (result.error || result.data?.success === false) {
+      toast.error('Re-run failed', result.error || result.data?.error || 'Script error');
+      return;
+    }
+    toast.success('Logic re-run', 'The record was recomputed with the latest script.');
+    setReloadTick((t) => t + 1);
+  }, [formId, record]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!formId || !record) return;
+    setDeleting(true);
+    try {
+      if (storageMode === 'api') {
+        const result = await api.deleteResponse(formId, record.id);
+        if (result.error) { toast.error('Failed to delete', result.error); return; }
+      } else {
+        deleteLocalResponse(record.id);
+      }
+      toast.success('Record deleted', 'The record has been removed');
+      navigate(`/responses/${formId}`);
+    } catch {
+      toast.error('Failed to delete', 'An error occurred');
+    } finally {
+      setDeleting(false);
+    }
+  }, [formId, record, storageMode, deleteLocalResponse, navigate]);
+
+  const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+  const completionTime = record?.metadata?.completionTime ?? 0;
+
+  return (
+    <div className="min-h-screen transition-colors">
+      <Header
+        title="Record"
+        actions={
+          record && !loading ? (
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
+              {editing ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setEditing(false)} disabled={saving}>
+                    <X className="h-4 w-4" />
+                    <span className="hidden lg:inline ml-2">Cancel</span>
+                  </Button>
+                  <Button size="sm" onClick={saveEdit} isLoading={saving}>
+                    <Check className="h-4 w-4" />
+                    <span className="ml-2">Save</span>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {storageMode === 'api' && form?.logicScript && (
+                    <Button variant="outline" size="sm" onClick={recompute} isLoading={recomputing} title="Re-run the form's logic script on this record">
+                      <RefreshCw className="h-4 w-4" />
+                      <span className="hidden lg:inline ml-2">Re-run logic</span>
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={startEdit}>
+                    <Edit2 className="h-4 w-4" />
+                    <span className="hidden lg:inline ml-2">Edit</span>
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowDelete(true)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10">
+                    <Trash2 className="h-4 w-4" />
+                    <span className="hidden lg:inline ml-2">Delete</span>
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
+
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+        {/* Back + context */}
+        <button
+          type="button"
+          onClick={() => navigate(`/responses/${formId}`)}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+        >
+          <ArrowLeft className="h-4 w-4" /> {form?.title ? `${form.title} — all records` : 'All records'}
+        </button>
+
+        {loading ? (
+          <div className="space-y-3" role="status" aria-label="Loading record">
+            <Skeleton className="h-9 w-64" />
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        ) : loadError || !record ? (
+          <EmptyState
+            title="Record not found"
+            description={loadError || 'This record may have been deleted.'}
+            action={<Button variant="outline" onClick={() => navigate(`/responses/${formId}`)}>Back to records</Button>}
+          />
+        ) : (
+          <>
+            {/* Title row */}
+            <div className="flex flex-wrap items-center gap-3 mb-6">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight truncate max-w-full">
+                {recordTitle(form, record.answers)}
+              </h1>
+              {storageMode === 'api' ? (
+                <select
+                  value={record.status || 'submitted'}
+                  onChange={(e) => changeStatus(e.target.value)}
+                  aria-label="Record status"
+                  className="px-2.5 py-1 rounded-lg text-sm border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{formatStatusLabel(s)}</option>
+                  ))}
+                </select>
+              ) : (
+                <Badge variant={statusBadgeVariant(record.status || 'submitted')} className="rounded-full">
+                  {formatStatusLabel(record.status || 'submitted')}
+                </Badge>
+              )}
+              <span className="text-sm text-gray-400 dark:text-slate-500">
+                Submitted {parseServerDate(record.submittedAt).toLocaleString()}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+              {/* Answers */}
+              <div className="lg:col-span-2 min-w-0">
+                <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-6 space-y-4">
+                  {fields.map((field) => (
+                    <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
+                      <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
+                      {editing ? (
+                        renderEditField(field, draft[field.id], (value) => setDraft((prev) => ({ ...prev, [field.id]: value })))
+                      ) : (
+                        <div className="text-gray-900 dark:text-white break-words">
+                          {field.type === 'linked_record' ? (
+                            <LinkedRecordChips
+                              items={asResolvedList(record._resolved?.[field.id])}
+                              onOpen={(it) => it.targetFormId && navigate(`/responses/${it.targetFormId}/${it.id}`)}
+                            />
+                          ) : field.type === 'file_upload' && Array.isArray(record.answers[field.id]) && (record.answers[field.id] as unknown[]).length > 0 ? (
+                            <div className="flex flex-col gap-1">
+                              {(record.answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
+                                f && f.url
+                                  ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
+                                  : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
+                              ))}
+                            </div>
+                          ) : (
+                            formatValue(record.answers[field.id], field.type, field.properties?.options) === '-' ? (
+                              <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
+                            ) : (
+                              formatValue(record.answers[field.id], field.type, field.properties?.options)
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {fields.length === 0 && (
+                    <p className="text-sm text-gray-400 dark:text-slate-500 italic">This form has no displayable fields.</p>
+                  )}
+                </div>
+
+                {/* Related records (owner-scoped) — hidden while editing so a stale grid
+                    never sits under half-changed answers. */}
+                {formId && responseId && storageMode === 'api' && !editing && (
+                  <RelatedRecordsPanel
+                    appSlug=""
+                    formId={formId}
+                    responseId={responseId}
+                    fetchRelated={(opts) =>
+                      api.getOwnerRelatedRecords(formId, responseId, opts)
+                        .then((r) => ({ related: r.data?.related, error: typeof r.error === 'string' ? r.error : undefined }))}
+                    deleteRecord={async (fid, rid) => { const r = await api.deleteResponse(fid, rid); return !r.error; }}
+                    canAddFn={() => false}
+                    canDeleteFn={() => true}
+                    onOpenRecord={(fid, rid) => navigate(`/responses/${fid}/${rid}`)}
+                  />
+                )}
+              </div>
+
+              {/* Details sidebar */}
+              <div className="space-y-4 min-w-0">
+                <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight mb-3">Details</h3>
+                  <dl className="space-y-3 text-sm">
+                    <div>
+                      <dt className="text-gray-500 dark:text-slate-400">Record ID</dt>
+                      <dd className="text-gray-700 dark:text-slate-300 font-mono text-xs bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded mt-1 break-all">{record.id}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-gray-500 dark:text-slate-400">Completion time</dt>
+                      <dd className="text-gray-900 dark:text-white mt-0.5">{formatDuration(completionTime)}</dd>
+                    </div>
+                    {record.tags && record.tags.length > 0 && (
+                      <div>
+                        <dt className="text-gray-500 dark:text-slate-400 mb-1">Tags</dt>
+                        <dd className="flex flex-wrap gap-1.5">
+                          {record.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
+                        </dd>
+                      </div>
+                    )}
+                    {record.metadata?.userAgent && (
+                      <div>
+                        <dt className="text-gray-500 dark:text-slate-400">User agent</dt>
+                        <dd className="text-gray-700 dark:text-slate-300 text-xs truncate mt-0.5" title={record.metadata.userAgent}>{record.metadata.userAgent}</dd>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+
+                {record.computed && Object.keys(record.computed).length > 0 && (
+                  <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight mb-3">Computed</h3>
+                    <dl className="space-y-3 text-sm">
+                      {Object.entries(record.computed).map(([key, value]) => (
+                        <div key={key} className="min-w-0">
+                          <dt className="text-xs text-gray-500 dark:text-slate-400 truncate" title={key}>{key}</dt>
+                          <dd className="text-gray-900 dark:text-white break-words mt-0.5">
+                            {value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+
+      <ConfirmDialog
+        isOpen={showDelete}
+        onClose={() => setShowDelete(false)}
+        onConfirm={confirmDelete}
+        title="Delete record"
+        message="Are you sure you want to delete this record? All data associated with this submission will be permanently removed."
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={deleting}
+      />
+    </div>
+  );
+}
+
+export default FormResponseView;

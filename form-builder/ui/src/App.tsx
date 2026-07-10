@@ -69,6 +69,7 @@ const AppHomeStudio = lazyWithRetry(() => import('./pages/AppHomeStudio'));
 const DomainLaunchRouter = lazyWithRetry(() => import('./pages/DomainLaunchRouter').then(m => ({ default: m.DomainLaunchRouter })));
 const FormResponse = lazyWithRetry(() => import('./pages/FormResponse'));
 const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
+const FormResponseView = lazyWithRetry(() => import('./pages/FormResponseView'));
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
 const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
@@ -312,6 +313,7 @@ function AppRoutes() {
           <Route path="/billing" element={<Billing />} />
           <Route path="/analytics/:formId" element={<FormAnalytics />} />
           <Route path="/responses/:formId" element={<FormResponses />} />
+          <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
           <Route path="/apps" element={<AppsDashboard />} />
           <Route path="/apps/new" element={<AppCreateWizard />} />
           <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
@@ -360,6 +362,7 @@ function AppRoutes() {
         <Route path="/billing" element={<Billing />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
         <Route path="/responses/:formId" element={<FormResponses />} />
+        <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
         {/* App admin routes */}
         <Route path="/apps" element={<AppsDashboard />} />
         <Route path="/apps/new" element={<AppCreateWizard />} />
