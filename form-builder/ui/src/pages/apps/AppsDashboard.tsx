@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText, LayoutGrid, List, Settings } from 'lucide-react';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
@@ -35,6 +35,14 @@ export function AppsDashboard() {
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showImport, setShowImport] = useState(false);
   const [showHandToAi, setShowHandToAi] = useState(false);
+  // Card grid vs compact list — remembered across visits.
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    try { return localStorage.getItem('appsDashboard.viewMode') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+  });
+  const changeViewMode = (mode: 'grid' | 'list') => {
+    setViewMode(mode);
+    try { localStorage.setItem('appsDashboard.viewMode', mode); } catch { /* ignore */ }
+  };
 
   // Open a "creator" MCP connection so an external AI can build a brand-new app itself — no placeholder.
 
@@ -96,16 +104,37 @@ export function AppsDashboard() {
           <p className="text-gray-500 dark:text-slate-400">Build and manage deployable applications</p>
         </div>
 
-        {/* Search */}
+        {/* Search + view toggle */}
         {apps.length > 0 && (
-          <div className="mb-4 sm:mb-6">
+          <div className="mb-4 sm:mb-6 flex items-center gap-3">
             <Input
-              placeholder={Object.keys(appPackMap).length > 0 ? 'Search apps or packs…' : 'Search apps…'}
+              placeholder="Search…"
+              aria-label="Search apps or packs"
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setAppLimit(APPS_PAGE); }}
               leftIcon={<Search className="h-4 w-4" />}
               className="w-full sm:max-w-xs lg:max-w-md"
             />
+            <div className="flex flex-none rounded-lg border border-gray-300 dark:border-slate-700 overflow-hidden ml-auto" role="group" aria-label="View mode">
+              <button
+                type="button"
+                onClick={() => changeViewMode('grid')}
+                aria-pressed={viewMode === 'grid'}
+                title="Card view"
+                className={`px-3 py-2.5 transition-colors cursor-pointer ${viewMode === 'grid' ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400' : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
+              >
+                <LayoutGrid className="h-4 w-4" /><span className="sr-only">Card view</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => changeViewMode('list')}
+                aria-pressed={viewMode === 'list'}
+                title="List view"
+                className={`px-3 py-2.5 border-l border-gray-300 dark:border-slate-700 transition-colors cursor-pointer ${viewMode === 'list' ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400' : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
+              >
+                <List className="h-4 w-4" /><span className="sr-only">List view</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -142,19 +171,33 @@ export function AppsDashboard() {
           />
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-              {filteredApps.slice(0, appLimit).map((app) => (
-                <AppCard
-                  key={app.id}
-                  app={app}
-                  packName={appPackMap[app.id] ?? null}
-                  onClick={() => navigate(`/apps/${app.id}/settings`)}
-                  onDelete={() => setDeleteTarget(app)}
-                />
-              ))}
-              {/* New-app CTA rides along in the grid (hidden while searching) — same wizard entry as the header button. */}
-              {!searchQuery.trim() && <NewAppCard onClick={() => navigate('/apps/new')} />}
-            </div>
+            {viewMode === 'grid' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {filteredApps.slice(0, appLimit).map((app) => (
+                  <AppCard
+                    key={app.id}
+                    app={app}
+                    packName={appPackMap[app.id] ?? null}
+                    onClick={() => navigate(`/apps/${app.id}/settings`)}
+                    onDelete={() => setDeleteTarget(app)}
+                  />
+                ))}
+                {/* New-app CTA rides along in the grid (hidden while searching) — same wizard entry as the header button. */}
+                {!searchQuery.trim() && <NewAppCard onClick={() => navigate('/apps/new')} />}
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 divide-y divide-gray-100 dark:divide-slate-800">
+                {filteredApps.slice(0, appLimit).map((app) => (
+                  <AppRow
+                    key={app.id}
+                    app={app}
+                    packName={appPackMap[app.id] ?? null}
+                    onManage={() => navigate(`/apps/${app.id}/settings`)}
+                    onDelete={() => setDeleteTarget(app)}
+                  />
+                ))}
+              </div>
+            )}
             <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" />
           </>
         )}
@@ -178,6 +221,109 @@ export function AppsDashboard() {
 
       {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" />}
       <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
+    </div>
+  );
+}
+
+// App identity tile (logo → curated icon on accent → monogram), shared by card + row.
+function AppTile({ app, size = 'md' }: { app: App; size?: 'sm' | 'md' }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showLogo = Boolean(app.logoUrl) && !imgFailed;
+  const icon = app.settings?.icon;
+  const accent = app.theme?.primaryColor;
+  const accented = !showLogo && isHexColor(accent);
+  const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
+  const box = size === 'sm' ? 'w-9 h-9 rounded-lg' : 'w-10 h-10 rounded-xl';
+  const glyph = size === 'sm' ? 'h-4.5 w-4.5' : 'h-5 w-5';
+  return (
+    <div
+      style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
+      className={cn(
+        'flex items-center justify-center flex-shrink-0 overflow-hidden', box,
+        showLogo
+          ? 'bg-gray-50 dark:bg-slate-800/60'
+          : accented
+            ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
+            : 'bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-400'
+      )}
+    >
+      {showLogo ? (
+        <img src={app.logoUrl} alt="" loading="lazy" onError={() => setImgFailed(true)} className="h-full w-full object-cover" />
+      ) : icon ? (
+        <DynamicIcon name={icon} className={glyph} fallback={<span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>} />
+      ) : (
+        <span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>
+      )}
+    </div>
+  );
+}
+
+// Compact list-mode row: click opens Manage; explicit View app / Manage / Remove actions.
+function AppRow({ app, packName, onManage, onDelete }: { app: App; packName: string | null; onManage: () => void; onDelete: () => void }) {
+  const formCount = app.formCount ?? app.navConfig?.length ?? 0;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onManage}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onManage(); } }}
+      title="Manage app"
+      className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
+    >
+      <AppTile app={app} size="sm" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{app.name}</span>
+          {packName && (
+            <Badge variant="info" size="sm" className="hidden md:inline-flex max-w-full whitespace-nowrap flex-none">
+              <Package className="h-3 w-3 mr-1 inline shrink-0" /><span className="truncate">{packName}</span>
+            </Badge>
+          )}
+        </div>
+        <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 min-w-0">
+          <span className="font-mono truncate max-w-[45%]">/{app.slug}</span>
+          <span aria-hidden="true">·</span>
+          <span className="tabular-nums flex-none">{formCount} form{formCount === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+      <Badge
+        variant={app.status === 'published' ? 'success' : app.status === 'draft' ? 'warning' : 'default'}
+        size="sm"
+        className="capitalize flex-none hidden sm:inline-flex"
+      >
+        {app.status}
+      </Badge>
+      <div className="flex items-center gap-0.5 flex-none" onClick={(e) => e.stopPropagation()}>
+        {app.status === 'published' && (
+          <button
+            type="button"
+            onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener,noreferrer')}
+            title="Open app"
+            aria-label={`Open ${app.name}`}
+            className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onManage}
+          title="Manage app"
+          aria-label={`Manage ${app.name}`}
+          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+        >
+          <Settings className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          title="Remove app"
+          aria-label={`Remove ${app.name}`}
+          className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }
