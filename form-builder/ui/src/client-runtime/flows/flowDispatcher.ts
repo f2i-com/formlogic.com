@@ -201,7 +201,10 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
       return useAppRuntimeStore.getState().fetchResponses(formId, {
         limit: typeof query?.limit === 'number' ? query.limit : undefined,
         offset: typeof query?.offset === 'number' ? query.offset : undefined,
-        answersEq: query?.answersEq,
+        answersEq:
+          query?.answersEq && typeof query.answersEq === 'object'
+            ? (query.answersEq as Record<string, string>)
+            : undefined,
       });
     },
     submitResponse: async (formId, answers) => {
@@ -246,7 +249,10 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
       const res = await api.getResponses(formId, {
         limit: typeof query?.limit === 'number' ? query.limit : undefined,
         offset: typeof query?.offset === 'number' ? query.offset : undefined,
-        answersEq: query?.answersEq,
+        answersEq:
+          query?.answersEq && typeof query.answersEq === 'object'
+            ? (query.answersEq as Record<string, string>)
+            : undefined,
       });
       if (res.error) throw new Error(res.error);
       return res.data?.responses ?? [];
