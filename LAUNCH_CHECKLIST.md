@@ -15,6 +15,11 @@ it runs the full-stack golden paths against a real PHP+MySQL+SPA. It runs nightl
 release tag, and on demand. Follow **[docs/RELEASE_RUNBOOK.md](docs/RELEASE_RUNBOOK.md)** for the full
 pre-launch sequence.
 
+Aokie receptionist operators: **[docs/AOKIE_OPERATIONS.md](docs/AOKIE_OPERATIONS.md)** (stack, restart
+recipe, deploy, support-bundle diagnosis) and **[docs/AOKIE_TROUBLESHOOTING.md](docs/AOKIE_TROUBLESHOOTING.md)**
+(concrete failure modes → fixes). Plugin internals: the aokie repo's `docs/ARCHITECTURE.md` +
+`docs/HARDWARE.md`.
+
 Fast CI (`ci.yml`, every PR/push) runs: backend PHP unit+DB tests, the full frontend **Vitest**
 suite, typecheck+build, bundle budget, pack-screen coverage, the custom-screen CSP no-egress pin
 (`check-security-invariants.mjs`), dependency audits, and the **FormLogic Desktop Rust tests on a
