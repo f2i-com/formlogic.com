@@ -726,7 +726,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
               const status = String(r.answers.status || '');
               // Same severity-coloring convention as AokiePairingScreen's hardware events list.
               const statusClass =
-                status === 'missed' || status === 'failed'
+                status === 'missed' || status === 'failed' || status === 'rejected'
                   ? 'text-red-600 dark:text-red-400'
                   : status === 'completed' || status === 'answered'
                     ? 'text-emerald-600 dark:text-emerald-400'

@@ -51,7 +51,14 @@ aokie.hardware.error
 The list is generated from ONE source (`contract.rs::events::ALL` in the aokie repo): the plugin's `manifest.json`, the desktop's bundled manifest copy and the flow event catalog must all declare exactly this set — Desktop silently drops any event a plugin emits without declaring, so drift here is a release blocker, and `cargo test -p aokie-plugin` fails on it.
 
 Conventions:
-- `correlationId` = call id (`call_<uuid>`), SMS handle, or pairing session id.
+- `correlationId` = call id (`call_<uuid>`), SMS handle, or pairing session id. Call ids are
+  NEVER reused; internally each call also has a monotonic generation stamped through the
+  async STT/LLM/TTS pipeline so a slow result from call A is dropped, never attributed to
+  call B (audit AK-002/C-05; drops are visible as `staleSttResults` in `dongle.diagnostics`).
+- `aokie.call.ended` data: `{callId, from, callerPhone, durationSeconds, durationMs, outcome,
+  reason, at}`. `outcome ∈ completed|rejected|missed` comes from the call-session state
+  machine (audit AK-001): answered → `completed` (even a sub-second call), operator-rejected
+  → `rejected`, never answered → `missed`. `durationSeconds`/`durationMs` count from ANSWER.
 - `idempotencyKey` = `aokie:<correlationId>:<step>:v1` (e.g. `aokie:call_abc:incoming:v1`; turn events append the turn index: `aokie:call_abc:turn.4.final:v1`).
 - `data` carries the minimum needed by FormLogic (caller phone/name, timestamps, durations, transcript text for turn events). No raw audio over the event bus.
 
