@@ -52,13 +52,16 @@ const LOGIC_CALL_INCOMING = `function run(ctx) {
   var key = 'seen-' + String(ev.idempotencyKey || ('incoming:' + ev.correlationId));
   if (ctx.storage && ctx.storage[key]) return {};
   var phone = String(d.callerPhone || d.from || '');
+  // Withheld/unknown caller id: never put a non-number ('unknown') in the
+  // phone field - format validation would reject the WHOLE Calls row.
+  if (!/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) phone = '';
   return {
     effects: [
       { type: 'storage.set', key: key, value: 1 },
       { type: 'formlogic.submitResponse', formKey: 'Calls', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         caller_phone: phone,
-        caller_name: String(d.callerName || ''),
+        caller_name: String(d.callerName || (phone ? '' : 'Unknown caller')),
         status: 'incoming',
         started_at: String(ev.occurredAt || '')
       } },
@@ -71,11 +74,15 @@ const LOGIC_CALL_ANSWERED = `function run(ctx) {
   var ev = ctx.event || {};
   if (ev.name !== 'aokie.call.answered') return {};
   var d = ev.data || {};
+  var callId = String(d.callId || ev.correlationId || '');
+  // Lifecycle upsert (audit §8): answered can arrive BEFORE incoming
+  // (caller-id grace delays it) or after a failed incoming write - the
+  // update must materialise the row, never assume it exists.
   return {
     effects: [
-      { type: 'formlogic.updateResponse', formKey: 'Calls',
-        match: { field: 'call_id', value: String(d.callId || ev.correlationId || '') },
-        answers: { status: 'answered', answered_at: String(ev.occurredAt || '') } }
+      { type: 'formlogic.updateResponse', formKey: 'Calls', upsert: true,
+        match: { field: 'call_id', value: callId },
+        answers: { call_id: callId, status: 'answered', answered_at: String(ev.occurredAt || '') } }
     ]
   };
 }`;
@@ -109,12 +116,17 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
   if (ev.name !== 'aokie.call.ended') return {};
   var d = ev.data || {};
   var outcome = String(d.outcome || d.status || '');
-  var status = outcome === 'missed' ? 'missed' : (outcome === 'failed' ? 'failed' : 'completed');
+  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected')
+    ? outcome : 'completed';
+  var callId = String(d.callId || ev.correlationId || '');
+  // Lifecycle upsert (audit §8): a call whose incoming write failed or
+  // arrived out of order still deserves a final record.
   return {
     effects: [
-      { type: 'formlogic.updateResponse', formKey: 'Calls',
-        match: { field: 'call_id', value: String(d.callId || ev.correlationId || '') },
+      { type: 'formlogic.updateResponse', formKey: 'Calls', upsert: true,
+        match: { field: 'call_id', value: callId },
         answers: {
+          call_id: callId,
           status: status,
           ended_at: String(ev.occurredAt || ''),
           duration_seconds: Number(d.durationSeconds || 0)
@@ -534,7 +546,9 @@ export const aokieReceptionistPack: PackData = {
       theme: { ...defaultTheme },
       fields: [
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
-        { id: 'caller_phone', type: 'phone', label: 'Caller Phone', required: true, properties: { placeholder: '+61 400 000 000' } },
+        // NOT required (audit §8): a private/withheld caller id is a valid call —
+        // a required phone-format field silently loses the whole Calls row.
+        { id: 'caller_phone', type: 'phone', label: 'Caller Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
         { id: 'caller_name', type: 'short_text', label: 'Caller Name', required: false, properties: {} },
         { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers' } },
         {
@@ -547,6 +561,7 @@ export const aokieReceptionistPack: PackData = {
               { id: 'incoming', label: 'Incoming', value: 'incoming' },
               { id: 'answered', label: 'Answered', value: 'answered' },
               { id: 'completed', label: 'Completed', value: 'completed' },
+              { id: 'rejected', label: 'Rejected', value: 'rejected' },
               { id: 'missed', label: 'Missed', value: 'missed' },
               { id: 'failed', label: 'Failed', value: 'failed' },
             ],

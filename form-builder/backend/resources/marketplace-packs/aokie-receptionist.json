@@ -288,7 +288,7 @@
             "id": "caller_phone",
             "type": "phone",
             "label": "Caller Phone",
-            "required": true,
+            "required": false,
             "properties": {
               "placeholder": "+61 400 000 000"
             }
@@ -330,6 +330,11 @@
                   "id": "completed",
                   "label": "Completed",
                   "value": "completed"
+                },
+                {
+                  "id": "rejected",
+                  "label": "Rejected",
+                  "value": "rejected"
                 },
                 {
                   "id": "missed",
@@ -2790,14 +2795,14 @@
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Log a Calls row the moment a call rings (deduped on the event idempotencyKey).",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.incoming') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('incoming:' + ev.correlationId));\n  if (ctx.storage && ctx.storage[key]) return {};\n  var phone = String(d.callerPhone || d.from || '');\n  return {\n    effects: [\n      { type: 'storage.set', key: key, value: 1 },\n      { type: 'formlogic.submitResponse', formKey: 'Calls', answers: {\n        call_id: String(d.callId || ev.correlationId || ''),\n        caller_phone: phone,\n        caller_name: String(d.callerName || ''),\n        status: 'incoming',\n        started_at: String(ev.occurredAt || '')\n      } },\n      { type: 'ui.toast', level: 'info', message: 'Incoming call' + (phone ? ' from ' + phone : '') }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.incoming') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('incoming:' + ev.correlationId));\n  if (ctx.storage && ctx.storage[key]) return {};\n  var phone = String(d.callerPhone || d.from || '');\n  // Withheld/unknown caller id: never put a non-number ('unknown') in the\n  // phone field - format validation would reject the WHOLE Calls row.\n  if (!/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) phone = '';\n  return {\n    effects: [\n      { type: 'storage.set', key: key, value: 1 },\n      { type: 'formlogic.submitResponse', formKey: 'Calls', answers: {\n        call_id: String(d.callId || ev.correlationId || ''),\n        caller_phone: phone,\n        caller_name: String(d.callerName || (phone ? '' : 'Unknown caller')),\n        status: 'incoming',\n        started_at: String(ev.occurredAt || '')\n      } },\n      { type: 'ui.toast', level: 'info', message: 'Incoming call' + (phone ? ' from ' + phone : '') }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-call-answered",
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Mark the Calls row answered.",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.answered') return {};\n  var d = ev.data || {};\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'Calls',\n        match: { field: 'call_id', value: String(d.callId || ev.correlationId || '') },\n        answers: { status: 'answered', answered_at: String(ev.occurredAt || '') } }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.answered') return {};\n  var d = ev.data || {};\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): answered can arrive BEFORE incoming\n  // (caller-id grace delays it) or after a failed incoming write - the\n  // update must materialise the row, never assume it exists.\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'Calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: { call_id: callId, status: 'answered', answered_at: String(ev.occurredAt || '') } }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-call-turn",
@@ -2811,7 +2816,7 @@
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Finalise the Calls row (status / ended_at / duration).",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = outcome === 'missed' ? 'missed' : (outcome === 'failed' ? 'failed' : 'completed');\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'Calls',\n        match: { field: 'call_id', value: String(d.callId || ev.correlationId || '') },\n        answers: {\n          status: status,\n          ended_at: String(ev.occurredAt || ''),\n          duration_seconds: Number(d.durationSeconds || 0)\n        } }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'Calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: {\n          call_id: callId,\n          status: status,\n          ended_at: String(ev.occurredAt || ''),\n          duration_seconds: Number(d.durationSeconds || 0)\n        } }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-sms-received",
