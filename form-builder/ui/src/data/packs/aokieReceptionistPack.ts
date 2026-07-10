@@ -95,6 +95,12 @@ const LOGIC_CALL_TURN = `function run(ctx) {
   var d = ev.data || {};
   var key = 'seen-' + String(ev.idempotencyKey || ('turn:' + ev.correlationId + ':' + d.turn));
   if (ctx.storage && ctx.storage[key]) return {};
+  // transcript-turns.text is required: a blank/whitespace final turn (a silence or
+  // noise STT finalization, or an empty bot turn) would be REJECTED by the validator
+  // and lost. Such a turn carries no content, so skip the write entirely (a no-op is
+  // idempotent — a redelivery re-skips) rather than emitting a doomed submission.
+  var text = String(d.text || '').trim();
+  if (text === '') return {};
   var speaker = String(d.speaker || 'caller');
   if (speaker === 'bot') speaker = 'aokie';
   if (['caller', 'aokie', 'operator', 'system'].indexOf(speaker) < 0) speaker = 'system';
@@ -104,7 +110,7 @@ const LOGIC_CALL_TURN = `function run(ctx) {
         call_id: String(d.callId || ev.correlationId || ''),
         turn_index: Number(d.turn || 0),
         speaker: speaker,
-        text: String(d.text || ''),
+        text: text,
         timestamp: String(ev.occurredAt || ''),
         source: 'stt'
       } },
@@ -194,11 +200,17 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
 
 const FLOW_MATCH_CUSTOMER = `(function () {
   var phone = String(inputs.callerPhone || inputs.from || '');
+  // Match on the last 9 digits, the SAME normalization the after-call context and
+  // the live-call UI use — an exact string compare missed a known customer stored
+  // as '+61 400 000 000' when the caller id arrived as '+61400000000', so a
+  // returning customer got the generic greeting.
+  var tail = phone.replace(/[^0-9]/g, '').slice(-9);
   var rows = (nodes.customers && nodes.customers.responses) || [];
   var hit = null;
   for (var i = 0; i < rows.length; i++) {
     var a = (rows[i] && rows[i].answers) || {};
-    if (phone && String(a.phone || '') === phone) { hit = rows[i]; break; }
+    var d = String(a.phone || '').replace(/[^0-9]/g, '');
+    if (tail && d.slice(-9) === tail) { hit = rows[i]; break; }
   }
   var name = hit ? String((hit.answers || {}).name || '') : '';
   return {
