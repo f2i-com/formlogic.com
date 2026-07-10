@@ -323,12 +323,16 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var m = raw.match(/\\{[\\s\\S]*\\}/);
   var data = {};
   try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
+  // Schema validation (audit AOK-FLOW-002): the extractor's output is MODEL
+  // text - every field is whitelisted/coerced/capped before it can drive an
+  // action. An unknown intent degrades to 'other' (no automatic action).
   var intent = String(data.intent || 'other').toLowerCase();
-  var name = String(data.caller_name || '').trim();
-  var service = String(data.service || '').trim();
-  var dateStr = String(data.date || '').trim();
-  var timeStr = String(data.time || '').trim();
-  var summary = String(data.summary || '').trim() || 'Call ended - no summary available.';
+  if (['appointment', 'order', 'message', 'other'].indexOf(intent) === -1) intent = 'other';
+  var name = String(data.caller_name || '').trim().slice(0, 200);
+  var service = String(data.service || '').trim().slice(0, 200);
+  var dateStr = String(data.date || '').trim().slice(0, 10);
+  var timeStr = String(data.time || '').trim().slice(0, 5);
+  var summary = (String(data.summary || '').trim() || 'Call ended - no summary available.').slice(0, 600);
   var callback = data.callback_requested === true;
   var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
   var validTime = /^\\d{2}:\\d{2}$/.test(timeStr);

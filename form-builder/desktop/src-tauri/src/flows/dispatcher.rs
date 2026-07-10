@@ -941,8 +941,9 @@ impl FlowRuntime {
             let scope = SelectorScope { event: Some(event.clone()), app: app_ctx.clone(), result: Some(result), inputs: Some(inputs.clone()), ..Default::default() };
             if let Some(actions) = binding.get("outputActions").and_then(Value::as_array) {
                 let flow_slug_for_kv = flow.get("slug").and_then(Value::as_str).unwrap_or(&flow_slug).to_string();
-                for action in actions {
-                    if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv).await {
+                for (action_idx, action) in actions.iter().enumerate() {
+                    let ekey = Self::output_effect_key(Some(&event), &binding_id, action_idx);
+                    if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref()).await {
                         action_errors.push(e);
                     }
                 }
@@ -1137,8 +1138,10 @@ impl FlowRuntime {
                 let scope = SelectorScope { event: event.clone(), app: app_ctx.clone(), result: Some(result), inputs: Some(inputs.clone()), ..Default::default() };
                 if let Some(actions) = b.get("outputActions").and_then(Value::as_array) {
                     let flow_slug_for_kv = flow.get("slug").and_then(Value::as_str).unwrap_or(&flow_slug).to_string();
-                    for action in actions {
-                        if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv).await {
+                    for (action_idx, action) in actions.iter().enumerate() {
+                        let binding_id = b.get("id").and_then(Value::as_str).unwrap_or("binding");
+                        let ekey = Self::output_effect_key(event.as_ref(), binding_id, action_idx);
+                        if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref()).await {
                             action_errors.push(e);
                         }
                     }
@@ -1272,6 +1275,24 @@ impl FlowRuntime {
     }
 
     /// Apply one binding outputAction (browser `applyOutputAction` parity).
+    /// Deterministic idempotency key for a binding output action (audit
+    /// AOK-FLOW-002 / FL-001): `flowout:<event idem>:<binding>:<action idx>`.
+    /// A crash between the submit and the run's completion retries with the
+    /// SAME key, so the server returns the original row instead of writing a
+    /// duplicate booking/task. Bounded to the ledger's 128-char column by
+    /// hashing the event key when oversized (mirrors applogic::effect_key_for).
+    fn output_effect_key(event: Option<&Value>, binding_id: &str, action_idx: usize) -> Option<String> {
+        let idem = event?.get("idempotencyKey")?.as_str().filter(|k| !k.is_empty())?;
+        let key = format!("flowout:{idem}:{binding_id}:{action_idx}");
+        if key.len() <= 128 {
+            return Some(key);
+        }
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        idem.hash(&mut h);
+        Some(format!("flowout:h{:016x}:{binding_id}:{action_idx}", h.finish()))
+    }
+
     async fn apply_output_action(
         &self,
         action: &Value,
@@ -1279,6 +1300,7 @@ impl FlowRuntime {
         client: &FormLogicClient,
         app_id: Option<&str>,
         flow_slug: &str,
+        effect_key: Option<&str>,
     ) -> Result<(), String> {
         let ty = action.get("type").and_then(Value::as_str).unwrap_or("");
         let when = action.get("when").and_then(Value::as_str);
@@ -1302,7 +1324,7 @@ impl FlowRuntime {
                 if !answers.is_object() {
                     return Err("answers did not resolve to an object".into());
                 }
-                client.submit_response(form, &answers, None).await.map(|_| self.note_records(1)).map_err(|e| e.to_string())
+                client.submit_response(form, &answers, effect_key).await.map(|_| self.note_records(1)).map_err(|e| e.to_string())
             }
             "formlogic.updateResponse" => {
                 let form = action.get("form").and_then(Value::as_str).ok_or("updateResponse missing form")?;
