@@ -119,6 +119,14 @@ impl EventReceipts {
         Ok(ReceiptOutcome::New)
     }
 
+    /// Whether a key is already journaled (crash-recovery diff, audit FL-001).
+    pub fn contains(&self, key: &str) -> bool {
+        self.inner
+            .lock()
+            .map(|i| i.seen.contains(key))
+            .unwrap_or(false)
+    }
+
     /// How many receipts are currently journaled (diagnostics/tests).
     pub fn len(&self) -> usize {
         self.inner.lock().map(|i| i.seen.len()).unwrap_or(0)

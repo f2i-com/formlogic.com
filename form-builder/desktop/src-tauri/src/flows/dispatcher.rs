@@ -186,6 +186,13 @@ pub struct FlowRuntime {
     seen: Mutex<(VecDeque<String>, HashSet<String>)>,
     /// Recent run outcomes for `GET /api/flows/runs/{id}` (inline + slug runs).
     run_cache: Mutex<(VecDeque<String>, HashMap<String, Value>)>,
+    /// Processing-complete markers (audit FL-001): an event is journaled here
+    /// only AFTER its app-logic effects and binding fan-out finished. The
+    /// startup recovery sweep replays receipts that never got this marker.
+    processed: Option<Arc<crate::plugins::receipts::EventReceipts>>,
+    /// When THIS dispatcher came up — recovery only replays receipts from
+    /// earlier sessions, never envelopes the live pump is already handling.
+    session_start: chrono::DateTime<chrono::Utc>,
 }
 
 /// True iff a redirect hop from `origin` (the first URL in the chain — i.e. the URL that was
@@ -232,6 +239,40 @@ fn flow_redirect_policy() -> reqwest::redirect::Policy {
     })
 }
 
+/// Which receipt-journal lines the crash-recovery sweep should replay (audit
+/// FL-001): journaled in a PREVIOUS session (`receivedAt < session_start`),
+/// young enough (24 h window — older gaps have aged past usefulness and out
+/// of the rotation anyway), and never marked processed. Deduped by key,
+/// oldest first, so replays land in original arrival order.
+fn recovery_candidates(
+    lines: Vec<Value>,
+    is_processed: &dyn Fn(&str) -> bool,
+    session_start: chrono::DateTime<chrono::Utc>,
+) -> Vec<(String, Value)> {
+    let cutoff = session_start - chrono::Duration::hours(24);
+    let mut seen = HashSet::new();
+    let mut out: Vec<(chrono::DateTime<chrono::Utc>, String, Value)> = Vec::new();
+    for v in lines {
+        let Some(key) = v.get("key").and_then(Value::as_str) else { continue };
+        let Some(at) = v
+            .get("receivedAt")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+        else {
+            continue;
+        };
+        if at >= session_start || at < cutoff || is_processed(key) || !seen.insert(key.to_string())
+        {
+            continue;
+        }
+        let Some(event) = v.get("event").filter(|e| e.is_object()).cloned() else { continue };
+        out.push((at, key.to_string(), event));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.into_iter().map(|(_, k, e)| (k, e)).collect()
+}
+
 impl FlowRuntime {
     pub fn new(
         host: Arc<PluginHost>,
@@ -250,6 +291,51 @@ impl FlowRuntime {
         let device_name = std::env::var("COMPUTERNAME")
             .or_else(|_| std::env::var("HOSTNAME"))
             .unwrap_or_else(|_| "FormLogic Desktop".to_string());
+        // Audit FL-001: the processed-marker journal lives beside the per-plugin
+        // receipt journals. If it can't open, recovery is disabled (logged), but
+        // live processing continues — the marker is an extra, not a gate.
+        let processed = match crate::plugins::receipts::EventReceipts::open(
+            host.plugin_data_root.join("host-event-processed.jsonl"),
+        ) {
+            Ok(p) => {
+                // First run with markers (migration): grandfather every receipt
+                // journaled before the feature existed — those events were
+                // handled by the pre-marker code, and replaying them would
+                // predate their effect keys (i.e. duplicate real records).
+                if p.is_empty() {
+                    let mut grandfathered = 0usize;
+                    if let Ok(dirs) = std::fs::read_dir(&host.plugin_data_root) {
+                        for entry in dirs.flatten() {
+                            let path = entry.path().join("host-event-receipts.jsonl");
+                            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                            for line in text.lines() {
+                                if let Some(key) = serde_json::from_str::<Value>(line)
+                                    .ok()
+                                    .as_ref()
+                                    .and_then(|v| v.get("key"))
+                                    .and_then(Value::as_str)
+                                {
+                                    if matches!(
+                                        p.record(key, &Value::Null),
+                                        Ok(crate::plugins::receipts::ReceiptOutcome::New)
+                                    ) {
+                                        grandfathered += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if grandfathered > 0 {
+                        eprintln!("[flows] crash recovery: grandfathered {grandfathered} pre-marker receipt(s) as processed");
+                    }
+                }
+                Some(Arc::new(p))
+            }
+            Err(e) => {
+                eprintln!("[flows] processed-marker journal unavailable ({e}) — crash recovery disabled");
+                None
+            }
+        };
         Arc::new(Self {
             host,
             registry,
@@ -262,6 +348,8 @@ impl FlowRuntime {
             applogic_storage: Mutex::new(HashMap::new()),
             seen: Mutex::new((VecDeque::new(), HashSet::new())),
             run_cache: Mutex::new((VecDeque::new(), HashMap::new())),
+            processed,
+            session_start: chrono::Utc::now(),
         })
     }
 
@@ -337,6 +425,70 @@ impl FlowRuntime {
         {
             let rt = self.clone();
             tokio::spawn(async move { rt.relay_loop().await });
+        }
+        // Crash-recovery sweep (audit FL-001): replay app-logic for events that
+        // were durably journaled (and acked to the plugin) in a previous session
+        // but never reached their processed marker.
+        {
+            let rt = self.clone();
+            tokio::spawn(async move { rt.recovery_sweep().await });
+        }
+    }
+
+    // ── crash recovery (audit FL-001) ───────────────────────────────────────────
+
+    /// Replay journaled-but-unprocessed envelopes from PREVIOUS sessions.
+    ///
+    /// Only the app-logic path is replayed: its writes carry effect keys, so a
+    /// half-processed event recovers exactly once. Flow bindings are NOT
+    /// replayed — re-running voice/side-effect nodes hours after the call they
+    /// belonged to would be worse than the (logged) gap.
+    async fn recovery_sweep(self: Arc<Self>) {
+        let Some(processed) = self.processed.clone() else { return };
+        // Recovery needs a linked client and a config snapshot; wait bounded.
+        let mut client = None;
+        for _ in 0..20 {
+            if let Some(c) = self.client() {
+                if self.ensure_snapshot(&c).await {
+                    client = Some(c);
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+        let Some(client) = client else { return };
+
+        let mut lines: Vec<Value> = Vec::new();
+        if let Ok(dirs) = std::fs::read_dir(&self.host.plugin_data_root) {
+            for entry in dirs.flatten() {
+                let path = entry.path().join("host-event-receipts.jsonl");
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                lines.extend(text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()));
+            }
+        }
+        let candidates =
+            recovery_candidates(lines, &|k| processed.contains(k), self.session_start);
+        if candidates.is_empty() {
+            return;
+        }
+        eprintln!(
+            "[flows] crash recovery: replaying app-logic for {} journaled-but-unprocessed event(s); flow bindings are not replayed",
+            candidates.len()
+        );
+        for (key, envelope) in candidates {
+            if !self.mark_seen(&key) {
+                continue; // the live path owns it
+            }
+            let connector = envelope
+                .get("connectorId")
+                .and_then(Value::as_str)
+                .or_else(|| envelope.get("source").and_then(Value::as_str))
+                .map(str::to_string);
+            let routing = self.route_for(connector.as_deref());
+            if !matches!(routing, ConnectorRouting::Ambiguous(_)) {
+                self.run_app_logic(&envelope, &client, &routing).await;
+            }
+            self.mark_processed(&key);
         }
     }
 
@@ -541,6 +693,9 @@ impl FlowRuntime {
                 apps.len(),
                 connector.as_deref().unwrap_or("?"),
             ));
+            // The rejection IS this event's outcome — mark it so recovery
+            // doesn't re-reject it (loudly) on every restart.
+            self.mark_processed(&idem);
             return;
         }
 
@@ -566,6 +721,23 @@ impl FlowRuntime {
                 tokio::spawn(async move {
                     rt.run_binding(&binding, &event, &client, &routing).await;
                 });
+            }
+        }
+
+        // Audit FL-001: only now — app-logic applied, sync bindings done,
+        // async bindings spawned — is this envelope "processed". Earlier
+        // returns (unlinked, no snapshot) deliberately leave no marker, so
+        // the startup recovery sweep retries them next session.
+        self.mark_processed(&idem);
+    }
+
+    /// Journal an idempotencyKey as fully processed (best-effort — a write
+    /// failure only means a possible duplicate REPLAY next boot, which the
+    /// app-logic effect ledger already dedupes).
+    fn mark_processed(&self, idem: &str) {
+        if let Some(p) = &self.processed {
+            if let Err(e) = p.record(idem, &Value::Null) {
+                self.note_error(format!("processed-marker write failed for {idem}: {e}"));
             }
         }
     }
@@ -1467,6 +1639,49 @@ mod tests {
     fn runtime() -> Arc<FlowRuntime> {
         let host = PluginHost::new(&std::env::temp_dir().join(format!("flrt-{}", uuid::Uuid::new_v4().simple())), false, crate::events::EventBus::new());
         FlowRuntime::new(host, None, FormLogicConfig { base_url: String::new(), api_key: String::new() })
+    }
+
+    // ── Crash-recovery candidate planning (audit FL-001) ────────────────────
+
+    #[test]
+    fn recovery_replays_only_pre_session_unprocessed_receipts_oldest_first() {
+        let start = chrono::Utc::now();
+        let at = |mins_ago: i64| (start - chrono::Duration::minutes(mins_ago)).to_rfc3339();
+        let line = |key: &str, received: String| {
+            json!({ "key": key, "receivedAt": received, "event": { "name": "aokie.call.incoming", "idempotencyKey": key } })
+        };
+        let lines = vec![
+            line("newer-unprocessed", at(5)),
+            line("older-unprocessed", at(90)),
+            line("already-processed", at(10)),
+            line("this-session", (start + chrono::Duration::seconds(1)).to_rfc3339()),
+            line("too-old", at(60 * 25)),
+            line("newer-unprocessed", at(5)), // duplicate journal line
+            json!({ "key": "no-envelope", "receivedAt": at(3) }),
+            json!({ "receivedAt": at(2), "event": {} }), // no key
+        ];
+        let picked = recovery_candidates(lines, &|k| k == "already-processed", start);
+        let keys: Vec<&str> = picked.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["older-unprocessed", "newer-unprocessed"],
+            "pre-session unprocessed only, deduped, oldest first"
+        );
+        assert_eq!(
+            picked[0].1.get("name").and_then(Value::as_str),
+            Some("aokie.call.incoming"),
+            "the journaled envelope itself is what replays"
+        );
+    }
+
+    #[test]
+    fn recovery_ignores_unparseable_timestamps() {
+        let start = chrono::Utc::now();
+        let lines = vec![
+            json!({ "key": "bad-ts", "receivedAt": "yesterday-ish", "event": {} }),
+            json!({ "key": "no-ts", "event": {} }),
+        ];
+        assert!(recovery_candidates(lines, &|_| false, start).is_empty());
     }
 
     // ── Connector→app routing (audit INT-004/C-13) ─────────────────────────
