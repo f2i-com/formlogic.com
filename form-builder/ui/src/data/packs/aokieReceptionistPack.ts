@@ -349,8 +349,13 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   if (validTime) appointment.time = timeStr;
   if (knownId) appointment.customer_link = knownId;
   var hasCustomerCreate = !knownId && !!name && !!phone && ctx.hasTranscript === true;
-  var needTask = callback || intent === 'message' || (wantsBooking && !hasAppointment);
-  var taskSummary = wantsBooking && !hasAppointment
+  // Audit AK-009/C-16: the receptionist tells callers 'someone will confirm
+  // with you' - so EVERY booking intent leaves a human a confirmation task,
+  // including the ones that DID create an appointment (status 'requested').
+  var needTask = callback || intent === 'message' || wantsBooking;
+  var taskSummary = hasAppointment
+    ? 'Confirm appointment with ' + caller + (phone ? ' (' + phone + ')' : '') + ' - ' + (service || 'Appointment') + ' on ' + dateStr + (validTime ? ' at ' + timeStr : '') + ' (requested on the call, NOT yet confirmed to the caller)'
+    : wantsBooking && !hasAppointment
     ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - the date was unclear on the call (' + summary + ')'
     : intent === 'message'
       ? 'Message from ' + caller + ': ' + summary
@@ -385,8 +390,13 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
 // replies remember what was said earlier in the call. The current caller line is
 // appended from the input in case its Transcript Turns row hasn't landed yet
 // (the app-logic writer and this flow both fire on the same turn.final event).
+// Kept in lockstep with the plugin's DEFAULT_AGENT_PERSONA (aokie.com radio.rs).
+// The "only promise what actually happens" clause is audit AK-009/C-16: the
+// agent once told a live caller it would text a confirmation — nothing sends
+// SMS, so the receptionist must describe bookings as requests a person
+// confirms, never claim to send anything itself.
 const DEFAULT_PERSONA =
-  'You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving.';
+  'You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.';
 
 const FLOW_LIVE_CONTEXT = `(function () {
   var callId = String(inputs.callId || '');
