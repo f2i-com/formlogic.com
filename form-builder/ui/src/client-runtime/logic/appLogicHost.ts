@@ -247,6 +247,16 @@ async function runHookInternal(
   return outcome;
 }
 
+/** A non-empty string form key (the sandbox output is loosely cast, so guard at runtime). */
+function isFormKey(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+/** A plain answers object (not null, not an array). Matches the desktop host's guard. */
+function isAnswersObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
 async function applyEffect(
   effect: CustomAppLogicEffect,
   handlers: AppLogicEffectHandlers | undefined,
@@ -280,6 +290,10 @@ async function applyEffect(
       break;
     case 'formlogic.submitResponse':
       if (handlers?.submitResponse) {
+        if (!isFormKey(effect.formKey) || !isAnswersObject(effect.answers)) {
+          outcome.errors.push('submitResponse: a string formKey and object answers are required');
+          break;
+        }
         try {
           await handlers.submitResponse(effect.formKey, effect.answers, effect.options);
         } catch (err) {
@@ -289,6 +303,10 @@ async function applyEffect(
       break;
     case 'formlogic.updateResponse':
       if (handlers?.updateResponse) {
+        if (!isFormKey(effect.formKey) || !isAnswersObject(effect.answers)) {
+          outcome.errors.push('updateResponse: a string formKey and object answers are required');
+          break;
+        }
         try {
           await handlers.updateResponse(
             effect.formKey,

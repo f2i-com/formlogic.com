@@ -118,6 +118,40 @@ describe('runHook — formlogic.updateResponse', () => {
     expect(fetchRows).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects a non-string formKey before touching the handler (host guard parity)', async () => {
+    mockedRunAppLogic.mockResolvedValue({
+      effects: [{ type: 'formlogic.updateResponse', formKey: 123, answers: { status: 'answered' } }],
+    });
+    const updateResponse = vi.fn(async () => ({}));
+
+    const outcome = await runHook({
+      bundle: bundleWith(['formlogic.responses.write']),
+      hook: 'onConnectorEvent',
+      input: {},
+      handlers: { updateResponse },
+    });
+
+    expect(updateResponse).not.toHaveBeenCalled();
+    expect(outcome.errors.some((e) => e.includes('string formKey and object answers'))).toBe(true);
+  });
+
+  it('rejects non-object answers before touching the handler (host guard parity)', async () => {
+    mockedRunAppLogic.mockResolvedValue({
+      effects: [{ type: 'formlogic.updateResponse', formKey: 'Calls', answers: 'not-an-object' }],
+    });
+    const updateResponse = vi.fn(async () => ({}));
+
+    const outcome = await runHook({
+      bundle: bundleWith(['formlogic.responses.write']),
+      hook: 'onConnectorEvent',
+      input: {},
+      handlers: { updateResponse },
+    });
+
+    expect(updateResponse).not.toHaveBeenCalled();
+    expect(outcome.errors.some((e) => e.includes('string formKey and object answers'))).toBe(true);
+  });
+
   it('captures a handler failure as a script error, never throwing', async () => {
     mockedRunAppLogic.mockResolvedValue({
       effects: [{ type: 'formlogic.updateResponse', formKey: 'Calls', answers: { status: 'answered' } }],
