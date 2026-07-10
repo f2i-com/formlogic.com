@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api, newIdempotencyKey } from '../lib/api';
+import { setConnectorCapabilityContext } from '../client-runtime/desktop/desktopClient';
 import { enqueueSubmission } from '../client-runtime/offlineQueue';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
@@ -112,6 +113,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         api.onSessionExpired(_appRuntimeSessionCallback);
 
         set({ isLoading: true, error: null, appSlug, config: null, permissions: null, roleName: null, activeFormId: null });
+        // SEC-001: connector capabilities are minted for the CURRENT app —
+        // the desktop enforces the member's role-derived grants per command.
+        setConnectorCapabilityContext(appSlug);
         try {
           const result = await api.getAppRuntime(appSlug);
           if (result.error) {

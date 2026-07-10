@@ -875,6 +875,34 @@ class AppUserService
 
     // Permission checks
 
+    /**
+     * The connector.<id>* grant PATTERNS this user holds in the app (audit SEC-001):
+     * the owner is ['*']; a member gets their role's connector grants verbatim
+     * (exact command, wildcard connector.<id>.*, or bare connector.<id>). Empty = no
+     * access. The DESKTOP enforces these patterns on its local loopback via the
+     * capability token minted from them — one grant model for local AND relay.
+     */
+    public function getUserConnectorGrants(string $appId, string $userId, string $connectorId): array
+    {
+        if ($this->isAppOwner($appId, $userId)) {
+            return ['*'];
+        }
+        $stmt = $this->mysql->prepare("
+            SELECT DISTINCT arp.permission
+            FROM app_users au
+            JOIN app_role_permissions arp ON arp.role_id = au.role_id
+            WHERE au.app_id = :a AND au.user_id = :u AND au.status = 'active'
+              AND (arp.permission = :bare OR arp.permission LIKE :prefix)
+        ");
+        $stmt->execute([
+            'a' => $appId,
+            'u' => $userId,
+            'bare' => 'connector.' . $connectorId,
+            'prefix' => 'connector.' . $connectorId . '.%',
+        ]);
+        return array_values(array_map(static fn (array $r) => (string) $r['permission'], $stmt->fetchAll()));
+    }
+
     public function hasPermission(string $appId, string $userId, string $permission, ?string $formId = null): bool
     {
         // Get user's role in the app

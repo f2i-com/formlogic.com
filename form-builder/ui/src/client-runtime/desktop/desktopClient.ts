@@ -163,6 +163,58 @@ export interface DesktopServiceSnapshot {
   node?: DesktopServiceNodeSpec | null;
 }
 
+// ── Connector capabilities (audit SEC-001/C-08) ─────────────────────────────
+// A LINKED desktop refuses browser connector commands without a server-minted,
+// role-derived capability, so origin pairing alone no longer authorises the
+// phone. Minted per (current app, connector), cached until shortly before
+// expiry. Deliberately free of lib/api imports (module-cycle safety): the mint
+// endpoint only needs the session cookie + CSRF token on a same-origin fetch.
+let capabilityAppSlug: string | null = null;
+const capabilityCache = new Map<string, { token: string; validUntil: number }>();
+
+/** The app whose membership/role scopes capability mints (set by the app runtime). */
+export function setConnectorCapabilityContext(appSlug: string | null): void {
+  if (appSlug !== capabilityAppSlug) {
+    capabilityAppSlug = appSlug;
+    capabilityCache.clear();
+  }
+}
+
+export function invalidateConnectorCapability(connectorId: string): void {
+  capabilityCache.delete(connectorId);
+}
+
+async function getConnectorCapability(connectorId: string): Promise<string | null> {
+  // Outside an app there is no role to derive from — a linked desktop will
+  // (correctly) refuse; an unlinked desktop keeps its legacy local gating.
+  if (!capabilityAppSlug) return null;
+  const cached = capabilityCache.get(connectorId);
+  if (cached && cached.validUntil > Date.now()) return cached.token;
+  try {
+    const csrf = typeof document !== 'undefined'
+      ? document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/)?.[1]
+      : undefined;
+    const res = await fetch(`/api/app/${encodeURIComponent(capabilityAppSlug)}/connector-capability`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {}),
+      },
+      body: JSON.stringify({ connectorId }),
+    });
+    if (!res.ok) return null; // e.g. 403: role has no connector access — the desktop's denial is authoritative
+    const data = (await res.json()) as { token?: string; expiresInSeconds?: number };
+    if (typeof data.token !== 'string' || data.token === '') return null;
+    // Refresh 30s early so an in-flight command never carries a just-expired token.
+    const ttlMs = Math.max(30, (data.expiresInSeconds ?? 300) - 30) * 1000;
+    capabilityCache.set(connectorId, { token: data.token, validUntil: Date.now() + ttlMs });
+    return data.token;
+  } catch {
+    return null;
+  }
+}
+
 export const desktopClient = {
   /** GET /api/desktop/info — name, versions, platform (origin-gated). */
   info(): Promise<DesktopClientResult<DesktopInstanceInfo>> {
@@ -207,6 +259,11 @@ export const desktopClient = {
      * POST /api/connectors/{id}/request — THE gateway FormLogic Web uses. Body/response
      * per connector-request/response.schema.json. Resolves the command's `data` payload
      * on success; the typed error envelope otherwise (never throws).
+     *
+     * SEC-001: every request carries the member's short-lived, role-derived connector
+     * capability (minted server-side for the CURRENT app); a linked desktop refuses
+     * commands without one. A capability_denied on a cached token invalidates it and
+     * retries ONCE with a fresh mint (role may have just changed).
      */
     async request(
       connectorId: string,
@@ -218,10 +275,21 @@ export const desktopClient = {
       if (payload !== undefined) body.payload = payload;
       if (opts?.timeoutMs !== undefined) body.timeoutMs = opts.timeoutMs;
       if (opts?.requestId !== undefined) body.requestId = opts.requestId;
-      const res = await desktopFetch<{ ok: true; data?: unknown; requestId?: string }>(
-        `/api/connectors/${encodeURIComponent(connectorId)}/request`,
-        { method: 'POST', body: JSON.stringify(body) }
-      );
+      const send = async (capability: string | null) =>
+        desktopFetch<{ ok: true; data?: unknown; requestId?: string }>(
+          `/api/connectors/${encodeURIComponent(connectorId)}/request`,
+          {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: capability ? { 'X-FormLogic-Capability': capability } : undefined,
+          }
+        );
+      let res = await send(await getConnectorCapability(connectorId));
+      if (!res.ok && res.error.code === 'capability_denied') {
+        invalidateConnectorCapability(connectorId);
+        const fresh = await getConnectorCapability(connectorId);
+        if (fresh) res = await send(fresh);
+      }
       if (!res.ok) return res;
       // Unwrap the connector-response success envelope to the command's data payload.
       return { ok: true, data: res.data?.data, requestId: res.data?.requestId };

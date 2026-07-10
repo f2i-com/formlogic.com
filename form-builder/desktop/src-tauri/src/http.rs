@@ -566,6 +566,10 @@ struct DesktopState {
     /// The headless flow runtime backing `POST /api/flows/run` +
     /// `GET /api/flows/runs/{id}`. `None` ⇒ those routes report runner_unavailable.
     flow_runtime: Option<Arc<FlowRuntime>>,
+    /// Verified connector capabilities (audit SEC-001): token → (grant
+    /// patterns, valid-until). Bounds server introspection to one call per
+    /// token lifetime.
+    capability_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
 }
 
 /// `{ok:false, error:{code, message}}` — the contract error envelope.
@@ -900,9 +904,96 @@ async fn connector_status(
 }
 
 /// The gateway FormLogic Web calls (`connector-request/response.schema.json`).
+/// True when a grant pattern list allows `command` on `connector_id`
+/// (audit SEC-001): `*` (owner) | `connector.<id>` | `connector.<id>.*`
+/// | exact `connector.<id>.<command>`.
+fn capability_grants_allow(grants: &[String], connector_id: &str, command: &str) -> bool {
+    grants.iter().any(|g| {
+        g == "*"
+            || g == &format!("connector.{connector_id}")
+            || g == &format!("connector.{connector_id}.*")
+            || g == &format!("connector.{connector_id}.{command}")
+    })
+}
+
+/// Enforce the member's server-minted capability on a browser-originated
+/// connector command (audit SEC-001/C-08). Rules:
+/// - UNLINKED desktop (no cloud account): local single-user use — the
+///   legacy origin-pairing + manifest gate stands alone.
+/// - Linked: the request must carry `X-FormLogic-Capability`; the token is
+///   verified server-side (cached for its lifetime) and its role-derived
+///   grant patterns must allow the command. A definitive server "not
+///   found" (expired/forged) denies; a TRANSPORT failure fails open with a
+///   log so a local operator is not locked out of their own phone while
+///   the internet is down (bounded revocation lag, documented).
+async fn check_connector_capability(
+    st: &DesktopState,
+    headers: &axum::http::HeaderMap,
+    connector_id: &str,
+    command: &str,
+) -> Result<(), axum::response::Response> {
+    let Some(client) = st.flow_runtime.as_ref().and_then(|rt| rt.api_client()) else {
+        return Ok(()); // unlinked — legacy local gating
+    };
+    let Some(token) = headers
+        .get("x-formlogic-capability")
+        .and_then(|v| v.to_str().ok())
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+    else {
+        return Err(desktop_err(
+            StatusCode::FORBIDDEN,
+            "capability_denied",
+            "a connector capability is required — reload the app page to refresh your access",
+        ));
+    };
+
+    let cached = st
+        .capability_cache
+        .lock()
+        .ok()
+        .and_then(|c| c.get(&token).filter(|(_, until)| *until > std::time::Instant::now()).cloned());
+    let grants = match cached {
+        Some((grants, _)) => grants,
+        None => match client.introspect_capability(&token).await {
+            Ok(Some((grants, ttl_secs))) => {
+                if let Ok(mut c) = st.capability_cache.lock() {
+                    // Opportunistic prune so the map stays bounded.
+                    c.retain(|_, (_, until)| *until > std::time::Instant::now());
+                    c.insert(
+                        token.clone(),
+                        (grants.clone(), std::time::Instant::now() + std::time::Duration::from_secs(ttl_secs.min(300))),
+                    );
+                }
+                grants
+            }
+            Ok(None) => {
+                return Err(desktop_err(
+                    StatusCode::FORBIDDEN,
+                    "capability_denied",
+                    "this connector capability is expired or invalid — reload the app page",
+                ))
+            }
+            Err(e) => {
+                eprintln!("[desktop] capability introspection unreachable ({e:?}) — allowing (offline grace)");
+                return Ok(());
+            }
+        },
+    };
+    if !capability_grants_allow(&grants, connector_id, command) {
+        return Err(desktop_err(
+            StatusCode::FORBIDDEN,
+            "capability_denied",
+            &format!("your role does not allow {connector_id}.{command}"),
+        ));
+    }
+    Ok(())
+}
+
 async fn connector_request(
     State(st): State<DesktopState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     let req: ConnectorRequestBody = match serde_json::from_slice(&body) {
@@ -915,6 +1006,11 @@ async fn connector_request(
             )
         }
     };
+    // Audit SEC-001/C-08: the local loopback enforces the SAME role-derived
+    // grants as the relay — origin pairing alone no longer authorises commands.
+    if let Err(denied) = check_connector_capability(&st, &headers, &id, &req.command).await {
+        return denied;
+    }
     match connectors::dispatch(&st.host, &id, &req).await {
         Ok(success) => (StatusCode::OK, Json(success)).into_response(),
         Err(f) => connector_failure_response(&f),
@@ -1525,6 +1621,7 @@ pub async fn serve(
             gui_mode,
         },
         flow_runtime,
+        capability_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Plugin-API routes: everything behind the pairing-token guard.

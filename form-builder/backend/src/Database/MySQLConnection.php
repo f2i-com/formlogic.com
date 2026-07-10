@@ -660,6 +660,28 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Short-lived connector capabilities (audit SEC-001/C-08): the server mints a
+        // token from a member's role-derived connector grants; FormLogic Desktop
+        // introspects it (owner-scoped, via its own API key) BEFORE serving that
+        // member's local loopback connector commands — so the local path enforces
+        // the same role model as the relay, instead of trusting origin pairing alone.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS connector_capabilities (
+                id VARCHAR(36) PRIMARY KEY,
+                token_hash CHAR(64) NOT NULL,
+                owner_user_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                connector_id VARCHAR(64) NOT NULL,
+                grants_json JSON NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_capability_token (token_hash),
+                INDEX idx_capability_owner (owner_user_id, expires_at),
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Connector→app assignment (audit INT-004/C-13): which ONE app under an owner
         // receives a local connector's events (and, later, may issue its commands).
         // Without a row, runtimes fall back to "exactly one candidate app" — two

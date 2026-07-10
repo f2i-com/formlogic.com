@@ -28,7 +28,106 @@ class ConnectorCommandController
         private DesktopCommandService $commands,
         private AppService $appService,
         private AppUserService $appUserService,
+        private ?\FormLogic\Database\MySQLConnection $db = null,
     ) {}
+
+    /** Capability token lifetime — long enough to amortise minting, short enough to bound revocation lag. */
+    private const CAPABILITY_TTL_SECONDS = 300;
+
+    /**
+     * POST /api/app/{slug}/connector-capability {connectorId} — mint a short-lived
+     * capability the DESKTOP verifies before serving this member's LOCAL loopback
+     * connector commands (audit SEC-001/C-08). The token encodes the member's
+     * role-derived grant patterns; no grants → 403, so a Viewer's browser cannot
+     * drive the phone even from a paired origin.
+     */
+    public function mintCapability(Request $request, Response $response, array $args): Response
+    {
+        [$app, $userId, $err] = $this->resolveMember($request, $response, (string) ($args['slug'] ?? ''));
+        if ($err !== null) {
+            return $err;
+        }
+        if ($this->db === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Capabilities unavailable'], 503);
+        }
+        $body = $request->getParsedBody() ?? [];
+        $connectorId = (string) ($body['connectorId'] ?? '');
+        if (!preg_match('/^[a-z0-9][a-z0-9_-]{0,63}$/', $connectorId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid connector id'], 400);
+        }
+        $grants = $this->appUserService->getUserConnectorGrants($app['id'], (string) $userId, $connectorId);
+        if ($grants === []) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Your role has no access to this connector'], 403);
+        }
+        $token = bin2hex(random_bytes(32));
+        $ownerId = (string) ($app['ownerId'] ?? $app['owner_id'] ?? '');
+        $stmt = $this->db->getConnection()->prepare(
+            "INSERT INTO connector_capabilities
+                (id, token_hash, owner_user_id, user_id, app_id, connector_id, grants_json, expires_at)
+             VALUES (:id, :h, :o, :u, :a, :c, :g, DATE_ADD(NOW(), INTERVAL :ttl SECOND))"
+        );
+        $stmt->execute([
+            'id' => $this->uuidV4(),
+            'h' => hash('sha256', $token),
+            'o' => $ownerId,
+            'u' => (string) $userId,
+            'a' => $app['id'],
+            'c' => $connectorId,
+            'g' => json_encode($grants),
+            'ttl' => self::CAPABILITY_TTL_SECONDS,
+        ]);
+        return $this->jsonResponse($response, [
+            'token' => $token,
+            'grants' => $grants,
+            'expiresInSeconds' => self::CAPABILITY_TTL_SECONDS,
+        ]);
+    }
+
+    /**
+     * GET /api/v1/connector-capabilities/{token} — Desktop introspection (flows:read),
+     * owner-scoped: a desktop can only verify capabilities minted for ITS owner's apps.
+     */
+    public function introspectCapability(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if ($this->db === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Capabilities unavailable'], 503);
+        }
+        $token = (string) ($args['token'] ?? '');
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Capability not found'], 404);
+        }
+        $stmt = $this->db->getConnection()->prepare(
+            "SELECT user_id, app_id, connector_id, grants_json,
+                    TIMESTAMPDIFF(SECOND, NOW(), expires_at) AS ttl
+             FROM connector_capabilities
+             WHERE token_hash = :h AND owner_user_id = :o AND expires_at > NOW()
+             LIMIT 1"
+        );
+        $stmt->execute(['h' => hash('sha256', $token), 'o' => (string) $userId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Capability not found'], 404);
+        }
+        return $this->jsonResponse($response, [
+            'userId' => $row['user_id'],
+            'appId' => $row['app_id'],
+            'connectorId' => $row['connector_id'],
+            'grants' => json_decode((string) $row['grants_json'], true) ?: [],
+            'expiresInSeconds' => max(0, (int) $row['ttl']),
+        ]);
+    }
+
+    private function uuidV4(): string
+    {
+        $d = random_bytes(16);
+        $d[6] = chr((ord($d[6]) & 0x0f) | 0x40);
+        $d[8] = chr((ord($d[8]) & 0x3f) | 0x80);
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($d), 4));
+    }
 
     // ── Web surface (member-gated) ──────────────────────────────────────────────────────────
 

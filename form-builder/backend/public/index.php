@@ -513,7 +513,8 @@ $container->set(\FormLogic\Controllers\ConnectorCommandController::class, functi
     return new \FormLogic\Controllers\ConnectorCommandController(
         $c->get(\FormLogic\Services\DesktopCommandService::class),
         $c->get(AppService::class),
-        $c->get(AppUserService::class)
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Database\MySQLConnection::class)
     );
 });
 // Flow KV storage: small persistent key/value state for flows (owner + runtime surfaces).
@@ -1543,6 +1544,12 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowController::class)->listConnectorAssignments($request, $response);
     })->add($flowsReadAuth);
 
+    // Capability introspection (audit SEC-001/C-08): the desktop verifies a member's
+    // short-lived connector capability before serving their local loopback commands.
+    $group->get('/connector-capabilities/{token}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->introspectCapability($request, $response, $getArgs($request));
+    })->add($flowsReadAuth);
+
     $group->put('/connector-assignments', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->putConnectorAssignment($request, $response);
     })->add($cloudWriteGate)->add($flowsWriteAuth);
@@ -1978,6 +1985,13 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     $group->get('/connector-commands/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->getCommand($request, $response, $getArgs($request));
     })->add($authRequired);
+
+    // Local-loopback capability mint (audit SEC-001/C-08): the browser fetches a
+    // short-lived, role-derived capability the DESKTOP verifies before serving this
+    // member's local connector commands — local and relay enforce ONE grant model.
+    $group->post('/connector-capability', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->mintCapability($request, $response, $getArgs($request));
+    })->add($connectorRelayRateLimiter)->add($authRequired);
 
     // File upload for app forms — gated on the form owner's cloud access.
     $group->post('/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {

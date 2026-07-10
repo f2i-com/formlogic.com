@@ -484,6 +484,12 @@ impl FlowRuntime {
         self.host.last_health(id).flatten()
     }
 
+    /// The linked API client, if any — for host features that need server
+    /// verification (connector-capability introspection, audit SEC-001).
+    pub fn api_client(&self) -> Option<Arc<FormLogicClient>> {
+        self.client()
+    }
+
     /// Route a connector's events to ONE app (audit INT-004/C-13): the
     /// assigned app wins; with no assignment, exactly one candidate app
     /// (holding `connector.<id>.*` grants) is implicitly it; two or more is

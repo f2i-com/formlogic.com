@@ -191,6 +191,31 @@ impl FormLogicClient {
         Ok(array_field(&v, "apps"))
     }
 
+    /// Verify a member's connector capability (audit SEC-001): the grant
+    /// patterns + remaining TTL, or `Ok(None)` when the server does not
+    /// recognise the token (expired / forged / another owner's).
+    pub async fn introspect_capability(
+        &self,
+        token: &str,
+    ) -> FlResult<Option<(Vec<String>, u64)>> {
+        match self
+            .send(reqwest::Method::GET, &format!("connector-capabilities/{token}"), &[], None)
+            .await
+        {
+            Ok((_, v)) => {
+                let grants = v
+                    .get("grants")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|g| g.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                let ttl = v.get("expiresInSeconds").and_then(Value::as_u64).unwrap_or(0);
+                Ok(Some((grants, ttl)))
+            }
+            Err(FlError::Http { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Connector→app assignments (audit INT-004): connector id → assigned app id.
     pub async fn connector_assignments(
         &self,
