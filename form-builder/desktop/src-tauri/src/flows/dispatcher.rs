@@ -642,6 +642,47 @@ impl FlowRuntime {
         self.client()
     }
 
+    /// Privacy-safe diagnostics snapshot (audit OBS-001) for
+    /// `GET /api/desktop/support-bundle`: per-plugin computed health plus the
+    /// durable-delivery journal counts. Composes surfaces other endpoints
+    /// already expose — no tokens, no conversation content, no user paths.
+    pub fn support_snapshot(&self) -> Value {
+        let plugins: Vec<Value> = self
+            .host
+            .plugin_ids()
+            .into_iter()
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "health": self.host.last_health(&id).flatten(),
+                })
+            })
+            .collect();
+
+        let count_lines = |p: &std::path::Path| -> Option<usize> {
+            std::fs::read_to_string(p).ok().map(|t| t.lines().count())
+        };
+        let root = &self.host.plugin_data_root;
+        let mut journals = serde_json::Map::new();
+        if let Ok(dirs) = std::fs::read_dir(root) {
+            for entry in dirs.flatten() {
+                let receipts = entry.path().join("host-event-receipts.jsonl");
+                if let Some(n) = count_lines(&receipts) {
+                    journals.insert(
+                        format!("{}.receipts", entry.file_name().to_string_lossy()),
+                        json!(n),
+                    );
+                }
+            }
+        }
+        journals.insert(
+            "processedMarkers".to_string(),
+            json!(count_lines(&root.join("host-event-processed.jsonl"))),
+        );
+
+        json!({ "plugins": plugins, "journals": journals })
+    }
+
     /// Route a connector's events to ONE app (audit INT-004/C-13): the
     /// assigned app wins; with no assignment, exactly one candidate app
     /// (holding `connector.<id>.*` grants) is implicitly it; two or more is

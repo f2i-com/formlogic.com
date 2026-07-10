@@ -202,6 +202,26 @@ async fn desktop_info(State(state): State<AppState>) -> impl IntoResponse {
     Json(v)
 }
 
+/// `GET /api/desktop/support-bundle` — one privacy-safe diagnostics document
+/// (audit OBS-001): identity/versions, flow-runtime status, per-plugin
+/// computed health, and the durable-delivery journal counts. Everything here
+/// is already exposed by other endpoints — this composes the snapshot an
+/// operator pastes into a bug report, with no tokens and no conversation
+/// content.
+async fn support_bundle(State(state): State<AppState>) -> impl IntoResponse {
+    let mut v = serde_json::json!({
+        "generatedAt": chrono::Utc::now().to_rfc3339(),
+        "desktop": serde_json::to_value(desktop_info_body()).unwrap_or_default(),
+    });
+    if let Some(rt) = &state.flow_runtime {
+        v["flowRuntime"] = serde_json::to_value(rt.status()).unwrap_or(serde_json::Value::Null);
+        let snapshot = rt.support_snapshot();
+        v["plugins"] = snapshot.get("plugins").cloned().unwrap_or_default();
+        v["journals"] = snapshot.get("journals").cloned().unwrap_or_default();
+    }
+    Json(v)
+}
+
 // ------- services -------
 
 async fn list_services(State(state): State<AppState>) -> impl IntoResponse {
@@ -1352,6 +1372,7 @@ fn is_export_path(path: &str) -> bool {
 fn is_restricted_read_path(path: &str) -> bool {
     path == "/api/config"
         || path == "/api/desktop/info"
+        || path == "/api/desktop/support-bundle"
         || path == "/api/python/logs"
         || (path.starts_with("/api/services/") && path.ends_with("/logs"))
 }
@@ -1572,6 +1593,7 @@ pub async fn serve(
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/desktop/info", get(desktop_info))
+        .route("/api/desktop/support-bundle", get(support_bundle))
         .route("/api/config", get(get_config))
         // services
         .route("/api/services", get(list_services).post(add_service))

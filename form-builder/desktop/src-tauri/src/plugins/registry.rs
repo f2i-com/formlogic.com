@@ -234,6 +234,13 @@ impl PluginHost {
         self.plugins.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Installed plugin ids, sorted (support bundle / diagnostics).
+    pub fn plugin_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.lock_plugins().keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
     /// Discover plugins under the root. Running plugins are left untouched
     /// (a manifest edit applies on the next restart); everything else is
     /// (re)loaded so `GET /api/plugins` always reflects the disk.
