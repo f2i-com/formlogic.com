@@ -35,9 +35,12 @@ its own Windows CI running the plugin's full test suite plus the voice-feature c
   `AppVisibilityRouteTest` (real getApp/getForm route boundary).
 - ✅ App dashboard renders populated widgets + records grid shows seeded data — `e2e/app-dashboard.spec.ts`.
 - ✅ Public live-demo isolation: a demo session's server write is rejected (read-only) — `e2e/demo-isolation.spec.ts`.
+- ✅ App export → import round trip; billing-disabled/self-host writes (no 402 with enforcement
+  off); app-RBAC deny-by-default → invitation → member access (`e2e/launch-golden-paths-2.spec.ts`,
+  audit FL-E2E-001). The e2e suite is now a HARD release requirement (package.yml zip + desktop
+  jobs `needs` the reusable e2e workflow on every `v*` tag).
 - ⏳ Interactive submit → dashboard/list/report updates (needs a real-account, non-read-only harness).
-- ⏳ Export app pack → import into fresh account → forms/reports/dashboard survive.
-- ⏳ Billing-disabled/self-host state; MCP token create/list/revoke.
+- ⏳ MCP token create/list/revoke golden path (backend suites cover the flows; e2e spec pending).
 
 ## Launch hardening review (2026-07) — actioned
 
