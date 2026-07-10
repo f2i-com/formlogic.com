@@ -412,8 +412,23 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     notes: 'Order taken from call ' + callId + '\\nCaller: ' + caller + (phone ? ' (' + phone + ')' : '') + '\\nDetails: ' + summary
   };
   if (knownId) order.customer_link = knownId;
+  // Calls-row enrichment: fills the Intent / Sentiment / Follow-up fields on the
+  // existing Calls record (found by call_id), which power the home 'Call intent
+  // share' donut and the Follow-up column. The Intent FIELD uses 'booking' where
+  // the extractor/action logic say 'appointment', and keeps 'question' (which the
+  // action logic above collapses to 'other').
+  var displayIntent = String(data.intent || 'other').toLowerCase();
+  if (displayIntent === 'appointment') displayIntent = 'booking';
+  if (['booking', 'order', 'question', 'message', 'other'].indexOf(displayIntent) === -1) displayIntent = 'other';
+  var sentiment = String(data.sentiment || 'neutral').toLowerCase();
+  if (['positive', 'neutral', 'negative'].indexOf(sentiment) === -1) sentiment = 'neutral';
+  var callRows = (nodes.calls && nodes.calls.responses) || [];
+  var callResponseId = callRows.length ? callRows[0].id : null;
   return {
     summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + summary,
+    hasCall: !!callResponseId,
+    callResponseId: callResponseId,
+    callUpdate: { intent: displayIntent, sentiment: sentiment, follow_up_required: needTask ? ['yes'] : [] },
     hasCustomerCreate: hasCustomerCreate,
     customer: {
       name: name || caller,
@@ -1678,6 +1693,7 @@ export const aokieReceptionistPack: PackData = {
           // digits-tail comparison no equality filter can express.
           { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 1, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },
           {
             id: 'extract',
@@ -1686,7 +1702,7 @@ export const aokieReceptionistPack: PackData = {
               system:
                 'You extract structured booking data from phone-call transcripts for a small business. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
-                'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "caller_name": string or null, "service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: set date/time ONLY if the caller agreed to a specific slot; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; use null when unsure — never guess.',
+                'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "sentiment": "positive" | "neutral" | "negative", "caller_name": string or null, "service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: set date/time ONLY if the caller agreed to a specific slot; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; judge sentiment from the caller\'s tone; use null when unsure — never guess.',
               maxTokens: 300,
               temperature: 0,
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
@@ -1699,6 +1715,9 @@ export const aokieReceptionistPack: PackData = {
             data: {
               value: {
                 summaryLine: '$nodes.plan.summaryLine',
+                hasCall: '$nodes.plan.hasCall',
+                callResponseId: '$nodes.plan.callResponseId',
+                callUpdate: '$nodes.plan.callUpdate',
                 hasCustomerCreate: '$nodes.plan.hasCustomerCreate',
                 customer: '$nodes.plan.customer',
                 hasAppointment: '$nodes.plan.hasAppointment',
@@ -1714,7 +1733,8 @@ export const aokieReceptionistPack: PackData = {
         edges: [
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'turns' },
-          { source: 'turns', target: 'ctx' },
+          { source: 'turns', target: 'calls' },
+          { source: 'calls', target: 'ctx' },
           { source: 'ctx', target: 'extract' },
           { source: 'extract', target: 'plan' },
           { source: 'plan', target: 'out' },
@@ -1847,6 +1867,7 @@ export const aokieReceptionistPack: PackData = {
       },
       inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
       outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCall', responseId: '$result.callResponseId', answers: '$result.callUpdate' },
         { type: 'formlogic.submitResponse', form: '@pack:customers', when: '$result.hasCustomerCreate', answers: '$result.customer' },
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
         { type: 'formlogic.submitResponse', form: '@pack:orders', when: '$result.hasOrder', answers: '$result.order' },
