@@ -175,6 +175,11 @@ class ExternalApiController
         }
 
         $data = $request->getParsedBody();
+        // Capture the RAW client answers for the idempotency hash BEFORE any
+        // sanitize/normalize/calc mutates them — parity with ResponseController and
+        // AppPublicController, which both hash the raw body so an exact replay matches
+        // even if the form definition (calculated fields etc.) changed since.
+        $rawAnswersForHash = (is_array($data) && isset($data['answers'])) ? $data['answers'] : [];
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
         $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
@@ -212,7 +217,7 @@ class ExternalApiController
             ? $data['idempotencyKey'] : null;
         $ownsReservation = false;
         if ($idemKey !== null) {
-            $payloadHash = hash('sha256', (string) json_encode($data['answers'] ?? []));
+            $payloadHash = hash('sha256', (string) json_encode($rawAnswersForHash));
             $userId = $request->getAttribute('userId');
             $userId = (is_string($userId) && $userId !== '') ? $userId : null;
             $reserved = $this->idempotencyReserve($args['formId'], $userId, $idemKey, $payloadHash);
