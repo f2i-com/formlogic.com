@@ -1352,16 +1352,23 @@ class ResponseService
             if ((string) $stmt->fetchColumn() === $hour) {
                 return 0;
             }
-            // Claim this hour's slot BEFORE the work — concurrent submitters skip.
+
+            // Read the retention setting BEFORE claiming this hour's slot: if the
+            // settings read fails transiently, the throttle marker is NOT burned, so
+            // the next submission retries this hour rather than letting expired PII
+            // linger an extra hour. (deleteResponse tolerates a concurrent
+            // double-purge, so reading before claiming introduces no race.)
+            $settingsStmt = $this->mysql->prepare("SELECT settings FROM forms WHERE id = :id");
+            $settingsStmt->execute(['id' => $formId]);
+            $settings = json_decode((string) ($settingsStmt->fetchColumn() ?: '{}'), true);
+            $days = (int) (is_array($settings) ? ($settings['retentionDays'] ?? 0) : 0);
+
+            // Claim this hour's slot now — concurrent submitters skip the work below.
             $claim = $db->prepare(
                 "INSERT OR REPLACE INTO form_data (key, value, updated_at) VALUES ('retention_purged_hour', :h, datetime('now'))"
             );
             $claim->execute(['h' => $hour]);
 
-            $settingsStmt = $this->mysql->prepare("SELECT settings FROM forms WHERE id = :id");
-            $settingsStmt->execute(['id' => $formId]);
-            $settings = json_decode((string) ($settingsStmt->fetchColumn() ?: '{}'), true);
-            $days = (int) (is_array($settings) ? ($settings['retentionDays'] ?? 0) : 0);
             if ($days <= 0) {
                 return 0;
             }
