@@ -2369,6 +2369,9 @@ interface LinkedRecord {
 }
 
 interface RelatedRecordGroup {
+  /** Stable identity for the RELATIONSHIP (source form + field) — two links from one
+   *  form via different linked_record fields are distinct groups. */
+  key?: string;
   formId: string;
   displayName: string;
   fieldLabel: string;
@@ -2384,8 +2387,9 @@ interface RelatedRecordGroup {
   /** Rows shown per group before the "Show all" expander (relatedPageSize, default 8). */
   pageSize?: number;
   /** Columns to render in the related grid (the link's displayFieldIds, or a
-   *  fallback of simple fields). */
-  columns?: Array<{ id: string; label: string; type: string }>;
+   *  fallback of simple fields). Choice columns carry their option map so the grid
+   *  renders labels, not raw option values. */
+  columns?: Array<{ id: string; label: string; type: string; options?: Array<{ value: string; label: string }> }>;
   records: Array<{ id: string; display: string; submittedAt: string; fields?: Record<string, unknown> }>;
   count: number;
 }

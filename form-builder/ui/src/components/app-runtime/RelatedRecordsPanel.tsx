@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Link2, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Link2, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { RelatedRecordGroup } from '../../lib/api';
 import { ListRowSkeleton } from '../ui/Skeleton';
@@ -8,15 +8,16 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { parseServerDate } from '../../lib/utils';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 
-const PAGE_SIZE = 50;
+type RelatedColumn = NonNullable<RelatedRecordGroup['columns']>[number];
 
 interface RelatedRecordsPanelProps {
   appSlug: string;
   formId: string;
   responseId: string;
   // Owner-mode overrides (the builder responses page): when provided, the panel uses these
-  // instead of the app-runtime store + app routes. All absent = the app-runtime behavior.
-  fetchRelated?: (opts: { limit: number; offset: number }) => Promise<{ related?: Record<string, RelatedRecordGroup>; error?: string }>;
+  // instead of the app-runtime store + app routes. Provide STABLE (useCallback'd) functions —
+  // a new identity each render forces a refetch. All absent = the app-runtime behavior.
+  fetchRelated?: () => Promise<{ related?: Record<string, RelatedRecordGroup>; error?: string }>;
   deleteRecord?: (formId: string, recordId: string) => Promise<boolean>;
   canAddFn?: (formId: string) => boolean;
   canDeleteFn?: (formId: string) => boolean;
@@ -24,55 +25,50 @@ interface RelatedRecordsPanelProps {
   onAddRecord?: (group: RelatedRecordGroup) => void;
 }
 
-/** Render one related-record cell value: arrays join, empty shows an em dash. */
-function formatCell(value: unknown): string {
+/** Render one related-record cell: arrays join, choice values map to their option label. */
+function formatCell(value: unknown, col: RelatedColumn): string {
+  const labelFor = (v: unknown): string => {
+    const opt = col.options?.find((o) => o.value === v);
+    return opt ? opt.label : String(v);
+  };
   if (value == null || value === '') return '—';
-  if (Array.isArray(value)) return value.length ? value.map((v) => String(v)).join(', ') : '—';
+  if (Array.isArray(value)) return value.length ? value.map(labelFor).join(', ') : '—';
   if (typeof value === 'object') return '—';
-  return String(value);
+  if (col.type === 'date' && typeof value === 'string') {
+    const d = new Date(value + 'T00:00:00');
+    return isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  return labelFor(value);
 }
 
 export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
-  const { appSlug, formId, responseId } = props;
+  const { appSlug, formId, responseId, fetchRelated, deleteRecord, onOpenRecord, onAddRecord } = props;
   const navigate = useNavigate();
   const store = useAppRuntimeStore();
   const [related, setRelated] = useState<Record<string, RelatedRecordGroup>>({});
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<{ formId: string; id: string; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  // Per-group "Show all" expansion (keyed by the source form id).
+  // Per-group "Show all" expansion (keyed by the relationship key).
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  // Resolve the data/CRUD/nav sources — the app-runtime store + app routes by default,
-  // or the owner-mode overrides when provided.
-  const doFetch = useCallback(
-    (opts: { limit: number; offset: number }) =>
-      props.fetchRelated
-        ? props.fetchRelated(opts)
-        : api.getRelatedRecords(appSlug, formId, responseId, opts).then((r) => ({ related: r.data?.related, error: r.error })),
-    [props, appSlug, formId, responseId]
-  );
-
+  // The backend now returns every related group in one call (no cross-group paging) —
+  // fetch once. Depend on the SPECIFIC fetch fn (not the whole props object) so an
+  // unrelated parent re-render (status change, opening the delete dialog) doesn't refetch.
   useEffect(() => {
+    let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: status reset must be synchronous when deps change
     setLoading(true);
     setError(null);
-    setOffset(0);
-    let cancelled = false;
-    doFetch({ limit: PAGE_SIZE, offset: 0 }).then((result) => {
+    const run = fetchRelated
+      ? fetchRelated()
+      : api.getRelatedRecords(appSlug, formId, responseId, { limit: 2000, offset: 0 }).then((r) => ({ related: r.data?.related, error: r.error }));
+    run.then((result) => {
       if (cancelled) return;
-      if (result.error) {
-        setError(result.error);
-      } else if (result.related) {
-        setRelated(result.related);
-        const totalRecords = Object.values(result.related).reduce((sum, g) => sum + g.records.length, 0);
-        setHasMore(totalRecords >= PAGE_SIZE);
-      }
+      if (result.error) setError(result.error);
+      else if (result.related) setRelated(result.related);
       setLoading(false);
     }).catch((err) => {
       if (cancelled) return;
@@ -80,60 +76,30 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [doFetch, refreshTick]);
-
-  const loadMore = useCallback(async () => {
-    const nextOffset = offset + PAGE_SIZE;
-    setLoadingMore(true);
-    try {
-      const result = await doFetch({ limit: PAGE_SIZE, offset: nextOffset });
-      if (result.related) {
-        const more = result.related;
-        setRelated((prev) => {
-          const merged = { ...prev };
-          for (const [key, group] of Object.entries(more)) {
-            if (merged[key]) {
-              merged[key] = { ...merged[key], records: [...merged[key].records, ...group.records], count: merged[key].count + group.count };
-            } else {
-              merged[key] = group;
-            }
-          }
-          return merged;
-        });
-        const newRecords = Object.values(more).reduce((sum, g) => sum + g.records.length, 0);
-        setHasMore(newRecords >= PAGE_SIZE);
-        setOffset(nextOffset);
-      } else {
-        setHasMore(false);
-      }
-    } catch {
-      // silently fail on load more
-    }
-    setLoadingMore(false);
-  }, [doFetch, offset]);
+  }, [fetchRelated, appSlug, formId, responseId, refreshTick]);
 
   const openRecord = useCallback((groupFormId: string, recordId: string) => {
-    if (props.onOpenRecord) props.onOpenRecord(groupFormId, recordId);
+    if (onOpenRecord) onOpenRecord(groupFormId, recordId);
     else navigate(`/app/${appSlug}/form/${groupFormId}/responses/${recordId}`);
-  }, [props, appSlug, navigate]);
+  }, [onOpenRecord, appSlug, navigate]);
 
   const addRelated = useCallback((group: RelatedRecordGroup) => {
-    if (props.onAddRecord) { props.onAddRecord(group); return; }
+    if (onAddRecord) { onAddRecord(group); return; }
     if (!group.fieldId) return;
     navigate(`/app/${appSlug}/form/${group.formId}?new=1&linkField=${encodeURIComponent(group.fieldId)}&linkTo=${encodeURIComponent(responseId)}`);
-  }, [props, appSlug, responseId, navigate]);
+  }, [onAddRecord, appSlug, responseId, navigate]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    const del = props.deleteRecord ?? store.deleteResponse;
+    const del = deleteRecord ?? store.deleteResponse;
     const ok = await del(deleteTarget.formId, deleteTarget.id);
     setDeleting(false);
     if (ok) {
       setDeleteTarget(null);
       setRefreshTick((t) => t + 1); // reload so counts + rows stay truthful
     }
-  }, [deleteTarget, props, store]);
+  }, [deleteTarget, deleteRecord, store]);
 
   const canAdd = props.canAddFn ?? store.canSubmit;
   const canDel = props.canDeleteFn ?? store.canDelete;
@@ -177,11 +143,12 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
           return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
         });
         const cap = Math.max(1, group.pageSize ?? 8);
-        const isExpanded = !!expanded[group.formId];
+        const gkey = group.key ?? group.formId;
+        const isExpanded = !!expanded[gkey];
         const visible = isExpanded ? sorted : sorted.slice(0, cap);
         const hiddenCount = sorted.length - visible.length;
         return (
-          <div key={group.formId} className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
+          <div key={gkey} className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
             <div className="px-5 py-2.5 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider truncate">
@@ -223,7 +190,7 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
                       {cols
                         ? cols.map((c, i) => (
                             <td key={c.id} className={`px-5 py-3 text-gray-700 dark:text-slate-300 ${i === 0 ? 'font-medium' : ''} max-w-[16rem] truncate`}>
-                              {formatCell(record.fields?.[c.id])}
+                              {formatCell(record.fields?.[c.id], c)}
                             </td>
                           ))
                         : <td className="px-5 py-3 font-medium text-gray-700 dark:text-slate-300 max-w-[20rem] truncate">{record.display}</td>}
@@ -251,7 +218,7 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
               <div className="px-5 py-2 border-t border-gray-100 dark:border-slate-700/30">
                 <button
                   type="button"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [group.formId]: !isExpanded }))}
+                  onClick={() => setExpanded((prev) => ({ ...prev, [gkey]: !isExpanded }))}
                   className="text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded px-1 py-0.5"
                 >
                   {isExpanded ? 'Show fewer' : `Show all ${sorted.length}`}
@@ -261,23 +228,6 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
           </div>
         );
       })}
-
-      {hasMore && (
-        <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-700/40">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="w-full text-center text-sm font-medium app-text-primary hover:opacity-80 disabled:opacity-50 cursor-pointer"
-          >
-            {loadingMore ? (
-              <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 motion-safe:animate-spin" /> Loading…</span>
-            ) : (
-              'Load more'
-            )}
-          </button>
-        </div>
-      )}
 
       <ConfirmDialog
         isOpen={!!deleteTarget}

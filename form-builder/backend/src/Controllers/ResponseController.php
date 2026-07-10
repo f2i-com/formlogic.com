@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Helpers\RelatedRecords;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
@@ -1234,125 +1235,63 @@ class ResponseController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
-        $q = $request->getQueryParams();
-        $limit = max(1, min((int) ($q['limit'] ?? 50), 200));
-        $offset = max(0, (int) ($q['offset'] ?? 0));
-
+        // One bounded pass, grouped by RELATIONSHIP (source form + field) — see
+        // AppPublicController::getRelatedRecords for the rationale. No cross-group paging.
+        $linkCap = 2000;
         $stmt = $this->mysql->prepare(
-            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :tf AND target_response_id = :tr ORDER BY source_form_id, source_response_id, field_id LIMIT :lim OFFSET :off"
+            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :tf AND target_response_id = :tr ORDER BY source_form_id, field_id, source_response_id LIMIT :lim"
         );
         $stmt->bindValue('tf', $formId);
         $stmt->bindValue('tr', $responseId);
-        $stmt->bindValue('lim', $limit, PDO::PARAM_INT);
-        $stmt->bindValue('off', $offset, PDO::PARAM_INT);
+        $stmt->bindValue('lim', $linkCap, PDO::PARAM_INT);
         $stmt->execute();
         $links = $stmt->fetchAll(PDO::FETCH_ASSOC);
         if (empty($links)) {
             return $this->jsonResponse($response, ['related' => []]);
         }
 
-        $linksByForm = [];
-        foreach ($links as $link) { $linksByForm[$link['source_form_id']][] = $link; }
+        $groups = [];
+        foreach ($links as $link) {
+            $key = $link['source_form_id'] . '|' . $link['field_id'];
+            if (!isset($groups[$key])) {
+                $groups[$key] = ['formId' => $link['source_form_id'], 'fieldId' => $link['field_id'], 'ids' => []];
+            }
+            $groups[$key]['ids'][$link['source_response_id']] = true;
+        }
 
+        $formCache = [];
         $related = [];
-        foreach ($linksByForm as $sourceFormId => $formLinks) {
-            $sourceForm = $this->formService->getForm($sourceFormId);
+        foreach ($groups as $key => $g) {
+            $sourceFormId = $g['formId'];
+            $fieldId = $g['fieldId'];
+            if (!array_key_exists($sourceFormId, $formCache)) {
+                $formCache[$sourceFormId] = $this->formService->getForm($sourceFormId) ?: null;
+            }
+            $sourceForm = $formCache[$sourceFormId];
             // Cross-tenant guard: only forms the same owner holds.
             if (!$sourceForm || ($sourceForm['userId'] ?? null) !== $userId) { continue; }
 
-            $fieldId = $formLinks[0]['field_id'];
-            $fieldLabel = $fieldId;
-            $displayFieldIds = [];
-            $allowMultiple = false;
-            $relatedHidden = false;
-            $relatedAllowAdd = true;
-            $relatedAllowDelete = true;
-            $relatedPageSize = 8;
-            foreach ($sourceForm['fields'] as $f) {
-                if ($f['id'] === $fieldId) {
-                    $props = $f['properties'] ?? [];
-                    $fieldLabel = $f['label'] ?? $fieldId;
-                    $displayFieldIds = $props['displayFieldIds'] ?? [];
-                    $allowMultiple = !empty($props['allowMultiple']);
-                    $relatedHidden = !empty($props['relatedHidden']);
-                    $relatedAllowAdd = ($props['relatedAllowAdd'] ?? true) !== false;
-                    $relatedAllowDelete = ($props['relatedAllowDelete'] ?? true) !== false;
-                    if (is_numeric($props['relatedPageSize'] ?? null)) {
-                        $relatedPageSize = max(1, min((int) $props['relatedPageSize'], 50));
-                    }
-                    break;
-                }
-            }
-            if ($relatedHidden) { continue; }
+            [$cfg, $columns] = RelatedRecords::fieldConfig($sourceForm, (string) $fieldId);
+            if ($cfg['hidden']) { continue; }
 
-            $columnFieldIds = $displayFieldIds;
-            if (empty($columnFieldIds)) {
-                $c = 0;
-                foreach ($sourceForm['fields'] as $f) {
-                    if ($c >= 3) break;
-                    if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number', 'dropdown', 'date'], true)) {
-                        $columnFieldIds[] = $f['id'];
-                        $c++;
-                    }
-                }
-            }
-            $columnDefs = [];
-            foreach ($sourceForm['fields'] as $f) {
-                if (in_array($f['id'], $columnFieldIds, true)) {
-                    $columnDefs[$f['id']] = ['id' => $f['id'], 'label' => $f['label'] ?? $f['id'], 'type' => $f['type']];
-                }
-            }
-            $columns = [];
-            foreach ($columnFieldIds as $cfid) {
-                if (isset($columnDefs[$cfid])) $columns[] = $columnDefs[$cfid];
-            }
+            $sourceResponses = $this->responseService->getResponsesByIds($sourceFormId, array_keys($g['ids']));
+            $records = RelatedRecords::buildRecords($sourceResponses, $sourceForm, $cfg['displayFieldIds'], $cfg['columnFieldIds']);
+            if (empty($records)) { continue; }
 
-            $sourceResponseIds = array_unique(array_column($formLinks, 'source_response_id'));
-            $sourceResponses = $this->responseService->getResponsesByIds($sourceFormId, $sourceResponseIds);
-
-            $matchingRecords = [];
-            foreach ($sourceResponses as $sr) {
-                $answers = $sr['answers'] ?? [];
-                $parts = [];
-                foreach ($displayFieldIds as $dfid) {
-                    $val = $answers[$dfid] ?? null;
-                    if ($val !== null) $parts[] = is_array($val) ? implode(', ', $val) : (string) $val;
-                }
-                if (empty($parts)) {
-                    $cc = 0;
-                    foreach ($sourceForm['fields'] as $f) {
-                        if ($cc >= 2) break;
-                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number'], true)) {
-                            $val = $answers[$f['id']] ?? null;
-                            if ($val !== null) { $parts[] = (string) $val; $cc++; }
-                        }
-                    }
-                }
-                $recFields = [];
-                foreach ($columnFieldIds as $cfid) { $recFields[$cfid] = $answers[$cfid] ?? null; }
-                $matchingRecords[] = [
-                    'id' => $sr['id'],
-                    'display' => implode(' - ', $parts) ?: ('Record ' . substr($sr['id'], 0, 8)),
-                    'submittedAt' => $sr['submittedAt'] ?? '',
-                    'fields' => $recFields,
-                ];
-            }
-
-            if (!empty($matchingRecords)) {
-                $related[$sourceFormId] = [
-                    'formId' => $sourceFormId,
-                    'displayName' => $sourceForm['title'] ?? $sourceFormId,
-                    'fieldLabel' => $fieldLabel,
-                    'fieldId' => $fieldId,
-                    'allowMultiple' => $allowMultiple,
-                    'allowAdd' => $relatedAllowAdd,
-                    'allowDelete' => $relatedAllowDelete,
-                    'pageSize' => $relatedPageSize,
-                    'columns' => $columns,
-                    'records' => $matchingRecords,
-                    'count' => count($matchingRecords),
-                ];
-            }
+            $related[$key] = [
+                'key' => $key,
+                'formId' => $sourceFormId,
+                'displayName' => $sourceForm['title'] ?? $sourceFormId,
+                'fieldLabel' => $cfg['fieldLabel'],
+                'fieldId' => $fieldId,
+                'allowMultiple' => $cfg['allowMultiple'],
+                'allowAdd' => $cfg['allowAdd'],
+                'allowDelete' => $cfg['allowDelete'],
+                'pageSize' => $cfg['pageSize'],
+                'columns' => $columns,
+                'records' => $records,
+                'count' => count($records),
+            ];
         }
 
         return $this->jsonResponse($response, ['related' => $related]);

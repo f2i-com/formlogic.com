@@ -3,30 +3,42 @@ import { ChevronLeft, ChevronRight, Loader2, Inbox } from 'lucide-react';
 import type { DashboardWidget } from '../../types/app';
 import type { WidgetDataForm } from './widgetData';
 
-interface Col { id: string; label: string; type: string }
+type FieldOption = { value: string; label?: string };
+interface Col { id: string; label: string; type: string; options?: FieldOption[] }
+type RawField = { id: string; label?: string; type?: string; properties?: { options?: FieldOption[] } };
 
-const SIMPLE_TYPES = ['short_text', 'long_text', 'email', 'phone', 'url', 'number', 'dropdown', 'date', 'checkbox'];
+const SIMPLE_TYPES = ['short_text', 'long_text', 'email', 'phone', 'url', 'number', 'dropdown', 'date', 'checkboxes'];
+const CHOICE_TYPES = ['dropdown', 'multiple_choice', 'checkboxes'];
+
+function toCol(f: RawField | undefined, id: string): Col {
+  const col: Col = { id, label: f?.label ?? id, type: f?.type ?? 'text' };
+  if (f && CHOICE_TYPES.includes(f.type ?? '') && f.properties?.options?.length) col.options = f.properties.options;
+  return col;
+}
 
 /** Columns for the grid: the widget's chosen fields, else the form's first few simple fields. */
 function deriveColumns(form: WidgetDataForm | undefined, columnFieldIds?: string[]): Col[] {
-  const fields = (form?.fields ?? []) as Array<{ id: string; label?: string; type?: string }>;
+  const fields = (form?.fields ?? []) as RawField[];
   if (columnFieldIds && columnFieldIds.length) {
-    return columnFieldIds.map((id) => {
-      const f = fields.find((x) => x.id === id);
-      return { id, label: f?.label ?? id, type: f?.type ?? 'text' };
-    });
+    return columnFieldIds.map((id) => toCol(fields.find((x) => x.id === id), id));
   }
   return fields
     .filter((f) => SIMPLE_TYPES.includes(f.type ?? ''))
     .slice(0, 4)
-    .map((f) => ({ id: f.id, label: f.label ?? f.id, type: f.type ?? 'text' }));
+    .map((f) => toCol(f, f.id));
 }
 
-function cell(v: unknown): string {
+/** Format a cell: choice values map to their option label; dates localize; arrays join. */
+function cell(v: unknown, col: Col): string {
+  const labelFor = (x: unknown): string => col.options?.find((o) => o.value === x)?.label ?? String(x);
   if (v == null || v === '') return '—';
-  if (Array.isArray(v)) return v.length ? v.map((x) => String(x)).join(', ') : '—';
+  if (Array.isArray(v)) return v.length ? v.map(labelFor).join(', ') : '—';
   if (typeof v === 'object') return '—';
-  return String(v);
+  if (col.type === 'date' && typeof v === 'string') {
+    const d = new Date(v + 'T00:00:00');
+    return isNaN(d.getTime()) ? v : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  return labelFor(v);
 }
 
 type GridRow = { id?: unknown; answers?: Record<string, unknown> };
@@ -116,7 +128,14 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-gray-400 dark:text-slate-500">
             <Inbox className="h-6 w-6 opacity-70" />
-            <span className="mt-1 text-xs">No records yet</span>
+            {/* page>0 with no rows = records shrank under us — offer a way back, not a dead end. */}
+            {page > 0 ? (
+              <button type="button" onClick={() => gotoPage(0)} className="mt-1 text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer">
+                No records on this page — back to the start
+              </button>
+            ) : (
+              <span className="mt-1 text-xs">No records yet</span>
+            )}
           </div>
         ) : (
           <table className={`w-full text-sm ${loading ? 'opacity-50' : ''}`}>
@@ -135,7 +154,7 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
                   >
                     {cols.length ? cols.map((c, i) => (
                       <td key={c.id} className={`px-4 py-2.5 text-gray-700 dark:text-slate-300 max-w-[14rem] truncate ${i === 0 ? 'font-medium' : ''}`}>
-                        {cell(answers[c.id])}
+                        {cell(answers[c.id], c)}
                       </td>
                     )) : <td className="px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{`Record ${id.slice(0, 8)}`}</td>}
                   </tr>

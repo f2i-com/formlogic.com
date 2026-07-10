@@ -46,7 +46,10 @@ function recordTitle(form: Form | null, answers: Record<string, unknown>): strin
   return 'Record';
 }
 
-function formatDuration(seconds: number): string {
+// completionTime is stored in MILLISECONDS (Date.now() - startTime) — every other
+// surface divides by 1000 before display.
+function formatDuration(ms: number): string {
+  const seconds = ms / 1000;
   if (!seconds || seconds <= 0) return '—';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
@@ -96,7 +99,8 @@ function FormResponseView() {
           if (!f) { setLoadError('Form not found'); return; }
           if (!local) { setLoadError('Record not found'); return; }
           setForm(f);
-          setRecord({ id: local.id, answers: local.answers ?? {}, submittedAt: local.submittedAt });
+          const localCt = (local as { completionTime?: number }).completionTime;
+          setRecord({ id: local.id, answers: local.answers ?? {}, submittedAt: local.submittedAt, metadata: { completionTime: localCt } });
         }
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load this record');
@@ -178,6 +182,19 @@ function FormResponseView() {
       setDeleting(false);
     }
   }, [formId, record, storageMode, deleteLocalResponse, navigate]);
+
+  // Stable callbacks for the related-records panel — inline closures would give it a
+  // new identity every render and force it to refetch (formId/responseId are fixed for
+  // this mount, since the route remounts per record).
+  const fetchRelated = useCallback(
+    () => api.getOwnerRelatedRecords(formId ?? '', responseId ?? '', { limit: 2000, offset: 0 })
+      .then((r) => ({ related: r.data?.related, error: typeof r.error === 'string' ? r.error : undefined })),
+    [formId, responseId]
+  );
+  const deleteRelated = useCallback(async (fid: string, rid: string) => { const r = await api.deleteResponse(fid, rid); return !r.error; }, []);
+  const openRelated = useCallback((fid: string, rid: string) => navigate(`/responses/${fid}/${rid}`), [navigate]);
+  const denyAdd = useCallback(() => false, []);
+  const allowDelete = useCallback(() => true, []);
 
   const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
   const completionTime = record?.metadata?.completionTime ?? 0;
@@ -333,13 +350,11 @@ function FormResponseView() {
                     appSlug=""
                     formId={formId}
                     responseId={responseId}
-                    fetchRelated={(opts) =>
-                      api.getOwnerRelatedRecords(formId, responseId, opts)
-                        .then((r) => ({ related: r.data?.related, error: typeof r.error === 'string' ? r.error : undefined }))}
-                    deleteRecord={async (fid, rid) => { const r = await api.deleteResponse(fid, rid); return !r.error; }}
-                    canAddFn={() => false}
-                    canDeleteFn={() => true}
-                    onOpenRecord={(fid, rid) => navigate(`/responses/${fid}/${rid}`)}
+                    fetchRelated={fetchRelated}
+                    deleteRecord={deleteRelated}
+                    canAddFn={denyAdd}
+                    canDeleteFn={allowDelete}
+                    onOpenRecord={openRelated}
                   />
                 )}
               </div>
@@ -409,4 +424,11 @@ function FormResponseView() {
   );
 }
 
-export default FormResponseView;
+// Remount on every record change so edit state (editing/draft) can NEVER leak from
+// one record onto another — navigating record→record (via a chip or a related row)
+// reuses this route's component instance, and a stale `draft` saved onto a freshly
+// loaded record would overwrite it (potentially wiping fields across forms).
+export default function FormResponseViewRoute() {
+  const { formId, responseId } = useParams<{ formId: string; responseId: string }>();
+  return <FormResponseView key={`${formId}/${responseId}`} />;
+}
