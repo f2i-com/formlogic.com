@@ -210,6 +210,18 @@ impl RpcClient {
         }
     }
 
+    /// Send an id-less notification to the plugin (e.g. `event.ack` after a
+    /// durable receipt — audit INT-003). Best-effort like [`respond`](Self::respond).
+    pub async fn notify(&self, method: &str, params: Value) {
+        let mut line = json!({ "jsonrpc": "2.0", "method": method, "params": params }).to_string();
+        line.push('\n');
+        let mut guard = self.stdin.lock().await;
+        if let Some(w) = guard.as_mut() {
+            let _ = w.write_all(line.as_bytes()).await;
+            let _ = w.flush().await;
+        }
+    }
+
     /// Tear down: mark closed and fail every in-flight request. Called when
     /// the stdout pump sees EOF (process died) or the supervisor stops it.
     fn close(&self) {

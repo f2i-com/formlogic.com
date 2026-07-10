@@ -32,7 +32,7 @@ One JSON object per line (`\n`-terminated, UTF-8, no Content-Length framing). Ma
 
 | Method | Params | Result |
 |---|---|---|
-| `plugin.init` | `{desktopVersion, pluginApiVersion, dataDir, devMode}` | `{ok: true, manifest?}` |
+| `plugin.init` | `{desktopVersion, pluginApiVersion, dataDir, devMode, features?}` — `features` is a string array of host capabilities the plugin may opt into; currently `"eventAck"` (durable event delivery, below). Absent/empty = a legacy host. | `{ok: true, manifest?}` |
 | `plugin.health` | `{}` | `{status: "ok"\|"degraded"\|"error", detail?}` |
 | `plugin.shutdown` | `{}` | `{ok: true}` |
 | `connector.request` | `connector-request.schema.json` (`{connectorId, command, payload?, timeoutMs?, requestId?}`) | `connector-response.schema.json` success body (`{ok:true, data?}`) — command errors are returned as JSON-RPC errors with `error.data = {code, message}` using the typed connector codes |
@@ -43,6 +43,22 @@ One JSON object per line (`\n`-terminated, UTF-8, no Content-Length framing). Ma
 |---|---|
 | `event.emit` | `{event: <desktop-event envelope>}` — envelope per `desktop-event.schema.json`. Desktop validates: `source`/`pluginId` must match the plugin, `name` must be declared in manifest `events`, size ≤ 64 KiB. Invalid events are dropped + logged, never forwarded. |
 | `log.emit` | `{level: "debug"\|"info"\|"warning"\|"error", message}` (≤ 2 KiB, redacted by the plugin) |
+
+### Desktop → plugin (notifications, no id) — durable delivery (`eventAck`)
+
+When the host advertised `eventAck` in `plugin.init`, it journals every `event.emit`
+envelope carrying an `idempotencyKey` to a durable per-plugin receipt log
+(`<plugin-data>/host-event-receipts.jsonl`, fsynced) BEFORE acknowledging:
+
+| Method | Params |
+|---|---|
+| `event.ack` | `{idempotencyKey}` — the envelope with this key is durably journaled; the plugin may stop re-delivering it. |
+
+Contract: delivery is **at-least-once** — a plugin that never receives the ack (host
+crash, lost write) re-emits the SAME envelope with the SAME `idempotencyKey` on a
+backoff schedule; the host dedupes on the key (re-acks, does not re-publish to the
+event bus). Plugins that ignore `event.ack` (or hosts that never send it) keep the
+legacy fire-and-forget semantics unchanged.
 
 ### Plugin → desktop (requests, WITH id)
 

@@ -345,6 +345,23 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
     let data_dir = host.plugin_data_root.join(id);
     let _ = std::fs::create_dir_all(&data_dir);
 
+    // Durable event receipts (audit INT-003): journal every event.emit
+    // BEFORE acknowledging it, so the plugin's outbox can stop re-delivering.
+    // If the journal can't open, the desktop must NOT advertise `eventAck` —
+    // promising acks it can never send would dead-letter every event.
+    let receipts = match crate::plugins::receipts::EventReceipts::open(
+        data_dir.join("host-event-receipts.jsonl"),
+    ) {
+        Ok(r) => Some(Arc::new(r)),
+        Err(e) => {
+            logs.push(
+                "stderr",
+                format!("[desktop] event receipts unavailable ({e}) — running without eventAck"),
+            );
+            None
+        }
+    };
+
     let spec = SpawnSpec {
         plugin_id: id,
         plugin_dir: &dir,
@@ -393,11 +410,66 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         let manifest = manifest.clone();
         let logs = logs.clone();
         let pump_client = client.clone();
+        let pump_receipts = receipts.clone();
         tokio::spawn(async move {
             while let Some(n) = notifications.recv().await {
                 match n {
                     rpc::PluginNotification::Event(envelope) => {
-                        host.events.publish_from_plugin(&id, &manifest, envelope, &logs);
+                        // Durable-receipt + ack path (audit INT-003). Journal
+                        // BEFORE ack; a replayed duplicate is re-acked but
+                        // never re-published. A journal write failure means
+                        // NO ack — the plugin keeps the row and re-delivers.
+                        let key = envelope
+                            .get("idempotencyKey")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string);
+                        match (pump_receipts.as_ref(), key) {
+                            (Some(receipts), Some(key)) => {
+                                use crate::plugins::receipts::ReceiptOutcome;
+                                match receipts.record(&key, &envelope) {
+                                    Ok(ReceiptOutcome::New) => {
+                                        host.events.publish_from_plugin(
+                                            &id, &manifest, envelope, &logs,
+                                        );
+                                        pump_client
+                                            .notify(
+                                                "event.ack",
+                                                json!({ "idempotencyKey": key }),
+                                            )
+                                            .await;
+                                    }
+                                    Ok(ReceiptOutcome::Duplicate) => {
+                                        logs.push(
+                                            "stdout",
+                                            format!(
+                                                "[desktop] deduped replayed event {key} (acked again, not re-published)"
+                                            ),
+                                        );
+                                        pump_client
+                                            .notify(
+                                                "event.ack",
+                                                json!({ "idempotencyKey": key }),
+                                            )
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        logs.push(
+                                            "stderr",
+                                            format!(
+                                                "[desktop] receipt journal write failed for {key}: {e} — NOT acked, plugin will re-deliver"
+                                            ),
+                                        );
+                                        host.events.publish_from_plugin(
+                                            &id, &manifest, envelope, &logs,
+                                        );
+                                    }
+                                }
+                            }
+                            // No journal or no idempotencyKey: legacy path.
+                            _ => {
+                                host.events.publish_from_plugin(&id, &manifest, envelope, &logs);
+                            }
+                        }
                     }
                     rpc::PluginNotification::Log { level, message } => {
                         logs.push("stdout", format!("[{level}] {message}"));
@@ -420,12 +492,20 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         });
     }
 
-    // Handshake — cancellable by a Stop that lands mid-init.
+    // Handshake — cancellable by a Stop that lands mid-init. `features`
+    // advertises `eventAck` only when the receipt journal is actually open
+    // (audit INT-003) — an ack-capable plugin then holds outboxed events
+    // until our event.ack confirms durable receipt.
+    let mut features: Vec<&str> = Vec::new();
+    if receipts.is_some() {
+        features.push("eventAck");
+    }
     let init_params = json!({
         "desktopVersion": env!("CARGO_PKG_VERSION"),
         "pluginApiVersion": crate::PLUGIN_API_VERSION,
         "dataDir": data_dir.display().to_string(),
         "devMode": host.dev_mode,
+        "features": features,
     });
     tokio::select! {
         res = client.request("plugin.init", init_params, INIT_TIMEOUT) => {

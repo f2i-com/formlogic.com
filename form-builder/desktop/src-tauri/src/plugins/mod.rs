@@ -23,6 +23,7 @@
 //! bridge manifest) that materialise into the plugins dir on user install.
 
 pub mod builtin;
+pub mod receipts;
 pub mod manifest;
 pub mod registry;
 pub mod rpc;
