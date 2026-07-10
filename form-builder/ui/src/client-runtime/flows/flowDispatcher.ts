@@ -431,6 +431,10 @@ export function startFlowDispatcher(
     // every CLAIM_POLL_INTERVAL_MS. Nothing to execute without flow definitions.
     if ((flows?.flows.length ?? 0) > 0) {
       void claimQueuedAppRuns();
+      // Clear any interval a prior (unstopped) start left running before we
+      // reassign — a re-entrant startFlowDispatcher (app switch without cleanup)
+      // would otherwise leak the old interval, which keeps polling forever.
+      stopClaimTimer();
       claimTimer = setInterval(() => void claimQueuedAppRuns(), CLAIM_POLL_INTERVAL_MS);
     }
   })();
