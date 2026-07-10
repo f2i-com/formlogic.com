@@ -1,6 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table } from 'lucide-react';
+import { ArrowLeft, Save, Check, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -201,6 +201,60 @@ export function AppSettings() {
       />
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
       <div className="max-w-4xl mx-auto">
+
+      {/* Identity + quick actions: opening the running app and jumping to Deploy are the two
+          things owners do most from here — surface them above the settings tabs instead of
+          burying them in the Manage grid. */}
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900/50">
+        {app.logoUrl ? (
+          <img src={app.logoUrl} alt="" className="h-11 w-11 flex-none rounded-xl object-cover ring-1 ring-black/5 dark:ring-white/10" />
+        ) : (
+          <div
+            className="flex h-11 w-11 flex-none items-center justify-center rounded-xl"
+            style={(() => {
+              const accent = isHexColor(app.theme?.primaryColor) ? app.theme.primaryColor : '#6366f1';
+              return { background: accent, color: readableForegroundColor(accent) };
+            })()}
+          >
+            <DynamicIcon name={app.settings?.icon} className="h-6 w-6" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{app.name}</p>
+            <span
+              className={cn(
+                'flex-none rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wide',
+                app.status === 'published'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+                  : 'border-gray-200 bg-gray-100 text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400',
+              )}
+            >
+              {app.status}
+            </span>
+          </div>
+          <p className="truncate font-mono text-xs text-gray-400 dark:text-slate-500">/app/{app.slug}</p>
+        </div>
+        <div className="flex flex-none items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={<Rocket className="h-4 w-4" />}
+            onClick={() => navGuarded(`/apps/${appId}/deploy`)}
+          >
+            Deploy
+          </Button>
+          <Button
+            size="sm"
+            leftIcon={<ExternalLink className="h-4 w-4" />}
+            disabled={app.status !== 'published'}
+            title={app.status === 'published' ? 'Open the app in a new tab' : 'Publish the app (Deploy) to open it'}
+            onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener')}
+          >
+            Open app
+          </Button>
+        </div>
+      </div>
 
       {/* Tab navigation */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
