@@ -4,7 +4,7 @@
 `AGENT_NOTES.md` are historical planning notes and contain stale items (rate limiting is
 MySQL-backed now, webhooks have a retry worker, etc.) — do not treat their TODOs as open.
 
-Last reconciled against code: 2026-07-04.
+Last reconciled against code: 2026-07-10.
 
 ---
 
@@ -13,8 +13,15 @@ Last reconciled against code: 2026-07-04.
 The **`E2E (Playwright) — release gate`** workflow (`.github/workflows/e2e.yml`) is the launch gate —
 it runs the full-stack golden paths against a real PHP+MySQL+SPA. It runs nightly, on every `v*`
 release tag, and on demand. Follow **[docs/RELEASE_RUNBOOK.md](docs/RELEASE_RUNBOOK.md)** for the full
-pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-screen CSP as no-egress
-(`check-security-invariants.mjs`).
+pre-launch sequence.
+
+Fast CI (`ci.yml`, every PR/push) runs: backend PHP unit+DB tests, the full frontend **Vitest**
+suite, typecheck+build, bundle budget, pack-screen coverage, the custom-screen CSP no-egress pin
+(`check-security-invariants.mjs`), dependency audits, and the **FormLogic Desktop Rust tests on a
+Windows runner**. The **`Package` workflow refuses to build/publish a release zip unless its
+`verify` job (backend tests + Vitest + invariants) passes on the exact same SHA** — a tag can no
+longer publish untested code (audit REL-001/C-09). The Aokie plugin repo (`f2i-com/aokie.com`) has
+its own Windows CI running the plugin's full test suite plus the voice-feature check.
 
 **Golden-path coverage:** ✅ = spec exists; ⏳ = tracked follow-up spec.
 - ✅ auth login/logout; build→publish→submit-public→view; required validation; hidden-field authority;

@@ -3,11 +3,18 @@ name: E2E (Playwright) — release gate
 # Full-stack launch golden paths. Runs the real PHP + MySQL + built SPA on ONE origin (so cookies are
 # same-origin over HTTP) and drives it with Playwright/Chrome.
 #
-# MANUAL-ONLY by choice: the suite is resource-heavy, so it no longer runs on tags or nightly —
-# run it locally before releases (cd form-builder/ui && npm run test:e2e against a live deploy,
-# see form-builder/README.md), or trigger this workflow on demand from the Actions tab.
+# Audit REL-001/C-09: this is the RELEASE GATE the launch checklist documents — it runs
+# nightly, on every v* release tag, and on demand. (It was temporarily manual-only while
+# resource-heavy; the checklist and reality must match, and tag pushes are rare enough
+# that the cost is fine.)
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
+    - cron: '20 15 * * *'
 
 jobs:
   e2e:

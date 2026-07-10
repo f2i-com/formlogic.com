@@ -82,6 +82,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # The full Vitest suite (client-runtime, flows, packs, connectors, aokie
+      # screens) — audit REL-001/C-09: CI previously built without running it.
+      - name: Unit tests (Vitest)
+        run: npm test
+
       - name: Typecheck + build
         run: npm run build
 
@@ -113,3 +118,26 @@ jobs:
       # unavoidable, document in LAUNCH_CHECKLIST.md.)
       - name: Security audit (high/critical)
         run: npm audit --audit-level=high
+
+  desktop:
+    # FormLogic Desktop's Rust runtime (flow dispatcher, plugin host, event
+    # receipts, relay) — audit REL-001/C-09: previously untested in CI. Runs on
+    # Windows because that is the ONLY platform the desktop ships on.
+    name: Desktop (Rust, Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: form-builder/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: form-builder/desktop/src-tauri
+
+      - name: Tests (lib)
+        run: cargo test --lib
