@@ -179,7 +179,7 @@ export function TriggersPanel({
         )}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-auto p-3">
         {isWorkspaceFlow && (
           <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
             Workspace flows can only use form.submitted triggers here; connector/event triggers need an app-scoped flow.

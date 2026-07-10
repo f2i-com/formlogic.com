@@ -176,7 +176,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         )}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-slate-300" htmlFor="flow-test-inputs">
             Inputs (JSON) — available as <span className="font-mono">$inputs</span> / <span className="font-mono">inputs</span>

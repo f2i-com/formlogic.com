@@ -254,7 +254,7 @@ function BindingFormPicker({
       {open && (
         <ul
           role="listbox"
-          className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          className="scrollbar-thin absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
         >
           {results.length === 0 ? (
             <li className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No forms match "{query}".</li>

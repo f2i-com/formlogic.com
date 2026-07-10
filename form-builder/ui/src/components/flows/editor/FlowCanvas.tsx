@@ -360,7 +360,7 @@ function QuickConnectMenu({ x, y, specs, onPick, onClose }: {
             />
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-1">
+        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-1">
           {results.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>
           ) : (

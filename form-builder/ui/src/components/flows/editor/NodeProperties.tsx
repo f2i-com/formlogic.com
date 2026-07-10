@@ -161,7 +161,7 @@ function FormCombobox({
       {open && (
         <ul
           role="listbox"
-          className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 shadow-lg"
+          className="scrollbar-thin absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 shadow-lg"
         >
           {results.length === 0 ? (
             <li className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No forms match "{query}".</li>
@@ -974,7 +974,7 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
       </div>
 
       {/* key={nodeId} remounts the field widgets (form-picker mode, adders) when the selection changes. */}
-      <div key={nodeId} onFocus={onPanelFocus} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3.5">
+      <div key={nodeId} onFocus={onPanelFocus} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 space-y-3.5">
         {spec ? (
           <>
             <p className="text-xs text-gray-500 dark:text-slate-400">{spec.description}</p>

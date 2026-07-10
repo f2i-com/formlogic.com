@@ -174,7 +174,7 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
         )}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-auto">
         {loadError && runs !== null && runs.length === 0 ? (
           <div className="px-3 py-4">
             <div className="mb-3 flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
