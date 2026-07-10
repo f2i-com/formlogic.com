@@ -873,6 +873,11 @@ class ResponseService
         // Keep the denormalized MySQL response_count in sync for list views.
         $this->syncResponseCount($formId);
 
+        // Records retention (audit PRIV-001): every write path funnels through
+        // here, so this is where expired rows age out. Hour-throttled, capped,
+        // and internally best-effort.
+        $this->purgeExpiredIfDue($formId);
+
         // 8. Read back + dispatch webhook, best-effort: the response is durably
         // saved in both stores by now, so a read/format/delivery error must NOT
         // bubble up and turn a saved submission into a 500 (the submitter would
@@ -1274,6 +1279,65 @@ class ResponseService
     /**
      * Delete a response
      */
+    /**
+     * Opportunistic records-retention purge (audit PRIV-001): when the form's
+     * settings carry a positive `retentionDays`, responses older than the TTL
+     * are removed THROUGH deleteResponse — so MySQL metadata/link rows and
+     * uploaded files go with the authoritative SQLite row. Throttled to once
+     * per hour per form (a `form_data` marker), capped per sweep, and never
+     * fails the caller: a purge problem must not reject a live submission.
+     */
+    public function purgeExpiredIfDue(string $formId): int
+    {
+        try {
+            $db = $this->sqlite->getFormDatabase($formId);
+            $hour = (string) intdiv(time(), 3600);
+            $stmt = $db->prepare("SELECT value FROM form_data WHERE key = 'retention_purged_hour'");
+            $stmt->execute();
+            if ((string) $stmt->fetchColumn() === $hour) {
+                return 0;
+            }
+            // Claim this hour's slot BEFORE the work — concurrent submitters skip.
+            $claim = $db->prepare(
+                "INSERT OR REPLACE INTO form_data (key, value, updated_at) VALUES ('retention_purged_hour', :h, datetime('now'))"
+            );
+            $claim->execute(['h' => $hour]);
+
+            $settingsStmt = $this->mysql->prepare("SELECT settings FROM forms WHERE id = :id");
+            $settingsStmt->execute(['id' => $formId]);
+            $settings = json_decode((string) ($settingsStmt->fetchColumn() ?: '{}'), true);
+            $days = (int) (is_array($settings) ? ($settings['retentionDays'] ?? 0) : 0);
+            if ($days <= 0) {
+                return 0;
+            }
+
+            $cutoff = date('Y-m-d H:i:s', time() - $days * 86400);
+            $sel = $db->prepare("SELECT id FROM responses WHERE submitted_at < :cutoff LIMIT 500");
+            $sel->execute(['cutoff' => $cutoff]);
+            $ids = $sel->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $deleted = 0;
+            foreach ($ids as $rid) {
+                if ($this->deleteResponse($formId, (string) $rid)) {
+                    $deleted++;
+                }
+            }
+            if ($deleted > 0) {
+                $this->logger->info('Retention purge removed expired responses', [
+                    'formId' => $formId,
+                    'deleted' => $deleted,
+                    'retentionDays' => $days,
+                ]);
+            }
+            return $deleted;
+        } catch (\Throwable $e) {
+            $this->logger->error('Retention purge failed', [
+                'formId' => $formId,
+                'error' => $e->getMessage(),
+            ]);
+            return 0;
+        }
+    }
+
     public function deleteResponse(string $formId, string $responseId): bool
     {
         if (!$this->sqlite->formDatabaseExists($formId)) {

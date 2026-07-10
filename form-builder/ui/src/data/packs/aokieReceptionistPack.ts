@@ -544,7 +544,9 @@ export const aokieReceptionistPack: PackData = {
       title: 'Calls',
       icon: 'PhoneCall',
       description: 'One row per phone call. Created and updated automatically by the app logic from aokie.call.* events; flows add the summary.',
-      settings: { ...defaultSettings },
+      // Caller PII ages out (audit PRIV-001); business records (customers,
+      // appointments, orders) deliberately carry no TTL.
+      settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
@@ -626,7 +628,7 @@ export const aokieReceptionistPack: PackData = {
       title: 'Transcript Turns',
       icon: 'MessagesSquare',
       description: 'Final transcript turns streamed from the Aokie plugin during a call (one row per aokie.call.turn.final event).',
-      settings: { ...defaultSettings },
+      settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
@@ -688,7 +690,7 @@ export const aokieReceptionistPack: PackData = {
       title: 'SMS Threads',
       icon: 'MessageCircle',
       description: 'One row per phone number the business texts with; upserted automatically when messages arrive.',
-      settings: { ...defaultSettings },
+      settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
         { id: 'phone', type: 'phone', label: 'Phone Number', required: true, properties: { placeholder: '+61 400 000 000' } },
@@ -733,7 +735,7 @@ export const aokieReceptionistPack: PackData = {
       title: 'SMS Messages',
       icon: 'MessageSquare',
       description: 'Every inbound and outbound SMS. Inbound rows land automatically; AI reply drafts wait for approval before sending.',
-      settings: { ...defaultSettings },
+      settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
         { id: 'message_id', type: 'short_text', label: 'Message ID', required: false, properties: {} },
@@ -1002,7 +1004,7 @@ export const aokieReceptionistPack: PackData = {
       title: 'Hardware Events',
       icon: 'Bluetooth',
       description: 'Dongle/phone bridge problems recorded automatically from aokie.hardware.error events. The section screen is the Device Setup console.',
-      settings: { ...defaultSettings },
+      settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
         { id: 'event_id', type: 'short_text', label: 'Event ID', required: false, properties: {} },

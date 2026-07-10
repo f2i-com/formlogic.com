@@ -267,7 +267,8 @@
           "notifications": {
             "emailNotifications": false
           },
-          "isClosed": false
+          "isClosed": false,
+          "retentionDays": 90
         },
         "theme": {
           "primaryColor": "#0284c7",
@@ -488,7 +489,8 @@
           "notifications": {
             "emailNotifications": false
           },
-          "isClosed": false
+          "isClosed": false,
+          "retentionDays": 90
         },
         "theme": {
           "primaryColor": "#0284c7",
@@ -733,7 +735,8 @@
           "notifications": {
             "emailNotifications": false
           },
-          "isClosed": false
+          "isClosed": false,
+          "retentionDays": 90
         },
         "theme": {
           "primaryColor": "#0284c7",
@@ -935,7 +938,8 @@
           "notifications": {
             "emailNotifications": false
           },
-          "isClosed": false
+          "isClosed": false,
+          "retentionDays": 90
         },
         "theme": {
           "primaryColor": "#0284c7",
@@ -2072,7 +2076,8 @@
           "notifications": {
             "emailNotifications": false
           },
-          "isClosed": false
+          "isClosed": false,
+          "retentionDays": 90
         },
         "theme": {
           "primaryColor": "#0284c7",
