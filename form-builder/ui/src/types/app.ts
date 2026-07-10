@@ -339,6 +339,9 @@ export interface AppInvitation {
 export interface AppRuntimeForm {
   formId: string;
   displayName: string;
+  /** Stable machine alias stamped at pack import (audit FL-007) — app-logic
+   *  formKey resolution prefers it over rename-able labels. */
+  packFormId?: string | null;
   icon?: string;
   description?: string | null;
   fields: unknown[];

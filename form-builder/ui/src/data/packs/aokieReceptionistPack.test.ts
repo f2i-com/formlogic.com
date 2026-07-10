@@ -134,13 +134,13 @@ describe('aokieReceptionistPack — app', () => {
     expect(rPerms).not.toContain('connector.aokie.dongle.installDriver');
   });
 
-  it('logic scripts reference forms by the app display names (the runtime logic keys)', () => {
-    const displayNames = new Set(app.forms.map((f) => f.displayName));
+  it('logic scripts reference forms by stable packFormIds — never rename-able labels (audit FL-007)', () => {
+    const packFormIds = new Set(app.forms.map((f) => f.packFormId));
     const sources = (app.customLogic?.scripts ?? []).map((s) => s.source).join('\n');
     const keys = [...sources.matchAll(/formKey:\s*'([^']+)'/g)].map((m) => m[1]);
     expect(keys.length).toBeGreaterThan(0);
     for (const key of keys) {
-      expect(displayNames.has(key), `logic formKey '${key}' is not an app display name`).toBe(true);
+      expect(packFormIds.has(key), `logic formKey '${key}' is not a packFormId`).toBe(true);
     }
   });
 

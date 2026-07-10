@@ -59,7 +59,7 @@ const LOGIC_CALL_INCOMING = `function run(ctx) {
   // write must not be marked handled.
   return {
     effects: [
-      { type: 'formlogic.submitResponse', formKey: 'Calls', answers: {
+      { type: 'formlogic.submitResponse', formKey: 'calls', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         caller_phone: phone,
         caller_name: String(d.callerName || (phone ? '' : 'Unknown caller')),
@@ -82,7 +82,7 @@ const LOGIC_CALL_ANSWERED = `function run(ctx) {
   // update must materialise the row, never assume it exists.
   return {
     effects: [
-      { type: 'formlogic.updateResponse', formKey: 'Calls', upsert: true,
+      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,
         match: { field: 'call_id', value: callId },
         answers: { call_id: callId, status: 'answered', answered_at: String(ev.occurredAt || '') } }
     ]
@@ -100,7 +100,7 @@ const LOGIC_CALL_TURN = `function run(ctx) {
   if (['caller', 'aokie', 'operator', 'system'].indexOf(speaker) < 0) speaker = 'system';
   return {
     effects: [
-      { type: 'formlogic.submitResponse', formKey: 'Transcript Turns', answers: {
+      { type: 'formlogic.submitResponse', formKey: 'transcript-turns', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         turn_index: Number(d.turn || 0),
         speaker: speaker,
@@ -125,7 +125,7 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
   // arrived out of order still deserves a final record.
   return {
     effects: [
-      { type: 'formlogic.updateResponse', formKey: 'Calls', upsert: true,
+      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,
         match: { field: 'call_id', value: callId },
         answers: {
           call_id: callId,
@@ -148,9 +148,9 @@ const LOGIC_SMS_RECEIVED = `function run(ctx) {
   if (d.displayName) thread.display_name = String(d.displayName);
   return {
     effects: [
-      { type: 'formlogic.updateResponse', formKey: 'SMS Threads', upsert: true,
+      { type: 'formlogic.updateResponse', formKey: 'sms-threads', upsert: true,
         match: { field: 'phone', value: phone }, answers: thread },
-      { type: 'formlogic.submitResponse', formKey: 'Messages', answers: {
+      { type: 'formlogic.submitResponse', formKey: 'sms-messages', answers: {
         message_id: String(d.messageId || ev.idempotencyKey || ''),
         phone: phone,
         direction: 'inbound',
@@ -175,7 +175,7 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
   if (['info', 'warning', 'error'].indexOf(severity) < 0) severity = 'error';
   return {
     effects: [
-      { type: 'formlogic.submitResponse', formKey: 'Device Setup', answers: {
+      { type: 'formlogic.submitResponse', formKey: 'hardware-events', answers: {
         event_id: String(ev.idempotencyKey || ''),
         event_name: String(d.event || ev.name || ''),
         severity: severity,

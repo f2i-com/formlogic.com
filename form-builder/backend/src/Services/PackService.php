@@ -169,12 +169,15 @@ class PackService
                         if (array_key_exists('isVisible', $appForm)) {
                             $meta['isVisible'] = (bool) $appForm['isVisible'];
                         }
-                        if (isset($appForm['settings'])) {
-                            $meta['settings'] = $appForm['settings'];
-                        }
-                        if (!empty($meta)) {
-                            $this->appService->updateAppForm($appId, $realFormId, $meta);
-                        }
+                        // Stable machine alias (audit FL-007): the pack's form key
+                        // is stamped into app_forms.settings so app-logic resolves
+                        // records by it forever — retitling the form changes nothing.
+                        $settings = isset($appForm['settings']) && is_array($appForm['settings'])
+                            ? $appForm['settings']
+                            : [];
+                        $settings['packFormId'] = (string) $appForm['packFormId'];
+                        $meta['settings'] = $settings;
+                        $this->appService->updateAppForm($appId, $realFormId, $meta);
                     }
                 }
 

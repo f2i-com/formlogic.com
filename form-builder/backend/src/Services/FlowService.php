@@ -1704,7 +1704,7 @@ class FlowService
 
         $out = [];
         $formsStmt = $this->mysql->prepare("
-            SELECT af.form_id AS id, f.title AS name, af.display_name AS displayName
+            SELECT af.form_id AS id, f.title AS name, af.display_name AS displayName, af.settings AS afSettings
             FROM app_forms af
             JOIN forms f ON f.id = af.form_id
             WHERE af.app_id = :a
@@ -1712,11 +1712,18 @@ class FlowService
         ");
         foreach ($stmt->fetchAll() as $row) {
             $formsStmt->execute(['a' => $row['id']]);
-            $forms = array_map(static fn (array $f) => [
-                'id' => $f['id'],
-                'name' => $f['name'],
-                'displayName' => $f['displayName'],
-            ], $formsStmt->fetchAll());
+            $forms = array_map(static function (array $f) {
+                $afSettings = json_decode((string) ($f['afSettings'] ?? ''), true);
+                return [
+                    'id' => $f['id'],
+                    'name' => $f['name'],
+                    'displayName' => $f['displayName'],
+                    // Stable machine alias (audit FL-007): stamped at pack import,
+                    // untouched by renames — formKey resolution checks it FIRST so
+                    // relabelling a form can't break app-logic record writes.
+                    'packFormId' => is_array($afSettings) ? ($afSettings['packFormId'] ?? null) : null,
+                ];
+            }, $formsStmt->fetchAll());
             $out[] = [
                 'app' => ['id' => $row['id'], 'slug' => $row['slug'], 'name' => $row['name']],
                 'customLogic' => $this->decodeJson($row['custom_logic']),

@@ -211,7 +211,12 @@ function logicStorageKey(key: string): string {
  */
 function resolveFormKey(formKey: string): string {
   const forms = useAppRuntimeStore.getState().config?.forms ?? [];
-  const hit = forms.find((f) => f.formId === formKey) ?? forms.find((f) => f.displayName === formKey);
+  // The stable pack alias wins (audit FL-007): labels are the operator's to
+  // change, so displayName resolves only as a fallback.
+  const hit =
+    forms.find((f) => f.packFormId === formKey) ??
+    forms.find((f) => f.formId === formKey) ??
+    forms.find((f) => f.displayName === formKey);
   return hit?.formId ?? formKey;
 }
 

@@ -41,6 +41,9 @@ pub struct FormRef {
     pub id: String,
     pub name: Option<String>,
     pub display_name: Option<String>,
+    /// Stable machine alias stamped at pack import (audit FL-007) — the ONLY
+    /// resolution key that survives the operator retitling the form.
+    pub pack_form_id: Option<String>,
 }
 
 impl AppLogicApp {
@@ -58,6 +61,7 @@ impl AppLogicApp {
                             id: f.get("id").and_then(Value::as_str)?.to_string(),
                             name: f.get("name").and_then(Value::as_str).map(str::to_string),
                             display_name: f.get("displayName").and_then(Value::as_str).map(str::to_string),
+                            pack_form_id: f.get("packFormId").and_then(Value::as_str).map(str::to_string),
                         })
                     })
                     .collect()
@@ -72,8 +76,13 @@ impl AppLogicApp {
         })
     }
 
-    /// Resolve a formKey (formId | displayName | title) to a real form id.
+    /// Resolve a formKey (packFormId | formId | displayName | title) to a real
+    /// form id. The stable pack alias wins (audit FL-007): labels are the
+    /// operator's to change, so they resolve only as fallbacks.
     fn resolve_form_key(&self, key: &str) -> Option<String> {
+        if let Some(f) = self.forms.iter().find(|f| f.pack_form_id.as_deref() == Some(key)) {
+            return Some(f.id.clone());
+        }
         if let Some(f) = self.forms.iter().find(|f| f.id == key) {
             return Some(f.id.clone());
         }
@@ -340,6 +349,27 @@ mod tests {
             ] },
             "forms": [ { "id": "form-calls", "name": "Calls", "displayName": "Calls" } ]
         })
+    }
+
+    /// Audit FL-007: the stable pack alias resolves FIRST and keeps working
+    /// after the operator retitles the form; labels remain fallbacks only.
+    #[test]
+    fn pack_form_id_resolution_survives_renames() {
+        let app = AppLogicApp::from_bundle(&json!({
+            "app": { "id": "app-1", "slug": "r", "name": "R" },
+            "customLogic": { "version": 1, "runtime": "quickjs", "scripts": [] },
+            "forms": [
+                // The operator renamed BOTH labels — only packFormId still says 'calls'.
+                { "id": "form-calls", "name": "Phone log", "displayName": "Phone log", "packFormId": "calls" },
+                // A second form whose TITLE clashes with the first form's alias:
+                // the alias must still win over the title match.
+                { "id": "form-decoy", "name": "calls", "displayName": "Decoy" }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(app.resolve_form_key("calls").as_deref(), Some("form-calls"));
+        assert_eq!(app.resolve_form_key("Phone log").as_deref(), Some("form-calls"));
+        assert_eq!(app.resolve_form_key("Decoy").as_deref(), Some("form-decoy"));
     }
 
     #[test]

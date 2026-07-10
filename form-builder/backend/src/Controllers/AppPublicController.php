@@ -129,6 +129,9 @@ class AppPublicController
                 $runtimeForms[] = [
                     'formId' => $form['formId'],
                     'displayName' => $form['displayName'],
+                    // Stable machine alias from pack import (audit FL-007) —
+                    // app-logic formKey resolution prefers it over labels.
+                    'packFormId' => is_array($form['settings'] ?? null) ? ($form['settings']['packFormId'] ?? null) : null,
                     'sortOrder' => $form['sortOrder'],
                     'fields' => $formData['fields'],
                     'settings' => $formData['settings'],
