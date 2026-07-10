@@ -946,10 +946,19 @@ async fn check_connector_capability(
     let Some(client) = st.flow_runtime.as_ref().and_then(|rt| rt.api_client()) else {
         return Ok(()); // unlinked — legacy local gating
     };
+    // The token is interpolated into the introspection URL path
+    // (`connector-capabilities/{token}`), so it must be opaque-safe: reject
+    // anything that could reshape the request (`/`, `.`, `%`, whitespace).
+    // Server-minted tokens are hex; we stay format-tolerant but path-safe.
     let Some(token) = headers
         .get("x-formlogic-capability")
         .and_then(|v| v.to_str().ok())
-        .filter(|t| !t.is_empty())
+        .map(str::trim)
+        .filter(|t| {
+            !t.is_empty()
+                && t.len() <= 128
+                && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
         .map(str::to_string)
     else {
         return Err(desktop_err(
@@ -985,9 +994,22 @@ async fn check_connector_capability(
                     "this connector capability is expired or invalid — reload the app page",
                 ))
             }
-            Err(e) => {
-                eprintln!("[desktop] capability introspection unreachable ({e:?}) — allowing (offline grace)");
+            // Offline grace applies ONLY to a genuine transport failure so a
+            // local operator is not locked out of their own phone while the
+            // internet is down. A server that ANSWERS with a definitive
+            // non-grant (401/403 unauthorized, or any other HTTP error) is not
+            // "offline" — treat it as a deny and fail CLOSED (audit SEC-001).
+            Err(crate::formlogic_client::FlError::Network(e)) => {
+                eprintln!("[desktop] capability introspection unreachable (network: {e}) — allowing (offline grace)");
                 return Ok(());
+            }
+            Err(e) => {
+                eprintln!("[desktop] capability introspection refused ({e:?}) — denying (fail closed)");
+                return Err(desktop_err(
+                    StatusCode::FORBIDDEN,
+                    "capability_denied",
+                    "your connector capability could not be verified — reload the app page",
+                ));
             }
         },
     };
