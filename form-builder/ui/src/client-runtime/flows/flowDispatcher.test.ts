@@ -5,6 +5,7 @@ import {
   __setRuntimeFlowsForTests,
   dispatchFormEvent,
   runFlowBySlug,
+  shouldDeferEventToDesktop,
   type FlowDispatcherDeps,
 } from './flowDispatcher';
 import type { FlowExecutorDeps } from './nodes';
@@ -202,6 +203,23 @@ describe('desktop-first routing for connector events', () => {
     __setRuntimeFlowsForTests({ flows: [passthroughGraph()], bindings: [binding({ event: 'aokie.call.ended' })] }, 'my-app');
     await dispatchFormEvent('aokie.call.ended', { formId: 'form-1', responseId: 'rd4', answers: {} });
     expect(harness.reserveCalls).toHaveLength(1);
+  });
+
+  // The SHARED single-writer gate (audit FL-001/C-04): the app-logic
+  // connector-event bridge (useDesktopConnectorEvents) applies the exact same
+  // predicate before running raw onConnectorEvent record writes, so the
+  // browser and the desktop runtime can never both write for one event.
+  it('shouldDeferEventToDesktop mirrors the routing for the app-logic bridge', async () => {
+    installDeps({ desktopRuntimeFresh: async () => true });
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(true);
+    expect(await shouldDeferEventToDesktop('form.submitted')).toBe(false);
+
+    installDeps({ desktopRuntimeFresh: async () => false });
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(false);
+
+    // Fails open: an unreachable probe must never strand an event unwritten.
+    installDeps({ desktopRuntimeFresh: async () => { throw new Error('offline'); } });
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(false);
   });
 });
 

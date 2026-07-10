@@ -10,6 +10,8 @@
 // connection, and no mock traffic. Dedupe on idempotencyKey happens centrally in the hub.
 import { useEffect, useRef } from 'react';
 import { isBrowserConnectorRegistered } from '../connectors/nativeConnectorClient';
+import { shouldDeferEventToDesktop } from '../flows/flowDispatcher';
+import { logger } from '../../lib/logger';
 import { subscribeDesktopEvents } from './desktopEvents';
 import type { DesktopEventEnvelope } from './desktopTypes';
 import type { AppLogicHookOutcome } from '../logic/appLogicHost';
@@ -62,7 +64,19 @@ export function useDesktopConnectorEvents({
       // browser connector (aokie, vehicle, …) keyed by connectorId or source.
       const id = envelope.connectorId ?? envelope.source;
       if (!id || !isBrowserConnectorRegistered(id)) return;
-      void runRef.current(toLogicEvent(envelope));
+      void (async () => {
+        // Single-writer rule (audit FL-001/C-04): while a cloud-linked desktop
+        // flow runtime is heartbeating, IT runs the raw onConnectorEvent
+        // record writes — the browser is a viewer. The exact gate the flow
+        // dispatcher already applies, so the two paths can never both write.
+        if (await shouldDeferEventToDesktop(envelope.name)) {
+          logger.warn(
+            `[app-logic] deferring ${envelope.name} to the desktop runtime (single writer)`
+          );
+          return;
+        }
+        await runRef.current(toLogicEvent(envelope));
+      })();
     });
   }, [appSlug, enabled]);
 }

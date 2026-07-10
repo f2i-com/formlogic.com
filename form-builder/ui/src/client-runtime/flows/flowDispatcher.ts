@@ -451,8 +451,26 @@ function stopClaimTimer(): void {
 // ---------------------------------------------------------------------------
 
 /** Events owned by the desktop runtime while it is alive (local LLM + speech). */
-function isDesktopFirstEvent(name: string): boolean {
+export function isDesktopFirstEvent(name: string): boolean {
   return name.startsWith('aokie.');
+}
+
+/**
+ * Shared desktop-first gate (audit FL-001: the browser must be a VIEWER, not a
+ * second writer): true when this event belongs to the desktop runtime AND a
+ * cloud-linked desktop flow runtime is heartbeating — the browser then skips
+ * running raw app-logic/bindings for it. Used by both the flow dispatcher and
+ * the app-logic connector-event bridge so the two writers can never disagree.
+ * Fails open (false) — an unreachable probe must never strand an event.
+ */
+export async function shouldDeferEventToDesktop(eventName: string): Promise<boolean> {
+  if (!isDesktopFirstEvent(eventName)) return false;
+  try {
+    const probe = getDeps().desktopRuntimeFresh;
+    return probe ? await probe() : false;
+  } catch {
+    return false;
+  }
 }
 
 let desktopFreshCache: { at: number; fresh: boolean } | null = null;
@@ -481,13 +499,7 @@ export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
 
 /** Should the browser defer this event to the desktop runtime? Never throws. */
 async function deferToDesktop(eventName: string): Promise<boolean> {
-  if (!isDesktopFirstEvent(eventName)) return false;
-  try {
-    const probe = getDeps().desktopRuntimeFresh;
-    return probe ? await probe() : false;
-  } catch {
-    return false;
-  }
+  return shouldDeferEventToDesktop(eventName);
 }
 
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
