@@ -242,6 +242,26 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   const turnsFormId = useMemo(() => forms.find((f) => f.displayName === 'Transcript Turns')?.formId, [forms]);
   const storedTurns = useResponses((remoteMode ? turnsFormId : undefined) ?? '', { limit: 60 });
 
+  // Known-caller name on the ringing/active header (audit AOK-UX-004): the
+  // incoming-caller-lookup flow already matches Customers by phone to shape
+  // the greeting; surface that name to the operator too. Match on the last-9
+  // phone digits (so +61… and 04… forms agree — the same rule the flow uses),
+  // scanning the Customers the SDK already exposes to this role.
+  const customersFormId = useMemo(() => forms.find((f) => f.displayName === 'Customers')?.formId, [forms]);
+  const customers = useResponses(customersFormId ?? '', { limit: 200, pollInterval: remoteMode ? undefined : 30 });
+  const customerNameForPhone = useCallback(
+    (phone?: string): string | undefined => {
+      const tail = String(phone ?? '').replace(/[^0-9]/g, '').slice(-9);
+      if (tail.length < 5) return undefined; // too short to match confidently
+      const hit = customers.rows.find(
+        (c) => String(c.answers.phone ?? '').replace(/[^0-9]/g, '').slice(-9) === tail
+      );
+      const name = hit ? String(hit.answers.name ?? '').trim() : '';
+      return name || undefined;
+    },
+    [customers.rows]
+  );
+
   // Role gate: operating the call maps to being allowed to write Calls records. Viewers
   // (no submit_responses on the Calls form) see everything but can't drive the phone.
   const roleAllowsOperating = callsFormId ? canSubmitCalls(callsFormId) : permissions.appLevel.includes('manage_app');
@@ -306,6 +326,10 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   // SAME validated/deduped stream app logic and flows consume).
   const reloadRef = useRef(recent.reload);
   useEffect(() => { reloadRef.current = recent.reload; }, [recent.reload]);
+  // The event subscription below has [] deps, so the incoming-call toast reads
+  // the customer lookup through a ref to avoid a stale (empty) closure.
+  const customerLookupRef = useRef(customerNameForPhone);
+  useEffect(() => { customerLookupRef.current = customerNameForPhone; }, [customerNameForPhone]);
   const turnsReloadRef = useRef(storedTurns.reload);
   useEffect(() => { turnsReloadRef.current = storedTurns.reload; }, [storedTurns.reload]);
 
@@ -330,8 +354,9 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
           setTurns([]);
           const incoming = callFromEventData(callId, data, 'ringing');
           setCall(incoming);
-          // Surface it even when the operator isn't looking at this tab.
-          toast.info('Incoming call', incoming.callerName || incoming.from || 'Unknown caller');
+          // Surface it even when the operator isn't looking at this tab — name
+          // the known customer when we can (audit AOK-UX-004).
+          toast.info('Incoming call', incoming.callerName || customerLookupRef.current(incoming.from) || incoming.from || 'Unknown caller');
           break;
         }
         case 'aokie.call.answered':
@@ -625,10 +650,15 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
 
             <div className="min-w-0">
               <p className="truncate text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
-                {active.callerName || active.from || 'Unknown caller'}
+                {active.callerName || customerNameForPhone(active.from) || active.from || 'Unknown caller'}
               </p>
-              <p className="mt-1 font-mono text-sm tabular-nums text-gray-500 dark:text-slate-400">
+              <p className="mt-1 flex items-center gap-2 font-mono text-sm tabular-nums text-gray-500 dark:text-slate-400">
                 {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
+                {!active.callerName && customerNameForPhone(active.from) && (
+                  <span className="rounded bg-primary-100 px-1.5 py-0.5 font-sans text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
+                    Known customer
+                  </span>
+                )}
               </p>
             </div>
 
