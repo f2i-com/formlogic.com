@@ -3,7 +3,7 @@
 ## Custom Domains, PWAs, FormLogic SDK, Application Packages, Native Runtime, Connectors, Offline Sync, Marketplace, and QuickJS App Logic
 
 **Document status:** planning/specification document only.
-**Target repo:** `izuc/formlogic-app`
+**Target repo:** `f2i-com/formlogic.com`
 **Main product direction:** extend FormLogic from a business form/app builder into a full custom business app deployment platform.
 
 This version expands the prior architecture document that described custom domains, app launch pages, browser PWAs, the FormLogic Native Runtime, connectors, and the MineCab proof-of-concept. 

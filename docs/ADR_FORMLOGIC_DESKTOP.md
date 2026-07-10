@@ -1,6 +1,6 @@
 # ADR: FormLogic Desktop becomes FormLogic Desktop
 
-**Date:** 2026-07-07 · **Status:** Accepted · **Repos:** `izuc/formlogic-app`, `formlogic-com/formlogic-web`, `izuc/aokie`
+**Date:** 2026-07-07 · **Status:** Accepted · **Repos:** `f2i-com/formlogic.com`, `formlogic-com/formlogic-web`, `f2i-com/aokie.com`
 
 ## Decision
 
@@ -20,7 +20,7 @@ Three disconnected products (FormLogic, FormLogic, Aokie) confuse users and trip
 
 ## Repo layout (decided 2026-07-07, hybrid)
 
-FormLogic Desktop's source lives **in `izuc/formlogic-app` at `form-builder/desktop`** (moved from `formlogic-web/desktop` so the platform, desktop companion, flows, and app packages version together). `formlogic-com/formlogic-web` keeps the FormLogic flow-builder product (ui/api/cli) — its web UI only gained the dual companion-id matcher. `izuc/aokie` stays separate (large native stack, heavy CI) behind the versioned stdio plugin contract.
+FormLogic Desktop's source lives **in `f2i-com/formlogic.com` at `form-builder/desktop`** (moved from `formlogic-web/desktop` so the platform, desktop companion, flows, and app packages version together). `formlogic-com/formlogic-web` keeps the FormLogic flow-builder product (ui/api/cli) — its web UI only gained the dual companion-id matcher. `f2i-com/aokie.com` stays separate (large native stack, heavy CI) behind the versioned stdio plugin contract.
 
 ## Consequences
 

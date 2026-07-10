@@ -56,7 +56,7 @@ The script verifies prerequisites, runs `composer install`, creates `backend/.en
 #### 1. Clone
 
 ```bash
-git clone git@github.com:izuc/formlogic-app.git
+git clone git@github.com:f2i-com/formlogic.com.git
 cd formlogic-app/form-builder
 ```
 

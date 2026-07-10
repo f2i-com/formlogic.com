@@ -79,20 +79,27 @@ class CsrfMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        $csrfCookie = $cookies[$this->cookieName] ?? '';
         $csrfHeader = $request->getHeaderLine($this->headerName);
         $authToken = (string) ($cookies[$this->authCookieName] ?? '');
 
-        // Primary check: the CSRF token must be the HMAC of THIS session's auth
-        // token, so a token minted for another session/user cannot be replayed.
-        $boundOk = $authToken !== '' && $this->secret !== ''
-            && hash_equals(self::tokenForAuth($authToken, $this->secret), $csrfHeader ?: '');
-        // Transitional fallback: plain double-submit (cookie == header) for sessions
-        // issued before this change. Safe to remove once old sessions have expired.
-        $doubleSubmitOk = hash_equals($csrfCookie ?: "\0", $csrfHeader ?: '');
+        // Misconfiguration must fail CLOSED and loudly (audit FL-AUTH-001):
+        // without the HMAC secret there is no forgery-proof token to check,
+        // and silently degrading to plain double-submit is exactly the
+        // weakness this middleware exists to prevent.
+        if ($this->secret === '') {
+            return $this->forbidden('CSRF protection is misconfigured (no signing secret) — set JWT_SECRET');
+        }
 
-        // Both branches use hash_equals to avoid leaking timing about which failed.
-        if (!$boundOk && !$doubleSubmitOk) {
+        // The CSRF token must be the HMAC of THIS session's auth token, so a
+        // token minted for another session/user — or an attacker-set
+        // cookie/header pair — can never be replayed. The transitional plain
+        // double-submit fallback (audit FL-AUTH-001) is retired: sessions
+        // predating the bound token have long expired, and double-submit is
+        // forgeable by anyone who can set a cookie (a subdomain, or a
+        // non-HTTPS sibling origin).
+        $boundOk = $authToken !== ''
+            && hash_equals(self::tokenForAuth($authToken, $this->secret), $csrfHeader ?: '');
+        if (!$boundOk) {
             return $this->forbidden('CSRF token validation failed');
         }
 

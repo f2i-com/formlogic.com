@@ -1,7 +1,7 @@
 # FormLogic Desktop — Plugin SDK Contract
 
 **Status:** Phase 0 contract (frozen 2026-07-07). Schemas: `docs/contracts/plugin-manifest.schema.json`, `desktop-event.schema.json`, `connector-request.schema.json`, `connector-response.schema.json`.
-**Host implementation:** this repo → `form-builder/desktop/src-tauri/src/plugins/`. **Reference plugin:** `izuc/aokie` → `crates/aokie-plugin`.
+**Host implementation:** this repo → `form-builder/desktop/src-tauri/src/plugins/`. **Reference plugin:** `f2i-com/aokie.com` → `crates/aokie-plugin`.
 
 ## 1. Layout
 

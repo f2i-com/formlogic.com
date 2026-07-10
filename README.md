@@ -82,7 +82,7 @@ Two installers live in `form-builder/`. Both create the `.env` files, generate s
 ### Manual setup
 
 ```bash
-git clone git@github.com:izuc/formlogic-app.git
+git clone git@github.com:f2i-com/formlogic.com.git
 cd formlogic-app
 
 # 1. Create the database (the app creates the tables on first request)
