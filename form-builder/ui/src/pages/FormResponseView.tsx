@@ -3,7 +3,7 @@
 // tags, plus the related-records grids — and edits inline. Route:
 // /responses/:formId/:responseId (owner-scoped; local-storage forms supported).
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Check, Edit2, RefreshCw, Trash2, X } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
@@ -55,6 +55,7 @@ function formatDuration(seconds: number): string {
 function FormResponseView() {
   const { formId, responseId } = useParams<{ formId: string; responseId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const storageMode = useFormStore((s) => s.storageMode);
   const getStoredForm = useFormStore((s) => s.getForm);
   const getLocalResponses = useResponseStore((s) => s.getResponsesByFormId);
@@ -223,14 +224,27 @@ function FormResponseView() {
       />
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-        {/* Back + context */}
-        <button
-          type="button"
-          onClick={() => navigate(`/responses/${formId}`)}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
-        >
-          <ArrowLeft className="h-4 w-4" /> {form?.title ? `${form.title} — all records` : 'All records'}
-        </button>
+        {/* History-aware back: return to wherever the user came from (the records table,
+            another record via a linked chip or related row, Analytics, a dashboard…),
+            falling back to this form's records list on a direct load. A separate quiet
+            link always offers the list, since "back" may lead somewhere else entirely. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-4">
+          <button
+            type="button"
+            onClick={() => { if (location.key !== 'default') navigate(-1); else navigate(`/responses/${formId}`); }}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back
+          </button>
+          <span className="text-gray-300 dark:text-slate-700" aria-hidden="true">·</span>
+          <button
+            type="button"
+            onClick={() => navigate(`/responses/${formId}`)}
+            className="text-sm text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-300 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded truncate max-w-[60vw]"
+          >
+            {form?.title ? `${form.title} — all records` : 'All records'}
+          </button>
+        </div>
 
         {loading ? (
           <div className="space-y-3" role="status" aria-label="Loading record">

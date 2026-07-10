@@ -964,7 +964,10 @@ function FormResponses() {
                             title={plain}
                           >
                             {isLinked
-                              ? <LinkedRecordChips items={linksFor(response, field.id)} />
+                              ? <LinkedRecordChips
+                                  items={linksFor(response, field.id)}
+                                  onOpen={(it) => it.targetFormId && navigate(`/responses/${it.targetFormId}/${it.id}`)}
+                                />
                               : isEmpty
                                 ? <span className="text-gray-300 dark:text-slate-600">—</span>
                                 : plain}
