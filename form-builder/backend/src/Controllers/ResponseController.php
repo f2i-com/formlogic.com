@@ -499,6 +499,12 @@ class ResponseController
             $quotaLock = null;
             if (!empty($settings['quotaLimit'])) {
                 $quotaLock = $this->responseService->acquireFormLock($formId);
+                if ($quotaLock === null) {
+                    // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot
+                    // the hard cap. Fail closed + retryable.
+                    return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
+                        'message' => 'The form is busy — please retry in a moment.']];
+                }
                 if ($this->responseService->getResponseCount($formId) >= (int)$settings['quotaLimit']) {
                     $this->responseService->releaseFormLock($quotaLock);
                     $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';

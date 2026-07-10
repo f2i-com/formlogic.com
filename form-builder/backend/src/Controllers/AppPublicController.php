@@ -607,9 +607,15 @@ class AppPublicController
             }
             $reserved = 'owner';
         }
-        // $reserved is 'owner' (we won the reservation) or 'unavailable' (the ledger write failed for a
-        // non-duplicate reason — fail OPEN and submit without idempotency rather than reject a real
-        // submission, matching the prior best-effort intent).
+        if ($reserved === 'unavailable') {
+            // Audit FL-004/C-11: the ledger is the ONLY duplicate gate for replayed
+            // submissions (service-worker background sync + manual retries carry the
+            // same key). Failing open during a ledger outage could persist the same
+            // submission twice — fail CLOSED and retryable instead; the offline
+            // queues treat a 5xx as retry-later.
+            return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
+                'message' => 'The submission ledger is temporarily unavailable — please retry.']];
+        }
         $ownsReservation = ($reserved === 'owner');
 
         $result = $this->runSubmissionPipeline($app, $formId, $data, $userId);
@@ -704,6 +710,12 @@ class AppPublicController
             $quotaLock = null;
             if ($form && !empty($settings['quotaLimit'])) {
                 $quotaLock = $this->responseService->acquireFormLock($formId);
+                if ($quotaLock === null) {
+                    // Audit FL-004/C-11: without the mutex, concurrent submissions can
+                    // both pass the re-check and overshoot a HARD cap — fail closed.
+                    return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
+                        'message' => 'The form is busy — please retry in a moment.']];
+                }
                 if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
                     $this->responseService->releaseFormLock($quotaLock);
                     $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';

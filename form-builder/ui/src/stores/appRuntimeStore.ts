@@ -8,6 +8,26 @@ import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportIte
 import type { CustomScreen } from '../types/form';
 import type { CustomAppLogicBundle } from '../types/customAppLogic';
 
+// ── Stable submission intent keys (audit FL-004/C-11) ──────────────────────
+// A failed ONLINE submit must reuse its idempotency key on manual retry, so a
+// server that actually persisted the first attempt (the ACK was lost) dedupes
+// instead of duplicating. Keyed per form; rotated when the payload changes
+// (that is a NEW logical submission) or after a confirmed success.
+const pendingSubmitKeys = new Map<string, { hash: string; key: string }>();
+
+function stableSubmitKey(formId: string, answers: Record<string, unknown>): string {
+  const hash = JSON.stringify(answers);
+  const existing = pendingSubmitKeys.get(formId);
+  if (existing && existing.hash === hash) return existing.key;
+  const fresh = { hash, key: newIdempotencyKey() };
+  pendingSubmitKeys.set(formId, fresh);
+  return fresh.key;
+}
+
+function clearSubmitKey(formId: string): void {
+  pendingSubmitKeys.delete(formId);
+}
+
 // Demo report + dashboard authoring stays per-browser (the shared demo is read-only on the server).
 const demoReportsKey = (appId: string) => `formlogic-demo-reports-${appId}`;
 const demoDashboardKey = (appId: string) => `formlogic-demo-dashboard-${appId}`;
@@ -208,9 +228,17 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey: key });
           return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
         }
-        const result = await api.createAppResponse(slug, formId, { answers });
-        if (result.error) throw new Error(result.error);
+        // ONE stable idempotency key per logical submission (audit FL-004/C-11):
+        // if this request dies after the server persisted it (dropped ACK,
+        // captive portal), BOTH the service worker's background-sync replay and
+        // a manual user retry carry the SAME key — the server returns the
+        // original response instead of creating a duplicate. The key is only
+        // rotated on success or when the answers change.
+        const idempotencyKey = stableSubmitKey(formId, answers);
+        const result = await api.createAppResponse(slug, formId, { answers, idempotencyKey });
+        if (result.error) throw new Error(result.error); // key retained for the retry
         if (!result.data?.response) throw new Error('Submission failed: no response was returned.');
+        clearSubmitKey(formId);
         return result.data.response;
       },
 

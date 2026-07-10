@@ -204,6 +204,12 @@ class ExternalApiController
             $quotaLock = null;
             if (!empty($settings['quotaLimit'])) {
                 $quotaLock = $this->responseService->acquireFormLock($args['formId']);
+                if ($quotaLock === null) {
+                    // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot
+                    // the hard cap. Fail closed + retryable.
+                    return $this->jsonResponse($response, ['error' => true, 'retryable' => true,
+                        'message' => 'The form is busy — please retry in a moment.'], 503);
+                }
                 if ($this->responseService->getResponseCount($args['formId']) >= (int)$settings['quotaLimit']) {
                     $this->responseService->releaseFormLock($quotaLock);
                     return $this->jsonResponse($response, ['error' => true, 'message' => 'This form has reached its maximum number of responses.'], 403);
@@ -290,6 +296,12 @@ class ExternalApiController
         // so the snapshot + createdCount can't go stale and overshoot the cap.
         // (GET_LOCK auto-releases when the request connection closes.)
         $quotaLock = ($quotaLimit > 0) ? $this->responseService->acquireFormLock($args['formId']) : null;
+        if ($quotaLimit > 0 && $quotaLock === null) {
+            // Audit FL-004/C-11: the whole batch depends on this mutex for an
+            // authoritative count — fail closed + retryable rather than overshoot.
+            return $this->jsonResponse($response, ['error' => true, 'retryable' => true,
+                'message' => 'The form is busy — please retry in a moment.'], 503);
+        }
         if ($quotaLimit > 0) {
             $responseCount = $this->responseService->getResponseCount($args['formId']);
         }
