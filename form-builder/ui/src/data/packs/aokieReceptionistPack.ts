@@ -1277,11 +1277,12 @@ export const aokieReceptionistPack: PackData = {
       },
 
       // Roles (plan §12.5/§12.6). Owner is created implicitly with every permission.
-      // NOTE: connector.aokie.* / flow.*.run entries are declarative capability intent —
-      // the platform's role storage enforces form-level grants (unknown permission strings
-      // are dropped on import); connector commands are gated by the app's customLogic
-      // grant surface, and the SDK screens additionally disable operator actions for
-      // roles that cannot write to the Calls form.
+      // connector.aokie.<command> permission rows are ENFORCED server-side: the remote
+      // relay checks them per command (memberCanRelay) and the desktop's local loopback
+      // requires a capability minted from them (SEC-001). Least privilege by design
+      // (audit AOK-ROLE-001): Receptionist operates calls/SMS but cannot rewire
+      // endpoints or install drivers; Device Admin administers hardware/settings but
+      // cannot answer or speak; Viewer reads records only.
       roles: [
         {
           name: 'Receptionist',
@@ -1323,6 +1324,30 @@ export const aokieReceptionistPack: PackData = {
             { packFormId: null, permission: 'connector.aokie.phone.status' },
             { packFormId: null, permission: 'connector.aokie.dongle.list' },
             { packFormId: null, permission: 'flow.*.run' },
+          ],
+        },
+        {
+          name: 'Device Admin',
+          description:
+            'Hardware & configuration delegation (audit AOK-ROLE-001): dongle setup, phone pairing, receptionist settings and outbox redrive — WITHOUT call operation. settings.set can redirect caller audio (sttEndpoint/ttsEndpoint), so it deliberately lives here, not with front-desk staff.',
+          permissions: [
+            { packFormId: 'hardware-events', permission: 'submit_responses' },
+            { packFormId: 'hardware-events', permission: 'view_all_responses' },
+            { packFormId: 'receptionist-settings', permission: 'submit_responses' },
+            { packFormId: 'receptionist-settings', permission: 'view_all_responses' },
+            { packFormId: 'receptionist-settings', permission: 'edit_responses' },
+            { packFormId: null, permission: 'connector.aokie.dongle.list' },
+            { packFormId: null, permission: 'connector.aokie.dongle.getPreferred' },
+            { packFormId: null, permission: 'connector.aokie.dongle.setPreferred' },
+            { packFormId: null, permission: 'connector.aokie.dongle.installDriver' },
+            { packFormId: null, permission: 'connector.aokie.dongle.diagnostics' },
+            { packFormId: null, permission: 'connector.aokie.phone.status' },
+            { packFormId: null, permission: 'connector.aokie.phone.startPairing' },
+            { packFormId: null, permission: 'connector.aokie.phone.stopPairing' },
+            { packFormId: null, permission: 'connector.aokie.phone.listPaired' },
+            { packFormId: null, permission: 'connector.aokie.settings.get' },
+            { packFormId: null, permission: 'connector.aokie.settings.set' },
+            { packFormId: null, permission: 'connector.aokie.outbox.redrive' },
           ],
         },
         {
