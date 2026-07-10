@@ -4,9 +4,22 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { aokieReceptionistPack as pack } from './aokieReceptionistPack';
+import { aokieReceptionistPack as pack, DEFAULT_PERSONA } from './aokieReceptionistPack';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { packCatalog } from './index';
+
+describe('aokieReceptionistPack — shared persona (audit CROSS-SCHEMA-001)', () => {
+  it("matches the cross-repo persona fixture the plugin's DEFAULT_AGENT_PERSONA is locked to", () => {
+    const fixture = JSON.parse(
+      readFileSync(join(__dirname, '../../../../../docs/contracts/aokie-persona.v1.json'), 'utf8')
+    ) as { personaVersion: number; persona: string };
+    expect(fixture.personaVersion).toBe(1);
+    // Byte-identical to the aokie repo's copy (which contract.rs locks against
+    // its DEFAULT_AGENT_PERSONA): the in-plugin voice agent and this flow-based
+    // reply path can never speak with two different personas.
+    expect(DEFAULT_PERSONA).toBe(fixture.persona);
+  });
+});
 
 const FORM_IDS = new Set(pack.forms.map((f) => f.packFormId));
 const FLOW_SLUGS = new Set((pack.flows ?? []).map((f) => f.slug));
