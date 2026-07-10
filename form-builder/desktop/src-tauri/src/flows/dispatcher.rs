@@ -44,6 +44,9 @@ pub const CLAIM_POLL_INTERVAL: Duration = Duration::from_secs(20);
 const SNAPSHOT_TTL: Duration = Duration::from_secs(60);
 /// Heartbeat cadence for the desktop-connection registry (docs §14: fresh < 90 s).
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(45);
+/// How long a per-correlation event queue may sit idle before its worker
+/// retires (FL-002) — comfortably past any real call's inter-event gaps.
+const EVENT_QUEUE_IDLE: Duration = Duration::from_secs(120);
 const CLAIM_BATCH_LIMIT: u32 = 10;
 const MAX_RETRY_ATTEMPTS: u32 = 5;
 const RETRY_BASE_DELAY_MS: u64 = 500;
@@ -189,20 +192,43 @@ impl FlowRuntime {
     /// `flow.run` RPC handler. Idempotent-safe to call once at boot.
     pub fn start(self: &Arc<Self>) {
         self.host.set_rpc_handler(Arc::new(RpcBridge(self.clone())));
-        // Event loop.
+        // Event loop. FL-002 (audit C-04): events sharing a correlationId —
+        // one phone call — are processed strictly in arrival order through a
+        // per-key serial queue; separate correlations run concurrently. The
+        // subscriber's loop body is now just an enqueue, so the broadcast
+        // receiver realistically never lags — and when it does, it is LOGGED,
+        // not silently skipped.
         {
             let rt = self.clone();
             let mut rx = rt.host.events().subscribe();
+            let handler_rt = self.clone();
+            let queues = crate::flows::serial_queues::SerialQueues::new(
+                EVENT_QUEUE_IDLE,
+                Arc::new(move |env: Value| {
+                    let rt = handler_rt.clone();
+                    Box::pin(async move { rt.on_event(env).await })
+                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                }),
+            );
             tokio::spawn(async move {
                 loop {
                     match rx.recv().await {
                         Ok(ev) => {
-                            let rt = rt.clone();
                             if let Ok(env) = serde_json::from_str::<Value>(&ev.json) {
-                                tokio::spawn(async move { rt.on_event(env).await; });
+                                let key = env
+                                    .get("correlationId")
+                                    .and_then(Value::as_str)
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or("__uncorrelated__")
+                                    .to_string();
+                                queues.enqueue(&key, env);
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            rt.note_error(format!(
+                                "event bus lagged — the dispatcher missed {n} event(s)"
+                            ));
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
@@ -394,17 +420,25 @@ impl FlowRuntime {
         // (1) App-logic onConnectorEvent — the raw record writes.
         self.run_app_logic(&envelope, &client).await;
 
-        // (2) Binding fan-out.
-        let bindings = self.matching_bindings(&envelope);
+        // (2) Binding fan-out — browser parity (FL-002/audit C-04). Bindings
+        // arrive server-ordered by sortOrder (stable-sorted again here in
+        // case a stale snapshot predates that); `sync` bindings are AWAITED
+        // in that order, `async`/`background` spawn detached at their slot —
+        // so work at a later slot can never start before an earlier sync
+        // binding (e.g. configure-receptionist at sortOrder 0) completed.
+        let mut bindings = self.matching_bindings(&envelope);
+        bindings.sort_by_key(|b| b.get("sortOrder").and_then(Value::as_i64).unwrap_or(0));
         for binding in bindings {
-            let rt = self.clone();
-            let client = client.clone();
-            let event = envelope.clone();
-            // async/background bindings run detached; sync awaited. Desktop has no
-            // caller to block, so run each detached (exactly-once is the ledger's job).
-            tokio::spawn(async move {
-                rt.run_binding(&binding, &event, &client).await;
-            });
+            if binding.get("mode").and_then(Value::as_str) == Some("sync") {
+                self.run_binding(&binding, &envelope, &client).await;
+            } else {
+                let rt = self.clone();
+                let client = client.clone();
+                let event = envelope.clone();
+                tokio::spawn(async move {
+                    rt.run_binding(&binding, &event, &client).await;
+                });
+            }
         }
     }
 

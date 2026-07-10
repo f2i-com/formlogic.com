@@ -12,6 +12,7 @@
 pub mod quickjs;
 pub mod runner;
 pub mod selectors;
+pub mod serial_queues;
 // applogic + dispatcher added below once the leaf modules compile.
 pub mod applogic;
 pub mod dispatcher;
