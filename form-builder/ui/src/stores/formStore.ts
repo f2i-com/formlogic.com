@@ -1032,7 +1032,13 @@ export const useFormStore = create<FormState>()(
 
             const localT = Date.parse(toUtc(localStr));
             const serverT = Date.parse(toUtc(serverStr));
-            const localIsNewer = Number.isNaN(serverT) || Number.isNaN(localT) || localT > serverT;
+            // Only treat local as newer when BOTH timestamps parse and local is
+            // genuinely later. An unparseable timestamp is ambiguous — falling
+            // through to the conflict / keep-cloud branches below is safe, whereas
+            // the old "NaN ⇒ local wins" default silently clobbered a newer cloud
+            // copy with stale local data.
+            const bothParsed = !Number.isNaN(localT) && !Number.isNaN(serverT);
+            const localIsNewer = bothParsed && localT > serverT;
 
             if (localIsNewer) {
               // Local holds the most recent edit → push it.
