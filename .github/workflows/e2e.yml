@@ -9,9 +9,10 @@ name: E2E (Playwright) — release gate
 # that the cost is fine.)
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
+  # Callable as a reusable workflow (audit FL-E2E-001/FL-REL-001): package.yml
+  # invokes it on v* tags and HARD-DEPENDS on it — the standalone tag trigger
+  # is gone so a tag runs the suite exactly once, as a release requirement.
+  workflow_call:
   schedule:
     # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
     - cron: '20 15 * * *'

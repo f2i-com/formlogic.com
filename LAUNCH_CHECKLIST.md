@@ -119,7 +119,11 @@ its own Windows CI running the plugin's full test suite plus the voice-feature c
   Self-cleaning, traces/screenshots on failure, documented in `e2e/README.md`. Now wired into CI:
   `.github/workflows/e2e.yml` brings up MySQL + PHP + the built SPA on one origin, seeds a test
   account, and runs the suite nightly + on demand (`workflow_dispatch`), uploading traces on failure.
-  Remaining (follow-ups): app-RBAC / export / billing-disabled golden paths.
+  Follow-ups CLOSED (audit FL-E2E-001, `e2e/launch-golden-paths-2.spec.ts`): app export→import
+  round trip, billing-disabled/self-host write behaviour (no 402 with enforcement off), and
+  app-RBAC (non-member deny-by-default → invitation → member runtime access). The e2e suite is
+  now a HARD release requirement: package.yml's zip + desktop jobs `needs` the reusable e2e
+  workflow on every v* tag (e2e.yml keeps nightly + manual runs).
 
 - [ ] **Desktop/Aokie installer signing (audit PKG-001)** — the pipelines are in place
   (`package.yml` `desktop` job: verify-gated NSIS+MSI via `tauri build`, SHA256SUMS, release

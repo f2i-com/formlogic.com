@@ -82,6 +82,13 @@ jobs:
             || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in form-builder/ui and commit the result" && exit 1)
           npm audit --audit-level=high
 
+  # Audit FL-E2E-001: the launch golden paths are a RELEASE REQUIREMENT — the
+  # zip and the desktop installers cannot publish from a SHA whose end-to-end
+  # suite hasn't passed. Reuses the exact e2e workflow the nightly runs.
+  e2e:
+    name: E2E golden paths (release gate)
+    uses: ./.github/workflows/e2e.yml
+
   # Audit PKG-001 (best-effort until signing infrastructure exists): build the
   # Windows desktop installers (NSIS + MSI via `tauri build`), run the desktop
   # test suite on the exact release SHA first, hash everything, sign when a
@@ -91,7 +98,7 @@ jobs:
   desktop:
     name: Build Windows desktop installer
     runs-on: windows-latest
-    needs: verify
+    needs: [verify, e2e]
     steps:
       - uses: actions/checkout@v4
 
@@ -174,7 +181,7 @@ jobs:
   package:
     name: Build distributable zip
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [verify, e2e]
     steps:
       - uses: actions/checkout@v4
 
