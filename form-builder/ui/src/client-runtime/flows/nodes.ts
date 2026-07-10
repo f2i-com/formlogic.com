@@ -553,7 +553,11 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
     if (fallback) body.model = fallback;
   }
   if (typeof data.temperature === 'number') body.temperature = data.temperature;
-  if (typeof data.maxTokens === 'number') body.max_tokens = data.maxTokens;
+  // Match the Rust runner's as_u64: only a non-negative integer is forwarded;
+  // a float/negative is dropped (server default) rather than silently diverging.
+  if (typeof data.maxTokens === 'number' && Number.isInteger(data.maxTokens) && data.maxTokens >= 0) {
+    body.max_tokens = data.maxTokens;
+  }
   // Pass-through extra request params (e.g. Qwen3's
   // chat_template_kwargs:{enable_thinking:false} to skip the reasoning block).
   if (data.extraBody && typeof data.extraBody === 'object') {
@@ -667,13 +671,21 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
   }
   const resolvedBody = data.body !== undefined ? resolveDeep(data.body, ctx.scope) : undefined;
   const doFetch = deps.fetchFn ?? fetch;
+  // Send the session cookie to the same-origin FormLogic API whether the author
+  // wrote the RELATIVE form (/api/...) or the ABSOLUTE same-origin form
+  // (https://host/api/...) — both are allow-listed, but only the relative form
+  // starts with '/', so the absolute form previously ran unauthenticated (401).
+  // The desktop loopback base URL is a different origin and keeps 'omit'.
+  const sameOrigin =
+    url.startsWith('/') ||
+    (typeof window !== 'undefined' && !!window.location?.origin && url.startsWith(window.location.origin + '/'));
   let res: Response;
   try {
     res = await doFetch(url, {
       method,
       headers,
       body: resolvedBody !== undefined && method !== 'GET' && method !== 'HEAD' ? JSON.stringify(resolvedBody) : undefined,
-      credentials: url.startsWith('/') ? 'include' : 'omit',
+      credentials: sameOrigin ? 'include' : 'omit',
       signal: ctx.signal,
     });
   } catch (err) {
@@ -957,8 +969,10 @@ async function runImageGen(ctx: FlowNodeContext): Promise<unknown> {
   }
 
   const prompt = interpolateTemplate(requireString(node, data, ['prompt']), scopeToContext(scope));
-  const width = typeof data.width === 'number' ? data.width : 1024;
-  const height = typeof data.height === 'number' ? data.height : 1024;
+  // Match the Rust runner's as_i64: a non-integer (e.g. 512.5) falls back to the
+  // default rather than being sent through as a fractional dimension.
+  const width = typeof data.width === 'number' && Number.isInteger(data.width) ? data.width : 1024;
+  const height = typeof data.height === 'number' && Number.isInteger(data.height) ? data.height : 1024;
   const body: Record<string, unknown> = { prompt, width, height, size: `${width}x${height}` };
   if (typeof data.steps === 'number') body.steps = data.steps;
   if (typeof data.model === 'string' && data.model !== '') body.model = data.model;
