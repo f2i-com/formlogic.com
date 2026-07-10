@@ -2362,7 +2362,15 @@ interface RelatedRecordGroup {
   formId: string;
   displayName: string;
   fieldLabel: string;
-  records: Array<{ id: string; display: string; submittedAt: string }>;
+  /** The source form's linked_record field that points back at the parent — used
+   *  to pre-link a newly added related record. */
+  fieldId?: string;
+  /** Whether that link field accepts multiple targets (array-valued answer). */
+  allowMultiple?: boolean;
+  /** Columns to render in the related grid (the link's displayFieldIds, or a
+   *  fallback of simple fields). */
+  columns?: Array<{ id: string; label: string; type: string }>;
+  records: Array<{ id: string; display: string; submittedAt: string; fields?: Record<string, unknown> }>;
   count: number;
 }
 

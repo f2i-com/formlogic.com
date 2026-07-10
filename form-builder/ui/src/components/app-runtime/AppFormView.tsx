@@ -708,6 +708,20 @@ export function AppFormView() {
   // The component instance is reused across /form/:formId navigations — honor ?new=1 per visit.
   useEffect(() => { setShowFormView(wantNew); }, [formId, wantNew]);
 
+  // Related-records "Add": arriving from a record's related sub-grid with
+  // ?linkField=<fieldId>&linkTo=<parentResponseId> pre-links the new record back
+  // to its parent by seeding that linked_record field (array when it allows many).
+  const linkField = searchParams.get('linkField');
+  const linkTo = searchParams.get('linkTo');
+  useEffect(() => {
+    if (!form || !linkField || !linkTo) return;
+    const fields = (form.fields as Array<Record<string, unknown>> | undefined) ?? [];
+    const target = fields.find((f) => f.id === linkField && f.type === 'linked_record');
+    if (!target) return;
+    const multiple = !!(target.properties as Record<string, unknown> | undefined)?.allowMultiple;
+    setAnswers((prev) => (prev[linkField] !== undefined ? prev : { ...prev, [linkField]: multiple ? [linkTo] : linkTo }));
+  }, [form, linkField, linkTo]);
+
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
       if (prev[fId] === val) return prev;

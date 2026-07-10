@@ -1859,12 +1859,39 @@ class AppPublicController
             $fieldId = $formLinks[0]['field_id'];
             $fieldLabel = $fieldId;
             $displayFieldIds = [];
+            $allowMultiple = false;
             foreach ($sourceForm['fields'] as $f) {
                 if ($f['id'] === $fieldId) {
                     $fieldLabel = $f['label'] ?? $fieldId;
                     $displayFieldIds = isset($f['properties']) ? ($f['properties']['displayFieldIds'] ?? []) : [];
+                    $allowMultiple = !empty($f['properties']['allowMultiple']);
                     break;
                 }
+            }
+
+            // Columns for the related grid (linked-records feature): the linked field's
+            // displayFieldIds, or a fallback of the first few simple fields. Sent so the
+            // UI can render a real multi-column grid instead of one concatenated string.
+            $columnFieldIds = $displayFieldIds;
+            if (empty($columnFieldIds)) {
+                $c = 0;
+                foreach ($sourceForm['fields'] as $f) {
+                    if ($c >= 3) break;
+                    if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number', 'dropdown', 'date'], true)) {
+                        $columnFieldIds[] = $f['id'];
+                        $c++;
+                    }
+                }
+            }
+            $columnDefs = [];
+            foreach ($sourceForm['fields'] as $f) {
+                if (in_array($f['id'], $columnFieldIds, true)) {
+                    $columnDefs[$f['id']] = ['id' => $f['id'], 'label' => $f['label'] ?? $f['id'], 'type' => $f['type']];
+                }
+            }
+            $columns = [];
+            foreach ($columnFieldIds as $cfid) {
+                if (isset($columnDefs[$cfid])) $columns[] = $columnDefs[$cfid];
             }
 
             // Batch-fetch source responses
@@ -1898,10 +1925,15 @@ class AppPublicController
                     }
                 }
 
+                $recFields = [];
+                foreach ($columnFieldIds as $cfid) {
+                    $recFields[$cfid] = $answers[$cfid] ?? null;
+                }
                 $matchingRecords[] = [
                     'id' => $sr['id'],
                     'display' => implode(' - ', $parts) ?: ('Record ' . substr($sr['id'], 0, 8)),
                     'submittedAt' => $sr['submittedAt'] ?? '',
+                    'fields' => $recFields,
                 ];
             }
 
@@ -1911,6 +1943,9 @@ class AppPublicController
                     'formId' => $sourceFormId,
                     'displayName' => $appForm['displayName'] ?? $sourceForm['title'],
                     'fieldLabel' => $fieldLabel,
+                    'fieldId' => $fieldId,
+                    'allowMultiple' => $allowMultiple,
+                    'columns' => $columns,
                     'records' => $matchingRecords,
                     'count' => count($matchingRecords),
                 ];
