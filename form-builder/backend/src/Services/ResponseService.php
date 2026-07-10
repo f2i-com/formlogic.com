@@ -873,6 +873,19 @@ class ResponseService
         // Keep the denormalized MySQL response_count in sync for list views.
         $this->syncResponseCount($formId);
 
+        // Upload staging (audit FL-006): the response is durably saved, so its
+        // files are now REFERENCED — commit them (remove pending markers) so
+        // the abandoned-upload sweeper never reclaims them.
+        if ($this->fileStorageService !== null) {
+            try {
+                $this->fileStorageService->commitResponseFiles($formId, $data['answers'] ?? []);
+            } catch (\Throwable $commitErr) {
+                $this->logger->error('Failed to commit uploaded files after response create', [
+                    'formId' => $formId, 'responseId' => $id, 'error' => $commitErr->getMessage(),
+                ]);
+            }
+        }
+
         // Records retention (audit PRIV-001): every write path funnels through
         // here, so this is where expired rows age out. Hour-throttled, capped,
         // and internally best-effort.
@@ -1222,6 +1235,9 @@ class ResponseService
         if ($oldAnswersForFiles !== null && $this->fileStorageService !== null) {
             try {
                 $newAnswers = is_array($data['answers'] ?? null) ? $data['answers'] : [];
+                // Files newly referenced by this update are committed (FL-006)…
+                $this->fileStorageService->commitResponseFiles($formId, $newAnswers);
+                // …and files the update dropped are deleted.
                 $orphaned = array_diff(
                     $this->fileStorageService->extractFileIds($oldAnswersForFiles),
                     $this->fileStorageService->extractFileIds($newAnswers)

@@ -180,6 +180,9 @@ class FileController
                 return $overQuota;
             }
             $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
+            // Abandoned-upload GC (audit FL-006): the uploader pays for the
+            // sweep — internally throttled to once an hour per form.
+            $this->fileStorage->sweepAbandonedUploads($formId);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -283,6 +286,9 @@ class FileController
                 return $overQuota;
             }
             $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
+            // Abandoned-upload GC (audit FL-006): the uploader pays for the
+            // sweep — internally throttled to once an hour per form.
+            $this->fileStorage->sweepAbandonedUploads($formId);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);

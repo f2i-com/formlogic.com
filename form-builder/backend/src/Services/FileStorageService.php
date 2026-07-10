@@ -103,6 +103,18 @@ class FileStorageService
             throw new \RuntimeException('Failed to store uploaded file');
         }
 
+        // Upload staging (audit FL-006): every upload starts PENDING — a
+        // marker in .pending/ (kept out of the form dir so the fileId globs
+        // never match it). A successful response submit commits its files by
+        // removing their markers; markers that outlive PENDING_TTL_SECONDS
+        // mark abandoned uploads for the sweeper. An invalid/never-submitted
+        // form therefore cannot consume permanent storage.
+        $pendingDir = $formDir . '/.pending';
+        if (!is_dir($pendingDir)) {
+            mkdir($pendingDir, 0700, true);
+        }
+        @touch($pendingDir . '/' . $storedFilename);
+
         return [
             'id' => $fileId,
             'originalFilename' => $originalFilename,
@@ -152,13 +164,87 @@ class FileStorageService
         return $filePath;
     }
 
+    /** How long an uncommitted upload may sit before the sweeper reclaims it. */
+    public const PENDING_TTL_SECONDS = 86400;
+    /** Minimum interval between sweeps of one form's pending dir. */
+    private const SWEEP_INTERVAL_SECONDS = 3600;
+
     /**
-     * Delete a specific file.
+     * Commit the files a persisted response references (audit FL-006): their
+     * pending markers are removed, making them permanent. Files without a
+     * marker (already committed, or pre-staging uploads) are untouched.
+     *
+     * @param array<string, mixed> $answers
+     */
+    public function commitResponseFiles(string $formId, array $answers): void
+    {
+        $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
+        $pendingDir = $formDir . '/.pending';
+        if (!is_dir($pendingDir)) {
+            return;
+        }
+        foreach ($this->extractFileIds($answers) as $fileId) {
+            $path = $this->getFilePath($formId, $fileId);
+            if ($path !== null) {
+                $marker = $pendingDir . '/' . basename($path);
+                if (is_file($marker)) {
+                    @unlink($marker);
+                }
+            }
+        }
+    }
+
+    /**
+     * Reclaim abandoned uploads (audit FL-006): delete files whose pending
+     * marker is older than the TTL — uploaded but never committed by a valid
+     * response. Throttled per form (marker-dir mtime) so upload bursts pay
+     * for at most one scan an hour. Returns how many files were reclaimed.
+     */
+    public function sweepAbandonedUploads(string $formId, int $ttlSeconds = self::PENDING_TTL_SECONDS): int
+    {
+        $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
+        $pendingDir = $formDir . '/.pending';
+        if (!is_dir($pendingDir)) {
+            return 0;
+        }
+        $throttle = $pendingDir . '/.last-sweep';
+        $last = is_file($throttle) ? (int) filemtime($throttle) : 0;
+        if (time() - $last < self::SWEEP_INTERVAL_SECONDS) {
+            return 0;
+        }
+        @touch($throttle);
+
+        $reclaimed = 0;
+        $cutoff = time() - $ttlSeconds;
+        foreach (glob($pendingDir . '/*') ?: [] as $marker) {
+            if (!is_file($marker) || is_link($marker)) {
+                continue;
+            }
+            $mtime = filemtime($marker);
+            if ($mtime === false || $mtime > $cutoff) {
+                continue;
+            }
+            $stored = $formDir . '/' . basename($marker);
+            if (is_file($stored) && !is_link($stored)) {
+                @unlink($stored);
+            }
+            @unlink($marker);
+            $reclaimed++;
+        }
+        return $reclaimed;
+    }
+
+    /**
+     * Delete a specific file (and its pending marker, if still staged).
      */
     public function deleteFile(string $formId, string $fileId): bool
     {
         $path = $this->getFilePath($formId, $fileId);
         if ($path && file_exists($path)) {
+            $marker = dirname($path) . '/.pending/' . basename($path);
+            if (is_file($marker)) {
+                @unlink($marker);
+            }
             return unlink($path);
         }
         return false;
@@ -174,6 +260,16 @@ class FileStorageService
         }
         $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
         if (is_dir($formDir)) {
+            // Clear the staging dir first or the final rmdir fails (FL-006).
+            $pendingDir = $formDir . '/.pending';
+            if (is_dir($pendingDir)) {
+                foreach (glob($pendingDir . '/{,.}*', GLOB_BRACE) ?: [] as $marker) {
+                    if (is_file($marker) && !is_link($marker)) {
+                        unlink($marker);
+                    }
+                }
+                @rmdir($pendingDir);
+            }
             $files = glob($formDir . '/*');
             foreach ($files as $file) {
                 if (is_file($file) && !is_link($file)) {
