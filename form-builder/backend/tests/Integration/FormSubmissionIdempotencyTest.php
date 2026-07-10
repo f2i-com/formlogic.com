@@ -127,6 +127,28 @@ class FormSubmissionIdempotencyTest extends TestCase
     }
 
     /**
+     * The 600s-takeover regression guard: once a row is 'completed', a LATER completing writer
+     * (a slow original that lost its reservation to a takeover and finally finished with its own
+     * duplicate response) must NOT overwrite the winner's response id. Without the status='pending'
+     * guard on the UPDATE, the ledger would regress and a future replay would surface the duplicate.
+     */
+    public function testCompleteDoesNotRegressAnAlreadyCompletedRow(): void
+    {
+        $key = 'k-' . bin2hex(random_bytes(4));
+        $hash = hash('sha256', 'Z');
+        $this->call('idempotencyReserve', [$this->formId, 'u1', $key, $hash]);
+
+        // The runtime that holds the reservation completes it.
+        $this->call('idempotencyComplete', [$this->formId, $key, 'resp-winner']);
+        // A slow original completing late with its own duplicate id — must be a no-op.
+        $this->call('idempotencyComplete', [$this->formId, $key, 'resp-loser']);
+
+        $found = $this->call('idempotencyFind', [$this->formId, $key]);
+        $this->assertSame('resp-winner', $found['response_id'], 'a completed row must not regress to a later writer');
+        $this->assertSame('completed', $found['status']);
+    }
+
+    /**
      * Mirrors the "abandoned/crashed reservation" trace: a request that reserves but never completes
      * (crash, or an uncaught \Error in the pipeline) leaves a 'pending' row; releasing it (as
      * create()'s catch-all now does on any failure) must let a genuine retry win the key again

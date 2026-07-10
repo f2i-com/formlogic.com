@@ -644,9 +644,12 @@ class ResponseController
             return;
         }
         try {
+            // Only complete a row we still hold ('pending'): a slow original that lost
+            // its reservation to a 600s takeover must not regress a row the new owner
+            // already completed back to its own duplicate response id.
             $stmt = $this->mysql->prepare(
                 "UPDATE form_submission_idempotency SET response_id = :r, status = 'completed'
-                 WHERE form_id = :f AND idempotency_key = :k"
+                 WHERE form_id = :f AND idempotency_key = :k AND status = 'pending'"
             );
             $stmt->execute(['r' => $responseId, 'f' => $formId, 'k' => $key]);
         } catch (\Throwable $e) {

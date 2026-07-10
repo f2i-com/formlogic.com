@@ -878,9 +878,12 @@ class AppPublicController
     private function idempotencyComplete(string $appId, string $formId, string $key, string $responseId): void
     {
         try {
+            // Only complete a row we still hold ('pending'): a slow original that lost
+            // its reservation to a 600s takeover must not regress a row the new owner
+            // already completed back to its own duplicate response id.
             $stmt = $this->mysql->prepare(
                 "UPDATE app_submission_idempotency SET response_id = :r, status = 'completed'
-                 WHERE app_id = :a AND form_id = :f AND idempotency_key = :k"
+                 WHERE app_id = :a AND form_id = :f AND idempotency_key = :k AND status = 'pending'"
             );
             $stmt->execute(['r' => $responseId, 'a' => $appId, 'f' => $formId, 'k' => $key]);
         } catch (\Throwable $e) {

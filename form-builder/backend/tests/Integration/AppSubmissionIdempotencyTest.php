@@ -122,6 +122,25 @@ class AppSubmissionIdempotencyTest extends TestCase
         $this->assertSame('resp-123', $replay['response_id']);
     }
 
+    /**
+     * The 600s-takeover regression guard: a completed row must not be overwritten by a LATER
+     * completing writer (a slow original that lost its reservation to a takeover). Without the
+     * status='pending' guard the ledger would regress to the duplicate response id.
+     */
+    public function testCompleteDoesNotRegressAnAlreadyCompletedRow(): void
+    {
+        $key = 'k-' . bin2hex(random_bytes(4));
+        $hash = hash('sha256', 'Z');
+        $this->call('idempotencyReserve', [$this->appId, $this->formId, 'u1', $key, $hash]);
+
+        $this->call('idempotencyComplete', [$this->appId, $this->formId, $key, 'resp-winner']);
+        $this->call('idempotencyComplete', [$this->appId, $this->formId, $key, 'resp-loser']);
+
+        $found = $this->call('idempotencyFind', [$this->appId, $this->formId, $key]);
+        $this->assertSame('resp-winner', $found['response_id'], 'a completed row must not regress to a later writer');
+        $this->assertSame('completed', $found['status']);
+    }
+
     public function testReleaseAllowsRetryAfterAFailedSubmission(): void
     {
         $key = 'k-' . bin2hex(random_bytes(4));

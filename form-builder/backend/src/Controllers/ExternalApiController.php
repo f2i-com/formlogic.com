@@ -1123,7 +1123,10 @@ class ExternalApiController
         ];
     }
 
-    /** Mark a reservation completed, pointing it at the created response. Best-effort. */
+    /** Mark a reservation completed, pointing it at the created response. Best-effort.
+     *  Only completes a row we still hold ('pending'): if a slow original ran past the
+     *  600s window and another runtime took the reservation over and already completed
+     *  it, the original must NOT regress the ledger back to its (duplicate) response. */
     private function idempotencyComplete(string $formId, string $key, string $responseId): void
     {
         if ($this->mysql === null) {
@@ -1132,7 +1135,7 @@ class ExternalApiController
         try {
             $stmt = $this->mysql->prepare(
                 "UPDATE form_submission_idempotency SET response_id = :r, status = 'completed'
-                 WHERE form_id = :f AND idempotency_key = :k"
+                 WHERE form_id = :f AND idempotency_key = :k AND status = 'pending'"
             );
             $stmt->execute(['r' => $responseId, 'f' => $formId, 'k' => $key]);
         } catch (\Throwable $e) {
