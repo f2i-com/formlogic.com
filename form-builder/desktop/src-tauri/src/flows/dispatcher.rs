@@ -1083,7 +1083,7 @@ impl FlowRuntime {
                 if !answers.is_object() {
                     return Err("answers did not resolve to an object".into());
                 }
-                client.submit_response(form, &answers).await.map(|_| self.note_records(1)).map_err(|e| e.to_string())
+                client.submit_response(form, &answers, None).await.map(|_| self.note_records(1)).map_err(|e| e.to_string())
             }
             "formlogic.updateResponse" => {
                 let form = action.get("form").and_then(Value::as_str).ok_or("updateResponse missing form")?;

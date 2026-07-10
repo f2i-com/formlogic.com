@@ -125,7 +125,16 @@ pub async fn run_onconnector_event(
     storage: &Mutex<Map<String, Value>>,
 ) -> ApplyReport {
     let mut report = ApplyReport::default();
-    for source in app.onconnector_scripts() {
+    // Effect-key base (audit FL-001/C-04): the event's idempotencyKey makes every
+    // record-creating effect deterministic across replays — a re-delivered event
+    // (crash recovery, retry, a second runtime) reuses the SAME server-side key
+    // and gets the ORIGINAL response back instead of writing a duplicate.
+    let event_key = event
+        .get("idempotencyKey")
+        .and_then(Value::as_str)
+        .filter(|k| !k.is_empty())
+        .map(str::to_string);
+    for (script_idx, source) in app.onconnector_scripts().into_iter().enumerate() {
         let snapshot = storage.lock().map(|g| Value::Object(g.clone())).unwrap_or(json!({}));
         let ctx = json!({
             "hook": "onConnectorEvent",
@@ -144,11 +153,29 @@ pub async fn run_onconnector_event(
             }
         };
         report.scripts_ran += 1;
-        for effect in collect_effects(&result) {
-            apply_effect(app, &effect, client, storage, &mut report).await;
+        for (effect_idx, effect) in collect_effects(&result).into_iter().enumerate() {
+            let effect_key = event_key
+                .as_deref()
+                .map(|ek| effect_key_for(ek, script_idx, effect_idx));
+            apply_effect(app, &effect, client, storage, &mut report, effect_key.as_deref()).await;
         }
     }
     report
+}
+
+/// Deterministic per-effect idempotency key: `applogic:<event key>:<script>:<effect>`.
+/// Bounded to the server's 128-char ledger column (the event key dominates; it is
+/// hashed down when too long so determinism survives truncation).
+pub fn effect_key_for(event_key: &str, script_idx: usize, effect_idx: usize) -> String {
+    let key = format!("applogic:{event_key}:{script_idx}:{effect_idx}");
+    if key.len() <= 128 {
+        key
+    } else {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        event_key.hash(&mut hasher);
+        format!("applogic:h{:016x}:{script_idx}:{effect_idx}", hasher.finish())
+    }
 }
 
 /// Flatten `result.effects[]` plus the `ui` shorthand (mirrors `resultEffects`).
@@ -177,6 +204,7 @@ async fn apply_effect(
     client: &FormLogicClient,
     storage: &Mutex<Map<String, Value>>,
     report: &mut ApplyReport,
+    effect_key: Option<&str>,
 ) {
     let ty = effect.get("type").and_then(Value::as_str).unwrap_or("");
     match ty {
@@ -211,7 +239,7 @@ async fn apply_effect(
                 report.errors.push("submitResponse answers is not an object".into());
                 return;
             }
-            match client.submit_response(&form_id, &answers).await {
+            match client.submit_response(&form_id, &answers, effect_key).await {
                 Ok(_) => report.submitted += 1,
                 Err(e) => report.errors.push(format!("submitResponse {form_key}: {e}")),
             }
@@ -227,7 +255,7 @@ async fn apply_effect(
                 report.errors.push("updateResponse answers is not an object".into());
                 return;
             }
-            apply_update(client, &form_id, form_key, effect, &answers, report).await;
+            apply_update(client, &form_id, form_key, effect, &answers, report, effect_key).await;
         }
         // connector.request / flow.run / ui.navigate / ui.setValues / ui.reject:
         // not part of the headless effect subset (documented) — skip silently.
@@ -245,6 +273,7 @@ async fn apply_update(
     effect: &Value,
     answers: &Value,
     report: &mut ApplyReport,
+    effect_key: Option<&str>,
 ) {
     // Explicit responseId wins.
     if let Some(rid) = effect.get("responseId").and_then(Value::as_str).filter(|s| !s.is_empty()) {
@@ -287,7 +316,9 @@ async fn apply_update(
             Ok(_) => report.updated += 1,
             Err(e) => report.errors.push(format!("updateResponse {form_key}: {e}")),
         },
-        None if upsert => match client.submit_response(form_id, answers).await {
+        // The upsert-create branch carries the effect key too: a replayed event
+        // whose first delivery already CREATED the row gets the original back.
+        None if upsert => match client.submit_response(form_id, answers, effect_key).await {
             Ok(_) => report.submitted += 1,
             Err(e) => report.errors.push(format!("updateResponse(upsert) {form_key}: {e}")),
         },
@@ -327,5 +358,24 @@ mod tests {
         let effects = collect_effects(&r);
         assert_eq!(effects.len(), 2);
         assert_eq!(effects[1]["type"], "ui.toast");
+    }
+    /// Audit FL-001: effect keys are deterministic (replay-safe) and always fit
+    /// the server ledger's 128-char column.
+    #[test]
+    fn effect_keys_are_deterministic_and_bounded() {
+        let a = effect_key_for("aokie:call_abc:incoming:v1", 0, 1);
+        let b = effect_key_for("aokie:call_abc:incoming:v1", 0, 1);
+        assert_eq!(a, b, "same event/script/effect -> same key");
+        assert_eq!(a, "applogic:aokie:call_abc:incoming:v1:0:1");
+        assert_ne!(a, effect_key_for("aokie:call_abc:incoming:v1", 0, 2));
+        assert_ne!(a, effect_key_for("aokie:call_abc:incoming:v1", 1, 1));
+
+        // Oversized event keys hash down, still deterministic + bounded.
+        let long = "k".repeat(300);
+        let h1 = effect_key_for(&long, 2, 3);
+        let h2 = effect_key_for(&long, 2, 3);
+        assert_eq!(h1, h2);
+        assert!(h1.len() <= 128, "key must fit the ledger column: {}", h1.len());
+        assert!(h1.starts_with("applogic:h"));
     }
 }

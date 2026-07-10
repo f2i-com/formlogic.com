@@ -424,7 +424,8 @@ $container->set(ExternalApiController::class, function (Container $c) {
         $c->get(WebhookService::class),
         $c->get(\FormLogic\Services\EmailService::class),
         $c->get(AuditService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(\FormLogic\Database\MySQLConnection::class)
     );
 });
 

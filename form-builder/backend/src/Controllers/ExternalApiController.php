@@ -28,6 +28,8 @@ class ExternalApiController
     private ?EmailService $emailService;
     private ?AuditService $auditService;
     private LoggerInterface $logger;
+    /** For the submission-idempotency ledger (audit FL-001) — null disables it. */
+    private ?\PDO $mysql;
 
     public function __construct(
         FormService $formService,
@@ -35,7 +37,8 @@ class ExternalApiController
         WebhookService $webhookService,
         ?EmailService $emailService = null,
         ?AuditService $auditService = null,
-        ?LoggerInterface $logger = null
+        ?LoggerInterface $logger = null,
+        ?\FormLogic\Database\MySQLConnection $mysql = null
     ) {
         $this->formService = $formService;
         $this->responseService = $responseService;
@@ -44,6 +47,7 @@ class ExternalApiController
         $this->auditService = $auditService;
         $this->logger = $logger ?? new NullLogger();
         $this->ipResolver = IpResolver::fromEnvironment();
+        $this->mysql = $mysql?->getConnection();
     }
 
     /** Best-effort "new response" email to the form owner (Notifications tab) — never fails the submit. */
@@ -197,6 +201,62 @@ class ExternalApiController
         unset($data['submittedByUserId'], $data['status']);
         $script = $form['logicScript'] ?? null;
 
+        // Idempotency (audit FL-001/C-04): FormLogic Desktop's app-logic effects
+        // stamp deterministic keys (applogic:<event>:<script>:<effect>), so a
+        // replayed connector event — crash recovery, retried delivery, a second
+        // runtime — returns the ORIGINAL response instead of writing a duplicate
+        // record. Reserve→complete|release against form_submission_idempotency,
+        // the same pattern (and table) as the public submit path.
+        $idemKey = (isset($data['idempotencyKey']) && is_string($data['idempotencyKey'])
+            && $data['idempotencyKey'] !== '' && strlen($data['idempotencyKey']) <= 128)
+            ? $data['idempotencyKey'] : null;
+        $ownsReservation = false;
+        if ($idemKey !== null) {
+            $payloadHash = hash('sha256', (string) json_encode($data['answers'] ?? []));
+            $userId = $request->getAttribute('userId');
+            $userId = (is_string($userId) && $userId !== '') ? $userId : null;
+            $reserved = $this->idempotencyReserve($args['formId'], $userId, $idemKey, $payloadHash);
+            if (is_array($reserved)) {
+                if (($reserved['payload_hash'] ?? '') !== $payloadHash) {
+                    return $this->jsonResponse($response, ['error' => true, 'conflict' => true,
+                        'message' => 'This idempotency key was already used with a different submission.'], 409);
+                }
+                if (is_string($reserved['response_id'] ?? null) && $reserved['response_id'] !== '') {
+                    return $this->jsonResponse($response, ['response' => ['id' => $reserved['response_id']], 'idempotent' => true], 200);
+                }
+                // Pending: young = a concurrent duplicate in flight; stale = an abandoned
+                // reservation (owner crashed mid-request) — retake atomically like the
+                // public path so a retried desktop effect can't wedge on 409 forever.
+                $takenOver = false;
+                try {
+                    $del = $this->mysql?->prepare(
+                        "DELETE FROM form_submission_idempotency
+                         WHERE form_id = :f AND idempotency_key = :k
+                           AND status = 'pending' AND created_at < (NOW() - INTERVAL 600 SECOND)"
+                    );
+                    $del?->execute(['f' => $args['formId'], 'k' => $idemKey]);
+                    if ($del !== null && $del->rowCount() > 0) {
+                        $takenOver = ($this->idempotencyReserve($args['formId'], $userId, $idemKey, $payloadHash) === 'owner');
+                    }
+                } catch (\Throwable $e) {
+                    // best-effort takeover
+                }
+                if (!$takenOver) {
+                    return $this->jsonResponse($response, ['error' => true, 'processing' => true,
+                        'message' => 'This submission is already being processed. Please retry in a moment.'], 409);
+                }
+                $reserved = 'owner';
+            }
+            if ($reserved === 'unavailable') {
+                // Audit FL-004/C-11: the ledger is the only duplicate gate for a replay —
+                // fail CLOSED and retryable, never submit unprotected.
+                return $this->jsonResponse($response, ['error' => true, 'retryable' => true,
+                    'message' => 'The submission ledger is temporarily unavailable — please retry.'], 503);
+            }
+            $ownsReservation = true;
+        }
+
+        $createdId = null;
         try {
             // Atomic quota enforcement: re-check the count under a per-form lock so
             // concurrent submissions cannot both pass the earlier check and overshoot
@@ -236,11 +296,22 @@ class ExternalApiController
             $this->maybeNotifyNewResponse($form);
             $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId']]);
 
+            $createdId = is_string($result['id'] ?? null) ? $result['id'] : null;
             return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Internal error processing response'], 500);
+        } finally {
+            if ($ownsReservation) {
+                if (is_string($createdId) && $createdId !== '') {
+                    $this->idempotencyComplete($args['formId'], $idemKey, $createdId);
+                } else {
+                    // Validation / quota / rejection / error: release so a genuine
+                    // retry isn't poisoned by a stale 'pending' row.
+                    $this->idempotencyRelease($args['formId'], $idemKey);
+                }
+            }
         }
     }
 
@@ -987,5 +1058,98 @@ class ExternalApiController
             }
         }
         return false;
+    }
+    /**
+     * Submission-idempotency trio (audit FL-001): a DELIBERATE hand-kept duplicate of
+     * ResponseController's form_submission_idempotency helpers (which in turn mirror
+     * AppPublicController's app-scoped set) — same reserve-first-via-unique-constraint
+     * design, same payload-hash conflict detection, same 600-second stale takeover.
+     * If the pattern changes, update all three by hand (kept unshared on purpose).
+     *
+     * @return string|array<string,mixed>
+     */
+    private function idempotencyReserve(string $formId, ?string $userId, string $key, string $payloadHash)
+    {
+        if ($this->mysql === null) {
+            return 'unavailable';
+        }
+        try {
+            $stmt = $this->mysql->prepare(
+                "INSERT INTO form_submission_idempotency (id, form_id, user_id, idempotency_key, response_id, payload_hash, status, created_at)
+                 VALUES (:id, :f, :u, :k, NULL, :h, 'pending', NOW())"
+            );
+            $stmt->execute([
+                'id' => $this->uuidV4(),
+                'f' => $formId, 'u' => $userId, 'k' => $key, 'h' => $payloadHash,
+            ]);
+            return 'owner';
+        } catch (\PDOException $e) {
+            $dup = $e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062);
+            if ($dup) {
+                return $this->idempotencyFind($formId, $key) ?? 'unavailable';
+            }
+            return 'unavailable';
+        }
+    }
+
+    /** @return array{response_id:?string, payload_hash:string, status:string}|null */
+    private function idempotencyFind(string $formId, string $key): ?array
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT response_id, payload_hash, status FROM form_submission_idempotency
+             WHERE form_id = :f AND idempotency_key = :k LIMIT 1"
+        );
+        $stmt->execute(['f' => $formId, 'k' => $key]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+        return [
+            'response_id' => is_string($row['response_id'] ?? null) ? $row['response_id'] : null,
+            'payload_hash' => (string) ($row['payload_hash'] ?? ''),
+            'status' => (string) ($row['status'] ?? ''),
+        ];
+    }
+
+    /** Mark a reservation completed, pointing it at the created response. Best-effort. */
+    private function idempotencyComplete(string $formId, string $key, string $responseId): void
+    {
+        if ($this->mysql === null) {
+            return;
+        }
+        try {
+            $stmt = $this->mysql->prepare(
+                "UPDATE form_submission_idempotency SET response_id = :r, status = 'completed'
+                 WHERE form_id = :f AND idempotency_key = :k"
+            );
+            $stmt->execute(['r' => $responseId, 'f' => $formId, 'k' => $key]);
+        } catch (\Throwable $e) {
+            // ignore — the response is already persisted.
+        }
+    }
+
+    /** Release an unfulfilled reservation (only our own 'pending' row) so a retry can proceed. */
+    private function idempotencyRelease(string $formId, string $key): void
+    {
+        if ($this->mysql === null) {
+            return;
+        }
+        try {
+            $stmt = $this->mysql->prepare(
+                "DELETE FROM form_submission_idempotency
+                 WHERE form_id = :f AND idempotency_key = :k AND status = 'pending'"
+            );
+            $stmt->execute(['f' => $formId, 'k' => $key]);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+    }
+
+    private function uuidV4(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 }

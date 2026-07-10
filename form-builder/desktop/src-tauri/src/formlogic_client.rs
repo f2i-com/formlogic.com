@@ -263,8 +263,19 @@ impl FormLogicClient {
 
     /// Submit a response through the normal server pipeline (validation +
     /// onSubmit + idempotency all run server-side). Returns the created response.
-    pub async fn submit_response(&self, form_id: &str, answers: &Value) -> FlResult<Value> {
-        let body = json!({ "answers": answers });
+    /// Create a response. `idempotency_key` (audit FL-001) makes the write
+    /// replay-safe: the server returns the ORIGINAL response for a repeated
+    /// key instead of creating a duplicate record.
+    pub async fn submit_response(
+        &self,
+        form_id: &str,
+        answers: &Value,
+        idempotency_key: Option<&str>,
+    ) -> FlResult<Value> {
+        let mut body = json!({ "answers": answers });
+        if let Some(k) = idempotency_key {
+            body["idempotencyKey"] = json!(k);
+        }
         let (_, v) = self
             .send(reqwest::Method::POST, &format!("forms/{form_id}/responses"), &[], Some(&body))
             .await?;
