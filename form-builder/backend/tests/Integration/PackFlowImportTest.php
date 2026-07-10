@@ -259,14 +259,18 @@ class PackFlowImportTest extends TestCase
         $this->assertIsArray($pack);
 
         $result = self::$packs->importPack($pack, $this->userId);
-        $this->assertCount(11, $result['forms']);
+        // 10 forms since the Flow Runs form was removed from the pack (2026-07-09,
+        // "every section earns its place").
+        $this->assertCount(10, $result['forms']);
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 
+        // 8 flows/bindings since the 2026-07-09 sessions (configure-receptionist,
+        // after-call booking, caller lookup joined the original six).
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(6, $flows);
+        $this->assertCount(8, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(6, $bindings);
+        $this->assertCount(8, $bindings);
         $this->assertStringNotContainsString('@pack:', json_encode($flows));
         $this->assertStringNotContainsString('@pack:', json_encode($bindings));
 

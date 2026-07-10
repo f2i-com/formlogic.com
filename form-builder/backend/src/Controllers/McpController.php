@@ -279,6 +279,19 @@ class McpController
                 return ['content' => [['type' => 'text', 'text' => $this->guide()]]];
             }
             $this->requireScope($session, self::TOOL_SCOPES[$name] ?? '__none__');
+            // Cloud entitlement (audit FL-003/C-10): mutating tools require an ACTIVE
+            // cloud account, the SAME policy as every web/API write path — the count
+            // quota alone let a lapsed account keep building through MCP. Read tools
+            // stay available (mirrors CloudWriteGate's read/export/delete allowance).
+            $toolScope = self::TOOL_SCOPES[$name] ?? '';
+            if (
+                (str_ends_with($toolScope, ':write') || $toolScope === 'connector:command')
+                && $this->planService !== null
+                && $this->planService->isEnforced()
+                && !$this->planService->isCloudActive($userId)
+            ) {
+                throw new McpDeniedException('Cloud access for this account has lapsed — renew to make changes', 'cloud_lapsed');
+            }
             switch ($name) {
                 case 'list_forms':
                     if ($scopedApp !== null) {

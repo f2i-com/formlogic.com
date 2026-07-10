@@ -807,6 +807,11 @@ $aiRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'ai', true);
 $aiFileRateLimiter = new RateLimitMiddleware($rateLimiter, 5, 60, 'ai_file', true);
 
 // Protected AI routes (require authentication to prevent abuse)
+// Cloud entitlement gate (audit FL-003/C-10): ONE policy — content-creating writes
+// (POST/PUT/PATCH) require an ACTIVE cloud account; reads, exports and DELETEs always
+// pass; no-op unless CLOUD_PLAN_ENFORCED. Applied to every cloud write surface below.
+$cloudWriteGate = new \FormLogic\Middleware\CloudWriteGateMiddleware($container->get(\FormLogic\Services\PlanService::class));
+
 $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $aiFileRateLimiter) {
     // Form generation from text prompt
     $group->post('/generate-form', function ($request, $response) use ($container) {
@@ -837,7 +842,7 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $a
     $group->post('/generate-screen', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->generateScreen($request, $response);
     });
-})->add($aiRateLimiter)->add($authRequired);
+})->add($cloudWriteGate)->add($aiRateLimiter)->add($authRequired);
 
 // Helper function to get route args
 $getArgs = function ($request) {
@@ -850,7 +855,7 @@ $formMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'form_m
 
 // Blocks content-creating writes when the owning account's cloud access has lapsed
 // (no-op unless CLOUD_PLAN_ENFORCED=true). Reads/exports/deletes always pass.
-$cloudWriteGate = new \FormLogic\Middleware\CloudWriteGateMiddleware($container->get(\FormLogic\Services\PlanService::class));
+// (gate defined above the /api/ai group — audit FL-003/C-10 coverage widening)
 
 // Form routes (protected for management)
 $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container, $getArgs, $formMutationRateLimiter) {
@@ -891,7 +896,7 @@ $app->group('/api/forms/{id}/webhooks', function (RouteCollectorProxy $group) us
     $group->get('/{webhookId}/deliveries', function ($request, $response) use ($container, $getArgs) {
         return $container->get(WebhookController::class)->getDeliveries($request, $response, $getArgs($request));
     });
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Form flow-bindings (protected — form owner only): bind the owner's WORKSPACE flows to a
 // standalone form's events (e.g. 'form.submitted'); rows live in app_flow_bindings with
@@ -909,7 +914,7 @@ $app->group('/api/forms/{id}/flow-bindings', function (RouteCollectorProxy $grou
     $group->delete('/{bindingId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->deleteFormBinding($request, $response, $getArgs($request));
     });
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Form version routes (protected)
 $app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) use ($container, $getArgs) {
@@ -922,7 +927,7 @@ $app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) us
     $group->post('/{version}/restore', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FormController::class)->restoreVersion($request, $response, $getArgs($request));
     });
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Create rate limiter for public endpoints (30 submissions per minute per IP)
 $submissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'submission');
@@ -1169,7 +1174,7 @@ $app->get('/.well-known/assetlinks.json', function ($request, $response) use ($c
 // Pack management routes (protected)
 $app->post('/api/packs/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->import($request, $response);
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Capability review: preview what a pack can do + its trust level before installing.
 $app->post('/api/packs/describe', function ($request, $response) use ($container) {
@@ -1180,7 +1185,7 @@ $app->post('/api/packs/describe', function ($request, $response) use ($container
 // The server verifies the signature and stamps trust (client-supplied trust is never used).
 $app->post('/api/application-packages/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->importSigned($request, $response);
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Bundled sample apps ("Try a sample app")
 $app->get('/api/sample-apps', function ($request, $response) use ($container) {
@@ -1188,11 +1193,11 @@ $app->get('/api/sample-apps', function ($request, $response) use ($container) {
 })->add($authRequired);
 $app->post('/api/sample-apps/{id}/install', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->installSampleApp($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 $app->post('/api/packs/adopt', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->adopt($request, $response);
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 $app->get('/api/packs/installed', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->listInstalled($request, $response);
@@ -1419,7 +1424,7 @@ $app->post('/api/billing/webhook/paypal', function ($request, $response) use ($c
 $apiRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'api_v1');
 $apiKeyService = $container->get(ApiKeyService::class);
 
-$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService, $rateLimiter) {
+$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService, $rateLimiter, $cloudWriteGate) {
     // Forms (forms:read)
     $formsReadAuth = new ApiKeyMiddleware($apiKeyService, ['forms:read'], $rateLimiter);
 
@@ -1440,11 +1445,11 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
 
     $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->submitResponse($request, $response, $getArgs($request));
-    })->add($responsesWriteAuth);
+    })->add($cloudWriteGate)->add($responsesWriteAuth);
 
     $group->post('/forms/{formId}/responses/batch', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->batchSubmitResponses($request, $response, $getArgs($request));
-    })->add($responsesWriteAuth);
+    })->add($cloudWriteGate)->add($responsesWriteAuth);
 
     // Response reading (responses:read)
     $responsesReadAuth = new ApiKeyMiddleware($apiKeyService, ['responses:read'], $rateLimiter);
@@ -1462,7 +1467,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
 
     $group->put('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->updateResponse($request, $response, $getArgs($request));
-    })->add($responsesManageAuth);
+    })->add($cloudWriteGate)->add($responsesManageAuth);
 
     $group->delete('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->deleteResponse($request, $response, $getArgs($request));
@@ -1485,11 +1490,11 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
 
     $group->post('/forms/{formId}/webhooks', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->createWebhook($request, $response, $getArgs($request));
-    })->add($webhooksWriteAuth);
+    })->add($cloudWriteGate)->add($webhooksWriteAuth);
 
     $group->put('/forms/{formId}/webhooks/{webhookId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->updateWebhook($request, $response, $getArgs($request));
-    })->add($webhooksWriteAuth);
+    })->add($cloudWriteGate)->add($webhooksWriteAuth);
 
     $group->delete('/forms/{formId}/webhooks/{webhookId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->deleteWebhook($request, $response, $getArgs($request));
@@ -1523,7 +1528,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     // UNIQUE ledger makes desktop-vs-browser execution exactly-once.
     $group->post('/flow-runs', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->reserveOwnerRun($request, $response);
-    })->add($flowsWriteAuth);
+    })->add($cloudWriteGate)->add($flowsWriteAuth);
 
     // Owner app custom-logic bundles — lets Desktop apply onConnectorEvent scripts headless.
     $group->get('/app-logic', function ($request, $response) use ($container) {
@@ -1539,8 +1544,11 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
 
     $group->put('/connector-assignments', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->putConnectorAssignment($request, $response);
-    })->add($flowsWriteAuth);
+    })->add($cloudWriteGate)->add($flowsWriteAuth);
 
+    // NOT cloud-gated (audit FL-003 policy): claim/complete/PATCH only FINALIZE work that was
+    // already reserved through a gated path — blocking them on lapse would strand in-flight
+    // runs/commands mid-execution without preventing any new content.
     $group->post('/flow-runs/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->claimOwnerRun($request, $response, $getArgs($request));
     })->add($flowsWriteAuth);
@@ -1555,7 +1563,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
 
     $group->put('/flow-kv', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerPut($request, $response);
-    })->add($flowsWriteAuth);
+    })->add($cloudWriteGate)->add($flowsWriteAuth);
 
     $group->delete('/flow-kv', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerDelete($request, $response);
@@ -1802,7 +1810,7 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->delete('/{appId}/groups/{id}/members/{memberId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppUserController::class)->removeGroupMember($request, $response, $getArgs($request));
     });
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Rate limiter for app runtime submissions (30 per minute per IP, same as public submission)
 $appSubmissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'app_submission');
@@ -1847,7 +1855,7 @@ $app->group('/api/flows', function (RouteCollectorProxy $group) use ($container,
     $group->delete('/{flowId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->deleteWorkspaceFlow($request, $response, $getArgs($request));
     });
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Owner-wide run history + queued/claim/complete across every flow the user owns (workspace +
 // app flows) — the same lifecycle FormLogic Desktop drives over /api/v1 with an API key.
@@ -1864,7 +1872,7 @@ $app->group('/api/flow-runs', function (RouteCollectorProxy $group) use ($contai
     $group->patch('/{runId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->completeOwnerRun($request, $response, $getArgs($request));
     })->add($flowRunRateLimiter);
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // Flow KV storage (owner surface): GET one entry / list a scope, PUT upsert, DELETE one key.
 $app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($container, $flowRunRateLimiter) {
@@ -1877,7 +1885,7 @@ $app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($containe
     $group->delete('', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerDelete($request, $response);
     })->add($flowRunRateLimiter);
-})->add($authRequired);
+})->add($cloudWriteGate)->add($authRequired);
 
 // App Runtime routes (public-facing, auth required for most)
 $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $cloudWriteGate) {
