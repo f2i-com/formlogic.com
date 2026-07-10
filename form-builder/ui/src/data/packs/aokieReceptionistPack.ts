@@ -329,6 +329,23 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var callback = data.callback_requested === true;
   var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
   var validTime = /^\\d{2}:\\d{2}$/.test(timeStr);
+  // PACK-002: an impossible or past date must never auto-book. Rebuild the
+  // date from its parts (2026-02-31 rolls over and stops matching = not a
+  // real calendar date) and compare LOCAL ISO strings for the past check
+  // (same local-date recipe as the ctx node - toISOString would be UTC).
+  var nowP = new Date();
+  var todayIso = nowP.getFullYear() + '-' + ('0' + (nowP.getMonth() + 1)).slice(-2) + '-' + ('0' + nowP.getDate()).slice(-2);
+  var realDate = false;
+  if (validDate) {
+    var dp = dateStr.split('-');
+    var dObj = new Date(Number(dp[0]), Number(dp[1]) - 1, Number(dp[2]));
+    realDate = dObj.getFullYear() === Number(dp[0]) && (dObj.getMonth() + 1) === Number(dp[1]) && dObj.getDate() === Number(dp[2]);
+  }
+  var pastDate = validDate && realDate && dateStr < todayIso;
+  var dateProblem = !validDate ? 'the date was unclear on the call'
+    : !realDate ? 'the extracted date (' + dateStr + ') is not a real calendar date'
+    : pastDate ? 'the extracted date (' + dateStr + ') is in the past'
+    : '';
   var ctx = nodes.ctx || {};
   var phone = String(ctx.phone || '');
   var knownId = ctx.customerId || null;
@@ -337,7 +354,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var wantsBooking = intent === 'appointment';
   // A named service is NOT required - 'an appointment tomorrow at 10' books
   // as service 'Appointment' (verified live: extractor gives service null).
-  var hasAppointment = wantsBooking && validDate;
+  var hasAppointment = wantsBooking && dateProblem === '';
   var hasOrder = intent === 'order';
   var appointment = {
     service: service || 'Appointment',
@@ -356,7 +373,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var taskSummary = hasAppointment
     ? 'Confirm appointment with ' + caller + (phone ? ' (' + phone + ')' : '') + ' - ' + (service || 'Appointment') + ' on ' + dateStr + (validTime ? ' at ' + timeStr : '') + ' (requested on the call, NOT yet confirmed to the caller)'
     : wantsBooking && !hasAppointment
-    ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - the date was unclear on the call (' + summary + ')'
+    ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - ' + (dateProblem || 'the date was unclear on the call') + ' (' + summary + ')'
     : intent === 'message'
       ? 'Message from ' + caller + ': ' + summary
       : 'Call back ' + caller + ': ' + summary;
