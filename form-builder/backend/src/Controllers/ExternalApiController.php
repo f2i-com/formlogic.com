@@ -460,10 +460,22 @@ class ExternalApiController
         }
 
         $params = $request->getQueryParams();
+        // Server-side answer-equality filters (audit AOK-FLOW-001):
+        // ?answers.<fieldId>=<value> — ANDed; used by the flow runners so an
+        // exact lookup (call_id, phone, …) is a database query, not a scan of
+        // the newest N rows. NOTE: PHP parses '.' in query keys to '_', so
+        // accept both spellings ('answers.call_id' arrives as 'answers_call_id').
+        $answersEq = [];
+        foreach ($params as $k => $v) {
+            if (is_string($v) && (str_starts_with((string) $k, 'answers.') || str_starts_with((string) $k, 'answers_'))) {
+                $answersEq[substr((string) $k, 8)] = $v;
+            }
+        }
         $options = [
             'status' => $params['status'] ?? null,
             'from' => $params['from'] ?? null,
             'to' => $params['to'] ?? null,
+            'answersEq' => $answersEq,
             'limit' => max(1, min((int)($params['limit'] ?? 50), 1000)),
             'offset' => max(0, (int)($params['offset'] ?? 0)),
         ];

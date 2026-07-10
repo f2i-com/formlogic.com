@@ -327,13 +327,24 @@ impl FormLogicClient {
     }
 
     /// List a form's responses (for `formlogic_list_responses` + match/upsert).
-    pub async fn list_responses(&self, form_id: &str, limit: u32) -> FlResult<Vec<Value>> {
+    /// `answers_eq` pairs become `answers.<field>=<value>` query params —
+    /// server-side equality lookups (audit AOK-FLOW-001).
+    pub async fn list_responses(
+        &self,
+        form_id: &str,
+        limit: u32,
+        answers_eq: &[(String, String)],
+    ) -> FlResult<Vec<Value>> {
         let limit = limit.to_string();
+        let mut query: Vec<(&str, &str)> = vec![("limit", &limit)];
+        for (k, v) in answers_eq {
+            query.push((k.as_str(), v.as_str()));
+        }
         let (_, v) = self
             .send(
                 reqwest::Method::GET,
                 &format!("forms/{form_id}/responses"),
-                &[("limit", &limit)],
+                &query,
                 None,
             )
             .await?;

@@ -488,6 +488,33 @@ struct ResponseFilter {
     value: Value,
 }
 
+/// Server-side pushdown (audit AOK-FLOW-001): the eq filters whose resolved
+/// value is a scalar become `answers.<field>=<value>` query params, so an
+/// exact lookup (call_id, phone, …) is answered by the DATABASE — a match
+/// beyond the fetch limit is never silently missed. Every filter is still
+/// applied client-side afterwards (frozen contract unchanged); pushdown only
+/// changes WHICH rows come back.
+fn pushdown_eq_filters(filters_raw: Option<&Value>, scope: &SelectorScope) -> Vec<(String, String)> {
+    parse_response_filters(filters_raw)
+        .iter()
+        .filter(|f| f.op == FilterOp::Eq)
+        .filter_map(|f| {
+            let resolved = resolve_selector(&f.value, scope);
+            let scalar = match &resolved {
+                Value::String(v) => Some(v.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                Value::Bool(b) => Some(b.to_string()),
+                _ => None,
+            }?;
+            // Field ids are machine keys; the server ignores anything else.
+            f.field
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                .then(|| (format!("answers.{}", f.field), scalar))
+        })
+        .collect()
+}
+
 /// Clamp a node's `limit` into `[1, LIST_RESPONSES_MAX_LIMIT]`, defaulting when
 /// unset/invalid (mirrors `clampListLimit` in nodes.ts).
 fn clamp_list_limit(raw: Option<&Value>) -> u32 {
@@ -847,7 +874,11 @@ async fn execute_node(
             let form_id = resolve_form_ref(node, scope)?;
             let limit = clamp_list_limit(data.get("limit"));
             let client = require_client(node, deps)?;
-            let raw = client.list_responses(&form_id, limit).await.map_err(|e| client_err(node, e))?;
+            let pushdown = pushdown_eq_filters(data.get("filters"), scope);
+            let raw = client
+                .list_responses(&form_id, limit, &pushdown)
+                .await
+                .map_err(|e| client_err(node, e))?;
             Ok(apply_list_responses(&raw, data.get("filters"), scope))
         }
 

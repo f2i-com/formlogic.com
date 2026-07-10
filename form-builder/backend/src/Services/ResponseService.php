@@ -457,6 +457,23 @@ class ResponseService
             $params['to'] = $options['to'];
         }
 
+        // Indexed answer-equality lookups (audit AOK-FLOW-001): flow list
+        // nodes push their eq filters here so a match BEYOND the row limit is
+        // found by the database, never silently missed by a client-side scan
+        // of the newest N rows. CAST-to-TEXT mirrors the node's loose
+        // equality (a numeric answer still matches its string form).
+        if (!empty($options['answersEq']) && is_array($options['answersEq'])) {
+            $i = 0;
+            foreach ($options['answersEq'] as $field => $value) {
+                if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', (string) $field)) {
+                    continue; // field ids are machine keys; ignore anything else
+                }
+                $i++;
+                $conditions[] = "CAST(json_extract(answers, '$.\"" . $field . "\"') AS TEXT) = :ans_eq_{$i}";
+                $params["ans_eq_{$i}"] = (string) $value;
+            }
+        }
+
         if (!empty($conditions)) {
             $sql .= " WHERE " . implode(' AND ', $conditions);
         }

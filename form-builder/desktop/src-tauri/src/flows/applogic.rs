@@ -300,7 +300,18 @@ async fn apply_update(
             let value = m.get("value");
             match (field, value) {
                 (Some(field), Some(value)) => {
-                    match client.list_responses(form_id, RESPONSE_SCAN_LIMIT).await {
+                    // Server-side equality pushdown (audit AOK-FLOW-001): the
+                    // lifecycle upserts match Calls rows by call_id — a call
+                    // older than the scan window must still be FOUND, or the
+                    // upsert double-creates. Scalar values become an
+                    // answers.<field> query; the local find_map stays as the
+                    // exact-equality check over whatever came back.
+                    let pushdown: Vec<(String, String)> = match value {
+                        Value::String(v) => vec![(format!("answers.{field}"), v.clone())],
+                        Value::Number(n) => vec![(format!("answers.{field}"), n.to_string())],
+                        _ => Vec::new(),
+                    };
+                    match client.list_responses(form_id, RESPONSE_SCAN_LIMIT, &pushdown).await {
                         Ok(rows) => rows.into_iter().find_map(|r| {
                             let ans = r.get("answers")?;
                             if ans.get(field) == Some(value) {
