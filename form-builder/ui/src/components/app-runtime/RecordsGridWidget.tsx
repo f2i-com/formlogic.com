@@ -44,18 +44,23 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
   const formId = cfg?.formId ?? '';
   const pageSize = Math.max(1, Math.min(cfg?.pageSize ?? 10, 50));
   const cols = useMemo(() => deriveColumns(form, cfg?.columnFieldIds), [form, cfg?.columnFieldIds]);
-  const [page, setPage] = useState(0);
+  // Page state is KEYED by the query (form + page size): when either changes the
+  // key no longer matches and the derived page falls back to 0 — no reset effect,
+  // and no double fetch with a stale page number.
+  const pageKey = `${formId}|${pageSize}`;
+  const [pageState, setPageState] = useState({ key: pageKey, page: 0 });
+  const page = pageState.key === pageKey ? pageState.page : 0;
+  const gotoPage = (p: number) => setPageState({ key: pageKey, page: Math.max(0, p) });
   const [rows, setRows] = useState<GridRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  // The builder canvas (no fetchPage) and an unconfigured widget never load — start settled.
+  const [loading, setLoading] = useState(!!fetchPage && !!formId);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset to page 0 when the form/page-size changes.
-  useEffect(() => { setPage(0); }, [formId, pageSize]);
-
   useEffect(() => {
-    if (!fetchPage || !formId) { setLoading(false); return; }
+    if (!fetchPage || !formId) return; // static preview / unconfigured — nothing to load
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: the in-flight status must reset synchronously when the query changes
     setLoading(true);
     setError(null);
     fetchPage(formId, { limit: pageSize, offset: page * pageSize }).then((r) => {
@@ -144,11 +149,11 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
         <div className="flex items-center justify-between gap-2 px-4 py-2 border-t border-gray-100 dark:border-slate-700/40 shrink-0">
           <span className="text-xs text-gray-400 dark:text-slate-500 tabular-nums">{from}–{to} of {total}</span>
           <div className="flex items-center gap-1">
-            <button type="button" aria-label="Previous page" disabled={!canPrev || loading} onClick={() => setPage((x) => Math.max(0, x - 1))}
+            <button type="button" aria-label="Previous page" disabled={!canPrev || loading} onClick={() => gotoPage(page - 1)}
               className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-default cursor-pointer">
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <button type="button" aria-label="Next page" disabled={!canNext || loading} onClick={() => setPage((x) => x + 1)}
+            <button type="button" aria-label="Next page" disabled={!canNext || loading} onClick={() => gotoPage(page + 1)}
               className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-default cursor-pointer">
               <ChevronRight className="h-4 w-4" />
             </button>
