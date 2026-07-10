@@ -49,11 +49,17 @@ jobs:
           extensions: pdo, pdo_mysql, mbstring, curl, gd, zip
           coverage: none
 
-      - name: Backend tests
+      # Audit FL-REL-001: the release gate must be IDENTICAL-or-stricter than
+      # main CI — a tag could previously package from a commit that never ran
+      # lint, audits, the bundle budget or the prelude-sync check.
+      - name: Backend gates (validate, lint, tests, audit)
         working-directory: form-builder/backend
         run: |
+          composer validate --no-check-publish
           composer install --no-interaction --prefer-dist --no-progress
+          find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
           composer test
+          composer audit
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -62,13 +68,19 @@ jobs:
           cache: npm
           cache-dependency-path: form-builder/ui/package-lock.json
 
-      - name: Frontend tests + invariants
+      - name: Frontend gates (lint, tests, build, budget, invariants, audit)
         working-directory: form-builder/ui
         run: |
           npm ci
+          npm run lint
           npm test
+          npm run build
+          node scripts/check-bundle-budget.mjs
           node scripts/check-pack-screens.mjs
           node scripts/check-security-invariants.mjs
+          git diff --exit-code ../backend/resources/formlogic-prelude.js \
+            || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in form-builder/ui and commit the result" && exit 1)
+          npm audit --audit-level=high
 
   # Audit PKG-001 (best-effort until signing infrastructure exists): build the
   # Windows desktop installers (NSIS + MSI via `tauri build`), run the desktop
