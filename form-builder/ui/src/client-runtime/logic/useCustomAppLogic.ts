@@ -128,10 +128,21 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
         const formId = resolveFormKey(formKey);
         let responseId = target.responseId;
         if (!responseId && target.match) {
+          // Push the match down to the server (answersEq) when the key is a plain
+          // string machine field, so the target row is found REGARDLESS of age.
+          // The old newest-100 client window missed a long-lived match key (e.g. an
+          // sms-thread by phone that had >100 newer rows since), and upsert then
+          // minted a DUPLICATE row. The client-side match + retry below still runs,
+          // absorbing the write-lag case (a row not yet server-visible).
+          const { field, value } = target.match;
+          const canPushDown = typeof value === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(field);
+          const fetchOpts = canPushDown
+            ? { limit: 100, answersEq: { [field]: value } }
+            : { limit: 100 };
           responseId =
             (await findResponseIdByMatch(
               async () =>
-                (await state.fetchResponses(formId, { limit: 100 })) as Array<{
+                (await state.fetchResponses(formId, fetchOpts)) as Array<{
                   id?: unknown;
                   answers?: Record<string, unknown>;
                 }>,
