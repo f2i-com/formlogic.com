@@ -102,12 +102,13 @@ $container->set(LoggerInterface::class, function (Container $c) {
 // Register database connections
 $container->set(MySQLConnection::class, function (Container $c) {
     $mysql = new MySQLConnection($c->get('settings')['mysql']);
-    // Initialize schema and run migrations only once per process
-    static $schemaInitialized = false;
-    if (!$schemaInitialized) {
-        $mysql->initializeSchema();
-        $mysql->runMigrations();
-        $schemaInitialized = true;
+    // Audit FL-DB-001: the request path runs ONE stamp SELECT, not the full
+    // DDL sweep; a stale stamp migrates once under a named MySQL lock (see
+    // MySQLConnection::ensureSchemaCurrent).
+    static $schemaChecked = false;
+    if (!$schemaChecked) {
+        $mysql->ensureSchemaCurrent();
+        $schemaChecked = true;
     }
     return $mysql;
 });

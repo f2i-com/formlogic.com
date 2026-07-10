@@ -54,6 +54,75 @@ class MySQLConnection
         return self::$instance;
     }
 
+    /**
+     * Request-path schema check (audit FL-DB-001). The old bootstrap ran the
+     * FULL initializeSchema + runMigrations (50+ CREATEs, dozens of SHOW
+     * COLUMNS probes, DDL) in EVERY php-fpm process. Now:
+     *
+     *  - Fast path: ONE indexed SELECT compares schema_meta's stamp against a
+     *    hash of this file — when the schema code hasn't changed, a request
+     *    executes zero DDL and zero probes.
+     *  - Miss (fresh install / after a deploy that touched this file): one
+     *    worker migrates under a named MySQL lock; concurrent workers wait on
+     *    the lock and re-check, so two deployers can never run the same
+     *    migration at once. A worker that can't get the lock reports
+     *    "migration in progress" instead of partially serving.
+     *
+     * The stamp is md5(this file): every schema/migration change lives here,
+     * so a deploy that touches it re-migrates exactly once — no version
+     * constant for a developer to forget to bump.
+     */
+    public function ensureSchemaCurrent(): void
+    {
+        $stamp = md5_file(__FILE__) ?: 'unknown';
+        $pdo = $this->getConnection();
+        if ($this->schemaStampMatches($pdo, $stamp)) {
+            return; // one SELECT, no DDL — the normal request path
+        }
+        $got = $pdo->query("SELECT GET_LOCK('formlogic_schema_migration', 15)")->fetchColumn();
+        if ((int) $got !== 1) {
+            throw new \RuntimeException(
+                'Database migration is in progress on another worker — retry shortly'
+            );
+        }
+        try {
+            // Re-check under the lock: a concurrent worker may have finished.
+            if ($this->schemaStampMatches($pdo, $stamp)) {
+                return;
+            }
+            $this->initializeSchema();
+            $this->runMigrations();
+            // schema_meta is the INSTALLER'S key/value store (install.php /
+            // bin/upgrade.php own its shape) — the stamp is just one more key.
+            $pdo->exec(
+                "CREATE TABLE IF NOT EXISTS schema_meta (
+                    meta_key VARCHAR(64) NOT NULL PRIMARY KEY,
+                    meta_value TEXT NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            );
+            $stmt = $pdo->prepare(
+                "INSERT INTO schema_meta (meta_key, meta_value) VALUES ('schema_code_stamp', :s)
+                 ON DUPLICATE KEY UPDATE meta_value = :s2"
+            );
+            $stmt->execute(['s' => $stamp, 's2' => $stamp]);
+        } finally {
+            $pdo->query("SELECT RELEASE_LOCK('formlogic_schema_migration')");
+        }
+    }
+
+    private function schemaStampMatches(\PDO $pdo, string $stamp): bool
+    {
+        try {
+            $current = $pdo
+                ->query("SELECT meta_value FROM schema_meta WHERE meta_key = 'schema_code_stamp'")
+                ->fetchColumn();
+            return $current === $stamp;
+        } catch (\PDOException $e) {
+            return false; // schema_meta missing — fresh install/upgrade path
+        }
+    }
+
     public function initializeSchema(): void
     {
         $pdo = $this->getConnection();
