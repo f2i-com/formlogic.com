@@ -62,6 +62,11 @@ pub struct HealthReport {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// The plugin's full component readiness (radio/outbox/config/build …) —
+    /// retained verbatim so the support bundle and readiness UIs see WHY,
+    /// not just a status word (audit CROSS-OBS-001 / INT-006).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<serde_json::Value>,
 }
 
 /// Everything the host tracks about one plugin. Runtime-only — the wire view

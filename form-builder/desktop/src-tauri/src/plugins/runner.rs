@@ -632,6 +632,7 @@ fn health_report(res: &Result<Value, RpcFailure>) -> HealthReport {
                     .get("detail")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                components: v.get("components").cloned(),
                 status,
             }
         }
@@ -640,6 +641,7 @@ fn health_report(res: &Result<Value, RpcFailure>) -> HealthReport {
             ok: false,
             status: "unreachable".into(),
             detail: Some(failure_text(f)),
+            components: None,
         },
     }
 }
