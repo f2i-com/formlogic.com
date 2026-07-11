@@ -304,6 +304,13 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
                     description="Stop accepting new responses"
                   />
 
+                  <Switch
+                    checked={editedSettings.singleRecord === true}
+                    onChange={(checked) => updateSettings({ singleRecord: checked || undefined })}
+                    label="Single record (settings-style)"
+                    description="The form holds one record that members edit in place — opening it in an app jumps straight to editing instead of a blank form"
+                  />
+
                   {editedSettings.isClosed && (
                     <div>
                       <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Closed message</label>

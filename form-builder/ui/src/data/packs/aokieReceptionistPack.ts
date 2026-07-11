@@ -1128,7 +1128,9 @@ export const aokieReceptionistPack: PackData = {
       icon: 'Settings',
       description:
         'Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so persona/greeting/voice/model changes take effect on the next caller turn. Reply mode is the one exception — see its own field description below.',
-      settings: { ...defaultSettings },
+      // Settings-style singleton: one record, edited in place — opening the section jumps
+      // straight into editing it (the entry form only shows until the first save).
+      settings: { ...defaultSettings, singleRecord: true },
       theme: { ...defaultTheme },
       fields: [
         { id: 'business_name', type: 'short_text', label: 'Business name', required: false, properties: { placeholder: 'e.g. Bright Smile Dental' } },
@@ -1219,7 +1221,7 @@ export const aokieReceptionistPack: PackData = {
           version: 1,
           cols: 12,
           widgets: [
-            { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call.' } },
+            { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Fill this in once to change how your AI receptionist talks and which model it uses — after that, opening this section edits the same record in place. The live call flow reads it on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call.' } },
             { id: 'l1', title: 'Current settings', layout: { x: 0, y: 1, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:receptionist-settings', titleField: 'business_name', subtitleField: 'model', metaField: 'active', limit: 5 } },
           ],
         },

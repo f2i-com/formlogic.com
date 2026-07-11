@@ -115,6 +115,10 @@ export interface FormSettings {
   closedMessage?: string;
   isClosed: boolean;
   showNigoDashboard?: boolean;
+  /** Settings-style singleton: the form holds ONE record that users edit in place. In the app
+   *  runtime, opening the form redirects to that record in edit mode (the blank form only shows
+   *  until the first record exists). UX-level — the server doesn't reject extra rows. */
+  singleRecord?: boolean;
 }
 
 export interface FormTheme {

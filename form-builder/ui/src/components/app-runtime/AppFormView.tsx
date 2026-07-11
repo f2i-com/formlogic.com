@@ -708,6 +708,25 @@ export function AppFormView() {
   // The component instance is reused across /form/:formId navigations — honor ?new=1 per visit.
   useEffect(() => { setShowFormView(wantNew); }, [formId, wantNew]);
 
+  // Settings-style singleton forms (settings.singleRecord): the form IS its one record.
+  // When a record already exists, visiting the form opens that record in edit mode instead
+  // of a section screen / blank entry; only the very first visit shows the entry form.
+  const singleRecord = (config?.forms.find((f) => f.formId === formId)?.settings as { singleRecord?: boolean } | undefined)?.singleRecord === true;
+  useEffect(() => {
+    if (!singleRecord || !appSlug || !formId) return;
+    if (!(canViewOwn(formId) || canViewAll(formId))) return; // entry-only roles keep the plain form
+    let cancelled = false;
+    api.getAppResponses(appSlug, formId, { limit: 1 }).then((res) => {
+      if (cancelled) return;
+      const first = ((res.data?.responses ?? []) as Array<{ id?: unknown }>)[0];
+      if (typeof first?.id === 'string') {
+        navigate(`/app/${appSlug}/form/${formId}/responses/${first.id}?edit=1`, { replace: true });
+      }
+    }).catch(() => { /* fall through to the normal form view */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- canViewOwn/canViewAll are stable store actions
+  }, [singleRecord, appSlug, formId, navigate]);
+
   // Related-records "Add": arriving from a record's related sub-grid with
   // ?linkField=<fieldId>&linkTo=<parentResponseId> pre-links the new record back
   // to its parent by seeding that linked_record field (array when it allows many).
@@ -940,6 +959,11 @@ export function AppFormView() {
         responseId: typeof createdId === 'string' ? createdId : undefined,
         answers: submissionData,
       });
+      // Singleton forms: the first fill created THE record — land on it, where all future
+      // visits (and edits) happen, instead of the generic thank-you screen.
+      if (singleRecord && typeof createdId === 'string' && (canViewOwn(formId) || canViewAll(formId))) {
+        navigate(`/app/${appSlug}/form/${formId}/responses/${createdId}`, { replace: true });
+      }
     } catch (err) {
       // Mirror the public-form path: a failure only means "not submitted" when we
       // are ONLINE (a real server rejection). When offline, the service worker's
@@ -954,7 +978,8 @@ export function AppFormView() {
     }
     setSubmitting(false);
     submittingRef.current = false;
-  }, [formId, createResponse, runBeforeSubmit, runAfterSubmit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- canViewOwn/canViewAll are stable store actions
+  }, [formId, appSlug, createResponse, runBeforeSubmit, runAfterSubmit, singleRecord, navigate]);
 
   const handleNext = useCallback(() => {
     if (currentField && isFieldRequired(currentField.id) && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {

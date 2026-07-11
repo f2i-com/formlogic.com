@@ -2207,7 +2207,8 @@
           "notifications": {
             "emailNotifications": false
           },
-          "isClosed": false
+          "isClosed": false,
+          "singleRecord": true
         },
         "theme": {
           "primaryColor": "#0284c7",
@@ -2391,7 +2392,7 @@
                 },
                 "kind": "text",
                 "text": {
-                  "body": "Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call."
+                  "body": "Fill this in once to change how your AI receptionist talks and which model it uses — after that, opening this section edits the same record in place. The live call flow reads it on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call."
                 }
               },
               {

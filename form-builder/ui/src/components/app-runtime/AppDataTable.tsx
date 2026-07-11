@@ -464,8 +464,10 @@ export function AppDataTable() {
   const canSubmitThis = formId ? canSubmit(formId) : false;
   // Offer "New record" only when the member can submit AND the form isn't explicitly closed to new
   // records (allowNewResponses !== false — so forms without a section screen still allow adding).
-  // Mirrors the section-screen dashboards' New button.
-  const canAddRecord = canSubmitThis && (runtimeForm?.customScreen?.allowNewResponses !== false);
+  // Mirrors the section-screen dashboards' New button. Singleton forms (settings.singleRecord)
+  // stop offering "New record" once their one record exists — it's edited in place instead.
+  const isSingleRecordFull = (runtimeForm?.settings as { singleRecord?: boolean } | undefined)?.singleRecord === true && total >= 1;
+  const canAddRecord = canSubmitThis && (runtimeForm?.customScreen?.allowNewResponses !== false) && !isSingleRecordFull;
   const newRecordButton = canAddRecord && formId ? (
     <button
       type="button"

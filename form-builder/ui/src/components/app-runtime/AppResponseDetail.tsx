@@ -37,6 +37,14 @@ export function AppResponseDetail() {
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   // Optional per-record widget (e.g. the call transcript) — rendered above the related panel.
   const recordScreen = runtimeForm?.customScreen?.recordScreen;
+
+  // ?edit=1 deep-links straight into edit mode (singleton settings-style forms land here from
+  // the form view). Applied once the record is loaded; view-only roles just see the record.
+  const wantEdit = new URLSearchParams(location.search).get('edit') === '1';
+  useEffect(() => {
+    if (wantEdit && response && formId && canEdit(formId)) setEditing(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- canEdit is a stable store action
+  }, [wantEdit, response, formId]);
   // Exclude layout-only screens (they carry no answer) so they don't render as empty
   // "No answer" rows — or, in edit mode, as bogus editable inputs the backend discards.
   const fields = ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>)

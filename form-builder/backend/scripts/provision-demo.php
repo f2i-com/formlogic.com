@@ -531,7 +531,7 @@ function seedResponses(FormService $formService, ResponseService $responseServic
     $defs = [];
     foreach ($createdForms as $cf) {
         $full = $formService->getForm($cf['id']);
-        if ($full) { $defs[$cf['id']] = ['title' => (string) ($full['title'] ?? ''), 'fields' => $full['fields'] ?? []]; }
+        if ($full) { $defs[$cf['id']] = ['title' => (string) ($full['title'] ?? ''), 'fields' => $full['fields'] ?? [], 'settings' => is_array($full['settings'] ?? null) ? $full['settings'] : []]; }
     }
     $hasLink = static function (array $fields): bool {
         foreach ($fields as $f) { if (($f['type'] ?? '') === 'linked_record') { return true; } }
@@ -560,7 +560,8 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
     $fields = $def['fields'] ?? [];
     $formName = strtolower((string) ($def['title'] ?? ''));
     $ids = [];
-    $count = random_int(9, 14);
+    // Settings-style singletons hold exactly ONE record that's edited in place.
+    $count = !empty($def['settings']['singleRecord']) ? 1 : random_int(9, 14);
     for ($i = 0; $i < $count; $i++) {
         // Decide this row's submission moment up-front so signing/acknowledgement dates can be
         // aligned to it AND backdateResponse can apply the very same timestamp — keeping the
