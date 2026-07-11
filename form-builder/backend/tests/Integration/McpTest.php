@@ -11,6 +11,7 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\DesktopCommandService;
+use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\PlanService;
@@ -79,7 +80,7 @@ class McpTest extends TestCase
         self::$responses = $responses;
         self::$reportValidator = new AppReportService(self::$apps, $forms);
         self::$desktopCommands = new DesktopCommandService($conn);
-        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands);
+        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands, null, null, null, new FlowService($conn));
     }
 
     protected function setUp(): void
@@ -114,6 +115,8 @@ class McpTest extends TestCase
             self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ?')->execute([$aid]);
             self::$pdo->prepare('DELETE FROM app_role_permissions WHERE role_id IN (SELECT id FROM app_roles WHERE app_id = ?)')->execute([$aid]);
             self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_flow_bindings WHERE app_id = ?')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM flow_definitions WHERE app_id = ?')->execute([$aid]);
         }
         self::$pdo->prepare('DELETE FROM apps WHERE owner_id = ?')->execute([$this->userId]);
         self::$pdo->prepare('DELETE FROM forms WHERE user_id = ?')->execute([$this->userId]);
@@ -1018,5 +1021,176 @@ class McpTest extends TestCase
         $this->assertStringContainsString('malformed', $res['text']);
         $after = $this->countAuditRows(['mcp.denied', 'mcp.tool_error']);
         $this->assertSame($before, $after, 'an ordinary validation \Exception must not add a new mcp.denied/mcp.tool_error audit row');
+    }
+
+    // ── Flows over MCP ──
+
+    /** The full flow lifecycle: create → list → get → bind to a form event → update → delete. */
+    public function testFlowToolsBuildBindAndTearDown(): void
+    {
+        $tok = self::$tokens->create($this->userId)['token'];
+
+        $created = $this->tool($tok, 'create_flow', [
+            'appId' => $this->appA,
+            'name' => 'Acknowledge lead',
+            'slug' => 'ack-lead',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input', 'data' => ['inputs' => [['name' => 'name']]]],
+                    ['id' => 'out', 'type' => 'output', 'data' => ['value' => ['ok' => true]]],
+                ],
+                'edges' => [['source' => 'in', 'target' => 'out']],
+            ],
+            'nodeCapabilities' => ['formlogic.responses.read'],
+        ]);
+        $this->assertFalse($created['isError'], $created['text']);
+        $this->assertSame('ack-lead', $created['data']['slug'] ?? null);
+        $flowId = (string) $created['data']['id'];
+
+        $list = $this->tool($tok, 'list_flows', ['appId' => $this->appA]);
+        $this->assertFalse($list['isError'], $list['text']);
+        $this->assertSame(['ack-lead'], array_column($list['data'], 'slug'));
+
+        $got = $this->tool($tok, 'get_flow', ['appId' => $this->appA, 'flowId' => $flowId]);
+        $this->assertFalse($got['isError'], $got['text']);
+        $this->assertSame('in', $got['data']['flowJson']['nodes'][0]['id'] ?? null);
+        $this->assertSame(['formlogic.responses.read'], $got['data']['nodeCapabilities']);
+
+        // Bind it to the app's form (form.submitted trigger). Mode defaults to async.
+        $binding = $this->tool($tok, 'create_flow_binding', [
+            'appId' => $this->appA,
+            'flow' => 'ack-lead',
+            'event' => 'form.submitted',
+            'formId' => $this->formA,
+            'inputMap' => ['name' => '$event.data.answers.name'],
+        ]);
+        $this->assertFalse($binding['isError'], $binding['text']);
+        $this->assertSame('async', $binding['data']['mode'] ?? null);
+        $this->assertSame($this->formA, $binding['data']['formId'] ?? null);
+        $bindingId = (string) $binding['data']['id'];
+
+        $bindings = $this->tool($tok, 'list_flow_bindings', ['appId' => $this->appA]);
+        $this->assertFalse($bindings['isError'], $bindings['text']);
+        $this->assertSame([$bindingId], array_column($bindings['data'], 'id'));
+
+        // A binding to a form OUTSIDE the app is rejected by the service with a clear message.
+        $foreign = $this->tool($tok, 'create_flow_binding', [
+            'appId' => $this->appA, 'flow' => 'ack-lead', 'event' => 'form.submitted', 'formId' => $this->formB,
+        ]);
+        $this->assertTrue($foreign['isError']);
+        $this->assertStringContainsString('does not belong to this app', $foreign['text']);
+
+        $upd = $this->tool($tok, 'update_flow', ['appId' => $this->appA, 'flowId' => $flowId, 'enabled' => false]);
+        $this->assertFalse($upd['isError'], $upd['text']);
+        $this->assertFalse($upd['data']['enabled']);
+
+        $updB = $this->tool($tok, 'update_flow_binding', ['appId' => $this->appA, 'bindingId' => $bindingId, 'enabled' => false]);
+        $this->assertFalse($updB['isError'], $updB['text']);
+        $this->assertFalse($updB['data']['enabled']);
+
+        $delB = $this->tool($tok, 'delete_flow_binding', ['appId' => $this->appA, 'bindingId' => $bindingId]);
+        $this->assertFalse($delB['isError'], $delB['text']);
+        $del = $this->tool($tok, 'delete_flow', ['appId' => $this->appA, 'flowId' => $flowId]);
+        $this->assertFalse($del['isError'], $del['text']);
+        $this->assertSame([], $this->tool($tok, 'list_flows', ['appId' => $this->appA])['data']);
+    }
+
+    /** App-scoped tokens: flow tools default to the scoped app and cannot touch another app's flows. */
+    public function testFlowToolsHonorAppScope(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+
+        // No appId → defaults to the scoped app.
+        $created = $this->tool($tok, 'create_flow', ['name' => 'Scoped flow']);
+        $this->assertFalse($created['isError'], $created['text']);
+        $this->assertSame($this->appA, $created['data']['appId'] ?? null);
+
+        // An explicit foreign appId is denied (and audited as an app_scope denial).
+        $foreign = $this->tool($tok, 'create_flow', ['appId' => $this->appB, 'name' => 'Nope']);
+        $this->assertTrue($foreign['isError']);
+        $this->assertStringContainsString('scoped to a single app', $foreign['text']);
+
+        $this->assertTrue($this->tool($tok, 'list_flows', ['appId' => $this->appB])['isError']);
+    }
+
+    /** Without apps:write the flow write tools are hidden from tools/list AND refuse when called. */
+    public function testFlowWriteToolsRequireAppsWrite(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, ['apps:read', 'forms:read'])['token'];
+
+        $names = $this->toolNames($tok);
+        $this->assertContains('list_flows', $names);
+        $this->assertNotContains('create_flow', $names);
+        $this->assertNotContains('create_flow_binding', $names);
+
+        $res = $this->tool($tok, 'create_flow', ['appId' => $this->appA, 'name' => 'X']);
+        $this->assertTrue($res['isError']);
+        $this->assertStringContainsString('lacks the required scope', $res['text']);
+    }
+
+    // ── Record writes over MCP (responses:write) ──
+
+    /** Default builder tokens have no record-write tools; responses:write unlocks the full
+     *  add → update (partial patch) → delete lifecycle through the validated pipeline. */
+    public function testResponseWriteToolsGatedAndValidated(): void
+    {
+        // Default scopes: the write tools are hidden and refuse.
+        $builder = self::$tokens->create($this->userId)['token'];
+        $this->assertNotContains('add_response', $this->toolNames($builder));
+        $denied = $this->tool($builder, 'add_response', ['formId' => $this->formA, 'answers' => []]);
+        $this->assertTrue($denied['isError']);
+        $this->assertStringContainsString('lacks the required scope', $denied['text']);
+
+        // A responses:write token: build a real form (real fields), then write records through it.
+        $scopes = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write', 'responses:read', 'responses:write'];
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, $scopes)['token'];
+        $this->assertContains('add_response', $this->toolNames($tok));
+
+        $form = $this->tool($tok, 'create_form', ['title' => 'Leads', 'fields' => [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => true],
+            ['id' => 'note', 'type' => 'long_text', 'label' => 'Note', 'required' => false],
+        ]]);
+        $this->assertFalse($form['isError'], $form['text']);
+        $formId = (string) $form['data']['id'];
+
+        // Validation runs: a missing required field is rejected with the field error surfaced.
+        $invalid = $this->tool($tok, 'add_response', ['formId' => $formId, 'answers' => ['note' => 'no name']]);
+        $this->assertTrue($invalid['isError']);
+        $this->assertStringContainsString('Validation failed', $invalid['text']);
+        $this->assertStringContainsString('required', $invalid['text']);
+
+        $created = $this->tool($tok, 'add_response', ['formId' => $formId, 'answers' => ['name' => 'Ada', 'note' => 'first contact']]);
+        $this->assertFalse($created['isError'], $created['text']);
+        $responseId = (string) $created['data']['id'];
+        $this->assertNotSame('', $responseId);
+
+        // update_response is a PARTIAL patch: omitting the required 'name' must not reject.
+        $patched = $this->tool($tok, 'update_response', ['formId' => $formId, 'responseId' => $responseId, 'answers' => ['note' => 'followed up']]);
+        $this->assertFalse($patched['isError'], $patched['text']);
+        $this->assertSame('followed up', $patched['data']['answers']['note'] ?? null);
+        $this->assertSame('Ada', $patched['data']['answers']['name'] ?? null);
+
+        $deleted = $this->tool($tok, 'delete_response', ['formId' => $formId, 'responseId' => $responseId]);
+        $this->assertFalse($deleted['isError'], $deleted['text']);
+        $gone = $this->tool($tok, 'delete_response', ['formId' => $formId, 'responseId' => $responseId]);
+        $this->assertTrue($gone['isError']);
+    }
+
+    /** tools/list front-loads the core build path (some MCP clients only eager-load the first
+     *  schemas): get_started first, then create_app → create_app_form → set_app_home → update_app →
+     *  create_flow → create_flow_binding before any list_* tool. */
+    public function testBuildToolsAreFrontLoaded(): void
+    {
+        $tok = self::$tokens->create($this->userId)['token'];
+        $names = $this->toolNames($tok);
+        $this->assertSame('get_started', $names[0]);
+        $expectedOrder = ['create_app', 'create_app_form', 'set_app_home', 'update_app', 'create_flow', 'create_flow_binding'];
+        $positions = array_map(static fn ($n) => array_search($n, $names, true), $expectedOrder);
+        $this->assertNotContains(false, $positions, 'every core build tool must be listed');
+        $sorted = $positions;
+        sort($sorted);
+        $this->assertSame($sorted, $positions, 'core build tools must keep their build-path order');
+        $firstList = array_search('list_forms', $names, true);
+        $this->assertGreaterThan(max($positions), $firstList, 'build tools must precede the list_* tools');
     }
 }

@@ -379,7 +379,10 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         null,
         // Same account form-count quota FormController enforces on the web create path — MCP calls
         // FormService directly and would otherwise let an AI create forms past the plan limit.
-        $c->get(\FormLogic\Services\PlanService::class)
+        $c->get(\FormLogic\Services\PlanService::class),
+        // Flows: the same owner CRUD surface the /flows workspace uses (create_flow,
+        // create_flow_binding, … — lets an AI automate the apps it builds).
+        $c->get(\FormLogic\Services\FlowService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so

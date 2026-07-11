@@ -14,6 +14,8 @@ use FormLogic\Services\ResponseService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\RateLimiter;
 use FormLogic\Services\PlanService;
+use FormLogic\Services\FlowService;
+use FormLogic\Services\ScriptRejection;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -69,6 +71,9 @@ class McpController
         // calls FormService directly and would otherwise bypass it. Null (self-hosted default, plan
         // enforcement off) makes every check below a no-op, exactly like FormController's.
         private ?PlanService $planService = null,
+        // Flows (automations) — the same owner CRUD surface the /flows workspace uses. Null only in
+        // older tests; production always wires it (flow tools error cleanly when absent).
+        private ?FlowService $flowService = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -258,6 +263,16 @@ class McpController
         'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
         'create_report' => 'apps:write', 'create_document' => 'apps:write',
         'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
+        // Flows are app configuration, so they ride the apps scopes: any builder token that can
+        // shape an app can automate it too (no scope migration for existing tokens).
+        'list_flows' => 'apps:read', 'get_flow' => 'apps:read',
+        'create_flow' => 'apps:write', 'update_flow' => 'apps:write', 'delete_flow' => 'apps:write',
+        'list_flow_bindings' => 'apps:read', 'create_flow_binding' => 'apps:write',
+        'update_flow_binding' => 'apps:write', 'delete_flow_binding' => 'apps:write',
+        // Record writes are an explicit opt-in scope (never in DEFAULT_SCOPES) and run the SAME
+        // pipeline as the external API: sanitize → normalize → calc → validate → onSubmit script.
+        'add_response' => 'responses:write', 'update_response' => 'responses:write',
+        'delete_response' => 'responses:write',
         'connector_command' => 'connector:command', 'desktop_status' => 'connector:command',
     ];
 
@@ -497,11 +512,219 @@ class McpController
                     $this->audit($request, 'mcp.create_document', $userId, ['appId' => $appId, 'documentId' => $item['id']]);
                     break;
                 }
+                case 'list_flows': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    // Summaries only — flowJson can be up to 256KB per flow; use get_flow for the graph.
+                    $data = array_map(static fn ($f) => [
+                        'id' => $f['id'], 'name' => $f['name'], 'slug' => $f['slug'],
+                        'description' => $f['description'], 'enabled' => $f['enabled'], 'version' => $f['version'],
+                    ], $this->flows()->listFlows($appId));
+                    break;
+                }
+                case 'get_flow': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    $data = $this->flows()->getFlow($appId, (string) ($args['flowId'] ?? ''));
+                    if (!$data) {
+                        throw new \Exception('Flow not found in this app');
+                    }
+                    break;
+                }
+                case 'create_flow': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    $input = [];
+                    foreach (['name', 'slug', 'description', 'flowJson', 'enabled', 'inputSchema', 'nodeCapabilities'] as $k) {
+                        if (array_key_exists($k, $args)) {
+                            $input[$k] = $args[$k];
+                        }
+                    }
+                    $data = $this->flows()->createFlow($appId, $userId, $input);
+                    $this->audit($request, 'mcp.create_flow', $userId, ['appId' => $appId, 'flowId' => $data['id'] ?? null]);
+                    break;
+                }
+                case 'update_flow': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    $input = [];
+                    foreach (['name', 'slug', 'description', 'flowJson', 'enabled', 'inputSchema', 'nodeCapabilities'] as $k) {
+                        if (array_key_exists($k, $args)) {
+                            $input[$k] = $args[$k];
+                        }
+                    }
+                    $data = $this->flows()->updateFlow($appId, (string) ($args['flowId'] ?? ''), $input);
+                    if (!$data) {
+                        throw new \Exception('Flow not found in this app');
+                    }
+                    $this->audit($request, 'mcp.update_flow', $userId, ['appId' => $appId, 'flowId' => $args['flowId'] ?? null]);
+                    break;
+                }
+                case 'delete_flow': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    if (!$this->flows()->deleteFlow($appId, (string) ($args['flowId'] ?? ''))) {
+                        throw new \Exception('Flow not found in this app');
+                    }
+                    $data = ['deleted' => true, 'flowId' => (string) ($args['flowId'] ?? '')];
+                    $this->audit($request, 'mcp.delete_flow', $userId, ['appId' => $appId, 'flowId' => $args['flowId'] ?? null]);
+                    break;
+                }
+                case 'list_flow_bindings': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    $data = $this->flows()->listBindings($appId);
+                    break;
+                }
+                case 'create_flow_binding': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    $input = [];
+                    foreach (['flow', 'event', 'mode', 'formId', 'connectorId', 'condition', 'inputMap',
+                              'outputActions', 'timeoutMs', 'retryPolicy', 'fallbackPolicy', 'enabled', 'sortOrder'] as $k) {
+                        if (array_key_exists($k, $args)) {
+                            $input[$k] = $args[$k];
+                        }
+                    }
+                    if (!isset($input['mode'])) {
+                        $input['mode'] = 'async'; // the forgiving default; sync/background/manual are opt-in
+                    }
+                    $data = $this->flows()->createBinding($appId, $input);
+                    $this->audit($request, 'mcp.create_flow_binding', $userId, ['appId' => $appId, 'bindingId' => $data['id'] ?? null, 'event' => $input['event'] ?? null]);
+                    break;
+                }
+                case 'update_flow_binding': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    $input = [];
+                    foreach (['flow', 'event', 'mode', 'formId', 'connectorId', 'condition', 'inputMap',
+                              'outputActions', 'timeoutMs', 'retryPolicy', 'fallbackPolicy', 'enabled', 'sortOrder'] as $k) {
+                        if (array_key_exists($k, $args)) {
+                            $input[$k] = $args[$k];
+                        }
+                    }
+                    $data = $this->flows()->updateBinding($appId, (string) ($args['bindingId'] ?? ''), $input);
+                    if (!$data) {
+                        throw new \Exception('Flow binding not found in this app');
+                    }
+                    $this->audit($request, 'mcp.update_flow_binding', $userId, ['appId' => $appId, 'bindingId' => $args['bindingId'] ?? null]);
+                    break;
+                }
+                case 'delete_flow_binding': {
+                    $appId = $this->resolveAppId($args, $session);
+                    $this->assertAppScope($session, $appId);
+                    $this->ownApp($appId, $userId);
+                    if (!$this->flows()->deleteBinding($appId, (string) ($args['bindingId'] ?? ''))) {
+                        throw new \Exception('Flow binding not found in this app');
+                    }
+                    $data = ['deleted' => true, 'bindingId' => (string) ($args['bindingId'] ?? '')];
+                    $this->audit($request, 'mcp.delete_flow_binding', $userId, ['appId' => $appId, 'bindingId' => $args['bindingId'] ?? null]);
+                    break;
+                }
                 case 'list_responses':
                     $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     $data = $this->responseService->getFormResponses((string) $args['formId'], ['limit' => min(200, max(1, (int) ($args['limit'] ?? 50)))]);
                     break;
+                case 'add_response': {
+                    $formId = (string) ($args['formId'] ?? '');
+                    $this->assertFormInScope($session, $formId);
+                    $form = $this->ownForm($formId, $userId);
+                    // Owner PROGRAMMATIC write (same stance as the external API): only an explicitly
+                    // archived form refuses; app-internal forms are typically 'draft' and must accept.
+                    if (($form['status'] ?? '') === 'archived') {
+                        throw new \Exception('Form is archived and not accepting responses');
+                    }
+                    $settings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
+                    if (!empty($settings['isClosed'])) {
+                        throw new \Exception('This form is closed and not accepting responses');
+                    }
+                    if (!is_array($args['answers'] ?? null)) {
+                        throw new \Exception('answers must be an object of field id → value');
+                    }
+                    $answers = $this->preparedAnswers($form, $args['answers']);
+                    // Atomic quota enforcement, mirroring the external API path (fail closed, retryable).
+                    $quotaLock = null;
+                    if (!empty($settings['quotaLimit'])) {
+                        $quotaLock = $this->responseService->acquireFormLock($formId);
+                        if ($quotaLock === null) {
+                            throw new \Exception('The form is busy — please retry in a moment.');
+                        }
+                        if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
+                            $this->responseService->releaseFormLock($quotaLock);
+                            throw new \Exception('This form has reached its maximum number of responses.');
+                        }
+                    }
+                    try {
+                        $result = $this->responseService->createResponse(
+                            $formId,
+                            ['answers' => $answers, 'ipAddress' => $this->ip($request), 'userAgent' => 'mcp'],
+                            $form['logicScript'] ?? null
+                        );
+                    } finally {
+                        $this->responseService->releaseFormLock($quotaLock);
+                    }
+                    if ($result instanceof ScriptRejection) {
+                        throw new \Exception("Submission rejected by the form's onSubmit script: " . $result->message);
+                    }
+                    $this->responseService->syncResponseLinks($formId, (string) ($result['id'] ?? ''), $form['fields'] ?? [], $answers);
+                    $data = $result;
+                    $this->audit($request, 'mcp.add_response', $userId, ['formId' => $formId, 'responseId' => $result['id'] ?? null]);
+                    break;
+                }
+                case 'update_response': {
+                    $formId = (string) ($args['formId'] ?? '');
+                    $responseId = (string) ($args['responseId'] ?? '');
+                    $this->assertFormInScope($session, $formId);
+                    $form = $this->ownForm($formId, $userId);
+                    $existing = $responseId !== '' ? $this->responseService->getResponse($formId, $responseId) : null;
+                    if (!$existing) {
+                        throw new \Exception('Response not found');
+                    }
+                    $upd = [];
+                    if (isset($args['answers']) && is_array($args['answers'])) {
+                        // PATCH semantics: merge the patch over the STORED answers before validating,
+                        // so a partial update isn't rejected for omitting an unrelated required field
+                        // (mirrors the external API and AppPublicController::updateResponseById).
+                        $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
+                        $upd['answers'] = $this->preparedAnswers($form, array_merge($existingAnswers, $args['answers']));
+                    }
+                    if (array_key_exists('status', $args)) {
+                        $upd['status'] = $args['status'];
+                    }
+                    if ($upd === []) {
+                        throw new \Exception('Nothing to update — provide answers (a partial patch) and/or status');
+                    }
+                    $data = $this->responseService->updateResponse($formId, $responseId, $upd);
+                    if (!$data) {
+                        throw new \Exception('Response not found');
+                    }
+                    if (isset($upd['answers'])) {
+                        $this->responseService->syncResponseLinks($formId, $responseId, $form['fields'] ?? [], $upd['answers']);
+                    }
+                    $this->audit($request, 'mcp.update_response', $userId, ['formId' => $formId, 'responseId' => $responseId]);
+                    break;
+                }
+                case 'delete_response': {
+                    $formId = (string) ($args['formId'] ?? '');
+                    $responseId = (string) ($args['responseId'] ?? '');
+                    $this->assertFormInScope($session, $formId);
+                    $this->ownForm($formId, $userId);
+                    if ($responseId === '' || !$this->responseService->deleteResponse($formId, $responseId)) {
+                        throw new \Exception('Response not found');
+                    }
+                    $data = ['deleted' => true, 'responseId' => $responseId];
+                    $this->audit($request, 'mcp.delete_response', $userId, ['formId' => $formId, 'responseId' => $responseId]);
+                    break;
+                }
                 case 'desktop_status': {
                     if ($this->desktopCommands === null) {
                         throw new \Exception('Connector relay is not available on this server.');
@@ -627,6 +850,59 @@ class McpController
         if ($this->planService && !$this->planService->canCreateForms($userId, 1)) {
             throw new \Exception('You\'ve reached your plan\'s limit of ' . $this->planService->formLimit($userId) . ' forms. Delete a form or upgrade to add more.');
         }
+    }
+
+    /** The FlowService, or a clean error on a server where it isn't wired (older test harnesses). */
+    private function flows(): FlowService
+    {
+        if ($this->flowService === null) {
+            throw new \Exception('Flows are not available on this server.');
+        }
+        return $this->flowService;
+    }
+
+    /**
+     * The app a flow/binding tool targets: an explicit appId wins; an app-scoped token falls back
+     * to its app; a creator token that has made exactly one app falls back to that app (the same
+     * convenience create_app_form provides).
+     */
+    private function resolveAppId(array $args, array $session): string
+    {
+        $appId = (string) ($args['appId'] ?? '');
+        if ($appId === '' && is_string($session['appId'] ?? null)) {
+            $appId = (string) $session['appId'];
+        }
+        if ($appId === '' && is_array($session['created'] ?? null) && count($session['created']['apps'] ?? []) === 1) {
+            $appId = (string) $session['created']['apps'][0];
+        }
+        return $appId;
+    }
+
+    /**
+     * Run submitted answers through the SAME pipeline as the external API write path:
+     * sanitize (drop non-input/unknown fields) → normalize (file urls, checkbox dedupe) →
+     * calculated fields → file validation → size cap → full field validation. Throws a
+     * user-safe \Exception carrying the per-field errors on failure.
+     */
+    private function preparedAnswers(array $form, array $answers): array
+    {
+        $fields = $form['fields'] ?? [];
+        $formId = (string) ($form['id'] ?? '');
+        $answers = $this->responseService->sanitizeSubmittedAnswers($fields, $answers);
+        $answers = $this->responseService->normalizeAnswers($fields, $answers, $formId);
+        $answers = $this->responseService->applyCalculatedFields($fields, $answers);
+        $fileErrors = $this->responseService->validateFileAnswers($fields, $answers, $formId);
+        if (!empty($fileErrors)) {
+            throw new \Exception('Validation failed: ' . json_encode($fileErrors, JSON_UNESCAPED_SLASHES));
+        }
+        if ($this->responseService->answersTooLarge($answers)) {
+            throw new \Exception('Submission is too large.');
+        }
+        $errors = $this->responseService->validateSubmittedAnswers($fields, $answers);
+        if (!empty($errors)) {
+            throw new \Exception('Validation failed: ' . json_encode($errors, JSON_UNESCAPED_SLASHES));
+        }
+        return $answers;
     }
 
     /** The target app must be in scope: the one scoped app, or (creator token) an app it created. */
@@ -827,20 +1103,38 @@ class McpController
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;
+        $flowGraph = ['type' => 'object', 'description' => "The automation graph: { nodes:[{ id, type, data:{ …node config } }], edges:[{ source, target, sourceHandle? }] }. Node ids are unique strings; node config lives under data; every edge references existing node ids; a condition node routes downstream via sourceHandle 'true' / 'false'. Node types + their config: see the get_started guide (§ Flows)."];
+        $customLogic = ['type' => 'object', 'description' => "App-logic bundle: { version:1, scripts:[{ id?, hook, source, permissions?, enabled? }], permissions?:[…] }. hook ∈ onAppStart|onScreenEnter|onScreenLeave|onButtonClick|onBeforeSubmit|onAfterSubmit|onConnectorEvent|onSyncConflict|mapConnectorDataToForm|calculateDashboardState. source = sandboxed QuickJS (≤50KB/script, ≤100KB total). permissions grant what the scripts may do (e.g. 'formlogic.responses.write', 'connector.aokie.call.answer')."];
+        // Ordered deliberately: the core BUILD path first (create_app → create_app_form →
+        // set_app_home → update_app → flows), because some MCP clients (e.g. Claude) surface only
+        // the first batch of tool schemas eagerly and lazy-load the rest — a fresh app build should
+        // never stall on a deferred schema.
         $all = [
-            ['name' => 'list_forms', 'scope' => 'forms:read', 'description' => "List the owner's forms (only this app's forms when the token is app-scoped).", 'inputSchema' => $obj([])],
-            ['name' => 'get_form', 'scope' => 'forms:read', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
-            ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a form. Provide title and optional fields[], logicScript (QuickJS onSubmit), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
-            ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
-            ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
-            ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
             ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms). Optional appKind tags the audience the app serves.', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'appKind' => ['type' => 'string', 'enum' => AppService::APP_KINDS, 'description' => 'Optional audience tag: admin console, client portal, staff field app, public intake, internal, or custom.']], ['name'])],
-            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), or hide the sidebar/menu (hideNav: true for a self-contained custom-home app).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.']], ['appId'])],
-            ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
+            ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
+            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed QuickJS event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'customLogic' => $customLogic], ['appId'])],
+            ['name' => 'create_flow', 'scope' => 'apps:write', 'description' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, QuickJS logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. After creating it, wire it to its trigger with create_flow_binding. Set nodeCapabilities to the union of the capabilities your nodes need (see get_started § Flows), e.g. ['formlogic.responses.read','formlogic.responses.write'].", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'lowercase letters/digits/hyphens; defaults from name.'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => "Capabilities the flow's nodes need: formlogic.responses.read / formlogic.responses.write / formlogic.kv.write / model.llm.local / connector.<id>.<command>."], 'enabled' => ['type' => 'boolean']], ['name'])],
+            ['name' => 'create_flow_binding', 'scope' => 'apps:write', 'description' => "Make a flow RUN automatically by binding it to a trigger EVENT. Common triggers: event 'form.submitted' + formId (a form received a new record), or a connector event + connectorId (e.g. event 'aokie.call.incoming', connectorId 'aokie' — an incoming phone call). flow = the flow's SLUG (not id). mode: async (default) | sync (the triggering caller waits for the result) | background | manual. inputMap maps the flow's trigger inputs from the event, e.g. { callerPhone: '\$event.data.from', name: '\$event.data.answers.name' }. outputActions (optional) run with the flow result, e.g. [{ type:'formlogic.submitResponse', form:'<formId>', answers:{ note:'\$result.summary' } }] — types: formlogic.submitResponse | formlogic.updateResponse | formlogic.toast | connector.request | call.speak | formlogic.store.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'flow' => ['type' => 'string', 'description' => "The flow's slug."], 'event' => ['type' => 'string', 'description' => "e.g. form.submitted, aokie.call.incoming, aokie.call.ended"], 'formId' => ['type' => 'string', 'description' => 'For form events: the form this binding listens to (must belong to the app).'], 'connectorId' => ['type' => 'string', 'description' => "For connector events: e.g. 'aokie'."], 'mode' => ['type' => 'string', 'enum' => ['sync', 'async', 'background', 'manual'], 'description' => 'Default async.'], 'condition' => ['type' => 'object', 'description' => "Optional gate: { type:'expression', expr:'<QuickJS boolean over event>' }."], 'inputMap' => ['type' => 'object', 'description' => 'flow input name → $event selector.'], 'outputActions' => ['type' => 'array', 'items' => ['type' => 'object'], 'description' => 'Actions run with the flow result (see tool description).'], 'timeoutMs' => ['type' => 'number', 'description' => '250–300000 (default 30000).'], 'enabled' => ['type' => 'boolean']], ['flow', 'event'])],
             ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],
             ['name' => 'create_document', 'scope' => 'apps:write', 'description' => "Add a PDF document (a report page combining multiple charts + explanatory text) to the app's Reports section. blocks[] render in order: { kind:'text', title?, body } for a heading/paragraph, or { kind:'report', reportId, caption? } to embed a chart — reportId is the id returned by create_report. Create the chart reports FIRST, then reference them here.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'blocks' => ['type' => 'array', 'items' => ['type' => 'object', 'description' => "{ kind:'text', title?, body } | { kind:'report', reportId, caption? }"]]], ['appId', 'name', 'blocks'])],
-            ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
+            ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
+            ['name' => 'list_forms', 'scope' => 'forms:read', 'description' => "List the owner's forms (only this app's forms when the token is app-scoped).", 'inputSchema' => $obj([])],
+            ['name' => 'get_form', 'scope' => 'forms:read', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
+            ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a standalone form (prefer create_app_form when building an app). Provide title and optional fields[], logicScript (QuickJS onSubmit), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
+            ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['formId'])],
+            ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach an existing form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
+            ['name' => 'list_flows', 'scope' => 'apps:read', 'description' => "List an app's flows (automations) — id, name, slug, enabled, version. Use get_flow for a flow's graph.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."]])],
+            ['name' => 'get_flow', 'scope' => 'apps:read', 'description' => 'Get one flow including its flowJson graph and nodeCapabilities.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string']], ['flowId'])],
+            ['name' => 'update_flow', 'scope' => 'apps:write', 'description' => 'Update a flow (any of name, slug, description, flowJson, nodeCapabilities, enabled). Changing flowJson bumps the version.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string']], 'enabled' => ['type' => 'boolean']], ['flowId'])],
+            ['name' => 'delete_flow', 'scope' => 'apps:write', 'description' => 'Delete a flow from an app (its bindings are removed with it).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string']], ['flowId'])],
+            ['name' => 'list_flow_bindings', 'scope' => 'apps:read', 'description' => "List an app's flow bindings (which events trigger which flows).", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."]])],
+            ['name' => 'update_flow_binding', 'scope' => 'apps:write', 'description' => 'Update a flow binding (partial: any of flow, event, formId, connectorId, mode, condition, inputMap, outputActions, timeoutMs, enabled).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'bindingId' => ['type' => 'string'], 'flow' => ['type' => 'string'], 'event' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'connectorId' => ['type' => 'string'], 'mode' => ['type' => 'string', 'enum' => ['sync', 'async', 'background', 'manual']], 'condition' => ['type' => 'object'], 'inputMap' => ['type' => 'object'], 'outputActions' => ['type' => 'array', 'items' => ['type' => 'object']], 'timeoutMs' => ['type' => 'number'], 'enabled' => ['type' => 'boolean']], ['bindingId'])],
+            ['name' => 'delete_flow_binding', 'scope' => 'apps:write', 'description' => 'Delete a flow binding (the flow itself stays).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'bindingId' => ['type' => 'string']], ['bindingId'])],
+            ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses (records).", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
+            ['name' => 'add_response', 'scope' => 'responses:write', 'description' => "Create a record (response) in a form. Runs the FULL submission pipeline — field validation, calculated fields, and the form's onSubmit script — exactly like the external API. answers = { <fieldId>: value }. NOT idempotent: repeating the call creates another record.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'answers' => ['type' => 'object', 'description' => 'Field id → value.']], ['formId', 'answers'])],
+            ['name' => 'update_response', 'scope' => 'responses:write', 'description' => 'Patch a record: answers is a PARTIAL object merged over the stored answers (send only the fields you change), validated like a submission. Optionally set the workflow status.', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'responseId' => ['type' => 'string'], 'answers' => ['type' => 'object', 'description' => 'Partial patch: field id → new value.'], 'status' => ['type' => 'string']], ['formId', 'responseId'])],
+            ['name' => 'delete_response', 'scope' => 'responses:write', 'description' => 'Permanently delete one record (response) from a form.', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'responseId' => ['type' => 'string']], ['formId', 'responseId'])],
             ['name' => 'desktop_status', 'scope' => 'connector:command', 'description' => "Check whether the owner's FormLogic Desktop is online (currently polling the connector relay). Call this BEFORE connector_command to know if commands will reach a desktop. Returns { online, lastSeenSecondsAgo }.", 'inputSchema' => $obj([])],
             ['name' => 'connector_command', 'scope' => 'connector:command', 'description' => "Send a command to a hardware/service CONNECTOR on the owner's linked FormLogic Desktop and wait for the result (the desktop must be RUNNING + LINKED). connectorId names the connector (e.g. 'aokie' — the Bluetooth phone bridge). command + payload are connector-specific; for aokie: call.answer, call.reject, call.hangup, call.operatorSpeak {text}, sms.send {to, body}, sms.thread {threadId}, call.current, phone.status, dongle.list, dongle.diagnostics {simulate:'call'}. This is how you REMOTELY control the phone: e.g. hang up the current call, or speak a message to the caller. Returns the connector's result, or a note that it is still pending (desktop offline/slow).", 'inputSchema' => $obj(['connectorId' => ['type' => 'string', 'description' => "Connector id, e.g. 'aokie'."], 'command' => ['type' => 'string', 'description' => 'Connector command, e.g. call.hangup.'], 'payload' => ['type' => 'object', 'description' => 'Command arguments (connector-specific).'], 'waitMs' => ['type' => 'number', 'description' => 'Max ms to wait for the desktop result (default 15000, max 25000).']], ['connectorId', 'command'])],
         ];
@@ -867,17 +1161,18 @@ class McpController
     private function serverInstructions(): string
     {
         return <<<'TXT'
-FormLogic builds self-hosted apps made of FORMS (fields + data), optional backend onSubmit SCRIPTS, no-code widget DASHBOARDS (charts/KPIs/record lists over the data), and optional CUSTOM CODE SCREENS (a sandboxed HTML/CSS/TypeScript frontend). This MCP server creates and edits all of it. Call the get_started tool for a full guide with a worked example.
+FormLogic builds self-hosted apps made of FORMS (fields + data), optional backend onSubmit SCRIPTS, no-code widget DASHBOARDS (charts/KPIs/record lists over the data), FLOWS (event-triggered automation graphs), and optional CUSTOM CODE SCREENS (a sandboxed HTML/CSS/TypeScript frontend). This MCP server creates and edits all of it. Call the get_started tool for a full guide with a worked example.
 
 Build an app from scratch:
 1. create_app { name, description?, appKind? } — a container for forms. appKind tags the audience: admin|client|staff|public|internal|custom. (Skip if your token is already scoped to one app; then create_app is hidden.)
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
 3. (optional) update_form { formId, logicScript } — a QuickJS "function onSubmit(ctx) {…}" server-side script.
 4. (recommended) set_app_home { appId, customScreen: { kind:"dashboard", dashboard:{ cols:12, widgets:[…] } } } — a no-code widget DASHBOARD home screen, the primary kind. Widgets: { kind:"report", layout:{x,y,w,h}, title?, spec } (spec = the same shape as create_report), { kind:"list", layout, list:{formId,limit?,titleField?,subtitleField?,metaField?} }, { kind:"text", layout, text:{body} }, { kind:"actions", layout } (new-record buttons), { kind:"activity", layout } (latest records). ALTERNATIVE: a full CODE frontend { enabled:true, files:[{path,content}] } or { enabled:true, ts, html, css }, compiled/bundled automatically; inside it window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v) — ALWAYS escapeHtml() record data before innerHTML.
-5. (optional) create_report { appId, name, spec } — add charts/KPIs/tables to the app's Reports section (bar|line|area|pie|donut|kpi|table). Then create_document { appId, name, blocks } to combine several charts + text into an exportable PDF report page.
-6. update_app { appId, status:"published" } — publish (status:"draft" unpublishes). Optional: slug, hideNav (full-screen, no menu).
+5. (optional) AUTOMATE with flows: create_flow { appId, name, flowJson:{nodes,edges}, nodeCapabilities } then create_flow_binding { flow:<slug>, event, formId?|connectorId?, inputMap?, outputActions? } — e.g. run a flow on event "form.submitted" of a form, or on a connector event like "aokie.call.incoming". Full node reference in get_started § Flows.
+6. (optional) create_report { appId, name, spec } — add charts/KPIs/tables to the app's Reports section (bar|line|area|pie|donut|kpi|table). Then create_document { appId, name, blocks } to combine several charts + text into an exportable PDF report page.
+7. update_app { appId, status:"published" } — publish (status:"draft" unpublishes). Optional: slug, hideNav (full-screen, no menu), customLogic (app-logic event handlers).
 
-First inspect existing content with list_apps / list_forms / get_form. Your token is temporary and cannot read submissions unless explicitly granted. Prefer create_app_form over create_form + add_form_to_app.
+First inspect existing content with list_apps / list_forms / get_form / list_flows. Your token is temporary; it can only read records with the responses:read scope and only create/update/delete records (add_response / update_response / delete_response) with the explicitly-granted responses:write scope. Prefer create_app_form over create_form + add_form_to_app.
 TXT;
     }
 
@@ -887,7 +1182,7 @@ TXT;
         return <<<'TXT'
 # Building a FormLogic app over MCP
 
-FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, backed by its own database) + optionally a backend onSubmit SCRIPT per form + a HOME SCREEN (preferably a no-code widget DASHBOARD; alternatively a sandboxed HTML/CSS/TypeScript CODE screen that reads/writes the forms' data). You build all of this with the tools below.
+FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, backed by its own database) + optionally a backend onSubmit SCRIPT per form + a HOME SCREEN (preferably a no-code widget DASHBOARD; alternatively a sandboxed HTML/CSS/TypeScript CODE screen that reads/writes the forms' data) + optionally FLOWS (event-triggered automation graphs bound to form or connector events). You build all of this with the tools below.
 
 ## Recommended workflow
 1. list_apps / list_forms — see what already exists (only if editing).
@@ -895,8 +1190,9 @@ FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, b
 3. For each form: create_app_form { title, fields, displayName? } — creates the form and attaches it to the app in one call.
 4. Optionally update_form { formId, logicScript } to add server-side automation.
 5. set_app_home { appId, customScreen } — give the app a home screen. PREFER a widget dashboard (see "Widget dashboards" below); a custom CODE frontend is the advanced alternative.
-6. Optionally create_report / create_document to add analytics (see "Reports" below).
-7. update_app { appId, status: "published" } to publish (status: "draft" unpublishes; optionally slug, hideNav).
+6. Optionally add flows: create_flow + create_flow_binding (see "Flows" below).
+7. Optionally create_report / create_document to add analytics (see "Reports" below).
+8. update_app { appId, status: "published" } to publish (status: "draft" unpublishes; optionally slug, hideNav).
 
 ## Fields
 A field: { "id": "email", "type": "email", "label": "Email", "required": true, "properties": {} }
@@ -934,6 +1230,58 @@ Inside the screen, window.FormLogic is the SDK:
 - FormLogic.toast.success(msg) / .error(msg)
 - FormLogic.escapeHtml(value)  // ALWAYS use this for record/user data placed into innerHTML
 Never fetch() — there is no network; only FormLogic reaches the backend.
+
+## Flows (event-triggered automations)
+A FLOW is a graph of nodes that runs when a bound event fires (a form submission, an incoming call, …). Two tools: create_flow makes the graph, create_flow_binding wires it to its trigger.
+
+flowJson = { nodes: [ { id, type, data: { …config } } ], edges: [ { source, target, sourceHandle? } ] }.
+Node ids are unique strings you choose (e.g. "summarise"); each node's config lives under its "data" key; edges connect nodes by id; a condition node has TWO out-handles — route with sourceHandle "true" / "false".
+
+VALUE REFERENCES (how nodes read data):
+- Selector strings: "$inputs.<name>" (trigger inputs), "$nodes.<nodeId>.<key>" (an earlier node's output), "$event" (the raw event). Used in JSON-ish fields (answers, payload, filters values, output value).
+- Templates: free-text fields interpolate {{ inputs.name }} / {{ nodes.summarise.content }} (note: no $ inside braces needed, but tolerated).
+- QuickJS code fields ("expr"): plain JS with variables inputs, nodes, event, upstream, app — e.g. nodes["lookup"].found && inputs.durationSeconds > 5.
+
+NODE TYPES (type → config → output):
+- input — the Trigger. data.inputs = [{ name, example? }] declares what the binding's inputMap provides. Output: $inputs.<name>.
+- output — the flow result. data.value: a selector or JSON (selector strings inside resolve); blank passes the upstream value through. The binding's outputActions read this as $result.
+- condition — data.expr (QuickJS boolean). Routes via sourceHandle true/false edges.
+- template — data.template ({{…}} interpolation) → string.
+- logic_block — data.expr (QuickJS, return any JSON), data.timeoutMs? → whatever you return.
+- llm_chat — data.system?, data.prompt ({{…}} ok), data.model?, data.maxTokens?, data.temperature? → { content } (the reply text: $nodes.<id>.content). Uses the app/Desktop's default model when model/endpoint are omitted — leave them omitted unless you must pin one.
+- http_request — data.url ({{…}} ok; allow-listed to the FormLogic API or the paired Desktop), data.method, data.body (JSON, selectors ok) → { status, ok, body }.
+- formlogic_list_responses — data.form (form id), data.filters? [{ field, op ("eq"|"contains"|…), value ("$inputs.x" ok) }], data.limit? → { first, responses, count, found }.
+- formlogic_submit_response — data.form, data.answers (JSON object, selectors ok) → the created record ({ id, … }). Runs the full validated pipeline.
+- formlogic_update_response — data.form, data.responseId (selector ok), data.answers (partial patch) → the updated record.
+- connector_request — data.connectorId (e.g. "aokie"), data.command (e.g. "sms.send"), data.payload (JSON, selectors ok) → the connector result.
+- storage_get / storage_set — small persistent KV: data.key, (set) data.value or data.valueFrom, data.scope? (default flow:<slug>).
+- aokie_speak — data.text ({{…}} ok) or data.textFrom (selector) — speak on the live call (needs the aokie connector).
+- browser_action / image_gen / stt_transcribe / tts_speak — advanced nodes backed by local FormLogic Desktop services.
+
+nodeCapabilities (on create_flow/update_flow) must declare what the nodes use, or the runtime refuses:
+formlogic.responses.read (find records), formlogic.responses.write (submit/update records), formlogic.kv.write (storage_set), model.llm.local (llm_chat), connector.<id>.<command> per connector command (e.g. connector.aokie.call.operatorSpeak, or the wildcard connector.aokie.*).
+
+create_flow_binding = the TRIGGER: { flow: "<flow slug>", event, formId?, connectorId?, mode?, condition?, inputMap?, outputActions?, timeoutMs? }.
+- Form trigger: event "form.submitted" + formId (must be a form of the same app). The event carries the new record: $event.data.answers.<fieldId>, $event.data.responseId.
+- Connector trigger: event e.g. "aokie.call.incoming" / "aokie.call.ended" / "aokie.sms.received" + connectorId "aokie" (requires the owner's FormLogic Desktop with that connector).
+- mode: async (default — fire and forget), sync (the triggering caller waits; keep it fast), background, manual.
+- inputMap: { <trigger input name>: "$event.data.<key>" } — feeds the flow's input node.
+- outputActions: run AFTER the flow with its result, e.g. [{ "type": "formlogic.submitResponse", "form": "<formId>", "answers": { "summary": "$result.summary" } }]. Types: formlogic.submitResponse, formlogic.updateResponse ({ responseId }), formlogic.toast ({ message }), connector.request ({ connectorId, command, payload }), call.speak ({ message }), formlogic.store ({ scope, key, value }).
+
+Example — auto-acknowledge a new lead:
+1. create_flow { "name": "Acknowledge lead", "slug": "ack-lead", "nodeCapabilities": ["model.llm.local"], "flowJson": { "nodes": [
+     { "id": "in", "type": "input", "data": { "inputs": [{ "name": "name" }, { "name": "message" }] } },
+     { "id": "draft", "type": "llm_chat", "data": { "prompt": "Write a one-sentence friendly acknowledgement to {{inputs.name}} who said: {{inputs.message}}" } },
+     { "id": "out", "type": "output", "data": { "value": { "reply": "$nodes.draft.content" } } }
+   ], "edges": [ { "source": "in", "target": "draft" }, { "source": "draft", "target": "out" } ] } }
+2. create_flow_binding { "flow": "ack-lead", "event": "form.submitted", "formId": "<leadFormId>", "inputMap": { "name": "$event.data.answers.name", "message": "$event.data.answers.message" }, "outputActions": [ { "type": "formlogic.updateResponse", "form": "<leadFormId>", "responseId": "$event.data.responseId", "answers": { "ack": "$result.reply" } } ] }
+
+## Records (responses)
+Reading records needs the responses:read scope; creating/changing them needs the explicitly-granted responses:write scope (both are opt-ins on the Connect an AI link — without them these tools are hidden).
+- list_responses { formId, limit? } — read records.
+- add_response { formId, answers } — create a record through the FULL pipeline (validation, calculated fields, the form's onSubmit script). Not idempotent — don't blindly retry.
+- update_response { formId, responseId, answers?, status? } — answers is a PARTIAL patch merged over the stored record.
+- delete_response { formId, responseId } — permanent.
 
 ## Reports (charts + PDF documents)
 Give the app a Reports section — no custom screen needed.

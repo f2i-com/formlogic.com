@@ -206,14 +206,17 @@ client refreshes it silently — see [the appendix](#how-the-flow-works-technica
 
 ## Scopes
 
-Each token carries a capability list. The **default ("builder") token** can manage apps, forms, and
-screens — but **cannot read submission data**:
+Each token carries a capability list. The **default ("builder") token** can manage apps, forms, screens
+**and flows** (flows ride the `apps:*` scopes — they are app configuration) — but **cannot read or write
+submission data**:
 
 `apps:read` · `apps:write` · `forms:read` · `forms:write` · `screens:write`
 
-`responses:read` is **off by default** and must be granted explicitly, as is **`connector:command`** (lets the
-token drive connectors on your linked FormLogic Desktop — e.g. control the Aokie phone). `tools/list` only
-returns the tools your token's scopes allow.
+`responses:read` (read records) and `responses:write` (create/update/delete records through the same
+validated pipeline as the external API, including each form's onSubmit script) are **off by default** and
+must be granted explicitly, as is **`connector:command`** (lets the token drive connectors on your linked
+FormLogic Desktop — e.g. control the Aokie phone). `tools/list` only returns the tools your token's
+scopes allow.
 
 **App‑scoped tokens** are enforced everywhere: they only see that one app's forms, can't create new apps,
 and can't touch other apps or their forms.
@@ -226,10 +229,14 @@ You can hand the link to any MCP-capable AI and just say *"build me an app"* —
 FormLogic in advance:
 
 - The **`initialize`** response carries an `instructions` string (the MCP client feeds it to the model) with
-  the whole workflow: `create_app` → `create_app_form` → `set_app_home` (widget dashboard) → publish, the
-  field types, the dashboard widget shapes, and the custom-screen SDK.
-- **`get_started`** is the first tool listed and returns a full guide with a worked example. It needs no
-  scope, so an AI can always read it before acting.
+  the whole workflow: `create_app` → `create_app_form` → `set_app_home` (widget dashboard) → flows → publish,
+  the field types, the dashboard widget shapes, and the custom-screen SDK.
+- **`get_started`** is the first tool listed and returns a full guide with worked examples — including the
+  complete flow node-type reference (§ Flows) and the record tools (§ Records). It needs no scope, so an AI
+  can always read it before acting.
+- **`tools/list` is ordered build-path-first** (`create_app`, `create_app_form`, `set_app_home`,
+  `update_app`, `create_flow`, `create_flow_binding`, …) so clients that eager-load only the first tool
+  schemas can build an app without waiting on lazily-loaded schemas.
 
 ## Tools
 
@@ -246,7 +253,19 @@ FormLogic in advance:
 | `set_app_home` | screens:write | Set the app's **home** screen — a widget **dashboard** (preferred) or a custom code screen |
 | `create_report` | apps:write | Add a chart, KPI, or table to the app's Reports section |
 | `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
+| `list_flows` | apps:read | List an app's flows (automations) — summaries only |
+| `get_flow` | apps:read | Get one flow incl. its `flowJson` graph + `nodeCapabilities` |
+| `create_flow` | apps:write | Create a flow: a graph of nodes (LLM chat, find/submit/update records, condition, template, QuickJS, HTTP, connector commands, speech) |
+| `update_flow` | apps:write | Update a flow (name/slug/description/`flowJson`/`nodeCapabilities`/enabled; graph changes bump the version) |
+| `delete_flow` | apps:write | Delete a flow (its bindings go with it) |
+| `list_flow_bindings` | apps:read | List which events trigger which flows |
+| `create_flow_binding` | apps:write | Wire a flow to its trigger: `form.submitted` + `formId`, or a connector event (e.g. `aokie.call.incoming` + `connectorId`) — with `inputMap` and optional `outputActions` |
+| `update_flow_binding` | apps:write | Update a binding (partial) |
+| `delete_flow_binding` | apps:write | Delete a binding (the flow stays) |
 | `list_responses` | responses:read | List a form's responses (off by default) |
+| `add_response` | responses:write | Create a record through the FULL pipeline (validation, calculated fields, onSubmit script). Off by default |
+| `update_response` | responses:write | Patch a record (partial `answers` merged over the stored record, validated) and/or set its status. Off by default |
+| `delete_response` | responses:write | Permanently delete a record. Off by default |
 | `desktop_status` | connector:command | Is your FormLogic Desktop online (polling the relay)? Returns `{ online, lastSeenSecondsAgo }` — call before `connector_command`. |
 | `connector_command` | connector:command | Send a command to a connector on your linked **FormLogic Desktop** and wait for the result — remote-control hardware/services like the **Aokie** phone bridge (`call.answer`/`call.hangup`/`call.operatorSpeak`/`sms.send`/…). Off by default. |
 
@@ -422,8 +441,10 @@ first; documents reference them by the `id` returned from `create_report`.
 ## Security
 
 - Tokens are short‑lived (TTL + idle timeout), revocable, and hashed at rest.
-- Default tokens cannot read submission data (`responses:read` is opt‑in); there is no response **write**
-  tool over MCP.
+- Default tokens cannot read or write submission data: `responses:read` is opt‑in, and the record write
+  tools (`add_response`/`update_response`/`delete_response`) need the separately opt‑in `responses:write`
+  scope — and every write runs the same validated pipeline as the external API (field validation,
+  calculated fields, the form's onSubmit script).
 - App‑scoped tokens are enforced on every call.
 - Per‑call size caps (fields 500KB, script 100KB, custom screen 512KB) and a JSON‑RPC batch cap (20).
 - Widget‑dashboard and report specs are sanitized server‑side against the target app/form on save (the

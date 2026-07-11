@@ -18,9 +18,11 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [showManual, setShowManual] = useState(false);
   // Opt-in: also let the AI drive this account's FormLogic Desktop connectors (e.g. the Aokie phone).
   const [connectorAccess, setConnectorAccess] = useState(false);
-  // Opt-in: also let the AI read submitted responses/data (`responses:read`). Deliberately no
-  // write option here — see ConnectAiModal task notes / the OAuth consent page for why.
+  // Opt-in: also let the AI read submitted responses/data (`responses:read`).
   const [responsesAccess, setResponsesAccess] = useState(false);
+  // Opt-in: also let the AI create/update/delete records (`responses:write` — implies read).
+  // Writes run the SAME validated pipeline as the external API (incl. each form's onSubmit script).
+  const [responsesWriteAccess, setResponsesWriteAccess] = useState(false);
   // The shared demo account only ever mints a READ-ONLY link (enforced server-side); reflect that here.
   const isDemo = useAuthStore((s) => s.user?.isDemo === true);
 
@@ -38,7 +40,11 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
   const generate = async () => {
     setGenerating(true);
-    const r = await api.createMcpToken(appId, creator, connectorAccess, responsesAccess ? ['responses:read'] : []);
+    const extraScopes = [
+      ...(responsesAccess || responsesWriteAccess ? ['responses:read'] : []),
+      ...(responsesWriteAccess ? ['responses:write'] : []),
+    ];
+    const r = await api.createMcpToken(appId, creator, connectorAccess, extraScopes);
     setGenerating(false);
     if (r.error || !r.data) { toast.error('Could not create a connection.'); return; }
     setFresh(r.data);
@@ -62,7 +68,11 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   // What the manual token still CANNOT do, given the current checkboxes — used by the access
   // summary below. Built as parts (joined with "or") rather than string-concatenated, since
   // whether "read submission data" applies now depends on the responsesAccess checkbox.
-  const cannotParts = [!responsesAccess && 'read submission data', creator && 'touch your existing apps'].filter(Boolean) as string[];
+  const cannotParts = [
+    !responsesAccess && !responsesWriteAccess && 'read submission data',
+    !responsesWriteAccess && 'write records',
+    creator && 'touch your existing apps',
+  ].filter(Boolean) as string[];
 
   const title = (
     <span className="flex items-center gap-2">
@@ -128,8 +138,8 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                     </p>
                   ) : (
                     <p className="text-[11px] text-gray-500 dark:text-slate-400">
-                      Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens{responsesAccess && (
-                        <> and <span className="font-medium text-gray-700 dark:text-slate-300">read submitted response data</span></>
+                      Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps, screens &amp; flows{(responsesAccess || responsesWriteAccess) && (
+                        <> and <span className="font-medium text-gray-700 dark:text-slate-300">{responsesWriteAccess ? 'read & write records' : 'read submitted response data'}</span></>
                       )}{cannotParts.length > 0 && (
                         <> — <span className="font-medium">cannot {cannotParts.join(' or ')}</span></>
                       )}.
@@ -169,8 +179,12 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                         <span>Also let this AI <span className="font-medium">control your FormLogic Desktop</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
                       </label>
                       <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
-                        <input type="checkbox" checked={responsesAccess} onChange={(e) => setResponsesAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
+                        <input type="checkbox" checked={responsesAccess || responsesWriteAccess} disabled={responsesWriteAccess} onChange={(e) => setResponsesAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
                         <span>Also let this AI <span className="font-medium">read submitted responses/data</span> (<code>responses:read</code>).</span>
+                      </label>
+                      <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                        <input type="checkbox" checked={responsesWriteAccess} onChange={(e) => setResponsesWriteAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
+                        <span>Also let this AI <span className="font-medium">create, update &amp; delete records</span> (<code>responses:write</code> — includes read). Writes run the same validated pipeline as the API, including each form&apos;s onSubmit script.</span>
                       </label>
                     </>
                   )}
@@ -197,9 +211,11 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                   <div className="min-w-0 text-xs">
                     <p className="text-gray-700 dark:text-slate-200">
                       {s.creator ? 'New apps only' : s.appId ? 'One app' : 'All apps'}
-                      {(s.scopes || []).includes('responses:read')
-                        ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads submissions</span>
-                        : <span className="text-gray-400 dark:text-slate-500"> · no submission data</span>}
+                      {(s.scopes || []).includes('responses:write')
+                        ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads &amp; writes records</span>
+                        : (s.scopes || []).includes('responses:read')
+                          ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads submissions</span>
+                          : <span className="text-gray-400 dark:text-slate-500"> · no submission data</span>}
                       {(s.scopes || []).includes('connector:command')
                         ? <span className="text-primary-600 dark:text-primary-400 font-medium"> · controls desktop</span>
                         : null}
