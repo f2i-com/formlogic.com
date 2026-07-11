@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ArrowRight,
   Cast,
   Laptop,
   Loader2,
@@ -836,7 +837,18 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
 
           {/* Call history (raw records the app logic wrote from events) */}
           <div className={`${card} p-5`}>
-            <h2 className="mb-3 text-sm font-medium">Recent calls</h2>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-medium">Recent calls</h2>
+              {appSlug && callsFormId && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/${appSlug}/form/${callsFormId}/responses`)}
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-medium text-primary-600 hover:underline dark:text-[#c5b9ff]"
+                >
+                  View all <ArrowRight className="h-3 w-3" />
+                </button>
+              )}
+            </div>
             {!callsFormId ? (
               <EmptyState title="No Calls form" message="This screen expects to be attached to the Calls form." />
             ) : recent.rows.length === 0 ? (
