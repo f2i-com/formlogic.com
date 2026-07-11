@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Controllers\AppPublicController;
+use FormLogic\Services\SubmissionIdempotencyService;
 use FormLogic\Database\MySQLConnection;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -70,12 +71,50 @@ class AppSubmissionIdempotencyTest extends TestCase
         }
     }
 
-    /** Invoke a private controller method by reflection. */
+    /**
+     * Legacy-shaped adapter over the consolidated SubmissionIdempotencyService (FL-IDEM-001) —
+     * see FormSubmissionIdempotencyTest::call() for the convention mapping.
+     * @var array<string,string> */
+    private array $leases = [];
+
     private function call(string $method, array $args): mixed
     {
-        $m = new \ReflectionMethod(AppPublicController::class, $method);
-        $m->setAccessible(true);
-        return $m->invoke($this->controller, ...$args);
+        $svc = new SubmissionIdempotencyService(self::$pdo);
+        $table = 'app_submission_idempotency';
+        switch ($method) {
+            case 'idempotencyReserve': {
+                [$appId, $formId, $userId, $key, $hash] = $args;
+                $r = $svc->reserve($table, ['app_id' => $appId, 'form_id' => $formId], $userId, $key, $hash);
+                if ($r['state'] === 'owner') {
+                    $this->leases[$key] = $r['lease'];
+                    return 'owner';
+                }
+                if ($r['state'] === 'unavailable') {
+                    return 'unavailable';
+                }
+                unset($r['state']);
+                return $r;
+            }
+            case 'idempotencyComplete': {
+                [$appId, $formId, $key, $respId] = $args;
+                $svc->complete($table, ['app_id' => $appId, 'form_id' => $formId], $key, $this->leases[$key] ?? '', $respId);
+                return null;
+            }
+            case 'idempotencyRelease': {
+                [$appId, $formId, $key] = $args;
+                $svc->release($table, ['app_id' => $appId, 'form_id' => $formId], $key, $this->leases[$key] ?? '');
+                return null;
+            }
+            case 'idempotencyFind': {
+                [$appId, $formId, $key] = $args;
+                $r = $svc->find($table, ['app_id' => $appId, 'form_id' => $formId], $key);
+                if ($r !== null) {
+                    unset($r['state']);
+                }
+                return $r;
+            }
+        }
+        throw new \RuntimeException("unknown method {$method}");
     }
 
     public function testFirstReserveWinsAndReplaySamePayloadReturnsPendingRow(): void

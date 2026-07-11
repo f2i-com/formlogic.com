@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Services\SubmissionIdempotencyService;
+
 use FormLogic\Helpers\RelatedRecords;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
@@ -40,7 +42,7 @@ class ResponseController
     private ?AppService $appService;
     // Idempotency ledger connection for the classic public submission endpoint (create()). Nullable
     // so a caller that can't supply a MySQLConnection (e.g. a narrow unit test) still gets a working
-    // controller — idempotencyReserve() fails open (submits without idempotency protection) when null.
+    // controller — the idempotency ledger (SubmissionIdempotencyService) fails open when null.
     private ?PDO $mysql;
 
     public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?EmailService $emailService = null, ?AppService $appService = null, ?MySQLConnection $mysql = null)
@@ -346,8 +348,9 @@ class ResponseController
         $answersForHash = (is_array($data) && isset($data['answers'])) ? $data['answers'] : [];
         $payloadHash = hash('sha256', (string) json_encode($answersForHash));
 
-        $reserved = $this->idempotencyReserve($formId, $userId, $key, $payloadHash);
-        if (is_array($reserved)) {
+        $scope = ['form_id' => $formId];
+        $reserved = $this->idem()->reserve('form_submission_idempotency', $scope, $userId, $key, $payloadHash);
+        if ($reserved['state'] === 'existing') {
             // A row already exists for this (form, key).
             if (($reserved['payload_hash'] ?? '') !== $payloadHash) {
                 return $this->jsonResponse($response, ['error' => true, 'conflict' => true,
@@ -359,44 +362,31 @@ class ResponseController
             }
             // Same payload, reservation still 'pending'. A YOUNG row means a concurrent submit is
             // genuinely in flight — ask the caller to retry. A STALE row is an ABANDONED reservation
-            // (the owning request died between reserve and complete/release); retake it atomically —
-            // the DELETE is guarded on status='pending' + age entirely DB-side, so two racers can't
-            // both win.
-            $takenOver = false;
-            try {
-                $del = $this->mysql->prepare(
-                    "DELETE FROM form_submission_idempotency
-                     WHERE form_id = :f AND idempotency_key = :k
-                       AND status = 'pending' AND created_at < (NOW() - INTERVAL 600 SECOND)"
-                );
-                $del->execute(['f' => $formId, 'k' => $key]);
-                if ($del->rowCount() > 0) {
-                    $takenOver = ($this->idempotencyReserve($formId, $userId, $key, $payloadHash) === 'owner');
-                }
-            } catch (\Throwable $e) {
-                // Takeover is best-effort; fall through to the normal processing response.
-            }
-            if (!$takenOver) {
+            // (the owning request died between reserve and complete/release); the service retakes it
+            // atomically and hands US a fresh lease when we win.
+            $newLease = $this->idem()->takeOver('form_submission_idempotency', $scope, $userId, $key, $payloadHash);
+            if ($newLease === null) {
                 return $this->jsonResponse($response, ['error' => true, 'processing' => true,
                     'message' => 'This submission is already being processed. Please retry in a moment.'], 409);
             }
-            $reserved = 'owner';
+            $reserved = ['state' => 'owner', 'lease' => $newLease];
         }
-        // $reserved is 'owner' (we won the reservation) or 'unavailable' (the ledger write failed for
-        // a non-duplicate reason, or no MySQL connection is available) — fail OPEN and submit without
+        // 'owner' (we won the reservation) or 'unavailable' (the ledger write failed for a
+        // non-duplicate reason, or no MySQL connection is available) — fail OPEN and submit without
         // idempotency rather than reject a real submission.
-        $ownsReservation = ($reserved === 'owner');
+        $ownsReservation = ($reserved['state'] === 'owner');
+        $lease = $ownsReservation ? $reserved['lease'] : '';
 
         $result = $this->runCreatePipeline($request, $formId, $data);
 
         if ($ownsReservation) {
             $respId = ($result['status'] === 201) ? ($result['payload']['response']['id'] ?? null) : null;
             if (is_string($respId) && $respId !== '') {
-                $this->idempotencyComplete($formId, $key, $respId);
+                $this->idem()->complete('form_submission_idempotency', $scope, $key, $lease, $respId);
             } else {
                 // Validation / quota / rejection / error: release the reservation so a legitimate
                 // retry of a genuinely-failed submit isn't poisoned by a stale 'pending' row.
-                $this->idempotencyRelease($formId, $key);
+                $this->idem()->release('form_submission_idempotency', $scope, $key, $lease);
             }
         }
         return $this->jsonResponse($response, $result['payload'], $result['status']);
@@ -560,7 +550,7 @@ class ResponseController
         } catch (\Throwable $e) {
             // \Throwable (not just \Exception): an \Error (TypeError, DivisionByZeroError, etc.)
             // escaping here would propagate past create()'s call site, which has no try/catch of its
-            // own — skipping the idempotencyComplete()/idempotencyRelease() call entirely and
+            // own — skipping the ledger complete()/release() call entirely and
             // stranding a 'pending' row in form_submission_idempotency for up to 600s (every retry
             // in that window gets 409 "processing" even though nothing ever actually succeeded).
             // AppPublicController::runSubmissionPipeline guards against exactly this for the
@@ -574,106 +564,13 @@ class ResponseController
         }
     }
 
-    /**
-     * Idempotency ledger for the CLASSIC public submission endpoint (create() above), operating on
-     * form_submission_idempotency. This trio (idempotencyReserve/idempotencyComplete/
-     * idempotencyRelease, plus idempotencyFind and uuidV4 below) is a DELIBERATE, hand-kept duplicate
-     * of AppPublicController::idempotencyReserve/idempotencyComplete/idempotencyRelease against
-     * app_submission_idempotency — same reserve-first-via-unique-constraint design, same
-     * payload-hash conflict detection, same 600-second stale-pending takeover, same
-     * fail-open-on-ledger-error behavior — scoped by form_id only (no app_id, since a standalone
-     * form need not belong to an app). If that pattern changes, update both by hand; this is not
-     * shared/extracted on purpose, to avoid risking the already-working app-runtime path.
-     *
-     * Returns:
-     *   'owner'        — we won the reservation (caller must complete or release it),
-     *   'unavailable'  — the ledger write failed for a non-duplicate reason, or there is no MySQL
-     *                    connection (caller should fail open),
-     *   array{response_id:?string, payload_hash:string, status:string} — an existing row (replay/conflict/in-flight).
-     * @return string|array<string,mixed>
-     */
-    private function idempotencyReserve(string $formId, ?string $userId, string $key, string $payloadHash)
-    {
-        if ($this->mysql === null) {
-            return 'unavailable';
-        }
-        try {
-            $stmt = $this->mysql->prepare(
-                "INSERT INTO form_submission_idempotency (id, form_id, user_id, idempotency_key, response_id, payload_hash, status, created_at)
-                 VALUES (:id, :f, :u, :k, NULL, :h, 'pending', NOW())"
-            );
-            $stmt->execute([
-                'id' => $this->uuidV4(),
-                'f' => $formId, 'u' => $userId, 'k' => $key, 'h' => $payloadHash,
-            ]);
-            return 'owner';
-        } catch (\PDOException $e) {
-            // 23000 / MySQL 1062 = duplicate key → a row already exists for this key.
-            $dup = $e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062);
-            if ($dup) {
-                // If it vanished between the failed insert and this read (a racing release), fail open.
-                return $this->idempotencyFind($formId, $key) ?? 'unavailable';
-            }
-            // Any other DB error: fail open — idempotency is best-effort, never block a real submit.
-            return 'unavailable';
-        }
-    }
 
-    /** @return array{response_id:?string, payload_hash:string, status:string}|null */
-    private function idempotencyFind(string $formId, string $key): ?array
-    {
-        $stmt = $this->mysql->prepare(
-            "SELECT response_id, payload_hash, status FROM form_submission_idempotency
-             WHERE form_id = :f AND idempotency_key = :k LIMIT 1"
-        );
-        $stmt->execute(['f' => $formId, 'k' => $key]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-        if (!is_array($row)) {
-            return null;
-        }
-        return [
-            'response_id' => is_string($row['response_id'] ?? null) ? $row['response_id'] : null,
-            'payload_hash' => (string) ($row['payload_hash'] ?? ''),
-            'status' => (string) ($row['status'] ?? ''),
-        ];
-    }
+    /** Lazily built — the shared submission-idempotency ledger (audit FL-IDEM-001). */
+    private ?SubmissionIdempotencyService $idempotencyLedger = null;
 
-    /** Mark a reservation completed, pointing it at the created response. Best-effort. */
-    private function idempotencyComplete(string $formId, string $key, string $responseId): void
+    private function idem(): SubmissionIdempotencyService
     {
-        if ($this->mysql === null) {
-            return;
-        }
-        try {
-            // Only complete a row we still hold ('pending'): a slow original that lost
-            // its reservation to a 600s takeover must not regress a row the new owner
-            // already completed back to its own duplicate response id.
-            $stmt = $this->mysql->prepare(
-                "UPDATE form_submission_idempotency SET response_id = :r, status = 'completed'
-                 WHERE form_id = :f AND idempotency_key = :k AND status = 'pending'"
-            );
-            $stmt->execute(['r' => $responseId, 'f' => $formId, 'k' => $key]);
-        } catch (\Throwable $e) {
-            // ignore — the response is already persisted; a failed ledger update only risks a future
-            // duplicate on replay, never data loss.
-        }
-    }
-
-    /** Release an unfulfilled reservation (only our own 'pending' row) so a retry can proceed. */
-    private function idempotencyRelease(string $formId, string $key): void
-    {
-        if ($this->mysql === null) {
-            return;
-        }
-        try {
-            $stmt = $this->mysql->prepare(
-                "DELETE FROM form_submission_idempotency
-                 WHERE form_id = :f AND idempotency_key = :k AND status = 'pending'"
-            );
-            $stmt->execute(['f' => $formId, 'k' => $key]);
-        } catch (\Throwable $e) {
-            // ignore
-        }
+        return $this->idempotencyLedger ??= new SubmissionIdempotencyService($this->mysql);
     }
 
     private function uuidV4(): string
