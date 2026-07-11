@@ -23,7 +23,10 @@ interface RelatedRecordsPanelProps {
   canDeleteFn?: (formId: string) => boolean;
   onOpenRecord?: (formId: string, recordId: string) => void;
   onAddRecord?: (group: RelatedRecordGroup) => void;
-  /** Groups a record widget renders itself (recordScreen.consumesRelated) — hidden here. */
+  /** Groups a record widget renders itself (recordScreen.consumesRelated) — hidden here.
+   *  Entries are either a bare fieldId, or 'packFormId.fieldId' to pin the source form when
+   *  several forms link here through the same field name (e.g. transcript-turns.call_link
+   *  vs follow-up-tasks.call_link). */
   excludeFieldIds?: string[];
 }
 
@@ -106,7 +109,16 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
   const canAdd = props.canAddFn ?? store.canSubmit;
   const canDel = props.canDeleteFn ?? store.canDelete;
   const excluded = props.excludeFieldIds;
-  const groups = Object.values(related).filter((g) => !excluded?.includes(g.fieldId ?? ''));
+  const isConsumed = (g: RelatedRecordGroup): boolean =>
+    !!excluded?.some((entry) => {
+      // Field ids are machine keys (no dots), so a dot always separates packFormId.fieldId.
+      const dot = entry.indexOf('.');
+      if (dot < 0) return entry === (g.fieldId ?? '');
+      if (entry.slice(dot + 1) !== (g.fieldId ?? '')) return false;
+      const sourceForm = store.config?.forms.find((f) => f.formId === g.formId);
+      return sourceForm?.packFormId === entry.slice(0, dot);
+    });
+  const groups = Object.values(related).filter((g) => !isConsumed(g));
 
   if (loading) {
     return (

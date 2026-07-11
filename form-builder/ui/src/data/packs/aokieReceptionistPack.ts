@@ -697,7 +697,9 @@ export const aokieReceptionistPack: PackData = {
         sdkScreen: { screenId: 'aokie-live-call', title: 'Live Call' },
         // Individual call records render their transcript as chat bubbles; the widget consumes
         // the call_link related group so the raw Transcript Turns grid isn't shown twice.
-        recordScreen: { kind: 'sdk', screenId: 'aokie-call-transcript', title: 'Transcript', consumesRelated: ['call_link'] },
+        // consumesRelated is packFormId-qualified: follow-up-tasks ALSO link here through a
+        // field named call_link, and that group must stay visible in the related panel.
+        recordScreen: { kind: 'sdk', screenId: 'aokie-call-transcript', title: 'Transcript', consumesRelated: ['transcript-turns.call_link'] },
       },
     },
 

@@ -482,7 +482,7 @@
             "screenId": "aokie-call-transcript",
             "title": "Transcript",
             "consumesRelated": [
-              "call_link"
+              "transcript-turns.call_link"
             ]
           }
         }

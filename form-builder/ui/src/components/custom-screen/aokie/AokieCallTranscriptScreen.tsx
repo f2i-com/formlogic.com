@@ -69,7 +69,16 @@ export function AokieCallTranscriptScreen({ params, recordContext }: { params?: 
         return;
       }
       const groups = Object.values(res.data.related ?? {});
-      const group = groups.find((g) => g.fieldId === relatedFieldId);
+      // Several forms may link to Calls through a field named call_link (follow-up tasks do
+      // too), so a fieldId match alone can pick the wrong group — require the group to
+      // actually carry transcript turns (speaker + text).
+      const looksLikeTurns = (g: RelatedRecordGroup): boolean => {
+        const cols = g.columns ?? [];
+        if (cols.some((c) => c.id === 'speaker') && cols.some((c) => c.id === 'text')) return true;
+        const f = g.records?.[0]?.fields;
+        return !!f && 'speaker' in f && 'text' in f;
+      };
+      const group = groups.find((g) => g.fieldId === relatedFieldId && looksLikeTurns(g));
       const rows = (group?.records ?? []).map(toTurn);
       // Chronological: the plugin numbers turns; timestamps break ties for flow-written rows.
       rows.sort((a, b) => {
