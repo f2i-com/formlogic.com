@@ -27,10 +27,11 @@ export function LandingHero({ beta }: { beta: boolean }) {
   }, []);
 
   // Auto-rotate: paused while the tab is hidden, and not started at all for
-  // reduced-motion users (the first headline simply stays put).
+  // Auto-rotate, paused while the tab is hidden. Reduced-motion users (incl. Windows with
+  // "Animation effects" off) still get the rotating copy — the CSS media query swaps the
+  // fade/slide for an instant change, so the text updates without any motion.
   useEffect(() => {
     if (hero.slides.length < 2) return;
-    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const timer = window.setInterval(() => {
       if (!document.hidden) setSlide((i) => (i + 1) % hero.slides.length);
     }, hero.intervalMs);
