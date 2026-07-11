@@ -154,27 +154,11 @@ foreach (glob(__DIR__ . '/../resources/marketplace-packs/*.json') ?: [] as $file
     ];
 }
 
-// Lucide icon NAMES (flat vector, rendered by the SPA's PackIcon/DynamicIcon), not emoji.
-$sampleIcons = ['crm' => 'Handshake', 'sales' => 'Handshake', 'expense' => 'CreditCard', 'onboard' => 'UserCheck', 'people' => 'UserCheck'];
-foreach (glob(__DIR__ . '/../resources/sample-apps/*.json') ?: [] as $file) {
-    $p = json_decode((string) file_get_contents($file), true);
-    if (!is_array($p) || empty($p['packMeta'])) { out("  skip (bad sample) " . basename($file)); continue; }
-    $meta = $p['packMeta'];
-    $key = basename($file, '.json');
-    $icon = 'Package';
-    foreach ($sampleIcons as $frag => $emoji) { if (str_contains(strtolower($key . ' ' . ($meta['name'] ?? '')), $frag)) { $icon = $emoji; break; } }
-    $slug = slugify($meta['name'] ?? $key);
-    $tags = $meta['tags'] ?? ['sample'];
-    $sources[] = [
-        'slug' => $slug,
-        'name' => $meta['name'] ?? 'Sample',
-        'description' => $meta['description'] ?? '',
-        'icon' => $icon,
-        'tags' => $tags,
-        'category' => niceCategory($slug, $tags),
-        'pack' => $p,
-    ];
-}
+// The demoable set is EXACTLY the marketplace packs: the legacy bundled sample apps
+// (resources/sample-apps — Sales CRM, Expense Manager, …) are no longer provisioned into the
+// demo account or the marketplace catalog; they remain available to signed-in users through
+// the separate "Try a sample app" gallery (/api/sample-apps). pruneStalePacks() below removes
+// previously provisioned ones.
 
 out(count($sources) . " pack source(s) found.");
 
@@ -232,6 +216,40 @@ foreach ($sources as $s) {
     $GLOBALS['demoDataChanged'] = true;
     out("  demo: installed " . count($res['forms'] ?? []) . " forms / " . count($res['apps'] ?? []) . " apps, seeded $n responses");
 }
+
+// ── Prune packs that left the source set ────────────────────────────────────
+// A pack removed from the sources above (e.g. the legacy sample apps) must also leave the
+// demo: uninstall its demo installation (apps + forms + SQLite dbs) and retire its catalog
+// entry so the marketplace lists exactly the current packs.
+$sourceSlugs = array_flip(array_column($sources, 'slug'));
+$staleStmt = $pdo->prepare(
+    "SELECT pi.id AS installation_id, pi.catalog_id, pc.slug
+     FROM pack_installations pi
+     JOIN pack_catalog pc ON pc.id = pi.catalog_id
+     WHERE pi.user_id = ?"
+);
+$staleStmt->execute([$demoId]);
+$pruned = 0;
+foreach ($staleStmt->fetchAll(PDO::FETCH_ASSOC) as $inst) {
+    if (isset($sourceSlugs[$inst['slug']])) { continue; }
+    try {
+        $r = $packs->uninstallPack((string) $inst['installation_id'], $demoId);
+        out("PRUNE: uninstalled stale demo pack '{$inst['slug']}' ({$r['appsDeleted']} apps, {$r['formsDeleted']} forms)");
+        $pruned++;
+        $GLOBALS['demoDataChanged'] = true;
+        // Retire the catalog entry only when nothing else references it.
+        $ref = $pdo->prepare('SELECT COUNT(*) FROM pack_installations WHERE catalog_id = ?');
+        $ref->execute([$inst['catalog_id']]);
+        if ((int) $ref->fetchColumn() === 0) {
+            $pdo->prepare('DELETE FROM pack_versions WHERE catalog_id = ?')->execute([$inst['catalog_id']]);
+            $pdo->prepare('DELETE FROM pack_catalog WHERE id = ?')->execute([$inst['catalog_id']]);
+            out("PRUNE: retired catalog entry '{$inst['slug']}'");
+        }
+    } catch (\Throwable $e) {
+        out("PRUNE FAILED for '{$inst['slug']}': " . $e->getMessage());
+    }
+}
+if ($pruned === 0) { out('PRUNE: nothing stale'); }
 
 // ── Optional: regenerate demo data in place (RESEED_DEMO=1) ──────────────────
 // Re-run the (domain-aware) seeder over ALREADY-installed demo apps without reinstalling — app slugs and
