@@ -92,4 +92,10 @@ describe('actingRoute', () => {
       expect(route(endpoint).blocked, `${endpoint} must default-deny`).toBe(true);
     }
   });
+
+  it('refuses account backups while acting — the export zip CONTAINS record data', () => {
+    for (const endpoint of ['/account/backup/export', '/account/backup/import']) {
+      expect(route(endpoint).blocked, `${endpoint} must be refused for acting admins`).toBe(true);
+    }
+  });
 });

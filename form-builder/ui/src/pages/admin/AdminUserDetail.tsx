@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Boxes, FileText, ShieldCheck, Workflow } from 'lucide-react';
+import { ArrowLeft, Boxes, FileJson, FileText, ShieldCheck, Workflow } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -8,6 +8,7 @@ import { api, type AdminUserDetail as AdminUserDetailData } from '../../lib/api'
 import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
+import { AdminSpinner } from './adminUi';
 
 /**
  * /admin/users/:userId — one user's page: profile + counters, admin grant/
@@ -39,7 +40,26 @@ export function AdminUserDetail() {
     setConfirmAdmin(null);
   };
 
-  const rowClass = 'w-full text-left rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800 block';
+  // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
+  // PATHS and sizes — never record data (matching data up needs server access).
+  const downloadManifest = async () => {
+    const r = await api.adminGetBackupManifest(userId);
+    if (r.error || !r.data) {
+      toast.error('Could not build the manifest', typeof r.error === 'string' ? r.error : undefined);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(r.data.manifest, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup-manifest-${user?.email ?? userId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const rowClass = 'w-full text-left rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800 block focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50';
 
   return (
     <div className="space-y-5">
@@ -50,7 +70,7 @@ export function AdminUserDetail() {
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : !user ? (
-        <p className="text-sm text-gray-500 dark:text-slate-400">Loading…</p>
+        <AdminSpinner label="Loading user" />
       ) : (
         <>
           <div>
@@ -67,6 +87,10 @@ export function AdminUserDetail() {
                   {user.isAdmin ? 'Remove admin' : 'Make admin'}
                 </Button>
               )}
+              <Button size="sm" variant="outline" onClick={downloadManifest} leftIcon={<FileJson className="h-3.5 w-3.5" />}
+                title="Schemas + sqlite file paths per form — never record data">
+                Backup manifest
+              </Button>
             </div>
           </div>
 

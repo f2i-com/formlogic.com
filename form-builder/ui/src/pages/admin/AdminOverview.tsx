@@ -6,6 +6,7 @@ import { api, type AdminOverview as AdminOverviewData } from '../../lib/api';
 import { loadUiCache, saveUiCache } from '../../lib/uiCache';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { useAuthStore } from '../../stores/authStore';
+import { AdminSpinner } from './adminUi';
 
 /**
  * /admin — instance counters (structure/statistics only, never record data).
@@ -31,7 +32,7 @@ export function AdminOverview() {
   useEffect(() => { load(); }, [load]);
 
   if (error && !data) return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
-  if (!data) return <p className="text-sm text-gray-500 dark:text-slate-400">Loading…</p>;
+  if (!data) return <AdminSpinner label="Loading overview" />;
 
   const s = data.stats;
   const iconBg = 'bg-primary-100 dark:bg-primary-500/15';
@@ -47,10 +48,15 @@ export function AdminOverview() {
         <StatCard icon={FileText} iconBg={iconBg} iconColor={iconColor} value={s.forms} label="Forms"
           subtext={`${s.responses.toLocaleString()} records`} />
         <StatCard icon={Workflow} iconBg={iconBg} iconColor={iconColor} value={s.flows} label="Flows" />
-        <StatCard icon={Package} iconBg={iconBg} iconColor={iconColor} value={data.version} label="Version" />
+        <StatCard icon={Package} iconBg={iconBg} iconColor={iconColor} value={<span className="text-base sm:text-lg font-semibold leading-snug break-all">{data.version}</span>} label="Version" />
         <StatCard icon={Wrench} iconBg={iconBg} iconColor={iconColor} value={data.maintenance.enabled ? 'ON' : 'off'} label="Maintenance" />
+        {/* A full datetime at StatCard's heading size wraps to three lines and
+            dwarfs the numeric tiles — downsize the value node (child text size
+            wins over the tile's text-2xl/3xl). */}
         <StatCard icon={LogOut} iconBg={iconBg} iconColor={iconColor}
-          value={data.sessionEpoch > 0 ? formatDateTimeInZone(new Date(data.sessionEpoch * 1000), tz) : 'never'}
+          value={data.sessionEpoch > 0
+            ? <span className="text-base sm:text-lg font-semibold leading-snug">{formatDateTimeInZone(new Date(data.sessionEpoch * 1000), tz)}</span>
+            : 'never'}
           label="Session boot" subtext="last global sign-out" />
       </div>
       <Button variant="outline" size="sm" onClick={load} leftIcon={<RefreshCw className="h-4 w-4" />}>Refresh</Button>

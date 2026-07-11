@@ -4,6 +4,8 @@ import { Badge } from '../../components/ui/Badge';
 import { DataTable, type Column } from '../../components/ui/DataTable';
 import { api, type AdminUser } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
+import { formatRelativeTime } from '../../lib/utils';
+import { AdminError } from './adminUi';
 
 /**
  * /admin/users — the user directory (counts only, never record data).
@@ -17,12 +19,14 @@ export function AdminUsers() {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // setState only inside the promise callback so the effect body stays render-clean
   // (loading starts true; later searches keep the previous rows visible).
   const load = useCallback(() => {
     api.adminListUsers(search, page + 1).then((r) => {
-      if (r.data) { setRows(r.data.users); setTotal(r.data.total); }
+      if (r.data) { setRows(r.data.users); setTotal(r.data.total); setError(null); }
+      else { setError(r.error || 'Could not load users'); }
       setLoading(false);
     });
   }, [search, page]);
@@ -44,9 +48,15 @@ export function AdminUsers() {
     },
     {
       key: 'online', label: 'Presence',
+      // Compact relative time in the cell (the full admin-timezone timestamp is
+      // on hover) — the absolute string was too long for the column.
       render: (u) => u.online
         ? <Badge variant="success">online</Badge>
-        : <span className="text-xs text-gray-500 dark:text-slate-400">{u.lastSeenAt ? `seen ${formatDateTimeInZone(u.lastSeenAt, tz)}` : 'never seen'}</span>,
+        : (
+          <span className="text-xs text-gray-500 dark:text-slate-400" title={u.lastSeenAt ? formatDateTimeInZone(u.lastSeenAt, tz) : undefined}>
+            {u.lastSeenAt ? `seen ${formatRelativeTime(u.lastSeenAt)}` : 'never seen'}
+          </span>
+        ),
     },
     {
       key: 'resources', label: 'Resources',
@@ -62,6 +72,11 @@ export function AdminUsers() {
     },
     { key: 'plan', label: 'Plan', render: (u) => <span className="text-xs">{u.plan}</span> },
   ], [tz]);
+
+  // A failed fetch must not masquerade as the empty "No users match" state.
+  if (error && rows.length === 0) {
+    return <AdminError message={error} onRetry={() => { setLoading(true); load(); }} />;
+  }
 
   return (
     <DataTable<AdminUser & Record<string, unknown>>

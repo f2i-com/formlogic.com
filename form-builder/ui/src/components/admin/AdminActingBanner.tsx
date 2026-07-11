@@ -23,7 +23,9 @@ export function AdminActingBanner({ acting }: { acting: AdminActing }) {
   }, []);
 
   return (
-    <div className="sticky top-0 z-[60] flex h-9 items-center justify-between gap-3 bg-amber-500 px-3 text-sm text-amber-950 dark:bg-amber-400">
+    // z-40 matches DemoBanner: above the page headers (z-30), BELOW modals/
+    // ConfirmDialogs (z-50) so overlays are never painted over by the bar.
+    <div className="sticky top-0 z-40 flex h-9 items-center justify-between gap-3 bg-amber-500 px-3 text-sm text-amber-950 dark:bg-amber-400">
       <p className="min-w-0 truncate flex items-center gap-2">
         <ShieldCheck className="h-4 w-4 shrink-0" />
         <span className="truncate">
@@ -33,7 +35,7 @@ export function AdminActingBanner({ acting }: { acting: AdminActing }) {
       <button
         type="button"
         onClick={() => navigate(`/admin/users/${acting.ownerId}`)}
-        className="shrink-0 rounded-md bg-amber-950/10 px-2.5 py-1 text-xs font-semibold hover:bg-amber-950/20"
+        className="shrink-0 rounded-md bg-amber-950/10 px-3 py-1.5 min-h-[28px] text-xs font-semibold hover:bg-amber-950/20"
       >
         Exit
       </button>

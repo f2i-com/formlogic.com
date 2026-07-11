@@ -16,11 +16,14 @@ export function Header({ title, actions }: HeaderProps) {
 
   return (
     <>
-      {/* Offset the sticky header below the fixed offline banner (h-8) so it
-          isn't occluded when offline. */}
+      {/* Offset the sticky header below the fixed offline banner (h-8) and below
+          whichever sticky top bar set --fl-demo-banner-h (the demo banner or the
+          admin acting banner, both z-40) — otherwise the header tucks UNDER the
+          bar on scroll and its top half is occluded. The var is 0px outside
+          those contexts, so this is a no-op on normal pages. */}
       <header className={cn(
         'h-14 sm:h-16 bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-b border-gray-200/60 dark:border-white/[0.06] sticky z-30 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4',
-        isOnline ? 'top-0' : 'top-8'
+        isOnline ? 'top-[var(--fl-demo-banner-h,0px)]' : 'top-[calc(2rem+var(--fl-demo-banner-h,0px))]'
       )}>
         <div className="flex-1 min-w-0 overflow-hidden">
           {title && (

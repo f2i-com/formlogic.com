@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { api, type AdminNotice, type MaintenanceStatus } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
+import { AdminError, AdminSpinner } from './adminUi';
 
 /**
  * /admin/platform — maintenance mode (close the site), global session boot,
@@ -24,12 +25,16 @@ export function AdminPlatform() {
   const [noticeLevel, setNoticeLevel] = useState<'info' | 'warning' | 'success'>('info');
   const [noticeAudience, setNoticeAudience] = useState<'online' | 'all'>('online');
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
     api.adminGetMaintenance().then((r) => {
       if (r.data) {
         setStatus(r.data.maintenance);
         setOnline(r.data.onlineUsers);
         setMessage((m) => m || r.data!.maintenance.message);
+        setLoadError(null);
+      } else {
+        setLoadError(r.error || 'Could not load the maintenance status');
       }
     });
     api.adminListNotices().then((r) => { if (r.data) setNotices(r.data.notices); });
@@ -62,6 +67,13 @@ export function AdminPlatform() {
       load();
     }
   };
+
+  // A silent failure must not render the default "maintenance off" state.
+  if (status === null) {
+    return loadError
+      ? <AdminError message={loadError} onRetry={load} />
+      : <AdminSpinner label="Loading platform status" />;
+  }
 
   return (
     <div className="space-y-5">

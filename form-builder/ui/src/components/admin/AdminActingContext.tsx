@@ -45,29 +45,41 @@ export function enterActing(ctx: AdminActing): void {
 }
 
 export function exitActing(): void {
+  if (!api.isAdminActing()) return;
+
+  // SYNCHRONOUS teardown, in this exact order:
+  // 1. Purge the owner's forms while persistence is STILL FROZEN — the purge's
+  //    set() must never reach localStorage. (Reversed, a local-mode admin's own
+  //    snapshot was overwritten with the purged/empty array and their forms were
+  //    permanently lost — persistence unfreezes only after the purge.)
+  useFormStore.getState().purgeAdminForeign();
+  // 2. Members/invitations/groups are keyed by appId and not persisted — reset.
+  useAppUserStore.setState({ users: {}, groups: {}, invitations: {} });
+  // 3. Drop the acting flag NOW (not debounced): anything the next page fetches
+  //    (e.g. browser-back to the admin's own /apps) must route to their own
+  //    endpoints immediately, not flash the owner's world for 150ms.
+  api.setAdminActing(null);
+  // 4. Restore the admin's own persisted snapshots into memory.
+  void useFormStore.persist.rehydrate();
+  void useAppStore.persist.rehydrate();
+
+  // Only the NETWORK refetch is debounced — hopping between two acting routes
+  // (settings → builder) re-enters acting within the window (enterActing cancels
+  // the timer) and must not refetch the admin's own world in between. The awaits
+  // enforce ordering: initialize()'s wholesale set must land AFTER rehydrate.
   if (teardownTimer) clearTimeout(teardownTimer);
   teardownTimer = setTimeout(() => {
     teardownTimer = null;
-    if (api.isAdminActing()) {
-      api.setAdminActing(null);
-
-      // Forms: drop the owner's forms + their save state, restore the admin's
-      // persisted snapshot, then re-pull their own cloud forms if applicable.
-      const formStore = useFormStore.getState();
-      formStore.purgeAdminForeign();
-      void useFormStore.persist.rehydrate();
-      if (formStore.storageMode === 'api') {
+    if (api.isAdminActing()) return; // another boundary took over
+    void (async () => {
+      await useFormStore.persist.rehydrate();
+      if (useFormStore.getState().storageMode === 'api') {
         useFormStore.setState({ isInitialized: false });
-        void useFormStore.getState().initialize();
+        await useFormStore.getState().initialize();
       }
-
-      // Apps: restore the admin's snapshot and refetch their own list.
-      void useAppStore.persist.rehydrate();
-      void useAppStore.getState().fetchApps();
-
-      // Members/invitations/groups are keyed by appId and not persisted — reset.
-      useAppUserStore.setState({ users: {}, groups: {}, invitations: {} });
-    }
+      await useAppStore.persist.rehydrate();
+      await useAppStore.getState().fetchApps();
+    })();
   }, 150);
 }
 

@@ -34,10 +34,12 @@ import {
   Plus,
   AlertTriangle,
   Download,
+  Archive,
+  UploadCloud,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
-import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection } from '../lib/api';
+import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AccountBackupImportResult } from '../lib/api';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
@@ -80,6 +82,7 @@ const SECTIONS = [
   { id: 'mcp', label: 'MCP' },
   { id: 'audit', label: 'Audit' },
   { id: 'your-data', label: 'Your data' },
+  { id: 'backup', label: 'Backup & restore' },
   { id: 'danger', label: 'Danger zone' },
 ] as const;
 
@@ -270,6 +273,46 @@ export function Settings() {
       toast.error('Export failed', e instanceof Error ? e.message : 'Could not export your data.');
     } finally {
       setIsExportingData(false);
+    }
+  };
+
+  // ── Backup & restore (full-workspace zip: structure + records + files) ──
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
+  const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null);
+  const [backupResult, setBackupResult] = useState<AccountBackupImportResult | null>(null);
+
+  const handleExportBackup = async () => {
+    setIsExportingBackup(true);
+    try {
+      await api.exportAccountBackup();
+      toast.success('Backup downloaded', 'Apps, forms, flows, records and files — all in one zip.');
+    } catch (e) {
+      toast.error('Backup failed', e instanceof Error ? e.message : 'Could not build the backup.');
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
+  const handleImportBackupConfirmed = async () => {
+    const file = pendingBackupFile;
+    setPendingBackupFile(null);
+    if (!file) return;
+    setIsImportingBackup(true);
+    setBackupResult(null);
+    try {
+      const r = await api.importAccountBackup(file);
+      if (r.error || !r.data) {
+        toast.error('Restore failed', typeof r.error === 'string' ? r.error : 'Could not import the backup.');
+        return;
+      }
+      setBackupResult(r.data);
+      toast.success(
+        'Backup restored',
+        `Created ${r.data.apps.length} app${r.data.apps.length === 1 ? '' : 's'}, ${r.data.forms.length} form${r.data.forms.length === 1 ? '' : 's'}, ${r.data.responses.toLocaleString()} records and ${r.data.files} file${r.data.files === 1 ? '' : 's'}.`
+      );
+    } finally {
+      setIsImportingBackup(false);
     }
   };
 
@@ -1078,6 +1121,63 @@ export function Settings() {
           </CardContent>
         </Card>
 
+        {/* Backup & restore */}
+        <Card id="backup" className="overflow-hidden scroll-mt-24">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Archive}
+              title="Backup & restore"
+              description="Download a full backup of your workspace, or restore one as new copies"
+              iconBg="bg-indigo-50 dark:bg-indigo-500/10"
+              iconColor="text-indigo-600 dark:text-indigo-400"
+            />
+            <div className="ml-0 sm:ml-14 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">Download full backup</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    Everything in one zip: apps, forms and flows (schemas), every form&apos;s record database, and uploaded files.
+                    Webhook secrets, members and API keys are not included.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={handleExportBackup} isLoading={isExportingBackup} leftIcon={<Archive className="h-4 w-4" />}>
+                  Download backup
+                </Button>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">Restore from backup</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    Creates new copies of everything in the backup — nothing is overwritten. Re-importing the same backup creates duplicates.
+                  </p>
+                </div>
+                <label className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-gray-700 dark:text-slate-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shrink-0">
+                  <UploadCloud className="h-4 w-4" />
+                  {isImportingBackup ? 'Restoring…' : 'Restore backup'}
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    disabled={isImportingBackup}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingBackupFile(f); e.target.value = ''; }}
+                  />
+                </label>
+              </div>
+              {backupResult && (
+                <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/10 text-sm space-y-1">
+                  <p className="font-medium text-gray-900 dark:text-white">Restore complete</p>
+                  <p className="text-gray-600 dark:text-slate-300">
+                    {backupResult.apps.length} apps · {backupResult.forms.length} forms · {backupResult.flows} flows · {backupResult.bindings} bindings · {backupResult.responses.toLocaleString()} records · {backupResult.files} files
+                  </p>
+                  {(backupResult.warnings ?? []).map((w, i) => (
+                    <p key={i} className="text-amber-700 dark:text-amber-400 text-xs">{w}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Danger Zone */}
         <Card id="danger" className="overflow-hidden scroll-mt-24 border-red-200/70 dark:border-red-500/30">
           <CardContent className="p-6">
@@ -1120,6 +1220,15 @@ export function Settings() {
         </nav>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={pendingBackupFile !== null}
+        onClose={() => setPendingBackupFile(null)}
+        onConfirm={handleImportBackupConfirmed}
+        title="Restore this backup?"
+        message={`"${pendingBackupFile?.name ?? ''}" will be restored as NEW apps and forms alongside your existing ones — nothing is overwritten. Large backups can take a minute.`}
+        confirmLabel="Restore backup"
+      />
 
       <Modal isOpen={deleteAccountOpen} onClose={() => setDeleteAccountOpen(false)} title="Delete account" size="sm">
         <div className="p-6 space-y-4">

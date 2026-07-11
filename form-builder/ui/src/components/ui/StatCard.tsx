@@ -33,7 +33,7 @@ export function StatCard({
               never overflow into it — these cards get narrow on dense grids. */}
           <div className="min-w-0 flex-1">
             <p className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums leading-tight break-words">{value}</p>
-            <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mt-1">{label}</p>
+            <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mt-1 break-words">{label}</p>
             {trend && (
               <p className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 <span

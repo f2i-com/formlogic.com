@@ -188,7 +188,7 @@ export default function FormPreview() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
+    <div className="min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
       {acting && form.customScreen?.enabled && (
         <div className="bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 text-xs px-4 py-2 text-center">
           Dashboard &amp; custom-screen previews are disabled for platform admins — they display record data. Showing the form structure instead.

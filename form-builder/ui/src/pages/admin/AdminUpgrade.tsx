@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { api, type AdminUpgradeStatus } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
+import { AdminError, AdminSpinner } from './adminUi';
 
 /**
  * /admin/upgrade — in-place release upgrades: upload a release zip →
@@ -23,8 +24,12 @@ export function AdminUpgrade() {
   const [restoreDbId, setRestoreDbId] = useState<string | null>(null);
   const [journal, setJournal] = useState<string[] | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
-    api.adminUpgradeStatus().then((r) => { if (r.data) setStatus(r.data); });
+    api.adminUpgradeStatus().then((r) => {
+      if (r.data) { setStatus(r.data); setLoadError(null); }
+      else { setLoadError(r.error || 'Could not load the upgrade status'); }
+    });
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -76,7 +81,11 @@ export function AdminUpgrade() {
     load();
   };
 
-  if (!status) return <p className="text-sm text-gray-500 dark:text-slate-400">Loading…</p>;
+  if (!status) {
+    return loadError
+      ? <AdminError message={loadError} onRetry={load} />
+      : <AdminSpinner label="Loading upgrade status" />;
+  }
 
   return (
     <div className="space-y-5">

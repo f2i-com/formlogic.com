@@ -1009,7 +1009,10 @@ export default function FormBuilder() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    // Height subtracts the acting/demo banner (var is 0px outside those contexts)
+    // so the builder's internal panels fit the viewport instead of overflowing
+    // under the fold by the banner's height.
+    <div className="min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] flex flex-col">
       {/* Header */}
       <header ref={observeHeader} className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">

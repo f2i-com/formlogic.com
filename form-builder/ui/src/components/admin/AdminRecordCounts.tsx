@@ -4,6 +4,7 @@ import { ArrowLeft, Database, ShieldCheck } from 'lucide-react';
 import { StatCard } from '../ui/StatCard';
 import { api } from '../../lib/api';
 import { useResourcePaths } from './AdminActingContext';
+import { AdminSpinner } from '../../pages/admin/adminUi';
 
 /**
  * The acting-mode replacement for the app Records view: per-form record COUNTS
@@ -57,7 +58,7 @@ export function AdminRecordCounts() {
         {error ? (
           <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
         ) : forms === null ? (
-          <p className="text-sm text-gray-500 dark:text-slate-400">Loading…</p>
+          <AdminSpinner label="Loading record counts" />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <StatCard

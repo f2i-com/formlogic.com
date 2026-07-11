@@ -180,9 +180,9 @@ export default function AppHomeStudio() {
   };
 
   return (
-    <div className="h-dvh flex flex-col bg-gray-50 dark:bg-slate-950">
+    <div className="h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex flex-col bg-gray-50 dark:bg-slate-950">
       {acting && (
-        <div className="bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 text-xs px-4 py-1.5 text-center shrink-0">
+        <div className="bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-xs px-4 py-1.5 text-center shrink-0 border-b border-slate-200 dark:border-slate-700">
           Widget previews show no data — record data is not visible to platform admins. Layout, widgets and code remain fully editable.
         </div>
       )}

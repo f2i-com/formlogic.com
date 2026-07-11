@@ -600,6 +600,64 @@ class ApiClient {
     });
   }
 
+  // ── Account backup (Settings → Backup & restore) ──────────────────────────
+  // The export zip CONTAINS record data (per-form SQLite + uploads), so acting
+  // mode must refuse both directions: /account/* is default-denied by
+  // actingRoute, and these raw-fetch methods carry their own explicit guards.
+
+  /** Download the full account backup zip (apps/forms/flows + records + files). */
+  async exportAccountBackup(): Promise<void> {
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
+    const response = await fetch(`${this.baseUrl}/account/backup/export`, { credentials: 'include' });
+    if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
+      let message = 'Failed to export the backup';
+      try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `formlogic-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  /** Restore a backup zip — creates COPIES of everything (never overwrites). */
+  async importAccountBackup(file: File): Promise<ApiResponse<AccountBackupImportResult>> {
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) fetchHeaders['X-CSRF-Token'] = csrfToken;
+      const response = await fetch(`${this.baseUrl}/account/backup/import`, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data?.message || 'Backup import failed', status: response.status };
+      }
+      return { data };
+    } catch (error) {
+      logger.error('Backup import failed:', error);
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Admin: the structure-only backup manifest for a user (paths + schema, never data). */
+  async adminGetBackupManifest(userId: string): Promise<ApiResponse<{ manifest: Record<string, unknown> }>> {
+    return this.request(`/admin/users/${encodeURIComponent(userId)}/backup-manifest`);
+  }
+
   // Form endpoints
   async getForms(options?: { status?: string; limit?: number; offset?: number }): Promise<ApiResponse<{ forms: Form[]; count: number }>> {
     const params = new URLSearchParams();
@@ -2786,6 +2844,16 @@ interface ApplicationPackageImportResult {
   installationId: string;
   forms: Array<{ id: string; title: string }>;
   apps: Array<{ id: string; name: string }>;
+}
+
+export interface AccountBackupImportResult {
+  apps: Array<{ id: string; name: string }>;
+  forms: Array<{ id: string; title: string }>;
+  flows: number;
+  bindings: number;
+  responses: number;
+  files: number;
+  warnings?: string[];
 }
 
 interface PackInstallation {
