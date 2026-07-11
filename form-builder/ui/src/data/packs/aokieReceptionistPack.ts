@@ -685,9 +685,11 @@ export const aokieReceptionistPack: PackData = {
       ],
       // The Calls section IS the Live Call operator screen (trusted host-rendered SDK
       // screen): current call card, live transcript, answer/hangup/speak, call history.
+      // No "New Call" button: call records are written exclusively by the flow/app
+      // logic from live call events — a hand-typed call row would just be wrong data.
       customScreen: {
         enabled: true,
-        allowNewResponses: true,
+        allowNewResponses: false,
         kind: 'sdk',
         sdkScreen: { screenId: 'aokie-live-call', title: 'Live Call' },
       },

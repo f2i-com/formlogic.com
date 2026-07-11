@@ -117,9 +117,9 @@ function formatDuration(ms: number): string {
 /** Speaker → label + color. The palette carries meaning: caller is neutral, the receptionist's
  *  own voice (AI or the operator standing in for it) is brand-colored. */
 function describeSpeaker(speaker: string): { label: string; className: string } {
-  if (speaker === 'caller') return { label: 'Caller', className: 'text-[#8fe7ed]' };
-  if (speaker === 'operator') return { label: 'You', className: 'text-[#c5b9ff]' };
-  return { label: 'Aokie', className: 'text-[#c5b9ff]' };
+  if (speaker === 'caller') return { label: 'Caller', className: 'text-cyan-700 dark:text-[#8fe7ed]' };
+  if (speaker === 'operator') return { label: 'You', className: 'text-primary-700 dark:text-[#c5b9ff]' };
+  return { label: 'Aokie', className: 'text-primary-700 dark:text-[#c5b9ff]' };
 }
 
 /** Chat-bubble treatment per speaker (landing-console style): the caller sits
@@ -128,15 +128,15 @@ function turnBubble(speaker: string): { row: string; avatar: string; bubble: str
   if (speaker === 'caller') {
     return {
       row: 'flex max-w-[86%] flex-row-reverse items-start gap-2 self-end',
-      avatar: 'bg-[rgba(76,199,216,0.15)] text-[#8fe7ed]',
-      bubble: 'rounded-[12px_4px_12px_12px] bg-[rgba(63,178,195,0.08)]',
+      avatar: 'bg-cyan-100 text-cyan-700 dark:bg-[rgba(76,199,216,0.15)] dark:text-[#8fe7ed]',
+      bubble: 'rounded-[12px_4px_12px_12px] bg-cyan-50/80 dark:bg-[rgba(63,178,195,0.08)]',
       initial: 'C',
     };
   }
   return {
     row: 'flex max-w-[86%] items-start gap-2',
-    avatar: 'bg-[rgba(117,86,246,0.2)] text-[#c5b9ff]',
-    bubble: 'rounded-[4px_12px_12px_12px] bg-white/[0.045]',
+    avatar: 'bg-primary-100 text-primary-700 dark:bg-[rgba(117,86,246,0.2)] dark:text-[#c5b9ff]',
+    bubble: 'rounded-[4px_12px_12px_12px] bg-gray-100/80 dark:bg-white/[0.045]',
     initial: speaker === 'operator' ? 'Y' : 'A',
   };
 }
@@ -148,7 +148,7 @@ function formatTurnTime(occurredAt: string): string | null {
 
 // Fixed-dark "front desk console" palette — the same navy window the landing
 // hero shows, deliberately identical in light and dark app themes.
-const card = 'rounded-xl border border-white/[0.07] bg-white/[0.035]';
+const card = 'rounded-xl border border-gray-200/80 bg-white dark:border-white/[0.07] dark:bg-white/[0.035]';
 const actionBtn =
   'inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-45';
 // Same traffic-light treatment as actionBtn, scaled up for the call stage's one urgent decision.
@@ -190,7 +190,7 @@ function CallControls({
           type="button"
           onClick={() => onCommand('call.answer', active.callId, { callId: active.callId })}
           disabled={answerDisabled}
-          className={`${stageActionBtn} border-[#55c980] bg-[#55c980] text-[#08130d] hover:bg-[#67d590]`}
+          className={`${stageActionBtn} border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-400 dark:border-[#55c980] dark:bg-[#55c980] dark:text-[#08130d] dark:hover:bg-[#67d590]`}
         >
           {busyCommand === 'call.answer' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Phone className="h-4 w-4" />}
           {busyCommand === 'call.answer' ? 'Answering…' : 'Answer'}
@@ -201,7 +201,7 @@ function CallControls({
           type="button"
           onClick={() => onCommand('call.reject', active.callId, { callId: active.callId })}
           disabled={busyCommand !== null}
-          className={`${stageActionBtn} border-amber-400/25 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20`}
+          className={`${stageActionBtn} border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-300 dark:hover:bg-amber-400/20`}
         >
           {busyCommand === 'call.reject' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
           {busyCommand === 'call.reject' ? 'Rejecting…' : 'Reject'}
@@ -211,13 +211,13 @@ function CallControls({
         type="button"
         onClick={() => onCommand('call.hangup', active.callId, { callId: active.callId })}
         disabled={hangupDisabled}
-        className={`${stageActionBtn} border-red-400/25 bg-red-400/10 text-red-300 hover:bg-red-400/20`}
+        className={`${stageActionBtn} border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-400/25 dark:bg-red-400/10 dark:text-red-300 dark:hover:bg-red-400/20`}
       >
         {busyCommand === 'call.hangup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
         {busyCommand === 'call.hangup' ? 'Hanging up…' : 'Hang up'}
       </button>
       {!roleAllowsOperating && (
-        <span className="text-xs text-[#77829a]">Your role can view calls but not operate them.</span>
+        <span className="text-xs text-gray-400 dark:text-[#77829a]">Your role can view calls but not operate them.</span>
       )}
     </div>
   );
@@ -576,18 +576,18 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   }, [shownTurns.length, isCallUp, pendingSpeak]);
 
   return (
-    <div className="mx-auto max-w-4xl p-4">
+    <div className="mx-auto max-w-4xl p-2 sm:p-4">
       {/* The front-desk console: one dark window, same as the landing hero scene. */}
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0d152b] text-[#e8ecf5] shadow-[0_30px_80px_-40px_rgba(0,0,0,0.75)]">
+      <div className="overflow-hidden rounded-2xl border border-gray-200/90 bg-gray-50/60 text-gray-900 shadow-[0_24px_60px_-40px_rgba(30,35,60,0.35)] dark:border-white/10 dark:bg-[#0d152b] dark:text-[#e8ecf5] dark:shadow-[0_30px_80px_-40px_rgba(0,0,0,0.75)]">
         {/* Console header: identity + truthful presence pill */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] bg-white/[0.02] px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200/80 bg-white px-4 py-3.5 sm:px-5 sm:py-4 dark:border-white/[0.08] dark:bg-white/[0.02]">
           <div className="flex min-w-0 items-center gap-3">
             <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#7b60fa] to-[#6548df] text-white shadow-[0_10px_24px_-12px_#6548df]">
               <PhoneCall className="h-5 w-5" />
             </span>
             <div className="min-w-0">
               <h1 className="truncate text-sm font-semibold tracking-tight">Aokie Receptionist</h1>
-              <p className="truncate text-[11px] text-[#7f899e]">Front desk console</p>
+              <p className="truncate text-[11px] text-gray-500 dark:text-[#7f899e]">Front desk console</p>
             </div>
           </div>
           {/* Presence pill (audit INT-006/C-15): a degraded plugin goes amber and says WHY,
@@ -597,11 +597,11 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
               'inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold',
               presence.kind === 'local'
                 ? degradedDetail
-                  ? 'bg-amber-400/10 text-amber-300'
-                  : 'bg-[rgba(111,221,154,0.09)] text-[#7de5a6]'
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-400/10 dark:text-amber-300'
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-[rgba(111,221,154,0.09)] dark:text-[#7de5a6]'
                 : presence.kind === 'remote'
-                  ? 'bg-[rgba(117,86,246,0.14)] text-[#c5b9ff]'
-                  : 'bg-white/[0.06] text-[#8b96ab]'
+                  ? 'bg-primary-100 text-primary-800 dark:bg-[rgba(117,86,246,0.14)] dark:text-[#c5b9ff]'
+                  : 'bg-gray-200/80 text-gray-600 dark:bg-white/[0.06] dark:text-[#8b96ab]'
             )}
           >
             <span
@@ -622,10 +622,10 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
           </span>
         </div>
 
-        <div className="space-y-4 p-5">
+        <div className="space-y-4 p-3 sm:p-5">
           {/* IDLE: quiet standby note under the header pill. */}
           {!active && (
-            <div className="flex items-center justify-between gap-3 text-[11px] text-[#7f899e]">
+            <div className="flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-[#7f899e]">
               <span>
                 {presence.kind === 'remote'
                   ? `Updates every ${REMOTE_RECORDS_POLL_MS / 1000}s${seenLabel ? ` · seen ${seenLabel}` : ''}`
@@ -637,10 +637,10 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
           {showSimulateSetup(presence) && !active && (
             <div className={`${card} p-5`}>
               <div className="flex items-start gap-3">
-                <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-[#7f899e]" />
+                <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-gray-400 dark:text-[#7f899e]" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium">Install FormLogic Desktop to take real calls</p>
-                  <p className="mt-1 text-sm leading-relaxed text-[#9aa4b8]">
+                  <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-[#9aa4b8]">
                     FormLogic Desktop hosts the Aokie phone plugin that owns your Bluetooth dongle and paired phone.
                     Until it is installed and paired (Device Setup section), this screen runs against a simulated bridge.
                   </p>
@@ -648,7 +648,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                     type="button"
                     onClick={() => void handleSimulate()}
                     disabled={simulating}
-                    className={`${actionBtn} mt-3 border-white/15 text-[#d9dee9] hover:bg-white/[0.06]`}
+                    className={`${actionBtn} mt-3 border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-white/15 dark:text-[#d9dee9] dark:hover:bg-white/[0.06]`}
                   >
                     <PhoneIncoming className="h-4 w-4" />
                     {simulating ? 'Simulating…' : 'Simulate incoming call (demo)'}
@@ -666,12 +666,12 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                 card,
                 'p-5',
                 isRinging
-                  ? 'call-ring border-[#8268ff]/50'
-                  : 'border-[#8268ff]/30 ring-1 ring-[#8268ff]/20'
+                  ? 'call-ring border-primary-400 dark:border-[#8268ff]/50'
+                  : 'border-primary-300 ring-1 ring-primary-500/20 dark:border-[#8268ff]/30 dark:ring-[#8268ff]/20'
               )}
             >
               <div className="space-y-4">
-                <div className="flex min-w-0 items-center gap-3.5">
+                <div className="flex min-w-0 items-center gap-3 sm:gap-3.5">
                   <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#2b8fa9] to-[#58c5cf] text-sm font-bold text-[#e8feff]">
                     {(active.callerName || customerNameForPhone(active.from) || active.from || '?')
                       .trim()
@@ -682,25 +682,25 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                     <p
                       className={cn(
                         'text-[10px] font-bold uppercase tracking-[0.08em]',
-                        isRinging ? 'text-[#c5b9ff]' : 'text-[#8ddfae]'
+                        isRinging ? 'text-primary-600 dark:text-[#c5b9ff]' : 'text-emerald-600 dark:text-[#8ddfae]'
                       )}
                     >
                       {isRinging ? 'Incoming call' : `Call in progress${elapsedLabel ? ` · ${elapsedLabel}` : ''}`}
                     </p>
-                    <p className="mt-0.5 truncate text-xl font-semibold tracking-tight">
+                    <p className="mt-0.5 truncate text-lg font-semibold tracking-tight sm:text-xl">
                       {active.callerName || customerNameForPhone(active.from) || active.from || 'Unknown caller'}
                     </p>
-                    <p className="mt-0.5 flex items-center gap-2 font-mono text-xs tabular-nums text-[#7d879a]">
+                    <p className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-gray-500 dark:text-[#7d879a]">
                       {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
                       {!active.callerName && customerNameForPhone(active.from) && (
-                        <span className="rounded-full bg-[rgba(117,86,246,0.18)] px-2 py-0.5 font-sans text-[10px] font-semibold text-[#c5b9ff]">
+                        <span className="rounded-full bg-primary-100 px-2 py-0.5 font-sans text-[10px] font-semibold text-primary-700 dark:bg-[rgba(117,86,246,0.18)] dark:text-[#c5b9ff]">
                           Known customer
                         </span>
                       )}
                     </p>
                   </div>
                   {!isRinging && (
-                    <span className="aokie-wave shrink-0" aria-hidden="true">
+                    <span className="aokie-wave hidden shrink-0 sm:flex" aria-hidden="true">
                       {[22, 14, 26, 12, 20, 27, 15, 23, 11, 19].map((h, i) => (
                         <i key={i} style={{ height: `${h}px`, animationDelay: `${(i % 7) * 0.06}s` }} />
                       ))}
@@ -716,7 +716,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                   onCommand={onCommand}
                 />
 
-                <div className="flex items-center gap-1.5 border-t border-white/[0.06] pt-3 text-[11px] text-[#7f899e]">
+                <div className="flex items-center gap-1.5 border-t border-gray-200/70 pt-3 text-[11px] text-gray-500 dark:border-white/[0.06] dark:text-[#7f899e]">
                   {remoteMode ? (
                     <>
                       <Cast className="h-3 w-3 shrink-0" />
@@ -743,17 +743,17 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
           <div className={`${card} p-5`}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Mic className="h-4 w-4 text-[#7f899e]" />
+                <Mic className="h-4 w-4 text-gray-400 dark:text-[#7f899e]" />
                 <h2 className="text-sm font-medium">{transcriptHeading}</h2>
               </div>
               {remoteMode && (
-                <span className="text-[11px] text-[#7f899e]">
+                <span className="text-[11px] text-gray-500 dark:text-[#7f899e]">
                   Stored records · updates every {REMOTE_RECORDS_POLL_MS / 1000}s
                 </span>
               )}
             </div>
             {shownTurns.length === 0 && pendingSpeak === null ? (
-              <p className="text-sm text-[#7f899e]">
+              <p className="text-sm text-gray-500 dark:text-[#7f899e]">
                 {remoteMode
                   ? 'No transcript recorded for the latest call yet.'
                   : 'Final transcript turns stream in here during a call.'}
@@ -775,9 +775,9 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                       <div className="min-w-0">
                         <div className={cn('flex items-baseline gap-2', t.speaker === 'caller' && 'flex-row-reverse')}>
                           <span className={`text-[11px] font-semibold ${speaker.className}`}>{speaker.label}</span>
-                          {time && <span className="font-mono text-[10px] tabular-nums text-[#69748a]">{time}</span>}
+                          {time && <span className="font-mono text-[10px] tabular-nums text-gray-400 dark:text-[#69748a]">{time}</span>}
                         </div>
-                        <p className={`mt-1 border border-white/[0.06] px-3 py-2 text-sm leading-relaxed text-[#cbd1dd] ${bubble.bubble}`}>
+                        <p className={`mt-1 border border-gray-200/60 px-3 py-2 text-sm leading-relaxed text-gray-700 dark:border-white/[0.06] dark:text-[#cbd1dd] ${bubble.bubble}`}>
                           {t.text}
                         </p>
                       </div>
@@ -786,17 +786,17 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                 })}
                 {pendingSpeak !== null && (
                   <div className="flex max-w-[86%] items-start gap-2">
-                    <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(117,86,246,0.2)] text-[10px] font-bold text-[#c5b9ff]" aria-hidden="true">
+                    <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[10px] font-bold text-primary-700 dark:bg-[rgba(117,86,246,0.2)] dark:text-[#c5b9ff]" aria-hidden="true">
                       Y
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-baseline gap-2">
-                        <span className="text-[11px] font-semibold text-[#c5b9ff]">You</span>
-                        <span className="flex items-center gap-1 text-[10px] text-[#69748a]">
+                        <span className="text-[11px] font-semibold text-primary-700 dark:text-[#c5b9ff]">You</span>
+                        <span className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-[#69748a]">
                           {remoteMode && <Cast className="h-3 w-3" />} sending…
                         </span>
                       </div>
-                      <p className="mt-1 rounded-[4px_12px_12px_12px] border border-white/[0.06] bg-white/[0.045] px-3 py-2 text-sm italic leading-relaxed text-[#c5b9ff]/80">
+                      <p className="mt-1 rounded-[4px_12px_12px_12px] border border-gray-200/60 bg-gray-100/80 px-3 py-2 text-sm italic leading-relaxed text-primary-700/80 dark:border-white/[0.06] dark:bg-white/[0.045] dark:text-[#c5b9ff]/80">
                         {pendingSpeak}
                       </p>
                     </div>
@@ -807,7 +807,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
 
             {/* Speak composer — only while a call is up; an ended call's transcript is a record, not a conversation. */}
             {active && (
-              <div className="mt-3 flex items-center gap-2 border-t border-white/[0.06] pt-3">
+              <div className="mt-3 flex items-center gap-2 border-t border-gray-200/70 pt-3 dark:border-white/[0.06]">
                 <input
                   type="text"
                   value={speakText}
@@ -819,7 +819,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                   }}
                   placeholder={speakPlaceholder}
                   disabled={speakDisabled}
-                  className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-sm text-[#e8ecf5] placeholder:text-[#69748a] focus:outline-none focus:ring-2 focus:ring-[#8268ff]/60 disabled:opacity-45"
+                  className="min-w-0 flex-1 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/60 disabled:opacity-45 dark:border-white/10 dark:bg-white/[0.045] dark:text-[#e8ecf5] dark:placeholder:text-[#69748a] dark:focus:ring-[#8268ff]/60"
                 />
                 <button
                   type="button"
@@ -840,21 +840,21 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
             {!callsFormId ? (
               <EmptyState title="No Calls form" message="This screen expects to be attached to the Calls form." />
             ) : recent.rows.length === 0 ? (
-              <p className="text-sm text-[#7f899e]">
+              <p className="text-sm text-gray-500 dark:text-[#7f899e]">
                 {recent.loading ? 'Loading…' : 'No calls logged yet — they are recorded automatically from call events.'}
               </p>
             ) : (
-              <ul className="divide-y divide-white/[0.06]">
+              <ul className="divide-y divide-gray-100 dark:divide-white/[0.06]">
                 {recent.rows.map((r) => {
                   const phone = String(r.answers.caller_phone || '');
                   const status = String(r.answers.status || '');
                   // Same severity-coloring convention as AokiePairingScreen's hardware events list.
                   const statusClass =
                     status === 'missed' || status === 'failed' || status === 'rejected'
-                      ? 'bg-red-400/10 text-red-300'
+                      ? 'bg-red-100 text-red-700 dark:bg-red-400/10 dark:text-red-300'
                       : status === 'completed' || status === 'answered'
-                        ? 'bg-[rgba(111,221,154,0.09)] text-[#7de5a6]'
-                        : 'bg-white/[0.06] text-[#8b96ab]';
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-[rgba(111,221,154,0.09)] dark:text-[#7de5a6]'
+                        : 'bg-gray-200/80 text-gray-600 dark:bg-white/[0.06] dark:text-[#8b96ab]';
                   // Click through to the record detail when the app runtime + Calls form are known.
                   const openDetail = () => {
                     if (appSlug && callsFormId) navigate(`/app/${appSlug}/form/${callsFormId}/responses/${r.id}`);
@@ -867,7 +867,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                       tabIndex={clickable ? 0 : undefined}
                       onClick={clickable ? openDetail : undefined}
                       onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openDetail(); } : undefined}
-                      className={`flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm ${clickable ? 'cursor-pointer rounded-lg px-1 -mx-1 hover:bg-white/[0.04]' : ''}`}
+                      className={`flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm ${clickable ? 'cursor-pointer rounded-lg px-1 -mx-1 hover:bg-gray-50 dark:hover:bg-white/[0.04]' : ''}`}
                     >
                       <div className="min-w-0">
                         <span className="font-medium">
@@ -877,7 +877,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                           <a
                             href={`tel:${phone}`}
                             onClick={(e) => e.stopPropagation()}
-                            className="ml-2 font-mono text-xs text-[#7d879a]"
+                            className="ml-2 font-mono text-xs text-gray-400 dark:text-[#7d879a]"
                           >
                             {phone}
                           </a>

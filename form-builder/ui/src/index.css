@@ -323,9 +323,13 @@
     display: block;
     width: 3px;
     border-radius: 2px;
+    background: linear-gradient(#34d399, #0d9488);
+    opacity: 0.85;
+    animation: aokieWave 1.15s ease-in-out infinite;
+  }
+  :root.dark .aokie-wave i {
     background: linear-gradient(#b7ff76, #6ddda7);
     opacity: 0.8;
-    animation: aokieWave 1.15s ease-in-out infinite;
   }
   @keyframes aokieWave {
     0%, 100% { transform: scaleY(0.3); }
