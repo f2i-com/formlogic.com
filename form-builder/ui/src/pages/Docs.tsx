@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Sparkles, Workflow,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Sparkles, Workflow, Moon, Sun,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
 import { useBetaMode } from '../hooks/useBetaMode';
+import { useUIStore } from '../stores/uiStore';
 
 // Shares the landing page's display/mono/gradient chrome so docs feel part of the brand.
 function useDocsChrome() {
@@ -91,6 +92,22 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
 // Bump when the /screenshots images are replaced: Apache serves them without Cache-Control,
 // so browsers heuristically cache by Last-Modified and would keep showing the old captures.
 const SCREENSHOT_VERSION = '2026-07-11';
+
+function ThemeToggle() {
+  const theme = useUIStore((s) => s.theme);
+  const toggleTheme = useUIStore((s) => s.toggleTheme);
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="p-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer"
+    >
+      {theme === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+    </button>
+  );
+}
 
 function Figure({ src, alt, caption }: { src: string; alt: string; caption: string }) {
   return (
@@ -199,6 +216,7 @@ export function Docs() {
             <Link to="/" className="hidden sm:flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">
               <ArrowLeft className="h-4 w-4" /> Home
             </Link>
+            <ThemeToggle />
             <Link to="/signup"><Button className="bg-primary-600 hover:bg-primary-500 text-primary-foreground border-0">Get started</Button></Link>
           </div>
         </div>

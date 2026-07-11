@@ -356,6 +356,27 @@
   gap: 18px;
 }
 
+/* Theme toggle: same pill language as the Star button, icon-only. The nav band is
+   fixed-dark in both themes, so the button's colors are constant. */
+.lv2-nav__theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: #b9c0cf;
+  cursor: pointer;
+  background: none;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.lv2-nav__theme:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
 .lv2-nav__star {
   display: inline-flex;
   align-items: center;

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Github, Menu, Star, X } from 'lucide-react';
+import { ArrowRight, Github, Menu, Moon, Star, Sun, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
+import { useUIStore } from '../../stores/uiStore';
 
 /**
  * Sticky dark marketing nav. In-page anchors for the sections, router links
@@ -11,6 +12,10 @@ import { GITHUB_URL } from './stats';
 export function LandingNav() {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
+  // The same persisted theme the whole product uses (App syncs it onto <html>): the landing's
+  // light bands, the docs page, and the app runtime all follow this toggle.
+  const theme = useUIStore((s) => s.theme);
+  const toggleTheme = useUIStore((s) => s.toggleTheme);
 
   return (
     <nav className="lv2-nav" aria-label="FormLogic primary navigation">
@@ -32,6 +37,15 @@ export function LandingNav() {
         </div>
 
         <div className="lv2-nav__actions">
+          <button
+            type="button"
+            className="lv2-nav__theme"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           <a
             href={GITHUB_URL}
             target="_blank"
