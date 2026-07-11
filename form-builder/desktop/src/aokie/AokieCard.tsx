@@ -14,6 +14,7 @@ import { useToast } from '../Toasts';
 interface AokiePhoneStatus {
   paired: boolean;
   device?: { name?: string; address?: string } | null;
+  connected?: boolean;
   /** AOK-BT-001 bounded pairing window — discoverable ONLY while this is open. */
   pairingOpen?: boolean;
   pairingSecondsRemaining?: number;
@@ -139,6 +140,9 @@ function withAokieDefaults(raw: unknown): AokieConnectorSettings {
 /** Poll cadence while a pairing window is open (countdown + bond detection). */
 const PAIRING_POLL_MS = 2000;
 
+/** Gentle background cadence keeping the connected readout truthful at rest. */
+const IDLE_POLL_MS = 12000;
+
 /** New-phone pairing window: the plugin clamps to 30..=300s; ask for the max —
  *  the window auto-closes the moment one phone bonds and there's a live
  *  countdown + Stop button, so the longer window just gives people time to
@@ -161,9 +165,15 @@ function formatSeconds(total: number): string {
 function PhonePairingControls({ running, onPaired }: { running: boolean; onPaired: () => void }) {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [bonded, setBonded] = useState<string[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [device, setDevice] = useState<{ name?: string; address?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bondedRef = useRef<string[]>([]);
+  // Snapshot when a window opens, so "the phone arrived" is a TRANSITION
+  // (new bond / fresh reconnect), not just "something was already connected".
+  const baselineBonds = useRef(0);
+  const baselineConnected = useRef(false);
   const toast = useToast();
   const { confirm } = useConfirm();
 
@@ -178,15 +188,18 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
     return addrs;
   }, []);
 
-  const pollWindow = useCallback(async () => {
+  const pollStatus = useCallback(async () => {
     const res = await plugins.command('aokie', 'phone.status');
     const d = (res.data ?? {}) as AokiePhoneStatus;
     const secs =
       d.pairingOpen && typeof d.pairingSecondsRemaining === 'number'
         ? d.pairingSecondsRemaining
         : 0;
+    const isConnected = !!d.connected || d.paired;
     setSecondsLeft(secs);
-    return secs;
+    setConnected(isConnected);
+    setDevice(d.device ?? null);
+    return { secs, connected: isConnected };
   }, []);
 
   // Initial snapshot when the plugin starts; drop stale readouts when it stops.
@@ -195,47 +208,83 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
       setSecondsLeft(0);
       setBonded([]);
       bondedRef.current = [];
+      setConnected(false);
+      setDevice(null);
       setError(null);
       return;
     }
-    Promise.all([pollWindow(), loadBonded()]).catch((e) =>
+    Promise.all([pollStatus(), loadBonded()]).catch((e) =>
       setError(e instanceof Error ? e.message : String(e)),
     );
-  }, [running, pollWindow, loadBonded]);
+  }, [running, pollStatus, loadBonded]);
 
-  // While the window is open, poll for the countdown AND the close reason: a
-  // successful bond auto-closes the window (one device per window), so a close
-  // that grew the bonded list is a success, not an expiry.
+  // Gentle idle poll so the connected readout stays truthful at rest — the
+  // phone can connect or drop at any time without a pairing window open.
+  useEffect(() => {
+    if (!running) return;
+    const t = window.setInterval(() => {
+      pollStatus().catch(() => {});
+    }, IDLE_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [running, pollStatus]);
+
+  // Baseline at window-open — also covers windows opened OUTSIDE this UI
+  // (flows, the command relay), which this card still renders a countdown for.
   const windowOpen = secondsLeft > 0;
+  useEffect(() => {
+    if (!windowOpen) return;
+    baselineConnected.current = connected;
+    loadBonded()
+      .then((addrs) => {
+        baselineBonds.current = addrs.length;
+      })
+      .catch(() => {
+        baselineBonds.current = bondedRef.current.length;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot once per window-open flip
+  }, [windowOpen, loadBonded]);
+
+  // While the window is open, poll fast: tick the countdown and watch for the
+  // phone actually arriving. A NEW bond (listPaired grew) or a fresh reconnect
+  // (connected flipped on since the window opened) is success — close the
+  // window (the radio auto-closes on a bond; Stop covers the reconnect case)
+  // and say so, instead of letting the timer silently run out.
   useEffect(() => {
     if (!running || !windowOpen) return;
     const t = window.setInterval(async () => {
       try {
-        const secs = await pollWindow();
-        if (secs > 0) return;
-        const before = bondedRef.current.length;
-        const after = await loadBonded();
-        if (after.length > before) {
-          toast.push({
-            kind: 'success',
-            title: 'Phone paired',
-            body: 'Aokie can take calls from this phone; it reconnects automatically from now on.',
-          });
-          onPaired();
+        const s = await pollStatus();
+        const bondsNow = (await loadBonded()).length;
+        const success =
+          bondsNow > baselineBonds.current || (s.connected && !baselineConnected.current);
+        if (!success) return;
+        try {
+          await plugins.command('aokie', 'phone.stopPairing');
+        } catch {
+          // The bond already auto-closed the window — fine.
         }
+        setSecondsLeft(0);
+        toast.push({
+          kind: 'success',
+          title: 'Phone connected',
+          body: 'Aokie can take calls from this phone; it reconnects automatically from now on.',
+        });
+        onPaired();
       } catch {
         // Plugin stopping mid-poll — the running-flip effect clears state.
       }
     }, PAIRING_POLL_MS);
     return () => window.clearInterval(t);
-  }, [running, windowOpen, pollWindow, loadBonded, toast, onPaired]);
+  }, [running, windowOpen, pollStatus, loadBonded, toast, onPaired]);
 
   const startPairing = async () => {
     setBusy(true);
     setError(null);
     try {
-      // Pre-window snapshot so the close handler can spot the new bond.
-      await loadBonded();
+      // Pre-window baseline so the poller can spot the new bond / reconnect.
+      const before = await loadBonded();
+      baselineBonds.current = before.length;
+      baselineConnected.current = connected;
       const res = await plugins.command('aokie', 'phone.startPairing', {
         seconds: PAIRING_WINDOW_SECONDS,
       });
@@ -314,6 +363,19 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
             </button>
           </div>
         </>
+      ) : connected ? (
+        <>
+          <div className="service-meta aokie-status-ok">
+            <CheckIcon className="inline-icon icon-leading" size={14} />
+            Phone connected{device?.address ? ` (${device.address})` : ''} — Aokie can take
+            calls.
+          </div>
+          <div className="aokie-card-actions">
+            <button className="btn btn-secondary" onClick={startPairing} disabled={busy}>
+              {busy ? 'Opening…' : 'Pair another phone'}
+            </button>
+          </div>
+        </>
       ) : (
         <>
           <div className="service-meta">
@@ -329,15 +391,24 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
       )}
       {bonded.length > 0 && (
         <div className="aokie-paired-list">
-          {bonded.map((address) => (
-            <div key={address} className="aokie-paired-row">
-              <CheckIcon className="inline-icon icon-leading" size={14} />
-              <span className="service-meta">{address}</span>
-              <button className="btn-tiny" onClick={() => forget(address)} disabled={busy}>
-                Forget
-              </button>
-            </div>
-          ))}
+          {bonded.map((address) => {
+            const isConnected =
+              connected &&
+              !!device?.address &&
+              address.toLowerCase() === device.address.toLowerCase();
+            return (
+              <div key={address} className="aokie-paired-row">
+                <CheckIcon className="inline-icon icon-leading" size={14} />
+                <span className="service-meta">
+                  {address}
+                  {isConnected ? ' · connected' : ''}
+                </span>
+                <button className="btn-tiny" onClick={() => forget(address)} disabled={busy}>
+                  Forget
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       {error && (
