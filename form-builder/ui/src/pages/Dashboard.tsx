@@ -32,6 +32,7 @@ import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { ListRowSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
+import { ShowMore } from '../components/ui/ShowMore';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useFormStore } from '../stores/formStore';
@@ -64,7 +65,15 @@ interface DashboardStatsCache {
   responseCounts: Record<string, number>;
   pulses: Record<string, PulseDay[]>;
   recent: Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>;
+  /** formId → epoch-ms of the most recent submission (drives the Last-activity sort). */
+  lastActivity?: Record<string, number>;
 }
+
+/** Dashboard "My forms" sort modes — Last activity is the default (last USED, not last added). */
+type DashFormsSort = 'activity' | 'edited' | 'created' | 'responses';
+const DASH_FORMS_SORT_KEY = 'dashboard.formsSort';
+const DASH_FORMS_PAGE = 10;
+const DASH_FORMS_INITIAL = 5;
 
 // Within this window a remount reuses the cache without refetching at all —
 // rapid Dashboard ↔ Forms navigation shouldn't hammer N analytics endpoints.
@@ -671,6 +680,22 @@ export function Dashboard() {
   // per-form counts + Recent Activity must come from the API (else the cards show
   // 0 / "No submissions yet" while the Total Responses stat shows the real number).
   const [responseCounts, setResponseCounts] = useState<Record<string, number>>({});
+  // formId → most recent submission (epoch ms). API mode: derived from the analytics fetch
+  // below; local mode: computed from the stored responses. Powers the Last-activity sort.
+  const [apiLastActivity, setApiLastActivity] = useState<Record<string, number>>({});
+  const [formsSort, setFormsSort] = useState<DashFormsSort>(() => {
+    try {
+      const v = localStorage.getItem(DASH_FORMS_SORT_KEY);
+      return v === 'edited' || v === 'created' || v === 'responses' ? v : 'activity';
+    } catch {
+      return 'activity';
+    }
+  });
+  const changeFormsSort = (v: DashFormsSort) => {
+    setFormsSort(v);
+    try { localStorage.setItem(DASH_FORMS_SORT_KEY, v); } catch { /* persistence is optional */ }
+  };
+  const [formsShown, setFormsShown] = useState(DASH_FORMS_INITIAL);
   // Per-form 14-day activity, for the pulse strip (api mode; local mode derives its own below).
   const [apiPulses, setApiPulses] = useState<Record<string, PulseDay[]>>({});
   const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
@@ -783,6 +808,7 @@ export function Dashboard() {
     statsShownFor.current = user.id;
     setStats({ totalResponses: cached.data.totalResponses });
     setResponseCounts(cached.data.responseCounts);
+    setApiLastActivity(cached.data.lastActivity ?? {});
     setApiPulses(cached.data.pulses);
     setApiRecent(cached.data.recent);
     setStatsReady(true);
@@ -841,6 +867,7 @@ export function Dashboard() {
           });
           if (cancelled) return;
           setResponseCounts(counts);
+          setApiLastActivity(lastActivity);
           setApiPulses(pulses);
 
           // Recent Activity: pull a few recent rows from the forms that have responses.
@@ -875,6 +902,7 @@ export function Dashboard() {
             responseCounts: counts,
             pulses,
             recent,
+            lastActivity,
           });
         } catch (error) {
           if (cancelled) return;
@@ -937,10 +965,44 @@ export function Dashboard() {
   // with a custom screen).
   const { openPreview: previewForm, previewChooser } = useFormPreview();
 
-  // Get recent forms
-  const recentForms = [...forms]
-    .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
-    .slice(0, 5);
+  // Local mode: most recent submission per form, straight from the stored responses.
+  const localLastActivity = useMemo(() => {
+    if (storageMode === 'api') return {} as Record<string, number>;
+    const map: Record<string, number> = {};
+    for (const form of forms) {
+      for (const r of getResponsesByFormId(form.id)) {
+        const t = parseServerDate(r.submittedAt).getTime();
+        if (Number.isFinite(t) && t > (map[form.id] ?? 0)) map[form.id] = t;
+      }
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
+  }, [forms, responses, getResponsesByFormId, storageMode]);
+  const activityOf = storageMode === 'api' ? apiLastActivity : localLastActivity;
+
+  // "My forms", sorted by the chosen mode. Default = Last activity (most recent submission,
+  // falling back to the edit time for forms with no responses yet) so the list surfaces the
+  // forms actually being USED — not just the last ones added.
+  const sortedForms = useMemo(() => {
+    const editedMs = (f: Form) => parseServerDate(f.updatedAt).getTime();
+    const activityMs = (f: Form) => activityOf[f.id] ?? editedMs(f);
+    const countOf = (f: Form) =>
+      storageMode === 'api' ? (responseCounts[f.id] ?? f.responseCount ?? 0) : getResponsesByFormId(f.id).length;
+    return [...forms].sort((a, b) => {
+      switch (formsSort) {
+        case 'edited':
+          return editedMs(b) - editedMs(a);
+        case 'created':
+          return parseServerDate(b.createdAt).getTime() - parseServerDate(a.createdAt).getTime();
+        case 'responses':
+          return countOf(b) - countOf(a) || activityMs(b) - activityMs(a);
+        case 'activity':
+        default:
+          return activityMs(b) - activityMs(a);
+      }
+    });
+  }, [forms, formsSort, activityOf, responseCounts, storageMode, getResponsesByFormId]);
+  const recentForms = sortedForms.slice(0, formsShown);
 
   // Get recent responses across all forms (local store — cloud mode uses apiRecent)
   const localRecentResponses = useMemo(() => {
@@ -1077,18 +1139,31 @@ export function Dashboard() {
               min-width:auto, so one long nowrap form title would otherwise blow the
               track past the viewport and shove the pulse strips over/under the text. */}
           <div className="min-w-0 lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between gap-2 mb-4">
               <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">My forms</h2>
               {forms.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigate('/forms')}
-                  className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-                >
-                  View all
-                  <ArrowRight className="h-4 w-4 ml-1" />
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={formsSort}
+                    onChange={(e) => changeFormsSort(e.target.value as DashFormsSort)}
+                    aria-label="Sort my forms by"
+                    className="cursor-pointer rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-600 transition-colors hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-slate-600"
+                  >
+                    <option value="activity">Last activity</option>
+                    <option value="edited">Last edited</option>
+                    <option value="created">Created</option>
+                    <option value="responses">Most responses</option>
+                  </select>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigate('/forms')}
+                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+                  >
+                    View all
+                    <ArrowRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -1162,7 +1237,15 @@ export function Dashboard() {
                             <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400 tabular-nums">
                               <span className="flex items-center gap-1">
                                 <Clock className="h-3.5 w-3.5" />
-                                <span className="font-mono text-xs">{formatRelativeTime(form.updatedAt)}</span>
+                                <span className="font-mono text-xs">
+                                  {formsSort === 'created'
+                                    ? `created ${formatRelativeTime(form.createdAt)}`
+                                    : formsSort === 'edited'
+                                      ? `edited ${formatRelativeTime(form.updatedAt)}`
+                                      : activityOf[form.id]
+                                        ? `active ${formatRelativeTime(new Date(activityOf[form.id]))}`
+                                        : `edited ${formatRelativeTime(form.updatedAt)}`}
+                                </span>
                               </span>
                               <span className="hidden sm:inline">•</span>
                               <span className="hidden sm:inline">{fieldCount} field{fieldCount === 1 ? '' : 's'}</span>
@@ -1252,6 +1335,13 @@ export function Dashboard() {
                     </Card>
                   );
                 })}
+                <ShowMore
+                  shown={recentForms.length}
+                  total={forms.length}
+                  onShowMore={() => setFormsShown((n) => n + DASH_FORMS_PAGE)}
+                  noun="forms"
+                  className="mt-1"
+                />
               </div>
             )}
 
