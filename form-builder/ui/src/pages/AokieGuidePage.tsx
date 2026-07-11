@@ -22,6 +22,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { Logo } from '../components/ui/Logo';
 
 const DESKTOP_RELEASES = 'https://github.com/f2i-com/formlogic.com/releases/latest';
 const AOKIE_RELEASES = 'https://github.com/f2i-com/aokie.com/releases';
@@ -124,9 +125,8 @@ export function AokieGuidePage() {
       {/* Slim header */}
       <header className="sticky top-0 z-20 border-b border-gray-200/70 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
         <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-5">
-          <Link to="/" className="flex items-center gap-2 text-sm font-bold text-gray-900 dark:text-white">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary-600 text-[11px] font-black text-primary-foreground">F</span>
-            FormLogic
+          <Link to="/" aria-label="FormLogic home">
+            <Logo size="sm" />
           </Link>
           <nav className="flex items-center gap-4 text-sm font-medium text-gray-600 dark:text-slate-300">
             <Link to="/packs/aokie-receptionist" className="hover:text-gray-900 dark:hover:text-white">Marketplace</Link>
