@@ -4,7 +4,7 @@ This is the developer guide for installing, running, testing, and deploying Form
 
 Everything lives in this directory:
 
-- `backend/` — PHP 8.1 / Slim 4 API
+- `backend/` — PHP 8.2 / Slim 4 API
 - `ui/` — React 19 + TypeScript + Vite SPA
 - `native-runtime/` — Tauri v2 desktop/mobile shell (optional; has its own [README](native-runtime/README.md))
 - `install.php` / `install.sh` — assisted installers
@@ -13,7 +13,7 @@ Everything lives in this directory:
 
 | Requirement | Version | Check |
 |-------------|---------|-------|
-| PHP | 8.1+ | `php -v` |
+| PHP | 8.2+ | `php -v` |
 | PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl, fileinfo | `php -m` |
 | Composer | any | `composer --version` |
 | MySQL | 8.0+ | `mysql --version` |
@@ -222,7 +222,7 @@ server {
         try_files $uri /api/index.php$is_args$args;
 
         location ~ \.php$ {
-            fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+            fastcgi_pass unix:/run/php/php8.2-fpm.sock;
             fastcgi_param SCRIPT_FILENAME $request_filename;
             include fastcgi_params;
         }

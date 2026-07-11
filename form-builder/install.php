@@ -199,9 +199,9 @@ function checkRequirements(): array
     $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '.' . PHP_RELEASE_VERSION;
     $checks['php_version'] = [
         'label' => 'PHP Version',
-        'required' => '>= 8.1',
+        'required' => '>= 8.2',
         'current' => $phpVersion,
-        'pass' => version_compare($phpVersion, '8.1.0', '>='),
+        'pass' => version_compare($phpVersion, '8.2.0', '>='),
     ];
 
     // Extensions
@@ -1268,7 +1268,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
       <p style="font-size:13px;color:#64748b;margin:0 0 10px;">
         Add these to the crontab on the server (<code>crontab -e</code> on Linux). If plain
         <code>php</code> isn't on cron's PATH, use the full path to the PHP <em>CLI</em> binary
-        (find it with <code>which php</code> — it must be PHP 8.1+ with the same extensions as the
+        (find it with <code>which php</code> — it must be PHP 8.2+ with the same extensions as the
         web PHP). On Windows, use Task Scheduler to run the same commands.
       </p>
       <ol style="padding-left:20px;font-size:13px;">

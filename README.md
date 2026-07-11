@@ -59,7 +59,7 @@ Visibility is enforced server-side: a member's runtime payload contains only the
 
 | Requirement | Version |
 |-------------|---------|
-| PHP | 8.1+ with `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl`, `fileinfo` |
+| PHP | 8.2+ with `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl`, `fileinfo` |
 | MySQL | 8.0+ |
 | Node.js | 20.19+ or 22.12+ (required by Vite 7) |
 | Composer | any recent |
@@ -226,7 +226,7 @@ There are also bundled **sample apps** (Apps → "Try a sample app"): a CRM, an 
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | PHP 8.1+ / Slim 4, PHP-DI, Monolog |
+| Backend | PHP 8.2+ / Slim 4, PHP-DI, Monolog |
 | Data | MySQL (users, forms, apps, roles, audit) + one SQLite database per form (responses) |
 | Frontend | React 19 + TypeScript, Vite 7, Tailwind CSS 4, Zustand 5, React Router 7, recharts |
 | Scripting | QuickJS sandbox — `quickjs-emscripten` (WASM Web Worker) in the browser, vendored static `qjs` binary on the server |
