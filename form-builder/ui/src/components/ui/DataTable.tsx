@@ -33,7 +33,9 @@ interface DataTableProps<T> {
   /**
    * Server-driven mode: `data` is the CURRENT page only; searching + paging + counts are controlled
    * externally. Requires `totalCount`, `page`, `onPageChange`, `searchValue`, `onSearchChange`. Client
-   * sort is disabled (a single page can't be sorted meaningfully). Defaults off (fully client-side).
+   * sort is disabled (a single page can't be sorted meaningfully) — pass `onSortChange` to sort
+   * SERVER-SIDE instead (the host refetches with the sort pushed into the query, so ordering spans
+   * every row and composes with pagination). Defaults off (fully client-side).
    */
   serverMode?: boolean;
   /** Controlled 0-based page index (server mode). */
@@ -42,6 +44,12 @@ interface DataTableProps<T> {
   /** Controlled search value (server mode). */
   searchValue?: string;
   onSearchChange?: (value: string) => void;
+  /** Controlled sort column key (server mode; null = server default order). */
+  sortKey?: string | null;
+  /** Controlled sort direction (server mode). */
+  sortDir?: 'asc' | 'desc';
+  /** Server mode: request a new sort. Enables the header sort buttons. */
+  onSortChange?: (key: string, dir: 'asc' | 'desc') => void;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -65,11 +73,19 @@ export function DataTable<T extends Record<string, unknown>>({
   onPageChange,
   searchValue,
   onSearchChange,
+  sortKey: serverSortKey,
+  sortDir: serverSortDir,
+  onSortChange,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+
+  // The sort shown in the header: controlled (server mode) or local (client mode).
+  const activeSortKey = serverMode ? (serverSortKey ?? null) : sortKey;
+  const activeSortDir = serverMode ? (serverSortDir ?? 'desc') : sortDir;
+  const sortInteractive = (col: Column<T>) => !!col.sortable && (!serverMode || !!onSortChange);
 
   // Show as many columns as fit the container's actual width (no horizontal scroll);
   // drop the rightmost when cramped, add them back when there's room, and collapse to
@@ -126,6 +142,14 @@ export function DataTable<T extends Record<string, unknown>>({
   const searchVal = serverMode ? (searchValue ?? '') : search;
 
   const handleSort = (key: string) => {
+    if (serverMode) {
+      // Server-side sort: hand the next (key, dir) to the host, which
+      // refetches with the sort in the query (and resets to page 0).
+      const nextDir: 'asc' | 'desc' =
+        activeSortKey === key ? (activeSortDir === 'asc' ? 'desc' : 'asc') : 'asc';
+      onSortChange?.(key, nextDir);
+      return;
+    }
     if (sortKey === key) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
@@ -212,18 +236,18 @@ export function DataTable<T extends Record<string, unknown>>({
                   key={col.key}
                   // Keep the columnheader role so aria-sort is honored; the sort
                   // control is an inner <button> (so the header isn't a role=button).
-                  aria-sort={col.sortable && !serverMode ? (sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
+                  aria-sort={sortInteractive(col) ? (activeSortKey === col.key ? (activeSortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
                   className={cn('px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400 truncate', col.className)}
                 >
-                  {col.sortable && !serverMode ? (
+                  {sortInteractive(col) ? (
                     <button
                       type="button"
                       onClick={() => handleSort(col.key)}
                       className="-mx-1 px-1 inline-flex items-center gap-1 rounded font-medium hover:text-gray-900 dark:hover:text-slate-200 select-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50"
                     >
                       {col.label}
-                      {sortKey === col.key ? (
-                        sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      {activeSortKey === col.key ? (
+                        activeSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
                       ) : (
                         <ChevronsUpDown className="h-3 w-3 text-gray-300 dark:text-slate-600" aria-hidden="true" />
                       )}

@@ -1399,12 +1399,18 @@ class ApiClient {
    * Server-paginated + searchable page of an app form's responses (returns the total matching count).
    * Used by the records grid for fast, large-dataset browsing. Non-demo only (no browser overlay).
    */
-  async getAppResponsesPage(slug: string, formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean }): Promise<ApiResponse<{ responses: unknown[]; count: number; total: number; scope: string }>> {
+  async getAppResponsesPage(slug: string, formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean; sort?: string; sortDir?: 'asc' | 'desc' }): Promise<ApiResponse<{ responses: unknown[]; count: number; total: number; scope: string }>> {
     const params = new URLSearchParams();
     params.set('limit', String(options.limit));
     params.set('offset', String(options.offset));
     if (options.search) params.set('search', options.search);
     if (options.resolve) params.set('resolve', 'linked');
+    // Server-side column sort — the database orders across ALL rows so it
+    // composes with pagination (never a client-side sort of one page).
+    if (options.sort) {
+      params.set('sort', options.sort);
+      params.set('dir', options.sortDir ?? 'desc');
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
   }
 

@@ -267,6 +267,12 @@ class ResponseController
             'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 1000)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
+        // Server-side column sorting (?sort=<fieldKey|submittedAt|status>&dir=asc|desc) —
+        // owner-API parity with the app-scoped list; validated in buildResponsesOrderBy.
+        if (is_string($queryParams['sort'] ?? null) && $queryParams['sort'] !== '') {
+            $options['sort'] = (string) $queryParams['sort'];
+            $options['sortDir'] = (string) ($queryParams['dir'] ?? 'desc');
+        }
 
         $responses = $this->responseService->getFormResponses($formId, $options);
         $responses = $this->resolveLinkedRecords($responses, $form, $form['userId']);

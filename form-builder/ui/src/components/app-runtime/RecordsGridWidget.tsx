@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Inbox } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Inbox } from 'lucide-react';
 import type { DashboardWidget } from '../../types/app';
 import type { WidgetDataForm } from './widgetData';
 
@@ -46,8 +46,9 @@ type GridRow = { id?: unknown; answers?: Record<string, unknown> };
 interface RecordsGridWidgetProps {
   widget: DashboardWidget;
   form?: WidgetDataForm;
-  /** Runtime only: server-paginated page fetch. Absent on the builder canvas → static preview. */
-  fetchPage?: (formId: string, opts: { limit: number; offset: number }) => Promise<{ rows: unknown[]; total: number }>;
+  /** Runtime only: server-paginated page fetch. Absent on the builder canvas → static preview.
+   *  Sort is pushed to the server so ordering spans all rows, composing with pagination. */
+  fetchPage?: (formId: string, opts: { limit: number; offset: number; sort?: string; sortDir?: 'asc' | 'desc' }) => Promise<{ rows: unknown[]; total: number }>;
   onOpenRecord?: (formId: string, recordId: string) => void;
 }
 
@@ -63,6 +64,15 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
   const [pageState, setPageState] = useState({ key: pageKey, page: 0 });
   const page = pageState.key === pageKey ? pageState.page : 0;
   const gotoPage = (p: number) => setPageState({ key: pageKey, page: Math.max(0, p) });
+  // Server-side column sort (keyed like the page so a form switch resets it).
+  const [sortState, setSortState] = useState<{ key: string; sort: string | null; dir: 'asc' | 'desc' }>({ key: pageKey, sort: null, dir: 'desc' });
+  const sort = sortState.key === pageKey ? sortState.sort : null;
+  const sortDir = sortState.key === pageKey ? sortState.dir : 'desc';
+  const toggleSort = (fieldId: string) => {
+    const nextDir: 'asc' | 'desc' = sort === fieldId ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc';
+    setSortState({ key: pageKey, sort: fieldId, dir: nextDir });
+    gotoPage(0); // a new order restarts pagination
+  };
   const [rows, setRows] = useState<GridRow[]>([]);
   const [total, setTotal] = useState(0);
   // The builder canvas (no fetchPage) and an unconfigured widget never load — start settled.
@@ -75,7 +85,7 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: the in-flight status must reset synchronously when the query changes
     setLoading(true);
     setError(null);
-    fetchPage(formId, { limit: pageSize, offset: page * pageSize }).then((r) => {
+    fetchPage(formId, { limit: pageSize, offset: page * pageSize, sort: sort ?? undefined, sortDir: sort ? sortDir : undefined }).then((r) => {
       if (cancelled) return;
       setRows((r.rows ?? []) as GridRow[]);
       setTotal(r.total ?? 0);
@@ -86,11 +96,33 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [fetchPage, formId, pageSize, page]);
+  }, [fetchPage, formId, pageSize, page, sort, sortDir]);
 
+  // Sortable when live (fetchPage present): the header click pushes the sort
+  // to the server so ordering spans every row, not just the visible page.
+  const sortable = !!fetchPage;
   const headerRow = (
     <tr className="text-left text-xs font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-100 dark:border-slate-700/40">
-      {cols.length ? cols.map((c) => <th key={c.id} className="px-4 py-2 font-semibold whitespace-nowrap">{c.label}</th>)
+      {cols.length ? cols.map((c) => (
+        <th
+          key={c.id}
+          aria-sort={sortable ? (sort === c.id ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
+          className="px-4 py-2 font-semibold whitespace-nowrap"
+        >
+          {sortable ? (
+            <button
+              type="button"
+              onClick={() => toggleSort(c.id)}
+              className="inline-flex items-center gap-1 font-semibold hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded"
+            >
+              {c.label}
+              {sort === c.id && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+            </button>
+          ) : (
+            c.label
+          )}
+        </th>
+      ))
         : <th className="px-4 py-2 font-semibold">Record</th>}
     </tr>
   );

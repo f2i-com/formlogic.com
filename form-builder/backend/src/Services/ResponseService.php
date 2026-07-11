@@ -445,6 +445,39 @@ class ResponseService
         }
     }
 
+    /**
+     * Server-side grid sorting: build the ORDER BY for a responses list from
+     * `$options['sort']` (a built-in column — 'submittedAt'/'submitted_at',
+     * 'status' — or an answer-field machine key) and `$options['sortDir']`
+     * ('asc'|'desc', default desc). Sorting happens in the DATABASE so it
+     * composes with LIMIT/OFFSET pagination — a grid never has to load every
+     * row and sort client-side.
+     *
+     * SQL-injection posture: ORDER BY cannot take bound parameters, so both
+     * interpolated pieces are strictly constrained — the direction collapses
+     * to the literal ASC/DESC, and a field key must pass the SAME
+     * `[A-Za-z0-9_]{1,64}` allowlist as the answersEq pushdown (anything else
+     * falls back to the default order). Answer sorting uses the raw
+     * `json_extract` value, so numeric answers sort numerically and text
+     * answers sort case-insensitively; `submitted_at` breaks ties for a
+     * stable pagination order across pages.
+     */
+    public static function buildResponsesOrderBy(array $options): string
+    {
+        $dir = strtolower((string) ($options['sortDir'] ?? 'desc')) === 'asc' ? 'ASC' : 'DESC';
+        $sort = (string) ($options['sort'] ?? '');
+        if ($sort === 'submittedAt' || $sort === 'submitted_at') {
+            return " ORDER BY submitted_at {$dir}, id {$dir}";
+        }
+        if ($sort === 'status') {
+            return " ORDER BY status COLLATE NOCASE {$dir}, submitted_at DESC";
+        }
+        if ($sort !== '' && preg_match('/^[A-Za-z0-9_]{1,64}$/', $sort)) {
+            return " ORDER BY json_extract(answers, '$.\"" . $sort . "\"') COLLATE NOCASE {$dir}, submitted_at DESC";
+        }
+        return " ORDER BY submitted_at DESC";
+    }
+
     public function getFormResponses(string $formId, array $options = []): array
     {
         if (!$this->sqlite->formDatabaseExists($formId)) {
@@ -487,7 +520,7 @@ class ResponseService
             $sql .= " WHERE " . implode(' AND ', $conditions);
         }
 
-        $sql .= " ORDER BY submitted_at DESC";
+        $sql .= self::buildResponsesOrderBy($options);
 
         // Pagination (clamp to safe ranges)
         $limit = max(1, min((int)($options['limit'] ?? 100), 1000));
@@ -719,7 +752,9 @@ class ResponseService
         $limit = max(1, min((int)($options['limit'] ?? 20), 100));
         $offset = max(0, (int)($options['offset'] ?? 0));
 
-        $sql = "SELECT * FROM responses" . $whereClause . " ORDER BY submitted_at DESC LIMIT :limit OFFSET :offset";
+        $sql = "SELECT * FROM responses" . $whereClause
+            . self::buildResponsesOrderBy($options)
+            . " LIMIT :limit OFFSET :offset";
         $stmt = $db->prepare($sql);
         foreach ($params as $key => $value) {
             $stmt->bindValue($key, $value);

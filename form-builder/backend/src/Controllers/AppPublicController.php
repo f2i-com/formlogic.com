@@ -878,6 +878,13 @@ class AppPublicController
             'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 200)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
+        // Server-side column sorting: ?sort=<fieldKey|submittedAt|status>&dir=asc|desc.
+        // Sorting composes with LIMIT/OFFSET in the database (never a client-side
+        // sort of one page); the key is allowlist-validated in buildResponsesOrderBy.
+        if (is_string($queryParams['sort'] ?? null) && $queryParams['sort'] !== '') {
+            $options['sort'] = (string) $queryParams['sort'];
+            $options['sortDir'] = (string) ($queryParams['dir'] ?? 'desc');
+        }
         // Own-scope callers only see their own rows — pushed into SQL for correct pagination + count.
         if ($scope === 'own') {
             $options['submittedByUserId'] = $userId;

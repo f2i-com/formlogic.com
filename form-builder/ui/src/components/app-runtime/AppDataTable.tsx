@@ -75,6 +75,11 @@ export function AppDataTable() {
   const [deleting, setDeleting] = useState(false);
   const [colDropdownOpen, setColDropdownOpen] = useState(false);
   const colDropdownRef = useRef<HTMLDivElement>(null);
+  // Server-side sort: the DataTable column key ('answer_<fieldId>',
+  // 'submittedAt' or 'status'); the fetch maps it to the API's sort param so
+  // ordering spans ALL rows and composes with pagination.
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   // Debounce the search box so we fetch a few times/sec, not per keystroke (server mode).
   useEffect(() => {
@@ -102,10 +107,12 @@ export function AppDataTable() {
     fields.slice(0, 6).forEach((f) => initial.add(f.id));
     // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: reset column visibility when the viewed form (formId) changes externally
     setVisibleColumns(initial);
-    // Reset paging + search when switching forms.
+    // Reset paging + search + sort when switching forms.
     setPage(0);
     setSearchInput('');
     setDebouncedSearch('');
+    setSortKey(null);
+    setSortDir('desc');
   }, [formId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close dropdown on click outside or Escape (keyboard-dismissible)
@@ -170,12 +177,22 @@ export function AppDataTable() {
 
     const run = async () => {
       if (serverMode) {
-        // One limited page from the server, with server-side search across all rows.
+        // One limited page from the server, with server-side search + sort
+        // across all rows. The DataTable column key maps to the API's sort
+        // key: 'answer_<fieldId>' → the field's machine key; submittedAt and
+        // status pass through as built-ins.
+        const sort = sortKey
+          ? sortKey.startsWith('answer_')
+            ? sortKey.slice('answer_'.length)
+            : sortKey
+          : undefined;
         const { rows, total: t } = await fetchResponsePage(formId, {
           limit: SERVER_PAGE,
           offset: page * SERVER_PAGE,
           search: debouncedSearch || undefined,
           resolve: hasLinkedFields,
+          sort,
+          sortDir: sort ? sortDir : undefined,
         });
         return { data: rows as Record<string, unknown>[], total: t };
       }
@@ -243,7 +260,7 @@ export function AppDataTable() {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, fetchResponsePage, reloadKey, serverMode, page, debouncedSearch, appSlug, fields]);
+  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, fetchResponsePage, reloadKey, serverMode, page, debouncedSearch, appSlug, fields, sortKey, sortDir]);
 
   // Demo mode: exact client-side drill match over the fully-loaded rows. Charts show option LABELS
   // for choice fields, so map the clicked label back to its stored option value(s) before comparing;
@@ -582,6 +599,13 @@ export function AppDataTable() {
           serverMode={serverMode}
           page={serverMode ? page : undefined}
           onPageChange={serverMode ? setPage : undefined}
+          sortKey={serverMode ? sortKey : undefined}
+          sortDir={serverMode ? sortDir : undefined}
+          onSortChange={serverMode ? ((key, dir) => {
+            setSortKey(key);
+            setSortDir(dir);
+            setPage(0); // a new order restarts pagination from the first page
+          }) : undefined}
           searchValue={serverMode ? searchInput : undefined}
           onSearchChange={serverMode ? ((v) => {
             setSearchInput(v);
