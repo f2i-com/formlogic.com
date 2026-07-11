@@ -92,6 +92,8 @@ const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppR
 const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
 const PackDetailPage = lazyWithRetry(() => import('./pages/PackDetailPage'));
 const Docs = lazyWithRetry(() => import('./pages/Docs').then(m => ({ default: m.Docs })));
+// Aokie setup guide — the landing "Explore Aokie" CTA's tutorial page (public).
+const AokieGuidePage = lazyWithRetry(() => import('./pages/AokieGuidePage').then(m => ({ default: m.AokieGuidePage })));
 
 // OAuth 2.1 consent page for external AI connectors (Claude / ChatGPT paste <origin>/api/mcp;
 // their browser opens this page to approve access). Registered in EVERY router branch: signed-out
@@ -222,6 +224,7 @@ const PUBLIC_PATHS = [
   '/packs',
   '/packs/:slug',
   '/docs',
+  '/aokie',
   '/privacy',
   '/terms',
   '/app/:appSlug/*',
@@ -274,6 +277,8 @@ function AppRoutes() {
         <Route path="/packs/:slug" element={<PackDetailPage />} />
         {/* Docs (public) */}
         <Route path="/docs" element={<Docs />} />
+        {/* Aokie setup guide (public marketing tutorial) */}
+        <Route path="/aokie" element={<AokieGuidePage />} />
         {/* Legal (public) */}
         <Route path="/privacy" element={<LegalPage type="privacy" />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
@@ -343,6 +348,7 @@ function AppRoutes() {
         <Route path="/packs" element={<PackGalleryPage />} />
         <Route path="/packs/:slug" element={<PackDetailPage />} />
         <Route path="/docs" element={<Docs />} />
+        <Route path="/aokie" element={<AokieGuidePage />} />
         <Route path="/privacy" element={<LegalPage type="privacy" />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
         <Route path="/form/:formId" element={<FormResponse />} />
@@ -411,6 +417,9 @@ function AppRoutes() {
 
       {/* Docs */}
       <Route path="/docs" element={<Docs />} />
+
+      {/* Aokie setup guide (public marketing tutorial) */}
+      <Route path="/aokie" element={<AokieGuidePage />} />
 
       {/* Legal (full screen) */}
       <Route path="/privacy" element={<LegalPage type="privacy" />} />

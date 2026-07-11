@@ -52,10 +52,10 @@ export function AokieSpotlight() {
             ))}
           </ul>
           <div className="lv2-inline-actions">
-            <Link to="/packs/aokie-receptionist" className="lv2-btn lv2-btn--primary">
+            <Link to="/aokie" className="lv2-btn lv2-btn--primary">
               Explore Aokie <ArrowRight size={17} />
             </Link>
-            <span>Requires FormLogic Desktop on Windows and compatible Bluetooth hardware.</span>
+            <span>Requires FormLogic Desktop on Windows and compatible Bluetooth hardware — the guide covers it all.</span>
           </div>
         </div>
 

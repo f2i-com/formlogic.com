@@ -40,6 +40,7 @@ export function LandingFooter() {
           <div className="lv2-footer__col">
             <strong>Resources</strong>
             <Link to="/docs">Documentation</Link>
+            <Link to="/aokie">Aokie setup guide</Link>
             <Link to="/docs">Self-hosting</Link>
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <a href={SUPPORT_EMAIL}>Support</a>
