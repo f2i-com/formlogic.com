@@ -88,11 +88,15 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
   );
 }
 
+// Bump when the /screenshots images are replaced: Apache serves them without Cache-Control,
+// so browsers heuristically cache by Last-Modified and would keep showing the old captures.
+const SCREENSHOT_VERSION = '2026-07-11';
+
 function Figure({ src, alt, caption }: { src: string; alt: string; caption: string }) {
   return (
     <figure className="my-6">
       <div className="rounded-xl overflow-hidden border border-gray-200/80 dark:border-slate-800 shadow-xl shadow-gray-900/[0.06] dark:shadow-black/30 bg-gray-50 dark:bg-slate-900">
-        <img src={src} alt={alt} loading="lazy" className="w-full block" />
+        <img src={`${src}?v=${SCREENSHOT_VERSION}`} alt={alt} loading="lazy" className="w-full block" />
       </div>
       <figcaption className="fl-mono text-xs text-gray-400 dark:text-slate-500 mt-2.5 text-center">{caption}</figcaption>
     </figure>
