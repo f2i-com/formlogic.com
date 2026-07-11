@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Activity as ActivityGlyph, AlertCircle, ArrowRight, ChevronRight, Inbox, LayoutGrid, Loader2, Plus, RotateCw, Zap } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
@@ -42,6 +42,12 @@ function isTimeAware(w: DashboardWidget): boolean {
 
 /** Chart types whose marks drill into the records view (KPI/table have no clickable category marks). */
 const DRILL_VIZ = new Set(['bar', 'pie', 'donut', 'line', 'area']);
+
+/** Mirrors AppDataTable's gate: a form whose custom screen sets allowNewResponses=false takes
+ *  records only from flows/app logic, so "new record" affordances (incl. Quick actions) skip it. */
+export function allowsManualNewRecord(f: { customScreen?: { allowNewResponses?: boolean } | null }): boolean {
+  return f.customScreen?.allowNewResponses !== false;
+}
 
 export interface WidgetDashboardProps extends WidgetDataDeps {
   dashboard: DashboardScreen;
@@ -188,12 +194,40 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
 
   const primaryColor = scope === 'app' ? undefined : accent;
 
+  // Quick-actions widgets grow to fit every button instead of scrolling: the widget reports its
+  // natural content height, we translate that into extra grid rows and shift everything below it
+  // down by the same amount — so the box expands without overlapping neighbours.
+  const [actionsExtra, setActionsExtra] = useState<Record<string, number>>({});
+  const reportActionsHeight = (w: DashboardWidget, px: number) => {
+    const base = Math.max(1, w.layout.h || 1);
+    const need = Math.ceil((px + GRID_GAP) / (GRID_ROW + GRID_GAP));
+    const extra = Math.max(0, need - base);
+    setActionsExtra((prev) => (prev[w.id] === extra ? prev : { ...prev, [w.id]: extra }));
+  };
+  const adjusted = useMemo(() => {
+    const entries = widgets.map((w) => ({ id: w.id, y: Math.max(0, w.layout.y || 0), h: Math.max(1, w.layout.h || 1) }));
+    // Process top-to-bottom so stacked actions widgets accumulate shifts correctly.
+    for (const g of [...entries].sort((a, b) => a.y - b.y)) {
+      const extra = actionsExtra[g.id] ?? 0;
+      if (extra <= 0) continue;
+      const bottom = g.y + g.h;
+      for (const e of entries) if (e !== g && e.y >= bottom) e.y += extra;
+      g.h += extra;
+    }
+    return new Map(entries.map((e) => [e.id, e]));
+  }, [widgets, actionsExtra]);
+
   const cellStyle = (w: DashboardWidget): CSSProperties => {
     const wSpan = Math.max(1, Math.min(w.layout.w || 1, cols));
-    const hSpan = Math.max(1, w.layout.h || 1);
-    if (narrow) return { height: hSpan * GRID_ROW + (hSpan - 1) * GRID_GAP };
+    const adj = adjusted.get(w.id);
+    const hSpan = adj?.h ?? Math.max(1, w.layout.h || 1);
+    if (narrow) {
+      const px = hSpan * GRID_ROW + (hSpan - 1) * GRID_GAP;
+      // Stacked layout can't overlap, so actions simply grow to their content.
+      return w.kind === 'actions' ? { minHeight: px } : { height: px };
+    }
     const x = Math.max(0, Math.min(w.layout.x || 0, cols - wSpan));
-    const y = Math.max(0, w.layout.y || 0);
+    const y = adj?.y ?? Math.max(0, w.layout.y || 0);
     return { gridColumn: `${x + 1} / span ${wSpan}`, gridRow: `${y + 1} / span ${hSpan}` };
   };
 
@@ -255,6 +289,7 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
               onOpenRecord={props.onOpenRecord}
               fetchPage={props.fetchPage}
               onPointClick={drillFor(w)}
+              onNaturalHeight={w.kind === 'actions' && !narrow ? (px) => reportActionsHeight(w, px) : undefined}
             />
           </div>
         ))}
@@ -362,10 +397,36 @@ export interface WidgetViewProps {
   onPointClick?: (point: { label: string; series?: string }) => void;
   /** Grid widgets: server-paginated page fetch. Absent on the builder canvas → static preview. */
   fetchPage?: (formId: string, opts: { limit: number; offset: number }) => Promise<{ rows: unknown[]; total: number }>;
+  /** Actions widgets only: reports the card height (px) needed to fit every button unscrolled,
+   *  re-reported on wrap changes — the dashboard grid grows the cell to match. */
+  onNaturalHeight?: (px: number) => void;
 }
 
 export function WidgetView(p: WidgetViewProps) {
   const { widget: w } = p;
+
+  // Natural-height reporting (actions widgets): observe the wrap container — its height changes
+  // when buttons rewrap — and report header + content + padding as the needed card height.
+  const measureCardRef = useRef<HTMLDivElement | null>(null);
+  const measureBodyRef = useRef<HTMLDivElement | null>(null);
+  const onNaturalHeight = p.onNaturalHeight;
+  useEffect(() => {
+    const card = measureCardRef.current;
+    const body = measureBodyRef.current;
+    const inner = body?.firstElementChild as HTMLElement | null;
+    if (!onNaturalHeight || !card || !body || !inner) return;
+    const report = () => {
+      // Header + any padding above the scroll body (its rect is stable even if it was scrolled).
+      const chrome = body.getBoundingClientRect().top - card.getBoundingClientRect().top;
+      // pb-4 on the scroll body (16px) + card borders (2px).
+      onNaturalHeight(Math.ceil(chrome + inner.offsetHeight + 18));
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(inner);
+    ro.observe(card);
+    return () => ro.disconnect();
+  }, [onNaturalHeight]);
 
   // Text widget: a plain note, no card chrome header.
   if (w.kind === 'text') {
@@ -478,7 +539,7 @@ export function WidgetView(p: WidgetViewProps) {
   } else if (w.kind === 'actions') {
     const forms = p.submittableForms ?? [];
     body = (
-      <div className="flex-1 min-h-0 overflow-auto px-4 pb-4">
+      <div ref={measureBodyRef} className="flex-1 min-h-0 overflow-auto px-4 pb-4">
         {forms.length === 0 ? (
           <WidgetEmpty icon={<Zap className="h-6 w-6 opacity-70" />} text="No quick actions available." />
         ) : (
@@ -535,8 +596,11 @@ export function WidgetView(p: WidgetViewProps) {
     );
   }
 
+  // Actions widgets in view mode (onNaturalHeight wired) hug their content: the grid rows are
+  // quantized, so filling the whole cell would leave a stretch of empty card under the buttons.
+  const hugContent = w.kind === 'actions' && !!onNaturalHeight;
   return (
-    <div className={`${CARD} h-full min-h-0 flex flex-col`}>
+    <div ref={measureCardRef} className={`${CARD} ${hugContent ? 'h-auto max-h-full' : 'h-full'} min-h-0 flex flex-col`}>
       {header}
       {body}
     </div>

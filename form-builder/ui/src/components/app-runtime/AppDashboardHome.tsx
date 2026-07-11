@@ -5,7 +5,7 @@ import { AppWidgetDashboard } from './AppWidgetDashboard';
 import { AppDashboard } from './AppDashboard';
 import { DashboardBuilder } from './DashboardBuilder';
 import type { DashboardScreen } from '../../types/app';
-import type { WidgetDataForm } from './WidgetDashboard';
+import { allowsManualNewRecord, type WidgetDataForm } from './WidgetDashboard';
 
 /**
  * The app home: renders the configurable widget dashboard (or the built-in pulse when there are no
@@ -21,7 +21,7 @@ export function AppDashboardHome({ dashboard }: { dashboard?: DashboardScreen })
 
   const forms = useMemo(() => config?.forms ?? [], [config]);
   const submittableForms: WidgetDataForm[] = useMemo(
-    () => forms.filter((f) => canSubmit(f.formId)).map((f) => ({ formId: f.formId, displayName: f.displayName, icon: f.icon, fields: f.fields ?? [] })),
+    () => forms.filter((f) => canSubmit(f.formId) && allowsManualNewRecord(f)).map((f) => ({ formId: f.formId, displayName: f.displayName, icon: f.icon, fields: f.fields ?? [] })),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- canSubmit is a stable store action; permissions is the state it reads
     [forms, permissions]
   );

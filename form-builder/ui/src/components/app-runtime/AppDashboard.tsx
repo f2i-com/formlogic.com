@@ -5,6 +5,7 @@ import { DynamicIcon } from '../ui/DynamicIcon';
 import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { allowsManualNewRecord } from './WidgetDashboard';
 import { api } from '../../lib/api';
 import { cn, parseServerDate, formatRelativeTime } from '../../lib/utils';
 import type { AppRuntimeForm, AppSettings } from '../../types/app';
@@ -98,7 +99,7 @@ export function AppDashboard() {
   );
   const statForms = useMemo(() => viewableForms.slice(0, STAT_FORMS_CAP), [viewableForms]);
   const submittableForms = useMemo(
-    () => forms.filter((f) => canSubmit(f.formId)).slice(0, QUICK_ACTIONS_CAP),
+    () => forms.filter((f) => canSubmit(f.formId) && allowsManualNewRecord(f)).slice(0, QUICK_ACTIONS_CAP),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- canSubmit is a stable store action; permissions is the state it reads
     [forms, permissions]
   );

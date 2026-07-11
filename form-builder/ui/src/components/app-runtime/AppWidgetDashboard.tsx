@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import { WidgetDashboard, type WidgetDataForm } from './WidgetDashboard';
+import { WidgetDashboard, allowsManualNewRecord, type WidgetDataForm } from './WidgetDashboard';
 import { AppDashboard } from './AppDashboard';
 import type { DashboardScreen } from '../../types/app';
 
@@ -22,9 +22,11 @@ export function AppWidgetDashboard({ dashboard }: { dashboard: DashboardScreen }
     [config]
   );
   const submittableForms = useMemo(
-    () => forms.filter((f) => canSubmit(f.formId)),
+    () => (config?.forms ?? [])
+      .filter((f) => canSubmit(f.formId) && allowsManualNewRecord(f))
+      .map((f) => ({ formId: f.formId, displayName: f.displayName, icon: f.icon, fields: f.fields ?? [] })),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- canSubmit is a stable store action; permissions is the state it reads
-    [forms, permissions]
+    [config, permissions]
   );
 
   if (!config) return null;
