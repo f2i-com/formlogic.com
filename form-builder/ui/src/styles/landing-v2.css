@@ -2005,6 +2005,8 @@
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 20px;
   overflow: hidden;
+  /* Fixed-dark product window in both themes — never inherit the band's text color. */
+  color: #ffffff;
   background: #0c1324;
   box-shadow: 0 38px 75px -40px rgba(0, 0, 0, 0.95);
 }
@@ -2878,4 +2880,48 @@
 :root:not(.dark) .lv2-scene__window {
   background: #121a2f;
   box-shadow: 0 34px 90px -34px rgba(16, 24, 43, 0.45), inset 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* ── Light-mode Desktop spotlight band ────────────────────────────────────
+   Follows the theme toggle like the hero: light wash + soft purple glow,
+   near-black copy, light-band label/accent tokens. The control-centre mock
+   stays the fixed-dark desktop window (color pinned on .lv2-minidesk). */
+
+:root:not(.dark) .lv2-desktop {
+  background:
+    radial-gradient(circle at 16% 50%, rgba(105, 73, 226, 0.08), transparent 32%),
+    linear-gradient(145deg, #ffffff, #f4f4fb);
+  color: #10182b;
+}
+
+:root:not(.dark) .lv2-desktop__ring {
+  border-color: rgba(99, 69, 227, 0.16);
+}
+
+:root:not(.dark) .lv2-desktop .lv2-label--light {
+  color: #5c3de0;
+}
+
+:root:not(.dark) .lv2-desktop .lv2-label--light::before {
+  background: #5c3de0;
+}
+
+:root:not(.dark) .lv2-desktop__copy > p {
+  color: #4c566b;
+}
+
+:root:not(.dark) .lv2-desktop .lv2-feature-rows svg {
+  color: #5c8914;
+}
+
+:root:not(.dark) .lv2-desktop .lv2-feature-rows small {
+  color: #667085;
+}
+
+:root:not(.dark) .lv2-desktop__note {
+  color: #667085;
+}
+
+:root:not(.dark) .lv2-minidesk {
+  box-shadow: 0 38px 75px -44px rgba(16, 24, 43, 0.42);
 }
