@@ -23,6 +23,8 @@ interface RelatedRecordsPanelProps {
   canDeleteFn?: (formId: string) => boolean;
   onOpenRecord?: (formId: string, recordId: string) => void;
   onAddRecord?: (group: RelatedRecordGroup) => void;
+  /** Groups a record widget renders itself (recordScreen.consumesRelated) — hidden here. */
+  excludeFieldIds?: string[];
 }
 
 /** Render one related-record cell: arrays join, choice values map to their option label. */
@@ -103,7 +105,8 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
 
   const canAdd = props.canAddFn ?? store.canSubmit;
   const canDel = props.canDeleteFn ?? store.canDelete;
-  const groups = Object.values(related);
+  const excluded = props.excludeFieldIds;
+  const groups = Object.values(related).filter((g) => !excluded?.includes(g.fieldId ?? ''));
 
   if (loading) {
     return (

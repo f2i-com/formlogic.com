@@ -5,6 +5,7 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
+import { RecordScreenPanel } from './RecordScreenPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
@@ -34,6 +35,8 @@ export function AppResponseDetail() {
   const [deleting, setDeleting] = useState(false);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
+  // Optional per-record widget (e.g. the call transcript) — rendered above the related panel.
+  const recordScreen = runtimeForm?.customScreen?.recordScreen;
   // Exclude layout-only screens (they carry no answer) so they don't render as empty
   // "No answer" rows — or, in edit mode, as bogus editable inputs the backend discards.
   const fields = ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>)
@@ -665,12 +668,27 @@ export function AppResponseDetail() {
         </div>
       </div>
 
+      {/* Per-record widget (customScreen.recordScreen): a trusted SDK screen or sandboxed code
+          rendered with this record's context — e.g. the call transcript on a Calls row. */}
+      {appSlug && formId && responseId && !editing && recordScreen && (
+        <RecordScreenPanel
+          screen={recordScreen}
+          appSlug={appSlug}
+          formId={formId}
+          responseId={responseId}
+          record={{ id: responseId, answers: savedAnswers, submittedAt: response.submittedAt as string | undefined, status: response.status as string | undefined }}
+          fields={fields}
+          accentColor={config?.app.theme?.primaryColor}
+        />
+      )}
+
       {/* Related records (inverse relations) */}
       {appSlug && formId && responseId && !editing && (
         <RelatedRecordsPanel
           appSlug={appSlug}
           formId={formId}
           responseId={responseId}
+          excludeFieldIds={recordScreen?.consumesRelated}
         />
       )}
 

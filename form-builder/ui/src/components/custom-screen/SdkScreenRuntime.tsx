@@ -17,6 +17,7 @@ import { EmptyState, useCurrentApp, useForms, useOfflineQueue, useRuntimeEnviron
 import { getSdkScreen, registerSdkScreen } from './sdkScreenRegistry';
 import { AokieLiveCallScreen } from './aokie/AokieLiveCallScreen';
 import { AokiePairingScreen } from './aokie/AokiePairingScreen';
+import { AokieCallTranscriptScreen } from './aokie/AokieCallTranscriptScreen';
 
 class ScreenErrorBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   constructor(props: { fallback: ReactNode; children: ReactNode }) {
@@ -82,3 +83,4 @@ registerSdkScreen('app.overview', AppOverviewScreen);
 // Aokie Receptionist screens (first-party, shipped with the aokie-receptionist pack).
 registerSdkScreen('aokie-live-call', AokieLiveCallScreen);
 registerSdkScreen('aokie-pairing', AokiePairingScreen);
+registerSdkScreen('aokie-call-transcript', AokieCallTranscriptScreen);

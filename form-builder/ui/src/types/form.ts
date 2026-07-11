@@ -153,6 +153,30 @@ export interface CustomScreen {
   dashboard?: DashboardScreen;
   /** Host-rendered first-party React screen (SDK). Present when kind === 'sdk'. */
   sdkScreen?: { screenId: string; title?: string; params?: Record<string, unknown> };
+  /** Optional per-RECORD widget on the record detail view (independent of the section screen):
+   *  'sdk' renders a trusted registry screen with the record context; 'code' renders sandboxed
+   *  HTML/CSS/JS whose SDK additionally exposes FormLogic.record() and FormLogic.related(). */
+  recordScreen?: RecordScreen;
+}
+
+export interface RecordScreen {
+  kind: 'sdk' | 'code';
+  title?: string;
+  /** sdk: id of a registered first-party screen (sdkScreenRegistry). */
+  screenId?: string;
+  params?: Record<string, unknown>;
+  /** linked_record field ids whose related groups this screen renders itself — the generic
+   *  Related-records panel hides them so the data isn't shown twice. */
+  consumesRelated?: string[];
+  /** code: sandboxed sources (same contract as section code screens). */
+  html?: string;
+  css?: string;
+  js?: string;
+  ts?: string;
+  files?: Array<{ path: string; content: string }>;
+  entry?: string;
+  /** Iframe height for code screens (px, default 420, clamped 160–1200). */
+  height?: number;
 }
 
 export interface Form {

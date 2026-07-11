@@ -692,6 +692,9 @@ export const aokieReceptionistPack: PackData = {
         allowNewResponses: false,
         kind: 'sdk',
         sdkScreen: { screenId: 'aokie-live-call', title: 'Live Call' },
+        // Individual call records render their transcript as chat bubbles; the widget consumes
+        // the call_link related group so the raw Transcript Turns grid isn't shown twice.
+        recordScreen: { kind: 'sdk', screenId: 'aokie-call-transcript', title: 'Transcript', consumesRelated: ['call_link'] },
       },
     },
 
@@ -707,7 +710,7 @@ export const aokieReceptionistPack: PackData = {
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
         // matchField: turns are written by app logic that never knows the Calls row id, so the
         // relationship joins on the shared call_id key (read-side; see RelatedRecords helper).
-        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, displayFieldIds: ['speaker', 'text'] } },
+        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, displayFieldIds: ['speaker', 'text', 'turn_index'] } },
         { id: 'turn_index', type: 'number', label: 'Turn', required: false, properties: { min: 0, step: 1 } },
         {
           id: 'speaker',

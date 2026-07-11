@@ -38,6 +38,18 @@ export interface PackForm {
     kind?: 'dashboard' | 'sdk';
     dashboard?: PackDashboardScreen;
     sdkScreen?: { screenId: string; title?: string; params?: Record<string, unknown> };
+    /** Optional per-RECORD widget on the record detail view (see RecordScreen in types/form). */
+    recordScreen?: {
+      kind: 'sdk' | 'code';
+      title?: string;
+      screenId?: string;
+      params?: Record<string, unknown>;
+      consumesRelated?: string[];
+      html?: string;
+      css?: string;
+      js?: string;
+      height?: number;
+    };
   };
   fields: PackFormField[];
 }

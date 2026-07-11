@@ -6,7 +6,16 @@
 // Refresh requirement).
 import type { ComponentType } from 'react';
 
-export type SdkScreenComponent = ComponentType<{ params?: Record<string, unknown> }>;
+/** Present when the screen renders as a RECORD widget (customScreen.recordScreen) — the record
+ *  detail view passes the loaded record; section screens receive no recordContext. */
+export interface SdkRecordContext {
+  appSlug: string;
+  formId: string;
+  responseId: string;
+  record: { id: string; answers: Record<string, unknown>; submittedAt?: string; status?: string };
+}
+
+export type SdkScreenComponent = ComponentType<{ params?: Record<string, unknown>; recordContext?: SdkRecordContext }>;
 
 const REGISTRY = new Map<string, SdkScreenComponent>();
 

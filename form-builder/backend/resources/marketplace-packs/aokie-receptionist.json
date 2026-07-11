@@ -472,6 +472,14 @@
           "sdkScreen": {
             "screenId": "aokie-live-call",
             "title": "Live Call"
+          },
+          "recordScreen": {
+            "kind": "sdk",
+            "screenId": "aokie-call-transcript",
+            "title": "Transcript",
+            "consumesRelated": [
+              "call_link"
+            ]
           }
         }
       },
@@ -520,7 +528,8 @@
               "relatedAllowAdd": false,
               "displayFieldIds": [
                 "speaker",
-                "text"
+                "text",
+                "turn_index"
               ]
             }
           },

@@ -54,6 +54,20 @@ function checkScreen(label, cs, { isForm }) {
     fail = 1;
     return;
   }
+  // Optional per-record widget: an sdk kind must reference a registered screen; a code kind
+  // must at least parse. (Rendered on the record detail view with the record context.)
+  if (isForm && cs.recordScreen) {
+    const rs = cs.recordScreen;
+    if (rs.kind === 'sdk') {
+      if (!rs.screenId || !sdkScreenIds.has(rs.screenId)) {
+        console.error(`[${label}] recordScreen sdk id '${rs.screenId}' is not registered in sdkScreenRegistry`); fail = 1;
+      }
+    } else if (rs.kind === 'code') {
+      try { new Function(rs.js || ''); } catch (e) { console.error(`[${label}] recordScreen JS SYNTAX ERROR: ${e.message}`); fail = 1; }
+    } else {
+      console.error(`[${label}] recordScreen has unknown kind '${rs.kind}'`); fail = 1;
+    }
+  }
   // Host-rendered SDK screens are trusted first-party React components — validate the
   // registry reference (and the New-record affordance policy for form sections).
   if (cs.kind === 'sdk') {

@@ -52,6 +52,10 @@ const SDK_SHIM = `
     openForm: function(){ return call('openForm'); },
     /** Open this form's records view (app runtime only — rejects on public links). */
     openRecords: function(){ return call('openRecords'); },
+    /** Record screens only: the record this screen is rendered for ({ id, answers, submittedAt, status }). */
+    record: function(){ return call('record'); },
+    /** Record screens only: this record's related-record groups (same shape as the related API). */
+    related: function(){ return call('related'); },
     /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
     escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
   };
@@ -71,6 +75,8 @@ export function CustomScreenRuntime({
   accentColor,
   onOpenForm,
   onOpenRecords,
+  record,
+  fetchRelated,
 }: {
   screen: CustomScreen;
   formId: string;
@@ -87,6 +93,10 @@ export function CustomScreenRuntime({
   onOpenForm?: () => void;
   /** Wired in the app runtime — the SDK's openRecords() opens this form's records table. */
   onOpenRecords?: () => void;
+  /** Record screens: the record this screen renders for — exposed via FormLogic.record(). */
+  record?: { id: string; answers: Record<string, unknown>; submittedAt?: string; status?: string };
+  /** Record screens: fetch this record's related groups — exposed via FormLogic.related(). */
+  fetchRelated?: () => Promise<unknown>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
@@ -191,6 +201,16 @@ export function CustomScreenRuntime({
             else throw new Error('Records are not available here.');
             break;
           }
+          case 'record': {
+            if (!record) throw new Error('record() is only available on record screens.');
+            result = { id: record.id, answers: record.answers, submittedAt: record.submittedAt, status: record.status };
+            break;
+          }
+          case 'related': {
+            if (!fetchRelated) throw new Error('related() is only available on record screens.');
+            result = await fetchRelated();
+            break;
+          }
           default:
             error = `Unknown action: ${m.action}`;
         }
@@ -201,7 +221,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated]);
 
   return (
     <iframe

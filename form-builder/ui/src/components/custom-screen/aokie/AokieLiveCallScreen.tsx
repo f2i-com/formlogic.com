@@ -117,7 +117,7 @@ function formatDuration(ms: number): string {
 
 /** Speaker → label + color. The palette carries meaning: caller is neutral, the receptionist's
  *  own voice (AI or the operator standing in for it) is brand-colored. */
-function describeSpeaker(speaker: string): { label: string; className: string } {
+export function describeSpeaker(speaker: string): { label: string; className: string } {
   if (speaker === 'caller') return { label: 'Caller', className: 'text-cyan-700 dark:text-[#8fe7ed]' };
   if (speaker === 'operator') return { label: 'You', className: 'text-primary-700 dark:text-[#c5b9ff]' };
   return { label: 'Aokie', className: 'text-primary-700 dark:text-[#c5b9ff]' };
@@ -125,7 +125,7 @@ function describeSpeaker(speaker: string): { label: string; className: string } 
 
 /** Chat-bubble treatment per speaker (landing-console style): the caller sits
  *  right in teal, the receptionist's voice (Aokie or the operator) left in brand. */
-function turnBubble(speaker: string): { row: string; avatar: string; bubble: string; initial: string } {
+export function turnBubble(speaker: string): { row: string; avatar: string; bubble: string; initial: string } {
   if (speaker === 'caller') {
     return {
       row: 'flex max-w-[86%] flex-row-reverse items-start gap-2 self-end',
