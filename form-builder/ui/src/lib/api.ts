@@ -2318,6 +2318,8 @@ interface FormAnalytics {
   completionRate: number;
   averageCompletionTime: number;
   responsesByDate: Array<{ date: string; count: number }>;
+  /** Most recent submission (offsetless UTC MySQL datetime); null with no responses. */
+  lastResponseAt?: string | null;
 }
 
 interface AIStatus {

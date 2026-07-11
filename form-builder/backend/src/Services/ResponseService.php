@@ -1567,6 +1567,7 @@ class ResponseService
             'completionRate' => 0,
             'averageCompletionTime' => 0,
             'responsesByDate' => [],
+            'lastResponseAt' => null,
         ];
 
         try {
@@ -1593,6 +1594,7 @@ class ResponseService
                     'completionRate' => 0,
                     'averageCompletionTime' => 0,
                     'responsesByDate' => [],
+                    'lastResponseAt' => null,
                 ];
             }
 
@@ -1637,6 +1639,17 @@ class ResponseService
             // so 0 becomes '+0 minutes', a harmless no-op. Still passed as a BOUND parameter
             // (not concatenated into the SQL) for consistency with every other bound value here.
             $tzModifier = sprintf('%+d minutes', $tzOffsetMinutes);
+
+            // The exact most-recent submission time (UTC, full precision). responsesByDate
+            // is DAY-granular, so consumers ranking forms by "last activity" (the dashboard)
+            // were comparing midnight-of-day against full-precision edit timestamps and
+            // losing to any same-day edit.
+            $lastResponseAt = null;
+            try {
+                $lastResponseAt = $db->query('SELECT MAX(submitted_at) FROM responses')->fetchColumn() ?: null;
+            } catch (\Exception $e) {
+                $this->logger->warning('Analytics lastResponseAt error', ['formId' => $formId, 'exception' => $e->getMessage()]);
+            }
 
             $responsesByDate = [];
             try {
@@ -1700,6 +1713,7 @@ class ResponseService
                 'completionRate' => round($completionRate, 2),
                 'averageCompletionTime' => round((float)$avgTime, 2),
                 'responsesByDate' => $responsesByDate,
+                'lastResponseAt' => $lastResponseAt,
             ];
         } catch (\Exception $e) {
             // Log the error but return default analytics

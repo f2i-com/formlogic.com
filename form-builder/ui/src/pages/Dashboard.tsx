@@ -859,9 +859,18 @@ export function Dashboard() {
             if (result.data?.analytics) {
               counts[forms[i].id] = result.data.analytics.totalResponses;
               pulses[forms[i].id] = buildPulseFromSparse(result.data.analytics.responsesByDate);
-              const dated = (result.data.analytics.responsesByDate || []).filter((d) => d.count > 0);
-              if (dated.length) {
-                lastActivity[forms[i].id] = Math.max(...dated.map((d) => parseServerDate(d.date).getTime()));
+              // Prefer the exact last-submission timestamp: responsesByDate is DAY-granular
+              // (a 22:28 call ranked as midnight and lost to any same-day form EDIT, which
+              // carries full precision). Fall back to the by-date max on older payloads.
+              const lastAt = result.data.analytics.lastResponseAt;
+              if (lastAt) {
+                const t = parseServerDate(lastAt).getTime();
+                if (Number.isFinite(t)) lastActivity[forms[i].id] = t;
+              } else {
+                const dated = (result.data.analytics.responsesByDate || []).filter((d) => d.count > 0);
+                if (dated.length) {
+                  lastActivity[forms[i].id] = Math.max(...dated.map((d) => parseServerDate(d.date).getTime()));
+                }
               }
             }
           });
