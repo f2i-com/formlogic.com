@@ -119,7 +119,9 @@ jobs:
 
       - name: Desktop tests (release gate on the exact SHA)
         working-directory: form-builder/desktop/src-tauri
-        run: cargo test --lib
+        # CI-DESKTOP-001: lib AND integration tests on the release SHA (the
+        # aokie contract tests self-skip without the plugin binary).
+        run: cargo test
 
       - name: Build installers (NSIS + MSI)
         working-directory: form-builder/desktop
