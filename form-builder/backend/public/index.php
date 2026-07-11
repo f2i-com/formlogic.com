@@ -826,39 +826,91 @@ $app->get('/api/notices', function ($request, $response) use ($container) {
 // user response DATA (structure + counts only).
 $adminGate = new \FormLogic\Middleware\AdminGateMiddleware($container->get(AuthService::class));
 $adminRateLimiter = new RateLimitMiddleware($container->get(\FormLogic\Services\RateLimiter::class), 240, 60, 'admin_api', true);
-$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container) {
+// Route args helper (same as $getArgs below, which is defined later in the file).
+// NOTE: route closures here MUST name their params $request/$response — the DI
+// bridge injects by parameter name, so e.g. fn ($rq, $rs) fails to invoke.
+$adminArgs = function ($request) {
+    return \Slim\Routing\RouteContext::fromRequest($request)->getRoute()->getArguments();
+};
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs) {
     $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
 
-    $group->get('/overview', fn ($rq, $rs) => $ctrl()->overview($rq, $rs));
-    $group->get('/users', fn ($rq, $rs) => $ctrl()->listUsers($rq, $rs));
-    $group->get('/users/{id}', fn ($rq, $rs, $args) => $ctrl()->getUser($rq, $rs, $args));
-    $group->post('/users/{id}/admin', fn ($rq, $rs, $args) => $ctrl()->setAdmin($rq, $rs, $args));
+    $group->get('/overview', function ($request, $response) use ($ctrl) {
+        return $ctrl()->overview($request, $response);
+    });
+    $group->get('/users', function ($request, $response) use ($ctrl) {
+        return $ctrl()->listUsers($request, $response);
+    });
+    $group->get('/users/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->getUser($request, $response, $adminArgs($request));
+    });
+    $group->post('/users/{id}/admin', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->setAdmin($request, $response, $adminArgs($request));
+    });
 
     // Structure views + on-behalf-of-the-owner structural edits.
-    $group->get('/forms/{id}', fn ($rq, $rs, $args) => $ctrl()->getFormStructure($rq, $rs, $args));
-    $group->put('/forms/{id}', fn ($rq, $rs, $args) => $ctrl()->updateForm($rq, $rs, $args));
-    $group->get('/apps/{id}', fn ($rq, $rs, $args) => $ctrl()->getAppStructure($rq, $rs, $args));
-    $group->put('/apps/{id}', fn ($rq, $rs, $args) => $ctrl()->updateApp($rq, $rs, $args));
-    $group->get('/flows/{id}', fn ($rq, $rs, $args) => $ctrl()->getFlowStructure($rq, $rs, $args));
-    $group->put('/flows/{id}', fn ($rq, $rs, $args) => $ctrl()->updateFlow($rq, $rs, $args));
+    $group->get('/forms/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->getFormStructure($request, $response, $adminArgs($request));
+    });
+    $group->put('/forms/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->updateForm($request, $response, $adminArgs($request));
+    });
+    $group->get('/apps/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->getAppStructure($request, $response, $adminArgs($request));
+    });
+    $group->put('/apps/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->updateApp($request, $response, $adminArgs($request));
+    });
+    $group->get('/flows/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->getFlowStructure($request, $response, $adminArgs($request));
+    });
+    $group->put('/flows/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->updateFlow($request, $response, $adminArgs($request));
+    });
 
     // Maintenance window + global session boot + broadcast notices.
-    $group->get('/maintenance', fn ($rq, $rs) => $ctrl()->getMaintenance($rq, $rs));
-    $group->put('/maintenance', fn ($rq, $rs) => $ctrl()->setMaintenance($rq, $rs));
-    $group->post('/boot-sessions', fn ($rq, $rs) => $ctrl()->bootSessions($rq, $rs));
-    $group->get('/notices', fn ($rq, $rs) => $ctrl()->listNotices($rq, $rs));
-    $group->post('/notices', fn ($rq, $rs) => $ctrl()->createNotice($rq, $rs));
-    $group->delete('/notices/{id}', fn ($rq, $rs, $args) => $ctrl()->revokeNotice($rq, $rs, $args));
+    $group->get('/maintenance', function ($request, $response) use ($ctrl) {
+        return $ctrl()->getMaintenance($request, $response);
+    });
+    $group->put('/maintenance', function ($request, $response) use ($ctrl) {
+        return $ctrl()->setMaintenance($request, $response);
+    });
+    $group->post('/boot-sessions', function ($request, $response) use ($ctrl) {
+        return $ctrl()->bootSessions($request, $response);
+    });
+    $group->get('/notices', function ($request, $response) use ($ctrl) {
+        return $ctrl()->listNotices($request, $response);
+    });
+    $group->post('/notices', function ($request, $response) use ($ctrl) {
+        return $ctrl()->createNotice($request, $response);
+    });
+    $group->delete('/notices/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->revokeNotice($request, $response, $adminArgs($request));
+    });
 
     // In-place upgrades: upload → validate/stage → apply (auto DB export + code
     // snapshot + maintenance window) → rollback / restore-db from the backup.
-    $group->get('/upgrade/status', fn ($rq, $rs) => $ctrl()->upgradeStatus($rq, $rs));
-    $group->post('/upgrade/upload', fn ($rq, $rs) => $ctrl()->upgradeUpload($rq, $rs));
-    $group->post('/upgrade/apply', fn ($rq, $rs) => $ctrl()->upgradeApply($rq, $rs));
-    $group->post('/upgrade/rollback', fn ($rq, $rs) => $ctrl()->upgradeRollback($rq, $rs));
-    $group->post('/upgrade/restore-db', fn ($rq, $rs) => $ctrl()->upgradeRestoreDb($rq, $rs));
-    $group->post('/upgrade/export-db', fn ($rq, $rs) => $ctrl()->upgradeExportDb($rq, $rs));
-    $group->delete('/upgrade/package', fn ($rq, $rs) => $ctrl()->upgradeDiscard($rq, $rs));
+    $group->get('/upgrade/status', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeStatus($request, $response);
+    });
+    $group->post('/upgrade/upload', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeUpload($request, $response);
+    });
+    $group->post('/upgrade/apply', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeApply($request, $response);
+    });
+    $group->post('/upgrade/rollback', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeRollback($request, $response);
+    });
+    $group->post('/upgrade/restore-db', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeRestoreDb($request, $response);
+    });
+    $group->post('/upgrade/export-db', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeExportDb($request, $response);
+    });
+    $group->delete('/upgrade/package', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeDiscard($request, $response);
+    });
 })->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // Landing hero headlines (public, no auth): the rotating <h1> slides the landing page fetches.
