@@ -551,7 +551,225 @@ function seedResponses(FormService $formService, ResponseService $responseServic
         $seeded[$fid] = seedForm($responseService, $fid, $def, $seeded);
         $total += count($seeded[$fid]);
     }
+
+    // Receptionist pack: replace the generic calls/turns randomness with a coherent story —
+    // mostly answered calls, and every completed call carries a real conversation transcript
+    // (the newest one a long, multi-topic booking call so transcript paging shows off).
+    $byTitle = [];
+    foreach ($defs as $fid => $def) { $byTitle[strtolower($def['title'])] = $fid; }
+    if (isset($byTitle['calls'], $byTitle['transcript turns'])) {
+        $total += enrichReceptionistCalls(
+            $responseService,
+            $byTitle['calls'],
+            $byTitle['transcript turns'],
+            $defs[$byTitle['transcript turns']]['fields'],
+            $byTitle['customers'] ?? null
+        );
+    }
     return $total;
+}
+
+/**
+ * Rewrite the seeded receptionist Calls into a believable operation (weighted to completed,
+ * coherent caller/customer/timestamps/summary) and rebuild Transcript Turns so each completed
+ * call has an actual conversation. Returns the number of turn rows created.
+ */
+function enrichReceptionistCalls(ResponseService $rs, string $callsFid, string $turnsFid, array $turnsFields, ?string $customersFid): int
+{
+    // Customers by id -> identity for caller alignment.
+    $customers = [];
+    if ($customersFid) {
+        foreach ($rs->getFormResponses($customersFid, ['limit' => 200]) as $c) {
+            $customers[(string) $c['id']] = [
+                'name' => (string) (($c['answers']['name'] ?? '') ?: 'the caller'),
+                'phone' => (string) ($c['answers']['phone'] ?? ''),
+            ];
+        }
+    }
+
+    // Wipe the generic turns (deleteResponse keeps counts/links honest).
+    foreach ($rs->getFormResponses($turnsFid, ['limit' => 1000]) as $t) {
+        try { $rs->deleteResponse($turnsFid, (string) $t['id']); } catch (\Throwable $e) { /* keep going */ }
+    }
+
+    $calls = array_reverse($rs->getFormResponses($callsFid, ['limit' => 200])); // oldest -> newest
+    $intents = ['booking', 'question', 'order', 'booking', 'message', 'question'];
+    $summaries = [
+        'booking' => '{name} booked an appointment; confirmation text sent.',
+        'order' => '{name} placed a pickup order and confirmed the total.',
+        'question' => "Answered {name}'s questions about hours and pricing.",
+        'message' => 'Took a message from {name} for a call-back.',
+    ];
+    $createdTurns = 0;
+    $completedSeen = 0;
+    $completedTotal = 0;
+    foreach ($calls as $i => $call) {
+        if (($i % 6) !== 3 && ($i % 11) !== 9) { $completedTotal++; }
+    }
+    foreach ($calls as $i => $call) {
+        $id = (string) $call['id'];
+        $answers = is_array($call['answers'] ?? null) ? $call['answers'] : [];
+        $status = ($i % 6) === 3 ? 'missed' : ((($i % 11) === 9) ? 'rejected' : 'completed');
+        $intent = $intents[$i % count($intents)];
+        $cust = $customers[(string) ($answers['customer_link'] ?? '')] ?? null;
+        $name = $cust['name'] ?? (string) (($answers['caller_name'] ?? '') ?: 'the caller');
+        $firstName = explode(' ', trim($name))[0] ?: 'there';
+
+        $completedSeen += $status === 'completed' ? 1 : 0;
+        $isNewestCompleted = $status === 'completed' && $completedSeen === $completedTotal;
+        $turns = $status === 'completed' ? receptionistConversation($intent, $isNewestCompleted) : [];
+
+        $startTs = is_string($call['submittedAt'] ?? null) && $call['submittedAt'] !== ''
+            ? strtotime((string) $call['submittedAt']) : time();
+        if ($startTs === false) { $startTs = time(); }
+        $duration = $status === 'completed' ? count($turns) * 9 + random_int(5, 40) : 0;
+
+        $patch = [
+            'status' => $status,
+            'intent' => $intent,
+            'sentiment' => $status === 'completed' ? (random_int(0, 9) < 7 ? 'positive' : 'neutral') : 'neutral',
+            'caller_name' => $name,
+            'started_at' => date('Y-m-d H:i:s', $startTs),
+            'summary' => $status === 'completed'
+                ? str_replace('{name}', $firstName, $summaries[$intent])
+                : ($status === 'missed' ? 'Missed call - no answer before hangup.' : 'Caller hung up before the greeting finished.'),
+            'duration_seconds' => $duration,
+            'follow_up_required' => ($status !== 'completed' && random_int(0, 1) === 1) ? ['yes'] : [],
+        ];
+        if ($cust && $cust['phone'] !== '') { $patch['caller_phone'] = $cust['phone']; }
+        if ($status === 'completed') {
+            $patch['answered_at'] = date('Y-m-d H:i:s', $startTs + 3);
+            $patch['ended_at'] = date('Y-m-d H:i:s', $startTs + 3 + $duration);
+        } else {
+            $patch['answered_at'] = '';
+            $patch['ended_at'] = date('Y-m-d H:i:s', $startTs + 20);
+        }
+        // ResponseService::updateResponse REPLACES answers wholesale — merge over the row's
+        // existing answers so call_id/customer_link/etc. survive the rewrite.
+        try { $rs->updateResponse($callsFid, $id, ['answers' => array_merge($answers, $patch)]); } catch (\Throwable $e) { continue; }
+
+        $callKey = (string) ($answers['call_id'] ?? '');
+        foreach ($turns as $ti => [$speaker, $text]) {
+            $turnAnswers = [
+                'call_id' => $callKey,
+                'call_link' => $id,
+                'turn_index' => $ti,
+                'speaker' => $speaker,
+                'text' => str_replace('{name}', $firstName, $text),
+                'timestamp' => date('Y-m-d H:i:s', $startTs + 3 + $ti * 9),
+                'source' => $speaker === 'caller' ? 'stt' : 'flow',
+            ];
+            try {
+                $r = $rs->createResponse($turnsFid, ['answers' => $turnAnswers]);
+                if (is_array($r) && isset($r['id'])) {
+                    backdateResponse($turnsFid, (string) $r['id'], date('Y-m-d H:i:s', $startTs + 3 + $ti * 9));
+                    $rs->syncResponseLinks($turnsFid, (string) $r['id'], $turnsFields, $turnAnswers);
+                    $createdTurns++;
+                }
+            } catch (\Throwable $e) { /* skip a bad row */ }
+        }
+    }
+    return $createdTurns;
+}
+
+/** One plausible receptionist conversation per intent ({name} = caller first name). */
+function receptionistConversation(string $intent, bool $long): array
+{
+    if ($long) {
+        return [
+            ['aokie', 'Thanks for calling Bright Smile Dental, this is Aokie. Who am I speaking with?'],
+            ['caller', "Hi, it's {name}."],
+            ['aokie', 'Hi {name}! How can I help you today?'],
+            ['caller', "I chipped a tooth last night and I'd like to get it looked at as soon as possible."],
+            ['aokie', "Sorry to hear that - let's get you in quickly. Is it causing you much pain right now?"],
+            ['caller', "It's a bit sensitive when I drink anything cold, but not too bad."],
+            ['aokie', 'Okay, that sounds like it needs attention within a day or two. Are you an existing patient with us?'],
+            ['caller', 'Yes, I was in for a clean about six months ago.'],
+            ['aokie', "Found you. I'll book this as an urgent repair. Do mornings or afternoons suit you better?"],
+            ['caller', 'Mornings are better, I do school pickup in the afternoons.'],
+            ['aokie', 'Understood. We have tomorrow at 9:30 AM or Thursday at 8:15 AM. Which works?'],
+            ['caller', 'Tomorrow at 9:30 would be great.'],
+            ['aokie', "Booked - tomorrow 9:30 AM with Dr Chen for a chipped tooth assessment. It'll be a 30 minute appointment."],
+            ['caller', 'Is that with the same dentist I saw last time?'],
+            ['aokie', "Your last visit was with Dr Patel. Dr Chen has the earliest urgent slot, but I can check Dr Patel's availability if you'd prefer."],
+            ['caller', "No no, Dr Chen is fine. Whatever's earliest."],
+            ['aokie', 'Great choice. Is your mobile still the best number for a reminder?'],
+            ['caller', 'Yes, this number is fine.'],
+            ['aokie', "Perfect, I'll send a confirmation text shortly. Anything else while I have you?"],
+            ['caller', 'Actually yes - do you know roughly what a chip repair costs?'],
+            ['aokie', 'For a small chip, a composite bonding repair usually runs between $150 and $300 depending on the size. Dr Chen will confirm after the assessment.'],
+            ['caller', 'Okay, and do you take HICAPS on the spot?'],
+            ['aokie', 'We do - bring your health fund card and the rebate is processed at the front desk.'],
+            ['caller', 'Great. Oh, one more thing - my son is due for a checkup too. Can I book him in?'],
+            ['aokie', "Of course. What's his name and roughly when was his last visit?"],
+            ['caller', 'Tom, I think he came in around Easter.'],
+            ['aokie', "I can see Tom's record. For a standard checkup and clean, the next family-friendly slot is Saturday the 25th at 10:00 AM."],
+            ['caller', 'Saturdays are perfect actually.'],
+            ['aokie', 'Booked - Tom, Saturday the 25th at 10:00 AM for a checkup and clean.'],
+            ['caller', 'Wonderful. Will we get reminders for both?'],
+            ['aokie', "Yes, you'll get a text the day before each appointment, and you can reply C to confirm or R to reschedule."],
+            ['caller', "That's really handy."],
+            ['aokie', 'Is there anything else I can help with today, {name}?'],
+            ['caller', "No, that's everything. You've been very helpful."],
+            ['aokie', "You're welcome! Quick recap: you're in tomorrow at 9:30 AM, and Tom's booked Saturday the 25th at 10:00 AM."],
+            ['caller', 'Perfect, thank you.'],
+            ['aokie', "Thanks for calling, {name}. We'll see you tomorrow - take care!"],
+            ['caller', 'Bye!'],
+            ['aokie', 'Goodbye!'],
+            ['system', 'Call ended by caller.'],
+        ];
+    }
+    $byIntent = [
+        'booking' => [
+            ['aokie', 'Thanks for calling, this is Aokie. Who am I speaking with?'],
+            ['caller', "Hi, it's {name}. I'd like to book an appointment for next week."],
+            ['aokie', 'Happy to help, {name}. Do mornings or afternoons work better for you?'],
+            ['caller', 'Afternoons, ideally after 2.'],
+            ['aokie', 'I have Tuesday at 2:30 PM or Wednesday at 4:00 PM available.'],
+            ['caller', 'Tuesday at 2:30 works.'],
+            ['aokie', "Booked - Tuesday 2:30 PM under your number. You'll get a reminder text the day before."],
+            ['caller', 'Great, thanks so much.'],
+            ['aokie', "You're welcome, {name}. See you Tuesday!"],
+            ['system', 'Call ended by caller.'],
+        ],
+        'order' => [
+            ['aokie', 'Thanks for calling, this is Aokie. How can I help?'],
+            ['caller', "Hi, it's {name}. I'd like to place my usual order for pickup."],
+            ['aokie', 'Of course, {name}. Your usual - anything extra today?'],
+            ['caller', 'Add one more of the large ones please.'],
+            ['aokie', 'Done. That brings the total to $48.50. Ready for pickup in about 25 minutes.'],
+            ['caller', 'Perfect. Can I pay when I pick it up?'],
+            ['aokie', 'Absolutely, card or cash at the counter.'],
+            ['caller', 'Great, see you soon.'],
+            ['aokie', "Thanks {name}, we'll have it ready!"],
+            ['system', 'Call ended by caller.'],
+        ],
+        'question' => [
+            ['aokie', 'Thanks for calling, this is Aokie. How can I help?'],
+            ['caller', 'Hi, quick question - what are your opening hours on Saturdays?'],
+            ['aokie', "We're open 9 AM to 1 PM on Saturdays."],
+            ['caller', 'And do I need to book ahead or can I just walk in?'],
+            ['aokie', "Saturdays fill up quickly, so booking ahead is best - walk-ins are welcome if there's a gap."],
+            ['caller', 'Good to know. What about parking nearby?'],
+            ['aokie', "There's free 2-hour parking right behind the building, entry off the side street."],
+            ['caller', 'Perfect, that answers everything. Thanks!'],
+            ['aokie', "Any time! Call back if you'd like to book."],
+            ['system', 'Call ended by caller.'],
+        ],
+        'message' => [
+            ['aokie', 'Thanks for calling, this is Aokie. How can I help?'],
+            ['caller', "Hi, it's {name}. Could you pass a message to the manager?"],
+            ['aokie', 'Of course, {name} - go ahead.'],
+            ['caller', 'Please let them know the delivery scheduled for Friday needs to move to Monday.'],
+            ['aokie', "Got it: Friday's delivery moved to Monday. What's the best number for a call-back?"],
+            ['caller', 'This one is fine.'],
+            ['aokie', "Noted - I've logged the message and someone will confirm today."],
+            ['caller', 'Thanks a lot.'],
+            ['aokie', "You're welcome, {name}!"],
+            ['system', 'Call ended by caller.'],
+        ],
+    ];
+    return $byIntent[$intent] ?? $byIntent['question'];
 }
 
 /** Create N plausible responses for one form. Returns the created response ids. */

@@ -1885,6 +1885,37 @@ class AppPublicController
             }
         }
 
+        // Match-based FORWARD resolution (single-record detail only, to keep list payloads
+        // cheap): a linked_record field with properties.matchField whose answer is EMPTY —
+        // flow-/logic-written rows never set the picker value — resolves its target by the
+        // shared join key (e.g. a transcript turn's call_id → its Call). Newest match wins.
+        // The synthesized target goes into _resolved only; the stored answer stays empty.
+        $matchResolved = []; // respIndex => fieldId => targetResponseId
+        if (count($responses) === 1) {
+            foreach ($responses as $ri => $resp) {
+                $answers = $resp['answers'] ?? [];
+                foreach ($linkedFields as $field) {
+                    $props = $field['properties'] ?? [];
+                    $targetFormId = $props['targetFormId'] ?? null;
+                    $matchField = $props['matchField'] ?? null;
+                    if (!$targetFormId || !is_string($matchField) || $matchField === '') continue;
+                    $existing = $answers[$field['id']] ?? null;
+                    if ($existing !== null && $existing !== '' && $existing !== []) continue;
+                    $tmf = $props['targetMatchField'] ?? null;
+                    $tmf = is_string($tmf) && $tmf !== '' ? $tmf : $matchField;
+                    $key = $answers[$matchField] ?? null;
+                    if (!is_scalar($key)) continue;
+                    $key = trim((string) $key);
+                    if ($key === '') continue;
+                    $matches = $this->responseService->getFormResponses($targetFormId, ['answersEq' => [$tmf => $key], 'limit' => 1]);
+                    $mid = $matches[0]['id'] ?? null;
+                    if (!is_string($mid) || $mid === '') continue;
+                    $matchResolved[$ri][$field['id']] = $mid;
+                    $refsByForm[$targetFormId][$mid] = true; // label loads through the normal batch
+                }
+            }
+        }
+
         // Batch-load referenced records
         $resolvedCache = []; // targetFormId => responseId => { id, display }
         foreach ($refsByForm as $targetFormId => $idMap) {
@@ -1950,7 +1981,7 @@ class AppPublicController
         }
 
         // Inject _resolved into each response
-        foreach ($responses as &$resp) {
+        foreach ($responses as $ri => &$resp) {
             $answers = $resp['answers'] ?? [];
             $resolved = [];
 
@@ -1958,6 +1989,10 @@ class AppPublicController
                 $targetFormId = $field['properties']['targetFormId'] ?? null;
                 if (!$targetFormId) continue;
                 $val = $answers[$field['id']] ?? null;
+                // Empty answer resolved through the match join (detail view only, above).
+                if (($val === null || $val === '' || $val === []) && isset($matchResolved[$ri][$field['id']])) {
+                    $val = $matchResolved[$ri][$field['id']];
+                }
                 if ($val === null) continue;
 
                 if (is_array($val)) {

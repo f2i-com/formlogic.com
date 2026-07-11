@@ -266,6 +266,40 @@ export function LinkedRecordSettings({
           />
           {!(properties.relatedHidden ?? false) && (
             <>
+              {ownFields.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
+                    Grid columns
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
+                    Which of THIS form&apos;s fields show as columns in the related grid (defaults to
+                    the first few simple fields)
+                  </p>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {ownFields.map((field) => {
+                      const cols = properties.relatedColumnFieldIds || [];
+                      return (
+                        <label
+                          key={field.id}
+                          className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={cols.includes(field.id)}
+                            onChange={(e) => {
+                              const next = e.target.checked ? [...cols, field.id] : cols.filter((id) => id !== field.id);
+                              onChange({ ...properties, relatedColumnFieldIds: next.length ? next : undefined });
+                            }}
+                            className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                          />
+                          <span className="text-gray-700 dark:text-slate-300">{field.label}</span>
+                          <span className="text-xs text-gray-400 dark:text-slate-500">({field.type})</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <Switch
                 checked={properties.relatedAllowAdd ?? true}
                 onChange={(checked) => onChange({ ...properties, relatedAllowAdd: checked })}

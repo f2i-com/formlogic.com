@@ -36,7 +36,12 @@ final class RelatedRecords
             if (($f['id'] ?? null) === $fieldId) {
                 $props = $f['properties'] ?? [];
                 $cfg['fieldLabel'] = $f['label'] ?? $fieldId;
-                $cfg['displayFieldIds'] = $props['displayFieldIds'] ?? [];
+                // relatedColumnFieldIds names SOURCE-form fields for the sub-grid's columns/row
+                // labels; displayFieldIds keeps its original meaning (TARGET-record label in
+                // pickers/detail chips) but doubles as the column config for older forms that
+                // predate the split.
+                $related = $props['relatedColumnFieldIds'] ?? null;
+                $cfg['displayFieldIds'] = is_array($related) && $related !== [] ? $related : ($props['displayFieldIds'] ?? []);
                 $cfg['allowMultiple'] = !empty($props['allowMultiple']);
                 $cfg['hidden'] = !empty($props['relatedHidden']);
                 $cfg['allowAdd'] = ($props['relatedAllowAdd'] ?? true) !== false;

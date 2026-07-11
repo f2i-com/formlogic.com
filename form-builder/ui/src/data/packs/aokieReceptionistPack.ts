@@ -715,7 +715,7 @@ export const aokieReceptionistPack: PackData = {
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
         // matchField: turns are written by app logic that never knows the Calls row id, so the
         // relationship joins on the shared call_id key (read-side; see RelatedRecords helper).
-        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, displayFieldIds: ['speaker', 'text', 'turn_index'] } },
+        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, relatedColumnFieldIds: ['speaker', 'text', 'turn_index'] } },
         { id: 'turn_index', type: 'number', label: 'Turn', required: false, properties: { min: 0, step: 1 } },
         {
           id: 'speaker',
@@ -824,7 +824,7 @@ export const aokieReceptionistPack: PackData = {
         { id: 'message_id', type: 'short_text', label: 'Message ID', required: false, properties: {} },
         // matchField: messages are written by app logic that never knows the thread's row id, so
         // the relationship joins on the shared phone key (read-side; see RelatedRecords helper).
-        { id: 'thread_link', type: 'linked_record', label: 'Thread', required: false, properties: { targetFormId: '@pack:sms-threads', matchField: 'phone', targetMatchField: 'phone', relatedPageSize: 10, relatedAllowAdd: false, displayFieldIds: ['body', 'direction', 'status'] } },
+        { id: 'thread_link', type: 'linked_record', label: 'Thread', required: false, properties: { targetFormId: '@pack:sms-threads', matchField: 'phone', targetMatchField: 'phone', relatedPageSize: 10, relatedAllowAdd: false, relatedColumnFieldIds: ['body', 'direction', 'status'] } },
         { id: 'phone', type: 'phone', label: 'Phone Number', required: true, properties: { placeholder: '+61 400 000 000' } },
         {
           id: 'direction',

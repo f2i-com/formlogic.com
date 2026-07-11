@@ -530,7 +530,7 @@
               "targetMatchField": "call_id",
               "relatedPageSize": 20,
               "relatedAllowAdd": false,
-              "displayFieldIds": [
+              "relatedColumnFieldIds": [
                 "speaker",
                 "text",
                 "turn_index"
@@ -988,7 +988,7 @@
               "targetMatchField": "phone",
               "relatedPageSize": 10,
               "relatedAllowAdd": false,
-              "displayFieldIds": [
+              "relatedColumnFieldIds": [
                 "body",
                 "direction",
                 "status"

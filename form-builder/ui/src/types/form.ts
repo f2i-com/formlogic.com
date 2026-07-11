@@ -76,6 +76,9 @@ export interface FieldProperties {
   relatedAllowAdd?: boolean;
   relatedAllowDelete?: boolean;
   relatedPageSize?: number;
+  /** Columns of the related sub-grid — fields of THIS form (the linking side). Absent = the
+   *  target-label displayFieldIds double as columns (legacy), else the first simple fields. */
+  relatedColumnFieldIds?: string[];
   // Match-based relation: also relate records whose `matchField` answer (on THIS form)
   // equals the target record's `targetMatchField` answer (defaults to matchField) — for
   // records written by flows/app logic that never know the target's record id.
