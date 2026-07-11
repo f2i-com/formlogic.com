@@ -32,7 +32,7 @@
  * (The UI build itself writes ui/dist and syncs the prelude via its normal prebuild step.)
  */
 
-import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -292,6 +292,15 @@ function upgradeTxt(version) {
 
 Full guide: docs/UPGRADING.md in the source repository.
 
+EASIEST — the ADMIN PANEL (no shell access needed): sign in as a platform
+administrator, open Admin → Upgrade, and upload THIS zip. It verifies the
+package checksums (manifest.json), closes the site for maintenance, exports
+the database and snapshots the current code automatically, applies the new
+files (never touching api/.env or api/storage/), and reopens — with one-click
+code rollback from the backup if anything looks wrong.
+
+Manual path:
+
 1. Back up your database AND your api/.env file.
 2. Replace ALL files in the web root with the contents of this zip,
    EXCEPT:
@@ -462,6 +471,36 @@ for (const p of mustNotExist) {
   if (existsSync(path.join(staging, p))) fail(`staged tree must NOT contain: ${p}`);
 }
 info(`all ${mustExist.length} required paths present; ${mustNotExist.length} excluded paths confirmed absent`);
+
+// [7.5] Integrity manifest --------------------------------------------------------
+// manifest.json makes the zip importable through the ADMIN PANEL's upgrade wizard:
+// it verifies every file's sha256 after staging and shows the version before apply.
+// protectedPaths documents what an in-place upgrade must never overwrite.
+step('Writing manifest.json (admin-panel upgrade import)');
+{
+  const { createHash } = await import('node:crypto');
+  const files = {};
+  const walk = (dir, rel = '') => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, entry.name);
+      const r = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(abs, r);
+      else files[r] = createHash('sha256').update(readFileSync(abs)).digest('hex');
+    }
+  };
+  walk(staging);
+  const manifest = {
+    name: 'formlogic',
+    version,
+    layout: 'single-domain-v1',
+    builtAt: new Date().toISOString(),
+    fileCount: Object.keys(files).length,
+    protectedPaths: ['api/.env', 'api/storage/', 'api/logs/'],
+    files,
+  };
+  writeFileSync(path.join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  info(`manifest.json covers ${manifest.fileCount} files`);
+}
 
 // [8] Zip ------------------------------------------------------------------------
 step('Creating the zip');

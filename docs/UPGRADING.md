@@ -5,6 +5,26 @@ losing data**. For first-time setup see the [developer guide](../form-builder/RE
 production checklist, full backup/restore detail, and health checks see
 [DEPLOYMENT.md](../DEPLOYMENT.md).
 
+## The easiest path: the admin panel
+
+A platform administrator (an account with `users.is_admin`, or one listed in the `ADMIN_EMAILS`
+env bootstrap) can upgrade entirely from the browser: **Admin → Upgrade → upload the release zip**
+(the same `formlogic-vX.Y.Z.zip` the CI attaches to each GitHub release). The wizard then:
+
+1. verifies the package's `manifest.json` checksums (every file sha256-checked after extraction),
+2. closes the site for maintenance (a file flag, so it holds even mid-migration),
+3. **exports the MySQL database and snapshots the current code automatically** into
+   `api/storage/backups/<id>/`,
+4. applies the new backend + UI files — `api/.env`, `api/storage/**` (per-form SQLite databases,
+   uploads, packs) and `api/logs/` are **never written**, by construction,
+5. stamps the version and reopens; schema migrations run automatically on the next request.
+
+If anything looks wrong afterwards, the same tab offers **one-click code rollback** from the
+backup (the database is deliberately NOT auto-restored — records created since the upgrade are
+kept; a separate, heavily-confirmed "Restore DB" exists for genuine corruption).
+
+The manual paths below remain fully supported and are what the wizard automates.
+
 ## The deployed layout
 
 A FormLogic release zip is laid out for a single web root (this is the layout the shipped
