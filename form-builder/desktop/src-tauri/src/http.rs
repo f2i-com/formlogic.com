@@ -411,9 +411,15 @@ async fn ensure_service_by_port(
 // ------- models -------
 
 async fn list_models(State(state): State<AppState>) -> impl IntoResponse {
-    match state.downloads.list_models() {
-        Ok(models) => (StatusCode::OK, Json(models)).into_response(),
-        Err(e) => err500(&e),
+    // The recursive models-dir walk (per-file metadata across every model
+    // root) can take real time on big libraries, and the Models page polls
+    // this endpoint. Run it on the blocking pool so it never stalls the async
+    // workers serving every other endpoint.
+    let downloads = state.downloads.clone();
+    match tokio::task::spawn_blocking(move || downloads.list_models()).await {
+        Ok(Ok(models)) => (StatusCode::OK, Json(models)).into_response(),
+        Ok(Err(e)) => err500(&e),
+        Err(e) => err500(&format!("models scan failed: {e}")),
     }
 }
 

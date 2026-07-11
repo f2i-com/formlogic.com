@@ -28,6 +28,7 @@ export default function ModelsPanel() {
   const [snapshot, setSnapshot] = useState<ModelsSnapshot | null>(null);
   const [downloads, setDownloads] = useState<DownloadProgress[]>([]);
   const [catalog, setCatalog] = useState<CatalogSnapshot | null>(null);
+  const [catalogFailed, setCatalogFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [url, setUrl] = useState('');
@@ -48,28 +49,32 @@ export default function ModelsPanel() {
 
   // Catalog only changes when the user edits the JSON, so we fetch once.
   useEffect(() => {
-    models.catalog().then(setCatalog).catch(() => {
-      /* non-fatal — Quick add stays hidden if companion is offline */
-    });
+    models
+      .catalog()
+      .then(setCatalog)
+      .catch(() => {
+        // Non-fatal — Quick add stays hidden if companion is offline; the
+        // flag stops the section spinner from spinning forever.
+        setCatalogFailed(true);
+      });
   }, []);
 
-  const refresh = useCallback(async () => {
-    const seq = ++reqSeqRef.current;
+  // Download progress only — cheap (an in-memory snapshot server-side), so it
+  // can tick fast enough for smooth progress bars.
+  const refreshDownloads = useCallback(async () => {
     try {
-      const [snap, dls] = await Promise.all([
-        models.list(),
-        models.downloads(),
-      ]);
-      if (seq !== reqSeqRef.current) return; // superseded by a newer refresh
+      const dls = await models.downloads();
       // Fire completion / failure toasts before swapping state in. The
       // first poll seeds the map without firing — we only care about
       // transitions, not the initial "this entry already exists" state.
       const seen = seenStatusRef.current;
       const firstPoll = firstPollRef.current;
+      let finishedOne = false;
       for (const d of dls) {
         const prev = seen.get(d.id);
         if (prev !== d.status && !firstPoll) {
           if (d.status === 'completed' && prev !== undefined) {
+            finishedOne = true;
             toast.push({
               kind: 'success',
               title: 'Download complete',
@@ -87,20 +92,49 @@ export default function ModelsPanel() {
         seen.set(d.id, d.status);
       }
       firstPollRef.current = false;
-      setSnapshot(snap);
       setDownloads(dls);
+      setError(null);
+      return finishedOne;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    }
+  }, [toast]);
+
+  // On-disk scan — the server walks every model root (can take a while on a
+  // big library), so poll it an order of magnitude slower than the download
+  // progress, plus immediately after anything that changes the disk.
+  const refreshDisk = useCallback(async () => {
+    const seq = ++reqSeqRef.current;
+    try {
+      const snap = await models.list();
+      if (seq !== reqSeqRef.current) return; // superseded by a newer refresh
+      setSnapshot(snap);
       setError(null);
     } catch (e) {
       if (seq !== reqSeqRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [toast]);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const [finishedOne] = await Promise.all([refreshDownloads(), refreshDisk()]);
+    return finishedOne;
+  }, [refreshDownloads, refreshDisk]);
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 1500);
-    return () => clearInterval(id);
-  }, [refresh]);
+    const fast = setInterval(async () => {
+      // A download finishing changes the disk — rescan right away instead of
+      // waiting for the slow tick.
+      if (await refreshDownloads()) refreshDisk();
+    }, 1500);
+    const slow = setInterval(refreshDisk, 8000);
+    return () => {
+      clearInterval(fast);
+      clearInterval(slow);
+    };
+  }, [refresh, refreshDownloads, refreshDisk]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -163,6 +197,9 @@ export default function ModelsPanel() {
         <div className="banner banner-err">
           Couldn't reach the FormLogic Desktop API: {error}
         </div>
+      )}
+      {!snapshot && !error && (
+        <SectionLoading label="Loading models folder…" />
       )}
       {snapshot && (
         <div className="datadir-note">
@@ -265,6 +302,12 @@ export default function ModelsPanel() {
         )}
       </section>
 
+      {!catalog && !catalogFailed && (
+        <section className="model-section">
+          <h3 className="section-title">Quick add</h3>
+          <SectionLoading label="Loading the model catalog…" />
+        </section>
+      )}
       {catalog && catalog.catalog.categories.length > 0 && (
         <section className="model-section">
           <div className="section-title-row">
@@ -353,6 +396,9 @@ export default function ModelsPanel() {
             <span className="section-count">({snapshot.models.length})</span>
           )}
         </h3>
+        {!snapshot && !error && (
+          <SectionLoading label="Scanning models on disk…" />
+        )}
         {snapshot?.models.length === 0 && (
           <div className="empty-state">No models downloaded yet.</div>
         )}
@@ -407,6 +453,18 @@ export default function ModelsPanel() {
           ))}
         </section>
       )}
+    </div>
+  );
+}
+
+/// Inline per-section loading indicator: the page paints instantly and each
+/// data section shows its own spinner until its fetch lands, instead of the
+/// whole panel sitting blank while the (potentially slow) disk scan runs.
+function SectionLoading({ label }: { label: string }) {
+  return (
+    <div className="section-loading" role="status" aria-live="polite">
+      <span className="spinner" aria-hidden="true" />
+      {label}
     </div>
   );
 }
