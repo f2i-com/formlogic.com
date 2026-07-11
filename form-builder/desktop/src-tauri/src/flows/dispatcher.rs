@@ -29,6 +29,9 @@ use crate::flows::applogic::{self, AppLogicApp};
 use crate::flows::quickjs;
 use crate::flows::relay;
 use crate::flows::runner::{self, FlowOutcome, RunDeps, RunOptions};
+use crate::flows::work_ledger::{
+    BindingState, ReceiveOutcome, StageOutcome, WorkLedger, WorkStatus,
+};
 use crate::flows::selectors::{
     build_inputs, interpolate_template, resolve_deep, resolve_selector, scope_to_context,
     when_passes, SelectorScope,
@@ -79,6 +82,11 @@ pub struct FlowRuntimeStatus {
     pub relay_poll_ok: Option<bool>,
     pub commands_handled: u64,
     pub last_command_at: Option<String>,
+    /// Durable event-work ledger (audit CROSS-EVENT-001): events whose
+    /// app-logic/binding stages are still unfinished, and dead-lettered
+    /// events awaiting operator redrive (`POST /api/flows/event-work/redrive`).
+    pub event_work_pending: u64,
+    pub event_work_dead: u64,
 }
 
 struct Inner {
@@ -170,6 +178,21 @@ fn route_connector_event(
     }
 }
 
+/// Typed outcome of one binding execution (audit CROSS-EVENT-001) — recorded
+/// in the durable work ledger instead of being silently dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BindingRunOutcome {
+    /// Executed; the run row (success or flow-level failure) is durable server-side.
+    Done,
+    /// Deliberately not executed (condition false, duplicate reservation,
+    /// vanished flow, routing) — terminal, with the reason recorded.
+    Skipped(String),
+    /// Transient failure before anything durable happened — retry with backoff.
+    Retryable(String),
+    /// Deterministic rejection — dead-lettered, visible, manually redrivable.
+    Permanent(String),
+}
+
 /// The desktop flow runtime. Cheaply cloneable via `Arc`.
 pub struct FlowRuntime {
     host: Arc<PluginHost>,
@@ -182,16 +205,29 @@ pub struct FlowRuntime {
     snapshot: Mutex<Option<CachedSnapshot>>,
     /// Per-app in-process logic storage (dedupe markers for onConnectorEvent).
     applogic_storage: Mutex<HashMap<String, Map<String, Value>>>,
-    /// In-process event dedupe (idempotencyKey) so one envelope runs once.
+    /// In-process IN-FLIGHT guard (audit CROSS-EVENT-001): an entry means a
+    /// task is driving that key RIGHT NOW (or it reached a terminal state this
+    /// session — terminal entries stay as a fast dedupe in front of the
+    /// ledger). Non-terminal keys are RELEASED when their drive pass ends, so
+    /// the retry pump can re-enter them — the old semantics ("seen once =
+    /// never again this session") lost every event that arrived before the
+    /// client/snapshot was ready.
     seen: Mutex<(VecDeque<String>, HashSet<String>)>,
     /// Recent run outcomes for `GET /api/flows/runs/{id}` (inline + slug runs).
     run_cache: Mutex<(VecDeque<String>, HashMap<String, Value>)>,
-    /// Processing-complete markers (audit FL-001): an event is journaled here
-    /// only AFTER its app-logic effects and binding fan-out finished. The
-    /// startup recovery sweep replays receipts that never got this marker.
+    /// Processing-complete markers (audit FL-001): kept in sync with the work
+    /// ledger's terminal states for downgrade compatibility + the one-time
+    /// import of pre-ledger receipts.
     processed: Option<Arc<crate::plugins::receipts::EventReceipts>>,
-    /// When THIS dispatcher came up — recovery only replays receipts from
-    /// earlier sessions, never envelopes the live pump is already handling.
+    /// Durable per-event work ledger (audit CROSS-EVENT-001):
+    /// received → app-logic → planned bindings → completed | dead, with
+    /// bounded retries, a redrivable DLQ, and cross-session recovery.
+    work: Option<Arc<WorkLedger>>,
+    /// The serial event queues (FL-002 ordering) — stored so the retry pump,
+    /// recovery sweep, and redrive re-enter events through the SAME pipeline.
+    event_queues: Mutex<Option<Arc<crate::flows::serial_queues::SerialQueues<Value>>>>,
+    /// When THIS dispatcher came up — the legacy-receipt import only considers
+    /// receipts from earlier sessions (live envelopes enter the ledger directly).
     session_start: chrono::DateTime<chrono::Utc>,
 }
 
@@ -239,17 +275,19 @@ fn flow_redirect_policy() -> reqwest::redirect::Policy {
     })
 }
 
-/// Which receipt-journal lines the crash-recovery sweep should replay (audit
-/// FL-001): journaled in a PREVIOUS session (`receivedAt < session_start`),
-/// young enough (24 h window — older gaps have aged past usefulness and out
-/// of the rotation anyway), and never marked processed. Deduped by key,
-/// oldest first, so replays land in original arrival order.
+/// Which receipt-journal lines the legacy-import pass should adopt into the
+/// work ledger (audit CROSS-EVENT-001): journaled in a PREVIOUS session
+/// (`receivedAt < session_start` — live envelopes enter the ledger directly)
+/// and never marked processed. There is deliberately NO age cutoff — the
+/// audit's rule is that unfinished work is never age-discarded; staleness is
+/// handled downstream by typed rejections (e.g. call-scoped reservations
+/// expire server-side), which land visibly in the ledger instead of a silent
+/// drop. Deduped by key, oldest first, so replays land in arrival order.
 fn recovery_candidates(
     lines: Vec<Value>,
     is_processed: &dyn Fn(&str) -> bool,
     session_start: chrono::DateTime<chrono::Utc>,
 ) -> Vec<(String, Value)> {
-    let cutoff = session_start - chrono::Duration::hours(24);
     let mut seen = HashSet::new();
     let mut out: Vec<(chrono::DateTime<chrono::Utc>, String, Value)> = Vec::new();
     for v in lines {
@@ -262,8 +300,7 @@ fn recovery_candidates(
         else {
             continue;
         };
-        if at >= session_start || at < cutoff || is_processed(key) || !seen.insert(key.to_string())
-        {
+        if at >= session_start || is_processed(key) || !seen.insert(key.to_string()) {
             continue;
         }
         let Some(event) = v.get("event").filter(|e| e.is_object()).cloned() else { continue };
@@ -336,6 +373,16 @@ impl FlowRuntime {
                 None
             }
         };
+        // The durable work ledger (audit CROSS-EVENT-001). If it can't open,
+        // live processing continues with the legacy best-effort semantics
+        // (in-session dedupe only) — loudly, because durability is off.
+        let work = match WorkLedger::open(host.plugin_data_root.join("host-event-work.jsonl")) {
+            Ok(w) => Some(Arc::new(w)),
+            Err(e) => {
+                eprintln!("[flows] event work ledger unavailable ({e}) — durable event recovery disabled");
+                None
+            }
+        };
         Arc::new(Self {
             host,
             registry,
@@ -349,6 +396,8 @@ impl FlowRuntime {
             seen: Mutex::new((VecDeque::new(), HashSet::new())),
             run_cache: Mutex::new((VecDeque::new(), HashMap::new())),
             processed,
+            work,
+            event_queues: Mutex::new(None),
             session_start: chrono::Utc::now(),
         })
     }
@@ -375,6 +424,9 @@ impl FlowRuntime {
                         as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
                 }),
             );
+            // The retry pump / recovery sweep / DLQ redrive re-enter events
+            // through these SAME per-correlation queues (FL-002 ordering).
+            *self.event_queues.lock().unwrap_or_else(|e| e.into_inner()) = Some(queues.clone());
             tokio::spawn(async move {
                 loop {
                     match rx.recv().await {
@@ -426,69 +478,104 @@ impl FlowRuntime {
             let rt = self.clone();
             tokio::spawn(async move { rt.relay_loop().await });
         }
-        // Crash-recovery sweep (audit FL-001): replay app-logic for events that
-        // were durably journaled (and acked to the plugin) in a previous session
-        // but never reached their processed marker.
+        // Crash-recovery sweep (audit CROSS-EVENT-001): import pre-ledger
+        // receipts once, then re-drive EVERY unfinished ledger event from any
+        // prior session — app-logic AND bindings, no age discard.
         {
             let rt = self.clone();
             tokio::spawn(async move { rt.recovery_sweep().await });
         }
+        // Retry pump (audit CROSS-EVENT-001): re-drives events whose retry
+        // backoff has elapsed (transient API/snapshot/link failures), and
+        // compacts the ledger's journal when it grows past its threshold.
+        {
+            let rt = self.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    tick.tick().await;
+                    let Some(work) = rt.work.clone() else { break };
+                    for (_key, envelope) in work.due_retries(chrono::Utc::now()) {
+                        rt.enqueue_envelope(envelope);
+                    }
+                    work.maybe_compact(chrono::Utc::now());
+                }
+            });
+        }
     }
 
-    // ── crash recovery (audit FL-001) ───────────────────────────────────────────
+    /// Re-enter an envelope through the per-correlation serial queues (the
+    /// same pipeline live events use), falling back to a direct task when the
+    /// queues aren't up yet.
+    fn enqueue_envelope(self: &Arc<Self>, envelope: Value) {
+        let key = envelope
+            .get("correlationId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("__uncorrelated__")
+            .to_string();
+        let queues = self
+            .event_queues
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        match queues {
+            Some(q) => q.enqueue(&key, envelope),
+            None => {
+                let rt = self.clone();
+                tokio::spawn(async move { rt.on_event(envelope).await });
+            }
+        }
+    }
 
-    /// Replay journaled-but-unprocessed envelopes from PREVIOUS sessions.
+    // ── crash recovery (audit CROSS-EVENT-001) ─────────────────────────────────
+
+    /// Recover ALL unfinished event work across every prior session.
     ///
-    /// Only the app-logic path is replayed: its writes carry effect keys, so a
-    /// half-processed event recovers exactly once. Flow bindings are NOT
-    /// replayed — re-running voice/side-effect nodes hours after the call they
-    /// belonged to would be worse than the (logged) gap.
+    /// 1. One-time import: receipts journaled (and acked to the plugin) before
+    ///    the work ledger existed, but never marked processed, become pending
+    ///    ledger rows. No age discard — staleness is handled by typed
+    ///    downstream rejections, not silent drops.
+    /// 2. Every pending ledger event (any prior session, any stage) is
+    ///    re-driven through the SAME serial pipeline as live events — the
+    ///    ledger's stage flags skip whatever already finished, so app-logic
+    ///    AND every planned binding recover exactly once. There is no need to
+    ///    wait for a linked client here: readiness failures reschedule with
+    ///    backoff (without consuming attempts) and the retry pump re-drives.
     async fn recovery_sweep(self: Arc<Self>) {
-        let Some(processed) = self.processed.clone() else { return };
-        // Recovery needs a linked client and a config snapshot; wait bounded.
-        let mut client = None;
-        for _ in 0..20 {
-            if let Some(c) = self.client() {
-                if self.ensure_snapshot(&c).await {
-                    client = Some(c);
-                    break;
+        let Some(work) = self.work.clone() else { return };
+        if let Some(processed) = self.processed.clone() {
+            let mut lines: Vec<Value> = Vec::new();
+            if let Ok(dirs) = std::fs::read_dir(&self.host.plugin_data_root) {
+                for entry in dirs.flatten() {
+                    let path = entry.path().join("host-event-receipts.jsonl");
+                    let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                    lines.extend(text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()));
                 }
             }
-            tokio::time::sleep(Duration::from_secs(3)).await;
-        }
-        let Some(client) = client else { return };
-
-        let mut lines: Vec<Value> = Vec::new();
-        if let Ok(dirs) = std::fs::read_dir(&self.host.plugin_data_root) {
-            for entry in dirs.flatten() {
-                let path = entry.path().join("host-event-receipts.jsonl");
-                let Ok(text) = std::fs::read_to_string(&path) else { continue };
-                lines.extend(text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()));
+            let mut imported = 0usize;
+            for (key, envelope) in
+                recovery_candidates(lines, &|k| processed.contains(k), self.session_start)
+            {
+                if work.receive(&key, &envelope) == ReceiveOutcome::New {
+                    imported += 1;
+                }
+            }
+            if imported > 0 {
+                eprintln!("[flows] crash recovery: imported {imported} pre-ledger receipt(s) as pending event work");
             }
         }
-        let candidates =
-            recovery_candidates(lines, &|k| processed.contains(k), self.session_start);
-        if candidates.is_empty() {
+
+        let pending = work.all_pending();
+        if pending.is_empty() {
             return;
         }
         eprintln!(
-            "[flows] crash recovery: replaying app-logic for {} journaled-but-unprocessed event(s); flow bindings are not replayed",
-            candidates.len()
+            "[flows] crash recovery: re-driving {} unfinished event(s) from prior sessions (app-logic + planned bindings)",
+            pending.len()
         );
-        for (key, envelope) in candidates {
-            if !self.mark_seen(&key) {
-                continue; // the live path owns it
-            }
-            let connector = envelope
-                .get("connectorId")
-                .and_then(Value::as_str)
-                .or_else(|| envelope.get("source").and_then(Value::as_str))
-                .map(str::to_string);
-            let routing = self.route_for(connector.as_deref());
-            if !matches!(routing, ConnectorRouting::Ambiguous(_)) {
-                self.run_app_logic(&envelope, &client, &routing).await;
-            }
-            self.mark_processed(&key);
+        for (_key, envelope) in pending {
+            self.enqueue_envelope(envelope);
         }
     }
 
@@ -539,7 +626,43 @@ impl FlowRuntime {
     }
 
     pub fn status(&self) -> FlowRuntimeStatus {
-        self.status.lock().map(|s| s.clone()).unwrap_or_default()
+        let mut s = self.status.lock().map(|s| s.clone()).unwrap_or_default();
+        if let Some(work) = &self.work {
+            let (pending, dead) = work.counts();
+            s.event_work_pending = pending;
+            s.event_work_dead = dead;
+        }
+        s
+    }
+
+    /// The event-work DLQ + counts (`GET /api/flows/event-work`).
+    pub fn event_work_debug(&self) -> Value {
+        match &self.work {
+            Some(work) => {
+                let (pending, dead) = work.counts();
+                json!({
+                    "available": true,
+                    "pending": pending,
+                    "dead": dead,
+                    "deadLetters": work.dead_letters(),
+                })
+            }
+            None => json!({ "available": false }),
+        }
+    }
+
+    /// Operator redrive (`POST /api/flows/event-work/redrive`): dead → pending
+    /// with a fresh attempt budget, re-entered through the live pipeline.
+    /// `None` redrives the whole dead set. Returns how many events revived.
+    pub fn redrive_event_work(self: &Arc<Self>, key: Option<&str>) -> usize {
+        let Some(work) = &self.work else { return 0 };
+        let revived = work.redrive(key);
+        let n = revived.len();
+        for (k, envelope) in revived {
+            self.release_inflight(&k); // drop the terminal dedupe entry
+            self.enqueue_envelope(envelope);
+        }
+        n
     }
 
     fn base_url(&self) -> String {
@@ -679,6 +802,11 @@ impl FlowRuntime {
             "processedMarkers".to_string(),
             json!(count_lines(&root.join("host-event-processed.jsonl"))),
         );
+        if let Some(work) = &self.work {
+            let (pending, dead) = work.counts();
+            journals.insert("eventWork.pending".to_string(), json!(pending));
+            journals.insert("eventWork.dead".to_string(), json!(dead));
+        }
 
         json!({ "plugins": plugins, "journals": journals })
     }
@@ -697,31 +825,218 @@ impl FlowRuntime {
 
     // ── event loop ──────────────────────────────────────────────────────────────
 
-    /// Handle one desktop event: app-logic record writes + binding fan-out.
+    /// Handle one desktop event: app-logic record writes + binding fan-out,
+    /// driven through the durable work ledger (audit CROSS-EVENT-001). The
+    /// envelope is journaled BEFORE any readiness check — the plugin's receipt
+    /// is already acked, so from here nothing may lose the event: failures
+    /// reschedule (bounded backoff via the retry pump), deterministic
+    /// rejections dead-letter visibly, and only a fully-terminal ledger state
+    /// stops re-delivery.
     async fn on_event(self: Arc<Self>, envelope: Value) {
         let name = envelope.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
         let idem = envelope.get("idempotencyKey").and_then(Value::as_str).unwrap_or_default().to_string();
         if name.is_empty() || idem.is_empty() {
             return;
         }
-        // In-process dedupe: one envelope drives one dispatch.
-        if !self.mark_seen(&idem) {
+        let Some(work) = self.work.clone() else {
+            // Ledger unavailable (logged at boot): legacy best-effort — the
+            // in-process set is then the only dedupe, and nothing recovers.
+            if !self.begin_inflight(&idem) {
+                return;
+            }
+            self.drive_event_legacy(&name, &idem, &envelope).await;
+            return;
+        };
+        // Durable FIRST. A replayed delivery of a terminal event stops here.
+        if work.receive(&idem, &envelope) == ReceiveOutcome::Terminal {
             return;
         }
-        let client = match self.client() {
-            Some(c) => c,
-            None => return, // no account linked — nothing to do headless
+        // In-process guard: one task drives a key at a time.
+        if !self.begin_inflight(&idem) {
+            return;
+        }
+        let terminal = self.drive_event(&work, &name, &idem, &envelope).await;
+        if !terminal {
+            // Still pending (retry scheduled / async bindings in flight):
+            // release the key so the pump's re-entry can process it.
+            self.release_inflight(&idem);
+        }
+    }
+
+    /// One drive pass over the event's remaining stages. Returns whether the
+    /// event reached a terminal state (completed/dead) during this pass.
+    async fn drive_event(
+        self: &Arc<Self>,
+        work: &Arc<WorkLedger>,
+        name: &str,
+        idem: &str,
+        envelope: &Value,
+    ) -> bool {
+        // Readiness failures reschedule WITHOUT consuming attempts — being
+        // offline/unlinked must never dead-letter acked work.
+        let Some(client) = self.client() else {
+            work.note_retry(idem, "no FormLogic account linked", false);
+            return false;
         };
         if !self.ensure_snapshot(&client).await {
-            return;
+            work.note_retry(idem, "flows/bindings snapshot unavailable", false);
+            return false;
         }
         if let Ok(mut s) = self.status.lock() {
             s.last_event_at = Some(now_iso());
         }
 
         // App/connector routing (audit INT-004/C-13): one connector's events
-        // belong to ONE app. Ambiguity is a rejection, loudly visible — the
-        // owner must set an assignment (PUT /api/v1/connector-assignments).
+        // belong to ONE app. Ambiguity is a deterministic rejection → the DLQ
+        // (visible with its reason; redrivable once an assignment is set).
+        let connector = envelope
+            .get("connectorId")
+            .and_then(Value::as_str)
+            .or_else(|| envelope.get("source").and_then(Value::as_str))
+            .map(str::to_string);
+        let routing = self.route_for(connector.as_deref());
+        if let ConnectorRouting::Ambiguous(apps) = &routing {
+            let msg = format!(
+                "event {name} rejected: {} apps use connector '{}' and none is assigned — set an assignment (PUT /api/v1/connector-assignments)",
+                apps.len(),
+                connector.as_deref().unwrap_or("?"),
+            );
+            self.note_error(msg.clone());
+            work.mark_dead(idem, &msg);
+            self.mark_processed(idem);
+            return true;
+        }
+
+        // Stage 1 — app-logic onConnectorEvent (the raw record writes). Its
+        // effect keys make re-runs idempotent; skipped once durably done.
+        if !work.get(idem).is_some_and(|w| w.app_logic_done) {
+            match self.run_app_logic(envelope, &client, &routing).await {
+                StageOutcome::Success => work.mark_app_logic_done(idem),
+                StageOutcome::Permanent(e) => {
+                    // Deterministic failure: recorded, not retried — the
+                    // record-write gap is visible in status/last_error.
+                    self.note_error(format!("app-logic (permanent): {e}"));
+                    work.mark_app_logic_done(idem);
+                }
+                StageOutcome::Retryable(e) => {
+                    self.note_error(format!("app-logic: {e}"));
+                    return work.note_retry(idem, &e, true) != WorkStatus::Pending;
+                }
+            }
+        }
+
+        // Stage 2 — plan the binding fan-out ONCE, durably, before anything
+        // executes: a crash mid-fan-out knows exactly which bindings were
+        // owed. The plan is fixed at this moment; later snapshot changes
+        // can't grow it (no double-fan-out drift on replays).
+        let mut bindings = self.matching_bindings(envelope);
+        bindings.sort_by_key(|b| b.get("sortOrder").and_then(Value::as_i64).unwrap_or(0));
+        if !work.get(idem).is_some_and(|w| w.bindings.is_some()) {
+            let ids: Vec<String> = bindings
+                .iter()
+                .filter_map(|b| b.get("id").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect();
+            work.plan_bindings(idem, &ids);
+        }
+        let planned = work.get(idem).and_then(|w| w.bindings).unwrap_or_default();
+
+        // Stage 3 — execute the planned-but-unfinished bindings in sortOrder
+        // (browser parity, FL-002/audit C-04): `sync` bindings are AWAITED in
+        // order, `async`/`background` spawn at their slot; each records a
+        // typed outcome in the ledger, and the LAST one to finish completes
+        // the event.
+        for binding in &bindings {
+            let Some(binding_id) = binding.get("id").and_then(Value::as_str) else { continue };
+            if planned.get(binding_id).map(|s| s.terminal()).unwrap_or(true) {
+                continue; // done in a prior pass, or not part of this event's plan
+            }
+            let inflight_key = format!("bind:{idem}:{binding_id}");
+            if !self.begin_inflight(&inflight_key) {
+                continue; // a previous pass's async task is still executing it
+            }
+            if binding.get("mode").and_then(Value::as_str) == Some("sync") {
+                let outcome = self.run_binding(binding, envelope, &client, &routing).await;
+                self.settle_binding(work, idem, binding_id, outcome);
+                self.release_inflight(&inflight_key);
+            } else {
+                let rt = self.clone();
+                let client = client.clone();
+                let event = envelope.clone();
+                let routing = routing.clone();
+                let binding = binding.clone();
+                let work = work.clone();
+                let idem = idem.to_string();
+                let binding_id = binding_id.to_string();
+                tokio::spawn(async move {
+                    let outcome = rt.run_binding(&binding, &event, &client, &routing).await;
+                    rt.settle_binding(&work, &idem, &binding_id, outcome);
+                    rt.release_inflight(&inflight_key);
+                    // The last async binding to finish completes the event.
+                    if work.try_complete(&idem) {
+                        rt.mark_processed(&idem);
+                        rt.begin_inflight(&idem); // terminal: keep the fast dedupe entry
+                    }
+                });
+            }
+        }
+        // Planned bindings that no longer exist in the snapshot can never
+        // execute — settle them as skipped so the event can complete.
+        for (binding_id, state) in &planned {
+            if !state.terminal() && !bindings.iter().any(|b| b.get("id").and_then(Value::as_str) == Some(binding_id)) {
+                work.set_binding(idem, binding_id, BindingState::Skipped, Some("binding no longer exists in the snapshot"));
+            }
+        }
+
+        if work.try_complete(idem) {
+            self.mark_processed(idem);
+            return true;
+        }
+        // Not complete: either async bindings are still in flight (their last
+        // task completes the event), or a binding outcome scheduled a retry.
+        false
+    }
+
+    /// Record one binding's typed outcome in the ledger. Retryable outcomes
+    /// leave the binding pending and schedule the EVENT for a re-drive.
+    fn settle_binding(
+        &self,
+        work: &Arc<WorkLedger>,
+        idem: &str,
+        binding_id: &str,
+        outcome: BindingRunOutcome,
+    ) {
+        match outcome {
+            BindingRunOutcome::Done => work.set_binding(idem, binding_id, BindingState::Done, None),
+            BindingRunOutcome::Skipped(reason) => {
+                work.set_binding(idem, binding_id, BindingState::Skipped, Some(&reason))
+            }
+            BindingRunOutcome::Permanent(e) => {
+                self.note_error(format!("binding {binding_id}: {e}"));
+                work.set_binding(idem, binding_id, BindingState::Dead, Some(&e));
+            }
+            BindingRunOutcome::Retryable(e) => {
+                self.note_error(format!("binding {binding_id}: {e}"));
+                if work.note_retry(idem, &format!("binding {binding_id}: {e}"), true) == WorkStatus::Dead {
+                    // Attempt budget exhausted: the event is dead — settle the
+                    // binding so the DLQ row tells the whole story.
+                    work.set_binding(idem, binding_id, BindingState::Dead, Some(&e));
+                    self.mark_processed(idem);
+                }
+            }
+        }
+    }
+
+    /// The pre-ledger event path, used only when the work ledger failed to
+    /// open: process best-effort with in-session dedupe (old semantics).
+    async fn drive_event_legacy(self: &Arc<Self>, name: &str, idem: &str, envelope: &Value) {
+        let Some(client) = self.client() else { return };
+        if !self.ensure_snapshot(&client).await {
+            return;
+        }
+        if let Ok(mut s) = self.status.lock() {
+            s.last_event_at = Some(now_iso());
+        }
         let connector = envelope
             .get("connectorId")
             .and_then(Value::as_str)
@@ -734,42 +1049,26 @@ impl FlowRuntime {
                 apps.len(),
                 connector.as_deref().unwrap_or("?"),
             ));
-            // The rejection IS this event's outcome — mark it so recovery
-            // doesn't re-reject it (loudly) on every restart.
-            self.mark_processed(&idem);
+            self.mark_processed(idem);
             return;
         }
-
-        // (1) App-logic onConnectorEvent — the raw record writes.
-        self.run_app_logic(&envelope, &client, &routing).await;
-
-        // (2) Binding fan-out — browser parity (FL-002/audit C-04). Bindings
-        // arrive server-ordered by sortOrder (stable-sorted again here in
-        // case a stale snapshot predates that); `sync` bindings are AWAITED
-        // in that order, `async`/`background` spawn detached at their slot —
-        // so work at a later slot can never start before an earlier sync
-        // binding (e.g. configure-receptionist at sortOrder 0) completed.
-        let mut bindings = self.matching_bindings(&envelope);
+        let _ = self.run_app_logic(envelope, &client, &routing).await;
+        let mut bindings = self.matching_bindings(envelope);
         bindings.sort_by_key(|b| b.get("sortOrder").and_then(Value::as_i64).unwrap_or(0));
         for binding in bindings {
             if binding.get("mode").and_then(Value::as_str) == Some("sync") {
-                self.run_binding(&binding, &envelope, &client, &routing).await;
+                let _ = self.run_binding(&binding, envelope, &client, &routing).await;
             } else {
                 let rt = self.clone();
                 let client = client.clone();
                 let event = envelope.clone();
                 let routing = routing.clone();
                 tokio::spawn(async move {
-                    rt.run_binding(&binding, &event, &client, &routing).await;
+                    let _ = rt.run_binding(&binding, &event, &client, &routing).await;
                 });
             }
         }
-
-        // Audit FL-001: only now — app-logic applied, sync bindings done,
-        // async bindings spawned — is this envelope "processed". Earlier
-        // returns (unlinked, no snapshot) deliberately leave no marker, so
-        // the startup recovery sweep retries them next session.
-        self.mark_processed(&idem);
+        self.mark_processed(idem);
     }
 
     /// Journal an idempotencyKey as fully processed (best-effort — a write
@@ -785,13 +1084,19 @@ impl FlowRuntime {
 
     /// Apply the ROUTED app's `onConnectorEvent` scripts to this event
     /// (audit INT-004: never every linked app's).
+    ///
+    /// Typed outcome (audit CROSS-EVENT-001): any script/API error is
+    /// `Retryable` — the record writes carry effect keys, so a re-run is
+    /// idempotent, and a deterministic script bug simply exhausts its attempt
+    /// budget into the visible DLQ instead of being logged-and-forgotten.
     async fn run_app_logic(
         &self,
         envelope: &Value,
         client: &FormLogicClient,
         routing: &ConnectorRouting,
-    ) {
+    ) -> StageOutcome {
         let apps: Vec<Value> = self.with_snapshot(|s| s.applogic.clone()).unwrap_or_default();
+        let mut errors: Vec<String> = Vec::new();
         for entry in &apps {
             let entry_app_id = entry
                 .get("app")
@@ -815,9 +1120,12 @@ impl FlowRuntime {
                 all.insert(app_id, g.clone());
             }
             self.note_records((report.submitted + report.updated) as u64);
-            for e in &report.errors {
-                self.note_error(format!("app-logic: {e}"));
-            }
+            errors.extend(report.errors.iter().cloned());
+        }
+        if errors.is_empty() {
+            StageOutcome::Success
+        } else {
+            StageOutcome::Retryable(errors.join("; "))
         }
     }
 
@@ -867,19 +1175,22 @@ impl FlowRuntime {
     }
 
     /// One binding: condition → reserve (idempotent) → execute → outputActions → complete.
+    ///
+    /// Returns a typed outcome (audit CROSS-EVENT-001) instead of silently
+    /// returning: the caller records it in the durable work ledger.
     async fn run_binding(
         self: &Arc<Self>,
         binding: &Value,
         event: &Value,
         client: &Arc<FormLogicClient>,
         routing: &ConnectorRouting,
-    ) {
+    ) -> BindingRunOutcome {
         // Condition (fail-safe: absent → true; error/false → skip).
         if let Some(expr) = binding.get("condition").and_then(|c| c.get("expr")).and_then(Value::as_str) {
             let ctx = json!({ "event": event });
             match quickjs::eval_bool(expr, &ctx).await {
                 Ok(true) => {}
-                _ => return,
+                _ => return BindingRunOutcome::Skipped("condition not met".into()),
             }
         }
         let binding_id = binding.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -887,14 +1198,14 @@ impl FlowRuntime {
         let flow_def_id = binding.get("flowDefinitionId").and_then(Value::as_str).map(str::to_string);
         let flow = match self.find_flow(flow_def_id.as_deref(), &flow_slug) {
             Some(f) => f,
-            None => return,
+            None => return BindingRunOutcome::Skipped(format!("flow '{flow_slug}' not found in the snapshot")),
         };
         let app_id = flow.get("appId").and_then(Value::as_str).map(str::to_string);
         // INT-004/C-13: a flow belonging to an app OTHER than the connector's
         // routed app must not fire for this event (app-less workspace flows
         // stay unrestricted).
         if !routing.allows_flow(app_id.as_deref()) {
-            return;
+            return BindingRunOutcome::Skipped("connector routed to another app".into());
         }
         let app_ctx = self.app_context(app_id.as_deref());
 
@@ -918,16 +1229,38 @@ impl FlowRuntime {
         let (run, created) = match client.reserve_run(&reserve).await {
             Ok(v) => v,
             Err(e) => {
-                self.note_error(format!("reserve {binding_id}: {e}"));
-                return;
+                return match &e {
+                    // Transport / server-side trouble: the reservation may
+                    // simply not have happened — retry with backoff.
+                    FlError::Network(_) | FlError::NotConfigured => {
+                        BindingRunOutcome::Retryable(format!("reserve {binding_id}: {e}"))
+                    }
+                    FlError::Unauthorized(_) => {
+                        BindingRunOutcome::Retryable(format!("reserve {binding_id}: {e}"))
+                    }
+                    FlError::Conflict => BindingRunOutcome::Skipped(
+                        "reservation already finalized elsewhere".into(),
+                    ),
+                    FlError::Http { status, .. } if *status >= 500 || *status == 408 || *status == 429 => {
+                        BindingRunOutcome::Retryable(format!("reserve {binding_id}: {e}"))
+                    }
+                    // Typed 4xx (e.g. a stale call-scoped trigger past its
+                    // TTL): deterministic — retrying cannot change the answer.
+                    FlError::Http { .. } => {
+                        BindingRunOutcome::Permanent(format!("reserve {binding_id}: {e}"))
+                    }
+                };
             }
         };
         if !created {
-            return; // duplicate event — another runtime already owns it
+            // Duplicate: another runtime owns it — or OUR OWN reservation from
+            // a crashed pass; the server's stale-run reclaim requeues that for
+            // the claim loop, so the work is not lost either way.
+            return BindingRunOutcome::Skipped("already reserved (another runtime, or recovered via the claim loop)".into());
         }
         let run_id = run.get("runId").or_else(|| run.get("id")).and_then(Value::as_str).unwrap_or_default().to_string();
         if run_id.is_empty() {
-            return;
+            return BindingRunOutcome::Permanent("reserve returned no run id".into());
         }
 
         let outcome = self
@@ -961,6 +1294,12 @@ impl FlowRuntime {
         if outcome.status != "done" || !action_errors.is_empty() {
             self.apply_fallback(binding, event, &outcome, &action_errors).await;
         }
+
+        // Executed to a durable server-side run row (success OR flow-level
+        // failure — both are recorded; flow retryPolicy already ran inside
+        // execute_with_retry). From the ledger's perspective this binding is
+        // done: re-running it could double the flow's side effects.
+        BindingRunOutcome::Done
     }
 
     /// The Rust twin of the browser dispatcher's `applyFallback` — same trigger, same
@@ -1529,7 +1868,11 @@ impl FlowRuntime {
     }
 
     /// Record `idem` as seen; returns `false` if it was already present.
-    fn mark_seen(&self, idem: &str) -> bool {
+    /// Claim a key for in-process work; `false` = another task holds it (or a
+    /// terminal entry is deduping replays). Terminal keys stay claimed; keys
+    /// whose work is still pending are released via [`release_inflight`](Self::release_inflight)
+    /// so the retry pump can re-enter them.
+    fn begin_inflight(&self, idem: &str) -> bool {
         let mut g = self.seen.lock().unwrap_or_else(|e| e.into_inner());
         if g.1.contains(idem) {
             return false;
@@ -1542,6 +1885,17 @@ impl FlowRuntime {
             }
         }
         true
+    }
+
+    /// Release a non-terminal key so a later pass (retry pump, plugin replay)
+    /// can drive it again. Also drops the queue entry so a stale duplicate in
+    /// the eviction deque can never evict a live claim of the same key.
+    fn release_inflight(&self, idem: &str) {
+        let mut g = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        g.1.remove(idem);
+        if let Some(pos) = g.0.iter().position(|k| k == idem) {
+            g.0.remove(pos);
+        }
     }
 
     fn cache_run(&self, run_id: &str, body: &Value) {
@@ -1721,7 +2075,9 @@ mod tests {
             line("older-unprocessed", at(90)),
             line("already-processed", at(10)),
             line("this-session", (start + chrono::Duration::seconds(1)).to_rfc3339()),
-            line("too-old", at(60 * 25)),
+            // Audit CROSS-EVENT-001: unfinished work is NEVER age-discarded —
+            // a days-old unprocessed receipt is still recovered.
+            line("days-old-unprocessed", at(60 * 25)),
             line("newer-unprocessed", at(5)), // duplicate journal line
             json!({ "key": "no-envelope", "receivedAt": at(3) }),
             json!({ "receivedAt": at(2), "event": {} }), // no key
@@ -1730,8 +2086,8 @@ mod tests {
         let keys: Vec<&str> = picked.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["older-unprocessed", "newer-unprocessed"],
-            "pre-session unprocessed only, deduped, oldest first"
+            vec!["days-old-unprocessed", "older-unprocessed", "newer-unprocessed"],
+            "pre-session unprocessed only, no age discard, deduped, oldest first"
         );
         assert_eq!(
             picked[0].1.get("name").and_then(Value::as_str),
@@ -1875,11 +2231,15 @@ mod tests {
     #[test]
     fn seen_dedup_is_bounded_and_dedupes() {
         let rt = runtime();
-        assert!(rt.mark_seen("a"));
-        assert!(!rt.mark_seen("a"));
-        assert!(rt.mark_seen("b"));
+        assert!(rt.begin_inflight("a"));
+        assert!(!rt.begin_inflight("a"));
+        assert!(rt.begin_inflight("b"));
+        // Releasing a non-terminal key lets a later pass re-claim it (the
+        // retry pump's re-entry — audit CROSS-EVENT-001).
+        rt.release_inflight("a");
+        assert!(rt.begin_inflight("a"));
         for i in 0..(SEEN_CAP + 10) {
-            rt.mark_seen(&format!("k{i}"));
+            rt.begin_inflight(&format!("k{i}"));
         }
         let g = rt.seen.lock().unwrap();
         assert!(g.0.len() <= SEEN_CAP);

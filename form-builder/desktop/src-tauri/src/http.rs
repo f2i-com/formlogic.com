@@ -1334,6 +1334,44 @@ async fn flows_run_status(State(st): State<DesktopState>, Path(id): Path<String>
     }
 }
 
+/// `GET /api/flows/event-work` — the durable event-work DLQ (audit
+/// CROSS-EVENT-001): pending/dead counts and every dead-lettered plugin event
+/// with its reason, attempts and age.
+async fn flows_event_work(State(st): State<DesktopState>) -> impl IntoResponse {
+    match &st.flow_runtime {
+        Some(rt) => (StatusCode::OK, Json(rt.event_work_debug())).into_response(),
+        None => desktop_err(
+            StatusCode::NOT_IMPLEMENTED,
+            "runner_unavailable",
+            "the desktop flow runtime is not available",
+        ),
+    }
+}
+
+/// `POST /api/flows/event-work/redrive {key?}` — operator redrive: revive one
+/// dead event (or, with no key, the whole dead set) back through the live
+/// pipeline with a fresh attempt budget.
+async fn flows_event_work_redrive(
+    State(st): State<DesktopState>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    let rt = match &st.flow_runtime {
+        Some(r) => r.clone(),
+        None => {
+            return desktop_err(
+                StatusCode::NOT_IMPLEMENTED,
+                "runner_unavailable",
+                "the desktop flow runtime is not available",
+            )
+        }
+    };
+    let key = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("key").and_then(|k| k.as_str()).map(str::to_string));
+    let revived = rt.redrive_event_work(key.as_deref());
+    (StatusCode::OK, Json(serde_json::json!({ "revived": revived }))).into_response()
+}
+
 // ------- helpers -------
 
 fn err400(msg: &str) -> axum::response::Response {
@@ -1730,6 +1768,10 @@ pub async fn serve(
         // LIVE desktop flow runner (docs/FORMLOGIC_DESKTOP.md §2).
         .route("/api/flows/run", post(flows_run))
         .route("/api/flows/runs/:id", get(flows_run_status))
+        // Durable event-work DLQ (audit CROSS-EVENT-001): dead-lettered
+        // plugin events with reason/age + the operator redrive.
+        .route("/api/flows/event-work", get(flows_event_work))
+        .route("/api/flows/event-work/redrive", post(flows_event_work_redrive))
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
             plugin_auth_guard,
