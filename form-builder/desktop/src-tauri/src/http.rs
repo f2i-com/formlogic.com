@@ -590,6 +590,11 @@ struct DesktopState {
     /// patterns, valid-until). Bounds server introspection to one call per
     /// token lifetime.
     capability_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
+    /// Last-known VERIFIED grants per capability token (grants, verified_at) — the offline-grace
+    /// source of truth (audit DESK-CAP-001). Unlike `capability_cache` (a short positive-TTL
+    /// cache), entries here outlive the token TTL but are only honoured while the cloud is
+    /// unreachable AND the verification is younger than `OFFLINE_GRACE_MAX_AGE`.
+    capability_last_known: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
 }
 
 /// `{ok:false, error:{code, message}}` — the contract error envelope.
@@ -937,6 +942,21 @@ fn capability_grants_allow(grants: &[String], connector_id: &str, command: &str)
 ///   found" (expired/forged) denies; a TRANSPORT failure fails open with a
 ///   log so a local operator is not locked out of their own phone while
 ///   the internet is down (bounded revocation lag, documented).
+/// How long a previously VERIFIED capability keeps working while the cloud is unreachable
+/// (audit DESK-CAP-001). Long enough to ride out a normal outage without locking the local
+/// operator out of their own phone; short enough that a revoked member's access dies within
+/// minutes even if they cut the desktop's connectivity on purpose.
+const OFFLINE_GRACE_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The DESK-CAP-001 offline-grace decision, factored pure for tests: a token is honoured
+/// during a cloud outage ONLY when this desktop verified it before AND that verification
+/// is younger than the grace window — and then only with its recorded grants.
+fn offline_grace_grants(last_known: Option<&(Vec<String>, std::time::Instant)>) -> Option<Vec<String>> {
+    last_known
+        .filter(|(_, at)| at.elapsed() < OFFLINE_GRACE_MAX_AGE)
+        .map(|(g, _)| g.clone())
+}
+
 async fn check_connector_capability(
     st: &DesktopState,
     headers: &axum::http::HeaderMap,
@@ -985,23 +1005,53 @@ async fn check_connector_capability(
                         (grants.clone(), std::time::Instant::now() + std::time::Duration::from_secs(ttl_secs.min(300))),
                     );
                 }
+                if let Ok(mut lk) = st.capability_last_known.lock() {
+                    lk.retain(|_, (_, at)| at.elapsed() < OFFLINE_GRACE_MAX_AGE);
+                    lk.insert(token.clone(), (grants.clone(), std::time::Instant::now()));
+                }
                 grants
             }
             Ok(None) => {
+                if let Ok(mut lk) = st.capability_last_known.lock() {
+                    lk.remove(&token);
+                }
                 return Err(desktop_err(
                     StatusCode::FORBIDDEN,
                     "capability_denied",
                     "this connector capability is expired or invalid — reload the app page",
-                ))
+                ));
             }
-            // Offline grace applies ONLY to a genuine transport failure so a
-            // local operator is not locked out of their own phone while the
-            // internet is down. A server that ANSWERS with a definitive
-            // non-grant (401/403 unauthorized, or any other HTTP error) is not
-            // "offline" — treat it as a deny and fail CLOSED (audit SEC-001).
+            // Offline grace applies ONLY to a genuine transport failure, and even then
+            // ONLY to a token this desktop has previously VERIFIED (audit DESK-CAP-001):
+            // the old blanket allow meant any well-formed token — revoked, forged, or a
+            // low-privilege member's — could run privileged local commands for as long
+            // as the cloud stayed unreachable. Now the last-known verified grants are
+            // reused for a bounded window (revocation lag ≤ OFFLINE_GRACE_MAX_AGE) and
+            // the per-command grant check below still applies; a cache miss fails
+            // CLOSED. A server that ANSWERS with a definitive non-grant is not
+            // "offline" — that denies outright (audit SEC-001).
             Err(crate::formlogic_client::FlError::Network(e)) => {
-                eprintln!("[desktop] capability introspection unreachable (network: {e}) — allowing (offline grace)");
-                return Ok(());
+                let last_known = st
+                    .capability_last_known
+                    .lock()
+                    .ok()
+                    .and_then(|lk| lk.get(&token).cloned());
+                match offline_grace_grants(last_known.as_ref()) {
+                    Some(grants) => {
+                        eprintln!(
+                            "[desktop] capability introspection unreachable (network: {e}) — using previously verified grants (bounded offline grace)"
+                        );
+                        grants
+                    }
+                    None => {
+                        eprintln!("[desktop] capability introspection unreachable (network: {e}) and no recent verification for this token — denying (fail closed)");
+                        return Err(desktop_err(
+                            StatusCode::FORBIDDEN,
+                            "capability_denied",
+                            "your access could not be verified while the cloud is unreachable — try again once the connection is back",
+                        ));
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("[desktop] capability introspection refused ({e:?}) — denying (fail closed)");
@@ -1657,6 +1707,7 @@ pub async fn serve(
         },
         flow_runtime,
         capability_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        capability_last_known: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Plugin-API routes: everything behind the pairing-token guard.
@@ -1725,10 +1776,29 @@ pub async fn serve(
 mod tests {
     use super::{
         connector_failure_status, desktop_auth_decision, desktop_info_body, health_body,
-        is_desktop_api_path, is_restricted_read_path, privileged_allowed,
+        is_desktop_api_path, is_restricted_read_path, offline_grace_grants, privileged_allowed,
+        OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::StatusCode;
+
+    #[test]
+    fn offline_grace_honours_only_recent_verified_tokens_with_their_grants() {
+        // DESK-CAP-001: a cloud outage must never turn into a blanket allow.
+        let now = std::time::Instant::now();
+        let grants = vec!["connector.aokie.call.answer".to_string()];
+
+        // Never verified on this desktop → fail closed.
+        assert_eq!(offline_grace_grants(None), None);
+
+        // Recently verified → the RECORDED grants apply (the per-command check still runs).
+        assert_eq!(offline_grace_grants(Some(&(grants.clone(), now))), Some(grants.clone()));
+
+        // Verified too long ago → the grace window has lapsed; fail closed.
+        if let Some(stale) = now.checked_sub(OFFLINE_GRACE_MAX_AGE + std::time::Duration::from_secs(1)) {
+            assert_eq!(offline_grace_grants(Some(&(grants, stale))), None);
+        }
+    }
 
     #[test]
     fn health_reports_new_and_legacy_identity() {
