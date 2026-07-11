@@ -99,6 +99,9 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'settings.get',
   'settings.set',
   'outbox.redrive',
+  'consent.get',
+  'consent.set',
+  'consent.revoke',
 ] as const;
 
 export type AokieEventName = (typeof AOKIE_EVENT_NAMES)[number];
