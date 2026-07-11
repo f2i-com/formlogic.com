@@ -378,7 +378,7 @@ class AppUserService
     public function getAppUser(string $appId, string $userId): ?array
     {
         $stmt = $this->mysql->prepare("
-            SELECT au.*, u.email, u.name as user_name, ar.name as role_name
+            SELECT au.*, u.email, u.name as user_name, u.timezone as user_timezone, ar.name as role_name
             FROM app_users au
             JOIN users u ON u.id = au.user_id
             JOIN app_roles ar ON ar.id = au.role_id
@@ -395,6 +395,8 @@ class AppUserService
         $user['email'] = $row['email'];
         $user['name'] = $row['user_name'];
         $user['roleName'] = $row['role_name'];
+        // The viewing member's display timezone (record times render in it).
+        $user['timezone'] = $row['user_timezone'] ?? null;
         return $user;
     }
 

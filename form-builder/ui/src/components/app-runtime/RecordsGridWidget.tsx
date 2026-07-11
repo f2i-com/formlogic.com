@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Inbox } from 'lucide-react';
 import type { DashboardWidget } from '../../types/app';
 import type { WidgetDataForm } from './widgetData';
+import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 
 type FieldOption = { value: string; label?: string };
 interface Col { id: string; label: string; type: string; options?: FieldOption[] }
@@ -28,15 +29,18 @@ function deriveColumns(form: WidgetDataForm | undefined, columnFieldIds?: string
     .map((f) => toCol(f, f.id));
 }
 
-/** Format a cell: choice values map to their option label; dates localize; arrays join. */
-function cell(v: unknown, col: Col): string {
+/** Format a cell: choice values map to their option label; dates localize;
+ *  datetimes (and ISO-8601 text) render in the viewer's timezone; arrays join. */
+function cell(v: unknown, col: Col, tz: string): string {
   const labelFor = (x: unknown): string => col.options?.find((o) => o.value === x)?.label ?? String(x);
   if (v == null || v === '') return '—';
   if (Array.isArray(v)) return v.length ? v.map(labelFor).join(', ') : '—';
   if (typeof v === 'object') return '—';
   if (col.type === 'date' && typeof v === 'string') {
-    const d = new Date(v + 'T00:00:00');
-    return isNaN(d.getTime()) ? v : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return formatDateOnly(v);
+  }
+  if (typeof v === 'string' && (col.type === 'datetime' || isIsoDateTime(v))) {
+    return formatDateTimeInZone(v, tz);
   }
   return labelFor(v);
 }
@@ -53,6 +57,7 @@ interface RecordsGridWidgetProps {
 }
 
 export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: RecordsGridWidgetProps) {
+  const tz = useDisplayTimezone();
   const cfg = widget.grid;
   const formId = cfg?.formId ?? '';
   const pageSize = Math.max(1, Math.min(cfg?.pageSize ?? 10, 50));
@@ -186,7 +191,7 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
                   >
                     {cols.length ? cols.map((c, i) => (
                       <td key={c.id} className={`px-4 py-2.5 text-gray-700 dark:text-slate-300 max-w-[14rem] truncate ${i === 0 ? 'font-medium' : ''}`}>
-                        {cell(answers[c.id], c)}
+                        {cell(answers[c.id], c, tz)}
                       </td>
                     )) : <td className="px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{`Record ${id.slice(0, 8)}`}</td>}
                   </tr>

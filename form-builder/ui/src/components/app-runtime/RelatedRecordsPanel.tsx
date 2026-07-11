@@ -7,6 +7,7 @@ import { ListRowSkeleton } from '../ui/Skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { parseServerDate } from '../../lib/utils';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 
 type RelatedColumn = NonNullable<RelatedRecordGroup['columns']>[number];
 
@@ -30,8 +31,9 @@ interface RelatedRecordsPanelProps {
   excludeFieldIds?: string[];
 }
 
-/** Render one related-record cell: arrays join, choice values map to their option label. */
-function formatCell(value: unknown, col: RelatedColumn): string {
+/** Render one related-record cell: arrays join, choice values map to their
+ *  option label, datetimes (incl. ISO-8601 text) show in the viewer's timezone. */
+function formatCell(value: unknown, col: RelatedColumn, tz: string): string {
   const labelFor = (v: unknown): string => {
     const opt = col.options?.find((o) => o.value === v);
     return opt ? opt.label : String(v);
@@ -40,8 +42,10 @@ function formatCell(value: unknown, col: RelatedColumn): string {
   if (Array.isArray(value)) return value.length ? value.map(labelFor).join(', ') : '—';
   if (typeof value === 'object') return '—';
   if (col.type === 'date' && typeof value === 'string') {
-    const d = new Date(value + 'T00:00:00');
-    return isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return formatDateOnly(value);
+  }
+  if (typeof value === 'string' && (col.type === 'datetime' || isIsoDateTime(value))) {
+    return formatDateTimeInZone(value, tz);
   }
   return labelFor(value);
 }
@@ -50,6 +54,7 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
   const { appSlug, formId, responseId, fetchRelated, deleteRecord, onOpenRecord, onAddRecord } = props;
   const navigate = useNavigate();
   const store = useAppRuntimeStore();
+  const tz = useDisplayTimezone();
   const [related, setRelated] = useState<Record<string, RelatedRecordGroup>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,12 +210,12 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
                       {cols
                         ? cols.map((c, i) => (
                             <td key={c.id} className={`px-5 py-3 text-gray-700 dark:text-slate-300 ${i === 0 ? 'font-medium' : ''} max-w-[16rem] truncate`}>
-                              {formatCell(record.fields?.[c.id], c)}
+                              {formatCell(record.fields?.[c.id], c, tz)}
                             </td>
                           ))
                         : <td className="px-5 py-3 font-medium text-gray-700 dark:text-slate-300 max-w-[20rem] truncate">{record.display}</td>}
                       <td className="px-5 py-3 text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">
-                        {record.submittedAt ? parseServerDate(record.submittedAt).toLocaleDateString() : '—'}
+                        {record.submittedAt ? formatDateTimeInZone(record.submittedAt, tz) : '—'}
                       </td>
                       <td className="px-3 py-3 w-10">
                         {mayDelete && (

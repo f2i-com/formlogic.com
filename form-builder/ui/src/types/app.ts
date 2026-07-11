@@ -43,6 +43,10 @@ export interface AppSettings {
   hideNav?: boolean;
   /** Optional portal type ('admin console' / 'client portal' / …) — see AppKind. */
   appKind?: AppKind;
+  /** IANA timezone record times are displayed in for members without their own
+   *  account timezone. Defaulted from the creator's account on app creation;
+   *  also drives report date bucketing. Empty/absent → UTC. */
+  timezone?: string;
 }
 
 export interface AppNavItem {

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
+import { browserTimezone } from '../lib/timezone';
 import { useFormStore, clearAllDebounceTimers } from './formStore';
 import { useAppStore } from './appStore';
 import { useAppUserStore } from './appUserStore';
@@ -14,6 +15,8 @@ interface User {
   name?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** IANA timezone the user prefers record times shown in ('' / undefined = unset). */
+  timezone?: string;
   /** True for the shared public "Demo" account (drives the demo banner). */
   isDemo?: boolean;
 }
@@ -175,7 +178,9 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
 
         try {
-          const result = await api.register(email, password, name);
+          // Auto-capture the browser's timezone so the new account shows record
+          // times in the user's own clock by default (editable later in Profile).
+          const result = await api.register(email, password, name, browserTimezone() || undefined);
 
           if (result.error || !result.data) {
             set({ isLoading: false, error: result.error || 'Registration failed' });

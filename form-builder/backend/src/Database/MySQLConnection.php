@@ -134,6 +134,7 @@ class MySQLConnection
                 email VARCHAR(255) NOT NULL UNIQUE,
                 password_hash VARCHAR(255) NOT NULL,
                 name VARCHAR(255),
+                timezone VARCHAR(64) DEFAULT NULL,
                 token_version INT NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1188,6 +1189,14 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'token_version'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE users ADD COLUMN token_version INT NOT NULL DEFAULT 0");
+        }
+
+        // Per-account display timezone (IANA name) — record times are shown in
+        // this zone (falling back to the app's timezone, then UTC). Nullable;
+        // existing rows default to unset.
+        $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'timezone'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN timezone VARCHAR(64) DEFAULT NULL AFTER name");
         }
 
         // Create rate_limits table for persistent rate limiting / login throttling (R1).

@@ -378,10 +378,10 @@ class ApiClient {
   }
 
   // Auth endpoints
-  async register(email: string, password: string, name?: string): Promise<ApiResponse<{ user: User }>> {
+  async register(email: string, password: string, name?: string, timezone?: string): Promise<ApiResponse<{ user: User }>> {
     const result = await this.request<{ user: User }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({ email, password, name, timezone }),
     });
 
     if (result.data?.user) {
@@ -2304,6 +2304,8 @@ interface User {
   name?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** IANA timezone the user prefers record times shown in ('' / undefined = unset). */
+  timezone?: string;
   /** True when this is the shared public "Demo" account (drives the demo banner). */
   isDemo?: boolean;
 }

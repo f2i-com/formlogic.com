@@ -12,7 +12,9 @@ class User
         public ?string $name = null,
         public ?string $passwordHash = null,
         public ?string $createdAt = null,
-        public ?string $updatedAt = null
+        public ?string $updatedAt = null,
+        /** IANA timezone the user prefers record times shown in (null = unset). */
+        public ?string $timezone = null
     ) {}
 
     public static function fromArray(array $data): self
@@ -23,7 +25,8 @@ class User
             name: $data['name'] ?? null,
             passwordHash: $data['password_hash'] ?? null,
             createdAt: $data['created_at'] ?? null,
-            updatedAt: $data['updated_at'] ?? null
+            updatedAt: $data['updated_at'] ?? null,
+            timezone: $data['timezone'] ?? null
         );
     }
 
@@ -35,6 +38,7 @@ class User
             'name' => $this->name,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
+            'timezone' => $this->timezone,
         ];
 
         if ($includePassword && $this->passwordHash) {

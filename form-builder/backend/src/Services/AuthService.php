@@ -86,10 +86,18 @@ class AuthService
      * where two concurrent registrations with the same email could both succeed
      * if we only checked for existence before inserting.
      */
-    public function register(string $email, string $password, ?string $name = null): array
+    public function register(string $email, string $password, ?string $name = null, ?string $timezone = null): array
     {
         if ($name !== null && mb_strlen($name) > self::MAX_NAME_LENGTH) {
             throw new \InvalidArgumentException('Name must be ' . self::MAX_NAME_LENGTH . ' characters or fewer.');
+        }
+
+        // A browser-detected timezone at signup gives the account a sensible
+        // default display zone. Validate against the IANA list; anything else
+        // is simply ignored (the account starts unset → falls back to app/UTC).
+        $tz = $timezone !== null ? trim($timezone) : '';
+        if ($tz !== '' && !in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
+            $tz = '';
         }
 
         $userId = $this->generateUuid();
@@ -100,8 +108,8 @@ class AuthService
             // Every new account starts with a free Cloud window (30 days normally; longer in beta —
             // see BETA_MODE). $signupFreeDays is a server-controlled int, safe to interpolate.
             $stmt = $this->mysql->prepare("
-                INSERT INTO users (id, email, password_hash, name, cloud_until, created_at, updated_at)
-                VALUES (:id, :email, :password_hash, :name, DATE_ADD(NOW(), INTERVAL {$this->signupFreeDays} DAY), :created_at, :updated_at)
+                INSERT INTO users (id, email, password_hash, name, timezone, cloud_until, created_at, updated_at)
+                VALUES (:id, :email, :password_hash, :name, :timezone, DATE_ADD(NOW(), INTERVAL {$this->signupFreeDays} DAY), :created_at, :updated_at)
             ");
 
             $stmt->execute([
@@ -109,6 +117,7 @@ class AuthService
                 'email' => $email,
                 'password_hash' => $passwordHash,
                 'name' => $name,
+                'timezone' => $tz === '' ? null : $tz,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -358,6 +367,18 @@ class AuthService
             }
             $updates[] = "name = :name";
             $params['name'] = $data['name'];
+        }
+
+        // Per-account display timezone. Validated against the real IANA list so
+        // a bad value can't reach the client-side Intl formatter; '' clears it
+        // (falls back to the app timezone, then UTC).
+        if (array_key_exists('timezone', $data)) {
+            $tz = trim((string) $data['timezone']);
+            if ($tz !== '' && !in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
+                throw new \InvalidArgumentException('Invalid timezone');
+            }
+            $updates[] = "timezone = :timezone";
+            $params['timezone'] = $tz === '' ? null : $tz;
         }
 
         if (isset($data['email'])) {

@@ -93,7 +93,8 @@ class AuthController
             $result = $this->authService->register(
                 $email,
                 $data['password'],
-                $data['name'] ?? null
+                $data['name'] ?? null,
+                is_string($data['timezone'] ?? null) ? $data['timezone'] : null
             );
 
             // Set HttpOnly cookie with the token
@@ -342,7 +343,7 @@ class AuthController
 
         try {
             // Only allow known fields to prevent mass-assignment
-            $allowedFields = ['name', 'email', 'password', 'currentPassword'];
+            $allowedFields = ['name', 'email', 'password', 'currentPassword', 'timezone'];
             $filteredData = array_intersect_key($data ?? [], array_flip($allowedFields));
             $updatedUser = $this->authService->updateUser($user->id, $filteredData);
 

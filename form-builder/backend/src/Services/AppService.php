@@ -92,6 +92,20 @@ class AppService
         return $settings;
     }
 
+    /** The user's account timezone (IANA name), or null if unset. Used to seed
+     *  a new app's display timezone from its creator. */
+    private function getUserTimezone(string $userId): ?string
+    {
+        try {
+            $stmt = $this->mysql->prepare("SELECT timezone FROM users WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+            $tz = $stmt->fetchColumn();
+            return is_string($tz) && $tz !== '' ? $tz : null;
+        } catch (\Throwable) {
+            return null; // column may not exist on a mid-migration DB — non-fatal
+        }
+    }
+
     public function getAllApps(string $userId): array
     {
         // form_count subquery: the REAL number of attached forms for list displays. navConfig is NOT a
@@ -272,6 +286,16 @@ class AppService
         $settings = is_array($data['settings'] ?? null) ? $data['settings'] : [];
         if (isset($data['appKind']) && !array_key_exists('appKind', $settings)) {
             $settings['appKind'] = $data['appKind'];
+        }
+        // Default the app's display timezone to the CREATOR's account timezone
+        // (so their apps show times in their own clock out of the box). Members
+        // can still override with their own account timezone; the app owner can
+        // change this in App settings. Only when the caller didn't set one.
+        if (!array_key_exists('timezone', $settings)) {
+            $creatorTz = $this->getUserTimezone($ownerId);
+            if ($creatorTz !== null && $creatorTz !== '') {
+                $settings['timezone'] = $creatorTz;
+            }
         }
         $settings = $this->sanitizeAppSettings($settings);
 

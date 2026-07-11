@@ -44,6 +44,9 @@ interface AppRuntimeState {
   error: string | null;
   permissions: AppUserPermissions | null;
   roleName: string | null;
+  /** The viewing member's own account timezone (IANA), from the bootstrap
+   *  payload. Overrides the app timezone when displaying record times. */
+  memberTimezone: string | null;
 
   // Actions
   initialize: (appSlug: string) => Promise<void>;
@@ -101,6 +104,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       error: null,
       permissions: null,
       roleName: null,
+      memberTimezone: null,
 
       initialize: async (appSlug: string) => {
         // Register cleanup callback (replace previous to avoid stale closures on HMR)
@@ -112,7 +116,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         };
         api.onSessionExpired(_appRuntimeSessionCallback);
 
-        set({ isLoading: true, error: null, appSlug, config: null, permissions: null, roleName: null, activeFormId: null });
+        set({ isLoading: true, error: null, appSlug, config: null, permissions: null, roleName: null, memberTimezone: null, activeFormId: null });
         // SEC-001: connector capabilities are minted for the CURRENT app —
         // the desktop enforces the member's role-derived grants per command.
         setConnectorCapabilityContext(appSlug);
@@ -152,6 +156,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
               config,
               permissions: perms ?? null,
               roleName: (appUser?.roleName as string) ?? null,
+              memberTimezone: (appUser?.timezone as string) || null,
               isLoading: false,
               activeFormId: null,
             });
@@ -173,6 +178,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         error: null,
         permissions: null,
         roleName: null,
+        memberTimezone: null,
       }),
 
       fetchResponses: async (formId, options) => {

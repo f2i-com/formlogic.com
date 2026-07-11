@@ -6,7 +6,8 @@ import { DataTable, type Column } from '../ui/DataTable';
 import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { cn, parseServerDate } from '../../lib/utils';
+import { cn } from '../../lib/utils';
+import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { api } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { toast } from '../../stores/toastStore';
@@ -52,6 +53,7 @@ export function AppDataTable() {
   const navigate = useNavigate();
   const location = useLocation();
   const { config, fetchResponses, fetchResponsePage, deleteResponse, canSubmit, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
+  const tz = useDisplayTimezone();
   // Demo keeps a browser-local overlay of records, so it fetches everything and searches/paginates
   // client-side. Real apps use fast server-side pagination + search (limited rows per query).
   const serverMode = !api.isDemoMode();
@@ -341,14 +343,16 @@ export function AppDataTable() {
       const answers = r.answers as Record<string, unknown> | undefined;
       const val = answers?.[field.id];
       if (val == null) return '-';
-      // Date/time locale formatting
+      // Date/time locale formatting (datetimes in the viewer's timezone)
       if (typeof val === 'string' && val) {
         if (field.type === 'date') {
-          try { return new Date(val + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch { /* fall through */ }
+          return formatDateOnly(val);
         } else if (field.type === 'time') {
           try { const [h, m] = val.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } catch { /* fall through */ }
-        } else if (field.type === 'datetime') {
-          try { return new Date(val).toLocaleString(); } catch { /* fall through */ }
+        } else if (field.type === 'datetime' || isIsoDateTime(val)) {
+          // 'datetime' fields AND plain text holding an ISO-8601 instant
+          // (e.g. the Aokie Calls started_at/ended_at short_text fields).
+          return formatDateTimeInZone(val, tz);
         }
       }
       if (field.type === 'file_upload' && Array.isArray(val)) {
@@ -380,9 +384,7 @@ export function AppDataTable() {
   const submittedAtCol: Column<Record<string, unknown>> = {
     key: 'submittedAt', label: 'Submitted', sortable: true, render: (r) => {
       const date = r.submittedAt as string;
-      // parseServerDate normalizes the offset-less UTC string; raw new Date() would
-      // parse it in the viewer's local zone and show the wrong time (cf. line 57).
-      return date ? parseServerDate(date).toLocaleString() : '-';
+      return date ? formatDateTimeInZone(date, tz) : '-';
     },
   };
 

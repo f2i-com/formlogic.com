@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
+import { TimezoneSelect } from '../../components/ui/TimezoneSelect';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { IconPicker } from '../../components/ui/IconPicker';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
@@ -421,6 +422,17 @@ export function AppSettings() {
                   ))}
                 </select>
                 <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Where members land when they open the app.</p>
+              </div>
+              <div>
+                <label htmlFor="app-timezone" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Timezone</label>
+                <TimezoneSelect
+                  id="app-timezone"
+                  value={(app.settings?.timezone as string) || ''}
+                  onChange={(tz) => updateSetting('timezone', tz || undefined)}
+                  emptyLabel="UTC (default)"
+                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Record times (call logs, submissions) display in this zone for members without their own timezone set. Also used for report date grouping.</p>
               </div>
             </div>
 

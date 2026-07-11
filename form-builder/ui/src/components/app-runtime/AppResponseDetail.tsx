@@ -13,6 +13,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { api, resolveFileUrl } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { cn, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../../lib/utils';
+import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { Badge } from '../ui/Badge';
 
 // Long/wide answer types span both columns of the detail grid.
@@ -23,6 +24,7 @@ export function AppResponseDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const authUser = useAuthStore((s) => s.user);
+  const tz = useDisplayTimezone();
   const { config, canEdit, canDelete, canViewOwn, canViewAll, updateResponse, deleteResponse } = useAppRuntimeStore();
   const [response, setResponse] = useState<Record<string, unknown> | null>(null);
   const [editing, setEditing] = useState(false);
@@ -271,10 +273,10 @@ export function AppResponseDetail() {
 
   const formName = runtimeForm?.displayName || 'Response';
   const submittedAtText = response.submittedAt
-    ? parseServerDate(String(response.submittedAt)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    ? formatDateTimeInZone(String(response.submittedAt), tz)
     : '—';
   const updatedAtText = response.updatedAt
-    ? parseServerDate(String(response.updatedAt)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    ? formatDateTimeInZone(String(response.updatedAt), tz)
     : null;
   const submittedDateShort = response.submittedAt
     ? parseServerDate(String(response.submittedAt)).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -608,9 +610,9 @@ export function AppResponseDetail() {
                                 </span>
                               );
                             }
-                            // Date formatting
+                            // Date formatting (no timezone shift for a calendar date)
                             if (field.type === 'date' && typeof val === 'string' && val) {
-                              try { return new Date(val + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch { return String(val); }
+                              return formatDateOnly(val);
                             }
                             // Time formatting
                             if (field.type === 'time' && typeof val === 'string' && val) {
@@ -619,9 +621,9 @@ export function AppResponseDetail() {
                                 return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
                               } catch { return String(val); }
                             }
-                            // Datetime formatting
+                            // Datetime formatting (in the viewer's timezone)
                             if (field.type === 'datetime' && typeof val === 'string' && val) {
-                              try { return new Date(val).toLocaleString(); } catch { return String(val); }
+                              return formatDateTimeInZone(val, tz);
                             }
                             // Long text: preserve whitespace
                             if (field.type === 'long_text' && typeof val === 'string') {
@@ -663,6 +665,9 @@ export function AppResponseDetail() {
                             }
                             // Arrays (checkboxes, etc.)
                             if (Array.isArray(val)) return (val as unknown[]).join(', ');
+                            // A plain text field holding an ISO-8601 datetime (e.g. the
+                            // Aokie Calls started_at/ended_at) shows in the viewer's tz too.
+                            if (isIsoDateTime(val)) return formatDateTimeInZone(val, tz);
                             return String(val);
                           })()
                         : <span className="text-gray-300 dark:text-slate-600" aria-label="No answer">—</span>

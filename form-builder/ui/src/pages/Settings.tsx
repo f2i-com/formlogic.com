@@ -8,6 +8,7 @@ import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Switch } from '../components/ui/Switch';
+import { TimezoneSelect } from '../components/ui/TimezoneSelect';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
@@ -127,6 +128,7 @@ export function Settings() {
   // Profile form state
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
+  const [timezone, setTimezone] = useState(user?.timezone || '');
   const [profilePassword, setProfilePassword] = useState('');
   const [hasProfileChanges, setHasProfileChanges] = useState(false);
 
@@ -177,6 +179,7 @@ export function Settings() {
     if (user) {
       setName(user.name || '');
       setEmail(user.email || '');
+      setTimezone(user.timezone || '');
     }
   }, [user]);
 
@@ -184,8 +187,9 @@ export function Settings() {
   useEffect(() => {
     const nameChanged = name !== (user?.name || '');
     const emailChanged = email !== (user?.email || '');
-    setHasProfileChanges(nameChanged || emailChanged);
-  }, [name, email, user]);
+    const tzChanged = timezone !== (user?.timezone || '');
+    setHasProfileChanges(nameChanged || emailChanged || tzChanged);
+  }, [name, email, timezone, user]);
 
   const emailChanged = email.trim().toLowerCase() !== (user?.email || '').toLowerCase();
 
@@ -203,7 +207,8 @@ export function Settings() {
     }
     setIsSavingProfile(true);
     try {
-      const payload = emailChanged ? { name, email, currentPassword: profilePassword } : { name, email };
+      const base = { name, email, timezone };
+      const payload = emailChanged ? { ...base, currentPassword: profilePassword } : base;
       const result = await updateProfile(payload as Parameters<typeof updateProfile>[0]);
       if (result.success) {
         toast.success('Profile Updated', 'Your profile has been saved successfully.');
@@ -504,6 +509,18 @@ export function Settings() {
                   disabled={isSavingProfile}
                 />
               )}
+              <div>
+                <label htmlFor="account-timezone" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Timezone</label>
+                <TimezoneSelect
+                  id="account-timezone"
+                  value={timezone}
+                  onChange={setTimezone}
+                  disabled={isSavingProfile}
+                  emptyLabel="Use each app's timezone"
+                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>
+              </div>
               <div className="pt-2">
                 <Button
                   onClick={handleSaveProfile}
