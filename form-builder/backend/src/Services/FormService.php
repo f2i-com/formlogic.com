@@ -48,6 +48,7 @@ class FormService
     private SQLiteConnection $sqlite;
     private ?WebhookService $webhookService;
     private ?FileStorageService $fileStorageService;
+    private StoreOpService $storeOps;
 
     public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null, ?FileStorageService $fileStorageService = null)
     {
@@ -55,6 +56,7 @@ class FormService
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
         $this->webhookService = $webhookService;
+        $this->storeOps = new StoreOpService($this->mysql);
     }
 
     /**
@@ -264,34 +266,77 @@ class FormService
             return $this->updateForm($id, $data);
         }
 
-        // Insert into MySQL
-        $stmt = $this->mysql->prepare("
-            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, custom_logic, icon, created_at, updated_at)
-            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :custom_logic, :icon, :created_at, :updated_at)
-        ");
+        // Cross-store saga (audit FL-DATA-001): the MySQL insert and the durable op
+        // record commit atomically; the SQLite fields save follows, and a failure there
+        // COMPENSATES (removes the metadata row + any SQLite file this call created) so
+        // a half-created form — visible in lists but missing its fields — is never
+        // exposed. Respect an already-open transaction (duplicateForm / pack imports).
+        $sqliteExisted = $this->sqlite->formDatabaseExists($id);
+        $ownTx = !$this->mysql->inTransaction();
+        if ($ownTx) {
+            $this->mysql->beginTransaction();
+        }
+        $opId = null;
+        try {
+            $opId = $this->storeOps->begin('form_create', 'form', $id, $data['userId'] ?? null, [
+                'fieldCount' => count($data['fields'] ?? []),
+            ]);
 
-        $stmt->execute([
-            'id' => $id,
-            'user_id' => $data['userId'] ?? null,
-            'title' => $data['title'] ?? 'Untitled Form',
-            'description' => $data['description'] ?? null,
-            'status' => $data['status'] ?? 'draft',
-            'settings' => json_encode($data['settings'] ?? []),
-            'theme' => json_encode($data['theme'] ?? []),
-            'logic_script' => $data['logicScript'] ?? null,
-            'logic_prompt' => $data['logicPrompt'] ?? null,
-            'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
-            'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
-            'icon' => $data['icon'] ?? null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            $stmt = $this->mysql->prepare("
+                INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, custom_logic, icon, created_at, updated_at)
+                VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :custom_logic, :icon, :created_at, :updated_at)
+            ");
+
+            $stmt->execute([
+                'id' => $id,
+                'user_id' => $data['userId'] ?? null,
+                'title' => $data['title'] ?? 'Untitled Form',
+                'description' => $data['description'] ?? null,
+                'status' => $data['status'] ?? 'draft',
+                'settings' => json_encode($data['settings'] ?? []),
+                'theme' => json_encode($data['theme'] ?? []),
+                'logic_script' => $data['logicScript'] ?? null,
+                'logic_prompt' => $data['logicPrompt'] ?? null,
+                'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
+                'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
+                'icon' => $data['icon'] ?? null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            if ($ownTx) {
+                $this->mysql->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($ownTx && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
 
         // Create SQLite database and save fields
         if (!empty($data['fields'])) {
-            $this->saveFormFields($id, $data['fields']);
+            try {
+                $this->saveFormFields($id, $data['fields']);
+            } catch (\Throwable $e) {
+                try {
+                    $delStmt = $this->mysql->prepare("DELETE FROM forms WHERE id = :id");
+                    $delStmt->execute(['id' => $id]);
+                    if (!$sqliteExisted) {
+                        $this->sqlite->deleteFormDatabase($id);
+                    }
+                    $this->storeOps->finish($opId);
+                } catch (\Throwable $compensationError) {
+                    // Compensation itself failed — leave the op pending so the
+                    // half-created form is operator-visible (reconcile report).
+                    $this->storeOps->fail($opId, 'create compensation failed: ' . $compensationError->getMessage());
+                    error_log("FormService::createForm — compensation failed for form {$id}: " . $compensationError->getMessage());
+                }
+                throw $e;
+            }
         }
 
+        $this->storeOps->finish($opId);
         return $this->getForm($id);
     }
 
@@ -381,19 +426,54 @@ class FormService
             $params['icon'] = $data['icon'];
         }
 
-        if (!empty($updates)) {
-            $updates[] = "updated_at = :updated_at";
-            $params['updated_at'] = date('Y-m-d H:i:s');
-
-            $sql = "UPDATE forms SET " . implode(', ', $updates) . " WHERE id = :id";
-            $stmt = $this->mysql->prepare($sql);
-            $stmt->execute($params);
+        // Cross-store saga (audit FL-DATA-001): SQLite fields first, MySQL metadata
+        // second, under a durable op record. Fields-first means a fields failure leaves
+        // the MySQL row untouched (previously title/settings committed and the fields
+        // silently didn't); a MySQL failure AFTER the fields saved compensates by
+        // restoring the previous fields, so the update applies all-or-nothing.
+        $fieldsProvided = isset($data['fields']);
+        $opId = null;
+        if ($fieldsProvided || !empty($updates)) {
+            $opId = $this->storeOps->begin('form_update', 'form', $formId, $existing['userId'] ?? null, [
+                'fields' => $fieldsProvided,
+                'metadata' => !empty($updates),
+            ]);
         }
 
-        // Update fields in SQLite if provided
-        if (isset($data['fields'])) {
-            $this->saveFormFields($formId, $data['fields']);
+        try {
+            // Update fields in SQLite if provided
+            if ($fieldsProvided) {
+                $this->saveFormFields($formId, $data['fields']);
+            }
+
+            if (!empty($updates)) {
+                $updates[] = "updated_at = :updated_at";
+                $params['updated_at'] = date('Y-m-d H:i:s');
+
+                $sql = "UPDATE forms SET " . implode(', ', $updates) . " WHERE id = :id";
+                $stmt = $this->mysql->prepare($sql);
+                $stmt->execute($params);
+            }
+        } catch (\Throwable $e) {
+            if ($fieldsProvided) {
+                // Restore the pre-update fields (idempotent: if the new fields never
+                // committed this simply rewrites the old ones) so neither store holds a
+                // partial update. field_count re-syncs inside saveFormFields.
+                try {
+                    $this->saveFormFields($formId, $existing['fields'] ?? []);
+                    $this->storeOps->finish($opId);
+                } catch (\Throwable $compensationError) {
+                    $this->storeOps->fail($opId, 'update compensation failed: ' . $compensationError->getMessage());
+                    error_log("FormService::updateForm — field restore failed for form {$formId}: " . $compensationError->getMessage());
+                }
+            } else {
+                // Single-store (MySQL) failure — nothing committed, nothing pending.
+                $this->storeOps->finish($opId);
+            }
+            throw $e;
         }
+
+        $this->storeOps->finish($opId);
 
         $updatedForm = $this->getForm($formId);
 
@@ -408,48 +488,183 @@ class FormService
     }
 
     /**
-     * Delete a form
+     * Delete a form — a durable cross-store saga (audit FL-DATA-001).
+     *
+     * The delete intent (store_ops row) commits in the SAME transaction as the metadata
+     * removal, then the on-disk stores (per-form SQLite DB, uploads dir) are removed and
+     * VERIFIED. Success is only reported when every store agrees; a disk failure leaves
+     * the pending op as the durable, retryable record (re-issued delete, account-erasure
+     * resume, or bin/reconcile.php --fix all complete it) and throws
+     * FormDeletionIncompleteException instead of faking success — previously this path
+     * logged the failure and returned true, silently leaving deleted-form responses
+     * (PII) on disk while account erasure trusted the result and dropped the owner.
+     *
+     * @return bool false when the form doesn't exist (and no deletion is pending)
+     * @throws FormDeletionIncompleteException metadata removed but disk cleanup incomplete
      */
     public function deleteForm(string $formId): bool
     {
-        // Delete MySQL first within a transaction, then SQLite file
-        // This ensures MySQL failure doesn't leave orphaned records with deleted data
-        $this->mysql->beginTransaction();
-        try {
-            // Clean up response_links referencing this form (no FK cascade on this table)
-            $linkStmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = :id1 OR target_form_id = :id2");
-            $linkStmt->execute(['id1' => $formId, 'id2' => $formId]);
+        // Resume path: a previous attempt already removed the metadata row but its disk
+        // cleanup failed — the pending op IS the deletion; finish the disk phase.
+        $pendingOp = $this->storeOps->pendingForEntity('form', $formId, 'form_delete');
+        $opId = $pendingOp['id'] ?? null;
 
-            // Delete from MySQL (cascades to related tables)
-            $stmt = $this->mysql->prepare("DELETE FROM forms WHERE id = :id");
-            $stmt->execute(['id' => $formId]);
-            $deleted = $stmt->rowCount() > 0;
-
-            $this->mysql->commit();
-        } catch (\Exception $e) {
-            $this->mysql->rollBack();
-            throw $e;
-        }
-
-        // Only delete SQLite after MySQL succeeds. Log (don't throw) on failure so an
-        // orphaned per-form .sqlite — a held handle/WAL on Windows, or a crash in
-        // this window — is visible for reconciliation instead of silently leaving
-        // deleted-form responses (PII) on disk. (Returns true when no file exists.)
-        if (!$this->sqlite->deleteFormDatabase($formId)) {
-            error_log("FormService::deleteForm — failed to delete SQLite DB for form {$formId}; orphaned file may remain");
-        }
-
-        // Clean up uploaded files for this form
-        if ($this->fileStorageService !== null) {
+        if ($opId === null) {
+            $ownTx = !$this->mysql->inTransaction();
+            if ($ownTx) {
+                $this->mysql->beginTransaction();
+            }
             try {
-                $this->fileStorageService->deleteFormFiles($formId);
-            } catch (\Exception $e) {
-                // Don't fail form deletion if file cleanup fails
-                error_log("FormService::deleteForm — file cleanup failed for form {$formId}: " . $e->getMessage());
+                // Lock the row so a concurrent delete of the same form serializes here.
+                $ownerStmt = $this->mysql->prepare("SELECT user_id FROM forms WHERE id = :id FOR UPDATE");
+                $ownerStmt->execute(['id' => $formId]);
+                $ownerRow = $ownerStmt->fetch();
+
+                if ($ownerRow === false) {
+                    if ($ownTx) {
+                        $this->mysql->commit();
+                    }
+                    // No metadata row and no pending deletion: report "not found", but
+                    // keep the legacy best-effort sweep of stray on-disk artifacts
+                    // (e.g. SQLite files left by a rolled-back pack import).
+                    $this->runFormDiskCleanup($formId);
+                    return false;
+                }
+
+                // Durable delete intent, atomic with the metadata removal: if we crash
+                // after this commit, the op row survives as the resumable record.
+                $opId = $this->storeOps->begin('form_delete', 'form', $formId, $ownerRow['user_id'] ?? null);
+
+                // Clean up response_links referencing this form (no FK cascade on this table)
+                $linkStmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = :id1 OR target_form_id = :id2");
+                $linkStmt->execute(['id1' => $formId, 'id2' => $formId]);
+
+                // Delete from MySQL (cascades to related tables)
+                $stmt = $this->mysql->prepare("DELETE FROM forms WHERE id = :id");
+                $stmt->execute(['id' => $formId]);
+
+                if ($ownTx) {
+                    $this->mysql->commit();
+                }
+            } catch (\Throwable $e) {
+                if ($ownTx && $this->mysql->inTransaction()) {
+                    $this->mysql->rollBack();
+                }
+                throw $e;
             }
         }
 
-        return $deleted;
+        // Disk phase — idempotent and verified.
+        $errors = $this->runFormDiskCleanup($formId);
+        if (empty($errors)) {
+            // The entity is verifiably gone from every store; any older pending op
+            // about it (e.g. a crashed create) is moot too.
+            $this->storeOps->finishAllForEntity('form', $formId);
+            return true;
+        }
+
+        $this->storeOps->fail($opId, implode('; ', $errors));
+        throw new FormDeletionIncompleteException(
+            "Form metadata was deleted, but stored data could not be fully removed (" . implode('; ', $errors) . "). "
+            . "The deletion is recorded and will be retried — retry the delete or run bin/reconcile.php --fix."
+        );
+    }
+
+    /**
+     * Remove and VERIFY the form's on-disk stores (per-form SQLite DB + uploads dir).
+     *
+     * @return string[] human-readable failures; empty = both stores verified clean
+     */
+    private function runFormDiskCleanup(string $formId): array
+    {
+        $errors = [];
+
+        try {
+            if (!$this->sqlite->deleteFormDatabase($formId)) {
+                $errors[] = 'per-form SQLite database still present';
+            }
+        } catch (\Throwable $e) {
+            $errors[] = 'SQLite delete failed: ' . $e->getMessage();
+        }
+
+        if ($this->fileStorageService !== null) {
+            try {
+                $this->fileStorageService->deleteFormFiles($formId);
+            } catch (\Throwable $e) {
+                // Verification below decides — deleteFormFiles failures are otherwise silent.
+            }
+            if (!$this->fileStorageService->formFilesRemoved($formId)) {
+                $errors[] = 'uploaded-files directory still present';
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Resume a deletion whose metadata row is already gone but whose disk cleanup is
+     * still pending — reachable from DELETE /api/forms/{id} after the row vanished, so
+     * the owner can self-serve the retry instead of dead-ending on a 404.
+     *
+     * @return bool|null null = no pending deletion owned by $userId (caller 404s);
+     *                   true = cleanup completed; false = still failing (caller 503s)
+     */
+    public function resumePendingDeletion(string $formId, string $userId): ?bool
+    {
+        try {
+            $op = $this->storeOps->pendingForEntity('form', $formId, 'form_delete');
+        } catch (\Throwable $e) {
+            return null;
+        }
+        if ($op === null || (string) ($op['user_id'] ?? '') !== $userId) {
+            return null;
+        }
+
+        $errors = $this->runFormDiskCleanup($formId);
+        if (empty($errors)) {
+            $this->storeOps->finishAllForEntity('form', $formId);
+            return true;
+        }
+        $this->storeOps->fail($op['id'], implode('; ', $errors));
+        return false;
+    }
+
+    /**
+     * Retry every pending form-deletion cleanup (optionally one user's) — the account-
+     * erasure resume path and the reconcile --fix repair.
+     *
+     * @return array{retried:int, completed:int, stillPending:int}
+     */
+    public function retryPendingCleanup(?string $userId = null): array
+    {
+        $retried = 0;
+        $completed = 0;
+        foreach ($this->storeOps->listPending('form_delete', $userId) as $op) {
+            $retried++;
+            $errors = $this->runFormDiskCleanup((string) $op['entity_id']);
+            if (empty($errors)) {
+                $this->storeOps->finishAllForEntity('form', (string) $op['entity_id']);
+                $completed++;
+            } else {
+                $this->storeOps->fail($op['id'], implode('; ', $errors));
+            }
+        }
+        return [
+            'retried' => $retried,
+            'completed' => $completed,
+            'stillPending' => $retried - $completed,
+        ];
+    }
+
+    /**
+     * Pending cross-store ops attributed to a user — account erasure must retain the
+     * owner while this is non-zero (disk PII may still exist for their deleted forms).
+     */
+    public function pendingCleanupCount(?string $userId = null): int
+    {
+        return $userId === null
+            ? $this->storeOps->countPending()
+            : $this->storeOps->countPendingForUser($userId);
     }
 
     /**

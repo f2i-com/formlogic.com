@@ -13,17 +13,24 @@ use PDO;
  * Drift can arise after a partial failure (e.g. a best-effort delete that only hit one store).
  *
  * - report() is READ-ONLY.
- * - fix() applies only SAFE repairs: re-sync forms.response_count, and delete response_links
- *   that point at a non-existent form. Orphaned SQLite files / upload dirs are reported but never
- *   auto-deleted (they may hold recoverable data).
+ * - fix() applies only SAFE repairs: re-sync forms.response_count, delete response_links
+ *   that point at a non-existent form, and (when constructed with a FormService) retry
+ *   pending form-deletion cleanups from the store_ops ledger — those carry a durable
+ *   delete INTENT, so completing them is safe by construction. Orphaned SQLite files /
+ *   upload dirs with no recorded intent are reported but never auto-deleted (they may
+ *   hold recoverable data).
  */
 class ReconcileService
 {
+    /** report() ignores ops younger than this — they're merely in flight on a live request. */
+    private const OP_REPORT_MIN_AGE_SECONDS = 60;
+
     public function __construct(
         private PDO $mysql,
         private SQLiteConnection $sqlite,
         private string $formsPath,
-        private string $uploadsPath
+        private string $uploadsPath,
+        private ?FormService $formService = null
     ) {
     }
 
@@ -103,7 +110,42 @@ class ReconcileService
             'orphanedUploads' => $files['orphanedUploads'],
             'countDrift' => $countDrift,
             'orphanedResponseLinks' => $orphanedLinks,
+            'pendingStoreOps' => $this->pendingStoreOps(),
         ];
+    }
+
+    /**
+     * Pending cross-store operations (audit FL-DATA-001) — each row is a mutation whose
+     * stores were never verified in agreement (crashed create, failed delete cleanup).
+     * The operator-visible failure state; form_delete rows are retryable via fix().
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function pendingStoreOps(): array
+    {
+        try {
+            $stmt = $this->mysql->prepare(
+                "SELECT id, op_type, entity_type, entity_id, user_id, attempts, last_error, created_at,
+                        TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age_seconds
+                 FROM store_ops
+                 WHERE created_at <= NOW() - INTERVAL :age SECOND
+                 ORDER BY created_at ASC LIMIT 500"
+            );
+            $stmt->bindValue('age', self::OP_REPORT_MIN_AGE_SECONDS, PDO::PARAM_INT);
+            $stmt->execute();
+            return array_map(static fn (array $r) => [
+                'opId' => $r['id'],
+                'opType' => $r['op_type'],
+                'entityType' => $r['entity_type'],
+                'entityId' => $r['entity_id'],
+                'userId' => $r['user_id'],
+                'attempts' => (int) $r['attempts'],
+                'lastError' => $r['last_error'],
+                'ageSeconds' => (int) $r['age_seconds'],
+            ], $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+        } catch (\Throwable $e) {
+            return []; // table not migrated yet — nothing to report
+        }
     }
 
     /** Apply safe repairs. @return array<string, int|string[]> summary of what changed. */
@@ -123,9 +165,26 @@ class ReconcileService
              WHERE source_form_id NOT IN (SELECT id FROM (SELECT id FROM forms) f1)
                 OR target_form_id NOT IN (SELECT id FROM (SELECT id FROM forms) f2)'
         );
+
+        // Retry pending form-deletion cleanups — safe: each carries a durable delete
+        // intent recorded atomically with the (already committed) metadata removal.
+        // Crashed create/update ops are only REPORTED: their intended content is
+        // unknown, so repairing them is an operator decision, not an auto-delete.
+        $cleanupRetries = ['retried' => 0, 'completed' => 0, 'stillPending' => 0];
+        if ($this->formService !== null) {
+            try {
+                $cleanupRetries = $this->formService->retryPendingCleanup();
+            } catch (\Throwable $e) {
+                // leave zeros — the report still lists the pending ops
+            }
+        }
+
         return [
             'responseCountsResynced' => $resynced,
             'orphanedLinksDeleted' => (int) $linksDeleted,
+            'deleteCleanupsRetried' => $cleanupRetries['retried'],
+            'deleteCleanupsCompleted' => $cleanupRetries['completed'],
+            'deleteCleanupsStillPending' => $cleanupRetries['stillPending'],
         ];
     }
 

@@ -121,7 +121,11 @@ class SQLiteConnection
     }
 
     /**
-     * Delete a form's SQLite database
+     * Delete a form's SQLite database.
+     *
+     * Returns true only when the main file AND its WAL/SHM journals are VERIFIED gone
+     * (the -wal file holds recent response content, so leaving it behind is the same
+     * PII leak as leaving the database itself). Idempotent: true when nothing exists.
      */
     public function deleteFormDatabase(string $formId): bool
     {
@@ -132,14 +136,27 @@ class SQLiteConnection
             unset($this->connections[$formId]);
         }
 
-        if (file_exists($dbPath)) {
-            // Clean up WAL and SHM journal files
-            @unlink($dbPath . '-wal');
-            @unlink($dbPath . '-shm');
-            return unlink($dbPath);
+        // Journals first, main file last — a main file without journals is still a
+        // valid database, while orphaned journals would be dangling response data.
+        foreach ([$dbPath . '-wal', $dbPath . '-shm', $dbPath] as $path) {
+            if (file_exists($path)) {
+                @unlink($path);
+            }
         }
 
-        return true;
+        return $this->formDatabaseFullyRemoved($formId);
+    }
+
+    /**
+     * True when no trace of the form's database remains on disk (main + WAL + SHM).
+     */
+    public function formDatabaseFullyRemoved(string $formId): bool
+    {
+        $dbPath = $this->getFormDbPath($formId);
+        clearstatcache();
+        return !file_exists($dbPath)
+            && !file_exists($dbPath . '-wal')
+            && !file_exists($dbPath . '-shm');
     }
 
     /**

@@ -24,6 +24,8 @@ date_default_timezone_set('UTC');
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Services\FileStorageService;
+use FormLogic\Services\FormService;
 use FormLogic\Services\ReconcileService;
 
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
@@ -36,7 +38,11 @@ $formsPath = $config['settings']['sqlite']['storage_path'];
 $sqlite = new SQLiteConnection($formsPath);
 $uploadsPath = $config['settings']['uploads']['storagePath'] ?? (__DIR__ . '/../storage/uploads');
 
-$svc = new ReconcileService($mysql->getConnection(), $sqlite, $formsPath, $uploadsPath);
+// FormService lets --fix retry pending form-deletion cleanups from the store_ops
+// ledger (durable delete intents whose disk phase failed — audit FL-DATA-001).
+$formService = new FormService($mysql, $sqlite, null, new FileStorageService(['storagePath' => $uploadsPath] + ($config['settings']['uploads'] ?? [])));
+
+$svc = new ReconcileService($mysql->getConnection(), $sqlite, $formsPath, $uploadsPath, $formService);
 $report = $svc->report();
 
 $issues = 0;
@@ -58,18 +64,32 @@ $line('orphaned SQLite files', $report['orphanedSqlite']);
 $line('orphaned upload dirs', $report['orphanedUploads']);
 $line('response-count drift', $report['countDrift']);
 $line('orphaned response_links', $report['orphanedResponseLinks']);
+$line('pending cross-store ops', count($report['pendingStoreOps']));
+foreach ($report['pendingStoreOps'] as $op) {
+    fwrite(STDOUT, sprintf(
+        "    %s %s %s  attempts=%d  age=%ds%s\n",
+        $op['opType'],
+        $op['entityType'],
+        $op['entityId'],
+        $op['attempts'],
+        $op['ageSeconds'],
+        $op['lastError'] ? '  last error: ' . $op['lastError'] : ''
+    ));
+}
 fwrite(STDOUT, str_repeat('-', 48) . "\n");
 
 if (in_array('--fix', $argv, true)) {
     $fixed = $svc->fix();
     fwrite(STDOUT, sprintf(
-        "Applied safe repairs: re-synced %d response count(s), deleted %d orphaned link(s).\n",
+        "Applied safe repairs: re-synced %d response count(s), deleted %d orphaned link(s), completed %d/%d pending delete cleanup(s).\n",
         count($fixed['responseCountsResynced']),
-        $fixed['orphanedLinksDeleted']
+        $fixed['orphanedLinksDeleted'],
+        $fixed['deleteCleanupsCompleted'],
+        $fixed['deleteCleanupsRetried']
     ));
-    fwrite(STDOUT, "(Orphaned SQLite files / upload dirs are left in place — remove manually after review.)\n");
+    fwrite(STDOUT, "(Orphaned SQLite files / upload dirs with no recorded delete intent are left in place — remove manually after review.)\n");
 } elseif ($issues > 0) {
-    fwrite(STDOUT, "Run with --fix to re-sync counts and drop orphaned links.\n");
+    fwrite(STDOUT, "Run with --fix to re-sync counts, drop orphaned links, and retry pending delete cleanups.\n");
 }
 
 exit($issues > 0 ? 1 : 0);

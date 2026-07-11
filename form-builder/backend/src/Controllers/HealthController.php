@@ -156,13 +156,14 @@ class HealthController
             $uploadsPath = $this->settings['uploads']['storagePath'] ?? ($base . '/storage/uploads');
             $recon = new ReconcileService($this->db->getConnection(), new SQLiteConnection($formsPath), $formsPath, $uploadsPath);
             $drift = $recon->fileDrift();
-            $total = count($drift['missingSqlite']) + count($drift['orphanedSqlite']) + count($drift['orphanedUploads']);
+            $pendingOps = count($recon->pendingStoreOps());
+            $total = count($drift['missingSqlite']) + count($drift['orphanedSqlite']) + count($drift['orphanedUploads']) + $pendingOps;
             $checks['dual_store'] = [
                 'ok' => true, // non-critical: drift is a maintenance issue, not an outage
                 'critical' => false,
                 'detail' => $total === 0 ? 'no file-level drift' : sprintf(
-                    '%d missing SQLite, %d orphaned SQLite, %d orphaned upload dirs',
-                    count($drift['missingSqlite']), count($drift['orphanedSqlite']), count($drift['orphanedUploads'])
+                    '%d missing SQLite, %d orphaned SQLite, %d orphaned upload dirs, %d pending cross-store ops',
+                    count($drift['missingSqlite']), count($drift['orphanedSqlite']), count($drift['orphanedUploads']), $pendingOps
                 ),
             ];
             if ($total > 0) {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Services\FormDeletionIncompleteException;
 use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
@@ -403,13 +404,44 @@ class FormController
         // Authorization check - user must own the form
         $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
+            // The metadata row may already be gone from a previous delete whose disk
+            // cleanup failed (durable pending deletion, audit FL-DATA-001). Let the
+            // SAME user resume it instead of dead-ending their retry on a 404.
+            $userId = $request->getAttribute('userId');
+            $resumed = $userId ? $this->formService->resumePendingDeletion($formId, (string) $userId) : null;
+            if ($resumed === true) {
+                $this->audit($request, 'form.delete', 'form', $formId);
+                return $this->jsonResponse($response, [
+                    'success' => true,
+                    'message' => 'Form deleted successfully',
+                ]);
+            }
+            if ($resumed === false) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'retryable' => true,
+                    'message' => 'The form is deleted, but its stored data could not be fully removed yet — please retry.',
+                ], 503);
+            }
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Form not found or access denied',
             ], 404);
         }
 
-        $deleted = $this->formService->deleteForm($formId);
+        try {
+            $deleted = $this->formService->deleteForm($formId);
+        } catch (FormDeletionIncompleteException $e) {
+            // Metadata removed but the on-disk stores still disagree — truthful,
+            // retryable failure instead of fake success (the deletion intent is
+            // durably recorded; a retry resumes the cleanup).
+            $this->audit($request, 'form.delete_incomplete', 'form', $formId);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'retryable' => true,
+                'message' => $e->getMessage(),
+            ], 503);
+        }
 
         if (!$deleted) {
             return $this->jsonResponse($response, [

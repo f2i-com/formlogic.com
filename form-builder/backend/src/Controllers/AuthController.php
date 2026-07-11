@@ -565,6 +565,22 @@ class AuthController
                 } while (count($batch) > 0 && $deletedThisPass > 0 && ++$guard < 1000);
             }
 
+            // Cross-session stragglers (audit FL-DATA-001): a prior delete may have
+            // removed a form's metadata row while its on-disk cleanup failed — those
+            // forms no longer appear in getAllForms, but their durable form_delete ops
+            // do. Resume them from the ledger, then require it EMPTY below: the users
+            // row must never drop while deleted-form PII may still sit on disk.
+            $pendingCleanup = 0;
+            if ($this->formService) {
+                try {
+                    $this->formService->retryPendingCleanup($userId);
+                    $pendingCleanup = $this->formService->pendingCleanupCount($userId);
+                } catch (\Throwable $e) {
+                    $pendingCleanup = 1; // fail closed — keep the account until verified
+                    $this->logger->error('Account deletion: pending-cleanup retry failed', ['userId' => $userId, 'error' => $e->getMessage()]);
+                }
+            }
+
             // Truthful completion (audit FL-005/FL-01): NEVER drop the user row while
             // owned resources remain — per-form SQLite databases and uploads live on
             // DISK, and deleting the account row first would orphan that PII with no
@@ -574,7 +590,7 @@ class AuthController
             $remainingForms = $this->formService
                 ? count($this->formService->getAllForms($userId, ['limit' => 1, 'offset' => 0]))
                 : 0;
-            if ($failedApps > 0 || $failedForms > 0 || $remainingForms > 0) {
+            if ($failedApps > 0 || $failedForms > 0 || $remainingForms > 0 || $pendingCleanup > 0) {
                 $this->audit($request, 'auth.account_delete_incomplete', 'user', $userId);
                 return $this->jsonResponse($response, [
                     'error' => true,
@@ -582,6 +598,7 @@ class AuthController
                     'retryable' => true,
                     'failedApps' => $failedApps,
                     'failedForms' => $failedForms,
+                    'pendingCleanup' => $pendingCleanup,
                     'message' => 'Some of your data could not be deleted, so your account was NOT closed. Nothing is lost — please retry; deletion resumes where it left off.',
                 ], 503);
             }

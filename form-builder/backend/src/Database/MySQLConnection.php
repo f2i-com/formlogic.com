@@ -1342,6 +1342,29 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Durable cross-store operation ledger (audit FL-DATA-001): one row per MySQL↔SQLite↔
+        // filesystem mutation in flight, written in the SAME transaction as the MySQL side and
+        // deleted only after every store is verified in agreement. A surviving row is pending
+        // work: reconcile reports/retries it, and account erasure refuses to drop a users row
+        // while that user has pending ops (see StoreOpService).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS store_ops (
+                id VARCHAR(36) PRIMARY KEY,
+                op_type VARCHAR(32) NOT NULL,
+                entity_type VARCHAR(32) NOT NULL,
+                entity_id VARCHAR(64) NOT NULL,
+                user_id VARCHAR(36) NULL,
+                detail TEXT NULL,
+                last_error TEXT NULL,
+                attempts INT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_store_ops_entity (entity_type, entity_id),
+                INDEX idx_store_ops_user (user_id),
+                INDEX idx_store_ops_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // FormLogic Flows tables for existing installs (CREATE TABLE IF NOT EXISTS; shared with
         // initializeSchema so fresh and migrated schemas match byte-for-byte).
         $this->createFlowTables($pdo);

@@ -281,6 +281,21 @@ class FileStorageService
     }
 
     /**
+     * True when the form's upload directory no longer exists — the verification step
+     * after deleteFormFiles(), whose unlink/rmdir failures are otherwise silent
+     * (they emit warnings, not exceptions). An unsanitizable id maps to no directory.
+     */
+    public function formFilesRemoved(string $formId): bool
+    {
+        $safeId = $this->sanitizeId($formId);
+        if ($safeId === '') {
+            return true;
+        }
+        clearstatcache();
+        return !is_dir($this->storagePath . '/' . $safeId);
+    }
+
+    /**
      * Delete files referenced in response answers.
      * Scans the answers for file_upload metadata and deletes associated files.
      */

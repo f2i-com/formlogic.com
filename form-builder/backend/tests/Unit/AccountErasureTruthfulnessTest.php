@@ -48,6 +48,8 @@ final class AccountErasureTruthfulnessTest extends TestCase
         return new class ($formIds, $deletesFail) extends FormService {
             /** @var array<string,bool> */
             public array $inventory = [];
+            /** Pending cross-store cleanup ops attributed to the user (audit FL-DATA-001). */
+            public int $pendingCleanup = 0;
             public function __construct(array $formIds, private bool $fail)
             {
                 foreach ($formIds as $id) {
@@ -65,6 +67,14 @@ final class AccountErasureTruthfulnessTest extends TestCase
                 }
                 unset($this->inventory[$formId]);
                 return true;
+            }
+            public function retryPendingCleanup(?string $userId = null): array
+            {
+                return ['retried' => 0, 'completed' => 0, 'stillPending' => $this->pendingCleanup];
+            }
+            public function pendingCleanupCount(?string $userId = null): int
+            {
+                return $this->pendingCleanup;
             }
         };
     }
@@ -108,6 +118,29 @@ final class AccountErasureTruthfulnessTest extends TestCase
         $this->assertSame('completed', $body['status'] ?? null);
         $this->assertSame([], $forms->inventory, 'every owned form deleted');
         $this->assertSame(['user-1'], $auth->deletedUsers, 'account dropped only after verification');
+    }
+
+    /**
+     * Audit FL-DATA-001: a prior session's form deletion may have removed the metadata
+     * row while its on-disk cleanup failed — those forms no longer appear in the
+     * inventory, but their durable form_delete ops do. The users row must not drop
+     * while any pending op (possible deleted-form PII on disk) remains.
+     */
+    public function testPendingCrossStoreCleanupRetainsTheAccount(): void
+    {
+        $auth = $this->authStub();
+        $forms = $this->formsStub(['f1'], deletesFail: false);
+        $forms->pendingCleanup = 1;
+        $controller = new AuthController($auth, [], 86400, null, null, '', $forms, null);
+
+        [$status, $body] = $this->deleteAccountRequest($controller);
+
+        $this->assertSame(503, $status);
+        $this->assertSame('failed', $body['status'] ?? null);
+        $this->assertTrue($body['retryable'] ?? false);
+        $this->assertSame(1, $body['pendingCleanup'] ?? null);
+        $this->assertSame([], $forms->inventory, 'listed forms still deleted normally');
+        $this->assertSame([], $auth->deletedUsers, 'account must survive while deleted-form data may remain on disk');
     }
 
     /** A retry AFTER the failure cause is fixed completes — resumable by construction. */
