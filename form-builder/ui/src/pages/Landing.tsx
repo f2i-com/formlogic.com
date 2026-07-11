@@ -7,7 +7,6 @@ import { DesktopSpotlight } from '../components/landing-v2/DesktopSpotlight';
 import { LandingFooter } from '../components/landing-v2/LandingFooter';
 import { LandingHero } from '../components/landing-v2/LandingHero';
 import { LandingNav } from '../components/landing-v2/LandingNav';
-import { MarketplaceSpotlight } from '../components/landing-v2/MarketplaceSpotlight';
 import { PlatformStory } from '../components/landing-v2/PlatformStory';
 import { PricingSection } from '../components/landing-v2/PricingSection';
 import { useLandingFonts, useReveal } from '../components/landing-v2/hooks';
@@ -29,11 +28,6 @@ import { useBetaMode } from '../hooks/useBetaMode';
  *  - no heavy imports (pack catalogue, React Flow, Monaco, Recharts).
  */
 
-// Marketplace size shown in the hero strip + marketplace CTA. A lightweight
-// constant on purpose: importing the pack catalogue here would pull the whole
-// catalogue into the landing bundle just to render one number.
-const PACK_COUNT = 29;
-
 export function Landing() {
   useLandingFonts();
   useReveal();
@@ -42,7 +36,7 @@ export function Landing() {
   return (
     <div className="lv2">
       <LandingNav />
-      <LandingHero beta={beta} packCount={PACK_COUNT} />
+      <LandingHero beta={beta} />
       <PlatformStory />
       <div id="live-demo" className="lv2-band--alt lv2-demo-band">
         <LiveDemoSection />
@@ -51,7 +45,6 @@ export function Landing() {
       <CapabilityBento />
       <DesktopSpotlight />
       <AiMcpSpotlight />
-      <MarketplaceSpotlight packCount={PACK_COUNT} />
       <PricingSection beta={beta} />
       <LandingFooter />
     </div>

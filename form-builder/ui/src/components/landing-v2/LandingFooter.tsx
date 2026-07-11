@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import { FormLogicMark } from './shared';
+import { GITHUB_URL } from './stats';
 
 const SUPPORT_EMAIL = `mailto:support@${import.meta.env.VITE_PUBLIC_DOMAIN || 'formlogic.com'}`;
 
@@ -40,6 +41,7 @@ export function LandingFooter() {
             <strong>Resources</strong>
             <Link to="/docs">Documentation</Link>
             <Link to="/docs">Self-hosting</Link>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <a href={SUPPORT_EMAIL}>Support</a>
           </div>
           <div className="lv2-footer__col">

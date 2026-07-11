@@ -2104,3 +2104,82 @@ code {
 .desktop-delivery-card {
   padding-bottom: 13px;
 }
+
+/* ============================================================================
+   Legacy panel harmonization (workspace shell, 2026-07 redesign).
+   Appended LAST so it wins the cascade: the mature panels (Services, Models,
+   Plugins, Python, Settings, Cloud/Pairing) keep their markup and behaviour
+   but their content boxes now match the shell — flat surfaces, 12px radius,
+   quiet borders and compact eyebrows instead of the old glassy cards.
+   ========================================================================== */
+
+.desktop-workspace__body .panel {
+  max-width: none;
+  gap: 14px;
+}
+
+/* Glassy cards → flat shell surfaces. */
+.service-card,
+.dl-form,
+.dl-row,
+.model-row,
+.catalog-card,
+.empty-state,
+.datadir-note {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.service-card:hover,
+.model-row:hover,
+.catalog-card:hover {
+  background: var(--surface-1);
+  border-color: var(--line-2);
+  box-shadow: var(--shadow-card);
+  transform: none;
+}
+
+/* Section titles → the shell's compact eyebrow. */
+.desktop-workspace__body .section-title {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
+
+.desktop-workspace__body .section-title::before {
+  width: 12px;
+  box-shadow: none;
+}
+
+/* Status badges lose the LED glow — the shell's pills are quiet. */
+.badge-ok::before,
+.badge-err::before,
+.badge-pending::before {
+  box-shadow: none;
+}
+
+/* Buttons align with .desktop-button proportions. */
+.desktop-workspace__body .btn {
+  min-height: 32px;
+  padding: 5px 13px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.desktop-workspace__body .btn-primary {
+  box-shadow: none;
+}
+
+.desktop-workspace__body .icon-btn {
+  border-radius: 8px;
+}
+
+.desktop-workspace__body code {
+  border-radius: 6px;
+}

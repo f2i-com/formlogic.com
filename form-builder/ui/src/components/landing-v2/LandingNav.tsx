@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Menu, X } from 'lucide-react';
+import { ArrowRight, Github, Menu, Star, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
+import { GITHUB_URL } from './stats';
 
 /**
  * Sticky dark marketing nav. In-page anchors for the sections, router links
@@ -22,7 +23,7 @@ export function LandingNav() {
           <a href="#platform" onClick={close}>Product</a>
           <a href="#aokie" onClick={close}>Aokie</a>
           <a href="#desktop" onClick={close}>Desktop</a>
-          <a href="#marketplace" onClick={close}>Marketplace</a>
+          <Link to="/packs" onClick={close}>Marketplace</Link>
           <a href="#pricing" onClick={close}>Pricing</a>
           <Link to="/docs" onClick={close}>Docs</Link>
           <Link to="/login" onClick={close} className="lv2-nav__mobile-signin">
@@ -31,6 +32,18 @@ export function LandingNav() {
         </div>
 
         <div className="lv2-nav__actions">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Star FormLogic on GitHub"
+            title="Star us on GitHub"
+            className="lv2-nav__star"
+          >
+            <Github size={15} />
+            <span>Star</span>
+            <Star size={13} className="lv2-nav__star-glyph" />
+          </a>
           <Link to="/login" className="lv2-nav__signin">
             Sign in
           </Link>

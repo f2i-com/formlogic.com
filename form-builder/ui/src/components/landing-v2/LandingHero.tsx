@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check, PhoneCall, Sparkles } from 'lucide-react';
 import { HeroProductScene } from './HeroProductScene';
+import { FIELD_TYPE_COUNT, PACK_COUNT } from './stats';
 
 /**
  * Outcome-led hero: headline, CTAs, beta-aware proof line, the interactive
- * product scene, and the capability proof strip.
+ * product scene, and the capability proof strip. The strip's numbers come
+ * from stats.ts and are pinned to their sources of truth by stats.test.ts.
  */
-export function LandingHero({ beta, packCount }: { beta: boolean; packCount: number }) {
+export function LandingHero({ beta }: { beta: boolean }) {
   return (
     <section className="lv2-hero" id="top">
       <div className="lv2-hero__grid" aria-hidden="true" />
@@ -48,11 +50,11 @@ export function LandingHero({ beta, packCount }: { beta: boolean; packCount: num
 
       <div className="lv2-container lv2-proof-strip" aria-label="Product capability summary">
         <span>
-          <strong>{packCount}</strong>
+          <strong>{PACK_COUNT}</strong>
           <small>starter packs</small>
         </span>
         <span>
-          <strong>23</strong>
+          <strong>{FIELD_TYPE_COUNT}</strong>
           <small>form field types</small>
         </span>
         <span>
