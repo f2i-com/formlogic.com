@@ -50,6 +50,7 @@ import { IconPicker } from '../components/ui/IconPicker';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, FormFlowsPanel, useFormPreview } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { useAdminActing, useResourcePaths } from '../components/admin/AdminActingContext';
 import { ScreenModal } from '../components/custom-screen/ScreenModal';
 import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
@@ -307,6 +308,10 @@ async function countFlowBindingsForForm(formId: string): Promise<number> {
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  // Platform-admin acting mode (editing another user's form): links stay under
+  // /admin/..., and owner-identity surfaces (publish-as-pack) are hidden.
+  const acting = useAdminActing();
+  const paths = useResourcePaths();
   const [searchParams, setSearchParams] = useSearchParams();
   // Whether the built-in AI is available (AI_ENABLED + configured). Hides the "Generate with AI"
   // entry points when off — users can still bring their own AI via the MCP "Connect an AI" flow.
@@ -546,7 +551,7 @@ export default function FormBuilder() {
   // message on a local-mode draft read as "flows need a published form" (user-reported).
   const formFlowsDisabledReason = !form
     ? 'Save the form first to add flows'
-    : storageMode !== 'api'
+    : storageMode !== 'api' && !acting
         ? 'Switch to Cloud storage to use flows (drafts work too)'
         : null;
   const canUseFormFlows = formFlowsDisabledReason === null;
@@ -864,9 +869,9 @@ export default function FormBuilder() {
     // absent (a real 404 / no access) — not while the fetch is still in flight,
     // which previously bounced direct/bookmarked builder links to /forms.
     if (loadFinished && !form && formId) {
-      navigate('/forms');
+      navigate(paths.formsHome());
     }
-  }, [loadFinished, form, formId, navigate]);
+  }, [loadFinished, form, formId, navigate, paths]);
 
   // These must stay above the early return below so hook order is stable when
   // `form` transitions null -> loaded (or back, e.g. on delete). (Rules of Hooks)
@@ -969,7 +974,7 @@ export default function FormBuilder() {
   const foldMiddleClusters = builderChrome === 'tiny';
   const designActions: BuilderHeaderAction[] = [
     { id: 'theme', label: 'Theme', title: 'Theme Customization', icon: Palette, onSelect: () => setActiveModal('theme') },
-    { id: 'screen', label: 'Screen', title: 'Custom screen (Beta)', icon: MonitorPlay, onSelect: () => navigate(`/forms/${form.id}/screen/edit`) },
+    { id: 'screen', label: 'Screen', title: 'Custom screen (Beta)', icon: MonitorPlay, onSelect: () => navigate(paths.screenEdit(form.id)) },
     ...(form.customScreen?.enabled ? [{ id: 'dashboard', label: 'Dashboard', title: 'View dashboard', icon: LayoutDashboard, onSelect: () => setActiveModal('screen') }] : []),
   ];
   const dataActions: BuilderHeaderAction[] = [
@@ -994,7 +999,9 @@ export default function FormBuilder() {
     ...(foldMiddleClusters ? [...designActions, ...dataActions] : []),
     { id: 'versions', label: 'Versions', title: 'Version History', icon: History, onSelect: () => setActiveModal('versions') },
     { id: 'shortcuts', label: 'Shortcuts', title: 'Keyboard Shortcuts (Ctrl+?)', icon: Keyboard, onSelect: () => setActiveModal('shortcuts') },
-    { id: 'publish-pack', label: 'Publish as pack', icon: Package, onSelect: handlePublishPack },
+    // Publishing a pack happens under the CALLER's marketplace identity — an admin
+    // acting on someone else's form must not publish it as their own.
+    ...(acting ? [] : [{ id: 'publish-pack', label: 'Publish as pack', icon: Package, onSelect: handlePublishPack }]),
   ];
   const chooseOverflowAction = (action: BuilderHeaderAction) => {
     setShowOverflowMenu(false);
@@ -1006,7 +1013,7 @@ export default function FormBuilder() {
       {/* Header */}
       <header ref={observeHeader} className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(paths.formsHome())}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {/* Hidden on phones so the title input keeps usable width (the header is

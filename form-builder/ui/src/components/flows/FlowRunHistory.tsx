@@ -273,9 +273,15 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
                 )}
               </div>
             )}
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-slate-400">
-              {JSON.stringify({ inputSnapshot: run.inputSnapshot, result: run.result }, null, 2)}
-            </pre>
+            {(run as { redacted?: boolean }).redacted ? (
+              <p className="text-xs text-gray-500 dark:text-slate-400 italic">
+                Run payloads (input snapshot, result) can contain record data, so they are hidden from platform admins.
+              </p>
+            ) : (
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-slate-400">
+                {JSON.stringify({ inputSnapshot: run.inputSnapshot, result: run.result }, null, 2)}
+              </pre>
+            )}
           </td>
         </tr>
       )}

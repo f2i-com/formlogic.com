@@ -924,13 +924,21 @@ export function Dashboard() {
           }
           setStatsReady(true);
         }
-      } else {
+      } else if (storageMode !== 'api') {
         setStats(localStats);
+        setStatsReady(true);
+      } else if (formsLoading === false) {
+        // Cloud mode with a genuinely empty account (the forms list finished
+        // loading and none exist). While forms are still loading this branch
+        // must NOT run: marking stats "ready" with zero counts here made a hard
+        // refresh flash "No responses yet" the moment the forms list landed,
+        // before the analytics fan-out had produced the real totals.
+        setStats({ totalResponses: 0 });
         setStatsReady(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [forms, storageMode, user, localStats]);
+  }, [forms, storageMode, user, localStats, formsLoading]);
 
   const totalResponses = stats.totalResponses;
 

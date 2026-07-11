@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, Package, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
 import { api } from '../../lib/api';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -16,6 +17,8 @@ import type { App } from '../../types/app';
 export function AppDeploySettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const paths = useResourcePaths();
+  const acting = useAdminActing();
   const { fetchApps, updateApp } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -92,7 +95,7 @@ export function AppDeploySettings() {
       <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
         <p className="text-lg font-medium text-gray-700 dark:text-slate-300">App not found</p>
         <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">It may have been deleted, or you don’t have access.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to apps</Button>
+        <Button variant="outline" className="mt-4" onClick={() => navigate(paths.appsHome())}>Back to apps</Button>
       </div>
     );
   }
@@ -155,7 +158,7 @@ export function AppDeploySettings() {
       <Header
         title="Deploy & share"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }
@@ -202,7 +205,7 @@ export function AppDeploySettings() {
             <Button variant="outline" size="sm" onClick={handleCopy} leftIcon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}>
               {copied ? 'Copied' : 'Copy'}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
+            <Button variant="outline" size="sm" disabled={!!acting} title={acting ? 'The live app shows record data, which is not visible to platform admins' : undefined} onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
               Open
             </Button>
           </div>
@@ -256,8 +259,9 @@ export function AppDeploySettings() {
         {/* Custom domains */}
         <CustomDomainsPanel appId={appId!} appSlug={app.slug} />
 
-        {/* FormLogic Desktop (local companion: plugins, pairing, aokie connector) */}
-        <DesktopStatusPanel />
+        {/* FormLogic Desktop (local companion) — hidden while acting: this panel shows
+            the signed-in ADMIN's own desktop, not the owner's. */}
+        {!acting && <DesktopStatusPanel />}
 
         {/* App logic (QuickJS) */}
         <AppLogicPanel appId={appId!} initialLogic={app.customLogic} />
@@ -265,8 +269,9 @@ export function AppDeploySettings() {
         {/* FormLogic Flows (event-driven automations, docs/FORMLOGIC_FLOWS.md) */}
         <FlowsPanel appId={appId!} appSlug={app.slug} />
 
-        {/* Application package */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
+        {/* Application package — hidden while acting (exports can embed seeded records;
+            the API layer refuses them for admins regardless) */}
+        {!acting && <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
           <div className="flex items-center gap-3 mb-4">
             <Package className="h-5 w-5 text-primary-600 dark:text-primary-400" />
             <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Application package</h3>
@@ -284,7 +289,7 @@ export function AppDeploySettings() {
               Export archive (ZIP)
             </Button>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
     </div>

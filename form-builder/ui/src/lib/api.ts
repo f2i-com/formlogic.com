@@ -204,6 +204,46 @@ export interface AppFormRelations {
   incomingLinks: AppFormRelationLink[];
 }
 
+/** Owner-self surfaces that must NOT be rewritten while acting (they act on the ADMIN's
+ *  own session/account or are already admin-scoped). */
+const ACTING_PASSTHROUGH = [
+  '/admin', '/auth', '/notices', '/ai', '/packs', '/billing', '/api-keys',
+  '/desktop-connections', '/oauth', '/health', '/mcp', '/sample-apps',
+  '/application-packages', '/demo',
+];
+
+/** Record-data surfaces: refused while acting (the backend mirror has no variants). */
+const ACTING_BLOCKED: RegExp[] = [
+  /^\/forms\/[^/]+\/(responses|analytics|lookup|reports|script|export|start|upload)(\/|\?|$)/,
+  /^\/app\//,                          // the entire app runtime shows record data
+  /^\/apps\/[^/]+\/export(\/|\?|$)/,   // app exports can embed seeded records
+  /^\/files\//,
+  /^\/flow-runs\/queued(\/|\?|$)/,     // queue/claim hand answer snapshots to executors
+  /\/claim(\/|\?|$)/,
+  /^\/flow-kv(\/|\?|$)/,
+];
+
+/**
+ * Platform-admin acting-mode endpoint router (pure — unit-tested directly):
+ * pass through admin-self surfaces, refuse record-data surfaces, rewrite
+ * everything owner-scoped onto the server's /admin/users/{ownerId} mirror, and
+ * DEFAULT-DENY anything unmapped (a loud 403, never a silent owner-surface call).
+ */
+export function actingRoute(endpoint: string, ownerId: string): { endpoint: string; blocked: boolean } {
+  for (const prefix of ACTING_PASSTHROUGH) {
+    if (endpoint === prefix || endpoint.startsWith(prefix + '/') || endpoint.startsWith(prefix + '?')) {
+      return { endpoint, blocked: false };
+    }
+  }
+  for (const re of ACTING_BLOCKED) {
+    if (re.test(endpoint)) return { endpoint, blocked: true };
+  }
+  if (/^\/(forms|apps|flows|flow-runs)(\/|\?|$)/.test(endpoint)) {
+    return { endpoint: `/admin/users/${encodeURIComponent(ownerId)}${endpoint}`, blocked: false };
+  }
+  return { endpoint, blocked: true };
+}
+
 class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
@@ -213,6 +253,12 @@ class ApiClient {
   // When true (the shared public Demo account), app-runtime writes stay in this browser's IndexedDB
   // instead of hitting the server, so the demo can't be polluted for other visitors.
   private _demoMode: boolean = false;
+  // Platform-admin ACTING mode: while an admin manages ANOTHER user's account under the
+  // /admin/... routes (AdminActingBoundary sets this), owner-scoped endpoints are rewritten
+  // onto the server's acting-as mirror (/admin/users/{ownerId}/...), and record-data
+  // endpoints are refused before any network call. The authoritative boundary is the
+  // backend allowlist (AdminActingAsRoutes) — this is defense in depth + honest UX.
+  private _adminActing: { ownerId: string } | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -226,6 +272,29 @@ class ApiClient {
   /** Whether the shared Demo account is active (writes should stay in the browser). */
   isDemoMode(): boolean {
     return this._demoMode;
+  }
+
+  /** Enter/leave platform-admin acting mode (AdminActingBoundary mounts/unmounts). */
+  setAdminActing(ctx: { ownerId: string } | null): void {
+    this._adminActing = ctx;
+  }
+
+  /** Whether requests are currently acting on another user's account as a platform admin. */
+  isAdminActing(): boolean {
+    return this._adminActing !== null;
+  }
+
+  static readonly ACTING_BLOCKED_MESSAGE = 'Record data is not visible to platform administrators.';
+
+  /** Route an endpoint for acting mode (see the exported actingRoute — pure and unit-tested). */
+  private routeForAdminActing(endpoint: string): { endpoint: string; blocked: boolean } {
+    const acting = this._adminActing;
+    if (!acting) return { endpoint, blocked: false };
+    const routed = actingRoute(endpoint, acting.ownerId);
+    if (routed.blocked) {
+      logger.warn('Admin acting mode refused an endpoint:', endpoint);
+    }
+    return routed;
   }
 
   /**
@@ -282,7 +351,11 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const routed = this.routeForAdminActing(endpoint);
+    if (routed.blocked) {
+      return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
+    }
+    const url = `${this.baseUrl}${routed.endpoint}`;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -351,7 +424,11 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null; networkError?: string }> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const routed = this.routeForAdminActing(endpoint);
+    if (routed.blocked) {
+      return { ok: false, status: 403, body: { error: true, message: ApiClient.ACTING_BLOCKED_MESSAGE } };
+    }
+    const url = `${this.baseUrl}${routed.endpoint}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
@@ -465,6 +542,8 @@ class ApiClient {
 
   /** Download an app form's responses as CSV (server-gated on the export_responses permission). */
   async exportAppResponses(appSlug: string, formId: string, fileLabel: string): Promise<void> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const response = await fetch(`${this.baseUrl}/app/${encodeURIComponent(appSlug)}/forms/${encodeURIComponent(formId)}/export`, { credentials: 'include' });
     if (!response.ok) {
       if (response.status === 401) this.handleUnauthorized();
@@ -611,6 +690,7 @@ class ApiClient {
 
   /** Record a form "start" (first interaction) for the analytics funnel. Fire-and-forget. */
   async recordFormStart(formId: string): Promise<void> {
+    if (this.isAdminActing()) return; // never pollute an owner's analytics funnel
     try {
       await fetch(`${this.baseUrl}/forms/${formId}/start`, { method: 'POST', credentials: 'include' });
     } catch { /* best-effort: never block the fill on an analytics ping */ }
@@ -659,6 +739,8 @@ class ApiClient {
 
   // Export
   async exportResponses(formId: string): Promise<string> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const url = `${this.baseUrl}/forms/${formId}/responses/export`;
     const response = await fetch(url, { credentials: 'include' });
 
@@ -673,6 +755,8 @@ class ApiClient {
 
   // Download SQLite database file
   async downloadSqlite(formId: string, filename: string): Promise<void> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const url = `${this.baseUrl}/forms/${formId}/export/sqlite`;
     const response = await fetch(url, { credentials: 'include' });
 
@@ -696,6 +780,8 @@ class ApiClient {
 
   // Download JSON export
   async downloadJson(formId: string, filename: string): Promise<void> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const url = `${this.baseUrl}/forms/${formId}/export/json`;
     const response = await fetch(url, { credentials: 'include' });
 
@@ -1941,6 +2027,8 @@ class ApiClient {
 
   /** Download a whole app as a full .formlogic ARCHIVE (ZIP: manifest + pack + quickjs + signature). */
   async exportAppPackageArchive(appId: string, filename = 'application'): Promise<void> {
+    // Raw fetch bypasses request() — app exports can embed seeded records, so acting mode refuses.
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const response = await fetch(`${this.baseUrl}/apps/${appId}/export/package`, { credentials: 'include' });
     if (!response.ok) {
       if (response.status === 401) this.handleUnauthorized();
@@ -2125,6 +2213,8 @@ class ApiClient {
 
   // File upload for form responses
   async uploadFile(formId: string, file: File, fieldId?: string): Promise<ApiResponse<UploadedFileMetadata>> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${formId}/upload`;
     const formData = new FormData();
     formData.append('file', file);
@@ -2156,6 +2246,8 @@ class ApiClient {
   }
 
   async uploadAppFile(slug: string, formId: string, file: File, fieldId?: string): Promise<ApiResponse<UploadedFileMetadata>> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/app/${slug}/forms/${formId}/upload`;
     const formData = new FormData();
     formData.append('file', file);
@@ -2188,6 +2280,8 @@ class ApiClient {
 
   // CSV import
   async parseImportCsv(formId: string, file: File): Promise<ApiResponse<CsvParseResult>> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
     const formData = new FormData();
     formData.append('file', file);
@@ -2218,6 +2312,8 @@ class ApiClient {
   }
 
   async importCsv(formId: string, file: File, columnMapping: Record<string, string>): Promise<ApiResponse<CsvImportResult>> {
+    // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
     const formData = new FormData();
     formData.append('file', file);

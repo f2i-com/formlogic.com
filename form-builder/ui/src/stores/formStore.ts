@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
 import { api } from '../lib/api';
+import { frozenWhileActing } from '../lib/adminFrozenStorage';
 import { logger } from '../lib/logger';
 import { toast } from './toastStore';
 
@@ -146,6 +147,9 @@ interface FormState {
   // Immediately re-save every part whose last sync failed. True when nothing failed
   // (or everything now saved); false when at least one part is still unsaved.
   retryFormSaves: (formId: string) => Promise<boolean>;
+  // Drop every _adminForeign form (another owner's forms loaded during a platform-admin
+  // acting session) plus its history/save state. Called by AdminActingBoundary on exit.
+  purgeAdminForeign: () => void;
   // LOCAL-ONLY mutation — no server sync is scheduled. For truthful rollback (e.g.
   // reverting an optimistic publish the server never acknowledged), never for edits.
   setFormLocal: (id: string, updates: Partial<Form>) => void;
@@ -324,9 +328,15 @@ export const useFormStore = create<FormState>()(
       }
     };
 
+    // Whether edits sync to the server: cloud mode, OR a platform admin acting on
+    // another user's account (acting always syncs through the acting-as mirror,
+    // even when the admin's OWN storage mode is 'local' — the owner's data lives
+    // server-side regardless). Demo never overlaps (demo accounts can't be admins).
+    const cloudSync = () => get().storageMode === 'api' || api.isAdminActing();
+
     const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
       // Demo overlay writes nothing to the server; the optimistic edit lives in the (persisted) store.
-      if (get().storageMode === 'api' && !api.isDemoMode()) {
+      if (cloudSync() && !api.isDemoMode()) {
         const key = `${formId}-${field}`;
         // Only count a NEW in-flight save. Rapid edits collapse into a single
         // debounced flush (the pending timer is replaced, its callback never
@@ -347,8 +357,12 @@ export const useFormStore = create<FormState>()(
 
     // Remove empty/untouched forms (no fields, default title, no content)
     const purgeEmptyForms = () => {
+      // NEVER while a platform admin is acting on another user's account: the
+      // owner's legitimately-empty drafts are not ours to garbage-collect.
+      if (api.isAdminActing()) return;
       const { forms, storageMode } = get();
       const emptyIds = forms
+        .filter(f => !(f as Form & { _adminForeign?: boolean })._adminForeign)
         .filter(f => f.fields.length === 0 && f.title === 'Untitled Form' && !f.description && !f.logicScript)
         .map(f => f.id);
       if (emptyIds.length === 0) return;
@@ -441,14 +455,20 @@ export const useFormStore = create<FormState>()(
 
       refreshForms: async () => {
         const state = get();
-        if (state.storageMode !== 'api') return;
+        const acting = api.isAdminActing();
+        // Acting mode always refreshes (the OWNER's forms via the acting-as
+        // mirror), regardless of the admin's own storage mode.
+        if (state.storageMode !== 'api' && !acting) return;
 
         set({ isLoading: true });
         try {
           const forms = await fetchAllForms();
           if (forms !== null) {
+            const fetched = acting
+              ? forms.map((f) => ({ ...f, _adminForeign: true } as Form))
+              : forms;
             const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
-            set({ forms: [...forms, ...localDemo], isLoading: false });
+            set({ forms: [...fetched, ...localDemo], isLoading: false });
           } else {
             set({ error: 'Failed to load forms', isLoading: false });
           }
@@ -488,13 +508,12 @@ export const useFormStore = create<FormState>()(
           responseCount: 0,
         };
 
-        const state = get();
-
         // Optimistic update
         set((s) => ({ forms: [...s.forms, form] }));
 
-        // If using API (and not the demo overlay), also create on server
-        if (state.storageMode === 'api' && !demo) {
+        // If syncing to a server (cloud mode or admin acting on an owner's account,
+        // never the demo overlay), also create there.
+        if (cloudSync() && !demo) {
           try {
             const result = await api.createForm(form);
             if (result.error) {
@@ -505,12 +524,15 @@ export const useFormStore = create<FormState>()(
               return null;
             } else if (result.data) {
               // Update with server response (may have different ID)
+              const created = api.isAdminActing()
+                ? ({ ...(result.data.form as Form), _adminForeign: true } as Form)
+                : (result.data.form as Form);
               set((s) => ({
                 forms: s.forms.map((f) =>
-                  f.id === form.id ? (result.data!.form as Form) : f
+                  f.id === form.id ? created : f
                 ),
               }));
-              return result.data.form as Form;
+              return created;
             }
           } catch (error) {
             // Rollback optimistic update
@@ -536,11 +558,12 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // If using API (and not the demo overlay), sync current form state to server (debounced).
+        // If syncing to a server (cloud mode or admin acting; not the demo overlay),
+        // sync current form state (debounced).
         // Demo edits stay in-browser (persisted for demo-local forms; in-session for seeded ones).
         // Uses a separate debounce key to avoid conflicts with field/settings/theme syncs
         // Reads fresh state inside the callback to avoid stale closures dropping earlier updates
-        if (state.storageMode === 'api' && !api.isDemoMode()) {
+        if ((state.storageMode === 'api' || api.isAdminActing()) && !api.isDemoMode()) {
           const key = `${id}-meta`;
           // Count only a new in-flight save (see syncFormField) so the spinner
           // clears once the debounced flush completes.
@@ -562,7 +585,7 @@ export const useFormStore = create<FormState>()(
         if (failed.length === 0) {
           return true;
         }
-        if (get().storageMode !== 'api' || api.isDemoMode()) {
+        if (!cloudSync() || api.isDemoMode()) {
           return true; // nothing syncs to a server in these modes
         }
         markSaving(id, true);
@@ -572,6 +595,35 @@ export const useFormStore = create<FormState>()(
         } finally {
           markSaving(id, false);
         }
+      },
+
+      purgeAdminForeign: () => {
+        const foreign = get().forms.filter((f) => (f as Form & { _adminForeign?: boolean })._adminForeign);
+        if (foreign.length === 0) return;
+        const ids = new Set(foreign.map((f) => f.id));
+        for (const id of ids) {
+          clearDebounceTimer(`${id}-fields`);
+          clearDebounceTimer(`${id}-settings`);
+          clearDebounceTimer(`${id}-theme`);
+          clearDebounceTimer(`${id}-meta`);
+        }
+        set((s) => {
+          const fieldHistory = { ...s.fieldHistory };
+          const saveErrors = { ...s.saveErrors };
+          const savingFormIds = { ...s.savingFormIds };
+          for (const id of ids) {
+            delete fieldHistory[id];
+            delete saveErrors[id];
+            delete savingFormIds[id];
+          }
+          return {
+            forms: s.forms.filter((f) => !ids.has(f.id)),
+            fieldHistory,
+            saveErrors,
+            savingFormIds,
+            activeFormId: s.activeFormId && ids.has(s.activeFormId) ? null : s.activeFormId,
+          };
+        });
       },
 
       setFormLocal: (id, updates) => {
@@ -610,8 +662,8 @@ export const useFormStore = create<FormState>()(
           return;
         }
 
-        // If using API, also delete on server
-        if (state.storageMode === 'api') {
+        // If syncing to a server (cloud mode or admin acting), also delete there
+        if (state.storageMode === 'api' || api.isAdminActing()) {
           try {
             const result = await api.deleteForm(id);
             if (result.error && formToDelete) {
@@ -675,8 +727,8 @@ export const useFormStore = create<FormState>()(
         // Optimistic update
         set((s) => ({ forms: [...s.forms, newForm] }));
 
-        // If using API (and not the demo overlay), duplicate on server
-        if (state.storageMode === 'api' && !demo) {
+        // If syncing to a server (cloud mode or admin acting, not the demo overlay), duplicate there
+        if (cloudSync() && !demo) {
           try {
             const result = await api.duplicateForm(id);
             if (result.error) {
@@ -685,12 +737,15 @@ export const useFormStore = create<FormState>()(
               return null;
             }
             if (result.data) {
+              const duplicated = api.isAdminActing()
+                ? ({ ...(result.data.form as Form), _adminForeign: true } as Form)
+                : (result.data.form as Form);
               set((s) => ({
                 forms: s.forms.map((f) =>
-                  f.id === newForm.id ? (result.data!.form as Form) : f
+                  f.id === newForm.id ? duplicated : f
                 ),
               }));
-              return result.data.form as Form;
+              return duplicated;
             }
           } catch (error) {
             set((s) => ({ forms: s.forms.filter((f) => f.id !== newForm.id) }));
@@ -707,10 +762,15 @@ export const useFormStore = create<FormState>()(
 
       loadFullForm: async (id, opts) => {
         const state = get();
-        // In local mode, the form is already fully loaded
-        if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
-        // Demo-local forms exist only in the browser — never fetch them from the server (404).
-        if (isDemoLocalFormId(id)) return state.forms.find((f) => f.id === id);
+        const acting = api.isAdminActing();
+        // Acting mode ALWAYS fetches (the owner's form via the acting-as mirror) —
+        // the admin's own local-mode/demo shortcuts don't apply to foreign forms.
+        if (!acting) {
+          // In local mode, the form is already fully loaded
+          if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
+          // Demo-local forms exist only in the browser — never fetch them from the server (404).
+          if (isDemoLocalFormId(id)) return state.forms.find((f) => f.id === id);
+        }
 
         // Check if the form already has fields loaded (use _fieldsLoaded flag
         // since a form with 0 fields is valid and shouldn't trigger a refetch).
@@ -726,15 +786,24 @@ export const useFormStore = create<FormState>()(
         try {
           const result = await api.getForm(id);
           if (!result.error && result.data?.form) {
-            const fullForm = { ...(result.data.form as Form), _fieldsLoaded: true } as Form;
+            const fullForm = {
+              ...(result.data.form as Form),
+              _fieldsLoaded: true,
+              ...(acting ? { _adminForeign: true } : {}),
+            } as Form;
             // Fields are wholesale-replaced from the server (incl. version restore), so
             // any in-session undo history is now incoherent — drop it (else Ctrl+Z would
             // restore pre-load fields and sync that stale state back to the server).
             set((s) => {
               const fieldHistory = { ...s.fieldHistory };
               delete fieldHistory[id];
+              // Upsert: a foreign form (or a deep-linked one) isn't in the list yet —
+              // .map() alone would silently drop it and the builder would 404.
+              const exists = s.forms.some((f) => f.id === id);
               return {
-                forms: s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f)),
+                forms: exists
+                  ? s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f))
+                  : [...s.forms, fullForm],
                 fieldHistory,
               };
             });
@@ -1262,11 +1331,16 @@ export const useFormStore = create<FormState>()(
     },
     {
       name: 'formlogic-forms',
+      // Writes are frozen while a platform admin is acting on another user's
+      // account — the owner's forms must never land in the admin's snapshot.
+      storage: frozenWhileActing(),
       partialize: (state) => ({
         // Only persist forms in local mode — API mode data is server-backed
         // Local mode persists everything; otherwise persist only demo-created (browser-only) forms
         // so they survive reload and merge back alongside the server's forms on the next load.
-        forms: state.storageMode === 'local' ? state.forms : state.forms.filter((f) => isDemoLocalFormId(f.id)),
+        // _adminForeign forms (another owner's, loaded while acting) never persist in either mode.
+        forms: (state.storageMode === 'local' ? state.forms : state.forms.filter((f) => isDemoLocalFormId(f.id)))
+          .filter((f) => !(f as Form & { _adminForeign?: boolean })._adminForeign),
         storageMode: state.storageMode,
         // Persist offline deletions so they survive a refresh until the next sync propagates them.
         pendingDeletions: state.pendingDeletions,

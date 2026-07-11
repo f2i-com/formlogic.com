@@ -114,6 +114,34 @@ export function formatDateTimeInZone(value: string | Date, tz: string): string {
 }
 
 /**
+ * The timezone the ADMIN PANEL renders every timestamp in: the signed-in
+ * admin's own account timezone, else their browser's zone, else UTC. (The
+ * app-runtime precedence chain doesn't apply — the admin panel is platform
+ * chrome, not a member view of someone's app.)
+ */
+export function useAdminTimezone(): string {
+  const tz = useAuthStore((s) => s.user?.timezone);
+  return resolveDisplayTimezone(tz, browserTimezone());
+}
+
+/**
+ * Date-only display of a UTC TIMESTAMP in `tz` ("11 Jul 2026") — for moments
+ * like "joined" where the time of day is noise but the zone still decides
+ * which calendar day the moment falls on. Distinct from formatDateOnly, which
+ * renders zone-less calendar dates verbatim.
+ */
+export function formatDateInZone(value: string | Date, tz: string): string {
+  const d = parseServerDate(value);
+  if (isNaN(d.getTime())) return typeof value === 'string' ? value : '';
+  const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' };
+  try {
+    return new Intl.DateTimeFormat(undefined, { ...opts, timeZone: tz }).format(d);
+  } catch {
+    return new Intl.DateTimeFormat(undefined, { ...opts, timeZone: 'UTC' }).format(d);
+  }
+}
+
+/**
  * Date-only display ("11 Jul 2026"). A calendar date carries no time, so it's
  * NOT shifted between zones — showing it in a viewer's tz would wrongly roll a
  * date-of-birth across midnight. Rendered from the literal Y-M-D.

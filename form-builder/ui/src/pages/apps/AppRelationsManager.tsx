@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Plus, Trash2, Link2, ExternalLink, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -21,6 +22,7 @@ interface Relation {
 export function AppRelationsManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   const { fetchAppForms } = useAppStore();
 
   const [appForms, setAppForms] = useState<AppForm[]>([]);
@@ -96,7 +98,7 @@ export function AppRelationsManager() {
 
   const handleEdit = (rel: Relation) => {
     // Navigate to the form builder — the linked_record field can be fully configured there
-    navigate(`/builder/${rel.sourceFormId}?appId=${appId}`);
+    navigate(paths.builder(rel.sourceFormId, appId));
   };
 
   const handleAdd = () => {
@@ -118,7 +120,7 @@ export function AppRelationsManager() {
         title="Relations"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
             <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>

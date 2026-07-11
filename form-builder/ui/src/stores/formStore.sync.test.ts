@@ -9,6 +9,8 @@ import type { Form } from '../types/form';
 vi.mock('../lib/api', () => ({
   api: {
     isDemoMode: vi.fn(() => false),
+    isAdminActing: vi.fn(() => false),
+    setAdminActing: vi.fn(),
     getForm: vi.fn(),
     getForms: vi.fn(async () => ({ data: { forms: [] } })),
     createForm: vi.fn(),

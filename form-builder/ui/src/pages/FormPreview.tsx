@@ -11,6 +11,7 @@ import { useFormStore } from '../stores/formStore';
 import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
+import { useAdminActing, useResourcePaths } from '../components/admin/AdminActingContext';
 import { cn } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
@@ -21,6 +22,10 @@ import type { FormField } from '../types/form';
 export default function FormPreview() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  // Platform-admin acting mode: previews show STRUCTURE only (dashboards/custom
+  // screens render live record data, which is hidden from admins).
+  const acting = useAdminActing();
+  const paths = useResourcePaths();
   const [searchParams] = useSearchParams();
   // ?form=1 previews the fillable FORM even when the form has a custom screen/dashboard — the "Preview"
   // eye on a standalone form shows the form itself (the screen has its own /forms/:id/screen preview).
@@ -121,7 +126,7 @@ export default function FormPreview() {
   }
 
   // A section-screen widget dashboard replaces the default form in preview (owner → live data).
-  if (!forceForm && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
+  if (!forceForm && !acting && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
     return (
       <div className="min-h-dvh w-full bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
         <div className="max-w-6xl mx-auto">
@@ -139,7 +144,7 @@ export default function FormPreview() {
   }
 
   // A custom screen replaces the default form in preview too (owner context → live data).
-  if (!forceForm && form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
+  if (!forceForm && !acting && form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
     return (
       <div className="h-dvh w-full bg-white dark:bg-slate-950">
         <CustomScreenRuntime
@@ -184,10 +189,15 @@ export default function FormPreview() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
+      {acting && form.customScreen?.enabled && (
+        <div className="bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 text-xs px-4 py-2 text-center">
+          Dashboard &amp; custom-screen previews are disabled for platform admins — they display record data. Showing the form structure instead.
+        </div>
+      )}
       {/* Header */}
       <header className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 flex-shrink-0 transition-colors duration-300">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/builder/${form.id}`)}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(paths.builder(form.id))}>
             <ArrowLeft className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Exit Preview</span>
           </Button>

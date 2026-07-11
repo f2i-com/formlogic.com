@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -15,6 +16,7 @@ import { useAuthStore } from '../../stores/authStore';
 export function AppRoleEditor() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   const { fetchRoles, createRole, deleteRole, updateRole, fetchAppForms, getApp } = useAppStore();
   const userId = useAuthStore((s) => s.user?.id);
   const [roles, setRoles] = useState<AppRole[]>([]);
@@ -160,7 +162,7 @@ export function AppRoleEditor() {
       <Header
         title="Roles & permissions"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navGuarded(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navGuarded(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }

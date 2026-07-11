@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
+import { frozenWhileActing } from '../lib/adminFrozenStorage';
 import { useFormStore } from './formStore';
 import { toast } from './toastStore';
 import type { App, AppForm, AppListItem, AppRole } from '../types/app';
@@ -260,6 +261,11 @@ export const useAppStore = create<AppState>()(
     })},
     {
       name: 'formlogic-apps',
+      // Writes are frozen while a platform admin is acting on another user's
+      // account — the owner's apps fill the in-memory slice via the acting-as
+      // mirror and must never land in the admin's own localStorage snapshot.
+      // AdminActingBoundary rehydrates + refetches on exit.
+      storage: frozenWhileActing(),
       partialize: (state) => ({
         apps: state.apps,
         activeAppId: state.activeAppId,

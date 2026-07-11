@@ -15,6 +15,7 @@ import { IconPicker } from '../../components/ui/IconPicker';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { cn } from '../../lib/utils';
 import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
+import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
 import type { App, AppRole, AppForm, AppKind } from '../../types/app';
 import { DEFAULT_APP_THEME, KIND_LABELS } from '../../types/app';
 
@@ -32,6 +33,10 @@ const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9
 export function AppSettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  // Platform-admin acting mode (managing another user's app): links stay inside
+  // /admin/..., and data-showing/identity-bound actions are hidden or disabled.
+  const acting = useAdminActing();
+  const paths = useResourcePaths();
   const [searchParams, setSearchParams] = useSearchParams();
   const { updateApp, deleteApp, fetchApps, fetchRoles, fetchAppForms } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
@@ -108,7 +113,7 @@ export function AppSettings() {
       <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
         <p className="text-lg font-medium text-gray-700 dark:text-slate-300">App not found</p>
         <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">It may have been deleted, or you don’t have access.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to apps</Button>
+        <Button variant="outline" className="mt-4" onClick={() => navigate(paths.appsHome())}>Back to apps</Button>
       </div>
     );
   }
@@ -147,7 +152,7 @@ export function AppSettings() {
       await deleteApp(appId);
       if (!useAppStore.getState().getApp(appId)) {
         setShowDelete(false);
-        navigate('/apps');
+        navigate(paths.appsHome());
       }
     } finally {
       setDeleting(false);
@@ -188,7 +193,7 @@ export function AppSettings() {
         title={app.name}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navGuarded('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navGuarded(paths.appsHome())} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
             {/* Nothing on the Manage tab is savable — hide the Save action there. */}
@@ -241,15 +246,17 @@ export function AppSettings() {
             variant="outline"
             size="sm"
             leftIcon={<Rocket className="h-4 w-4" />}
-            onClick={() => navGuarded(`/apps/${appId}/deploy`)}
+            onClick={() => navGuarded(paths.appSub(`${appId}`, 'deploy'))}
           >
             Deploy
           </Button>
           <Button
             size="sm"
             leftIcon={<ExternalLink className="h-4 w-4" />}
-            disabled={app.status !== 'published'}
-            title={app.status === 'published' ? 'Open the app in a new tab' : 'Publish the app (Deploy) to open it'}
+            disabled={app.status !== 'published' || !!acting}
+            title={acting
+              ? 'The live app shows record data, which is not visible to platform admins'
+              : app.status === 'published' ? 'Open the app in a new tab' : 'Publish the app (Deploy) to open it'}
             onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener')}
           >
             Open app
@@ -553,7 +560,9 @@ export function AppSettings() {
           <TabsContent value="manage">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
-              { label: 'Records', desc: 'Browse the data in every form of this app', icon: Table, path: 'records' },
+              acting
+                ? { label: 'Record counts', desc: 'Totals per form — record data itself is not visible to platform admins', icon: Table, path: 'records' }
+                : { label: 'Records', desc: 'Browse the data in every form of this app', icon: Table, path: 'records' },
               { label: 'Forms', desc: 'Add, remove, and reorder forms', icon: LayoutGrid, path: 'forms' },
               { label: 'Companion app', desc: 'A second app — e.g. an admin console — over these same forms and data', icon: Layers, path: 'forms' },
               { label: 'Users', desc: 'Manage users and invitations', icon: Users, path: 'users' },
@@ -564,7 +573,7 @@ export function AppSettings() {
             ].map((item) => (
               <button
                 key={item.label}
-                onClick={() => navGuarded(`/apps/${appId}/${item.path}`)}
+                onClick={() => navGuarded(paths.appSub(`${appId}`, item.path))}
                 className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
               >
                 <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
@@ -576,7 +585,9 @@ export function AppSettings() {
                 </div>
               </button>
             ))}
-            <button
+            {/* Identity-bound / export surfaces are the owner's, not an acting admin's:
+                MCP tokens would mint under the admin, and app exports can embed records. */}
+            {!acting && <button
               onClick={() => setShowMcp(true)}
               className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
             >
@@ -587,8 +598,8 @@ export function AppSettings() {
                 <span className="block text-sm font-medium text-gray-900 dark:text-white">Connect an AI</span>
                 <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Let an external AI build via MCP (Beta)</span>
               </div>
-            </button>
-            <button
+            </button>}
+            {!acting && <button
               onClick={handleExport}
               disabled={exporting}
               className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
@@ -600,7 +611,7 @@ export function AppSettings() {
                 <span className="block text-sm font-medium text-gray-900 dark:text-white">{exporting ? 'Exporting…' : 'Export app'}</span>
                 <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Portable .json: forms, screens, scripts &amp; roles. Not responses, members, or secrets.</span>
               </div>
-            </button>
+            </button>}
           </div>
           <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
             <strong className="font-medium text-gray-700 dark:text-slate-300">Export is a structure bundle, not a data backup.</strong>{' '}

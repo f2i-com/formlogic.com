@@ -37,6 +37,17 @@ export function useFormPreview(): UseFormPreviewResult {
   const [chooser, setChooser] = useState<{ formId: string; contexts: FormAppContext[] } | null>(null);
 
   const openPreview = useCallback((formId: string) => {
+    // Platform-admin acting mode: the app-runtime preview shows record data (not
+    // visible to admins), so ALWAYS open the standalone structural preview — and
+    // under the acting route, so the new tab re-enters acting mode for this form.
+    if (api.isAdminActing()) {
+      const tab = openPreviewPlaceholder();
+      void (async () => {
+        await flushFormSaves(formId);
+        openPreviewTab(`/admin${standalonePreviewUrl(formId)}`, tab);
+      })();
+      return;
+    }
     // Local/offline forms live only in this browser — they can't belong to server apps
     // (and have no debounced server save to flush). Sync path, still inside the gesture.
     if (useFormStore.getState().storageMode !== 'api') {

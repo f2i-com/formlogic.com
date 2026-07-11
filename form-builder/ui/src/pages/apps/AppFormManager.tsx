@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
+import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { api } from '../../lib/api';
 import type { AppFormRelations } from '../../lib/api';
 import type { App, AppForm, DashboardWidget, AppReportItem } from '../../types/app';
@@ -24,6 +25,7 @@ interface RelationBadge {
 export function AppFormManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   const { addFormToApp, removeFormFromApp, updateAppForm, reorderAppForms, apps } = useAppStore();
   const { forms: allForms, refreshForms } = useFormStore();
   const [appForms, setAppForms] = useState<AppForm[]>([]);
@@ -286,7 +288,7 @@ export function AppFormManager() {
     toast.success('Companion app created', `"${newApp.name ?? name}" shares this app's forms and data — members and roles are its own.`);
     // Refresh the apps slice so the new app exists in the store before we land on its manage page.
     await useAppStore.getState().fetchApps();
-    navigate(`/apps/${newApp.id}/settings?tab=manage`);
+    navigate(paths.appSub(newApp.id, 'settings?tab=manage'));
   };
 
   const startRename = (af: AppForm) => {
@@ -321,7 +323,7 @@ export function AppFormManager() {
       <Header
         title="Manage forms"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }
@@ -414,7 +416,7 @@ export function AppFormManager() {
                       <Tag className="h-4 w-4" />
                     </button>
                   )}
-                  <button onClick={() => navigate(`/builder/${af.formId}?appId=${appId}`)} aria-label={`Edit ${af.displayName}`} title="Edit form" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
+                  <button onClick={() => navigate(paths.builder(af.formId, appId))} aria-label={`Edit ${af.displayName}`} title="Edit form" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors cursor-pointer', af.isVisible ? 'text-green-600' : 'text-gray-400')}>

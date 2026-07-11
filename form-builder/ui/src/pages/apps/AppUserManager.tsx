@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
+import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import { Header } from '../../components/layout/Header';
@@ -23,6 +24,7 @@ const GROUPS_ENABLED = false;
 export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   const [loading, setLoading] = useState(true);
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
   const { fetchRoles } = useAppStore();
@@ -201,7 +203,7 @@ export function AppUserManager() {
         title="Users & access"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
             <Button size="sm" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}>Invite user</Button>

@@ -9,6 +9,7 @@ import { readUploadedScreenFiles } from '../components/custom-screen/screenFileU
 import { AppCustomScreenRuntime } from '../components/custom-screen/AppCustomScreenRuntime';
 import { bundleScreenFiles, type ScreenFile } from '../lib/screenCompile';
 import { toast } from '../stores/toastStore';
+import { useAdminActing } from '../components/admin/AdminActingContext';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAiAvailable } from '../hooks/useAiAvailable';
 import type { CustomScreen } from '../types/form';
@@ -41,6 +42,8 @@ function toFiles(cs: CustomScreen): ScreenFile[] {
 export default function AppHomeStudio() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  // Platform-admin acting mode: widget previews render no record data.
+  const acting = useAdminActing();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [forms, setForms] = useState<AppRuntimeForm[]>([]);
@@ -178,6 +181,11 @@ export default function AppHomeStudio() {
 
   return (
     <div className="h-dvh flex flex-col bg-gray-50 dark:bg-slate-950">
+      {acting && (
+        <div className="bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 text-xs px-4 py-1.5 text-center shrink-0">
+          Widget previews show no data — record data is not visible to platform admins. Layout, widgets and code remain fully editable.
+        </div>
+      )}
       <div className="flex items-center gap-3 px-4 h-14 shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
         <button onClick={() => { if (dirty) setConfirmLeave(true); else navigate(-1); }} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
@@ -195,7 +203,7 @@ export default function AppHomeStudio() {
           <Button variant="outline" size="sm" onClick={() => setPreviewOpen((v) => !v)} leftIcon={previewOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />} title={previewOpen ? 'Hide preview' : 'Show preview'}>
             <span className="hidden sm:inline">{previewOpen ? 'Hide preview' : 'Preview'}</span>
           </Button>
-          {hasScreen && !dirty && slug && (
+          {hasScreen && !dirty && slug && !acting && (
             <Button variant="outline" size="sm" onClick={() => window.open(`/app/${slug}`, '_blank', 'noopener,noreferrer')}>Open app</Button>
           )}
           <Button size="sm" onClick={save} disabled={!hasScreen || saving || !dirty} leftIcon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}>Save</Button>

@@ -56,10 +56,20 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
 
 // Lazy load pages for better performance
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
-const Admin = lazyWithRetry(() => import('./pages/Admin').then(m => ({ default: m.Admin })));
 const FormsList = lazyWithRetry(() => import('./pages/FormsList').then(m => ({ default: m.FormsList })));
 const Settings = lazyWithRetry(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
-const Doctor = lazyWithRetry(() => import('./pages/Doctor').then(m => ({ default: m.Doctor })));
+// Platform admin panel — routed pages under /admin/* (AdminLayout guards non-admins)
+const AdminLayout = lazyWithRetry(() => import('./pages/admin/AdminLayout').then(m => ({ default: m.AdminLayout })));
+const AdminOverview = lazyWithRetry(() => import('./pages/admin/AdminOverview').then(m => ({ default: m.AdminOverview })));
+const AdminUsers = lazyWithRetry(() => import('./pages/admin/AdminUsers').then(m => ({ default: m.AdminUsers })));
+const AdminUserDetail = lazyWithRetry(() => import('./pages/admin/AdminUserDetail').then(m => ({ default: m.AdminUserDetail })));
+const AdminPlatform = lazyWithRetry(() => import('./pages/admin/AdminPlatform').then(m => ({ default: m.AdminPlatform })));
+const AdminUpgrade = lazyWithRetry(() => import('./pages/admin/AdminUpgrade').then(m => ({ default: m.AdminUpgrade })));
+const AdminDoctor = lazyWithRetry(() => import('./pages/admin/AdminDoctor').then(m => ({ default: m.AdminDoctor })));
+// Acting mode: the REAL owner UIs (app manager, builder, flows) mounted for another
+// user's resources — AdminActingBoundary resolves the owner + rewrites API calls.
+const AdminActingBoundary = lazyWithRetry(() => import('./components/admin/AdminActingBoundary').then(m => ({ default: m.AdminActingBoundary })));
+const AdminRecordCounts = lazyWithRetry(() => import('./components/admin/AdminRecordCounts').then(m => ({ default: m.AdminRecordCounts })));
 const FlowsWorkspace = lazyWithRetry(() => import('./pages/flows/FlowsWorkspace').then(m => ({ default: m.FlowsWorkspace })));
 const Billing = lazyWithRetry(() => import('./pages/Billing').then(m => ({ default: m.Billing })));
 const FormBuilder = lazyWithRetry(() => import('./pages/FormBuilder'));
@@ -320,7 +330,7 @@ function AppRoutes() {
           <Route path="/forms" element={<FormsList />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/flows" element={<FlowsWorkspace />} />
-          <Route path="/doctor" element={<Doctor />} />
+          {/* No /doctor for the demo — diagnostics are platform-admin-only now */}
           <Route path="/billing" element={<Billing />} />
           <Route path="/analytics/:formId" element={<FormAnalytics />} />
           <Route path="/responses/:formId" element={<FormResponses />} />
@@ -372,9 +382,17 @@ function AppRoutes() {
         <Route path="/forms" element={<FormsList />} />
         <Route path="/flows" element={<FlowsWorkspace />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/doctor" element={<Doctor />} />
-        {/* Platform admin panel (the page itself redirects non-admins; the API enforces it) */}
-        <Route path="/admin" element={<Admin />} />
+        {/* Doctor now lives inside the admin panel (server-side admin-gated too) */}
+        <Route path="/doctor" element={<Navigate to="/admin/doctor" replace />} />
+        {/* Platform admin panel (AdminLayout redirects non-admins; the API enforces it) */}
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<AdminOverview />} />
+          <Route path="users" element={<AdminUsers />} />
+          <Route path="users/:userId" element={<AdminUserDetail />} />
+          <Route path="platform" element={<AdminPlatform />} />
+          <Route path="upgrade" element={<AdminUpgrade />} />
+          <Route path="doctor" element={<AdminDoctor />} />
+        </Route>
         <Route path="/billing" element={<Billing />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
         <Route path="/responses/:formId" element={<FormResponses />} />
@@ -407,6 +425,25 @@ function AppRoutes() {
 
       {/* Preview route (full screen) */}
       <Route path="/preview/:formId" element={<FormPreview />} />
+
+      {/* Platform-admin ACTING routes (full screen): the same owner UIs pointed at
+          another user's account via the /admin/users/{ownerId} API mirror. There is
+          deliberately NO records/responses/analytics route here — records shows
+          counters only, and the API layer refuses record-data endpoints. */}
+      <Route path="/admin/apps/:appId" element={<AdminActingBoundary kind="app" />}>
+        <Route path="settings" element={<AppSettingsPage />} />
+        <Route path="forms" element={<AppFormManager />} />
+        <Route path="users" element={<AppUserManager />} />
+        <Route path="roles" element={<AppRoleEditor />} />
+        <Route path="relations" element={<AppRelationsManager />} />
+        <Route path="deploy" element={<AppDeploySettings />} />
+        <Route path="records" element={<AdminRecordCounts />} />
+        <Route path="home/edit" element={<AppHomeStudio />} />
+      </Route>
+      <Route path="/admin/builder/:formId" element={<AdminActingBoundary kind="form"><FormBuilder /></AdminActingBoundary>} />
+      <Route path="/admin/preview/:formId" element={<AdminActingBoundary kind="form"><FormPreview /></AdminActingBoundary>} />
+      <Route path="/admin/forms/:formId/screen/edit" element={<AdminActingBoundary kind="form"><CustomScreenStudio /></AdminActingBoundary>} />
+      <Route path="/admin/users/:userId/flows" element={<AdminActingBoundary kind="user"><FlowsWorkspace /></AdminActingBoundary>} />
 
       {/* Custom-screen play + editors — full screen (own header/back), so they fit the viewport
           and scroll internally instead of overflowing under AppShell's chrome on small screens */}
