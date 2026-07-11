@@ -782,8 +782,11 @@ $app->get('/api/health', function ($request, $response) use ($container) {
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// Deep diagnostics ("Doctor") — protected; surfaces broken DB / unwritable dirs / missing
-// QuickJS / billing misconfig that would otherwise fail silently.
+// Deep diagnostics ("Doctor") — platform admins only. Infrastructure internals (filesystem
+// paths, worker staleness, store drift, billing config) are operator concerns; the Doctor
+// page now lives inside the admin panel. AdminGateMiddleware also subsumes the old
+// demo-session refusal (the shared demo account can never be a platform admin).
+$adminGate = new \FormLogic\Middleware\AdminGateMiddleware($container->get(AuthService::class));
 $container->set(\FormLogic\Controllers\HealthController::class, function (Container $c) {
     // DocumentConverter's constructor can throw on a misconfigured temp dir; the Doctor
     // endpoint must degrade gracefully, so pass null on failure (deep() rebuilds defensively).
@@ -797,18 +800,8 @@ $container->set(\FormLogic\Controllers\HealthController::class, function (Contai
     );
 });
 $app->get('/api/health/deep', function ($request, $response) use ($container) {
-    // Infrastructure diagnostics (filesystem paths, worker staleness, store drift) must never
-    // be readable through the SHARED public demo session — any anonymous visitor holds it.
-    // Real accounts on a self-hosted install keep access (explicit admin roles are still a
-    // deferred decision — see launch review 2026-06-29).
-    $user = $request->getAttribute('user');
-    $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
-    if ($user !== null && strtolower((string) ($user->email ?? '')) === $demoEmail) {
-        $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'Diagnostics are not available in the demo.']));
-        return $response->withHeader('Content-Type', 'application/json')->withStatus(403);
-    }
     return $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
-})->add($authRequired);
+})->add($adminGate)->add($authRequired);
 
 // Broadcast notices for signed-in dashboards: the SPA polls this (cheap, indexed)
 // and toasts anything it hasn't shown yet. Admins compose them in /api/admin/notices.
@@ -822,9 +815,9 @@ $app->get('/api/notices', function ($request, $response) use ($container) {
 // ── Admin panel (platform administrators only) ─────────────────────────────────
 // Gate order (Slim route middleware is LIFO — last add() runs first): AuthMiddleware
 // authenticates and sets the user attribute, THEN AdminGateMiddleware requires the
-// platform-admin flag. Everything here is audited as admin.*; none of it returns
-// user response DATA (structure + counts only).
-$adminGate = new \FormLogic\Middleware\AdminGateMiddleware($container->get(AuthService::class));
+// platform-admin flag ($adminGate is constructed above, next to /api/health/deep).
+// Everything here is audited as admin.*; none of it returns user response DATA
+// (structure + counts only).
 $adminRateLimiter = new RateLimitMiddleware($container->get(\FormLogic\Services\RateLimiter::class), 240, 60, 'admin_api', true);
 // Route args helper (same as $getArgs below, which is defined later in the file).
 // NOTE: route closures here MUST name their params $request/$response — the DI
@@ -912,6 +905,25 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
         return $ctrl()->upgradeDiscard($request, $response);
     });
 })->add($adminRateLimiter)->add($adminGate)->add($authRequired);
+
+// ── Admin acting-as mirror (platform administrators only) ──────────────────────
+// Owner-parity management of ANOTHER user's apps/forms/flows through the SAME
+// owner controllers: AdminActAsMiddleware resolves {ownerId}, refuses mutations
+// on the shared demo account, swaps the effective user to the owner (so every
+// owner-path check/validator/quota binds unchanged), and audits every mutation
+// as admin.on_behalf. The route ALLOWLIST lives in AdminActingAsRoutes — record
+// data endpoints are deliberately absent (structure + counters only), and
+// flow-run payloads are redacted to metadata. LIFO order: authRequired →
+// adminGate → adminRateLimiter (keys on the ADMIN, pre-swap) → adminActAs.
+// $cloudWriteGate is deliberately NOT attached: an admin fixing a broken app
+// must not be blocked by the owner's lapsed cloud plan (fully audited instead).
+$adminActAs = new \FormLogic\Middleware\AdminActAsMiddleware(
+    $container->get(AuthService::class),
+    $container->get(AuditService::class)
+);
+$app->group('/api/admin/users/{ownerId}', function (RouteCollectorProxy $group) use ($container) {
+    \FormLogic\Http\AdminActingAsRoutes::register($group, $container);
+})->add($adminActAs)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // Landing hero headlines (public, no auth): the rotating <h1> slides the landing page fetches.
 // Content lives in resources/landing-hero.json so copy edits never need a frontend build. Slides

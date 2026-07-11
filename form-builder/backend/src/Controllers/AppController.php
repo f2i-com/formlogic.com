@@ -445,6 +445,14 @@ class AppController
     {
         if ($this->auditService === null) return;
         $userId = $request->getAttribute('userId');
+        // A platform admin acting on the owner's behalf (AdminActAsMiddleware
+        // swapped the effective user) is the TRUE actor: attribute the event to
+        // the admin and record who it was done for.
+        $adminActorId = $request->getAttribute('adminActorId');
+        if (is_string($adminActorId) && $adminActorId !== '') {
+            $details['onBehalfOf'] = $userId;
+            $userId = $adminActorId;
+        }
         $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }

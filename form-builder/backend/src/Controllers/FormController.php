@@ -354,7 +354,13 @@ class FormController
             unset($data['_changelog']);
             if ($this->versionService !== null) {
                 try {
-                    $this->versionService->createVersion($formId, $request->getAttribute('userId'), $changelog);
+                    // form_versions.created_by names the TRUE actor (the admin when
+                    // this edit arrives via the acting-as mirror, else the owner).
+                    $this->versionService->createVersion(
+                        $formId,
+                        $request->getAttribute('adminActorId') ?? $request->getAttribute('userId'),
+                        $changelog
+                    );
                 } catch (\Exception $versionErr) {
                     $this->logger->warning('Version creation failed', [
                         'formId' => $formId,
@@ -612,6 +618,14 @@ class FormController
     {
         if ($this->auditService === null) return;
         $userId = $request->getAttribute('userId');
+        // A platform admin acting on the owner's behalf (AdminActAsMiddleware
+        // swapped the effective user) is the TRUE actor: attribute the event to
+        // the admin and record who it was done for.
+        $adminActorId = $request->getAttribute('adminActorId');
+        if (is_string($adminActorId) && $adminActorId !== '') {
+            $details['onBehalfOf'] = $userId;
+            $userId = $adminActorId;
+        }
         $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }

@@ -229,6 +229,28 @@ class AdminPanelTest extends TestCase
         }
     }
 
+    public function testLoginAndRegisterPayloadsCarryIsAdmin(): void
+    {
+        // The SPA stores the user object handed back at sign-in. It must carry the
+        // same computed decorations /auth/me returns (isAdmin, isDemo) — without
+        // them the Admin nav entry only appeared after a full page refresh.
+        $email = 'signin-' . bin2hex(random_bytes(6)) . '@test.local';
+        $reg = self::$auth->register($email, 'correct-horse-battery');
+        try {
+            $this->assertArrayHasKey('isAdmin', $reg['user']);
+            $this->assertFalse($reg['user']['isAdmin']);
+            $this->assertFalse($reg['user']['isDemo']);
+
+            // Grant the flag → the next login payload reflects it immediately.
+            self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$reg['user']['id']]);
+            $login = self::$auth->login($email, 'correct-horse-battery');
+            $this->assertTrue($login['user']['isAdmin']);
+            $this->assertFalse($login['user']['isDemo']);
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE email = ?')->execute([$email]);
+        }
+    }
+
     public function testAdminGateBlocksNonAdmins(): void
     {
         $gate = new AdminGateMiddleware(self::$auth);

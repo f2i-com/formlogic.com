@@ -232,13 +232,12 @@ class AuthController
         return strtolower((string)($_ENV['DEMO_ENABLED'] ?? 'true')) !== 'false';
     }
 
-    /** User payload + `isDemo` (demo banner) and `isAdmin` (admin panel access) flags. */
+    /** User payload + `isDemo` (demo banner) and `isAdmin` (admin panel access) flags.
+     *  Login/register decorate through the same AuthService helper, so every
+     *  endpoint that hands the SPA a user agrees on these computed flags. */
     private function decorateUser($user): array
     {
-        $arr = $user->toArray();
-        $arr['isDemo'] = ($user->email === $this->demoEmail());
-        $arr['isAdmin'] = $this->authService->isPlatformAdmin($user);
-        return $arr;
+        return $this->authService->userPayload($user);
     }
 
     /** Current demo seed epoch (bumped by provisioning whenever the shared demo data is
@@ -372,7 +371,7 @@ class AuthController
             }
 
             return $this->jsonResponse($response, [
-                'user' => $updatedUser->toArray(),
+                'user' => $this->decorateUser($updatedUser),
             ]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [

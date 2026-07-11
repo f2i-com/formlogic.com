@@ -142,8 +142,22 @@ class AuthService
         $token = $this->generateToken($user);
 
         return [
-            'user' => $user->toArray(),
+            'user' => $this->userPayload($user),
             'token' => $token,
+        ];
+    }
+
+    /**
+     * The user payload the SPA stores at sign-in. Carries the same computed
+     * decorations /auth/me returns (isDemo, isAdmin) — without them the Admin
+     * nav entry only appeared after a full page refresh re-fetched /auth/me.
+     */
+    public function userPayload(User $user): array
+    {
+        $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+        return $user->toArray() + [
+            'isDemo' => strtolower($user->email) === $demoEmail,
+            'isAdmin' => $this->isPlatformAdmin($user),
         ];
     }
 
@@ -216,7 +230,7 @@ class AuthService
         $token = $this->generateToken($user);
 
         return [
-            'user' => $user->toArray(),
+            'user' => $this->userPayload($user),
             'token' => $token,
         ];
     }
