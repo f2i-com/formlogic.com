@@ -10,8 +10,6 @@ import {
 } from './api';
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, CheckIcon } from './Icons';
-import PairingSection from './PairingSection';
-import FormLogicCloudSection from './FormLogicCloudSection';
 import { useToast } from './Toasts';
 
 /**
@@ -804,10 +802,8 @@ export default function SettingsPanel() {
           </div>
         </form>
       </section>
-
-      <FormLogicCloudSection />
-
-      <PairingSection />
+      {/* The Cloud account link + browser pairing moved to the Connections
+          workspace (redesign 2026-07) — see ConnectionsPanel.tsx. */}
     </div>
   );
 }

@@ -6,15 +6,26 @@ import PluginsPanel from './PluginsPanel';
 import ModelsPanel from './ModelsPanel';
 import PythonPanel from './PythonPanel';
 import SettingsPanel from './SettingsPanel';
-import { ExternalLinkIcon } from './Icons';
+import ConnectionsPanel from './ConnectionsPanel';
+import ReceptionistPanel from './aokie/ReceptionistPanel';
+import { DesktopOverview } from './DesktopOverview';
+import { DesktopSidebar, SECTION_META, type SectionId } from './DesktopSidebar';
+import { useDesktopOverview } from './useDesktopOverview';
+import { ExternalLinkIcon, MoonIcon, SunIcon } from './Icons';
 
 /**
- * FormLogic Desktop top-level UI — a tray-resident dashboard with five tabs:
- *   Services · Plugins · Models · Python · Settings.
+ * FormLogic Desktop top-level UI (workspace-shell redesign, 2026-07):
+ * a grouped sidebar (Operate / Local runtime / Manage) beside a workspace
+ * header + body. Overview is a card-based control centre; the mature
+ * operational panels (Services/Plugins/Models/Python/Settings) render
+ * unchanged, and only the SELECTED panel is mounted — those panels poll every
+ * 1.5–2 s, so keeping all of them alive would waste work in a tray-resident
+ * app.
  *
- * The HTTP API is bound to 127.0.0.1:17872; the indicator in the header
- * just polls /api/health to confirm the Rust side is up. If it's not,
- * everything else gracefully shows "unreachable" without crashing.
+ * The HTTP API is bound to 127.0.0.1:17872; the header pill polls
+ * /api/health every 3 s (paused while the window is hidden) to confirm the
+ * Rust side is up. If it's not, everything else shows "unreachable" without
+ * crashing.
  */
 
 interface HealthResponse {
@@ -27,21 +38,12 @@ interface HealthResponse {
   pluginApiVersion?: number;
 }
 
-type Tab = 'services' | 'plugins' | 'models' | 'python' | 'settings';
-
-const TABS: { value: Tab; label: string }[] = [
-  { value: 'services', label: 'Services' },
-  { value: 'plugins', label: 'Plugins' },
-  { value: 'models', label: 'Models' },
-  { value: 'python', label: 'Python' },
-  { value: 'settings', label: 'Settings' },
-];
-
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('services');
+  const [section, setSection] = useState<SectionId>('overview');
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
+  const overview = useDesktopOverview();
 
   const toggleTheme = () => {
     const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
@@ -92,123 +94,90 @@ export default function App() {
     };
   }, []);
 
+  const meta = SECTION_META[section];
+  const cloudLabel = overview.runtime?.linked
+    ? (() => {
+        const url = overview.runtime?.baseUrl ?? overview.cloud?.baseUrl ?? '';
+        try {
+          return url ? new URL(url).host : 'Linked';
+        } catch {
+          return 'Linked';
+        }
+      })()
+    : 'Not linked';
+
   return (
-    <div className="app">
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark">FL</span>
-          <div className="brand-titles">
-            <h1>FormLogic Desktop</h1>
-            <p className="tagline">Local models, plugins &amp; hardware for FormLogic apps</p>
+    <div className="desktop-shell">
+      <DesktopSidebar
+        section={section}
+        onChange={setSection}
+        pendingPairing={overview.pendingPairing?.length ?? 0}
+        cloudLabel={cloudLabel}
+      />
+
+      <div className="desktop-workspace">
+        <header className="desktop-workspace-header">
+          <div className="desktop-workspace-header__titles">
+            <h1>{meta.title}</h1>
+            <p>{meta.subtitle}</p>
           </div>
-        </div>
-        <div className="header-status">
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          >
-            {theme === 'dark' ? (
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-              </svg>
+          <div className="desktop-workspace-header__actions">
+            {health ? (
+              <span className="desktop-status-pill is-ok">
+                <i />
+                Desktop online · v{health.version}
+              </span>
+            ) : healthError ? (
+              <span
+                className="desktop-status-pill is-live"
+                role="status"
+                aria-label={`FormLogic Desktop API unreachable: ${healthError}`}
+                title={`${API_BASE} — ${healthError}`}
+              >
+                <i />
+                API unreachable
+              </span>
             ) : (
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-              </svg>
+              <span className="desktop-status-pill is-neutral">
+                <i />
+                checking…
+              </span>
             )}
-          </button>
-          <a
-            className="brand-link"
-            href="https://formlogic.com"
-            onClick={(e) => {
-              e.preventDefault();
-              openExternal('https://formlogic.com');
-            }}
-          >
-            <span className="icon-button-label">
-              formlogic.com
-              <ExternalLinkIcon size={12} />
-            </span>
-          </a>
-          <code>{API_BASE}</code>
-          {health ? (
-            <span className="badge badge-ok">v{health.version}</span>
-          ) : healthError ? (
-            <span
-              className="badge badge-err"
-              role="status"
-              aria-label={`FormLogic Desktop API unreachable: ${healthError}`}
-              title={healthError}
+            <a
+              className="desktop-icon-button"
+              href="https://formlogic.com"
+              aria-label="Open formlogic.com"
+              title="formlogic.com"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternal('https://formlogic.com');
+              }}
             >
-              unreachable
-            </span>
-          ) : (
-            <span className="badge badge-pending">checking…</span>
-          )}
-        </div>
-      </header>
+              <ExternalLinkIcon size={15} />
+            </a>
+            <button
+              type="button"
+              className="desktop-icon-button"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            >
+              {theme === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
+            </button>
+          </div>
+        </header>
 
-      <nav
-        className="tabs"
-        role="tablist"
-        aria-label="FormLogic Desktop sections"
-        onKeyDown={(e) => {
-          // Arrow-key roving between tabs (WAI-ARIA tabs pattern).
-          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-          e.preventDefault();
-          const i = TABS.findIndex((t) => t.value === tab);
-          const next =
-            e.key === 'ArrowRight'
-              ? (i + 1) % TABS.length
-              : (i - 1 + TABS.length) % TABS.length;
-          setTab(TABS[next].value);
-          document.getElementById(`tab-${TABS[next].value}`)?.focus();
-        }}
-      >
-        {TABS.map((t) => (
-          <TabButton key={t.value} current={tab} value={t.value} onSelect={setTab}>
-            {t.label}
-          </TabButton>
-        ))}
-      </nav>
-
-      <main className="app-main">
-        <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-          {tab === 'services' && <ServicesPanel />}
-          {tab === 'plugins' && <PluginsPanel />}
-          {tab === 'models' && <ModelsPanel />}
-          {tab === 'python' && <PythonPanel />}
-          {tab === 'settings' && <SettingsPanel />}
-        </div>
-      </main>
+        <main className="desktop-workspace__body">
+          {section === 'overview' && <DesktopOverview data={overview} onOpen={setSection} />}
+          {section === 'receptionist' && <ReceptionistPanel />}
+          {section === 'services' && <ServicesPanel />}
+          {section === 'models' && <ModelsPanel />}
+          {section === 'plugins' && <PluginsPanel />}
+          {section === 'python' && <PythonPanel />}
+          {section === 'connections' && <ConnectionsPanel />}
+          {section === 'settings' && <SettingsPanel />}
+        </main>
+      </div>
     </div>
-  );
-}
-
-interface TabButtonProps {
-  current: Tab;
-  value: Tab;
-  onSelect: (t: Tab) => void;
-  children: React.ReactNode;
-}
-
-function TabButton({ current, value, onSelect, children }: TabButtonProps) {
-  const selected = current === value;
-  return (
-    <button
-      role="tab"
-      id={`tab-${value}`}
-      aria-selected={selected}
-      aria-controls={`panel-${value}`}
-      tabIndex={selected ? 0 : -1}
-      className={`tab ${selected ? 'tab-active' : ''}`}
-      onClick={() => onSelect(value)}
-    >
-      {children}
-    </button>
   );
 }
