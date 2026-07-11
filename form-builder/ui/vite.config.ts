@@ -16,7 +16,7 @@ export default defineConfig({
       manifest: {
         name: 'FormLogic App',
         short_name: 'FormLogic',
-        description: 'Build and deploy form-based applications',
+        description: 'Forms, apps, flows and local capability — connected. Build the system that runs your business.',
         theme_color: '#6366f1',
         background_color: '#ffffff',
         display: 'standalone',
