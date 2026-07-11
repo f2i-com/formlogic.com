@@ -443,6 +443,12 @@ class UpgradeService
                 continue;
             }
             $info = json_decode((string) @file_get_contents("{$dir}/{$entry}/backup-info.json"), true);
+            // Only REAL backups belong in this list: anything without an info
+            // file, a code snapshot, or a DB export is a stray directory (e.g.
+            // a temp/staging folder) — listing it as restorable is misleading.
+            if (!is_array($info) && !is_dir("{$dir}/{$entry}/api") && !is_file("{$dir}/{$entry}/database.sql.gz")) {
+                continue;
+            }
             $out[] = [
                 'id' => $entry,
                 'at' => is_array($info) ? ($info['at'] ?? null) : null,

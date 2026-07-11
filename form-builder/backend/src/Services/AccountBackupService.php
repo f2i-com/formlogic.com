@@ -1227,9 +1227,12 @@ final class AccountBackupService
 
     private function tmpDir(): string
     {
-        $dir = dirname(__DIR__, 2) . '/storage/backups/tmp';
+        // NOT under storage/backups/ — the admin Upgrade panel lists every
+        // directory there as a restorable backup, so a staging dir showed up
+        // as a phantom "tmp" backup entry.
+        $dir = dirname(__DIR__, 2) . '/storage/tmp/account-backups';
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
-            throw new \RuntimeException('Could not create storage/backups/tmp');
+            throw new \RuntimeException('Could not create storage/tmp/account-backups');
         }
         return $dir;
     }

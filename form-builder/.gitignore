@@ -48,6 +48,8 @@ lerna-debug.log*
 /backend/storage/maintenance.json
 /backend/storage/upgrades/
 /backend/storage/backups/
+# Account-backup staging (export zips are built + streamed from here)
+/backend/storage/tmp/
 /backend/logs/*.log
 
 # OS files
