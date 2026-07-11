@@ -38,9 +38,17 @@ function toTurn(r: RelatedRecordGroup['records'][number]): Turn {
   };
 }
 
+// Turns rendered per "Load more" click. The full (server-capped) turn set is fetched once and
+// kept in memory; rendering is chunked so a long call doesn't paint hundreds of bubbles up front.
+const TURN_PAGE = 30;
+// The related endpoint's match-join cap (RelatedRecords / answersEq limit). A group at exactly
+// this size is almost certainly truncated to the newest turns.
+const SERVER_TURN_CAP = 500;
+
 export function AokieCallTranscriptScreen({ params, recordContext }: { params?: Record<string, unknown>; recordContext?: SdkRecordContext }) {
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(TURN_PAGE);
   const relatedFieldId = typeof params?.relatedFieldId === 'string' && params.relatedFieldId ? params.relatedFieldId : 'call_link';
 
   const appSlug = recordContext?.appSlug;
@@ -50,6 +58,10 @@ export function AokieCallTranscriptScreen({ params, recordContext }: { params?: 
   useEffect(() => {
     if (!appSlug || !formId || !responseId) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: paging must reset synchronously when the record changes
+    setTurns(null);
+    setError(null);
+    setVisibleCount(TURN_PAGE);
     api.getRelatedRecords(appSlug, formId, responseId).then((res) => {
       if (cancelled) return;
       if (res.error || !res.data) {
@@ -73,6 +85,9 @@ export function AokieCallTranscriptScreen({ params, recordContext }: { params?: 
 
   if (!recordContext) return null;
 
+  const visible = turns?.slice(0, visibleCount) ?? [];
+  const remaining = (turns?.length ?? 0) - visible.length;
+
   return (
     <div>
       {error ? (
@@ -89,23 +104,38 @@ export function AokieCallTranscriptScreen({ params, recordContext }: { params?: 
           <p className="text-sm">No transcript was recorded for this call.</p>
         </div>
       ) : (
-        <div className="flex max-h-[28rem] flex-col gap-2.5 overflow-y-auto pr-1">
-          {turns.map((t) => {
-            const bubble = turnBubble(t.speaker);
-            const who = describeSpeaker(t.speaker);
-            return (
-              <div key={t.id} className={bubble.row}>
-                <span className={`mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full text-[10px] font-semibold ${bubble.avatar}`} aria-hidden="true">
-                  {bubble.initial}
-                </span>
-                <div className={`min-w-0 px-3 py-2 ${bubble.bubble}`}>
-                  <span className={`block text-[11px] font-medium ${who.className}`}>{who.label}</span>
-                  <p className="whitespace-pre-wrap break-words text-sm text-gray-800 dark:text-slate-100">{t.text}</p>
+        <>
+          <p className="mb-2 text-xs text-gray-400 dark:text-slate-500">
+            {turns.length === 1 ? '1 turn' : `${turns.length} turns`}
+            {turns.length >= SERVER_TURN_CAP && ' · showing the most recent turns'}
+          </p>
+          <div className="flex max-h-[28rem] flex-col gap-2.5 overflow-y-auto pr-1">
+            {visible.map((t) => {
+              const bubble = turnBubble(t.speaker);
+              const who = describeSpeaker(t.speaker);
+              return (
+                <div key={t.id} className={bubble.row}>
+                  <span className={`mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full text-[10px] font-semibold ${bubble.avatar}`} aria-hidden="true">
+                    {bubble.initial}
+                  </span>
+                  <div className={`min-w-0 px-3 py-2 ${bubble.bubble}`}>
+                    <span className={`block text-[11px] font-medium ${who.className}`}>{who.label}</span>
+                    <p className="whitespace-pre-wrap break-words text-sm text-gray-800 dark:text-slate-100">{t.text}</p>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+            {remaining > 0 && (
+              <button
+                type="button"
+                onClick={() => setVisibleCount((c) => c + TURN_PAGE)}
+                className="mx-auto mb-1 mt-1 inline-flex shrink-0 cursor-pointer items-center rounded-full border border-gray-200/80 bg-white px-3.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 app-ring-primary dark:border-slate-700/60 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+              >
+                Load more ({remaining} more {remaining === 1 ? 'turn' : 'turns'})
+              </button>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

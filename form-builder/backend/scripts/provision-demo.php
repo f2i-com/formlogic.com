@@ -581,6 +581,9 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
             if (is_array($r) && isset($r['id'])) {
                 $ids[] = $r['id'];
                 backdateResponse($formId, (string) $r['id'], $submittedTs);
+                // The raw service doesn't maintain response_links (the API layers do) — sync here
+                // so seeded linked_record values power the inverse "related records" grids.
+                $responseService->syncResponseLinks($formId, (string) $r['id'], $fields, $answers);
             }
         } catch (\Throwable $e) {
             // skip a bad row, keep going

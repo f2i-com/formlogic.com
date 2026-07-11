@@ -307,7 +307,11 @@
             "label": "Customer",
             "required": false,
             "properties": {
-              "targetFormId": "@pack:customers"
+              "targetFormId": "@pack:customers",
+              "matchField": "caller_phone",
+              "targetMatchField": "phone",
+              "relatedAllowAdd": false,
+              "relatedPageSize": 10
             }
           },
           {

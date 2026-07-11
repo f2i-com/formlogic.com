@@ -625,7 +625,10 @@ export const aokieReceptionistPack: PackData = {
         // a required phone-format field silently loses the whole Calls row.
         { id: 'caller_phone', type: 'phone', label: 'Caller Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
         { id: 'caller_name', type: 'short_text', label: 'Caller Name', required: false, properties: {} },
-        { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers' } },
+        // matchField: a customer's record page also lists calls whose caller phone equals the
+        // customer's phone (on top of the explicit link the caller-lookup flow writes) — so call
+        // history is browsable per customer, each row opening the call + its transcript.
+        { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers', matchField: 'caller_phone', targetMatchField: 'phone', relatedAllowAdd: false, relatedPageSize: 10 } },
         {
           id: 'status',
           type: 'dropdown',
