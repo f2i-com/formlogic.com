@@ -1411,6 +1411,16 @@ pub fn run() {
                 // Backfill install-completion markers for venv services installed before the
                 // marker existed, so they don't suddenly read as not-installed.
                 r.backfill_install_markers();
+                // DESK-PROC-001: restore the services that were running when the
+                // desktop last exited (model selection + GPU pins are applied
+                // above, so they spawn with the right env). With the kill-on-
+                // close job reaping children on ANY desktop exit, this is what
+                // brings llama-cpp / aokie-voice back without manual Start.
+                let restored = r.autostart_remembered();
+                if !restored.is_empty() {
+                    log::info!("restored {} service(s) from the previous session: {}",
+                        restored.len(), restored.join(", "));
+                }
             }
             // Build Downloads + Python + Catalog helpers from the
             // registry's data dir so all four share `${dataDir}`
@@ -1545,6 +1555,9 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     if let Ok(mut reg) = registry_for_reaper.lock() {
                         reg.reap_exited();
+                        // DESK-PROC-001: fire any due crash-restart (bounded
+                        // backoff; the crash-loop breaker lives in the reap).
+                        reg.run_scheduled_restarts();
                     }
                     python_for_reaper.reap_exited();
                 }

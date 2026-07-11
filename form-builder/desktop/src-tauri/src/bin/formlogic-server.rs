@@ -218,6 +218,15 @@ async fn main() {
     if let Ok(r) = registry.lock() {
         r.backfill_install_markers();
     }
+    // DESK-PROC-001: restore services that were running when the server last
+    // exited (after the model env above so they spawn correctly).
+    if let Ok(mut r) = registry.lock() {
+        let restored = r.autostart_remembered();
+        if !restored.is_empty() {
+            log::info!("restored {} service(s) from the previous session: {}",
+                restored.len(), restored.join(", "));
+        }
+    }
     let downloads: DownloadsHandle = Downloads::new(models_dir.clone()).into_handle();
     if let Ok(tok) = std::env::var("FORMLOGIC_HF_TOKEN") {
         if !tok.is_empty() {
@@ -275,7 +284,12 @@ async fn main() {
                 // Recover from poison so reaping survives a panic that poisoned the
                 // mutex (otherwise exited children stop being reaped for the process
                 // lifetime).
-                registry.lock().unwrap_or_else(|e| e.into_inner()).reap_exited();
+                {
+                    let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+                    reg.reap_exited();
+                    // DESK-PROC-001: fire any due crash-restart.
+                    reg.run_scheduled_restarts();
+                }
                 python.reap_exited();
             }
         });

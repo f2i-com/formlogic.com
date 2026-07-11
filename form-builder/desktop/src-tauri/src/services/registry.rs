@@ -164,6 +164,16 @@ pub struct ServiceRuntime {
     pub installer: Option<Arc<Runner>>,
     pub port: u16,
     pub last_status_change: DateTime<Utc>,
+    /// DESK-PROC-001 crash supervision: consecutive rapid-crash restarts so
+    /// far. Reset by a manual Start and after a quiet period (a crash long
+    /// after the last one starts a fresh window).
+    pub restart_attempts: u32,
+    /// When the next automatic restart is due (`Errored` with a schedule).
+    /// `None` = nothing scheduled (healthy, manually stopped, or crash-looped
+    /// out of attempts).
+    pub restart_at: Option<DateTime<Utc>>,
+    /// When the service last crashed — the quiet-period anchor.
+    pub last_crash_at: Option<DateTime<Utc>>,
 }
 
 impl ServiceRuntime {
@@ -177,6 +187,9 @@ impl ServiceRuntime {
             installer: None,
             port,
             last_status_change: Utc::now(),
+            restart_attempts: 0,
+            restart_at: None,
+            last_crash_at: None,
         }
     }
 
@@ -384,6 +397,56 @@ pub struct Registry {
     /// service's own default (e.g. krea2 keeps DIT on GPU 0 + encoder on GPU 1). Set live
     /// from the GPU picker; takes effect on the next start.
     service_gpus: HashMap<String, u32>,
+    /// DESK-PROC-001: ids of the services the operator has running, persisted
+    /// to `<dataDir>/services-running.json` so a desktop relaunch (or a crash
+    /// followed by the kill-on-close job reaping the children) restores them
+    /// via [`Registry::autostart_remembered`]. Explicit Stop forgets; the
+    /// shutdown-path `stop_all` deliberately does NOT.
+    remembered_running: std::collections::HashSet<String>,
+}
+
+/// DESK-PROC-001 backoff policy, factored pure for tests: given how many
+/// consecutive rapid restarts have already been attempted, decide the next
+/// step — `Some((new_attempt_count, delay_seconds))` to schedule another
+/// automatic restart, or `None` when the service is crash-looping and
+/// automatic recovery must stop (the operator presses Start to reset).
+/// Delays: 2, 4, 8, 16, 32 s — five attempts inside a quiet window.
+fn next_restart(attempts_so_far: u32) -> Option<(u32, i64)> {
+    const MAX_RESTART_ATTEMPTS: u32 = 5;
+    if attempts_so_far >= MAX_RESTART_ATTEMPTS {
+        return None;
+    }
+    let attempt = attempts_so_far + 1;
+    Some((attempt, 2i64 << (attempt - 1).min(4)))
+}
+
+/// A crash after this long since the previous one starts a FRESH attempt
+/// window (the earlier crashes were evidently transient — the service ran
+/// fine in between).
+const RESTART_QUIET_SECS: i64 = 600;
+
+/// DESK-PROC-001: the remembered-running set on disk (a plain JSON string
+/// array). Missing/corrupt reads collapse to empty — worst case the operator
+/// starts services by hand once, exactly the pre-feature behaviour.
+fn load_remembered_running(path: &Path) -> std::collections::HashSet<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn persist_remembered_running(path: &Path, ids: &std::collections::HashSet<String>) {
+    let mut sorted: Vec<&String> = ids.iter().collect();
+    sorted.sort();
+    match serde_json::to_string_pretty(&sorted) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                log::warn!("could not persist the running-services list: {e}");
+            }
+        }
+        Err(e) => log::warn!("could not serialize the running-services list: {e}"),
+    }
 }
 
 /// Seed a built-in plumbing script, refreshing it when we ship a new
@@ -602,6 +665,7 @@ impl Registry {
             data_dir.display()
         );
         let model_dirs = combine_model_dirs(&models_dir, extra_model_dirs);
+        let remembered_running = load_remembered_running(&data_dir.join("services-running.json"));
         Ok(Self {
             services,
             data_dir,
@@ -610,6 +674,7 @@ impl Registry {
             llama_model: None,
             ollama_model: None,
             service_gpus: HashMap::new(),
+            remembered_running,
         })
     }
 
@@ -626,6 +691,7 @@ impl Registry {
             llama_model: None,
             ollama_model: None,
             service_gpus: HashMap::new(),
+            remembered_running: std::collections::HashSet::new(),
         }
     }
 
@@ -1144,6 +1210,15 @@ impl Registry {
     /// doesn't exist or the spawn fails. Currently a no-op when the
     /// service is already Running.
     pub fn start(&mut self, id: &str) -> Result<(), String> {
+        self.start_with(id, true)
+    }
+
+    /// The real start. `manual` (a Start click / API call / boot restore)
+    /// resets the crash-supervision counters and records the service in the
+    /// remembered-running set; the automatic crash-restart path passes
+    /// `false` so its attempt counter survives across restarts and the
+    /// crash-loop breaker can trip (DESK-PROC-001).
+    fn start_with(&mut self, id: &str, manual: bool) -> Result<(), String> {
         // Extract everything we need under a read-only borrow first so
         // we can call `self.ctx(...)` (which also borrows `self`) without
         // hitting the borrow checker. `RunSpec.clone()` is cheap — small
@@ -1249,6 +1324,14 @@ impl Registry {
             let _ = old.stop();
         }
         svc.set_status(ServiceStatus::Starting, None);
+        // DESK-PROC-001: a manual start resets crash supervision (the
+        // operator explicitly re-armed it); the auto-restart path keeps its
+        // counters so the crash-loop breaker can trip.
+        if manual {
+            svc.restart_attempts = 0;
+            svc.restart_at = None;
+            svc.last_crash_at = None;
+        }
 
         match Runner::spawn(cfg) {
             Ok(runner) => {
@@ -1258,6 +1341,15 @@ impl Registry {
                 // Running, but the immediate UI feedback is "it's
                 // starting → it spawned, looking good".
                 svc.set_status(ServiceStatus::Running, None);
+                // DESK-PROC-001: remember it as operator-running so a desktop
+                // relaunch restores it (explicit Stop forgets; shutdown's
+                // stop_all deliberately doesn't).
+                if self.remembered_running.insert(id.to_string()) {
+                    persist_remembered_running(
+                        &self.data_dir.join("services-running.json"),
+                        &self.remembered_running,
+                    );
+                }
                 Ok(())
             }
             Err(e) => {
@@ -1268,8 +1360,72 @@ impl Registry {
         }
     }
 
+    /// DESK-PROC-001: start every service remembered as running from the
+    /// previous desktop session. Called once at boot AFTER the saved model
+    /// selection + GPU pins are applied (they affect the spawn env). Failures
+    /// are logged per service and never block the rest.
+    pub fn autostart_remembered(&mut self) -> Vec<String> {
+        let ids: Vec<String> = self.remembered_running.iter().cloned().collect();
+        let mut restored = Vec::new();
+        for id in ids {
+            if !self.services.contains_key(&id) {
+                continue; // template gone since last session
+            }
+            match self.start_with(&id, true) {
+                Ok(()) => {
+                    log::info!("restored service {id} from the previous session");
+                    restored.push(id);
+                }
+                Err(e) => log::warn!("could not restore service {id}: {e}"),
+            }
+        }
+        restored
+    }
+
+    /// DESK-PROC-001: start any crashed service whose scheduled automatic
+    /// restart is due. Driven by the same 2 s reaper tick as `reap_exited`.
+    pub fn run_scheduled_restarts(&mut self) {
+        let now = Utc::now();
+        let due: Vec<String> = self
+            .services
+            .values()
+            .filter(|s| {
+                s.status == ServiceStatus::Errored && s.restart_at.is_some_and(|t| t <= now)
+            })
+            .map(|s| s.template.id.clone())
+            .collect();
+        for id in due {
+            let attempt = match self.services.get_mut(&id) {
+                Some(svc) => {
+                    svc.restart_at = None;
+                    svc.restart_attempts
+                }
+                None => continue,
+            };
+            log::info!("auto-restarting crashed service {id} (attempt {attempt})");
+            if let Err(e) = self.start_with(&id, false) {
+                // Spawn failure ends automatic recovery for this crash (the
+                // error is already on the service card); a later crash of a
+                // successful restart schedules afresh.
+                log::warn!("auto-restart of {id} failed: {e}");
+            }
+        }
+    }
+
     pub fn stop(&mut self, id: &str) -> Result<(), String> {
+        // DESK-PROC-001: an explicit Stop means "the operator wants it not
+        // running" — forget it (so it won't be restored at boot) and cancel
+        // any pending crash-restart.
+        if self.remembered_running.remove(id) {
+            persist_remembered_running(
+                &self.data_dir.join("services-running.json"),
+                &self.remembered_running,
+            );
+        }
         let svc = self.services.get_mut(id).ok_or("unknown service")?;
+        svc.restart_at = None;
+        svc.restart_attempts = 0;
+        svc.last_crash_at = None;
         if let Some(runner) = svc.runner.take() {
             // The runner may have spawned children (a shell wrapper, python
             // subprocesses); a plain kill of the direct child would orphan
@@ -1407,18 +1563,47 @@ impl Registry {
             }
             if let Some(runner) = &svc.runner {
                 if let Some(code) = runner.check_exited() {
-                    let msg = format!("process exited (code {code}) — open Logs for details");
-                    let err = if code == 0 { None } else { Some(msg) };
                     // KEEP the runner (and its LogBuffer) so a crashed service's
                     // stderr/traceback stays visible in the LogsViewer — dropping
                     // it here made crash logs vanish the instant the process died
                     // (e.g. Lance's "No module named flash_attn"). start() replaces
                     // it on restart; logs() prefers the runner's output once it has
                     // any, falling back to the installer otherwise.
-                    svc.set_status(
-                        if code == 0 { ServiceStatus::Stopped } else { ServiceStatus::Errored },
-                        err,
-                    );
+                    if code == 0 {
+                        // A clean spontaneous exit is presumed intentional
+                        // (the service shut itself down) — no auto-restart.
+                        svc.set_status(ServiceStatus::Stopped, None);
+                    } else {
+                        // DESK-PROC-001: schedule an automatic restart with
+                        // exponential backoff. A crash long after the previous
+                        // one starts a fresh attempt window; five rapid
+                        // crashes trip the breaker and recovery stops until
+                        // the operator presses Start.
+                        let now = Utc::now();
+                        let quiet = !svc
+                            .last_crash_at
+                            .is_some_and(|t| (now - t).num_seconds() <= RESTART_QUIET_SECS);
+                        if quiet {
+                            svc.restart_attempts = 0;
+                        }
+                        svc.last_crash_at = Some(now);
+                        let msg = match next_restart(svc.restart_attempts) {
+                            Some((attempt, delay)) => {
+                                svc.restart_attempts = attempt;
+                                svc.restart_at = Some(now + chrono::Duration::seconds(delay));
+                                format!(
+                                    "process exited (code {code}) — auto-restart {attempt}/5 in {delay}s; open Logs for details"
+                                )
+                            }
+                            None => {
+                                svc.restart_at = None;
+                                format!(
+                                    "process exited (code {code}) — crash-looping (5 rapid restarts); auto-restart disabled, press Start to try again. Open Logs for details"
+                                )
+                            }
+                        };
+                        svc.set_status(ServiceStatus::Errored, Some(msg));
+                    }
                 }
             }
         }
@@ -1932,6 +2117,45 @@ pub type RegistryHandle = Arc<Mutex<Registry>>;
 #[cfg(test)]
 mod tests {
     use super::venv_name_in;
+    use super::{load_remembered_running, next_restart, persist_remembered_running};
+
+    /// DESK-PROC-001 backoff decision table: exponential delays, then the
+    /// crash-loop breaker.
+    #[test]
+    fn restart_backoff_escalates_then_trips_the_breaker() {
+        assert_eq!(next_restart(0), Some((1, 2)));
+        assert_eq!(next_restart(1), Some((2, 4)));
+        assert_eq!(next_restart(2), Some((3, 8)));
+        assert_eq!(next_restart(3), Some((4, 16)));
+        assert_eq!(next_restart(4), Some((5, 32)));
+        // Five rapid restarts spent → crash-looping, stop automatic recovery.
+        assert_eq!(next_restart(5), None);
+        assert_eq!(next_restart(99), None);
+    }
+
+    /// DESK-PROC-001: the remembered-running set survives a round trip, and a
+    /// missing/corrupt file collapses to empty (pre-feature behaviour).
+    #[test]
+    fn remembered_running_round_trips_and_tolerates_corruption() {
+        let dir = std::env::temp_dir().join(format!(
+            "fl-services-running-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("services-running.json");
+
+        assert!(load_remembered_running(&path).is_empty(), "missing file → empty");
+
+        let ids: std::collections::HashSet<String> =
+            ["llama-cpp", "aokie-voice"].iter().map(|s| s.to_string()).collect();
+        persist_remembered_running(&path, &ids);
+        assert_eq!(load_remembered_running(&path), ids);
+
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(load_remembered_running(&path).is_empty(), "corrupt file → empty");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn extracts_venv_name_from_run_command() {
