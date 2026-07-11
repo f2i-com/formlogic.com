@@ -117,13 +117,28 @@ function formatDuration(ms: number): string {
 /** Speaker → label + color. The palette carries meaning: caller is neutral, the receptionist's
  *  own voice (AI or the operator standing in for it) is brand-colored. */
 function describeSpeaker(speaker: string): { label: string; className: string } {
-  if (speaker === 'caller') return { label: 'Caller', className: 'text-gray-500 dark:text-slate-400' };
-  if (speaker === 'operator') return { label: 'You', className: 'text-primary-600 dark:text-primary-400' };
-  return { label: 'Aokie', className: 'text-primary-600 dark:text-primary-400' };
+  if (speaker === 'caller') return { label: 'Caller', className: 'text-[#8fe7ed]' };
+  if (speaker === 'operator') return { label: 'You', className: 'text-[#c5b9ff]' };
+  return { label: 'Aokie', className: 'text-[#c5b9ff]' };
 }
 
-function turnBodyClass(speaker: string): string {
-  return speaker === 'caller' ? 'text-gray-700 dark:text-slate-300' : 'text-primary-700 dark:text-primary-300';
+/** Chat-bubble treatment per speaker (landing-console style): the caller sits
+ *  right in teal, the receptionist's voice (Aokie or the operator) left in brand. */
+function turnBubble(speaker: string): { row: string; avatar: string; bubble: string; initial: string } {
+  if (speaker === 'caller') {
+    return {
+      row: 'flex max-w-[86%] flex-row-reverse items-start gap-2 self-end',
+      avatar: 'bg-[rgba(76,199,216,0.15)] text-[#8fe7ed]',
+      bubble: 'rounded-[12px_4px_12px_12px] bg-[rgba(63,178,195,0.08)]',
+      initial: 'C',
+    };
+  }
+  return {
+    row: 'flex max-w-[86%] items-start gap-2',
+    avatar: 'bg-[rgba(117,86,246,0.2)] text-[#c5b9ff]',
+    bubble: 'rounded-[4px_12px_12px_12px] bg-white/[0.045]',
+    initial: speaker === 'operator' ? 'Y' : 'A',
+  };
 }
 
 function formatTurnTime(occurredAt: string): string | null {
@@ -131,7 +146,9 @@ function formatTurnTime(occurredAt: string): string | null {
   return ms === null ? null : new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-const card = 'bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60';
+// Fixed-dark "front desk console" palette — the same navy window the landing
+// hero shows, deliberately identical in light and dark app themes.
+const card = 'rounded-xl border border-white/[0.07] bg-white/[0.035]';
 const actionBtn =
   'inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-45';
 // Same traffic-light treatment as actionBtn, scaled up for the call stage's one urgent decision.
@@ -173,7 +190,7 @@ function CallControls({
           type="button"
           onClick={() => onCommand('call.answer', active.callId, { callId: active.callId })}
           disabled={answerDisabled}
-          className={`${stageActionBtn} border-transparent bg-emerald-600 text-white hover:bg-emerald-500`}
+          className={`${stageActionBtn} border-[#55c980] bg-[#55c980] text-[#08130d] hover:bg-[#67d590]`}
         >
           {busyCommand === 'call.answer' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Phone className="h-4 w-4" />}
           {busyCommand === 'call.answer' ? 'Answering…' : 'Answer'}
@@ -184,7 +201,7 @@ function CallControls({
           type="button"
           onClick={() => onCommand('call.reject', active.callId, { callId: active.callId })}
           disabled={busyCommand !== null}
-          className={`${stageActionBtn} border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20`}
+          className={`${stageActionBtn} border-amber-400/25 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20`}
         >
           {busyCommand === 'call.reject' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
           {busyCommand === 'call.reject' ? 'Rejecting…' : 'Reject'}
@@ -194,13 +211,13 @@ function CallControls({
         type="button"
         onClick={() => onCommand('call.hangup', active.callId, { callId: active.callId })}
         disabled={hangupDisabled}
-        className={`${stageActionBtn} border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20`}
+        className={`${stageActionBtn} border-red-400/25 bg-red-400/10 text-red-300 hover:bg-red-400/20`}
       >
         {busyCommand === 'call.hangup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />}
         {busyCommand === 'call.hangup' ? 'Hanging up…' : 'Hang up'}
       </button>
       {!roleAllowsOperating && (
-        <span className="text-xs text-gray-400 dark:text-slate-500">Your role can view calls but not operate them.</span>
+        <span className="text-xs text-[#77829a]">Your role can view calls but not operate them.</span>
       )}
     </div>
   );
@@ -559,272 +576,321 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   }, [shownTurns.length, isCallUp, pendingSpeak]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-4">
-      <div className="flex items-center gap-3">
-        <PhoneCall className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-        <h1 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Live Call</h1>
-      </div>
-
-      {/* IDLE: a thin standby bar — where the receptionist is listening, and when it last rang.
-          Truthful (audit INT-006/C-15): a degraded plugin turns the dot amber and says WHY,
-          instead of a green "Listening" over a receptionist that cannot answer or speak. */}
-      {!active && (
-        <div className="flex items-center gap-2.5 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 px-4 py-2.5 text-sm">
+    <div className="mx-auto max-w-4xl p-4">
+      {/* The front-desk console: one dark window, same as the landing hero scene. */}
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0d152b] text-[#e8ecf5] shadow-[0_30px_80px_-40px_rgba(0,0,0,0.75)]">
+        {/* Console header: identity + truthful presence pill */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] bg-white/[0.02] px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#7b60fa] to-[#6548df] text-white shadow-[0_10px_24px_-12px_#6548df]">
+              <PhoneCall className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-semibold tracking-tight">Aokie Receptionist</h1>
+              <p className="truncate text-[11px] text-[#7f899e]">Front desk console</p>
+            </div>
+          </div>
+          {/* Presence pill (audit INT-006/C-15): a degraded plugin goes amber and says WHY,
+              never a green "Listening" over a receptionist that cannot answer or speak. */}
           <span
-            className={`h-2 w-2 shrink-0 rounded-full ${
+            className={cn(
+              'inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold',
               presence.kind === 'local'
                 ? degradedDetail
-                  ? 'bg-amber-500 animate-pulse'
-                  : 'bg-emerald-500 animate-pulse'
+                  ? 'bg-amber-400/10 text-amber-300'
+                  : 'bg-[rgba(111,221,154,0.09)] text-[#7de5a6]'
                 : presence.kind === 'remote'
-                  ? 'bg-primary-500 animate-pulse'
-                  : 'bg-gray-300 dark:bg-slate-600'
-            }`}
-          />
-          <span className="min-w-0 truncate font-medium text-gray-900 dark:text-white">
-            {presence.kind === 'local'
-              ? degradedDetail
-                ? `Degraded — ${degradedDetail}`
-                : `Listening — FormLogic Desktop v${desktop.version ?? '?'}`
-              : presence.kind === 'remote'
-                ? `Listening on ${presence.deviceName} — via relay`
-                : 'Demo bridge — no desktop connected'}
-          </span>
-          <span className="ml-auto shrink-0 text-xs text-gray-400 dark:text-slate-500">
-            {presence.kind === 'remote'
-              ? `Updates every ${REMOTE_RECORDS_POLL_MS / 1000}s${seenLabel ? ` · seen ${seenLabel}` : ''}`
-              : (lastCallLabel ?? '')}
-          </span>
-        </div>
-      )}
-
-      {showSimulateSetup(presence) && !active && (
-        <div className={`${card} p-5`}>
-          <div className="flex items-start gap-3">
-            <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-gray-400 dark:text-slate-500" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-900 dark:text-white">Install FormLogic Desktop to take real calls</p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                FormLogic Desktop hosts the Aokie phone plugin that owns your Bluetooth dongle and paired phone.
-                Until it is installed and paired (Device Setup section), this screen runs against a simulated bridge.
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleSimulate()}
-                disabled={simulating}
-                className={`${actionBtn} mt-3 border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800`}
-              >
-                <PhoneIncoming className="h-4 w-4" />
-                {simulating ? 'Simulating…' : 'Simulate incoming call (demo)'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* RINGING / ACTIVE: the call stage takes over. Ring-pulse while ringing (static primary
-          halo under reduced motion — see .call-ring in index.css); a steady ring once answered. */}
-      {active && (
-        <div
-          className={cn(
-            card,
-            'p-6 border-2',
-            isRinging
-              ? 'call-ring border-primary-300 dark:border-primary-500/40'
-              : 'border-primary-200 dark:border-primary-500/30 ring-1 ring-primary-500/20'
-          )}
-        >
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <span
-                className={`text-xs font-semibold uppercase tracking-wider ${
-                  isRinging ? 'text-primary-600 dark:text-primary-400' : 'text-emerald-600 dark:text-emerald-400'
-                }`}
-              >
-                {isRinging ? 'Incoming call' : 'Live'}
-              </span>
-              {elapsedLabel && (
-                <span className="font-mono text-xl tabular-nums text-gray-900 dark:text-white">{elapsedLabel}</span>
+                  ? 'bg-[rgba(117,86,246,0.14)] text-[#c5b9ff]'
+                  : 'bg-white/[0.06] text-[#8b96ab]'
+            )}
+          >
+            <span
+              className={cn(
+                'h-1.5 w-1.5 shrink-0 rounded-full bg-current',
+                presence.kind !== 'none' && 'animate-pulse'
               )}
-            </div>
-
-            <div className="min-w-0">
-              <p className="truncate text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
-                {active.callerName || customerNameForPhone(active.from) || active.from || 'Unknown caller'}
-              </p>
-              <p className="mt-1 flex items-center gap-2 font-mono text-sm tabular-nums text-gray-500 dark:text-slate-400">
-                {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
-                {!active.callerName && customerNameForPhone(active.from) && (
-                  <span className="rounded bg-primary-100 px-1.5 py-0.5 font-sans text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
-                    Known customer
-                  </span>
-                )}
-              </p>
-            </div>
-
-            <CallControls
-              active={active}
-              can={can}
-              roleAllowsOperating={roleAllowsOperating}
-              busyCommand={busyCommand}
-              onCommand={onCommand}
             />
+            <span className="min-w-0 truncate">
+              {presence.kind === 'local'
+                ? degradedDetail
+                  ? `Degraded — ${degradedDetail}`
+                  : `Listening · Desktop v${desktop.version ?? '?'}`
+                : presence.kind === 'remote'
+                  ? `Listening on ${presence.deviceName} · relay`
+                  : 'Demo bridge — no desktop connected'}
+            </span>
+          </span>
+        </div>
 
-            <div className="flex items-center gap-1.5 border-t border-gray-100 dark:border-slate-800 pt-3 text-[11px] text-gray-400 dark:text-slate-500">
-              {remoteMode ? (
-                <>
-                  <Cast className="h-3 w-3 shrink-0" />
-                  <span>
-                    Commands run on {relayDeviceName ?? 'the hosting desktop'}
-                    {relayBusy !== null
-                      ? ' · sending…'
-                      : latencyMs !== null
-                        ? ` · last round-trip ${(latencyMs / 1000).toFixed(1)}s`
-                        : ''}
+        <div className="space-y-4 p-5">
+          {/* IDLE: quiet standby note under the header pill. */}
+          {!active && (
+            <div className="flex items-center justify-between gap-3 text-[11px] text-[#7f899e]">
+              <span>
+                {presence.kind === 'remote'
+                  ? `Updates every ${REMOTE_RECORDS_POLL_MS / 1000}s${seenLabel ? ` · seen ${seenLabel}` : ''}`
+                  : (lastCallLabel ?? 'Waiting for the next call')}
+              </span>
+            </div>
+          )}
+
+          {showSimulateSetup(presence) && !active && (
+            <div className={`${card} p-5`}>
+              <div className="flex items-start gap-3">
+                <Laptop className="mt-0.5 h-5 w-5 shrink-0 text-[#7f899e]" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Install FormLogic Desktop to take real calls</p>
+                  <p className="mt-1 text-sm leading-relaxed text-[#9aa4b8]">
+                    FormLogic Desktop hosts the Aokie phone plugin that owns your Bluetooth dongle and paired phone.
+                    Until it is installed and paired (Device Setup section), this screen runs against a simulated bridge.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleSimulate()}
+                    disabled={simulating}
+                    className={`${actionBtn} mt-3 border-white/15 text-[#d9dee9] hover:bg-white/[0.06]`}
+                  >
+                    <PhoneIncoming className="h-4 w-4" />
+                    {simulating ? 'Simulating…' : 'Simulate incoming call (demo)'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* RINGING / ACTIVE: the call stage takes over — caller card with live waveform,
+              ring-pulse while ringing (static halo under reduced motion, .call-ring). */}
+          {active && (
+            <div
+              className={cn(
+                card,
+                'p-5',
+                isRinging
+                  ? 'call-ring border-[#8268ff]/50'
+                  : 'border-[#8268ff]/30 ring-1 ring-[#8268ff]/20'
+              )}
+            >
+              <div className="space-y-4">
+                <div className="flex min-w-0 items-center gap-3.5">
+                  <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#2b8fa9] to-[#58c5cf] text-sm font-bold text-[#e8feff]">
+                    {(active.callerName || customerNameForPhone(active.from) || active.from || '?')
+                      .trim()
+                      .charAt(0)
+                      .toUpperCase()}
                   </span>
-                </>
-              ) : presence.kind === 'local' ? (
-                <span>Direct bridge · FormLogic Desktop v{desktop.version ?? '?'}</span>
-              ) : (
-                <span>Simulated call — demo bridge</span>
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={cn(
+                        'text-[10px] font-bold uppercase tracking-[0.08em]',
+                        isRinging ? 'text-[#c5b9ff]' : 'text-[#8ddfae]'
+                      )}
+                    >
+                      {isRinging ? 'Incoming call' : `Call in progress${elapsedLabel ? ` · ${elapsedLabel}` : ''}`}
+                    </p>
+                    <p className="mt-0.5 truncate text-xl font-semibold tracking-tight">
+                      {active.callerName || customerNameForPhone(active.from) || active.from || 'Unknown caller'}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-2 font-mono text-xs tabular-nums text-[#7d879a]">
+                      {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
+                      {!active.callerName && customerNameForPhone(active.from) && (
+                        <span className="rounded-full bg-[rgba(117,86,246,0.18)] px-2 py-0.5 font-sans text-[10px] font-semibold text-[#c5b9ff]">
+                          Known customer
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  {!isRinging && (
+                    <span className="aokie-wave shrink-0" aria-hidden="true">
+                      {[22, 14, 26, 12, 20, 27, 15, 23, 11, 19].map((h, i) => (
+                        <i key={i} style={{ height: `${h}px`, animationDelay: `${(i % 7) * 0.06}s` }} />
+                      ))}
+                    </span>
+                  )}
+                </div>
+
+                <CallControls
+                  active={active}
+                  can={can}
+                  roleAllowsOperating={roleAllowsOperating}
+                  busyCommand={busyCommand}
+                  onCommand={onCommand}
+                />
+
+                <div className="flex items-center gap-1.5 border-t border-white/[0.06] pt-3 text-[11px] text-[#7f899e]">
+                  {remoteMode ? (
+                    <>
+                      <Cast className="h-3 w-3 shrink-0" />
+                      <span>
+                        Commands run on {relayDeviceName ?? 'the hosting desktop'}
+                        {relayBusy !== null
+                          ? ' · sending…'
+                          : latencyMs !== null
+                            ? ` · last round-trip ${(latencyMs / 1000).toFixed(1)}s`
+                            : ''}
+                      </span>
+                    </>
+                  ) : presence.kind === 'local' ? (
+                    <span>Direct bridge · FormLogic Desktop v{desktop.version ?? '?'}</span>
+                  ) : (
+                    <span>Simulated call — demo bridge</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Transcript (remote mode: the newest call's STORED turns — no local hub here) + composer */}
+          <div className={`${card} p-5`}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Mic className="h-4 w-4 text-[#7f899e]" />
+                <h2 className="text-sm font-medium">{transcriptHeading}</h2>
+              </div>
+              {remoteMode && (
+                <span className="text-[11px] text-[#7f899e]">
+                  Stored records · updates every {REMOTE_RECORDS_POLL_MS / 1000}s
+                </span>
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Transcript (remote mode: the newest call's STORED turns — no local hub here) + composer */}
-      <div className={`${card} p-5`}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Mic className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-            <h2 className="text-sm font-medium text-gray-900 dark:text-white">{transcriptHeading}</h2>
-          </div>
-          {remoteMode && (
-            <span className="text-[11px] text-gray-400 dark:text-slate-500">
-              Stored records · updates every {REMOTE_RECORDS_POLL_MS / 1000}s
-            </span>
-          )}
-        </div>
-        {shownTurns.length === 0 && pendingSpeak === null ? (
-          <p className="text-sm text-gray-400 dark:text-slate-500">
-            {remoteMode
-              ? 'No transcript recorded for the latest call yet.'
-              : 'Final transcript turns stream in here during a call.'}
-          </p>
-        ) : (
-          <div ref={transcriptRef} className="max-h-96 space-y-3 overflow-y-auto">
-            {shownTurns.map((t) => {
-              const speaker = describeSpeaker(t.speaker);
-              const time = formatTurnTime(t.occurredAt);
-              return (
-                <div key={t.key}>
-                  <div className="flex items-baseline gap-2">
-                    <span className={`text-xs font-medium ${speaker.className}`}>{speaker.label}</span>
-                    {time && <span className="font-mono text-[11px] tabular-nums text-gray-400 dark:text-slate-500">{time}</span>}
+            {shownTurns.length === 0 && pendingSpeak === null ? (
+              <p className="text-sm text-[#7f899e]">
+                {remoteMode
+                  ? 'No transcript recorded for the latest call yet.'
+                  : 'Final transcript turns stream in here during a call.'}
+              </p>
+            ) : (
+              <div ref={transcriptRef} className="flex max-h-96 flex-col gap-3 overflow-y-auto">
+                {shownTurns.map((t) => {
+                  const speaker = describeSpeaker(t.speaker);
+                  const bubble = turnBubble(t.speaker);
+                  const time = formatTurnTime(t.occurredAt);
+                  return (
+                    <div key={t.key} className={bubble.row}>
+                      <span
+                        className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${bubble.avatar}`}
+                        aria-hidden="true"
+                      >
+                        {bubble.initial}
+                      </span>
+                      <div className="min-w-0">
+                        <div className={cn('flex items-baseline gap-2', t.speaker === 'caller' && 'flex-row-reverse')}>
+                          <span className={`text-[11px] font-semibold ${speaker.className}`}>{speaker.label}</span>
+                          {time && <span className="font-mono text-[10px] tabular-nums text-[#69748a]">{time}</span>}
+                        </div>
+                        <p className={`mt-1 border border-white/[0.06] px-3 py-2 text-sm leading-relaxed text-[#cbd1dd] ${bubble.bubble}`}>
+                          {t.text}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+                {pendingSpeak !== null && (
+                  <div className="flex max-w-[86%] items-start gap-2">
+                    <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(117,86,246,0.2)] text-[10px] font-bold text-[#c5b9ff]" aria-hidden="true">
+                      Y
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[11px] font-semibold text-[#c5b9ff]">You</span>
+                        <span className="flex items-center gap-1 text-[10px] text-[#69748a]">
+                          {remoteMode && <Cast className="h-3 w-3" />} sending…
+                        </span>
+                      </div>
+                      <p className="mt-1 rounded-[4px_12px_12px_12px] border border-white/[0.06] bg-white/[0.045] px-3 py-2 text-sm italic leading-relaxed text-[#c5b9ff]/80">
+                        {pendingSpeak}
+                      </p>
+                    </div>
                   </div>
-                  <p className={`text-sm leading-relaxed ${turnBodyClass(t.speaker)}`}>{t.text}</p>
-                </div>
-              );
-            })}
-            {pendingSpeak !== null && (
-              <div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-xs font-medium text-primary-600 dark:text-primary-400">You</span>
-                  <span className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500">
-                    {remoteMode && <Cast className="h-3 w-3" />} sending…
-                  </span>
-                </div>
-                <p className="text-sm italic leading-relaxed text-primary-600/80 dark:text-primary-400/80">{pendingSpeak}</p>
+                )}
+              </div>
+            )}
+
+            {/* Speak composer — only while a call is up; an ended call's transcript is a record, not a conversation. */}
+            {active && (
+              <div className="mt-3 flex items-center gap-2 border-t border-white/[0.06] pt-3">
+                <input
+                  type="text"
+                  value={speakText}
+                  onChange={(e) => setSpeakText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' || speakDisabled || !speakText.trim()) return;
+                    if (remoteMode) void handleRelaySpeak(active.callId);
+                    else void handleSpeak();
+                  }}
+                  placeholder={speakPlaceholder}
+                  disabled={speakDisabled}
+                  className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-sm text-[#e8ecf5] placeholder:text-[#69748a] focus:outline-none focus:ring-2 focus:ring-[#8268ff]/60 disabled:opacity-45"
+                />
+                <button
+                  type="button"
+                  onClick={() => { if (remoteMode) void handleRelaySpeak(active.callId); else void handleSpeak(); }}
+                  disabled={speakDisabled || !speakText.trim()}
+                  aria-label="Send to caller"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#8268ff] to-[#6847eb] text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
               </div>
             )}
           </div>
-        )}
 
-        {/* Speak composer — only while a call is up; an ended call's transcript is a record, not a conversation. */}
-        {active && (
-          <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3 dark:border-slate-800">
-            <input
-              type="text"
-              value={speakText}
-              onChange={(e) => setSpeakText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter' || speakDisabled || !speakText.trim()) return;
-                if (remoteMode) void handleRelaySpeak(active.callId);
-                else void handleSpeak();
-              }}
-              placeholder={speakPlaceholder}
-              disabled={speakDisabled}
-              className="min-w-0 flex-1 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500"
-            />
-            <button
-              type="button"
-              onClick={() => { if (remoteMode) void handleRelaySpeak(active.callId); else void handleSpeak(); }}
-              disabled={speakDisabled || !speakText.trim()}
-              aria-label="Send to caller"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-600 text-primary-foreground transition-colors hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <Send className="h-4 w-4" />
-            </button>
+          {/* Call history (raw records the app logic wrote from events) */}
+          <div className={`${card} p-5`}>
+            <h2 className="mb-3 text-sm font-medium">Recent calls</h2>
+            {!callsFormId ? (
+              <EmptyState title="No Calls form" message="This screen expects to be attached to the Calls form." />
+            ) : recent.rows.length === 0 ? (
+              <p className="text-sm text-[#7f899e]">
+                {recent.loading ? 'Loading…' : 'No calls logged yet — they are recorded automatically from call events.'}
+              </p>
+            ) : (
+              <ul className="divide-y divide-white/[0.06]">
+                {recent.rows.map((r) => {
+                  const phone = String(r.answers.caller_phone || '');
+                  const status = String(r.answers.status || '');
+                  // Same severity-coloring convention as AokiePairingScreen's hardware events list.
+                  const statusClass =
+                    status === 'missed' || status === 'failed' || status === 'rejected'
+                      ? 'bg-red-400/10 text-red-300'
+                      : status === 'completed' || status === 'answered'
+                        ? 'bg-[rgba(111,221,154,0.09)] text-[#7de5a6]'
+                        : 'bg-white/[0.06] text-[#8b96ab]';
+                  // Click through to the record detail when the app runtime + Calls form are known.
+                  const openDetail = () => {
+                    if (appSlug && callsFormId) navigate(`/app/${appSlug}/form/${callsFormId}/responses/${r.id}`);
+                  };
+                  const clickable = !!appSlug && !!callsFormId;
+                  return (
+                    <li
+                      key={r.id}
+                      role={clickable ? 'button' : undefined}
+                      tabIndex={clickable ? 0 : undefined}
+                      onClick={clickable ? openDetail : undefined}
+                      onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openDetail(); } : undefined}
+                      className={`flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm ${clickable ? 'cursor-pointer rounded-lg px-1 -mx-1 hover:bg-white/[0.04]' : ''}`}
+                    >
+                      <div className="min-w-0">
+                        <span className="font-medium">
+                          {String(r.answers.caller_name || phone || 'Unknown caller')}
+                        </span>
+                        {phone && (
+                          <a
+                            href={`tel:${phone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="ml-2 font-mono text-xs text-[#7d879a]"
+                          >
+                            {phone}
+                          </a>
+                        )}
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${statusClass}`}>{status}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
-        )}
-      </div>
-
-      {/* Call history (raw records the app logic wrote from events) */}
-      <div className={`${card} p-5`}>
-        <h2 className="mb-3 text-sm font-medium text-gray-900 dark:text-white">Recent calls</h2>
-        {!callsFormId ? (
-          <EmptyState title="No Calls form" message="This screen expects to be attached to the Calls form." />
-        ) : recent.rows.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-slate-500">
-            {recent.loading ? 'Loading…' : 'No calls logged yet — they are recorded automatically from call events.'}
-          </p>
-        ) : (
-          <ul className="divide-y divide-gray-100 dark:divide-slate-800">
-            {recent.rows.map((r) => {
-              const phone = String(r.answers.caller_phone || '');
-              const status = String(r.answers.status || '');
-              // Same severity-coloring convention as AokiePairingScreen's hardware events list.
-              const statusClass =
-                status === 'missed' || status === 'failed' || status === 'rejected'
-                  ? 'text-red-600 dark:text-red-400'
-                  : status === 'completed' || status === 'answered'
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-gray-500 dark:text-slate-400';
-              // Click through to the record detail when the app runtime + Calls form are known.
-              const openDetail = () => {
-                if (appSlug && callsFormId) navigate(`/app/${appSlug}/form/${callsFormId}/responses/${r.id}`);
-              };
-              const clickable = !!appSlug && !!callsFormId;
-              return (
-                <li
-                  key={r.id}
-                  role={clickable ? 'button' : undefined}
-                  tabIndex={clickable ? 0 : undefined}
-                  onClick={clickable ? openDetail : undefined}
-                  onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openDetail(); } : undefined}
-                  className={`flex flex-wrap items-center justify-between gap-2 py-2 text-sm ${clickable ? 'cursor-pointer rounded-lg px-1 -mx-1 hover:bg-gray-50 dark:hover:bg-slate-800/50' : ''}`}
-                >
-                  <div className="min-w-0">
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {String(r.answers.caller_name || phone || 'Unknown caller')}
-                    </span>
-                    {phone && (
-                      <a
-                        href={`tel:${phone}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="ml-2 text-xs text-gray-400 dark:text-slate-500"
-                      >
-                        {phone}
-                      </a>
-                    )}
-                  </div>
-                  <span className={`text-xs font-medium capitalize ${statusClass}`}>{status}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        </div>
       </div>
     </div>
   );

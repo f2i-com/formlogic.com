@@ -115,6 +115,31 @@ class DashboardSanitizeRoundTripTest extends TestCase
 
     // ── Structural caps ───────────────────────────────────────────────────────
 
+    /**
+     * Dashboard theme CSS (2026-07): visual rules survive the round trip;
+     * call-out and escape constructs are stripped (dashboards travel in packs).
+     */
+    public function testCustomCssIsSanitizedAndRoundTrips(): void
+    {
+        $css = '@import url(http://evil.example/x.css); .fl-dash { --dash-card-radius: 20px; '
+            . 'background: url(http://evil.example/p.png), url(data:image/png;base64,AA==); } </style>';
+        $out = $this->sanitize(['version' => 1, 'widgets' => [], 'customCss' => $css]);
+        $this->assertArrayHasKey('customCss', $out);
+        $clean = $out['customCss'];
+        $this->assertStringNotContainsString('@import', $clean);
+        $this->assertStringNotContainsString('evil.example', $clean, 'remote url() removed');
+        $this->assertStringContainsString('data:image/png', $clean, 'data URIs stay');
+        $this->assertStringNotContainsStringIgnoringCase('</style', $clean);
+        $this->assertStringContainsString('--dash-card-radius: 20px', $clean, 'visual rules survive');
+        // Idempotent: sanitizing the sanitized dashboard changes nothing.
+        $again = $this->sanitize($out);
+        $this->assertSame($clean, $again['customCss']);
+        // Empty/absent CSS is not persisted at all.
+        $none = $this->sanitize(['version' => 1, 'widgets' => [], 'customCss' => '   ']);
+        $this->assertArrayNotHasKey('customCss', $none);
+        $this->assertArrayNotHasKey('customCss', $this->sanitize(['version' => 1, 'widgets' => []]));
+    }
+
     public function testWidgetCountIsCappedAtSixty(): void
     {
         $widgets = [];

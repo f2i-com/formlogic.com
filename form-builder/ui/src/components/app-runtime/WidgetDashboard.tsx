@@ -12,11 +12,14 @@ import {
   GRID_ROW, GRID_GAP, DEFAULT_COLS, useWidgetData, fieldsOf, displayAnswer, autoTitle,
   type WidgetDataForm, type WidgetRecord, type ActivityRow, type WidgetDataDeps,
 } from './widgetData';
+import './dashboard.css';
 
 // Re-export the shared data types so existing consumers can import them from here.
 export type { WidgetDataForm, WidgetRecord, ActivityRow, WidgetDataDeps } from './widgetData';
 
-const CARD = 'rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50';
+// The card surface reads the --dash-* variables (dashboard.css), so a
+// dashboard's custom CSS can retheme every box with one variable override.
+const CARD = 'fl-dash-card';
 
 // ── Dashboard date-range picker ────────────────────────────────────────────────
 
@@ -78,6 +81,8 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const narrow = useNarrow();
+  // Stable per-mount scope for the custom-CSS injection (CSS.escape-safe).
+  const scopeId = useMemo(() => `fl-dash-${++dashScopeCounter}`, []);
   const cols = Math.max(1, Math.min(dashboard.cols ?? DEFAULT_COLS, 24));
   const widgets = useMemo(
     () => [...(dashboard.widgets ?? [])].sort((a, b) => (a.layout.y - b.layout.y) || (a.layout.x - b.layout.x)),
@@ -197,9 +202,11 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     : { display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: `${GRID_ROW}px`, gap: GRID_GAP };
 
   return (
-    <div className={props.className ?? 'w-full'}>
+    <div className={`fl-dash-scope ${props.className ?? 'w-full'}`} id={scopeId}>
+      <DashboardCustomCss css={dashboard.customCss} scopeId={scopeId} />
+      <div className="fl-dash">
       {showPicker && (
-        <div className="mb-3 flex justify-end">
+        <div className="fl-dash-range mb-3 flex justify-end">
           <div
             role="group"
             aria-label="Date range"
@@ -225,7 +232,7 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
       )}
       <div style={containerStyle}>
         {effectiveWidgets.map((w) => (
-          <div key={w.id} style={cellStyle(w)} className="min-w-0 min-h-0">
+          <div key={w.id} style={cellStyle(w)} className={`fl-dash-widget fl-dash-widget--${w.kind} min-w-0 min-h-0`}>
             <WidgetView
               widget={w}
               reportResult={data.reportResults[w.id]}
@@ -252,8 +259,70 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
           </div>
         ))}
       </div>
+      </div>
     </div>
   );
+}
+
+// ── Dashboard custom CSS (scoped) ───────────────────────────────────────────────
+
+let dashScopeCounter = 0;
+
+/**
+ * Inject the dashboard's custom CSS, scoped to its own container.
+ *
+ * The rules were already sanitized server-side (no @import / remote url() /
+ * scriptable values — AppReportService::sanitizeDashboardCss). Scoping happens
+ * here: the browser parses the CSS via a detached stylesheet, and every rule's
+ * selector list is prefixed with the dashboard's scope id — including rules
+ * nested in @media/@supports — so dashboard theming can never reach the app
+ * chrome. Unparseable input simply produces no rules.
+ */
+function DashboardCustomCss({ css, scopeId }: { css?: string; scopeId: string }) {
+  useEffect(() => {
+    if (!css || !css.trim()) return;
+    let scoped = '';
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      scoped = scopeCssRules(sheet.cssRules, `#${scopeId}`);
+    } catch {
+      return; // constructed stylesheets unavailable — skip rather than inject unscoped
+    }
+    if (!scoped) return;
+    const el = document.createElement('style');
+    el.setAttribute('data-fl-dash-css', scopeId);
+    el.textContent = scoped;
+    document.head.appendChild(el);
+    return () => { el.remove(); };
+  }, [css, scopeId]);
+  return null;
+}
+
+/** Serialize rules with every selector prefixed by `scope` (recursing into grouping rules). */
+function scopeCssRules(rules: CSSRuleList, scope: string): string {
+  let out = '';
+  for (const rule of Array.from(rules)) {
+    if (rule instanceof CSSStyleRule) {
+      const selectors = rule.selectorText
+        .split(',')
+        .map((sel) => `${scope} ${sel.trim()}`)
+        .join(', ');
+      const body = rule.cssText.slice(rule.cssText.indexOf('{'));
+      out += `${selectors} ${body}
+`;
+    } else if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
+      const kind = rule instanceof CSSMediaRule ? '@media' : '@supports';
+      out += `${kind} ${rule.conditionText} { ${scopeCssRules(rule.cssRules, scope)} }
+`;
+    } else if (rule instanceof CSSKeyframesRule || rule instanceof CSSFontFaceRule) {
+      // Keyframes/font-face are name-scoped, not selector-scoped — pass through.
+      out += `${rule.cssText}
+`;
+    }
+    // Anything else (@import survived nothing server-side; @page etc.) is dropped.
+  }
+  return out;
 }
 
 // ── Single widget view (shared by runtime + builder) ────────────────────────────

@@ -37,6 +37,8 @@ class AppReportService
     private const MAX_ITEMS = 200;
     private const MAX_BLOCKS = 100;
     private const MAX_WIDGETS = 60;
+    /** Upper bound for dashboard custom CSS (plenty for theming, hostile-blob proof). */
+    private const DASHBOARD_CSS_MAX = 20000;
 
     public function __construct(private AppService $appService, private FormService $formService) {}
 
@@ -362,12 +364,44 @@ class AppReportService
         }
         $dash = ['version' => 1, 'cols' => $cols, 'widgets' => array_values($out)];
         if (is_bool($dashboard['showRangePicker'] ?? null)) { $dash['showRangePicker'] = $dashboard['showRangePicker']; }
+        // Custom CSS (dashboard theming): builder-authored rules the runtime scopes to
+        // the dashboard container. Dashboards travel inside packs, so the rules are
+        // sanitized here — the enforcement point every save path already goes through.
+        if (is_string($dashboard['customCss'] ?? null)) {
+            $css = $this->sanitizeDashboardCss($dashboard['customCss']);
+            if ($css !== '') { $dash['customCss'] = $css; }
+        }
         // Auto-refresh cadence (seconds): only the fixed 30 / 60 / 300 steps persist; anything else drops.
         $ri = $dashboard['refreshInterval'] ?? null;
         if (is_numeric($ri) && (float) $ri == (int) $ri && in_array((int) $ri, self::REFRESH_INTERVALS, true)) {
             $dash['refreshInterval'] = (int) $ri;
         }
         return $dash;
+    }
+
+    /**
+     * Sanitize dashboard custom CSS. CSS cannot run script, but it can call out
+     * (url()/@import fetch attacker hosts, leaking viewer IPs) and legacy engines
+     * had scriptable values — strip those constructs, keep everything visual.
+     * data: image URLs stay allowed so authors can embed textures/patterns.
+     * The runtime additionally prefixes every selector with the dashboard's own
+     * scope container, so these rules can never restyle the app chrome.
+     */
+    public function sanitizeDashboardCss(string $css): string
+    {
+        $css = substr($css, 0, self::DASHBOARD_CSS_MAX);
+        // A literal </style> would break out of the runtime's injected tag.
+        $css = preg_replace('/<\/?\s*style/i', '', $css) ?? '';
+        // No remote fetches: @import always; url(...) unless a data: URI.
+        $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? '';
+        $css = preg_replace_callback(
+            '~url\s*\(\s*(["\']?)([^)"\']*)\1\s*\)~i',
+            static fn (array $m) => stripos(trim($m[2]), 'data:') === 0 ? $m[0] : 'none',
+            $css
+        ) ?? '';
+        // Legacy scriptable-CSS constructs (defense in depth for old engines).
+        $css = preg_replace('/expression\s*\(|-moz-binding|behavior\s*:/i', '', $css) ?? '';
+        return trim($css);
     }
 
     /**

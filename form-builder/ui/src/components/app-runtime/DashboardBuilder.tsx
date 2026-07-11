@@ -3,6 +3,7 @@ import {
   Plus, Trash2, Settings2, GripVertical, Save, Loader2,
   BarChart3, PieChart, Hash, Table2, List as ListIcon, Type, Zap, Activity,
   AreaChart, TrendingUp, ListOrdered, Target, Copy, Rows3,
+  Paintbrush,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -189,6 +190,13 @@ export interface DashboardBuilderProps extends WidgetDataDeps {
 
 type Interaction = { type: 'move' | 'resize'; id: string; startX: number; startY: number; orig: DashboardWidget['layout']; base: DashboardWidget[] };
 
+const CSS_PLACEHOLDER = `.fl-dash {
+  --dash-card-radius: 20px;
+  --dash-card-bg: #fbfaff;
+  --dash-scrollbar-thumb: #c4b5fd;
+}
+.fl-dash-widget--report .fl-dash-card { border-width: 2px; }`;
+
 export function DashboardBuilder(props: DashboardBuilderProps) {
   const { scope, builderForms, accent, onSave, onCancel } = props;
   const cols = props.initial?.cols ?? DEFAULT_COLS;
@@ -208,6 +216,10 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       ? props.initial.refreshInterval
       : 0
   );
+  // Dashboard theming CSS (sanitized server-side, scoped at runtime). Trimmed-empty
+  // is not persisted, so untouched dashboards stay byte-identical.
+  const [customCss, setCustomCss] = useState<string>(props.initial?.customCss ?? '');
+  const [cssOpen, setCssOpen] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   // Widget id pending delete confirmation (T-widget-delete-confirm): the Trash button no longer
   // deletes immediately — a stray click on a chart full of configuration would otherwise vanish
@@ -237,7 +249,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   // A stable serialized compare against the state captured on mount (cols can't change in the
   // builder, so it isn't part of the snapshot). Saving re-baselines; Cancel/close confirm when
   // dirty, and a beforeunload handler guards page navigation/refresh while dirty.
-  const snapshot = JSON.stringify({ widgets, showRangePicker, refreshInterval });
+  const snapshot = JSON.stringify({ widgets, showRangePicker, refreshInterval, customCss });
   const [cleanSnapshot, setCleanSnapshot] = useState(snapshot);
   const dirty = snapshot !== cleanSnapshot;
   const [confirmClose, setConfirmClose] = useState(false);
@@ -356,9 +368,9 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     // finally guarantees the button leaves the "Saving…" state even if onSave rejects — otherwise a
     // failed save would leave the builder stuck in a disabled/spinning state.
     try {
-      const ok = await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }), ...(refreshInterval ? { refreshInterval } : {}) });
+      const ok = await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }), ...(refreshInterval ? { refreshInterval } : {}), ...(customCss.trim() ? { customCss: customCss.trim() } : {}) });
       // A successful save re-baselines the dirty compare (hosts usually unmount us, but not always).
-      if (ok) setCleanSnapshot(JSON.stringify({ widgets, showRangePicker, refreshInterval }));
+      if (ok) setCleanSnapshot(JSON.stringify({ widgets, showRangePicker, refreshInterval, customCss }));
     } finally {
       setSaving(false);
     }
@@ -409,6 +421,16 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
             <option value={300}>5m</option>
           </select>
         </label>
+        <button
+          type="button"
+          onClick={() => setCssOpen((v) => !v)}
+          aria-expanded={cssOpen}
+          className={`flex items-center gap-1.5 text-xs font-medium cursor-pointer select-none rounded-md px-1.5 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 app-ring-primary ${cssOpen ? 'app-text-primary' : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'}`}
+          title="Theme this dashboard with custom CSS (boxes, colours, scrollbars)"
+        >
+          <Paintbrush className="h-3.5 w-3.5" />
+          Theme CSS{customCss.trim() ? ' •' : ''}
+        </button>
         <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize · double-click a widget to edit it</p>
         <p className="text-xs text-gray-400 dark:text-slate-500 sm:hidden">Tip: the drag-and-drop grid is easier to arrange on a larger screen.</p>
         <div className="ml-auto flex items-center gap-2">
@@ -418,6 +440,32 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
           </Button>
         </div>
       </div>
+
+      {cssOpen && (
+        <div className="mb-3 rounded-xl border border-gray-200/80 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900/50">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Dashboard theme CSS</p>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500">
+              Applied only to this dashboard. Remote URLs and imports are stripped on save.
+            </p>
+          </div>
+          <textarea
+            value={customCss}
+            onChange={(e) => setCustomCss(e.target.value)}
+            rows={8}
+            spellCheck={false}
+            aria-label="Dashboard custom CSS"
+            placeholder={CSS_PLACEHOLDER}
+            className="w-full resize-y rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2 font-mono text-xs leading-relaxed text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 app-ring-primary dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-200 dark:placeholder:text-slate-600"
+          />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-gray-400 dark:text-slate-500">
+            Hooks: <code>.fl-dash</code> (container) · <code>.fl-dash-card</code> (boxes) ·{' '}
+            <code>.fl-dash-widget--report/list/grid/text/actions/activity</code> (per kind) ·{' '}
+            variables <code>--dash-card-bg</code>, <code>--dash-card-border</code>, <code>--dash-card-radius</code>,{' '}
+            <code>--dash-card-shadow</code>, <code>--dash-scrollbar-thumb</code>.
+          </p>
+        </div>
+      )}
 
       {/* Canvas */}
       <div className="flex-1 min-h-0 overflow-auto rounded-xl bg-gray-50/60 dark:bg-slate-950/40 border border-gray-200/70 dark:border-slate-800 p-3">

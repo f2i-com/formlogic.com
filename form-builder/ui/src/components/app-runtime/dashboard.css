@@ -1,0 +1,79 @@
+/* ============================================================================
+   Widget-dashboard default design + theming hooks (2026-07).
+
+   Every dashboard renders inside `.fl-dash`. The card surface and scrollbars
+   read the --dash-* custom properties below, so a dashboard's custom CSS can
+   retheme boxes/colours/scrollbars with a few variable overrides — or target
+   the class hooks directly for full control:
+
+     .fl-dash                    the dashboard container
+     .fl-dash-range              the date-range picker row
+     .fl-dash-widget             one grid cell
+     .fl-dash-widget--report     …per widget kind (report/list/grid/text/
+                                 actions/activity)
+     .fl-dash-card               the card surface inside a cell
+
+   Custom CSS is sanitized server-side and prefixed to the dashboard's own
+   scope container at runtime, so rules can never restyle the app chrome.
+   ========================================================================== */
+
+.fl-dash {
+  --dash-card-bg: #ffffff;
+  --dash-card-border: rgb(229 231 235 / 0.8);
+  --dash-card-radius: 16px;
+  --dash-card-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 30px -24px rgb(15 23 42 / 0.25);
+  --dash-card-hover-border: rgb(203 213 225 / 0.9);
+  --dash-scrollbar-thumb: rgb(148 163 184 / 0.45);
+  --dash-scrollbar-thumb-hover: rgb(148 163 184 / 0.7);
+  --dash-scrollbar-track: transparent;
+}
+
+:root.dark .fl-dash {
+  --dash-card-bg: rgb(15 23 42 / 0.5);
+  --dash-card-border: rgb(51 65 85 / 0.6);
+  --dash-card-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 14px 34px -26px rgb(0 0 0 / 0.6);
+  --dash-card-hover-border: rgb(71 85 105 / 0.8);
+  --dash-scrollbar-thumb: rgb(100 116 139 / 0.5);
+  --dash-scrollbar-thumb-hover: rgb(100 116 139 / 0.8);
+}
+
+.fl-dash-card {
+  background: var(--dash-card-bg);
+  border: 1px solid var(--dash-card-border);
+  border-radius: var(--dash-card-radius);
+  box-shadow: var(--dash-card-shadow);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.fl-dash-widget:hover > .fl-dash-card,
+.fl-dash-widget:hover > * > .fl-dash-card {
+  border-color: var(--dash-card-hover-border);
+}
+
+/* Slim, theme-aware scrollbars inside widgets (lists, tables, text). */
+.fl-dash * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dash-scrollbar-thumb) var(--dash-scrollbar-track);
+}
+
+.fl-dash *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.fl-dash *::-webkit-scrollbar-track {
+  background: var(--dash-scrollbar-track);
+}
+
+.fl-dash *::-webkit-scrollbar-thumb {
+  background: var(--dash-scrollbar-thumb);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.fl-dash *::-webkit-scrollbar-thumb:hover {
+  background: var(--dash-scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}

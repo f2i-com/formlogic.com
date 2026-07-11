@@ -316,6 +316,24 @@
      stage card while a call is ringing. rgb(var(--primary-500) / …) means it rings indigo by
      day, lime by night, automatically — no hardcoded hue. */
   .call-ring { animation: callRing 1.5s ease-out infinite; }
+
+  /* Aokie live-call console waveform (landing-console aesthetic). */
+  .aokie-wave { display: flex; align-items: center; gap: 3px; }
+  .aokie-wave i {
+    display: block;
+    width: 3px;
+    border-radius: 2px;
+    background: linear-gradient(#b7ff76, #6ddda7);
+    opacity: 0.8;
+    animation: aokieWave 1.15s ease-in-out infinite;
+  }
+  @keyframes aokieWave {
+    0%, 100% { transform: scaleY(0.3); }
+    50% { transform: scaleY(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .aokie-wave i { animation: none; }
+  }
   @keyframes callRing {
     0%   { box-shadow: 0 0 0 0 rgb(var(--primary-500) / 0.4); }
     75%  { box-shadow: 0 0 0 14px rgb(var(--primary-500) / 0); }

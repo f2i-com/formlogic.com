@@ -260,6 +260,10 @@ export interface DashboardScreen {
   showRangePicker?: boolean;
   /** Auto-refresh cadence in seconds — 30 | 60 | 300 only; absent = off. */
   refreshInterval?: number;
+  /** Builder-authored theming CSS, sanitized server-side (AppReportService::sanitizeDashboardCss)
+   *  and scoped client-side to this dashboard's container. Rules target the documented
+   *  fl-dash-* class hooks and --dash-* variables. */
+  customCss?: string;
 }
 
 export interface AppForm {
