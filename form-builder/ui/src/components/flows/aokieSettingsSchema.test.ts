@@ -25,7 +25,9 @@ const fixture = JSON.parse(
 };
 
 const panelSource = readFileSync(
-  join(__dirname, '../../../../desktop/src/PluginsPanel.tsx'),
+  // The Aokie settings UI moved from PluginsPanel into the shared feature
+  // module during the 2026-07 desktop redesign.
+  join(__dirname, '../../../../desktop/src/aokie/AokieCard.tsx'),
   'utf8'
 );
 
@@ -41,7 +43,7 @@ describe('aokie settings schema conformance', () => {
 
   it('the Desktop panel offers only hfpCodec values the plugin accepts', () => {
     const union = panelSource.match(/hfpCodec:\s*((?:'[a-z]+'\s*\|\s*)+'[a-z]+')/);
-    expect(union, 'PluginsPanel hfpCodec union type').toBeTruthy();
+    expect(union, 'AokieCard hfpCodec union type').toBeTruthy();
     const offered = [...union![1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
     const allowed = spec('hfpCodec')?.options ?? [];
     for (const value of offered) {
@@ -52,7 +54,7 @@ describe('aokie settings schema conformance', () => {
   it('the Desktop panel defaults sit inside the plugin bounds', () => {
     for (const key of ['sttEndpointMs', 'bargeSensitivity'] as const) {
       const m = panelSource.match(new RegExp(`${key}:\\s*(\\d+)`));
-      expect(m, `PluginsPanel default for ${key}`).toBeTruthy();
+      expect(m, `AokieCard default for ${key}`).toBeTruthy();
       const def = Number(m![1]);
       const s = spec(key)!;
       expect(def, `${key} default ${def} within [${s.min}, ${s.max}]`).toBeGreaterThanOrEqual(s.min!);

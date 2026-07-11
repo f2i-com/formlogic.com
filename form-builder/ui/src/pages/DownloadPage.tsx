@@ -44,10 +44,11 @@ export function DownloadPage() {
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg">
           <Download className="h-8 w-8" />
         </div>
-        <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Get the FormLogic app</h1>
+        <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Get FormLogic Desktop</h1>
         <p className="mt-3 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
-          The FormLogic app runs your apps on the desktop with local device features — and everything also works right
-          here in your browser.
+          FormLogic Desktop is the local capability layer: it runs local AI services and models, connects supervised
+          plugins and hardware (like the Aokie AI receptionist), and keeps your flows running headlessly — while
+          everything also works right here in your browser.
         </p>
 
         <div className="mt-8 flex flex-col gap-3 text-left">

@@ -1,6 +1,8 @@
+import { Link } from 'react-router-dom';
 import {
   Code2,
   Database,
+  Download,
   LayoutGrid,
   Monitor,
   PhoneCall,
@@ -112,9 +114,14 @@ export function DesktopSpotlight() {
               </div>
             </span>
           </div>
+          <div className="lv2-inline-actions" style={{ marginTop: 26 }}>
+            <Link to="/download" className="lv2-btn lv2-btn--primary">
+              Get FormLogic Desktop <Download size={16} />
+            </Link>
+          </div>
           <span className="lv2-desktop__note">
             <Monitor size={15} /> Windows desktop UI today; a Linux headless runtime is also
-            available.
+            available. The web app works everywhere.
           </span>
         </div>
       </div>
