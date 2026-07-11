@@ -1,10 +1,14 @@
 // Small flow-workspace time labels shared by overview and run history.
 //
-// Kept dependency-free so table rows can render compact relative labels while retaining an
-// absolute timestamp in title= for audit/debugging.
+// Timestamps arrive as offsetless MySQL datetimes in UTC ("Y-m-d H:i:s") — parseServerDate
+// stamps the missing Z. Feeding them to new Date() directly read them as LOCAL time, so a
+// run from last night showed as "21h ago" instead of "11h ago" (UTC+10), and Safari parsed
+// the space-separated format as Invalid Date outright.
+import { parseServerDate } from '../../lib/utils';
+
 export function formatRelativeTime(value: string | null | undefined, nowMs = Date.now()): string {
   if (!value) return 'Unknown time';
-  const at = new Date(value).getTime();
+  const at = parseServerDate(value).getTime();
   if (!Number.isFinite(at)) return value;
   const seconds = Math.max(0, Math.round((nowMs - at) / 1000));
   if (seconds < 45) return 'just now';
@@ -19,7 +23,7 @@ export function formatRelativeTime(value: string | null | undefined, nowMs = Dat
 
 export function formatAbsoluteTimeTitle(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
-  const at = new Date(value);
+  const at = parseServerDate(value);
   if (!Number.isFinite(at.getTime())) return value;
   return at.toLocaleString();
 }

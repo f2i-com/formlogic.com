@@ -10,7 +10,7 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../ui/Button';
-import { formatRelativeTime } from './relativeTime';
+import { formatAbsoluteTimeTitle, formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
 import { flowStarterTemplatesForConnectors, type FlowStarterTemplate } from './starterTemplates';
 import {
@@ -76,6 +76,16 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
       if (!cancelled) await loadRuns();
     })();
     return () => { cancelled = true; };
+  }, [loadRuns]);
+
+  // A tab left open (e.g. overnight test calls) showed a stale list until the manual
+  // Refresh — refetch whenever the tab becomes visible again.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void loadRuns();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loadRuns]);
 
   useEffect(() => {
@@ -192,7 +202,7 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
                       <span className="block truncate font-mono text-[11px] text-gray-500 dark:text-slate-400">{run.triggerEvent}</span>
                     </span>
                     <span className="self-center"><RunStatusChip run={run} /></span>
-                    <span className="col-span-2 text-xs text-gray-400 dark:text-slate-500 sm:col-span-1 sm:self-center" title={when ?? undefined}>
+                    <span className="col-span-2 text-xs text-gray-400 dark:text-slate-500 sm:col-span-1 sm:self-center" title={formatAbsoluteTimeTitle(when)}>
                       {formatRelativeTime(when)}
                     </span>
                   </button>

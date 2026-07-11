@@ -16,6 +16,14 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(null, now)).toBe('Unknown time');
     expect(formatRelativeTime('not-a-date', now)).toBe('not-a-date');
   });
+
+  it('reads offsetless MySQL datetimes as UTC (the API wire format)', () => {
+    // Regression: "2026-07-09 09:00:00" parsed as LOCAL time made last night's call
+    // runs read as "21h ago" instead of "3h ago" on a UTC+10 machine (and Safari
+    // failed to parse the space-separated form at all).
+    expect(formatRelativeTime('2026-07-09 09:00:00', now)).toBe('3h ago');
+    expect(formatRelativeTime('2026-07-09 11:55:00', now)).toBe('5m ago');
+  });
 });
 
 describe('formatAbsoluteTimeTitle', () => {

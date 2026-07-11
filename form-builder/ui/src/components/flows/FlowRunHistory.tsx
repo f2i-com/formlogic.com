@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, History, RefreshCw } from 'lucide-react';
 import { api } from '../../lib/api';
+import { parseServerDate } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
 import { getNodeSpec } from './editor/nodeCatalog';
@@ -39,7 +40,8 @@ function runtimeChip(run: FlowRunLog) {
 
 function runDuration(run: FlowRunLog): string {
   if (!run.startedAt || !run.finishedAt) return '-';
-  const ms = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+  // parseServerDate: offsetless UTC MySQL datetimes — Safari can't even parse them raw.
+  const ms = parseServerDate(run.finishedAt).getTime() - parseServerDate(run.startedAt).getTime();
   if (!Number.isFinite(ms) || ms < 0) return '-';
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
