@@ -311,7 +311,7 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | PHP 8.1+ / Slim 4 |
+| Framework | PHP 8.2+ / Slim 4 |
 | Auth | HttpOnly cookie sessions (JWT-signed) + scoped API keys + ephemeral MCP tokens |
 | Database | MySQL (global metadata) + SQLite (per-form responses) |
 | Logging | Monolog |
@@ -494,7 +494,7 @@ Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g. `http://
 ### PHP extensions missing
 Check with `php -m`. On Ubuntu/Debian:
 ```bash
-sudo apt install php8.1-mysql php8.1-sqlite3 php8.1-mbstring php8.1-xml
+sudo apt install php8.2-mysql php8.2-sqlite3 php8.2-mbstring php8.2-xml
 ```
 
 ### AI generation not working
