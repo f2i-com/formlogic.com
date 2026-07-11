@@ -44,12 +44,23 @@ class BodySizeLimitMiddleware implements MiddlewareInterface
             return $this->payloadTooLarge();
         }
 
-        // If size is unknown (streaming), read up to limit + 1 to check
+        // If size is unknown (streaming), count it in CHUNKS up to limit + 1.
+        // A single read($maxBytes + 1) allocates the whole limit as one PHP
+        // string — with the backup-sized limit (~216MB) that exceeds
+        // memory_limit and fatals every unknown-size request (incl. GETs whose
+        // php://input size is unreported). 1MB chunks keep memory flat.
         if ($size === null) {
             $body->rewind();
-            $content = $body->read($this->maxBytes + 1);
-            if (strlen($content) > $this->maxBytes) {
-                return $this->payloadTooLarge();
+            $total = 0;
+            while (!$body->eof()) {
+                $chunk = $body->read(1024 * 1024);
+                if ($chunk === '') {
+                    break;
+                }
+                $total += strlen($chunk);
+                if ($total > $this->maxBytes) {
+                    return $this->payloadTooLarge();
+                }
             }
             // Rewind for downstream handlers
             $body->rewind();

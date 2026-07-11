@@ -160,6 +160,33 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         $c->get(\FormLogic\Services\FlowService::class),
         $c->get(ResponseService::class),
         $c->get(AuditService::class),
+        $c->get(LoggerInterface::class),
+        $c->get(\FormLogic\Services\AccountBackupService::class)
+    );
+});
+
+// Account backups: owner full-workspace export/import zips + the admin
+// structure-only backup manifest (paths + schema, never record data).
+$container->set(\FormLogic\Services\AccountBackupService::class, function (Container $c) use ($settings) {
+    return new \FormLogic\Services\AccountBackupService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(\FormLogic\Services\AppUserService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(ResponseService::class),
+        $settings['settings']['backups'] ?? [],
+        $settings['settings']['sqlite']['storage_path'],
+        $settings['settings']['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads',
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+$container->set(\FormLogic\Controllers\AccountBackupController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AccountBackupController(
+        $c->get(\FormLogic\Services\AccountBackupService::class),
+        $c->get(AuditService::class),
         $c->get(LoggerInterface::class)
     );
 });
@@ -710,12 +737,14 @@ $app->add(new CorsMiddleware(
 $app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
 
 // Global body-size safety net. It must accommodate the largest legitimate body —
-// pack zip uploads (packs.maxZipSize) are larger than ordinary file uploads —
-// plus multipart/base64 envelope overhead. Stricter per-route/per-field limits
-// are still enforced in the upload/pack handlers.
+// account-backup zip uploads (backups.maxZipSize, 200MB default) are the largest,
+// ahead of pack zips and ordinary file uploads — plus multipart/base64 envelope
+// overhead. Stricter per-route/per-field limits are still enforced in the
+// upload/pack/backup handlers.
 $uploadMax = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1024);
 $packMax = $settings['settings']['packs']['maxZipSize'] ?? (50 * 1024 * 1024);
-$maxBodySize = max($uploadMax, $packMax) + (16 * 1024 * 1024);
+$backupMax = $settings['settings']['backups']['maxZipSize'] ?? (200 * 1024 * 1024);
+$maxBodySize = max($uploadMax, $packMax, $backupMax) + (16 * 1024 * 1024);
 $app->add(new BodySizeLimitMiddleware($maxBodySize));
 
 // Public MCP-OAuth endpoints (RFC 9728/8414 discovery + token + register) must be readable from ANY
@@ -839,6 +868,11 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/users/{id}/admin', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->setAdmin($request, $response, $adminArgs($request));
+    });
+    // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
+    // PATHS and sizes — never record data (the admin panel lists, it never exports).
+    $group->get('/users/{id}/backup-manifest', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->backupManifest($request, $response, $adminArgs($request));
     });
 
     // Structure views + on-behalf-of-the-owner structural edits.
@@ -1021,6 +1055,20 @@ $aiFileRateLimiter = new RateLimitMiddleware($rateLimiter, 5, 60, 'ai_file', tru
 // (POST/PUT/PATCH) require an ACTIVE cloud account; reads, exports and DELETEs always
 // pass; no-op unless CLOUD_PLAN_ENFORCED. Applied to every cloud write surface below.
 $cloudWriteGate = new \FormLogic\Middleware\CloudWriteGateMiddleware($container->get(\FormLogic\Services\PlanService::class));
+
+// ── Account backup (owner-only; NEVER admin-actable) ───────────────────────────
+// The export zip CONTAINS record data (per-form SQLite + uploads), so these
+// endpoints must never gain an /api/admin mirror; the SPA's acting mode
+// default-denies /account/* too. Expensive endpoints → tight per-user limit.
+// NOTE: route closures MUST name their params $request/$response (PHP-DI
+// injects by parameter name).
+$backupRateLimiter = new RateLimitMiddleware($rateLimiter, 3, 60, 'account_backup', true);
+$app->get('/api/account/backup/export', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AccountBackupController::class)->export($request, $response);
+})->add($backupRateLimiter)->add($authRequired);
+$app->post('/api/account/backup/import', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AccountBackupController::class)->import($request, $response);
+})->add($cloudWriteGate)->add($backupRateLimiter)->add($authRequired);
 
 $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $aiFileRateLimiter) {
     // Form generation from text prompt

@@ -9,6 +9,8 @@ use FormLogic\Controllers\AdminController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Middleware\AdminGateMiddleware;
+use FormLogic\Services\AccountBackupService;
+use FormLogic\Services\AppUserService;
 use FormLogic\Middleware\MaintenanceMiddleware;
 use FormLogic\Models\User;
 use FormLogic\Services\AdminService;
@@ -45,6 +47,7 @@ class AdminPanelTest extends TestCase
     private static FormService $forms;
     private static ResponseService $responses;
     private static AppService $apps;
+    private static SQLiteConnection $sqlite;
     private static FlowService $flows;
     private static string $tmpRoot = '';
 
@@ -80,6 +83,7 @@ class AdminPanelTest extends TestCase
         mkdir(self::$tmpRoot, 0777, true);
 
         $sqlite = new SQLiteConnection(self::$tmpRoot . '/sqlite');
+        self::$sqlite = $sqlite;
         self::$forms = new FormService($conn, $sqlite);
         self::$responses = new ResponseService($conn, $sqlite);
         self::$apps = new AppService($conn, self::$forms);
@@ -187,9 +191,15 @@ class AdminPanelTest extends TestCase
     {
         $maintenance ??= new MaintenanceService(self::$tmpRoot . '/maintenance-' . bin2hex(random_bytes(3)) . '.json');
         $upgrade ??= new UpgradeService(self::$tmpRoot . '/nowhere', self::$mysql, $maintenance);
+        $backup = new AccountBackupService(
+            self::$mysql, self::$sqlite, self::$forms, self::$apps,
+            new AppUserService(self::$mysql), self::$flows, self::$responses,
+            [], self::$tmpRoot . '/sqlite', self::$tmpRoot . '/uploads'
+        );
         return new AdminController(
             self::$admin, self::$auth, $maintenance, $upgrade,
-            self::$forms, self::$apps, self::$flows, self::$responses
+            self::$forms, self::$apps, self::$flows, self::$responses,
+            null, null, $backup
         );
     }
 
@@ -372,6 +382,39 @@ class AdminPanelTest extends TestCase
             ['id' => (string) $form['id']]
         ));
         $this->assertSame('Contact v2', $upd['form']['title'] ?? null);
+    }
+
+    public function testBackupManifestReturnsPathsAndSchemaNeverData(): void
+    {
+        $form = self::$forms->createForm([
+            'title' => 'Contact', 'userId' => $this->userId,
+            'fields' => [['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false]],
+        ]);
+        self::$responses->createResponse((string) $form['id'], ['answers' => ['name' => 'TOP-SECRET-ANSWER']], null);
+
+        $ctrl = $this->controller();
+        $res = $ctrl->backupManifest($this->request('GET', '/x', null, $this->adminId), (new ResponseFactory())->createResponse(), ['id' => $this->userId]);
+        $this->assertSame(200, $res->getStatusCode());
+        $body = $this->json($res);
+        $m = $body['manifest'];
+
+        // Paths + schema + counts are all there...
+        $this->assertSame('formlogic.adminBackupManifest', $m['kind']);
+        $entry = $m['forms'][0];
+        $this->assertSame('Contact', $entry['title']);
+        $this->assertSame(1, $entry['responseCount']);
+        $this->assertSame('name', $entry['fields'][0]['id'] ?? null);
+        $this->assertStringContainsString('storage/forms/', $entry['sqlite']['relativePath']);
+        $this->assertTrue($entry['sqlite']['exists']);
+        $this->assertGreaterThan(0, $entry['sqlite']['sizeBytes']);
+        $this->assertStringContainsString('storage/uploads/', $entry['uploads']['relativePath']);
+
+        // ...but never the record data. THE boundary assertion.
+        $this->assertStringNotContainsString('TOP-SECRET-ANSWER', json_encode($body));
+
+        // Unknown user → 404.
+        $nf = $ctrl->backupManifest($this->request('GET', '/x', null, $this->adminId), (new ResponseFactory())->createResponse(), ['id' => 'no-such-user']);
+        $this->assertSame(404, $nf->getStatusCode());
     }
 
     public function testSetAdminGuards(): void

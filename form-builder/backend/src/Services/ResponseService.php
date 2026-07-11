@@ -2598,6 +2598,155 @@ class ResponseService
     }
 
     /**
+     * Account-backup restore: insert fully-formed response rows into a form's
+     * stores with ids/timestamps/status/metadata/computed/tags PRESERVED, and
+     * with NO side effects — no onSubmit script, webhooks, flow enqueue,
+     * analytics, retention purge, or file commit (createResponse must never be
+     * used for restores; it fires all of those and regenerates ids).
+     *
+     * The caller (AccountBackupService) has already remapped linked_record
+     * answers and rewritten file urls for the NEW form id, and compensates by
+     * deleting the whole form on failure — so this throws loudly rather than
+     * skipping rows. The MySQL response_metadata mirror stays strict (per-row
+     * compensating delete; bulk cleanup on rollback) so the Doctor's dual-store
+     * countDrift check holds after a restore.
+     *
+     * @param array<int, array{
+     *   id: string, answers: array, metadata: array, status: string,
+     *   submittedAt: string, updatedAt: string,
+     *   computed?: array<int, array{name: string, rawValue: string, createdAt?: ?string}>,
+     *   tags?: array<int, array{tag: string, createdAt?: ?string}>
+     * }> $rows chunked by the caller (<= 1000 per call)
+     * @return int rows created
+     */
+    public function restoreResponses(string $formId, array $rows): int
+    {
+        if (count($rows) > 1000) {
+            throw new \RuntimeException('Maximum 1000 rows allowed per restore chunk');
+        }
+        if (!$this->formExists($formId)) {
+            throw new \RuntimeException('Form not found');
+        }
+
+        // The SQLite side accepts 'spam' but the MySQL response_metadata ENUM
+        // does not — mirror it as 'archived' (both are closed, report-excluded
+        // states) instead of failing the strict-mode insert.
+        $allowedStatuses = ['draft', 'submitted', 'reviewed', 'approved', 'rejected', 'spam', 'archived'];
+        $mysqlEnum = ['draft', 'submitted', 'reviewed', 'approved', 'rejected', 'archived'];
+        foreach ($rows as $i => $row) {
+            $status = (string) ($row['status'] ?? '');
+            if (!in_array($status, $allowedStatuses, true)) {
+                // A tampered/incompatible backup fails LOUDLY, never coerces silently.
+                throw new \RuntimeException("Restore row {$i} has invalid status '{$status}'");
+            }
+            if (!is_string($row['id'] ?? null) || $row['id'] === '') {
+                throw new \RuntimeException("Restore row {$i} is missing an id");
+            }
+        }
+
+        $db = $this->sqlite->getFormDatabase($formId);
+        $this->sqlite->migrateFormDatabase($db);
+
+        $created = 0;
+        $mysqlInsertedIds = [];
+
+        $db->beginTransaction();
+        try {
+            $respStmt = $db->prepare("
+                INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
+                VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
+            ");
+            $computedStmt = $db->prepare("
+                INSERT OR REPLACE INTO computed (response_id, field_name, field_value, created_at)
+                VALUES (:rid, :name, :value, COALESCE(:created_at, datetime('now')))
+            ");
+            $tagStmt = $db->prepare("
+                INSERT OR IGNORE INTO tags (response_id, tag, created_at)
+                VALUES (:rid, :tag, COALESCE(:created_at, datetime('now')))
+            ");
+            $mysqlStmt = $this->mysql->prepare("
+                INSERT INTO response_metadata (id, form_id, status, submitted_at, ip_address, user_agent, completion_time)
+                VALUES (:id, :form_id, :status, :submitted_at, :ip_address, :user_agent, :completion_time)
+            ");
+
+            foreach ($rows as $row) {
+                $metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : [];
+                $respStmt->execute([
+                    'id' => $row['id'],
+                    'answers' => json_encode(is_array($row['answers'] ?? null) ? $row['answers'] : []),
+                    'metadata' => json_encode($metadata),
+                    'status' => $row['status'],
+                    'submitted_at' => $row['submittedAt'],
+                    'updated_at' => $row['updatedAt'],
+                ]);
+
+                foreach ($row['computed'] ?? [] as $c) {
+                    // field_value is the RAW TEXT from the source db (already
+                    // json-encoded) — re-encoding would double-encode it.
+                    $computedStmt->execute([
+                        'rid' => $row['id'],
+                        'name' => (string) $c['name'],
+                        'value' => (string) $c['rawValue'],
+                        'created_at' => $c['createdAt'] ?? null,
+                    ]);
+                }
+                foreach ($row['tags'] ?? [] as $t) {
+                    $tagStmt->execute([
+                        'rid' => $row['id'],
+                        'tag' => (string) $t['tag'],
+                        'created_at' => $t['createdAt'] ?? null,
+                    ]);
+                }
+
+                try {
+                    $completion = $metadata['completionTime'] ?? null;
+                    $mysqlStmt->execute([
+                        'id' => $row['id'],
+                        'form_id' => $formId,
+                        'status' => in_array($row['status'], $mysqlEnum, true) ? $row['status'] : 'archived',
+                        'submitted_at' => $row['submittedAt'],
+                        'ip_address' => isset($metadata['ipAddress']) && is_string($metadata['ipAddress']) ? substr($metadata['ipAddress'], 0, 45) : null,
+                        'user_agent' => isset($metadata['userAgent']) && is_string($metadata['userAgent']) ? $metadata['userAgent'] : null,
+                        'completion_time' => is_numeric($completion) ? (int) $completion : null,
+                    ]);
+                    $mysqlInsertedIds[] = $row['id'];
+                } catch (\Exception $mysqlErr) {
+                    // Keep the stores in sync: drop this row's SQLite side, then fail the chunk.
+                    $db->exec("DELETE FROM responses WHERE id = " . $db->quote($row['id']));
+                    throw $mysqlErr;
+                }
+
+                $created++;
+            }
+
+            $db->commit();
+            if ($created > 0) {
+                $this->syncResponseCount($formId);
+            }
+        } catch (\Exception $e) {
+            $db->rollBack();
+            if (!empty($mysqlInsertedIds)) {
+                try {
+                    $placeholders = implode(',', array_fill(0, count($mysqlInsertedIds), '?'));
+                    $this->mysql->prepare("DELETE FROM response_metadata WHERE id IN ($placeholders)")
+                        ->execute($mysqlInsertedIds);
+                } catch (\Exception $cleanupErr) {
+                    $this->logger->warning('Failed to clean up MySQL rows after restore rollback', [
+                        'formId' => $formId,
+                        'orphanedIds' => count($mysqlInsertedIds),
+                        'error' => $cleanupErr->getMessage(),
+                    ]);
+                }
+            }
+            throw $e instanceof \RuntimeException
+                ? $e
+                : new \RuntimeException('Restore failed: ' . $e->getMessage(), 0, $e);
+        }
+
+        return $created;
+    }
+
+    /**
      * Generate a UUID v4
      */
     private function generateUuid(): string

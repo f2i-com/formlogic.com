@@ -167,6 +167,21 @@ return [
             'allowedFileTypes' => ['application/zip', 'application/x-zip-compressed'],
         ],
 
+        // Account backups (Settings → Backup & restore): a full-workspace zip —
+        // apps/forms/flows structure + per-form SQLite record databases + uploaded
+        // files. The zip cap feeds the global BodySizeLimit calculation in
+        // public/index.php; the other caps bound the import validator.
+        'backups' => [
+            'maxZipSize' => (int)($_ENV['BACKUP_MAX_ZIP_SIZE'] ?? 200 * 1024 * 1024),            // 200MB upload
+            'maxEntryBytes' => (int)($_ENV['BACKUP_MAX_ENTRY_BYTES'] ?? 256 * 1024 * 1024),      // one sqlite can be big
+            'maxTotalUncompressed' => (int)($_ENV['BACKUP_MAX_TOTAL_BYTES'] ?? 1024 * 1024 * 1024), // 1GB unpacked
+            'maxResponsesPerForm' => (int)($_ENV['BACKUP_MAX_RESPONSES_PER_FORM'] ?? 200000),
+            'maxForms' => 500,
+            'maxApps' => 100,
+            'maxFlows' => 200,
+            'maxBindings' => 400,
+        ],
+
         // Hosted-cloud plan limits. Only enforced when planEnforced is true (hosted SaaS);
         // self-hosted installs leave it false and stay unlimited.
         'cloud' => [

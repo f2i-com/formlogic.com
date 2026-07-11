@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Services\AccountBackupService;
 use FormLogic\Services\AdminService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
@@ -41,6 +42,7 @@ class AdminController
         private ResponseService $responses,
         private ?AuditService $auditService = null,
         private ?LoggerInterface $logger = null,
+        private ?AccountBackupService $backup = null,
     ) {
     }
 
@@ -86,6 +88,26 @@ class AdminController
         }
         $this->audit($request, $isAdmin ? 'admin.grant_admin' : 'admin.revoke_admin', (string) $args['id']);
         return $this->jsonResponse($response, ['success' => true, 'isAdmin' => $isAdmin]);
+    }
+
+    /**
+     * GET /api/admin/users/{id}/backup-manifest — the user's full SCHEMA (forms
+     * incl. fields/settings, apps, flows) plus the sqlite/uploads file PATHS
+     * and sizes per form, so an operator with server access can match data up
+     * manually. Never the sqlite contents, answers, or uploaded files — the
+     * admin panel lists, it does not export data.
+     */
+    public function backupManifest(Request $request, Response $response, array $args): Response
+    {
+        if ($this->backup === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Backups are not configured'], 500);
+        }
+        $manifest = $this->backup->adminBackupManifest((string) $args['id']);
+        if ($manifest === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+        $this->audit($request, 'admin.backup_manifest', (string) $args['id']);
+        return $this->jsonResponse($response, ['manifest' => $manifest]);
     }
 
     // ── Structure views (counts, never records) ─────────────────────────────
