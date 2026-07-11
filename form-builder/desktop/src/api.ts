@@ -30,7 +30,13 @@ async function request<T>(
       try {
         const body = await resp.json();
         if (typeof body?.error === 'string') detail = body.error;
-        else if (body?.error?.message) detail = body.error.message;
+        else if (body?.error?.message) {
+          // Keep the typed code (e.g. connector 'stale_call') so callers can
+          // branch on it — the message alone is free-form prose.
+          detail = body.error.code
+            ? `${body.error.code}: ${body.error.message}`
+            : body.error.message;
+        }
       } catch {
         /* not JSON — ignore */
       }

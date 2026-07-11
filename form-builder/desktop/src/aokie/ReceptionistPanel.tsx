@@ -10,6 +10,8 @@ import {
   SmartphoneIcon,
 } from '../Icons';
 import { AokieCard } from './AokieCard';
+import { DeliveryDiagnostics } from './DeliveryDiagnostics';
+import { LiveCallConsole } from './LiveCallConsole';
 
 /** `phone.status` response data (aokie connector) — readiness subset. */
 interface PhoneStatus {
@@ -43,6 +45,9 @@ export default function ReceptionistPanel() {
   const [phone, setPhone] = useState<PhoneStatus | null>(null);
   const [cloudLinked, setCloudLinked] = useState<boolean | null>(null);
   const [deliveryNote, setDeliveryNote] = useState<string>('');
+  // Whether the built-in AI receptionist owns call replies (settings bag) —
+  // drives the live console's speak-to-caller gating.
+  const [aiReceptionist, setAiReceptionist] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +83,13 @@ export default function ReceptionistPanel() {
           if (!cancelled) setPhone((res.data ?? null) as PhoneStatus | null);
         } catch {
           if (!cancelled) setPhone(null);
+        }
+        try {
+          const res = await plugins.command('aokie', 'settings.get');
+          const bag = (res.data as { settings?: Record<string, unknown> } | undefined)?.settings;
+          if (!cancelled && bag) setAiReceptionist(Boolean(bag.aiReceptionist));
+        } catch {
+          /* keep the last known flag */
         }
       } else {
         setPhone(null);
@@ -219,8 +231,17 @@ export default function ReceptionistPanel() {
         ))}
       </div>
 
-      {/* The live console: phone status, pairing, dev simulate + settings —
-          the ONE shared Aokie implementation. */}
+      {/* Live-call controls + delivery diagnostics — only meaningful while
+          the plugin process is up. */}
+      {running && (
+        <div className="desktop-receptionist-cards">
+          <LiveCallConsole aiReceptionist={aiReceptionist} />
+          <DeliveryDiagnostics />
+        </div>
+      )}
+
+      {/* The status/settings console: phone status, pairing, dev simulate +
+          settings — the ONE shared Aokie implementation. */}
       {plugin ? (
         <AokieCard running={running} devMode={devMode} />
       ) : plugin === null ? (
