@@ -14,7 +14,9 @@ class User
         public ?string $createdAt = null,
         public ?string $updatedAt = null,
         /** IANA timezone the user prefers record times shown in (null = unset). */
-        public ?string $timezone = null
+        public ?string $timezone = null,
+        /** Platform administrator (users.is_admin) — NOT app-level RBAC. */
+        public bool $isAdmin = false
     ) {}
 
     public static function fromArray(array $data): self
@@ -26,7 +28,8 @@ class User
             passwordHash: $data['password_hash'] ?? null,
             createdAt: $data['created_at'] ?? null,
             updatedAt: $data['updated_at'] ?? null,
-            timezone: $data['timezone'] ?? null
+            timezone: $data['timezone'] ?? null,
+            isAdmin: (bool) ($data['is_admin'] ?? false)
         );
     }
 

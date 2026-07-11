@@ -129,7 +129,38 @@ $container->set(AuthService::class, function (Container $c) {
         $settings['jwt'],
         $settings['rateLimit']['login'] ?? [],
         $c->get(\FormLogic\Services\EmailService::class),
-        (int) ($settings['cloud']['signupFreeDays'] ?? 30)
+        (int) ($settings['cloud']['signupFreeDays'] ?? 30),
+        $settings['adminEmails'] ?? []
+    );
+});
+
+// Admin panel services: maintenance flag (file-based), platform oversight queries,
+// and the in-place upgrade machinery.
+$container->set(\FormLogic\Services\MaintenanceService::class, function () {
+    return new \FormLogic\Services\MaintenanceService(\FormLogic\Services\MaintenanceService::defaultPath());
+});
+$container->set(\FormLogic\Services\AdminService::class, function (Container $c) {
+    return new \FormLogic\Services\AdminService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Services\UpgradeService::class, function (Container $c) {
+    return new \FormLogic\Services\UpgradeService(
+        \FormLogic\Services\UpgradeService::defaultApiRoot(),
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\MaintenanceService::class)
+    );
+});
+$container->set(\FormLogic\Controllers\AdminController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AdminController(
+        $c->get(\FormLogic\Services\AdminService::class),
+        $c->get(AuthService::class),
+        $c->get(\FormLogic\Services\MaintenanceService::class),
+        $c->get(\FormLogic\Services\UpgradeService::class),
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(ResponseService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
     );
 });
 
@@ -658,6 +689,16 @@ $app->add(new \FormLogic\Middleware\DemoReadOnlyMiddleware(
     $cookieName
 ));
 
+// Maintenance mode (admin panel): while the FILE flag (storage/maintenance.json)
+// is on, every API route 503s except the health/auth/admin allowlist and any
+// request bearing a valid platform-admin token. Added BEFORE CorsMiddleware so
+// CORS stays outermost and even 503s carry CORS headers.
+$app->add(new \FormLogic\Middleware\MaintenanceMiddleware(
+    $container->get(\FormLogic\Services\MaintenanceService::class),
+    $container->get(AuthService::class),
+    $cookieName
+));
+
 // Add CORS middleware with allowlist support
 $corsSettings = $settings['settings']['cors'];
 $app->add(new CorsMiddleware(
@@ -726,12 +767,17 @@ $app->get('/api/health', function ($request, $response) use ($container) {
     } catch (\Throwable $e) {
         // Never let a mailer misconfig break the health probe.
     }
+    // Maintenance flags ride the pre-auth config channel so the SPA + embedded
+    // forms can show the admin's message. FILE-based — no MySQL dependency here.
+    $maintenance = $container->get(\FormLogic\Services\MaintenanceService::class)->status();
     $response->getBody()->write(json_encode([
         'status' => 'ok',
         'timestamp' => date('c'),
         'betaMode' => (bool) ($settings['cloud']['betaMode'] ?? false),
         'emailConfigured' => $emailConfigured,
         'supportEmail' => (string) ($settings['supportEmail'] ?? 'hello@formlogic.com'),
+        'maintenanceMode' => $maintenance['enabled'],
+        'maintenanceMessage' => $maintenance['enabled'] ? $maintenance['message'] : null,
     ]));
     return $response->withHeader('Content-Type', 'application/json');
 });
@@ -763,6 +809,57 @@ $app->get('/api/health/deep', function ($request, $response) use ($container) {
     }
     return $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
 })->add($authRequired);
+
+// Broadcast notices for signed-in dashboards: the SPA polls this (cheap, indexed)
+// and toasts anything it hasn't shown yet. Admins compose them in /api/admin/notices.
+$app->get('/api/notices', function ($request, $response) use ($container) {
+    $response->getBody()->write((string) json_encode([
+        'notices' => $container->get(\FormLogic\Services\AdminService::class)->activeNotices(),
+    ]));
+    return $response->withHeader('Content-Type', 'application/json');
+})->add($authRequired);
+
+// ── Admin panel (platform administrators only) ─────────────────────────────────
+// Gate order (Slim route middleware is LIFO — last add() runs first): AuthMiddleware
+// authenticates and sets the user attribute, THEN AdminGateMiddleware requires the
+// platform-admin flag. Everything here is audited as admin.*; none of it returns
+// user response DATA (structure + counts only).
+$adminGate = new \FormLogic\Middleware\AdminGateMiddleware($container->get(AuthService::class));
+$adminRateLimiter = new RateLimitMiddleware($container->get(\FormLogic\Services\RateLimiter::class), 240, 60, 'admin_api', true);
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container) {
+    $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
+
+    $group->get('/overview', fn ($rq, $rs) => $ctrl()->overview($rq, $rs));
+    $group->get('/users', fn ($rq, $rs) => $ctrl()->listUsers($rq, $rs));
+    $group->get('/users/{id}', fn ($rq, $rs, $args) => $ctrl()->getUser($rq, $rs, $args));
+    $group->post('/users/{id}/admin', fn ($rq, $rs, $args) => $ctrl()->setAdmin($rq, $rs, $args));
+
+    // Structure views + on-behalf-of-the-owner structural edits.
+    $group->get('/forms/{id}', fn ($rq, $rs, $args) => $ctrl()->getFormStructure($rq, $rs, $args));
+    $group->put('/forms/{id}', fn ($rq, $rs, $args) => $ctrl()->updateForm($rq, $rs, $args));
+    $group->get('/apps/{id}', fn ($rq, $rs, $args) => $ctrl()->getAppStructure($rq, $rs, $args));
+    $group->put('/apps/{id}', fn ($rq, $rs, $args) => $ctrl()->updateApp($rq, $rs, $args));
+    $group->get('/flows/{id}', fn ($rq, $rs, $args) => $ctrl()->getFlowStructure($rq, $rs, $args));
+    $group->put('/flows/{id}', fn ($rq, $rs, $args) => $ctrl()->updateFlow($rq, $rs, $args));
+
+    // Maintenance window + global session boot + broadcast notices.
+    $group->get('/maintenance', fn ($rq, $rs) => $ctrl()->getMaintenance($rq, $rs));
+    $group->put('/maintenance', fn ($rq, $rs) => $ctrl()->setMaintenance($rq, $rs));
+    $group->post('/boot-sessions', fn ($rq, $rs) => $ctrl()->bootSessions($rq, $rs));
+    $group->get('/notices', fn ($rq, $rs) => $ctrl()->listNotices($rq, $rs));
+    $group->post('/notices', fn ($rq, $rs) => $ctrl()->createNotice($rq, $rs));
+    $group->delete('/notices/{id}', fn ($rq, $rs, $args) => $ctrl()->revokeNotice($rq, $rs, $args));
+
+    // In-place upgrades: upload → validate/stage → apply (auto DB export + code
+    // snapshot + maintenance window) → rollback / restore-db from the backup.
+    $group->get('/upgrade/status', fn ($rq, $rs) => $ctrl()->upgradeStatus($rq, $rs));
+    $group->post('/upgrade/upload', fn ($rq, $rs) => $ctrl()->upgradeUpload($rq, $rs));
+    $group->post('/upgrade/apply', fn ($rq, $rs) => $ctrl()->upgradeApply($rq, $rs));
+    $group->post('/upgrade/rollback', fn ($rq, $rs) => $ctrl()->upgradeRollback($rq, $rs));
+    $group->post('/upgrade/restore-db', fn ($rq, $rs) => $ctrl()->upgradeRestoreDb($rq, $rs));
+    $group->post('/upgrade/export-db', fn ($rq, $rs) => $ctrl()->upgradeExportDb($rq, $rs));
+    $group->delete('/upgrade/package', fn ($rq, $rs) => $ctrl()->upgradeDiscard($rq, $rs));
+})->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // Landing hero headlines (public, no auth): the rotating <h1> slides the landing page fetches.
 // Content lives in resources/landing-hero.json so copy edits never need a frontend build. Slides

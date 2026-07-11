@@ -44,6 +44,10 @@ class AuthMiddleware implements MiddlewareInterface
             return $this->unauthorized('Invalid or expired token');
         }
 
+        // Presence for the admin panel's online-user count (self-throttled to
+        // one write per user per minute inside the service).
+        $this->authService->touchLastSeen($user);
+
         // Add user to request attributes
         $request = $request->withAttribute('user', $user);
         $request = $request->withAttribute('userId', $user->id);

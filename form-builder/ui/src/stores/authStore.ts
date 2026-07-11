@@ -19,6 +19,8 @@ interface User {
   timezone?: string;
   /** True for the shared public "Demo" account (drives the demo banner). */
   isDemo?: boolean;
+  /** Platform administrator (unlocks the /admin panel). */
+  isAdmin?: boolean;
 }
 
 interface AuthState {

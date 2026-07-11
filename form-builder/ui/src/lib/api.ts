@@ -718,7 +718,7 @@ class ApiClient {
   }
 
   // Health check
-  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; betaMode?: boolean; emailConfigured?: boolean; supportEmail?: string }>> {
+  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; betaMode?: boolean; emailConfigured?: boolean; supportEmail?: string; maintenanceMode?: boolean; maintenanceMessage?: string | null }>> {
     return this.request('/health');
   }
 
@@ -2295,6 +2295,127 @@ class ApiClient {
   async revokeDesktopConnection(id: string): Promise<ApiResponse<{ success: boolean }>> {
     return this.request(`/desktop-connections/${id}`, { method: 'DELETE' });
   }
+
+  // ── Broadcast notices (signed-in dashboards poll this) ──────────────────────
+
+  async getNotices(): Promise<ApiResponse<{ notices: AdminNotice[]; maintenance?: boolean; message?: string }>> {
+    return this.request('/notices');
+  }
+
+  // ── Admin panel (platform administrators only) ──────────────────────────────
+
+  async adminOverview(): Promise<ApiResponse<AdminOverview>> {
+    return this.request('/admin/overview');
+  }
+
+  async adminListUsers(search = '', page = 1): Promise<ApiResponse<{ users: AdminUser[]; total: number; page: number; pages: number }>> {
+    const params = new URLSearchParams({ page: String(page) });
+    if (search) params.set('search', search);
+    return this.request(`/admin/users?${params.toString()}`);
+  }
+
+  async adminGetUser(id: string): Promise<ApiResponse<{ user: AdminUserDetail }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}`);
+  }
+
+  async adminSetAdmin(id: string, isAdmin: boolean): Promise<ApiResponse<{ success: boolean; isAdmin: boolean }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/admin`, { method: 'POST', body: JSON.stringify({ isAdmin }) });
+  }
+
+  async adminGetForm(id: string): Promise<ApiResponse<{ form: Record<string, unknown> & { responseCount?: number | null }; ownerId?: string }>> {
+    return this.request(`/admin/forms/${encodeURIComponent(id)}`);
+  }
+
+  async adminUpdateForm(id: string, input: Record<string, unknown>): Promise<ApiResponse<{ form: Record<string, unknown> }>> {
+    return this.request(`/admin/forms/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+
+  async adminGetApp(id: string): Promise<ApiResponse<{ app: Record<string, unknown>; ownerId?: string; forms: Array<{ formId: string; displayName?: string; formStatus?: string; responseCount?: number | null }>; flows: Array<Record<string, unknown>>; bindings: Array<Record<string, unknown>> }>> {
+    return this.request(`/admin/apps/${encodeURIComponent(id)}`);
+  }
+
+  async adminUpdateApp(id: string, input: Record<string, unknown>): Promise<ApiResponse<{ app: Record<string, unknown> }>> {
+    return this.request(`/admin/apps/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+
+  async adminGetFlow(id: string): Promise<ApiResponse<{ flow: Record<string, unknown>; ownerId?: string }>> {
+    return this.request(`/admin/flows/${encodeURIComponent(id)}`);
+  }
+
+  async adminUpdateFlow(id: string, input: Record<string, unknown>): Promise<ApiResponse<{ flow: Record<string, unknown> }>> {
+    return this.request(`/admin/flows/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+
+  async adminGetMaintenance(): Promise<ApiResponse<{ maintenance: MaintenanceStatus; onlineUsers: number }>> {
+    return this.request('/admin/maintenance');
+  }
+
+  async adminSetMaintenance(enabled: boolean, message?: string): Promise<ApiResponse<{ maintenance: MaintenanceStatus }>> {
+    return this.request('/admin/maintenance', { method: 'PUT', body: JSON.stringify({ enabled, message }) });
+  }
+
+  async adminBootSessions(): Promise<ApiResponse<{ success: boolean; epoch: number }>> {
+    return this.request('/admin/boot-sessions', { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async adminListNotices(): Promise<ApiResponse<{ notices: AdminNotice[] }>> {
+    return this.request('/admin/notices');
+  }
+
+  async adminCreateNotice(message: string, level: string, audience: string, expiresMinutes?: number): Promise<ApiResponse<{ notice: AdminNotice }>> {
+    return this.request('/admin/notices', { method: 'POST', body: JSON.stringify({ message, level, audience, expiresMinutes }) });
+  }
+
+  async adminRevokeNotice(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/admin/notices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async adminUpgradeStatus(): Promise<ApiResponse<AdminUpgradeStatus>> {
+    return this.request('/admin/upgrade/status');
+  }
+
+  /** Upload a release zip for the upgrade wizard (multipart — raw fetch like the other uploads). */
+  async adminUpgradeUpload(file: File): Promise<ApiResponse<{ staged: AdminStagedPackage }>> {
+    try {
+      const formData = new FormData();
+      formData.append('package', file);
+      const headers: Record<string, string> = {};
+      const csrf = this.getCsrfToken();
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      const res = await fetch(`${this.baseUrl}/admin/upgrade/upload`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: formData,
+      });
+      if (res.status === 401) { this.handleUnauthorized(); return { error: 'Session expired', status: 401 }; }
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return { error: body?.message || `Upload failed (HTTP ${res.status})`, status: res.status };
+      return { data: body };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : 'Upload failed' };
+    }
+  }
+
+  async adminUpgradeApply(keepMaintenanceOn = false): Promise<ApiResponse<{ ok: boolean; fromVersion: string; toVersion: string; backupId: string; journal: string[] }>> {
+    return this.request('/admin/upgrade/apply', { method: 'POST', body: JSON.stringify({ confirm: true, keepMaintenanceOn }) });
+  }
+
+  async adminUpgradeRollback(backupId: string): Promise<ApiResponse<{ ok: boolean; restoredVersion: string; journal: string[] }>> {
+    return this.request('/admin/upgrade/rollback', { method: 'POST', body: JSON.stringify({ backupId, confirm: true }) });
+  }
+
+  async adminUpgradeRestoreDb(backupId: string): Promise<ApiResponse<{ ok: boolean; statements: number }>> {
+    return this.request('/admin/upgrade/restore-db', { method: 'POST', body: JSON.stringify({ backupId, confirm: 'RESTORE-DATABASE' }) });
+  }
+
+  async adminUpgradeExportDb(): Promise<ApiResponse<{ ok: boolean; backupId: string }>> {
+    return this.request('/admin/upgrade/export-db', { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async adminUpgradeDiscard(): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request('/admin/upgrade/package', { method: 'DELETE' });
+  }
 }
 
 // Types
@@ -2308,6 +2429,86 @@ interface User {
   timezone?: string;
   /** True when this is the shared public "Demo" account (drives the demo banner). */
   isDemo?: boolean;
+  /** Platform administrator (unlocks the /admin panel). */
+  isAdmin?: boolean;
+}
+
+// ── Admin panel types ─────────────────────────────────────────────────────────
+
+export interface MaintenanceStatus {
+  enabled: boolean;
+  message: string;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+}
+
+export interface AdminNotice {
+  id: string;
+  message: string;
+  level: 'info' | 'success' | 'warning';
+  audience: 'online' | 'all';
+  createdBy?: string | null;
+  createdAt: string;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  active: boolean;
+}
+
+export interface AdminOverview {
+  stats: {
+    users: number;
+    admins: number;
+    onlineUsers: number;
+    apps: number;
+    forms: number;
+    flows: number;
+    responses: number;
+    signups7d: number;
+  };
+  maintenance: MaintenanceStatus;
+  version: string;
+  sessionEpoch: number;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name?: string | null;
+  plan: string;
+  cloudUntil?: string | null;
+  isAdmin: boolean;
+  isDemo: boolean;
+  createdAt?: string | null;
+  lastSeenAt?: string | null;
+  online: boolean;
+  appsCount?: number;
+  formsCount?: number;
+  flowsCount?: number;
+  responsesCount?: number;
+}
+
+export interface AdminUserDetail extends AdminUser {
+  apps: Array<{ id: string; name: string; slug?: string | null; status?: string | null; createdAt?: string; formCount: number; flowCount: number; bindingCount: number; memberCount: number }>;
+  forms: Array<{ id: string; title: string; status?: string | null; createdAt?: string; updatedAt?: string; responseCount: number | null; apps?: string | null }>;
+  flows: Array<{ id: string; appId?: string | null; appName?: string | null; name: string; slug: string; enabled: boolean; version: number; updatedAt?: string }>;
+}
+
+export interface AdminStagedPackage {
+  version: string;
+  integrity: 'verified' | 'unverified';
+  verifiedFiles: number;
+  currentVersion: string;
+  isDowngrade: boolean;
+  stagedAt: string;
+}
+
+export interface AdminUpgradeStatus {
+  currentVersion: string;
+  layout: { apiRoot: string; webRoot: string | null; mode: string; supported: boolean };
+  staged: AdminStagedPackage | null;
+  backups: Array<{ id: string; at?: string | null; version?: string | null; manual: boolean; hasCode: boolean; hasDatabase: boolean; sizeBytes: number }>;
+  history: Array<{ action: string; at: string; by?: string; fromVersion?: string; toVersion?: string; backupId?: string }>;
+  maintenance: MaintenanceStatus;
 }
 
 interface FormResponse {

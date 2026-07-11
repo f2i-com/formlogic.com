@@ -1227,6 +1227,37 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE users ADD COLUMN cloud_until DATETIME NULL DEFAULT NULL");
         }
 
+        // Platform administrator flag (admin panel) — distinct from app-level RBAC.
+        // Bootstrapped via ADMIN_EMAILS env or granted from the admin panel itself.
+        $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'is_admin'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN is_admin TINYINT(1) NOT NULL DEFAULT 0");
+        }
+
+        // Presence for the admin panel's "logged-in users" count: bumped (throttled
+        // to once a minute) by AuthMiddleware on authenticated requests.
+        $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'last_seen_at'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN last_seen_at DATETIME NULL DEFAULT NULL");
+        }
+
+        // Admin broadcast notices — toast messages pushed to signed-in dashboards
+        // (audience 'online' = short expiry so only current sessions see it;
+        // 'all' = persists until expiry/revoke so later logins see it too).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS admin_notices (
+                id VARCHAR(36) PRIMARY KEY,
+                message TEXT NOT NULL,
+                level VARCHAR(16) NOT NULL DEFAULT 'info',
+                audience VARCHAR(16) NOT NULL DEFAULT 'online',
+                created_by VARCHAR(36) NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NULL DEFAULT NULL,
+                revoked_at DATETIME NULL DEFAULT NULL,
+                INDEX idx_notice_active (revoked_at, expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Plan tier — 'personal' (default, subject to cloud limits) or 'enterprise'
         // (unlimited). Only meaningful when CLOUD_PLAN_ENFORCED=true (hosted SaaS).
         $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'plan'");

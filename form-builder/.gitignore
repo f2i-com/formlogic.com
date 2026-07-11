@@ -43,6 +43,11 @@ lerna-debug.log*
 /backend/storage/uploads/
 /backend/storage/packs/
 /backend/storage/pack-screenshots/
+# Admin-panel runtime state: the maintenance flag, uploaded/staged upgrade
+# packages, and pre-upgrade backups (DB exports + code snapshots).
+/backend/storage/maintenance.json
+/backend/storage/upgrades/
+/backend/storage/backups/
 /backend/logs/*.log
 
 # OS files

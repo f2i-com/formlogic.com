@@ -232,11 +232,12 @@ class AuthController
         return strtolower((string)($_ENV['DEMO_ENABLED'] ?? 'true')) !== 'false';
     }
 
-    /** User payload + an `isDemo` flag so the UI can show the demo banner. */
+    /** User payload + `isDemo` (demo banner) and `isAdmin` (admin panel access) flags. */
     private function decorateUser($user): array
     {
         $arr = $user->toArray();
         $arr['isDemo'] = ($user->email === $this->demoEmail());
+        $arr['isAdmin'] = $this->authService->isPlatformAdmin($user);
         return $arr;
     }
 

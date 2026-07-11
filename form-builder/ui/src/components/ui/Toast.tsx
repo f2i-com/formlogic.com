@@ -53,9 +53,12 @@ function ToastItem({ toast }: { toast: ToastType }) {
     timeoutRef.current = setTimeout(() => removeToast(toast.id), 150);
   }, [removeToast, toast.id]);
 
-  // Auto-dismiss after the duration set in the toast store
+  // Auto-dismiss after the duration set in the toast store. duration <= 0 means
+  // PERSISTENT (manual dismiss only — e.g. admin broadcast warnings); the store's
+  // own fallback timer already honors this convention.
   useEffect(() => {
     const duration = toast.duration ?? 5000;
+    if (duration <= 0) return;
     const autoDismiss = setTimeout(() => handleClose(), duration);
     return () => {
       clearTimeout(autoDismiss);

@@ -58,8 +58,12 @@ class AuthService
     private RateLimiter $rateLimiter;
     private ?EmailService $emailService;
     private int $signupFreeDays = 30;
+    /** Lowercased emails always treated as platform admins (ADMIN_EMAILS env bootstrap). */
+    private array $adminEmails = [];
+    /** Per-request memo of the global session epoch (system_meta 'session_epoch'). */
+    private ?int $sessionEpochCache = null;
 
-    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [], ?EmailService $emailService = null, int $signupFreeDays = 30)
+    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [], ?EmailService $emailService = null, int $signupFreeDays = 30, array $adminEmails = [])
     {
         $this->mysql = $mysql->getConnection();
         $this->jwtConfig = $jwtConfig;
@@ -71,6 +75,10 @@ class AuthService
         ], $rateLimitConfig);
         $this->rateLimiter = new RateLimiter($this->mysql);
         $this->emailService = $emailService;
+        $this->adminEmails = array_values(array_filter(array_map(
+            static fn ($e) => strtolower(trim((string) $e)),
+            $adminEmails
+        ), static fn ($e) => $e !== ''));
     }
 
     /** Rate-limit decay window in seconds. */
@@ -321,7 +329,19 @@ class AuthService
                 return null;
             }
 
-            return $this->getUserById($decoded->sub);
+            $user = $this->getUserById($decoded->sub);
+            if ($user === null) {
+                return null;
+            }
+            // Global session boot (admin panel "sign everyone out"): tokens issued
+            // before the epoch are rejected for everyone EXCEPT platform admins —
+            // the admin who pressed the button must keep their session to manage
+            // the maintenance window and let people back in.
+            $iat = isset($decoded->iat) ? (int) $decoded->iat : 0;
+            if (!$this->isPlatformAdmin($user) && $iat < $this->getSessionEpoch()) {
+                return null;
+            }
+            return $user;
         } catch (\Firebase\JWT\ExpiredException $e) {
             // Token has expired
             return null;
@@ -351,6 +371,80 @@ class AuthService
         }
 
         return User::fromArray($row);
+    }
+
+    // ── Platform administration (admin panel) ───────────────────────────────
+
+    /**
+     * Platform admin = the users.is_admin flag OR membership in the ADMIN_EMAILS
+     * env allowlist (the bootstrap path before any flag has been granted).
+     * Distinct from app-level RBAC. The shared demo account can never be admin.
+     */
+    public function isPlatformAdmin(User $user): bool
+    {
+        $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+        if (strtolower($user->email) === $demoEmail) {
+            return false;
+        }
+        if ($user->isAdmin) {
+            return true;
+        }
+        return $this->adminEmails !== [] && in_array(strtolower($user->email), $this->adminEmails, true);
+    }
+
+    /**
+     * The global session epoch (unix seconds): non-admin tokens issued before it
+     * are rejected. 0 = never booted. Memoized for the request; fails open (0)
+     * when system_meta is missing (pre-migration DB).
+     */
+    public function getSessionEpoch(): int
+    {
+        if ($this->sessionEpochCache !== null) {
+            return $this->sessionEpochCache;
+        }
+        try {
+            $stmt = $this->mysql->query("SELECT meta_value FROM system_meta WHERE meta_key = 'session_epoch'");
+            $val = $stmt ? $stmt->fetchColumn() : false;
+            $this->sessionEpochCache = ($val !== false && $val !== null) ? (int) $val : 0;
+        } catch (\Throwable) {
+            $this->sessionEpochCache = 0;
+        }
+        return $this->sessionEpochCache;
+    }
+
+    /**
+     * Sign every non-admin user out everywhere: stamps the global session epoch
+     * so all previously-issued non-admin tokens fail validation. Admin sessions
+     * survive (they must be able to reopen the site). Returns the new epoch.
+     */
+    public function bootAllSessions(): int
+    {
+        $epoch = time();
+        $stmt = $this->mysql->prepare("
+            INSERT INTO system_meta (meta_key, meta_value) VALUES ('session_epoch', :v)
+            ON DUPLICATE KEY UPDATE meta_value = :v2
+        ");
+        $stmt->execute(['v' => (string) $epoch, 'v2' => (string) $epoch]);
+        $this->sessionEpochCache = $epoch;
+        return $epoch;
+    }
+
+    /**
+     * Presence for the admin panel's "logged-in users" count. Self-throttling:
+     * writes at most once a minute per user (the WHERE clause makes repeat
+     * calls within the window a no-op). Best-effort — never breaks auth.
+     */
+    public function touchLastSeen(User $user): void
+    {
+        try {
+            $stmt = $this->mysql->prepare("
+                UPDATE users SET last_seen_at = NOW()
+                WHERE id = :id AND (last_seen_at IS NULL OR last_seen_at < DATE_SUB(NOW(), INTERVAL 60 SECOND))
+            ");
+            $stmt->execute(['id' => $user->id]);
+        } catch (\Throwable) {
+            // pre-migration DB (no column yet) — presence is best-effort
+        }
     }
 
     /**

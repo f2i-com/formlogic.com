@@ -77,6 +77,15 @@ if ($isProduction && $cloudPlanEnforced) {
     }
 }
 
+// Platform-administrator bootstrap: a comma-separated email allowlist. Accounts
+// matching it are treated as admins even before the users.is_admin flag is set —
+// the way the FIRST admin gets into the admin panel (which can then grant the
+// durable flag to itself/others).
+$adminEmails = array_values(array_filter(array_map(
+    'trim',
+    explode(',', (string) ($_ENV['ADMIN_EMAILS'] ?? ''))
+)));
+
 return [
     'settings' => [
         'displayErrorDetails' => !$isProduction && ($_ENV['APP_DEBUG'] ?? 'false') === 'true',
@@ -84,6 +93,7 @@ return [
         'logErrorDetails' => !$isProduction,
         'supportEmail' => $supportEmail,
         'isProduction' => $isProduction,
+        'adminEmails' => $adminEmails,
 
         'logger' => [
             'name' => 'formlogic',

@@ -56,6 +56,7 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
 
 // Lazy load pages for better performance
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Admin = lazyWithRetry(() => import('./pages/Admin').then(m => ({ default: m.Admin })));
 const FormsList = lazyWithRetry(() => import('./pages/FormsList').then(m => ({ default: m.FormsList })));
 const Settings = lazyWithRetry(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const Doctor = lazyWithRetry(() => import('./pages/Doctor').then(m => ({ default: m.Doctor })));
@@ -372,6 +373,8 @@ function AppRoutes() {
         <Route path="/flows" element={<FlowsWorkspace />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/doctor" element={<Doctor />} />
+        {/* Platform admin panel (the page itself redirects non-admins; the API enforces it) */}
+        <Route path="/admin" element={<Admin />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
         <Route path="/responses/:formId" element={<FormResponses />} />

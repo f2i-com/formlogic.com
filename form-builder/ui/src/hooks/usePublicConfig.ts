@@ -13,6 +13,10 @@ export interface PublicConfig {
   emailConfigured: boolean;
   /** Address to contact for manual help when email isn't configured. */
   supportEmail: string;
+  /** The admin closed the site for maintenance (file-backed flag on the server). */
+  maintenanceMode: boolean;
+  /** The admin's visitor-facing maintenance message (shown on embeds + the app shell). */
+  maintenanceMessage: string | null;
 }
 
 // Defaults are the "don't scare anyone" values: assume email works (so we don't wrongly tell users
@@ -21,6 +25,8 @@ const DEFAULTS: PublicConfig = {
   betaMode: false,
   emailConfigured: true,
   supportEmail: 'hello@formlogic.com',
+  maintenanceMode: false,
+  maintenanceMessage: null,
 };
 
 let cached: PublicConfig | null = null;
@@ -38,6 +44,8 @@ export function usePublicConfig(): PublicConfig {
           // Only treat email as unconfigured when the backend explicitly says so.
           emailConfigured: res.data?.emailConfigured !== false,
           supportEmail: res.data?.supportEmail || DEFAULTS.supportEmail,
+          maintenanceMode: !!res.data?.maintenanceMode,
+          maintenanceMessage: res.data?.maintenanceMessage || null,
         };
         setCfg(cached);
       })

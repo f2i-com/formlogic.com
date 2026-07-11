@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft } from 'lucide-react';
+import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft, Wrench } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { useFormStore } from '../stores/formStore';
@@ -23,6 +23,7 @@ import { FileUploadField } from '../components/ui/FileUploadField';
 import { LocationField } from '../components/ui/LocationField';
 import type { FormField } from '../types/form';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePublicConfig } from '../hooks/usePublicConfig';
 import { handleRovingKeys } from '../lib/a11y';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
@@ -793,6 +794,8 @@ function normalizeFormData(raw: any) {
 // Main Form Response Component
 export default function FormResponse() {
   const { formId } = useParams<{ formId: string }>();
+  // Pre-auth instance flags — carries the admin's maintenance message for embeds.
+  const publicConfig = usePublicConfig();
   const { getForm, updateForm } = useFormStore();
   const {
     startResponse,
@@ -1051,6 +1054,28 @@ export default function FormResponse() {
   const getFieldRequired = (field: FormField) => {
     return field.required || isFieldRequired(field.id);
   };
+
+  // Site closed for maintenance (admin panel): embedded/shared forms show the
+  // admin's customizable message instead of a broken form (submits would 503).
+  // Deliberately neutral colors — the form theme hasn't necessarily loaded.
+  if (publicConfig.maintenanceMode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-amber-100 dark:bg-amber-500/15 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Wrench className="h-8 w-8 text-amber-500 dark:text-amber-400" />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">Down for maintenance</h1>
+          <p className="text-gray-500 dark:text-slate-400 mb-6">
+            {publicConfig.maintenanceMessage || 'This form is briefly unavailable while the site is being maintained. Please try again shortly.'}
+          </p>
+          <Button onClick={() => window.location.reload()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoadingForm) {
     return (

@@ -9,6 +9,7 @@ import {
   Boxes,
   Cloud,
   HardDrive,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
@@ -22,6 +23,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
   const { storageMode } = useFormStore();
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
+  const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
   // "Create Form" opens the New Form picker (template or blank), not a blank form.
   const { openNewForm, newFormPicker } = useCreateFormFlow();
 
@@ -35,6 +37,8 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     { path: '/apps', icon: Boxes, label: 'Apps' },
     // Settings moved into the profile menu (Header); Flows is now a first-class section.
     { path: '/flows', icon: Workflow, label: 'Flows' },
+    // Platform administrators only — instance maintenance, users, upgrades.
+    ...(isAdmin ? [{ path: '/admin', icon: ShieldCheck, label: 'Admin' }] : []),
   ];
 
   return (
