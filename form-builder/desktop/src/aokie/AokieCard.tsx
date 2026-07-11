@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { plugins } from '../api';
 import { AlertTriangleIcon, CheckIcon } from '../Icons';
+import { useConfirm } from '../ConfirmDialog';
 import { useToast } from '../Toasts';
 
 /**
@@ -13,6 +14,21 @@ import { useToast } from '../Toasts';
 interface AokiePhoneStatus {
   paired: boolean;
   device?: { name?: string; address?: string } | null;
+  /** AOK-BT-001 bounded pairing window — discoverable ONLY while this is open. */
+  pairingOpen?: boolean;
+  pairingSecondsRemaining?: number;
+}
+
+/** `phone.startPairing` response data. */
+interface AokieStartPairingResult {
+  windowSeconds?: number;
+  simulated?: boolean;
+}
+
+/** `phone.listPaired` response data — radio mode returns `{address}` objects,
+ *  the no-radio config fallback may hold richer legacy device records. */
+interface AokieListPairedResult {
+  devices?: Array<{ address?: string } | string>;
 }
 
 /** `dongle.diagnostics {simulate:"call"}` response data. */
@@ -120,6 +136,220 @@ function withAokieDefaults(raw: unknown): AokieConnectorSettings {
   };
 }
 
+/** Poll cadence while a pairing window is open (countdown + bond detection). */
+const PAIRING_POLL_MS = 2000;
+
+/** New-phone pairing window: the plugin clamps to 30..=300s; ask for the max —
+ *  the window auto-closes the moment one phone bonds and there's a live
+ *  countdown + Stop button, so the longer window just gives people time to
+ *  find their phone's Bluetooth menu. */
+const PAIRING_WINDOW_SECONDS = 300;
+
+function formatSeconds(total: number): string {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Bluetooth pairing controls (AOK-BT-001): the radio is connectable-only at
+ * rest — a NEW phone can only see "Aokie AI Assistant" while an explicit
+ * pairing window is open, and this is the UI that opens one. Shows a live
+ * countdown while discoverable, and the revocable bonded phones (Forget =
+ * `phone.removePaired`, so that phone must pair again before reconnecting).
+ */
+function PhonePairingControls({ running, onPaired }: { running: boolean; onPaired: () => void }) {
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [bonded, setBonded] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bondedRef = useRef<string[]>([]);
+  const toast = useToast();
+  const { confirm } = useConfirm();
+
+  const loadBonded = useCallback(async () => {
+    const res = await plugins.command('aokie', 'phone.listPaired');
+    const raw = (res.data as AokieListPairedResult | undefined)?.devices ?? [];
+    const addrs = raw
+      .map((d) => (typeof d === 'string' ? d : (d?.address ?? '')))
+      .filter((a): a is string => a !== '');
+    bondedRef.current = addrs;
+    setBonded(addrs);
+    return addrs;
+  }, []);
+
+  const pollWindow = useCallback(async () => {
+    const res = await plugins.command('aokie', 'phone.status');
+    const d = (res.data ?? {}) as AokiePhoneStatus;
+    const secs =
+      d.pairingOpen && typeof d.pairingSecondsRemaining === 'number'
+        ? d.pairingSecondsRemaining
+        : 0;
+    setSecondsLeft(secs);
+    return secs;
+  }, []);
+
+  // Initial snapshot when the plugin starts; drop stale readouts when it stops.
+  useEffect(() => {
+    if (!running) {
+      setSecondsLeft(0);
+      setBonded([]);
+      bondedRef.current = [];
+      setError(null);
+      return;
+    }
+    Promise.all([pollWindow(), loadBonded()]).catch((e) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
+  }, [running, pollWindow, loadBonded]);
+
+  // While the window is open, poll for the countdown AND the close reason: a
+  // successful bond auto-closes the window (one device per window), so a close
+  // that grew the bonded list is a success, not an expiry.
+  const windowOpen = secondsLeft > 0;
+  useEffect(() => {
+    if (!running || !windowOpen) return;
+    const t = window.setInterval(async () => {
+      try {
+        const secs = await pollWindow();
+        if (secs > 0) return;
+        const before = bondedRef.current.length;
+        const after = await loadBonded();
+        if (after.length > before) {
+          toast.push({
+            kind: 'success',
+            title: 'Phone paired',
+            body: 'Aokie can take calls from this phone; it reconnects automatically from now on.',
+          });
+          onPaired();
+        }
+      } catch {
+        // Plugin stopping mid-poll — the running-flip effect clears state.
+      }
+    }, PAIRING_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [running, windowOpen, pollWindow, loadBonded, toast, onPaired]);
+
+  const startPairing = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // Pre-window snapshot so the close handler can spot the new bond.
+      await loadBonded();
+      const res = await plugins.command('aokie', 'phone.startPairing', {
+        seconds: PAIRING_WINDOW_SECONDS,
+      });
+      const d = (res.data ?? {}) as AokieStartPairingResult;
+      if (d.simulated) {
+        toast.push({
+          kind: 'success',
+          title: 'Simulated pairing session',
+          body: 'Dev mode has no radio — no real pairing window was opened.',
+        });
+        return;
+      }
+      setSecondsLeft(d.windowSeconds ?? PAIRING_WINDOW_SECONDS);
+      toast.push({
+        kind: 'success',
+        title: 'Discoverable for 5 minutes',
+        body: 'On your phone: Bluetooth → Pair new device → "Aokie AI Assistant".',
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stopPairing = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await plugins.command('aokie', 'phone.stopPairing');
+      setSecondsLeft(0);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const forget = async (address: string) => {
+    const ok = await confirm({
+      title: 'Forget this phone?',
+      body: `${address} won't be able to reconnect until you pair it again.`,
+      confirmLabel: 'Forget',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await plugins.command('aokie', 'phone.removePaired', { address });
+      await loadBonded();
+      onPaired();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!running) return null;
+
+  return (
+    <div>
+      <div className="aokie-card-head">
+        <span className="section-title aokie-card-title">Bluetooth pairing</span>
+      </div>
+      {windowOpen ? (
+        <>
+          <div className="service-meta">
+            Discoverable as “Aokie AI Assistant” — {formatSeconds(secondsLeft)} left. On your
+            phone: Bluetooth → Pair new device.
+          </div>
+          <div className="aokie-card-actions">
+            <button className="btn btn-secondary" onClick={stopPairing} disabled={busy}>
+              Stop pairing
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="service-meta">
+            New phones can't see the dongle until you open a pairing window (already-paired
+            phones reconnect on their own).
+          </div>
+          <div className="aokie-card-actions">
+            <button className="btn btn-primary" onClick={startPairing} disabled={busy}>
+              {busy ? 'Opening…' : 'Pair a phone'}
+            </button>
+          </div>
+        </>
+      )}
+      {bonded.length > 0 && (
+        <div className="aokie-paired-list">
+          {bonded.map((address) => (
+            <div key={address} className="aokie-paired-row">
+              <CheckIcon className="inline-icon icon-leading" size={14} />
+              <span className="service-meta">{address}</span>
+              <button className="btn-tiny" onClick={() => forget(address)} disabled={busy}>
+                Forget
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {error && (
+        <div className="service-error">
+          <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Aokie-specific status card: dongle + phone readouts via connector
  * requests while the plugin runs, and the dev-mode "Simulate incoming call"
@@ -217,6 +447,7 @@ export function AokieCard({ running, devMode }: { running: boolean; devMode: boo
               {simResult && <span className="service-meta">{simResult}</span>}
             </div>
           )}
+          <PhonePairingControls running={running} onPaired={refresh} />
           <AokieSettingsForm running={running} />
         </>
       )}

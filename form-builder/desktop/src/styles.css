@@ -676,6 +676,10 @@ code {
 .aokie-card-title { margin: 0; }
 .aokie-card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
+.aokie-paired-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.aokie-paired-row { display: flex; align-items: center; gap: 8px; }
+.aokie-paired-row .service-meta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
 /* ---------- models panel ---------- */
 
 .model-section { display: flex; flex-direction: column; gap: 12px; }
