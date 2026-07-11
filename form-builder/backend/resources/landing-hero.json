@@ -1,0 +1,12 @@
+{
+  "_comment": "Landing hero headlines, rotated by the frontend. Each slide renders as: {pre}<em>{em}</em>{post} — plain text only (never HTML). Served by GET /api/landing/hero; edit freely, changes go live within ~5 minutes (the endpoint is cached briefly).",
+  "intervalMs": 6000,
+  "slides": [
+    { "pre": "Build the system that ", "em": "runs your business." },
+    { "pre": "From form, to app, to ", "em": "flow — with logic." },
+    { "pre": "Every call answered. ", "em": "Every booking captured." },
+    { "pre": "Forms in. Apps out. ", "em": "Logic all the way down." },
+    { "pre": "Stop renting software. ", "em": "Run your own." },
+    { "pre": "Less duct tape. ", "em": "More system." }
+  ]
+}

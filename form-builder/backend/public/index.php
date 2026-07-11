@@ -761,6 +761,39 @@ $app->get('/api/health/deep', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
 })->add($authRequired);
 
+// Landing hero headlines (public, no auth): the rotating <h1> slides the landing page fetches.
+// Content lives in resources/landing-hero.json so copy edits never need a frontend build. Slides
+// are validated to PLAIN STRINGS (the frontend renders text nodes, never HTML) and capped; a
+// missing/broken file falls back to the shipped default headline.
+$app->get('/api/landing/hero', function ($request, $response) {
+    $default = ['intervalMs' => 6000, 'slides' => [['pre' => 'Build the system that ', 'em' => 'runs your business.', 'post' => '']]];
+    $payload = $default;
+    $file = dirname(__DIR__) . '/resources/landing-hero.json';
+    if (is_file($file)) {
+        $raw = json_decode((string) file_get_contents($file), true);
+        if (is_array($raw)) {
+            $slides = [];
+            foreach ((array) ($raw['slides'] ?? []) as $s) {
+                if (!is_array($s)) { continue; }
+                $clean = [];
+                foreach (['pre', 'em', 'post'] as $k) {
+                    $v = $s[$k] ?? '';
+                    $clean[$k] = is_string($v) ? mb_substr($v, 0, 140) : '';
+                }
+                if (trim($clean['pre'] . $clean['em'] . $clean['post']) === '') { continue; }
+                $slides[] = $clean;
+                if (count($slides) >= 12) { break; }
+            }
+            if ($slides !== []) {
+                $interval = (int) ($raw['intervalMs'] ?? 6000);
+                $payload = ['intervalMs' => max(2500, min($interval ?: 6000, 20000)), 'slides' => $slides];
+            }
+        }
+    }
+    $response->getBody()->write((string) json_encode($payload));
+    return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'public, max-age=300');
+});
+
 // Auth routes (public, rate limited)
 // Shared persistent rate-limit store so every limit below holds across requests
 // and worker processes (not just within a single PHP process).

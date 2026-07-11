@@ -722,6 +722,11 @@ class ApiClient {
     return this.request('/health');
   }
 
+  /** Public rotating hero headlines for the landing page (backend/resources/landing-hero.json). */
+  async getLandingHero(): Promise<ApiResponse<{ intervalMs?: number; slides?: Array<{ pre?: string; em?: string; post?: string }> }>> {
+    return this.request('/landing/hero');
+  }
+
   /**
    * Authenticated deep health ("Doctor"). Returns the body even on 503 (degraded) so the UI can
    * render the failing checks. Null on auth failure / network error.

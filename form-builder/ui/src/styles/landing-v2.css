@@ -565,6 +565,34 @@
   color: #bdadff;
 }
 
+/* Rotating headline: all slides share one grid cell so the <h1> is sized by the
+   tallest slide — swapping never shifts the layout below. Inactive slides fade
+   down and out; the active one fades up in. */
+.lv2-hero__slides {
+  display: grid;
+}
+
+.lv2-hero__slide {
+  grid-area: 1 / 1;
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+  pointer-events: none;
+}
+
+.lv2-hero__slide.is-active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv2-hero__slide {
+    transition: none;
+    transform: none;
+  }
+}
+
 .lv2-hero__copy > p {
   max-width: 600px;
   margin: 0;
