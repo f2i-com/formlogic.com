@@ -108,3 +108,10 @@ fs2 = "0.4"
 # the tree transitively, so this adds no new build surface.
 sha2 = "0.10"
 getrandom = "0.2"
+
+# DESK-SECRET-001: the OS credential store (Windows Credential Manager) for the
+# long-lived FormLogic API key + HuggingFace token, so they never sit in a
+# plaintext config file. Windows-only backend — the audited/shipped platform;
+# other targets fall back to the existing plaintext storage (see src/secrets.rs).
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }

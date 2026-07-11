@@ -13,6 +13,7 @@ pub mod http;
 pub mod oauth;
 pub mod pairing;
 pub mod plugins;
+pub mod secrets;
 pub mod services;
 
 /// Port the localhost API binds to. Fixed so formlogic-web's detection probe has a
@@ -278,6 +279,70 @@ fn write_config_str(app: &tauri::AppHandle, key: &str, val: Option<&str>) -> Res
     atomic_write(&p, &pretty)
 }
 
+// --- DESK-SECRET-001: the FormLogic API key lives in the OS credential store,
+//     not the plaintext config. These wrappers migrate a legacy plaintext key
+//     into the keyring on first read (verify-before-delete) and keep the
+//     `has_key` presence check working. The value is never logged. ---
+
+/// Read the FormLogic API key, preferring the OS credential store and
+/// transparently migrating a legacy plaintext copy in `companion-config.json`
+/// into the keyring on first read. On a keyring failure the plaintext copy is
+/// kept and still used, so a link is never lost.
+fn read_api_key(app: &tauri::AppHandle) -> Option<String> {
+    if let Ok(Some(v)) = crate::secrets::get(crate::secrets::API_KEY) {
+        return Some(v);
+    }
+    // Legacy plaintext in the config file → migrate it out.
+    let legacy = read_config_str(app, "formlogicApiKey")?;
+    match crate::secrets::store_verified(crate::secrets::API_KEY, &legacy) {
+        Ok(true) => {
+            let _ = write_config_str(app, "formlogicApiKey", None);
+            eprintln!("[formlogic] migrated the API key into the OS credential store");
+        }
+        Ok(false) => { /* no OS keyring here — keep the plaintext copy */ }
+        Err(e) => eprintln!(
+            "[formlogic] could not secure the API key in the credential store ({e}) — keeping the local copy"
+        ),
+    }
+    Some(legacy)
+}
+
+/// Store (`Some`) or clear (`None`) the FormLogic API key. A stored key goes to
+/// the credential store and its plaintext copy is removed; if the keyring is
+/// unavailable/failing the key falls back to plaintext so linking still works.
+fn write_api_key(app: &tauri::AppHandle, key: Option<&str>) -> Result<(), String> {
+    match key {
+        Some(k) if !k.trim().is_empty() => {
+            let k = k.trim();
+            match crate::secrets::store_verified(crate::secrets::API_KEY, k) {
+                Ok(true) => {
+                    let _ = write_config_str(app, "formlogicApiKey", None);
+                    Ok(())
+                }
+                Ok(false) => write_config_str(app, "formlogicApiKey", Some(k)),
+                Err(e) => {
+                    eprintln!(
+                        "[formlogic] credential store rejected the API key ({e}) — storing it locally"
+                    );
+                    write_config_str(app, "formlogicApiKey", Some(k))
+                }
+            }
+        }
+        _ => {
+            // Clear both the keyring and any legacy plaintext (unlink / rotate).
+            let _ = crate::secrets::delete(crate::secrets::API_KEY);
+            write_config_str(app, "formlogicApiKey", None)
+        }
+    }
+}
+
+/// Whether a FormLogic API key is set (keyring OR legacy plaintext), without
+/// materialising the value.
+fn has_api_key(app: &tauri::AppHandle) -> bool {
+    matches!(crate::secrets::get(crate::secrets::API_KEY), Ok(Some(_)))
+        || read_config_str(app, "formlogicApiKey").is_some()
+}
+
 /// The user's chosen data dir from the pointer file, if any (else OS default).
 fn read_data_dir_override(app: &tauri::AppHandle) -> Option<String> {
     read_config_str(app, "dataDir")
@@ -408,19 +473,30 @@ fn hf_token_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// Read the saved HuggingFace token, if any (trimmed; BOM-tolerant for
-/// hand edits). None when unset/empty.
+/// hand edits). None when unset/empty. DESK-SECRET-001: prefers the OS
+/// credential store and migrates a legacy `hf-token` file into it on first
+/// read (verify-before-delete).
 fn read_hf_token(app: &tauri::AppHandle) -> Option<String> {
+    if let Ok(Some(v)) = crate::secrets::get(crate::secrets::HF_TOKEN) {
+        return Some(v);
+    }
     let p = hf_token_path(app)?;
-    let s = std::fs::read_to_string(p).ok()?;
+    let s = std::fs::read_to_string(&p).ok()?;
     let s = s.strip_prefix('\u{feff}').unwrap_or(&s).trim();
     if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
+        return None;
     }
+    let val = s.to_string();
+    if let Ok(true) = crate::secrets::store_verified(crate::secrets::HF_TOKEN, &val) {
+        let _ = std::fs::remove_file(&p);
+        eprintln!("[formlogic] migrated the HuggingFace token into the OS credential store");
+    }
+    Some(val)
 }
 
-/// Persist (Some) or clear (None/empty) the HuggingFace token.
+/// Persist (Some) or clear (None/empty) the HuggingFace token. DESK-SECRET-001:
+/// stored in the OS credential store when available (plaintext copy removed);
+/// falls back to the legacy file only when the keyring is unavailable/failing.
 fn write_hf_token(app: &tauri::AppHandle, token: Option<&str>) -> Result<(), String> {
     let _guard = pointer_lock().lock().unwrap_or_else(|e| e.into_inner());
     let p = hf_token_path(app).ok_or("cannot resolve config dir")?;
@@ -429,13 +505,27 @@ fn write_hf_token(app: &tauri::AppHandle, token: Option<&str>) -> Result<(), Str
     }
     match token {
         Some(t) if !t.trim().is_empty() => {
-            atomic_write(&p, t.trim())?;
+            let t = t.trim();
+            match crate::secrets::store_verified(crate::secrets::HF_TOKEN, t) {
+                Ok(true) => {
+                    let _ = std::fs::remove_file(&p);
+                    Ok(())
+                }
+                Ok(false) => atomic_write(&p, t),
+                Err(e) => {
+                    eprintln!(
+                        "[formlogic] credential store rejected the HuggingFace token ({e}) — storing it locally"
+                    );
+                    atomic_write(&p, t)
+                }
+            }
         }
         _ => {
+            let _ = crate::secrets::delete(crate::secrets::HF_TOKEN);
             let _ = std::fs::remove_file(&p);
+            Ok(())
         }
     }
-    Ok(())
 }
 
 /// Resolve the active per-user data directory. Honours a user-chosen
@@ -979,7 +1069,7 @@ fn get_formlogic_config(
 ) -> FormLogicConfigView {
     FormLogicConfigView {
         base_url: read_config_str(&app, "formlogicBaseUrl").unwrap_or_default(),
-        has_key: read_config_str(&app, "formlogicApiKey").is_some(),
+        has_key: has_api_key(&app),
         linked: runtime.status().linked,
         device_name: read_config_str(&app, "formlogicDeviceName"),
     }
@@ -1011,11 +1101,11 @@ fn set_formlogic_config(
     write_config_str(&app, "formlogicBaseUrl", if base.is_empty() { None } else { Some(base) })?;
     let key = api_key.trim();
     if !key.is_empty() {
-        write_config_str(&app, "formlogicApiKey", Some(key))?;
+        write_api_key(&app, Some(key))?;
     }
     runtime.reconfigure(FormLogicConfig {
         base_url: read_config_str(&app, "formlogicBaseUrl").unwrap_or_default(),
-        api_key: read_config_str(&app, "formlogicApiKey").unwrap_or_default(),
+        api_key: read_api_key(&app).unwrap_or_default(),
     });
     Ok(())
 }
@@ -1038,7 +1128,7 @@ async fn disconnect_formlogic(
         }
     }
     write_config_str(&app, "formlogicBaseUrl", None)?;
-    write_config_str(&app, "formlogicApiKey", None)?;
+    write_api_key(&app, None)?;
     let _ = write_config_str(&app, "formlogicConnectionId", None);
     let _ = write_config_str(&app, "formlogicDeviceName", None);
     runtime.reconfigure(FormLogicConfig { base_url: String::new(), api_key: String::new() });
@@ -1198,7 +1288,7 @@ async fn run_oauth_link(
         link.set(LinkPhase::Error, Some(format!("Could not save the link: {e}")));
         return;
     }
-    if let Err(e) = write_config_str(&app, "formlogicApiKey", Some(&token.api_key)) {
+    if let Err(e) = write_api_key(&app, Some(&token.api_key)) {
         link.set(LinkPhase::Error, Some(format!("Could not save the key: {e}")));
         return;
     }
@@ -1354,7 +1444,7 @@ pub fn run() {
             // receptionist (event + claim loops); the web app only views state.
             let fl_config = FormLogicConfig {
                 base_url: read_config_str(app.handle(), "formlogicBaseUrl").unwrap_or_default(),
-                api_key: read_config_str(app.handle(), "formlogicApiKey").unwrap_or_default(),
+                api_key: read_api_key(app.handle()).unwrap_or_default(),
             };
             let flow_runtime = FlowRuntime::new(plugin_host.clone(), Some(registry.clone()), fl_config);
             // start() launches the flow event/claim/heartbeat loops via tokio::spawn, which needs an
