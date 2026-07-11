@@ -372,7 +372,7 @@ form-builder/
 │       ├── application-package/   # .formlogic package types + validator
 │       ├── lib/formlogic/         # QuickJS engine wrapper (Web Worker) + shared prelude
 │       ├── types/                 # TypeScript interfaces (form, app, custom logic)
-│       └── data/packs/            # The 28 marketplace pack bundles
+│       └── data/packs/            # The 29 marketplace pack bundles
 │
 ├── native-runtime/                # Tauri v2 shell (Rust) — see its README
 └── README.md                      # This file

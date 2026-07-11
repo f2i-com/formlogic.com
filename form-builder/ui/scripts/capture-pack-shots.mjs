@@ -1,8 +1,8 @@
 /**
  * Auto-capture marketplace thumbnails for every catalog pack.
  *
- * Renders each demo app's dashboard headlessly and snaps a clean 16:10 crop, so the marketplace
- * shows a real preview of the app you'd install — captured automatically once the app is published.
+ * Renders each demo app headlessly and snaps the FULL 16:10 app frame — sidebar, navigation and
+ * dashboard together — so the marketplace shows the real product you'd install, not just charts.
  *
  * Pipeline:  php scripts/provision-demo.php   (emits the manifest)
  *         →  node scripts/capture-pack-shots.mjs
@@ -84,19 +84,19 @@ async function main() {
     await page.waitForTimeout(3800);
 
     const outPath = resolve(OUT_DIR, file);
-    // 16:10 crop of the dashboard content region (inside <main>, excluding the sidebar), starting at
-    // the first widget card so the owner "Edit dashboard" bar isn't in the thumbnail.
-    const main = await page.locator('#app-main-content').boundingBox();
-    const card = await page.locator('#app-main-content .rounded-2xl').first().boundingBox();
-    if (main && main.width > 200) {
-      const x = Math.max(0, Math.round(main.x));
-      const y = Math.max(0, Math.round((card?.y ?? main.y) - 8));
-      const width = Math.min(Math.round(main.width), 1360 - x);
-      const height = Math.min(Math.round(width * 0.625), 850 - y);
-      await page.screenshot({ path: outPath, clip: { x, y, width, height } });
-    } else {
-      await page.screenshot({ path: outPath });
-    }
+    // FULL app frame (sidebar + nav + dashboard) — the thumbnail should show it's a real app,
+    // not just charts. The viewport is already 16:10 (1360x850); only the owner-only
+    // "Edit dashboard" bar is hidden so the shot reads like a member's view.
+    await page.addStyleTag({ content: '[data-shot-hide], .fl-shot-hide { display: none !important; }' });
+    await page.evaluate(() => {
+      for (const b of document.querySelectorAll('button')) {
+        if (b.textContent && b.textContent.trim() === 'Edit dashboard') {
+          const row = b.closest('div');
+          if (row) row.setAttribute('data-shot-hide', '1');
+        }
+      }
+    });
+    await page.screenshot({ path: outPath });
   }
 
   let ok = 0;

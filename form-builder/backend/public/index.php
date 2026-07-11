@@ -748,6 +748,16 @@ $container->set(\FormLogic\Controllers\HealthController::class, function (Contai
     );
 });
 $app->get('/api/health/deep', function ($request, $response) use ($container) {
+    // Infrastructure diagnostics (filesystem paths, worker staleness, store drift) must never
+    // be readable through the SHARED public demo session — any anonymous visitor holds it.
+    // Real accounts on a self-hosted install keep access (explicit admin roles are still a
+    // deferred decision — see launch review 2026-06-29).
+    $user = $request->getAttribute('user');
+    $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+    if ($user !== null && strtolower((string) ($user->email ?? '')) === $demoEmail) {
+        $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'Diagnostics are not available in the demo.']));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus(403);
+    }
     return $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
 })->add($authRequired);
 

@@ -24,7 +24,7 @@
 3. **Dashboards** make apps look like software, not paperwork: every app home screen and every form section is a no-code, drag-and-drop grid of chart/KPI/list widgets, plus a Reports section with exportable PDFs.
 4. **Everywhere**: the same app installs as a PWA, runs on the owner's own domain with a branded launch page, or opens inside the FormLogic Native Runtime (a Tauri desktop/mobile shell) with device connectors and an offline queue.
 
-Don't want to start from a blank canvas? Install one of the **28 marketplace apps** ([catalog below](#app-marketplace)) and customise it — or point your own AI at the built-in [MCP server](docs/MCP.md) and have it build the app for you.
+Don't want to start from a blank canvas? Install one of the **29 marketplace apps** ([catalog below](#app-marketplace)) and customise it — or point your own AI at the built-in [MCP server](docs/MCP.md) and have it build the app for you.
 
 ## One backend, many portals
 
@@ -151,6 +151,12 @@ Every app is portable. Export it as a **signed `.formlogic` package** — a ZIP 
 - **Built-in AI generation**: generate forms and multi-form apps from a text prompt, a document, or an image, using any OpenAI-compatible provider — including keyless local servers (LM Studio, Ollama, vLLM). Optional; the platform works without it.
 - **External REST API**: scoped API keys (`Authorization: Bearer flk_…`) give programmatic access; API submissions run the *full* pipeline including your `onSubmit` script. See [docs/API.md](docs/API.md).
 
+### Flows, the Desktop, and an AI receptionist
+
+- **FormLogic Flows** — visual, event-driven automations (`/flows`): triggers from form events, schedules, or device connectors, and a node executor (branching, loops, AI calls, connector commands, form reads/writes) that runs in the browser and headlessly on FormLogic Desktop. See [docs/FORMLOGIC_FLOWS.md](docs/FORMLOGIC_FLOWS.md).
+- **FormLogic Desktop** — a desktop workspace (Tauri v2, `form-builder/desktop/`) that pairs with your account over OAuth, executes flows headlessly, and hosts local services — a llama.cpp LLM server and the Aokie Voice speech server — plus hardware connector plugins. See [docs/FORMLOGIC_DESKTOP.md](docs/FORMLOGIC_DESKTOP.md).
+- **Aokie Receptionist** — the flagship pack: an AI phone receptionist that answers real phone calls on FormLogic Desktop with local speech-to-text, a local LLM, and text-to-speech. Live calls stream into the app's front-desk console; every call lands as records — calls with chat-style transcripts, customers, bookings, orders, and SMS threads — that your flows act on.
+
 ### Offline and sync
 
 Forms can live locally in the browser (no account) or in the cloud, with change-aware sync and conflict prompts. Inside apps, submissions queue while offline and flush to an idempotent batch endpoint — from the browser, the PWA, or the native runtime's persisted queue — so nothing is lost or double-submitted.
@@ -163,7 +169,7 @@ HttpOnly JWT-signed session cookies, CSRF double-submit protection, per-endpoint
 
 ## App marketplace
 
-FormLogic ships a catalog of **28 ready-made vertical apps** — each a real working system (several linked forms, roles, seeded demo data, a configurable widget dashboard, reports), not a "Contact Us" form. Install one in a click, customise it, hand it to your AI, or export it as a `.formlogic` package. The no-signup **Live Demo** has the whole catalog pre-installed and populated — 34 demo apps across the 28 packs, since a few packs ship more than one portal (e.g. Finance OS ships onboarding *and* a transition hub).
+FormLogic ships a catalog of **29 ready-made vertical apps** — each a real working system (several linked forms, roles, seeded demo data, a configurable widget dashboard, reports), not a "Contact Us" form. Install one in a click, customise it, hand it to your AI, or export it as a `.formlogic` package. The no-signup **Live Demo** has the whole catalog pre-installed and populated — 32 demo apps across the 29 packs, since a few packs ship more than one portal (e.g. Finance OS ships onboarding *and* a transition hub).
 
 <p align="center">
   <img src="docs/images/packs/plumbing.png" width="49%" alt="Plumbing & Trades Field Service — invoiced-over-time, jobs-by-status, and recent jobs" />
@@ -185,7 +191,7 @@ FormLogic ships a catalog of **28 ready-made vertical apps** — each a real wor
   &nbsp;
   <img src="docs/images/packs/ohs.png" width="49%" alt="OHS & Quality Management — incidents by severity, incidents over time, recent incidents" />
 </p>
-<p align="center"><sub>Eight of the marketplace dashboards. Every dashboard is a no-code widget grid and renders in light &amp; dark.</sub></p>
+<p align="center"><sub>Eight of the marketplace apps — each thumbnail is the full app frame (navigation, forms, records, reports) around a no-code widget dashboard. Everything renders in light &amp; dark.</sub></p>
 
 | App | Category | What it runs |
 |-----|----------|--------------|
@@ -217,6 +223,7 @@ FormLogic ships a catalog of **28 ready-made vertical apps** — each a real wor
 | Customer Service | Billing & Business | Tickets, bugs, feature requests, feedback, refunds, escalations, KB |
 | Finance OS (US) | Finance | RIA/broker-dealer onboarding, compliance & advisory (Reg BI, Form CRS) |
 | Finance OS (AU) | Finance | AFSL advice, Best Interest Duty, super, AUSTRAC |
+| Aokie Receptionist | AI & Voice | AI phone receptionist: live call console → call records with chat-style transcripts → customers → bookings, orders & SMS threads |
 
 There are also bundled **sample apps** (Apps → "Try a sample app"): a CRM, an expense manager, people onboarding, the MineCab connector reference app, and a device-capability check.
 
@@ -241,7 +248,8 @@ formlogic-app/
     ├── install.php / install.sh   # Assisted installers
     ├── backend/                   # PHP Slim API (public/index.php = routes)
     ├── ui/                        # React SPA (builder, app runtime, marketplace)
-    └── native-runtime/            # Tauri v2 desktop/mobile shell
+    ├── desktop/                   # FormLogic Desktop (Tauri v2): headless flows, local AI services, plugins
+    └── native-runtime/            # Tauri v2 shell that opens any FormLogic app natively
 ```
 
 ## Documentation
@@ -256,6 +264,8 @@ formlogic-app/
 | [docs/ONE_BACKEND_MANY_PORTALS.md](docs/ONE_BACKEND_MANY_PORTALS.md) | The multi-portal model: shared forms, companion apps, appKind |
 | [docs/CUSTOM_APP_PLATFORM.md](docs/CUSTOM_APP_PLATFORM.md) | App logic (QuickJS), SDK, connectors, signed packages, custom domains |
 | [docs/NATIVE_RUNTIME_TAURI.md](docs/NATIVE_RUNTIME_TAURI.md) | The native runtime: bridge, deep links, manifest verification, offline queue |
+| [docs/FORMLOGIC_FLOWS.md](docs/FORMLOGIC_FLOWS.md) | FormLogic Flows: triggers, node executor, bindings, desktop parity |
+| [docs/FORMLOGIC_DESKTOP.md](docs/FORMLOGIC_DESKTOP.md) | FormLogic Desktop: account pairing, headless flows, local services, plugins |
 | [docs/WIDGET_DASHBOARD_DESIGN.md](docs/WIDGET_DASHBOARD_DESIGN.md) | The no-code widget dashboard system |
 | [docs/APP_SECTIONS_SPEC.md](docs/APP_SECTIONS_SPEC.md) | Per-form section screens |
 | [docs/CUSTOM_APP_SPEC.md](docs/CUSTOM_APP_SPEC.md) | The master platform design spec |
