@@ -1809,6 +1809,17 @@ pub async fn serve(
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
+    // DESK-PROC-001: keep this listener socket out of spawned children so a
+    // service can never inherit it and wedge :17872 after it (or the desktop)
+    // dies. Best-effort — a failure here is logged, not fatal.
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        if let Err(e) = crate::proc::set_socket_non_inheritable(listener.as_raw_socket()) {
+            log::warn!("could not make the API listener socket non-inheritable: {e}");
+        }
+    }
+
     log::info!("FormLogic Desktop API listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())

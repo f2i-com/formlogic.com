@@ -13,6 +13,7 @@ pub mod http;
 pub mod oauth;
 pub mod pairing;
 pub mod plugins;
+pub mod proc;
 pub mod secrets;
 pub mod services;
 
@@ -1299,6 +1300,12 @@ async fn run_oauth_link(
 }
 
 pub fn run() {
+    // DESK-PROC-001: put the desktop (and, by inheritance, every service /
+    // plugin / model process it spawns) in a kill-on-close Job Object BEFORE
+    // anything is spawned, so the whole tree dies with the desktop.
+    if let Err(e) = crate::proc::install_kill_on_close_group() {
+        log::warn!("could not install the kill-on-close process group: {e}");
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())

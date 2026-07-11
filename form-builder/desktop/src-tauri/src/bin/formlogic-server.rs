@@ -124,6 +124,12 @@ async fn main() {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
 
+    // DESK-PROC-001: kill-on-close process group so spawned services die with
+    // this server (headless parity with the GUI).
+    if let Err(e) = formlogic_desktop_lib::proc::install_kill_on_close_group() {
+        log::warn!("could not install the kill-on-close process group: {e}");
+    }
+
     let data_dir = match std::env::var_os("FORMLOGIC_DATA_DIR") {
         Some(d) => PathBuf::from(d),
         None => match home_dir() {

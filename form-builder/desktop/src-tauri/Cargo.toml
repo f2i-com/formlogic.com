@@ -113,5 +113,15 @@ getrandom = "0.2"
 # long-lived FormLogic API key + HuggingFace token, so they never sit in a
 # plaintext config file. Windows-only backend — the audited/shipped platform;
 # other targets fall back to the existing plaintext storage (see src/secrets.rs).
+#
+# DESK-PROC-001: Job Object (kill-on-close) so the whole service tree dies with
+# the desktop, and SetHandleInformation to make the API listener socket
+# non-inheritable so children never wedge :17872 (see src/proc.rs).
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
