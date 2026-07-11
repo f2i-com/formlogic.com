@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Sparkles,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Sparkles, Workflow,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
@@ -50,6 +50,7 @@ const SECTIONS = [
   { id: 'cloud', title: 'Cloud & billing', icon: Cloud },
   { id: 'apps', title: 'Apps & permissions', icon: Boxes },
   { id: 'packs', title: 'Packs & templates', icon: Package },
+  { id: 'flows', title: 'Flows & Desktop', icon: Workflow },
   { id: 'self-hosting', title: 'Self-hosting', icon: Server },
   { id: 'security', title: 'Security', icon: Shield },
 ];
@@ -421,12 +422,15 @@ export function Docs() {
             {/* MCP */}
             <section className="mb-14">
               <H2 id="mcp" icon={Plug}>Build with your AI (MCP)</H2>
-              <P>Point your <strong className="text-gray-900 dark:text-white">own</strong> AI — Claude Desktop, Claude Code, Cursor, anything that speaks <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) — at FormLogic and let it build and edit forms, write <a href="#apps" className="text-primary-600 dark:text-primary-400 hover:underline">custom screens</a>, and wire up an app. Bring your own (frontier) model instead of the built-in one. It works over a <strong className="text-gray-900 dark:text-white">temporary, scoped connection</strong> you can revoke any time.</P>
+              <P>Point your <strong className="text-gray-900 dark:text-white">own</strong> AI — Claude, ChatGPT, Claude Code, Cursor, anything that speaks <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) — at FormLogic and let it build and edit forms, dashboards, reports, and whole apps. Bring your own (frontier) model instead of the built-in one. Every connection is <strong className="text-gray-900 dark:text-white">scoped and revocable</strong>.</P>
+              <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Connect with OAuth (Claude / ChatGPT)</h3>
               <Steps items={[
-                <>Open <strong className="text-gray-900 dark:text-white">Connect an AI</strong> — from <C>Settings</C> (all your apps), an app's <C>Manage</C> tab (that app only), or <strong className="text-gray-900 dark:text-white">"Connect an AI"</strong> on the Apps page or Dashboard (the AI creates the app itself).</>,
-                <>Click <strong className="text-gray-900 dark:text-white">Generate connection</strong> and copy the URL + token (shown <strong className="text-gray-900 dark:text-white">once</strong>).</>,
-                <>Add it to your MCP client as a <strong className="text-gray-900 dark:text-white">remote / HTTP MCP server</strong> using the generated config.</>,
+                <>Copy your MCP URL — <C>https://&lt;your-host&gt;/api/mcp</C> (shown in <strong className="text-gray-900 dark:text-white">Settings → Connect an AI</strong>).</>,
+                <>Add it as a <strong className="text-gray-900 dark:text-white">custom connector</strong> in Claude or ChatGPT (or <C>claude mcp add --transport http formlogic &lt;url&gt;</C> in Claude Code) — no token copying.</>,
+                <>Your browser opens FormLogic&apos;s consent page: check who&apos;s asking, optionally <strong className="text-gray-900 dark:text-white">limit the connection to one app</strong>, and approve.</>,
               ]} />
+              <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Or generate a manual token (other clients)</h3>
+              <P>From <strong className="text-gray-900 dark:text-white">Connect an AI</strong> — in <C>Settings</C> (all your apps), an app&apos;s <C>Manage</C> tab (that app only), or <strong className="text-gray-900 dark:text-white">&quot;Hand to an AI&quot;</strong> on the Apps page — click <strong className="text-gray-900 dark:text-white">Generate connection</strong> and paste the config into any client that supports remote/HTTP MCP servers:</P>
               <CodeBlock title="client config — add as a remote/HTTP MCP server">{`{
   "mcpServers": {
     "formlogic": {
@@ -435,14 +439,16 @@ export function Docs() {
     }
   }
 }`}</CodeBlock>
-              <P>The connection is deliberately short-lived — a <strong className="text-gray-900 dark:text-white">1-hour</strong> expiry, a <strong className="text-gray-900 dark:text-white">15-minute</strong> idle timeout, and one-click revoke. The token is stored hashed and shown only once.</P>
-              <P>Tokens carry <strong className="text-gray-900 dark:text-white">scopes</strong>. The default "builder" token can manage apps, forms, and screens — but <strong className="text-gray-900 dark:text-white">cannot read submission data</strong> (<C>responses:read</C> is opt-in). Tools the AI can call:</P>
+              <P>Connections are deliberately short-lived — a <strong className="text-gray-900 dark:text-white">1-hour</strong> expiry (OAuth clients refresh silently), a <strong className="text-gray-900 dark:text-white">15-minute</strong> idle timeout for manual tokens, and one-click revoke. Tokens are stored hashed and shown only once.</P>
+              <P>Tokens carry <strong className="text-gray-900 dark:text-white">scopes</strong>. The default &quot;builder&quot; token can manage apps, forms, and screens — but <strong className="text-gray-900 dark:text-white">cannot read submission data</strong> (<C>responses:read</C> is opt-in). Tools the AI can call:</P>
               <ul className="space-y-1.5 text-gray-600 dark:text-slate-300 list-disc pl-5 my-4">
                 <li><strong className="text-gray-900 dark:text-white">Forms</strong> — <C>list_forms</C>, <C>get_form</C>, <C>create_form</C>, <C>update_form</C> (fields, onSubmit script, custom screen)</li>
-                <li><strong className="text-gray-900 dark:text-white">Apps</strong> — <C>list_apps</C>, <C>create_app</C>, <C>update_app</C> (name, slug, publish), <C>add_form_to_app</C>, <C>set_app_home</C> (custom home screen)</li>
+                <li><strong className="text-gray-900 dark:text-white">Apps</strong> — <C>list_apps</C>, <C>create_app</C>, <C>update_app</C> (name, slug, publish), <C>add_form_to_app</C>, <C>set_app_home</C> (a no-code widget dashboard, or a custom code screen)</li>
+                <li><strong className="text-gray-900 dark:text-white">Reports</strong> — <C>create_report</C> (charts, KPIs, tables) and <C>create_document</C> (exportable PDF pages)</li>
                 <li><strong className="text-gray-900 dark:text-white">Responses</strong> — <C>list_responses</C> (only with the <C>responses:read</C> scope)</li>
+                <li><strong className="text-gray-900 dark:text-white">Desktop</strong> — <C>desktop_status</C> and <C>connector_command</C> (drive connectors on your linked FormLogic Desktop, like the Aokie phone bridge — off by default)</li>
               </ul>
-              <Tip>An <strong className="text-gray-900 dark:text-white">app-scoped</strong> link is enforced: the AI only ever sees that one app's forms and can't reach anything else. To turn the <strong className="text-gray-900 dark:text-white">built-in</strong> AI off and steer everyone to bring-your-own, set <C>AI_ENABLED=false</C>. Full reference: <C>docs/MCP.md</C>.</Tip>
+              <Tip>An <strong className="text-gray-900 dark:text-white">app-scoped</strong> link is enforced: the AI only ever sees that one app&apos;s forms and can&apos;t reach anything else. To turn the <strong className="text-gray-900 dark:text-white">built-in</strong> AI off and steer everyone to bring-your-own, set <C>AI_ENABLED=false</C>. Full reference: <C>docs/MCP.md</C>.</Tip>
             </section>
 
             {/* Cloud & billing */}
@@ -505,6 +511,18 @@ export function Docs() {
               <Figure src="/screenshots/marketplace.png" alt="The pack marketplace" caption="The marketplace — every pack is a complete app with a live dashboard. Try it in the demo, or publish your own." />
             </section>
 
+            {/* Flows & Desktop */}
+            <section className="mb-14">
+              <H2 id="flows" icon={Workflow}>Flows &amp; Desktop</H2>
+              <P><strong className="text-gray-900 dark:text-white">Flows</strong> run your busywork. A flow is a <strong className="text-gray-900 dark:text-white">trigger</strong> — a form submission, a schedule, or a device event like an incoming call — plus a chain of nodes: branches, loops, record reads and writes, AI calls, and speech. Build them visually at <C>/flows</C>, test-run them in place, and they execute right in your browser.</P>
+              <Figure src="/screenshots/flows.png" alt="The Flows workspace" caption="The Flows workspace — the Aokie Receptionist pack's flows: caller lookup, live reply, call summary, SMS drafts." />
+              <Bullets items={[
+                <><strong className="text-gray-900 dark:text-white">FormLogic Desktop</strong> — a companion desktop app that pairs with your account and runs your flows <em>headlessly</em>, so automations keep working when the browser is closed. It also hosts local AI services (a llama.cpp LLM server and a speech server) that AI and speech nodes use by default — no API keys required.</>,
+                <><strong className="text-gray-900 dark:text-white">AI services</strong> — point AI nodes at the Desktop's local models, or add any OpenAI-compatible provider from the AI services panel in the Flows header.</>,
+                <><strong className="text-gray-900 dark:text-white">The Aokie Receptionist</strong> — the flagship pack ties it together: an AI phone receptionist that answers real calls on the Desktop with local speech-to-text, a local LLM, and text-to-speech. Live calls stream into a front-desk console, and every call lands as records — calls with chat-style transcripts, customers, bookings, orders, and SMS threads — that your flows act on.</>,
+              ]} />
+            </section>
+
             {/* Self-hosting */}
             <section className="mb-14">
               <H2 id="self-hosting" icon={Server}>Self-hosting</H2>
@@ -527,7 +545,7 @@ cd ../ui && npm install && npm run build
 # 4. (Optional) seed the marketplace + demo with the sample app packs
 cd ../backend && php scripts/provision-demo.php`}</CodeBlock>
               <Tip><strong className="text-gray-900 dark:text-white">One domain is all you need.</strong> The frontend calls the API at <C>/api</C> on the <strong className="text-gray-900 dark:text-white">same origin</strong> by default, so you can serve the app and its API from a single domain with no CORS setup — point your web server's <C>/api</C> at the PHP backend and serve the built UI for everything else. Only set <C>VITE_API_URL</C> (at build time) and <C>CORS_ORIGIN</C> if you deliberately put the API on a <em>separate</em> host.</Tip>
-              <P>FormLogic is source-available — the full source, README, and deployment guide live on <a href="https://github.com/izuc/formlogic-app" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">GitHub</a> (production hardening: set <C>APP_ENV=production</C>, strong secrets, HTTPS). You can self-host and modify it freely under the project's <a href="https://github.com/izuc/formlogic-app/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">license</a>. If it's useful to you, a <strong className="text-gray-900 dark:text-white">star</strong> is hugely appreciated.</P>
+              <P>FormLogic is source-available — the full source, README, and deployment guide live on <a href="https://github.com/f2i-com/formlogic.com" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">GitHub</a> (production hardening: set <C>APP_ENV=production</C>, strong secrets, HTTPS). You can self-host and modify it freely under the project's <a href="https://github.com/f2i-com/formlogic.com/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">license</a>. If it's useful to you, a <strong className="text-gray-900 dark:text-white">star</strong> is hugely appreciated.</P>
             </section>
 
             {/* Security */}
