@@ -3,6 +3,7 @@ import { plugins } from '../api';
 import { AlertTriangleIcon, CheckIcon } from '../Icons';
 import { useConfirm } from '../ConfirmDialog';
 import { useToast } from '../Toasts';
+import { DongleSetupWizard } from './DongleSetupWizard';
 
 /**
  * The Aokie receptionist feature UI (audit/redesign 2026-07): live phone
@@ -518,6 +519,7 @@ export function AokieCard({ running, devMode }: { running: boolean; devMode: boo
               {simResult && <span className="service-meta">{simResult}</span>}
             </div>
           )}
+          <DongleSetupWizard running={running} />
           <PhonePairingControls running={running} onPaired={refresh} />
           <AokieSettingsForm running={running} />
         </>

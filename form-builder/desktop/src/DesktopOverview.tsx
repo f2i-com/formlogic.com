@@ -87,6 +87,10 @@ export function DesktopOverview({
         </button>
       </section>
 
+      {/* The receptionist hero is the Aokie PLUGIN's surface — it renders only
+          while the plugin is installed (or the first fetch is still loading),
+          so removing the plugin removes its chrome too. */}
+      {(!data.loaded || aokieInstalled) && (
       <section className="desktop-aokie-card">
         <div className="desktop-aokie-card__accent" aria-hidden="true" />
         <div className="desktop-aokie-card__main">
@@ -140,6 +144,7 @@ export function DesktopOverview({
           </span>
         </div>
       </section>
+      )}
 
       <div className="desktop-overview-grid">
         <SectionCard

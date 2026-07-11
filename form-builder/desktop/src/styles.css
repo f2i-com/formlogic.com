@@ -681,6 +681,23 @@ code {
 .aokie-paired-row { display: flex; align-items: center; gap: 8px; }
 .aokie-paired-row .service-meta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
+/* Dongle setup wizard (WinUSB driver): selectable device rows + step body. */
+.dongle-wizard { display: flex; flex-direction: column; gap: 8px; }
+.dongle-wizard-list { display: flex; flex-direction: column; gap: 6px; }
+.dongle-wizard-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-field);
+  cursor: pointer;
+}
+.dongle-wizard-row.is-selected { border-color: var(--accent, #6366f1); }
+.dongle-wizard-row__name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.dongle-wizard-row__name small { color: var(--text-secondary, #888); }
+.dongle-wizard-row__badges { display: flex; gap: 6px; flex-wrap: wrap; }
+
 /* ---------- models panel ---------- */
 
 .model-section { display: flex; flex-direction: column; gap: 12px; }

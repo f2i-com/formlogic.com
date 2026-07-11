@@ -800,6 +800,19 @@ async fn restart_plugin(
     }
 }
 
+/// `DELETE /api/plugins/{id}` — stop + remove the plugin folder (manifest +
+/// binary). Plugin data under `plugin-data/<id>` is kept for a reinstall;
+/// bundled built-ins reappear as installable templates.
+async fn uninstall_plugin(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match st.host.uninstall(&id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    }
+}
+
 /// `GET /api/plugins/{id}/health` — probes a running plugin on demand (the
 /// probe also becomes the recorded "last" report); otherwise returns the
 /// last report from the supervisor's 10 s ticker.
@@ -1757,7 +1770,7 @@ pub async fn serve(
     // Plugin-API routes: everything behind the pairing-token guard.
     let plugin_api = Router::new()
         .route("/api/plugins", get(list_plugins))
-        .route("/api/plugins/:id", get(get_plugin))
+        .route("/api/plugins/:id", get(get_plugin).delete(uninstall_plugin))
         .route("/api/plugins/:id/install", post(install_builtin_plugin))
         .route("/api/plugins/:id/start", post(start_plugin))
         .route("/api/plugins/:id/stop", post(stop_plugin))

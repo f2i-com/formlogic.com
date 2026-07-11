@@ -49,6 +49,7 @@ export function DesktopSidebar({
   onChange,
   pendingPairing,
   cloudLabel,
+  receptionistAvailable,
 }: {
   section: SectionId;
   onChange: (s: SectionId) => void;
@@ -56,13 +57,18 @@ export function DesktopSidebar({
   pendingPairing: number;
   /** e.g. the linked device/base host, or "Not linked". */
   cloudLabel: string;
+  /** The Aokie plugin is installed — its workspace is plugin UI, not core
+   *  chrome, so the nav entry only exists while the plugin does. */
+  receptionistAvailable: boolean;
 }) {
   const groups: Array<{ label: string; items: NavItem[] }> = [
     {
       label: 'Operate',
       items: [
         { id: 'overview', label: 'Overview', icon: LayoutGridIcon },
-        { id: 'receptionist', label: 'AI Receptionist', icon: PhoneCallIcon, badge: 'New', badgeTone: 'accent' },
+        ...(receptionistAvailable
+          ? [{ id: 'receptionist', label: 'AI Receptionist', icon: PhoneCallIcon, badge: 'New', badgeTone: 'accent' } as NavItem]
+          : []),
       ],
     },
     {

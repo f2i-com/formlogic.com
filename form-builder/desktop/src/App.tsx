@@ -45,6 +45,17 @@ export default function App() {
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
   const overview = useDesktopOverview();
 
+  // The AI Receptionist workspace is the Aokie PLUGIN's UI, not core chrome:
+  // it exists only while the plugin is installed (uninstalled → nav entry and
+  // panel disappear; the Plugins page still offers the bundled template).
+  const aokieInstalled = (overview.plugins?.plugins ?? []).some((p) => p.id === 'aokie');
+  const receptionistAvailable = !overview.loaded || aokieInstalled;
+  useEffect(() => {
+    if (section === 'receptionist' && overview.loaded && !aokieInstalled) {
+      setSection('overview');
+    }
+  }, [section, overview.loaded, aokieInstalled]);
+
   const toggleTheme = () => {
     const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
     setThemeState(next);
@@ -113,6 +124,7 @@ export default function App() {
         onChange={setSection}
         pendingPairing={overview.pendingPairing?.length ?? 0}
         cloudLabel={cloudLabel}
+        receptionistAvailable={receptionistAvailable}
       />
 
       <div className="desktop-workspace">
@@ -169,7 +181,7 @@ export default function App() {
 
         <main className="desktop-workspace__body">
           {section === 'overview' && <DesktopOverview data={overview} onOpen={setSection} />}
-          {section === 'receptionist' && <ReceptionistPanel />}
+          {section === 'receptionist' && receptionistAvailable && <ReceptionistPanel />}
           {section === 'services' && <ServicesPanel />}
           {section === 'models' && <ModelsPanel />}
           {section === 'plugins' && <PluginsPanel />}

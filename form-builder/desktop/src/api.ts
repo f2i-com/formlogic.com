@@ -412,6 +412,12 @@ export const plugins = {
     request<void>(`/api/plugins/${encodeURIComponent(id)}/restart`, {
       method: 'POST',
     }),
+  /** Stop + remove the plugin folder (manifest + binary). Plugin data under
+   *  `plugin-data/<id>` is kept; bundled built-ins become installable again. */
+  uninstall: (id: string) =>
+    request<void>(`/api/plugins/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
   health: (id: string) =>
     request<{ health: PluginHealthReport }>(
       `/api/plugins/${encodeURIComponent(id)}/health`,

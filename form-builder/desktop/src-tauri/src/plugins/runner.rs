@@ -159,6 +159,46 @@ impl PluginHost {
         self.start(id)
     }
 
+    /// Uninstall a plugin (`DELETE /api/plugins/{id}`): stop it if active,
+    /// remove `<plugins>/<id>` (manifest + binary), and forget the slot. The
+    /// plugin's WRITABLE data under `<plugin-data>/<id>` (settings, outbox,
+    /// pairing) is deliberately KEPT so a reinstall resumes where it left off
+    /// — wiping data is a separate, explicit filesystem action. A bundled
+    /// built-in (e.g. Aokie) reappears as an installable template afterwards.
+    pub async fn uninstall(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        // Only registered slots can be uninstalled; slot ids exist only for
+        // scanned folders whose `manifest.id == dir_name`, so this also rules
+        // out path tricks in `id`.
+        let dir = {
+            let map = self.lock_plugins();
+            let slot = map
+                .get(id)
+                .ok_or_else(|| format!("unknown plugin {id:?}"))?;
+            slot.dir.clone()
+        };
+        self.stop(id).await?;
+        // Defense in depth: never remove anything outside the plugins root.
+        if !dir.starts_with(self.plugins_root()) {
+            return Err(format!(
+                "plugin dir {} is outside the plugins root",
+                dir.display()
+            ));
+        }
+        std::fs::remove_dir_all(&dir).map_err(|e| {
+            format!(
+                "cannot remove {} (is the plugin binary still running or locked?): {e}",
+                dir.display()
+            )
+        })?;
+        {
+            let mut map = self.lock_plugins();
+            map.remove(id);
+        }
+        self.persist();
+        self.scan();
+        Ok(())
+    }
+
     /// Best-effort shutdown of every running plugin (process exit path).
     pub async fn stop_all(self: &Arc<Self>) {
         let ids: Vec<String> = {
@@ -702,5 +742,26 @@ mod tests {
         let m = manifest("\"flow.run\"");
         let err = handle_inbound_plugin_request(&h, &m, "aokie", "not.a.method", json!({})).await.unwrap_err();
         assert_eq!(err.code, -32601);
+    }
+
+    #[tokio::test]
+    async fn uninstall_removes_dir_and_slot_and_reoffers_builtin() {
+        let h = host();
+        // Materialise the bundled Aokie template, then uninstall it.
+        h.install_builtin("aokie").expect("install builtin");
+        let dir = h.plugins_root().join("aokie");
+        assert!(dir.join("manifest.json").is_file());
+        assert!(h.get("aokie").is_some());
+
+        h.uninstall("aokie").await.expect("uninstall");
+        assert!(!dir.exists(), "plugin dir must be removed");
+        assert!(h.get("aokie").is_none(), "slot must be forgotten");
+        // The bundled template is offered for install again.
+        let builtins = h.builtin_plugins();
+        let aokie = builtins.iter().find(|b| b.id == "aokie").expect("template listed");
+        assert!(!aokie.installed);
+
+        // Unknown ids refuse cleanly.
+        assert!(h.uninstall("aokie").await.is_err());
     }
 }

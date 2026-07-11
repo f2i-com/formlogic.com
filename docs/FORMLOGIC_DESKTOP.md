@@ -40,6 +40,8 @@ New:
 | `GET /api/plugins` | token | list plugins + lifecycle state |
 | `GET /api/plugins/{id}` | token | manifest + state + versions |
 | `POST /api/plugins/{id}/start\|stop\|restart` | token (privileged) | lifecycle control |
+| `POST /api/plugins/{id}/install` | token (privileged) | materialise a bundled built-in template |
+| `DELETE /api/plugins/{id}` | token (privileged) | uninstall: stop + remove the plugin folder (its `plugin-data/{id}` is kept) |
 | `GET /api/plugins/{id}/health` | token | last health probe result |
 | `GET /api/plugins/{id}/logs?tail=n` | token | captured stdout/stderr ring buffer |
 | `POST /api/plugins/{id}/commands/{command}` | token (privileged) | admin/dev direct command |

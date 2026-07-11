@@ -10,6 +10,7 @@ import {
 import { AlertTriangleIcon, CheckIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { AokieCard } from './aokie/AokieCard';
+import { useConfirm } from './ConfirmDialog';
 import { useToast } from './Toasts';
 
 /**
@@ -36,6 +37,7 @@ export default function PluginsPanel() {
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
   const toast = useToast();
+  const { confirm } = useConfirm();
   // Toast on state transitions (crashed / unhealthy / running), not on every
   // poll; the first poll seeds silently.
   const seenStateRef = useRef<Map<string, PluginState>>(new Map());
@@ -172,6 +174,24 @@ export default function PluginsPanel() {
             onStart={() => runAction(() => plugins.start(p.id), p.id)}
             onStop={() => runAction(() => plugins.stop(p.id), p.id)}
             onRestart={() => runAction(() => plugins.restart(p.id), p.id)}
+            onRemove={async () => {
+              const ok = await confirm({
+                title: `Remove the ${p.name} plugin?`,
+                body:
+                  'The plugin is stopped and its folder (manifest + binary) is deleted. ' +
+                  'Its data (settings, journals) is kept, so reinstalling picks up where it left off.' +
+                  (snapshot.builtins.some((b) => b.id === p.id)
+                    ? ' It stays available to reinstall under "Built-in plugins".'
+                    : ''),
+                confirmLabel: 'Remove plugin',
+                danger: true,
+              });
+              if (!ok) return;
+              await runAction(async () => {
+                await plugins.uninstall(p.id);
+                toast.push({ kind: 'success', title: `Plugin "${p.name}" removed` });
+              }, p.id);
+            }}
           />
         ))}
       </section>
@@ -264,6 +284,7 @@ interface CardProps {
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
+  onRemove: () => void;
 }
 
 function PluginCard({
@@ -275,6 +296,7 @@ function PluginCard({
   onStart,
   onStop,
   onRestart,
+  onRemove,
 }: CardProps) {
   const loadLogs = useMemo(
     () => () => plugins.logs(plugin.id, 200),
@@ -369,6 +391,11 @@ function PluginCard({
           <button onClick={onToggle} className="btn btn-ghost">
             {expanded ? 'Hide logs' : 'Logs'}
           </button>
+          {!active && (
+            <button onClick={onRemove} disabled={pending} className="btn btn-danger">
+              Remove
+            </button>
+          )}
         </div>
       </div>
       {plugin.id === 'aokie' && (
