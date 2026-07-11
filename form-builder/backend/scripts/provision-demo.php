@@ -574,6 +574,7 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
             if ($v !== null) { $answers[$f['id']] = $v; }
         }
         coherencePass($fields, $answers, $submittedDate, $i, $count, $formName);
+        alignMatchKeys($responseService, $fields, $answers);
         try {
             $r = $responseService->createResponse($formId, ['answers' => $answers]);
             if (is_array($r) && isset($r['id'])) {
@@ -585,6 +586,34 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
         }
     }
     return $ids;
+}
+
+/**
+ * Match-key coherence: when a linked_record field declares a match-based relation
+ * (properties.matchField / targetMatchField — see RelatedRecords::matchRelations) and this row
+ * picked a target record, copy the shared join key from that exact target record. Keeps the
+ * demo's correlations real: a message's phone IS its thread's phone, a transcript turn's
+ * call_id IS its call's call_id — so match-based related grids show populated data.
+ */
+function alignMatchKeys(ResponseService $responseService, array $fields, array &$answers): void
+{
+    foreach ($fields as $f) {
+        if (($f['type'] ?? '') !== 'linked_record') { continue; }
+        $props = $f['properties'] ?? [];
+        $matchField = $props['matchField'] ?? null;
+        $target = $props['targetFormId'] ?? null;
+        $picked = $answers[(string) ($f['id'] ?? '')] ?? null;
+        if (!is_string($matchField) || $matchField === '' || !is_string($target) || !is_string($picked) || $picked === '') { continue; }
+        $tmf = $props['targetMatchField'] ?? null;
+        $tmf = is_string($tmf) && $tmf !== '' ? $tmf : $matchField;
+        try {
+            $tr = $responseService->getResponse($target, $picked);
+            $val = $tr['answers'][$tmf] ?? null;
+            if (is_scalar($val) && trim((string) $val) !== '') { $answers[$matchField] = $val; }
+        } catch (\Throwable $e) {
+            // keep the generated value
+        }
+    }
 }
 
 /**
@@ -2174,6 +2203,12 @@ function genValue(array $field, int $i, array $seeded, string $formName = '', in
             if ($has($label, ['quote number', 'quote no', 'quote #'])) { return $code('QT'); }
             if ($has($label, ['order']) && $has($label, ['number', ' no', '#'])) { return $code('ORD'); }
             if ($has($label, ['reference', 'ref no', 'ref number', 'ticket number', 'case number', 'job number', 'work order number'])) { return $code('REF'); }
+            // Machine ids (receptionist pack: Calls/Transcript Turns call_id, Messages message_id,
+            // Hardware Events event_id) — stable-looking tokens; match-based joins copy them across
+            // forms via alignMatchKeys so related records correlate.
+            if ($has($label, ['call id'])) { return 'call_' . substr(hash('sha256', $formName . 'call' . $i), 0, 16); }
+            if ($has($label, ['message id'])) { return 'msg_' . substr(hash('sha256', $formName . 'msg' . $i), 0, 16); }
+            if ($has($label, ['event id'])) { return 'evt_' . substr(hash('sha256', $formName . 'evt' . $i), 0, 16); }
             if ($has($label, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate']) && !$has($label, ['template'])) {
                 // Distinct prefix per vehicle (drawn without replacement) so no prefix repeats down a fleet list.
                 $platePfx = ['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK', 'BDG', 'CFH', 'LMR', 'PWS', 'GVT', 'NKD', 'RJB', 'SYH'];

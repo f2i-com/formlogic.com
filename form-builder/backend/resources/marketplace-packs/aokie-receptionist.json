@@ -467,7 +467,7 @@
         ],
         "customScreen": {
           "enabled": true,
-          "allowNewResponses": true,
+          "allowNewResponses": false,
           "kind": "sdk",
           "sdkScreen": {
             "screenId": "aokie-live-call",
@@ -513,7 +513,15 @@
             "label": "Call",
             "required": false,
             "properties": {
-              "targetFormId": "@pack:calls"
+              "targetFormId": "@pack:calls",
+              "matchField": "call_id",
+              "targetMatchField": "call_id",
+              "relatedPageSize": 20,
+              "relatedAllowAdd": false,
+              "displayFieldIds": [
+                "speaker",
+                "text"
+              ]
             }
           },
           {
@@ -962,7 +970,16 @@
             "label": "Thread",
             "required": false,
             "properties": {
-              "targetFormId": "@pack:sms-threads"
+              "targetFormId": "@pack:sms-threads",
+              "matchField": "phone",
+              "targetMatchField": "phone",
+              "relatedPageSize": 10,
+              "relatedAllowAdd": false,
+              "displayFieldIds": [
+                "body",
+                "direction",
+                "status"
+              ]
             }
           },
           {

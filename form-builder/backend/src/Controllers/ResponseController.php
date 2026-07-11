@@ -1128,7 +1128,8 @@ class ResponseController
         if ($this->mysql === null) {
             return $this->jsonResponse($response, ['related' => []]);
         }
-        if (!$this->responseService->getResponse($formId, $responseId)) {
+        $targetResp = $this->responseService->getResponse($formId, $responseId);
+        if (!$targetResp) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
@@ -1143,9 +1144,6 @@ class ResponseController
         $stmt->bindValue('lim', $linkCap, PDO::PARAM_INT);
         $stmt->execute();
         $links = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        if (empty($links)) {
-            return $this->jsonResponse($response, ['related' => []]);
-        }
 
         $groups = [];
         foreach ($links as $link) {
@@ -1157,6 +1155,40 @@ class ResponseController
         }
 
         $formCache = [];
+
+        // Match-based relations (RelatedRecords::matchRelations): candidate source forms are
+        // the ones sharing an app with this form — the bounded universe where a join-key
+        // relationship can be declared. Ownership is enforced by the group loop below.
+        $targetAnswers = is_array($targetResp['answers'] ?? null) ? $targetResp['answers'] : [];
+        $cand = $this->mysql->prepare(
+            "SELECT DISTINCT af2.form_id FROM app_forms af1 JOIN app_forms af2 ON af1.app_id = af2.app_id WHERE af1.form_id = :f"
+        );
+        $cand->bindValue('f', $formId);
+        $cand->execute();
+        foreach ($cand->fetchAll(PDO::FETCH_COLUMN) as $sfId) {
+            $sfId = (string) $sfId;
+            if (!array_key_exists($sfId, $formCache)) {
+                $formCache[$sfId] = $this->formService->getForm($sfId) ?: null;
+            }
+            $sourceForm = $formCache[$sfId];
+            if (!$sourceForm || ($sourceForm['userId'] ?? null) !== $userId) {
+                continue;
+            }
+            RelatedRecords::mergeMatchGroups(
+                $groups,
+                $sourceForm,
+                $sfId,
+                $formId,
+                $responseId,
+                $targetAnswers,
+                fn (string $fid, string $field, string $value) =>
+                    $this->responseService->getFormResponses($fid, ['answersEq' => [$field => $value], 'limit' => 500])
+            );
+        }
+
+        if (empty($groups)) {
+            return $this->jsonResponse($response, ['related' => []]);
+        }
         $related = [];
         foreach ($groups as $key => $g) {
             $sourceFormId = $g['formId'];

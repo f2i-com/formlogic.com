@@ -76,6 +76,11 @@ export interface FieldProperties {
   relatedAllowAdd?: boolean;
   relatedAllowDelete?: boolean;
   relatedPageSize?: number;
+  // Match-based relation: also relate records whose `matchField` answer (on THIS form)
+  // equals the target record's `targetMatchField` answer (defaults to matchField) — for
+  // records written by flows/app logic that never know the target's record id.
+  matchField?: string;
+  targetMatchField?: string;
   // Location properties
   showMap?: boolean;
 }

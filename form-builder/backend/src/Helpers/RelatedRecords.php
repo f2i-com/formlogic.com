@@ -87,6 +87,85 @@ final class RelatedRecords
     }
 
     /**
+     * Match-based relationships declared on a source form's linked_record fields:
+     * `properties.matchField` (a field on the source form) joins records whose answer equals
+     * the target record's `properties.targetMatchField` answer (defaults to matchField).
+     * Lets flow-/logic-written records relate by a shared key (call_id, phone, …) without the
+     * writer ever knowing the target's response id — resolved read-side, merged with explicit
+     * response_links rows into the same relationship group.
+     *
+     * @return array<int,array{fieldId: string, matchField: string, targetMatchField: string}>
+     */
+    public static function matchRelations(array $sourceForm, string $targetFormId): array
+    {
+        $out = [];
+        foreach ($sourceForm['fields'] ?? [] as $f) {
+            if (($f['type'] ?? '') !== 'linked_record') {
+                continue;
+            }
+            $props = $f['properties'] ?? [];
+            if (($props['targetFormId'] ?? '') !== $targetFormId) {
+                continue;
+            }
+            $matchField = $props['matchField'] ?? null;
+            if (!is_string($matchField) || $matchField === '' || !is_string($f['id'] ?? null)) {
+                continue;
+            }
+            $targetMatchField = $props['targetMatchField'] ?? null;
+            $out[] = [
+                'fieldId' => $f['id'],
+                'matchField' => $matchField,
+                'targetMatchField' => is_string($targetMatchField) && $targetMatchField !== '' ? $targetMatchField : $matchField,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Fold match-based relations for one source form into the response_links groups
+     * (same `formId|fieldId` keys, so explicit links and matches dedupe together).
+     * $fetchMatches performs the bounded answer-equality lookup and returns response rows.
+     *
+     * @param array<string,array{formId: string, fieldId: string, ids: array<string,bool>}> $groups
+     */
+    public static function mergeMatchGroups(
+        array &$groups,
+        array $sourceForm,
+        string $sourceFormId,
+        string $targetFormId,
+        string $targetResponseId,
+        array $targetAnswers,
+        callable $fetchMatches
+    ): void {
+        foreach (self::matchRelations($sourceForm, $targetFormId) as $rel) {
+            $val = $targetAnswers[$rel['targetMatchField']] ?? null;
+            if (!is_scalar($val)) {
+                continue;
+            }
+            $val = trim((string) $val);
+            if ($val === '') {
+                continue;
+            }
+            $matches = $fetchMatches($sourceFormId, $rel['matchField'], $val);
+            foreach ($matches as $m) {
+                $mid = $m['id'] ?? null;
+                if (!is_string($mid) || $mid === '') {
+                    continue;
+                }
+                // A record never relates to itself through a same-form join key.
+                if ($sourceFormId === $targetFormId && $mid === $targetResponseId) {
+                    continue;
+                }
+                $key = $sourceFormId . '|' . $rel['fieldId'];
+                if (!isset($groups[$key])) {
+                    $groups[$key] = ['formId' => $sourceFormId, 'fieldId' => $rel['fieldId'], 'ids' => []];
+                }
+                $groups[$key]['ids'][$mid] = true;
+            }
+        }
+    }
+
+    /**
      * Build the display records for one group from its source responses.
      * @return array<int,array<string,mixed>>
      */

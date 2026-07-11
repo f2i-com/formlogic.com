@@ -1730,9 +1730,6 @@ class AppPublicController
         $stmt->bindValue('lim', $linkCap, PDO::PARAM_INT);
         $stmt->execute();
         $links = $stmt->fetchAll();
-        if (empty($links)) {
-            return $this->jsonResponse($response, ['related' => []]);
-        }
 
         // Group by (source form, field); dedup source response ids within each group.
         $groups = [];
@@ -1753,6 +1750,34 @@ class AppPublicController
         // Cache each distinct source form + its per-form view permission across relationships.
         $formCache = [];
         $permCache = [];
+
+        // Match-based relations (RelatedRecords::matchRelations): scan the app's forms for
+        // linked_record fields that join this form by a shared answer key and fold the
+        // matching records into the same groups the explicit links produced.
+        $targetAnswers = $targetResp['answers'] ?? [];
+        foreach ($appFormMap as $sfId => $af) {
+            if (!array_key_exists($sfId, $formCache)) {
+                $formCache[$sfId] = $this->formService->getForm($sfId) ?: null;
+            }
+            $sourceForm = $formCache[$sfId];
+            if (!$sourceForm) {
+                continue;
+            }
+            RelatedRecords::mergeMatchGroups(
+                $groups,
+                $sourceForm,
+                (string) $sfId,
+                $formId,
+                $responseId,
+                is_array($targetAnswers) ? $targetAnswers : [],
+                fn (string $fid, string $field, string $value) =>
+                    $this->responseService->getFormResponses($fid, ['answersEq' => [$field => $value], 'limit' => 500])
+            );
+        }
+
+        if (empty($groups)) {
+            return $this->jsonResponse($response, ['related' => []]);
+        }
         $related = [];
         foreach ($groups as $key => $g) {
             $sourceFormId = $g['formId'];

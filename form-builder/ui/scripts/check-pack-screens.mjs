@@ -4,8 +4,10 @@
  * Asserts, for every official pack (src/data/packs/*Pack.ts) and every bundled sample app
  * (backend/resources/sample-apps/*.json):
  *   - every APP has an enabled custom home screen (kit-based dashboard);
- *   - every FORM has an enabled section screen with allowNewResponses: true and a New-record
- *     affordance (data-open / FormLogic.openForm);
+ *   - every FORM has an enabled section screen with allowNewResponses set EXPLICITLY:
+ *     true plus a New-record affordance (data-open / FormLogic.openForm), or false for
+ *     forms whose records are written exclusively by flows/app logic (e.g. Calls) —
+ *     an absent flag is treated as the forgotten-lockout bug this gate exists to catch;
  *   - all screen JS parses (new Function), CSS braces balance, and screens follow the design
  *     rules: no emoji, no hardcoded hex colors (tokens only), form screens never use the
  *     app-scoped SDK (no data-nav / FL.navigate / FL.forms).
@@ -62,8 +64,8 @@ function checkScreen(label, cs, { isForm }) {
     if (!sdkScreenIds.has(id)) {
       console.error(`[${label}] sdk screen '${id}' is not registered in sdkScreenRegistry`); fail = 1;
     }
-    if (isForm && cs.allowNewResponses !== true) {
-      console.error(`[${label}] allowNewResponses must be true on section screens`); fail = 1;
+    if (isForm && typeof cs.allowNewResponses !== 'boolean') {
+      console.error(`[${label}] allowNewResponses must be set explicitly on section screens (true, or false for flow-written forms)`); fail = 1;
     }
     return;
   }
@@ -93,7 +95,7 @@ function checkScreen(label, cs, { isForm }) {
       if (w.kind === 'list' && (!w.list || !w.list.formId)) { console.error(`[${label}] list widget ${w.id} missing list.formId`); fail = 1; }
       if (isForm && (w.kind === 'actions' || w.kind === 'activity')) { console.error(`[${label}] section screens can't use app-scope widget '${w.kind}'`); fail = 1; }
     }
-    if (isForm && cs.allowNewResponses !== true) { console.error(`[${label}] allowNewResponses must be true on section screens`); fail = 1; }
+    if (isForm && typeof cs.allowNewResponses !== 'boolean') { console.error(`[${label}] allowNewResponses must be set explicitly on section screens (true, or false for flow-written forms)`); fail = 1; }
     return;
   }
   // Multi-file TS screens (sample-app homes) compile at runtime — the js-string heuristics don't
@@ -122,8 +124,8 @@ function checkScreen(label, cs, { isForm }) {
   if (jsHexes.length) { console.error(`[${label}] hardcoded hex in js: ${jsHexes.join(' ')} (use --fl-* vars)`); fail = 1; }
   if (!/wire\(/.test(js)) { console.error(`[${label}] kit wire() not called`); fail = 1; }
   if (isForm) {
-    if (cs.allowNewResponses !== true) { console.error(`[${label}] allowNewResponses must be true on section screens`); fail = 1; }
-    if (!/data-open|openForm/.test(js)) { console.error(`[${label}] no New-record affordance (data-open / openForm)`); fail = 1; }
+    if (typeof cs.allowNewResponses !== 'boolean') { console.error(`[${label}] allowNewResponses must be set explicitly on section screens (true, or false for flow-written forms)`); fail = 1; }
+    if (cs.allowNewResponses === true && !/data-open|openForm/.test(js)) { console.error(`[${label}] no New-record affordance (data-open / openForm)`); fail = 1; }
     if (/data-nav|FL\.navigate|FL\.forms\(/.test(js)) { console.error(`[${label}] section screens are form-scoped — no navigate/forms/data-nav`); fail = 1; }
   } else {
     if (!/data-nav/.test(js)) { console.error(`[${label}] app home screen has no data-nav targets`); fail = 1; }

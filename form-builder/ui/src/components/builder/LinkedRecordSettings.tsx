@@ -29,6 +29,10 @@ export function LinkedRecordSettings({
   const displayFieldIds = properties.displayFieldIds || [];
   const searchFieldIds = properties.searchFieldIds || [];
   const allowMultiple = properties.allowMultiple || false;
+  // This form's own data fields (for the match-by-field join key picker).
+  const ownFields = (appForms.find((f) => f.formId === currentFormId)?.fields ?? []).filter(
+    (f) => !['statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type)
+  );
 
   // Load app forms list
   useEffect(() => {
@@ -203,6 +207,51 @@ export function LinkedRecordSettings({
           label="Allow Multiple"
           description="Let users select more than one record"
         />
+      )}
+
+      {/* Match-based relation: join by a shared key instead of (only) the picker value. */}
+      {targetFormId && ownFields.length > 0 && (
+        <div className="pt-3 border-t border-gray-100 dark:border-slate-800 space-y-2">
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300">
+            Match by field <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
+          </label>
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Also relate records automatically when a field on this form equals a field on the
+            target — useful when records are created by flows or app logic that never set the
+            link. Leave blank for picker-only linking.
+          </p>
+          <div className="flex items-center gap-2">
+            <select
+              value={properties.matchField ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                onChange(v
+                  ? { ...properties, matchField: v }
+                  : { ...properties, matchField: undefined, targetMatchField: undefined });
+              }}
+              aria-label="Field on this form"
+              className="min-w-0 flex-1 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            >
+              <option value="">No match field</option>
+              {ownFields.map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </select>
+            <span className="shrink-0 text-xs text-gray-400 dark:text-slate-500">equals</span>
+            <select
+              value={properties.targetMatchField ?? properties.matchField ?? ''}
+              onChange={(e) => onChange({ ...properties, targetMatchField: e.target.value || undefined })}
+              disabled={!properties.matchField}
+              aria-label="Field on the target form"
+              className="min-w-0 flex-1 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50"
+            >
+              <option value="">Same field key</option>
+              {targetFields.map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
       )}
 
       {/* Related records grid — how these records appear on the TARGET record's page. */}
