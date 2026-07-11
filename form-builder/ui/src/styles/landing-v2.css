@@ -2735,76 +2735,12 @@
 }
 
 /* ── Light-mode hero band ─────────────────────────────────────────────────
-   The nav + hero + proof strip follow the theme toggle (the rest of the dark
-   bands — Aokie, Desktop, footer — stay deliberately dark in both themes).
-   Same composition as the dark hero: the purple/blue glows and the grid
-   overlay survive at light alphas, and the product-scene window stays the
-   dark navy console — a screenshot of the real product floating on light. */
-
-:root:not(.dark) .lv2-nav {
-  border-bottom-color: rgba(16, 24, 43, 0.08);
-  background: rgba(255, 255, 255, 0.85);
-  color: #10182b;
-}
-
-:root:not(.dark) .lv2-nav .lv2-mark {
-  color: #10182b;
-}
-
-:root:not(.dark) .lv2-nav__links a {
-  color: #55607a;
-}
-
-:root:not(.dark) .lv2-nav__links a:hover {
-  color: #10182b;
-}
-
-:root:not(.dark) .lv2-nav__signin {
-  color: #55607a;
-}
-
-:root:not(.dark) .lv2-nav__signin:hover {
-  color: #10182b;
-}
-
-:root:not(.dark) .lv2-nav__star,
-:root:not(.dark) .lv2-nav__theme {
-  border-color: rgba(16, 24, 43, 0.14);
-  color: #55607a;
-}
-
-:root:not(.dark) .lv2-nav__star:hover,
-:root:not(.dark) .lv2-nav__theme:hover {
-  border-color: rgba(16, 24, 43, 0.3);
-  color: #10182b;
-}
-
-:root:not(.dark) .lv2-nav__cta {
-  border-color: #10182b;
-  background: #10182b;
-  color: #ffffff;
-}
-
-:root:not(.dark) .lv2-nav__cta:hover {
-  background: #1d2947;
-  border-color: #1d2947;
-  color: #ffffff;
-}
-
-:root:not(.dark) .lv2-nav__menu {
-  border-color: rgba(16, 24, 43, 0.15);
-  color: #10182b;
-}
-
-@media (max-width: 899px) {
-  :root:not(.dark) .lv2-nav__links {
-    border-bottom-color: rgba(16, 24, 43, 0.08);
-    background: rgba(255, 255, 255, 0.98);
-  }
-  :root:not(.dark) .lv2-nav__links a {
-    border-bottom-color: rgba(16, 24, 43, 0.06);
-  }
-}
+   The hero + proof strip follow the theme toggle; the NAV stays fixed-dark
+   in both themes (a dark bar over the light page, by choice), as do the
+   other dark bands — Aokie and the footer. Same composition as the dark
+   hero: the purple/blue glows and the grid overlay survive at light alphas,
+   and the product-scene window stays the dark navy console — a screenshot
+   of the real product floating on light. */
 
 :root:not(.dark) .lv2-hero {
   background:
