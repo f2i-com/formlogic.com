@@ -918,10 +918,10 @@ export function AppFormView() {
 
   // Use refs to avoid stale closure when handleSubmit is called from memoized handleNext
   const answersRef = useRef(answers);
-  // eslint-disable-next-line react-hooks/refs -- mirror ref for latest value in callbacks; not read during render output
+   
   answersRef.current = answers;
   const calculatedRef = useRef(calculatedValues);
-  // eslint-disable-next-line react-hooks/refs -- mirror ref for latest value in callbacks; not read during render output
+   
   calculatedRef.current = calculatedValues;
 
   const submittingRef = useRef(false);

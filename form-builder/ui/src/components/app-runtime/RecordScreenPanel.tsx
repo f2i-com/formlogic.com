@@ -1,5 +1,6 @@
 import { LayoutTemplate } from 'lucide-react';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
+import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { getSdkScreen } from '../custom-screen/sdkScreenRegistry';
 import { api } from '../../lib/api';
 import type { RecordScreen } from '../../types/form';
@@ -31,12 +32,13 @@ export function RecordScreenPanel({
 }) {
   let body: React.ReactNode = null;
   if (screen.kind === 'sdk') {
-    const Comp = screen.screenId ? getSdkScreen(screen.screenId) : undefined;
     // An unregistered id renders nothing rather than a broken card (old client, renamed screen).
-    if (!Comp) return null;
+    // Existence-checked here as a plain value; SdkScreenRuntime does the actual (error-bounded)
+    // registry render so no component is created during THIS render.
+    if (!screen.screenId || !getSdkScreen(screen.screenId)) return null;
     body = (
       <div className="p-5">
-        <Comp params={screen.params} recordContext={{ appSlug, formId, responseId, record }} />
+        <SdkScreenRuntime screenId={screen.screenId} params={screen.params} recordContext={{ appSlug, formId, responseId, record }} />
       </div>
     );
   } else if (screen.kind === 'code') {

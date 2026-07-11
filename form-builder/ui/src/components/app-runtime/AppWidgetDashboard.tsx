@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import { WidgetDashboard, allowsManualNewRecord, type WidgetDataForm } from './WidgetDashboard';
+import { WidgetDashboard, type WidgetDataForm } from './WidgetDashboard';
+import { allowsManualNewRecord } from './widgetData';
 import { AppDashboard } from './AppDashboard';
 import type { DashboardScreen } from '../../types/app';
 

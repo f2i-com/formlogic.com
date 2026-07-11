@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { MessagesSquare } from 'lucide-react';
 import { api } from '../../../lib/api';
 import type { RelatedRecordGroup } from '../../../lib/api';
-import { describeSpeaker, turnBubble } from './AokieLiveCallScreen';
+import { describeSpeaker, turnBubble } from './callBubbles';
 import type { SdkRecordContext } from '../sdkScreenRegistry';
 
 /**

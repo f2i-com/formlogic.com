@@ -43,12 +43,6 @@ function isTimeAware(w: DashboardWidget): boolean {
 /** Chart types whose marks drill into the records view (KPI/table have no clickable category marks). */
 const DRILL_VIZ = new Set(['bar', 'pie', 'donut', 'line', 'area']);
 
-/** Mirrors AppDataTable's gate: a form whose custom screen sets allowNewResponses=false takes
- *  records only from flows/app logic, so "new record" affordances (incl. Quick actions) skip it. */
-export function allowsManualNewRecord(f: { customScreen?: { allowNewResponses?: boolean } | null }): boolean {
-  return f.customScreen?.allowNewResponses !== false;
-}
-
 export interface WidgetDashboardProps extends WidgetDataDeps {
   dashboard: DashboardScreen;
   scope: 'app' | 'form' | 'public';
@@ -183,17 +177,6 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     };
   };
 
-  if (widgets.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-center text-gray-400 dark:text-slate-500">
-        <LayoutGrid className="h-8 w-8 mb-3" />
-        <p className="text-sm">This dashboard has no widgets yet.</p>
-      </div>
-    );
-  }
-
-  const primaryColor = scope === 'app' ? undefined : accent;
-
   // Quick-actions widgets grow to fit every button instead of scrolling: the widget reports its
   // natural content height, we translate that into extra grid rows and shift everything below it
   // down by the same amount — so the box expands without overlapping neighbours.
@@ -216,6 +199,17 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     }
     return new Map(entries.map((e) => [e.id, e]));
   }, [widgets, actionsExtra]);
+
+  if (widgets.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center text-gray-400 dark:text-slate-500">
+        <LayoutGrid className="h-8 w-8 mb-3" />
+        <p className="text-sm">This dashboard has no widgets yet.</p>
+      </div>
+    );
+  }
+
+  const primaryColor = scope === 'app' ? undefined : accent;
 
   const cellStyle = (w: DashboardWidget): CSSProperties => {
     const wSpan = Math.max(1, Math.min(w.layout.w || 1, cols));

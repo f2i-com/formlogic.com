@@ -5,7 +5,7 @@ import { DynamicIcon } from '../ui/DynamicIcon';
 import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import { allowsManualNewRecord } from './WidgetDashboard';
+import { allowsManualNewRecord } from './widgetData';
 import { api } from '../../lib/api';
 import { cn, parseServerDate, formatRelativeTime } from '../../lib/utils';
 import type { AppRuntimeForm, AppSettings } from '../../types/app';

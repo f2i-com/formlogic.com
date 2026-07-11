@@ -5,7 +5,8 @@ import { AppWidgetDashboard } from './AppWidgetDashboard';
 import { AppDashboard } from './AppDashboard';
 import { DashboardBuilder } from './DashboardBuilder';
 import type { DashboardScreen } from '../../types/app';
-import { allowsManualNewRecord, type WidgetDataForm } from './WidgetDashboard';
+import type { WidgetDataForm } from './WidgetDashboard';
+import { allowsManualNewRecord } from './widgetData';
 
 /**
  * The app home: renders the configurable widget dashboard (or the built-in pulse when there are no

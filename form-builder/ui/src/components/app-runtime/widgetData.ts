@@ -7,6 +7,12 @@ export const GRID_ROW = 116;
 export const GRID_GAP = 16;
 export const DEFAULT_COLS = 12;
 
+/** Mirrors AppDataTable's gate: a form whose custom screen sets allowNewResponses=false takes
+ *  records only from flows/app logic, so "new record" affordances (incl. Quick actions) skip it. */
+export function allowsManualNewRecord(f: { customScreen?: { allowNewResponses?: boolean } | null }): boolean {
+  return f.customScreen?.allowNewResponses !== false;
+}
+
 export interface WidgetDataForm {
   formId: string;
   displayName: string;

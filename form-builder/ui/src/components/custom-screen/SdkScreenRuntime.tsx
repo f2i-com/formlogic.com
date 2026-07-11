@@ -14,7 +14,7 @@
 //                   package trust gate (spec §29.6) could widen this to verified publishers.
 import { Component, createElement, type ReactNode } from 'react';
 import { EmptyState, useCurrentApp, useForms, useOfflineQueue, useRuntimeEnvironment } from '../../sdk';
-import { getSdkScreen, registerSdkScreen } from './sdkScreenRegistry';
+import { getSdkScreen, registerSdkScreen, type SdkRecordContext } from './sdkScreenRegistry';
 import { AokieLiveCallScreen } from './aokie/AokieLiveCallScreen';
 import { AokiePairingScreen } from './aokie/AokiePairingScreen';
 import { AokieCallTranscriptScreen } from './aokie/AokieCallTranscriptScreen';
@@ -32,8 +32,9 @@ class ScreenErrorBoundary extends Component<{ fallback: ReactNode; children: Rea
   }
 }
 
-/** Render a registered SDK screen with an error boundary + a clear fallback when it's missing/fails. */
-export function SdkScreenRuntime({ screenId, params }: { screenId: string; params?: Record<string, unknown> }) {
+/** Render a registered SDK screen with an error boundary + a clear fallback when it's missing/fails.
+ *  `recordContext` is set when the screen renders as a RECORD widget (customScreen.recordScreen). */
+export function SdkScreenRuntime({ screenId, params, recordContext }: { screenId: string; params?: Record<string, unknown>; recordContext?: SdkRecordContext }) {
   // Looked up from a stable registry (Map) — NOT a component created per render; render via
   // createElement with a lowercase binding so it reads as a value, not a locally-defined component.
   const screen = getSdkScreen(screenId);
@@ -42,7 +43,7 @@ export function SdkScreenRuntime({ screenId, params }: { screenId: string; param
   }
   return (
     <ScreenErrorBoundary fallback={<EmptyState title="This screen ran into a problem" message="Please try again later." />}>
-      {createElement(screen, { params })}
+      {createElement(screen, { params, recordContext })}
     </ScreenErrorBoundary>
   );
 }
