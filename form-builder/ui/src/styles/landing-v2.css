@@ -672,6 +672,9 @@
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 22px;
   overflow: hidden;
+  /* The console window is fixed-dark in BOTH themes, so it must not inherit the
+     hero's text color (near-black in light mode) — pin its own. */
+  color: #ffffff;
   background: rgba(18, 26, 47, 0.92);
   box-shadow: 0 34px 90px -30px rgba(0, 0, 0, 0.76), inset 0 1px rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(18px);
@@ -2870,4 +2873,9 @@
   :root:not(.dark) .lv2-proof-strip > span {
     border-bottom-color: rgba(16, 24, 43, 0.08);
   }
+}
+
+:root:not(.dark) .lv2-scene__window {
+  background: #121a2f;
+  box-shadow: 0 34px 90px -34px rgba(16, 24, 43, 0.45), inset 0 1px rgba(255, 255, 255, 0.06);
 }
