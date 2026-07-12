@@ -157,13 +157,20 @@ class AppDataExportService
                     'description' => $form['description'] ?? '',
                     'sqliteFile' => null,
                     'responseCount' => 0,
-                    'fields' => array_map(static fn ($f) => [
-                        'id' => $f['id'] ?? '',
-                        'type' => $f['type'] ?? '',
-                        'label' => $f['label'] ?? '',
-                        'required' => (bool) ($f['required'] ?? false),
-                        'options' => $f['properties']['options'] ?? null,
-                    ], $form['fields'] ?? []),
+                    'fields' => array_map(static function ($f) {
+                        $entry = [
+                            'id' => $f['id'] ?? '',
+                            'type' => $f['type'] ?? '',
+                            'label' => $f['label'] ?? '',
+                            'required' => (bool) ($f['required'] ?? false),
+                            'options' => $f['properties']['options'] ?? null,
+                        ];
+                        if (($f['type'] ?? '') === 'linked_record') {
+                            $entry['targetFormId'] = $f['properties']['targetFormId'] ?? null;
+                            $entry['allowMultiple'] = (bool) ($f['properties']['allowMultiple'] ?? false);
+                        }
+                        return $entry;
+                    }, $form['fields'] ?? []),
                 ];
 
                 if ($this->sqlite->formDatabaseExists($formId)) {
@@ -292,13 +299,22 @@ TXT;
             throw new \InvalidArgumentException('Unknown SQL dialect');
         }
         $exportForms = $this->exportForms($app);
+        $tableByFormId = [];
+        foreach ($exportForms as $ef) {
+            $tableByFormId[(string) $ef['form']['id']] = $ef['table'];
+        }
+        $usedTables = array_fill_keys(array_values($tableByFormId), true);
 
         $sink('-- FormLogic app data export — ' . ($dialect === 'mysql' ? 'MySQL' : 'SQL Server') . ' dialect', false);
         $sink('-- App: ' . str_replace(["\r", "\n"], ' ', (string) ($app['name'] ?? '')) . ' (' . ($app['slug'] ?? '') . ')', false);
         $sink('-- Exported (UTC): ' . gmdate('Y-m-d H:i:s'), false);
         $sink('-- One table per form; one row per record. submitted_at / updated_at are UTC.', false);
         $sink('-- Zone-less datetime answers are the wall-clock time the respondent picked.', false);
-        $sink('-- Multi-value answers (checkboxes, files, locations, links) are JSON text.', false);
+        $sink('-- Multi-value answers (checkboxes, files, locations) are JSON text.', false);
+        $sink('-- Relations: single linked-record fields are FOREIGN KEY columns; multi-link', false);
+        $sink('-- fields also get a <table>_<field>_links junction table (source_id, target_id,', false);
+        $sink('-- position). Constraints are added LAST without validating existing rows, so a', false);
+        $sink('-- dangling link (deleted target) never blocks the load.', false);
         $sink('', false);
         if ($dialect === 'mysql') {
             $sink('SET NAMES utf8mb4', true);
@@ -306,22 +322,36 @@ TXT;
             $sink('', false);
         }
 
+        $fkAlters = [];
         foreach ($exportForms as $ef) {
-            $this->dumpFormTable($ef, $dialect, $sink);
+            $this->dumpFormTable($ef, $dialect, $sink, $tableByFormId, $usedTables, $fkAlters);
         }
 
+        if ($fkAlters !== []) {
+            $sink('-- Relations (added last so table order and dangling links never block the load)', false);
+            foreach ($fkAlters as $alter) {
+                $sink($alter, true);
+            }
+            $sink('', false);
+        }
         if ($dialect === 'mysql') {
             $sink('SET FOREIGN_KEY_CHECKS = 1', true);
         }
     }
 
-    /** @param array{form: array, table: string, displayName: string} $ef */
-    private function dumpFormTable(array $ef, string $dialect, callable $sink): void
+    /**
+     * @param array{form: array, table: string, displayName: string} $ef
+     * @param array<string,string> $tableByFormId export table name per form id
+     * @param array<string,true> $usedTables all table names claimed so far (junction names join it)
+     * @param string[] $fkAlters collected ALTER TABLE … FOREIGN KEY statements (emitted last)
+     */
+    private function dumpFormTable(array $ef, string $dialect, callable $sink, array $tableByFormId, array &$usedTables, array &$fkAlters): void
     {
         $form = $ef['form'];
         $formId = (string) $form['id'];
         $table = $ef['table'];
         $q = fn (string $ident): string => $dialect === 'mysql' ? "`{$ident}`" : "[{$ident}]";
+        $tq = fn (string $t): string => $dialect === 'mysql' ? "`{$t}`" : "[dbo].[{$t}]";
 
         $db = $this->sqlite->formDatabaseExists($formId) ? $this->sqlite->getFormDatabase($formId) : null;
 
@@ -338,11 +368,21 @@ TXT;
             if (in_array($type, ['statement', 'welcome_screen', 'thank_you'], true)) {
                 continue;
             }
+            $link = null;
+            if ($type === 'linked_record') {
+                $targetFormId = (string) ($f['properties']['targetFormId'] ?? '');
+                $link = [
+                    'targetFormId' => $targetFormId,
+                    'targetTable' => $tableByFormId[$targetFormId] ?? null,
+                    'multi' => (bool) ($f['properties']['allowMultiple'] ?? false),
+                ];
+            }
             $fieldCols[] = [
                 'column' => $this->uniqueName($this->sqlName((string) ($f['id'] ?? ''), 'field'), $used),
                 'fieldId' => (string) ($f['id'] ?? ''),
                 'type' => $type,
                 'label' => (string) ($f['label'] ?? ''),
+                'link' => $link,
             ];
         }
         $computedCols = [];
@@ -367,7 +407,12 @@ TXT;
             $comment = $dialect === 'mysql'
                 ? ' COMMENT ' . $this->mysqlString($c['label'] !== '' ? $c['label'] : $c['fieldId'])
                 : '';
-            $lines[] = "  {$q($c['column'])} {$this->columnType($c['type'], $dialect)} NULL{$comment}";
+            // A single linked-record holds ONE target response id → a real,
+            // FK-able key column. Multi links stay JSON (junction table below).
+            $colType = ($c['link'] !== null && !$c['link']['multi'])
+                ? ($dialect === 'mysql' ? 'VARCHAR(36)' : 'NVARCHAR(36)')
+                : $this->columnType($c['type'], $dialect);
+            $lines[] = "  {$q($c['column'])} {$colType} NULL{$comment}";
         }
         foreach ($computedCols as $c) {
             $comment = $dialect === 'mysql' ? ' COMMENT ' . $this->mysqlString('script-computed: ' . $c['name']) : '';
@@ -381,6 +426,59 @@ TXT;
         $create = "CREATE TABLE " . ($dialect === 'mysql' ? $q($table) : "[dbo].[{$table}]") . " (\n" . implode(",\n", $lines) . "\n)"
             . ($dialect === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '');
         $sink($create, true);
+
+        // Relations. Single links: an FK straight on the column. Multi links: a
+        // junction table (source_id, target_id, position). Constraints land in
+        // $fkAlters (emitted after ALL tables + data, unvalidated) so table
+        // order and dangling links never block the load. A link whose target
+        // form isn't part of this app is documented but not constrained.
+        $junctions = [];
+        foreach ($fieldCols as $i => $c) {
+            if ($c['link'] === null) {
+                continue;
+            }
+            if ($c['link']['targetTable'] === null) {
+                $sink("-- note: {$table}.{$c['column']} references form {$c['link']['targetFormId']}, which is not part of this app — no constraint emitted", false);
+                continue;
+            }
+            $target = $c['link']['targetTable'];
+            if (!$c['link']['multi']) {
+                $fkAlters[] = $dialect === 'mysql'
+                    ? "ALTER TABLE {$tq($table)} ADD CONSTRAINT `fk_{$table}_{$c['column']}` FOREIGN KEY ({$q($c['column'])}) REFERENCES {$tq($target)} (`id`)"
+                    : "ALTER TABLE {$tq($table)} WITH NOCHECK ADD CONSTRAINT [fk_{$table}_{$c['column']}] FOREIGN KEY ({$q($c['column'])}) REFERENCES {$tq($target)} ([id])";
+                continue;
+            }
+            $jt = $this->uniqueName($this->sqlName($table . '_' . $c['column'] . '_links', 'links'), $usedTables);
+            $junctions[$i] = ['table' => $jt, 'rows' => []];
+            if ($dialect === 'mysql') {
+                $sink("DROP TABLE IF EXISTS {$q($jt)}", true);
+                $sink("CREATE TABLE {$q($jt)} (\n  `source_id` VARCHAR(36) NOT NULL,\n  `target_id` VARCHAR(36) NOT NULL,\n  `position` INT NOT NULL,\n  PRIMARY KEY (`source_id`, `position`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", true);
+                $fkAlters[] = "ALTER TABLE {$q($jt)} ADD CONSTRAINT `fk_{$jt}_source` FOREIGN KEY (`source_id`) REFERENCES {$tq($table)} (`id`)";
+                $fkAlters[] = "ALTER TABLE {$q($jt)} ADD CONSTRAINT `fk_{$jt}_target` FOREIGN KEY (`target_id`) REFERENCES {$tq($target)} (`id`)";
+            } else {
+                $sink("IF OBJECT_ID(N'dbo.{$jt}', N'U') IS NOT NULL DROP TABLE [dbo].[{$jt}]", true);
+                $sink("CREATE TABLE [dbo].[{$jt}] (\n  [source_id] NVARCHAR(36) NOT NULL,\n  [target_id] NVARCHAR(36) NOT NULL,\n  [position] INT NOT NULL,\n  PRIMARY KEY ([source_id], [position])\n)", true);
+                $fkAlters[] = "ALTER TABLE [dbo].[{$jt}] WITH NOCHECK ADD CONSTRAINT [fk_{$jt}_source] FOREIGN KEY ([source_id]) REFERENCES {$tq($table)} ([id])";
+                $fkAlters[] = "ALTER TABLE [dbo].[{$jt}] WITH NOCHECK ADD CONSTRAINT [fk_{$jt}_target] FOREIGN KEY ([target_id]) REFERENCES {$tq($target)} ([id])";
+            }
+        }
+        $flushJunctions = function () use (&$junctions, $dialect, $sink, $q): void {
+            foreach ($junctions as &$j) {
+                if ($j['rows'] === []) {
+                    continue;
+                }
+                $head = 'INSERT INTO ' . ($dialect === 'mysql' ? $q($j['table']) : "[dbo].[{$j['table']}]")
+                    . ($dialect === 'mysql'
+                        ? ' (`source_id`, `target_id`, `position`)'
+                        : ' ([source_id], [target_id], [position])')
+                    . " VALUES\n";
+                foreach (array_chunk($j['rows'], self::INSERT_BATCH) as $chunk) {
+                    $sink($head . implode(",\n", $chunk), true);
+                }
+                $j['rows'] = [];
+            }
+            unset($j);
+        };
 
         if ($db === null) {
             $sink('', false);
@@ -418,8 +516,29 @@ TXT;
                     $this->stringLiteral((string) $row['id'], $dialect),
                     $this->stringLiteral((string) ($row['status'] ?? 'submitted'), $dialect),
                 ];
-                foreach ($fieldCols as $c) {
-                    $vals[] = $this->sqlValue($answers[$c['fieldId']] ?? null, $c['type'], $dialect);
+                foreach ($fieldCols as $i => $c) {
+                    $v = $answers[$c['fieldId']] ?? null;
+                    if ($c['link'] !== null && !$c['link']['multi']) {
+                        // Single link: one target id in a key column (a stray
+                        // array from legacy data collapses to its first entry).
+                        if (is_array($v)) {
+                            $v = $v[0] ?? null;
+                        }
+                        $vals[] = (is_string($v) && $v !== '') ? $this->stringLiteral($v, $dialect) : 'NULL';
+                        continue;
+                    }
+                    if ($c['link'] !== null && isset($junctions[$i])) {
+                        // Multi link: junction rows alongside the JSON column.
+                        $ids = is_array($v) ? $v : ($v !== null && $v !== '' ? [$v] : []);
+                        $pos = 0;
+                        foreach ($ids as $targetId) {
+                            if (is_string($targetId) && $targetId !== '') {
+                                $junctions[$i]['rows'][] = '(' . $this->stringLiteral((string) $row['id'], $dialect)
+                                    . ', ' . $this->stringLiteral($targetId, $dialect) . ', ' . $pos++ . ')';
+                            }
+                        }
+                    }
+                    $vals[] = $this->sqlValue($v, $c['type'], $dialect);
                 }
                 foreach ($computedCols as $c) {
                     $vals[] = $this->sqlValue($computedByResponse[$row['id']][$c['name']] ?? null, 'computed', $dialect);
@@ -437,10 +556,12 @@ TXT;
                     $rowsBuffer = [];
                 }
             }
+            $flushJunctions();
         }
         if ($rowsBuffer !== []) {
             $sink($insertHead . implode(",\n", $rowsBuffer), true);
         }
+        $flushJunctions();
         $sink('', false);
     }
 

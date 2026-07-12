@@ -107,7 +107,14 @@ class AppDataExportTest extends TestCase
         $this->f1 = (string) $f1['id'];
         $f2 = self::$forms->createForm([
             'title' => 'Job Sheets', 'userId' => $this->userId, 'status' => 'published', // duplicate title → table name deduped
-            'fields' => [['id' => 'note', 'type' => 'long_text', 'label' => 'Note', 'required' => false]],
+            'fields' => [
+                ['id' => 'note', 'type' => 'long_text', 'label' => 'Note', 'required' => false],
+                // Single link → FK column; multi link → junction table.
+                ['id' => 'job', 'type' => 'linked_record', 'label' => 'Job', 'required' => false,
+                 'properties' => ['targetFormId' => $this->f1, 'displayFieldIds' => ['customer']]],
+                ['id' => 'related_jobs', 'type' => 'linked_record', 'label' => 'Related jobs', 'required' => false,
+                 'properties' => ['targetFormId' => $this->f1, 'displayFieldIds' => ['customer'], 'allowMultiple' => true]],
+            ],
         ]);
         $this->f2 = (string) $f2['id'];
 
@@ -124,10 +131,20 @@ class AppDataExportTest extends TestCase
             'status' => 'open',
         ]], null);
         self::$responses->createResponse($this->f1, ['answers' => ['customer' => 'Beta', 'hours' => 2]], null);
-        self::$responses->createResponse($this->f2, ['answers' => ['note' => 'hello']], null);
 
         $db = self::$sqlite->getFormDatabase($this->f1);
         $ids = $db->query('SELECT id FROM responses ORDER BY rowid')->fetchAll(PDO::FETCH_COLUMN);
+
+        // f2's record links to BOTH f1 records (multi) + the first one (single);
+        // a second record carries a DANGLING single link — the load must survive it.
+        self::$responses->createResponse($this->f2, ['answers' => [
+            'note' => 'hello',
+            'job' => $ids[0],
+            'related_jobs' => [$ids[0], $ids[1]],
+        ]], null);
+        self::$responses->createResponse($this->f2, ['answers' => [
+            'note' => 'dangling', 'job' => 'no-such-record-0000',
+        ]], null);
         $db->prepare('INSERT INTO computed (response_id, field_name, field_value) VALUES (?, ?, ?)')
             ->execute([$ids[0], 'quote_total', json_encode(180.5)]);
         $db->prepare('INSERT INTO tags (response_id, tag) VALUES (?, ?)')->execute([$ids[0], 'vip']);
@@ -142,8 +159,13 @@ class AppDataExportTest extends TestCase
         if (self::$pdo === null) {
             return;
         }
-        foreach ($this->createdTables as $t) {
-            self::$pdo->exec("DROP TABLE IF EXISTS `{$t}`");
+        if ($this->createdTables !== []) {
+            // The dump adds FK constraints between these tables — drop with checks off.
+            self::$pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
+            foreach ($this->createdTables as $t) {
+                self::$pdo->exec("DROP TABLE IF EXISTS `{$t}`");
+            }
+            self::$pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
         }
         if ($this->userId !== '') {
             $owned = self::$pdo->prepare('SELECT id FROM apps WHERE owner_id = ?');
@@ -207,7 +229,7 @@ class AppDataExportTest extends TestCase
         });
 
         // Register the tables for cleanup BEFORE executing (so a failure still drops).
-        $this->createdTables = ['job_sheets', 'job_sheets_2'];
+        $this->createdTables = ['job_sheets', 'job_sheets_2', 'job_sheets_2_related_jobs_links'];
         foreach ($statements as $sql) {
             self::$pdo->exec($sql);
         }
@@ -233,7 +255,40 @@ class AppDataExportTest extends TestCase
         $this->assertSame(['vip'], json_decode((string) $first['tags'], true));
 
         $count2 = (int) self::$pdo->query('SELECT COUNT(*) FROM `job_sheets_2`')->fetchColumn();
-        $this->assertSame(1, $count2);
+        $this->assertSame(2, $count2);
+
+        // Relations: the single link landed as a REAL foreign key on the column…
+        $fk = self::$pdo->prepare(
+            "SELECT REFERENCED_TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'job_sheets_2' AND COLUMN_NAME = 'job'
+               AND REFERENCED_TABLE_NAME IS NOT NULL"
+        );
+        $fk->execute();
+        $this->assertSame('job_sheets', $fk->fetchColumn(), 'job column is FK to job_sheets');
+
+        // …and a JOIN through it resolves the linked record.
+        $joined = self::$pdo->query(
+            "SELECT p.customer FROM `job_sheets_2` c JOIN `job_sheets` p ON p.id = c.job WHERE c.note = 'hello'"
+        )->fetchColumn();
+        $this->assertStringStartsWith("O'Brien", (string) $joined);
+
+        // The multi link produced an ordered junction table with FKs both ways.
+        $links = self::$pdo->query(
+            'SELECT source_id, target_id, position FROM `job_sheets_2_related_jobs_links` ORDER BY position'
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(2, $links);
+        $this->assertSame([0, 1], array_map('intval', array_column($links, 'position')));
+        $jfk = self::$pdo->prepare(
+            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'job_sheets_2_related_jobs_links'
+               AND REFERENCED_TABLE_NAME IS NOT NULL"
+        );
+        $jfk->execute();
+        $this->assertSame(2, (int) $jfk->fetchColumn(), 'junction has source + target FKs');
+
+        // The DANGLING link row still loaded (constraints are added unvalidated).
+        $dangling = self::$pdo->query("SELECT job FROM `job_sheets_2` WHERE note = 'dangling'")->fetchColumn();
+        $this->assertSame('no-such-record-0000', $dangling);
     }
 
     public function testMssqlDumpHasTSqlShape(): void
@@ -254,6 +309,10 @@ class AppDataExportTest extends TestCase
         $this->assertStringContainsString('DATETIME2', $chunks);
         // Quote escaping is quote-doubling, with the N unicode prefix.
         $this->assertStringContainsString("N'O''Brien & Sons", $chunks);
+        // Relations arrive as unvalidated T-SQL constraints + a junction table.
+        $this->assertStringContainsString('ALTER TABLE [dbo].[job_sheets_2] WITH NOCHECK ADD CONSTRAINT [fk_job_sheets_2_job] FOREIGN KEY ([job]) REFERENCES [dbo].[job_sheets] ([id])', $chunks);
+        $this->assertStringContainsString('CREATE TABLE [dbo].[job_sheets_2_related_jobs_links]', $chunks);
+        $this->assertStringContainsString('[fk_job_sheets_2_related_jobs_links_target] FOREIGN KEY ([target_id]) REFERENCES [dbo].[job_sheets] ([id])', $chunks);
         // No MySQL-isms in the T-SQL dialect.
         $this->assertStringNotContainsString('ENGINE=InnoDB', $chunks);
         $this->assertStringNotContainsString('SET FOREIGN_KEY_CHECKS', $chunks);

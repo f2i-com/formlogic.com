@@ -7,8 +7,8 @@ type ExportFormat = 'sqlite' | 'mysql' | 'mssql';
 
 const EXPORT_OPTIONS: Array<{ format: ExportFormat; label: string; hint: string; icon: typeof FileArchive }> = [
   { format: 'sqlite', label: 'SQLite bundle (.zip)', hint: 'Per-form databases + schema.json + files', icon: FileArchive },
-  { format: 'mysql', label: 'MySQL dump (.sql)', hint: 'Forms as tables, records as rows', icon: FileCode2 },
-  { format: 'mssql', label: 'SQL Server dump (.sql)', hint: 'Same tables in T-SQL', icon: FileCode2 },
+  { format: 'mysql', label: 'MySQL dump (.sql)', hint: 'Tables, records + foreign-key relations', icon: FileCode2 },
+  { format: 'mssql', label: 'SQL Server dump (.sql)', hint: 'Same tables + relations in T-SQL', icon: FileCode2 },
 ];
 
 /**
