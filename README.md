@@ -83,7 +83,7 @@ Two installers live in `form-builder/`. Both create the `.env` files, generate s
 
 ```bash
 git clone git@github.com:f2i-com/formlogic.com.git
-cd formlogic-app
+cd formlogic.com
 
 # 1. Create the database (the app creates the tables on first request)
 mysql -u root -p -e "CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
@@ -241,7 +241,7 @@ There are also bundled **sample apps** (Apps → "Try a sample app"): a CRM, an 
 | Auth | HttpOnly cookie sessions (JWT-signed) + scoped API keys + ephemeral MCP tokens |
 
 ```
-formlogic-app/
+formlogic.com/
 ├── DEPLOYMENT.md                  # Production launch checklist & operations
 ├── docs/                          # Design docs, API & MCP reference (below)
 └── form-builder/

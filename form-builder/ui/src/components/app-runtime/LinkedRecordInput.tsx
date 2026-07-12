@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { Search, X, Loader2, ChevronDown, Check } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { LinkedRecord } from '../../lib/api';
-import { cn, parseServerDate } from '../../lib/utils';
+import { cn } from '../../lib/utils';
+import { useDisplayTimezone, formatDateInZone } from '../../lib/timezone';
 
 interface LinkedRecordInputProps {
   formId: string;
@@ -33,6 +34,7 @@ export function LinkedRecordInput({
 }: LinkedRecordInputProps) {
   const storeLookup = useAppRuntimeStore((s) => s.lookupRecords);
   const lookup = lookupProp ?? storeLookup;
+  const tz = useDisplayTimezone();
   const listId = useId();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<LinkedRecord[]>([]);
@@ -305,7 +307,7 @@ export function LinkedRecordInput({
                     <span className={cn('font-medium', isSelected && 'font-semibold')}>{record.display}</span>
                     {record.submittedAt && (
                       <span className="block text-xs text-gray-400 dark:text-slate-500 mt-0.5">
-                        {parseServerDate(record.submittedAt).toLocaleDateString()}
+                        {formatDateInZone(record.submittedAt, tz)}
                       </span>
                     )}
                   </span>

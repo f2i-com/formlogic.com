@@ -36,7 +36,7 @@ http://localhost/<your-folder>/form-builder/install.php
 For the default checkout under your web root that's:
 
 ```
-http://localhost/formlogic-app/form-builder/install.php
+http://localhost/formlogic.com/form-builder/install.php
 ```
 
 The wizard checks requirements and file permissions (fixing what it can — including the Linux `qjs` execute bit), tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding, and prints cron lines for the maintenance CLIs. On an already-installed deployment it instead offers an **"Upgrade existing installation"** mode (same guarded migrations as `backend/bin/upgrade.php`; requires `INSTALL_ENABLE=1` since the wizard locks itself once installed). The wizard also ships at the root of the release zip (`install.php` beside `api/`). **Delete `install.php` when done.**
@@ -57,7 +57,7 @@ The script verifies prerequisites, runs `composer install`, creates `backend/.en
 
 ```bash
 git clone git@github.com:f2i-com/formlogic.com.git
-cd formlogic-app/form-builder
+cd formlogic.com/form-builder
 ```
 
 #### 2. Backend

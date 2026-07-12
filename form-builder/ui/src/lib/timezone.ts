@@ -9,7 +9,9 @@ import { useAuthStore } from '../stores/authStore';
  * they're SHOWN: an owner in Sydney and a member in London viewing the same
  * call should each see it in their own clock. The display zone resolves in a
  * clear order — the viewing member's own account timezone wins, else the app's
- * configured timezone (set by / defaulted from its creator), else UTC.
+ * configured timezone (set by / defaulted from its creator), else the
+ * browser's own zone, else UTC. (An EXPLICIT "UTC" setting still wins — the
+ * browser only fills in when nothing is configured.)
  */
 
 /** Resolve the timezone to render in: member override → app default → UTC. */
@@ -26,8 +28,9 @@ export function resolveDisplayTimezone(
 
 /**
  * The timezone the CURRENT app-runtime member should see record times in:
- * their own account timezone, else the app's configured timezone, else UTC.
- * A hook so record views re-render if either changes (profile edit / settings).
+ * their own account timezone, else the app's configured timezone, else the
+ * BROWSER's zone, else UTC. A hook so record views re-render if either
+ * changes (profile edit / settings).
  */
 export function useDisplayTimezone(): string {
   // The live account timezone (updates reactively when the member saves it in
@@ -35,7 +38,9 @@ export function useDisplayTimezone(): string {
   const liveTz = useAuthStore((s) => s.user?.timezone);
   const memberTz = useAppRuntimeStore((s) => s.memberTimezone);
   const appTz = useAppRuntimeStore((s) => s.config?.app?.settings?.timezone);
-  return resolveDisplayTimezone(liveTz ?? memberTz, appTz);
+  // With no member and no app zone configured, show the viewer's own clock
+  // (an explicitly configured zone — including "UTC" — still wins above).
+  return resolveDisplayTimezone(liveTz ?? memberTz, (appTz ?? '').trim() || browserTimezone());
 }
 
 // ISO-8601 with a time component AND an explicit zone (Z or ±hh:mm). This is

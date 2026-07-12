@@ -2156,6 +2156,32 @@ class ApiClient {
     window.URL.revokeObjectURL(downloadUrl);
   }
 
+  /**
+   * Owner data export for an app: 'sqlite' = zip of per-form SQLite snapshots +
+   * schema.json + uploads; 'mysql' / 'mssql' = a relational .sql dump (forms as
+   * tables, records as rows). Triggers a browser download.
+   */
+  async exportAppData(appId: string, format: 'sqlite' | 'mysql' | 'mssql', filename = 'app'): Promise<void> {
+    // Raw fetch bypasses request() — record data is never exposed to acting admins.
+    if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
+    const response = await fetch(`${this.baseUrl}/apps/${appId}/export/data?format=${format}`, { credentials: 'include' });
+    if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
+      let message = 'Failed to export app data';
+      try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = format === 'sqlite' ? `${filename}-data.zip` : `${filename}-${format}.sql`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
   /** Import a .formlogic ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust. */
   async importApplicationPackage(file: File): Promise<ApiResponse<ApplicationPackageImportResult>> {
     const formData = new FormData();

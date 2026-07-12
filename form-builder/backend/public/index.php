@@ -576,6 +576,25 @@ $container->set(AppController::class, function (Container $c) {
     );
 });
 
+$container->set(\FormLogic\Services\AppDataExportService::class, function (Container $c) use ($settings) {
+    return new \FormLogic\Services\AppDataExportService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $settings['settings']['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads',
+        $c->get(LoggerInterface::class)
+    );
+});
+$container->set(\FormLogic\Controllers\AppDataExportController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppDataExportController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AppDataExportService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
 $container->set(AppUserController::class, function (Container $c) {
     return new AppUserController(
         $c->get(AppUserService::class),
@@ -2012,6 +2031,12 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     // Full .formlogic ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
     $group->get('/{id}/export/package', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportAppArchive($request, $response, $getArgs($request));
+    });
+    // Owner DATA export (Records page): ?format=sqlite (zip of per-form SQLite
+    // snapshots + schema.json + uploads) | mysql | mssql (forms as tables,
+    // records as rows). Owner-only; refused for the shared demo account.
+    $group->get('/{id}/export/data', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppDataExportController::class)->export($request, $response, $getArgs($request));
     });
 
     // Custom domains (owner-gated). One app → many domains; each verified via DNS TXT.

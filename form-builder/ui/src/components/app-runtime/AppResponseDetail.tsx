@@ -12,8 +12,8 @@ import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
 import { api, resolveFileUrl } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
-import { cn, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../../lib/utils';
-import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { cn, statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
+import { useDisplayTimezone, formatDateTimeInZone, formatDateInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { Badge } from '../ui/Badge';
 
 // Long/wide answer types span both columns of the detail grid.
@@ -279,7 +279,7 @@ export function AppResponseDetail() {
     ? formatDateTimeInZone(String(response.updatedAt), tz)
     : null;
   const submittedDateShort = response.submittedAt
-    ? parseServerDate(String(response.submittedAt)).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    ? formatDateInZone(String(response.submittedAt), tz)
     : null;
 
   const meta = (response.metadata ?? {}) as Record<string, unknown>;

@@ -22,7 +22,8 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api, resolveFileUrl } from '../lib/api';
 import { toast } from '../stores/toastStore';
-import { statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
+import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
+import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import type { Form } from '../types/form';
 
 interface RecordData {
@@ -59,6 +60,8 @@ function FormResponseView() {
   const { formId, responseId } = useParams<{ formId: string; responseId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  // Platform-chrome page: the signed-in user's account timezone, else their browser's.
+  const displayTz = useAccountTimezone();
   const storageMode = useFormStore((s) => s.storageMode);
   const getStoredForm = useFormStore((s) => s.getForm);
   const getLocalResponses = useResponseStore((s) => s.getResponsesByFormId);
@@ -277,30 +280,34 @@ function FormResponseView() {
           />
         ) : (
           <>
-            {/* Title row */}
-            <div className="flex flex-wrap items-center gap-3 mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight truncate max-w-full">
+            {/* Title row: title on the left (truncating), status + timestamp anchored
+                to the RIGHT so they don't jump around as record titles change length.
+                On phones the controls wrap onto their own line, left-aligned. */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-x-4 gap-y-2 mb-6">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0 sm:flex-1">
                 {recordTitle(form, record.answers)}
               </h1>
-              {storageMode === 'api' ? (
-                <select
-                  value={record.status || 'submitted'}
-                  onChange={(e) => changeStatus(e.target.value)}
-                  aria-label="Record status"
-                  className="px-2.5 py-1 rounded-lg text-sm border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
-                >
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>{formatStatusLabel(s)}</option>
-                  ))}
-                </select>
-              ) : (
-                <Badge variant={statusBadgeVariant(record.status || 'submitted')} className="rounded-full">
-                  {formatStatusLabel(record.status || 'submitted')}
-                </Badge>
-              )}
-              <span className="text-sm text-gray-400 dark:text-slate-500">
-                Submitted {parseServerDate(record.submittedAt).toLocaleString()}
-              </span>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:flex-shrink-0 sm:justify-end">
+                {storageMode === 'api' ? (
+                  <select
+                    value={record.status || 'submitted'}
+                    onChange={(e) => changeStatus(e.target.value)}
+                    aria-label="Record status"
+                    className="px-2.5 py-1 rounded-lg text-sm border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+                  >
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>{formatStatusLabel(s)}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <Badge variant={statusBadgeVariant(record.status || 'submitted')} className="rounded-full">
+                    {formatStatusLabel(record.status || 'submitted')}
+                  </Badge>
+                )}
+                <span className="text-sm text-gray-400 dark:text-slate-500 whitespace-nowrap">
+                  Submitted {formatDateTimeInZone(record.submittedAt, displayTz)}
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
@@ -328,10 +335,10 @@ function FormResponseView() {
                               ))}
                             </div>
                           ) : (
-                            formatValue(record.answers[field.id], field.type, field.properties?.options) === '-' ? (
+                            formatValue(record.answers[field.id], field.type, field.properties?.options, displayTz) === '-' ? (
                               <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
                             ) : (
-                              formatValue(record.answers[field.id], field.type, field.properties?.options)
+                              formatValue(record.answers[field.id], field.type, field.properties?.options, displayTz)
                             )
                           )}
                         </div>

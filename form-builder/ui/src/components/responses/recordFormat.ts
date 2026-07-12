@@ -2,6 +2,7 @@
 // so the responses table, the CSV export, the full-page record view (FormResponseView) and
 // the linked-record peek all render answers identically. Components live in recordDisplay.tsx
 // (kept separate so react fast-refresh sees component-only modules).
+import { browserTimezone, formatDateTimeInZone, isIsoDateTime } from '../../lib/timezone';
 // A linked_record value resolved server-side into a human label. `targetFormId` lets the
 // UI open the referenced record on demand (the owner owns it, so it's fetchable directly).
 export type ResolvedLink = { id: string; display: string; targetFormId?: string };
@@ -9,8 +10,10 @@ export type ResolvedLink = { id: string; display: string; targetFormId?: string 
 export const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'] as const;
 
 // Format a single answer for display. Pure over its args (no component state) so it's shared
-// by the table, the CSV export, the record view, and the linked-record peek.
-export function formatValue(value: unknown, fieldType?: string, options?: Array<{ value: string; label?: string }>): string {
+// by the table, the CSV export, the record view, and the linked-record peek. `tz` is the
+// viewer's display timezone for TRUE instants (ISO datetimes with a zone); zone-less
+// datetime-local answers are a wall clock the respondent picked and are never shifted.
+export function formatValue(value: unknown, fieldType?: string, options?: Array<{ value: string; label?: string }>, tz?: string): string {
   if (value === null || value === undefined) return '-';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   // File upload: show filenames
@@ -52,6 +55,11 @@ export function formatValue(value: unknown, fieldType?: string, options?: Array<
       const d = new Date(2000, 0, 1, h, m);
       return isNaN(d.getTime()) ? value : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     } else if (fieldType === 'datetime') {
+      // A full ISO instant (explicit zone) renders in the viewer's timezone;
+      // a zone-less datetime-local value is a wall clock — formatted verbatim.
+      if (isIsoDateTime(value)) {
+        return formatDateTimeInZone(value, tz || browserTimezone() || 'UTC');
+      }
       const d = new Date(value);
       return isNaN(d.getTime()) ? value : d.toLocaleString();
     }

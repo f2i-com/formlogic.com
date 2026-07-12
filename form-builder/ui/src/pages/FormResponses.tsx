@@ -6,6 +6,7 @@ import {
   asResolvedList, formatValue, linkedText,
   STATUS_OPTIONS, type ResolvedLink,
 } from '../components/responses/recordFormat';
+import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import {
   Search,
   Trash2,
@@ -108,6 +109,8 @@ function FormResponses() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  // Platform-chrome page: the owner's account timezone, else their browser's.
+  const displayTz = useAccountTimezone();
   const storageMode = useFormStore((state) => state.storageMode);
   const getForm = useFormStore((state) => state.getForm);
   const refreshForms = useFormStore((state) => state.refreshForms);
@@ -464,12 +467,12 @@ function FormResponses() {
     const headers = ['ID', 'Submitted At', 'Status', ...allExportFields.map((f) => f.label)];
     const rows = filteredResponses.map((r) => [
       r.id,
-      parseServerDate(r.submittedAt).toLocaleString(),
+      formatDateTimeInZone(r.submittedAt, displayTz),
       r.status ?? 'submitted',
       ...allExportFields.map((f) =>
         f.type === 'linked_record'
           ? linkedText(linksFor(r, f.id))
-          : formatValue(r.answers[f.id], f.type, f.properties?.options)
+          : formatValue(r.answers[f.id], f.type, f.properties?.options, displayTz)
       ),
     ]);
 
@@ -547,7 +550,7 @@ function FormResponses() {
   const linksFor = (response: ResponseWithStatus, fieldId: string): ResolvedLink[] =>
     asResolvedList(response._resolved?.[fieldId]);
 
-  // Format date (server timestamps are UTC — parse them as such)
+  // Format date (server timestamps are UTC) in the viewer's display timezone.
   const formatDate = (dateStr: string) => {
     const date = parseServerDate(dateStr);
     return date.toLocaleDateString(undefined, {
@@ -556,6 +559,7 @@ function FormResponses() {
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: displayTz,
     });
   };
 
@@ -852,7 +856,7 @@ function FormResponses() {
                           {/* This row is itself a button, so linked records render as plain text (no nested buttons). */}
                           {field.type === 'linked_record'
                             ? linkedText(linksFor(response, field.id))
-                            : formatValue(response.answers[field.id], field.type, field.properties?.options)}
+                            : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
                         </p>
                       ))}
                       <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
@@ -950,7 +954,7 @@ function FormResponses() {
                         const isLinked = field.type === 'linked_record';
                         const plain = isLinked
                           ? linkedText(linksFor(response, field.id))
-                          : formatValue(response.answers[field.id], field.type, field.properties?.options);
+                          : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz);
                         const isEmpty = plain === '-';
                         return (
                           <td
