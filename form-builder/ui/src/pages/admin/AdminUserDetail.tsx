@@ -9,6 +9,7 @@ import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { AdminSpinner } from './adminUi';
+import { AdminAccountTools } from './AdminAccountTools';
 
 /**
  * /admin/users/:userId — one user's page: profile + counters, admin grant/
@@ -256,6 +257,16 @@ export function AdminUserDetail() {
               </div>
             )}
           </section>
+
+          {/* Support tools: password reset, email change, payments/complimentary,
+              and the heavily-gated full account deletion. */}
+          <AdminAccountTools
+            userId={userId}
+            email={user.email}
+            isAdmin={!!user.isAdmin}
+            isSelf={user.id === me?.id}
+            onChanged={load}
+          />
         </>
       )}
 

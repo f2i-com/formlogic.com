@@ -13,6 +13,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   variant?: 'danger' | 'default';
   isLoading?: boolean;
+  /** Disable the confirm button (e.g. until a type-to-confirm input matches). */
+  confirmDisabled?: boolean;
   /** Optional extra content between the message and the buttons (e.g. a confirmation input). */
   children?: ReactNode;
 }
@@ -27,6 +29,7 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   variant = 'default',
   isLoading = false,
+  confirmDisabled = false,
   children,
 }: ConfirmDialogProps) {
   return (
@@ -57,6 +60,7 @@ export function ConfirmDialog({
             size="sm"
             onClick={onConfirm}
             isLoading={isLoading}
+            disabled={confirmDisabled}
           >
             {confirmLabel}
           </Button>

@@ -2586,8 +2586,11 @@ class ApiClient {
     return this.request('/admin/overview');
   }
 
-  async adminListUsers(search = '', page = 1): Promise<ApiResponse<{ users: AdminUser[]; total: number; page: number; pages: number }>> {
-    const params = new URLSearchParams({ page: String(page) });
+  async adminListUsers(search = '', page = 1, limit = 25): Promise<ApiResponse<{ users: AdminUser[]; total: number; page: number; pages: number }>> {
+    // Keep `limit` in lockstep with the caller's table pageSize — the server
+    // slices pages by THIS value, the table computes page math from ITS value,
+    // and a mismatch renders oversized first pages + wrong page counts.
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (search) params.set('search', search);
     return this.request(`/admin/users?${params.toString()}`);
   }
@@ -2603,6 +2606,48 @@ class ApiClient {
   /** Lockout recovery: switch a user's two-factor auth OFF (they re-enroll themselves). */
   async adminResetMfa(id: string): Promise<ApiResponse<{ success: boolean; mfaEnabled: boolean }>> {
     return this.request(`/admin/users/${encodeURIComponent(id)}/mfa/reset`, { method: 'POST' });
+  }
+
+  /** Set (or generate) a user's password; their sessions are revoked. The temp password is shown ONCE. */
+  async adminResetPassword(id: string, password?: string): Promise<ApiResponse<{ success: boolean; tempPassword?: string }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/password`, {
+      method: 'POST',
+      body: JSON.stringify(password ? { password } : {}),
+    });
+  }
+
+  /** Change a user's email address (sessions revoked). */
+  async adminUpdateEmail(id: string, email: string): Promise<ApiResponse<{ success: boolean; email: string }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/email`, {
+      method: 'PUT',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  /** The user's payment ledger + plan/complimentary state. */
+  async adminListPayments(id: string): Promise<ApiResponse<{
+    payments: Array<{ id: string; provider: string; orderId: string; captureId: string | null; amountCents: number; currency: string; months: number; status: string; createdAt: string }>;
+    plan: string;
+    cloudUntil: string | null;
+    complimentary: boolean;
+  }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/payments`);
+  }
+
+  /** Complimentary access: the account stays active with no payments required. */
+  async adminSetComplimentary(id: string, enabled: boolean): Promise<ApiResponse<{ success: boolean; complimentary: boolean }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/complimentary`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  /** Permanently erase an account + ALL its data. confirmEmail must match the target exactly. */
+  async adminDeleteUser(id: string, confirmEmail: string): Promise<ApiResponse<{ status: string; message?: string }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmEmail }),
+    });
   }
 
   async adminGetForm(id: string): Promise<ApiResponse<{ form: Record<string, unknown> & { responseCount?: number | null }; ownerId?: string }>> {

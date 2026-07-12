@@ -46,6 +46,7 @@ class AdminController
         private ?AccountBackupService $backup = null,
         private ?ScheduledBackupService $scheduledBackup = null,
         private ?\FormLogic\Services\MfaService $mfaService = null,
+        private ?\FormLogic\Services\AccountErasureService $erasure = null,
     ) {
     }
 
@@ -67,7 +68,8 @@ class AdminController
         return $this->jsonResponse($response, $this->admin->listUsers(
             trim((string) ($q['search'] ?? '')),
             max(1, (int) ($q['page'] ?? 1)),
-            (int) ($q['limit'] ?? 25)
+            // Clamped: a hostile/typo'd limit must not turn into LIMIT 0 or a full scan.
+            max(1, min(100, (int) ($q['limit'] ?? 25)))
         ));
     }
 
@@ -112,6 +114,150 @@ class AdminController
         $this->mfaService->disable($userId);
         $this->audit($request, 'admin.mfa_reset', $userId, ['wasEnabled' => $wasEnabled]);
         return $this->jsonResponse($response, ['success' => true, 'mfaEnabled' => false]);
+    }
+
+    // ── Account tools (support operations) ───────────────────────────────────
+
+    /** Shared guard: the target row, or an error response. Demo refusable. */
+    private function accountTarget(Response $response, string $userId, bool $refuseDemo = true): array|Response
+    {
+        $row = $this->admin->accountRow($userId);
+        if ($row === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+        if ($refuseDemo && $this->admin->isDemoRow($row)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The shared demo account cannot be modified'], 403);
+        }
+        return $row;
+    }
+
+    /**
+     * POST /api/admin/users/{id}/password — lockout recovery: set a new password
+     * (provided, validated against the policy) or generate a temporary one
+     * (returned ONCE, never stored in plaintext or logged). Every outstanding
+     * session for the user is revoked.
+     */
+    public function resetPassword(Request $request, Response $response, array $args): Response
+    {
+        $target = $this->accountTarget($response, (string) $args['id']);
+        if ($target instanceof Response) {
+            return $target;
+        }
+        $body = $request->getParsedBody() ?? [];
+        $provided = (string) ($body['password'] ?? '');
+        $generated = $provided === '';
+        if ($generated) {
+            // Unambiguous alphabet, 16 chars — comfortably past the policy.
+            $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+            $provided = '';
+            for ($i = 0; $i < 16; $i++) {
+                $provided .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+            }
+        } elseif (($pwError = AuthService::passwordError($provided)) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $pwError], 400);
+        }
+        $this->admin->setUserPassword($target['id'], $provided);
+        // Sign the user out everywhere — old sessions must not survive a support reset.
+        $this->auth->revokeTokens($target['id']);
+        $this->audit($request, 'admin.password_reset', $target['id'], ['generated' => $generated]);
+        return $this->jsonResponse($response, ['success' => true] + ($generated ? ['tempPassword' => $provided] : []));
+    }
+
+    /** PUT /api/admin/users/{id}/email — change the account's email address (sessions revoked). */
+    public function updateEmail(Request $request, Response $response, array $args): Response
+    {
+        $target = $this->accountTarget($response, (string) $args['id']);
+        if ($target instanceof Response) {
+            return $target;
+        }
+        $body = $request->getParsedBody() ?? [];
+        $email = trim((string) ($body['email'] ?? ''));
+        try {
+            $this->admin->setUserEmail($target['id'], $email);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        $this->auth->revokeTokens($target['id']);
+        $this->audit($request, 'admin.email_change', $target['id'], ['from' => $target['email'], 'to' => $email]);
+        return $this->jsonResponse($response, ['success' => true, 'email' => $email]);
+    }
+
+    /** GET /api/admin/users/{id}/payments — the payment ledger + plan/complimentary state. */
+    public function listPayments(Request $request, Response $response, array $args): Response
+    {
+        $target = $this->accountTarget($response, (string) $args['id'], false);
+        if ($target instanceof Response) {
+            return $target;
+        }
+        return $this->jsonResponse($response, [
+            'payments' => $this->admin->listPayments($target['id']),
+            'plan' => (string) ($target['plan'] ?? 'personal'),
+            'cloudUntil' => $target['cloud_until'] ?? null,
+            'complimentary' => $this->admin->isComplimentary($target['cloud_until'] ?? null),
+        ]);
+    }
+
+    /**
+     * POST /api/admin/users/{id}/complimentary — free access without payments:
+     * ON pushes cloud_until ~100 years out; OFF sets it to now (paid time, if
+     * any, is superseded — the ledger itself is never touched).
+     */
+    public function setComplimentary(Request $request, Response $response, array $args): Response
+    {
+        $target = $this->accountTarget($response, (string) $args['id']);
+        if ($target instanceof Response) {
+            return $target;
+        }
+        $enabled = (($request->getParsedBody() ?? [])['enabled'] ?? null) === true;
+        $this->admin->setComplimentary($target['id'], $enabled);
+        $this->audit($request, 'admin.complimentary', $target['id'], ['enabled' => $enabled]);
+        return $this->jsonResponse($response, ['success' => true, 'complimentary' => $enabled]);
+    }
+
+    /**
+     * POST /api/admin/users/{id}/delete — permanently erase an account and ALL
+     * its data (apps, forms incl. per-form databases + uploads, recycle bin),
+     * through the same truthful/resumable engine as self-service deletion.
+     * HEAVILY gated: admin-only route, never yourself, never the demo account,
+     * never another administrator (revoke their admin flag first), and the
+     * request must carry the target's EXACT email as confirmation.
+     */
+    public function deleteUser(Request $request, Response $response, array $args): Response
+    {
+        if ($this->erasure === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Account erasure is not available'], 503);
+        }
+        $target = $this->accountTarget($response, (string) $args['id']);
+        if ($target instanceof Response) {
+            return $target;
+        }
+        if ($target['id'] === (string) $request->getAttribute('userId')) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'You cannot delete your own account from the admin panel — use Settings'], 400);
+        }
+        if (!empty($target['is_admin'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This user is an administrator — remove their admin access first'], 400);
+        }
+        $confirm = trim((string) (($request->getParsedBody() ?? [])['confirmEmail'] ?? ''));
+        if ($confirm === '' || strcasecmp($confirm, (string) $target['email']) !== 0) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Type the account\'s email address exactly to confirm deletion'], 400);
+        }
+
+        $result = $this->erasure->erase($target['id']);
+        if (!$result['completed']) {
+            $this->audit($request, 'admin.user_delete_incomplete', $target['id'], ['email' => $target['email']] + $result);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'status' => 'failed',
+                'retryable' => true,
+                'failedApps' => $result['failedApps'],
+                'failedForms' => $result['failedForms'],
+                'pendingCleanup' => $result['pendingCleanup'],
+                'pendingTrash' => $result['pendingTrash'],
+                'message' => 'Some of the account\'s data could not be deleted, so it was NOT closed. Nothing is lost — retry to resume where it left off.',
+            ], 503);
+        }
+        $this->audit($request, 'admin.user_delete', $target['id'], ['email' => $target['email']]);
+        return $this->jsonResponse($response, ['status' => 'completed', 'message' => 'The account and all its data have been deleted.']);
     }
 
     /**

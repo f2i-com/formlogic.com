@@ -23,8 +23,12 @@ export function AdminUsers() {
 
   // setState only inside the promise callback so the effect body stays render-clean
   // (loading starts true; later searches keep the previous rows visible).
+  // PAGE_SIZE is passed to BOTH the API call and the table: the server slices
+  // pages by the request limit while DataTable computes page math from its own
+  // pageSize — mismatched values render oversized first pages + wrong counts.
+  const PAGE_SIZE = 25;
   const load = useCallback(() => {
-    api.adminListUsers(search, page + 1).then((r) => {
+    api.adminListUsers(search, page + 1, PAGE_SIZE).then((r) => {
       if (r.data) { setRows(r.data.users); setTotal(r.data.total); setError(null); }
       else { setError(r.error || 'Could not load users'); }
       setLoading(false);
@@ -85,6 +89,7 @@ export function AdminUsers() {
       serverMode
       totalCount={total}
       page={page}
+      pageSize={PAGE_SIZE}
       onPageChange={setPage}
       searchValue={search}
       onSearchChange={(v) => { setSearch(v); setPage(0); }}

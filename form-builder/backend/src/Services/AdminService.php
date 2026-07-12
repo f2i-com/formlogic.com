@@ -84,7 +84,7 @@ class AdminService
                    (SELECT COUNT(*) FROM flow_definitions fd WHERE fd.owner_user_id = u.id) AS flows_count,
                    (SELECT COALESCE(SUM(f2.response_count), 0) FROM forms f2 WHERE f2.user_id = u.id) AS responses_count
             FROM users u {$where}
-            ORDER BY u.created_at DESC
+            ORDER BY u.created_at DESC, u.id DESC
             LIMIT " . (int) $limit . ' OFFSET ' . (int) (($page - 1) * $limit)
         );
         $stmt->execute($params);
@@ -200,6 +200,93 @@ class AdminService
         }
         $upd = $this->mysql->prepare('UPDATE users SET is_admin = :a WHERE id = :id');
         $upd->execute(['a' => $isAdmin ? 1 : 0, 'id' => $targetUserId]);
+    }
+
+    // ── Account tools (support operations, all audited by the controller) ────
+
+    /** The target row (id/email/is_admin/plan/cloud_until) or null — shared guard base for the tools below. */
+    public function accountRow(string $userId): ?array
+    {
+        $stmt = $this->mysql->prepare('SELECT id, email, is_admin, plan, cloud_until FROM users WHERE id = :id');
+        $stmt->execute(['id' => $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
+    /** True when the row is the shared public demo account. */
+    public function isDemoRow(array $row): bool
+    {
+        $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+        return strtolower((string) ($row['email'] ?? '')) === $demoEmail;
+    }
+
+    /** Set a user's password hash (lockout recovery). Caller revokes sessions + audits. */
+    public function setUserPassword(string $userId, string $password): void
+    {
+        $upd = $this->mysql->prepare('UPDATE users SET password_hash = :h WHERE id = :id');
+        $upd->execute(['h' => password_hash($password, PASSWORD_DEFAULT), 'id' => $userId]);
+    }
+
+    /**
+     * Change a user's email address. Validates format + uniqueness.
+     * @throws \InvalidArgumentException
+     */
+    public function setUserEmail(string $userId, string $email): void
+    {
+        $email = trim($email);
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new \InvalidArgumentException('Invalid email format');
+        }
+        $dupe = $this->mysql->prepare('SELECT id FROM users WHERE email = :e AND id != :id');
+        $dupe->execute(['e' => $email, 'id' => $userId]);
+        if ($dupe->fetchColumn() !== false) {
+            throw new \InvalidArgumentException('Another account already uses that email address');
+        }
+        $upd = $this->mysql->prepare('UPDATE users SET email = :e WHERE id = :id');
+        $upd->execute(['e' => $email, 'id' => $userId]);
+    }
+
+    /** The user's payment ledger (metadata only — amounts, months, status; never card/PayPal detail). */
+    public function listPayments(string $userId): array
+    {
+        $stmt = $this->mysql->prepare(
+            'SELECT id, provider, order_id, capture_id, amount_cents, currency, months, status, created_at
+             FROM payments WHERE user_id = :id ORDER BY created_at DESC LIMIT 200'
+        );
+        $stmt->execute(['id' => $userId]);
+        return array_map(static fn (array $p) => [
+            'id' => $p['id'],
+            'provider' => $p['provider'],
+            'orderId' => $p['order_id'],
+            'captureId' => $p['capture_id'],
+            'amountCents' => (int) $p['amount_cents'],
+            'currency' => $p['currency'],
+            'months' => (int) $p['months'],
+            'status' => $p['status'],
+            'createdAt' => $p['created_at'],
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /** Far enough out to read as "never expires", near enough to distinguish from real top-ups. */
+    private const COMPLIMENTARY_YEARS = 100;
+
+    /**
+     * Complimentary access: ON pushes cloud_until ~100 years out so the account
+     * never needs a payment; OFF sets it to NOW (any enforcement then applies
+     * normally — on self-hosted installs enforcement is off anyway).
+     */
+    public function setComplimentary(string $userId, bool $on): void
+    {
+        $sql = $on
+            ? 'UPDATE users SET cloud_until = DATE_ADD(NOW(), INTERVAL ' . self::COMPLIMENTARY_YEARS . ' YEAR) WHERE id = :id'
+            : 'UPDATE users SET cloud_until = NOW() WHERE id = :id';
+        $this->mysql->prepare($sql)->execute(['id' => $userId]);
+    }
+
+    /** Whether the account's access reads as complimentary (cloud_until decades out). */
+    public function isComplimentary(?string $cloudUntil): bool
+    {
+        return !empty($cloudUntil) && strtotime((string) $cloudUntil) > time() + 50 * 365 * 86400;
     }
 
     // ── Broadcast notices ────────────────────────────────────────────────────

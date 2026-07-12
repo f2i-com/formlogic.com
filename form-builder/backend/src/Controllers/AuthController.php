@@ -580,98 +580,31 @@ class AuthController
         }
 
         try {
-            $failedApps = 0;
-            $failedForms = 0;
-            // Delete apps the user owns (membership of other people's apps is
-            // removed via the user FK cascade on the users delete).
-            if ($this->appService) {
-                foreach ($this->appService->getAllApps($userId) as $app) {
-                    $owner = $app['ownerId'] ?? $app['owner_id'] ?? null;
-                    if ($owner === $userId && !empty($app['id'])) {
-                        try {
-                            $this->appService->deleteApp((string) $app['id']);
-                        } catch (\Throwable $e) {
-                            $failedApps++;
-                            $this->logger->error('Account deletion: failed to delete app', ['appId' => $app['id'], 'userId' => $userId, 'error' => $e->getMessage()]);
-                        }
-                    }
-                }
-            }
-            // Delete ALL the user's forms (incl. their per-form response DB +
-            // uploaded files). getAllForms defaults to 50, so loop until empty —
-            // re-querying offset 0 each pass since rows are being removed. Without
-            // this, forms beyond 50 leave orphaned SQLite DBs + PII files on disk
-            // after a GDPR-erasure request. A pass that makes NO progress stops the
-            // loop (a persistently-failing form must not spin the guard to 1000).
-            if ($this->formService) {
-                $guard = 0;
-                do {
-                    $batch = $this->formService->getAllForms($userId, ['limit' => 1000, 'offset' => 0]);
-                    $deletedThisPass = 0;
-                    $failedForms = 0; // per-pass: only the FINAL pass's failures matter
-                    foreach ($batch as $form) {
-                        if (!empty($form['id'])) {
-                            try {
-                                $this->formService->deleteForm((string) $form['id']);
-                                $deletedThisPass++;
-                            } catch (\Throwable $e) {
-                                $failedForms++;
-                                $this->logger->error('Account deletion: failed to delete form', ['formId' => $form['id'], 'userId' => $userId, 'error' => $e->getMessage()]);
-                            }
-                        }
-                    }
-                } while (count($batch) > 0 && $deletedThisPass > 0 && ++$guard < 1000);
-            }
+            // The one erasure engine (shared with the admin panel's delete-user):
+            // constructed from THIS controller's deps so tests that stub them
+            // exercise the same flow.
+            $result = (new \FormLogic\Services\AccountErasureService(
+                $this->authService,
+                $this->formService,
+                $this->appService,
+                $this->trashService,
+                $this->logger
+            ))->erase($userId);
 
-            // Cross-session stragglers (audit FL-DATA-001): a prior delete may have
-            // removed a form's metadata row while its on-disk cleanup failed — those
-            // forms no longer appear in getAllForms, but their durable form_delete ops
-            // do. Resume them from the ledger, then require it EMPTY below: the users
-            // row must never drop while deleted-form PII may still sit on disk.
-            $pendingCleanup = 0;
-            if ($this->formService) {
-                try {
-                    $this->formService->retryPendingCleanup($userId);
-                    $pendingCleanup = $this->formService->pendingCleanupCount($userId);
-                } catch (\Throwable $e) {
-                    $pendingCleanup = 1; // fail closed — keep the account until verified
-                    $this->logger->error('Account deletion: pending-cleanup retry failed', ['userId' => $userId, 'error' => $e->getMessage()]);
-                }
-            }
-
-            // Recycle bin: the erasure loops above delete via the SERVICES (never
-            // TrashService — erasure must not stash data), but the user's existing
-            // bin snapshots contain record PII and must go too. purgeUser returns
-            // the number of traces REMAINING (fail-closed), joining the guard below.
-            $trashRemaining = 0;
-            if ($this->trashService !== null) {
-                $trashRemaining = $this->trashService->purgeUser($userId);
-            }
-
-            // Truthful completion (audit FL-005/FL-01): NEVER drop the user row while
-            // owned resources remain — per-form SQLite databases and uploads live on
-            // DISK, and deleting the account row first would orphan that PII with no
-            // owner left to retry as. Every per-resource delete is idempotent, so a
-            // failed erasure is RESUMABLE: the account stays intact and the user (or
-            // support) simply retries.
-            $remainingForms = $this->formService
-                ? count($this->formService->getAllForms($userId, ['limit' => 1, 'offset' => 0]))
-                : 0;
-            if ($failedApps > 0 || $failedForms > 0 || $remainingForms > 0 || $pendingCleanup > 0 || $trashRemaining > 0) {
+            if (!$result['completed']) {
                 $this->audit($request, 'auth.account_delete_incomplete', 'user', $userId);
                 return $this->jsonResponse($response, [
                     'error' => true,
                     'status' => 'failed',
                     'retryable' => true,
-                    'failedApps' => $failedApps,
-                    'failedForms' => $failedForms,
-                    'pendingCleanup' => $pendingCleanup,
-                    'pendingTrash' => $trashRemaining,
+                    'failedApps' => $result['failedApps'],
+                    'failedForms' => $result['failedForms'],
+                    'pendingCleanup' => $result['pendingCleanup'],
+                    'pendingTrash' => $result['pendingTrash'],
                     'message' => 'Some of your data could not be deleted, so your account was NOT closed. Nothing is lost — please retry; deletion resumes where it left off.',
                 ], 503);
             }
 
-            $this->authService->deleteAccount($userId);
             $this->audit($request, 'auth.account_delete', 'user', $userId);
 
             $response = $this->clearAuthCookie($response);

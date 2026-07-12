@@ -163,7 +163,14 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         $c->get(LoggerInterface::class),
         $c->get(\FormLogic\Services\AccountBackupService::class),
         $c->get(\FormLogic\Services\ScheduledBackupService::class),
-        $c->get(\FormLogic\Services\MfaService::class)
+        $c->get(\FormLogic\Services\MfaService::class),
+        new \FormLogic\Services\AccountErasureService(
+            $c->get(AuthService::class),
+            $c->get(FormService::class),
+            $c->get(AppService::class),
+            $c->get(\FormLogic\Services\TrashService::class),
+            $c->get(LoggerInterface::class)
+        )
     );
 });
 
@@ -946,6 +953,24 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // + remembered browsers wiped) so they can sign in and re-enroll. Audited.
     $group->post('/users/{id}/mfa/reset', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->resetMfa($request, $response, $adminArgs($request));
+    });
+    // Account tools (support operations, all audited): set/generate a password
+    // (sessions revoked), change the email, view the payment ledger, toggle
+    // complimentary access, and — heavily gated — erase the whole account.
+    $group->post('/users/{id}/password', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->resetPassword($request, $response, $adminArgs($request));
+    });
+    $group->put('/users/{id}/email', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->updateEmail($request, $response, $adminArgs($request));
+    });
+    $group->get('/users/{id}/payments', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->listPayments($request, $response, $adminArgs($request));
+    });
+    $group->post('/users/{id}/complimentary', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->setComplimentary($request, $response, $adminArgs($request));
+    });
+    $group->post('/users/{id}/delete', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->deleteUser($request, $response, $adminArgs($request));
     });
     // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
     // PATHS and sizes — never record data (the admin panel lists, it never exports).
