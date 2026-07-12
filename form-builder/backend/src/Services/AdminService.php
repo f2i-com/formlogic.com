@@ -96,7 +96,7 @@ class AdminService
     public function getUserOverview(string $userId): ?array
     {
         $stmt = $this->mysql->prepare("
-            SELECT u.id, u.email, u.name, u.plan, u.cloud_until, u.is_admin, u.created_at, u.last_seen_at
+            SELECT u.id, u.email, u.name, u.plan, u.cloud_until, u.is_admin, u.created_at, u.last_seen_at, u.mfa_enabled
             FROM users u WHERE u.id = :id
         ");
         $stmt->execute(['id' => $userId]);
@@ -289,6 +289,10 @@ class AdminService
             'lastSeenAt' => $r['last_seen_at'] ?? null,
             'online' => $online,
         ];
+        // Present only on queries that select it (the user-detail overview).
+        if (array_key_exists('mfa_enabled', $r)) {
+            $out['mfaEnabled'] = (bool) $r['mfa_enabled'];
+        }
         foreach (['apps_count' => 'appsCount', 'forms_count' => 'formsCount', 'flows_count' => 'flowsCount', 'responses_count' => 'responsesCount'] as $src => $dst) {
             if (array_key_exists($src, $r)) {
                 $out[$dst] = (int) $r[$src];

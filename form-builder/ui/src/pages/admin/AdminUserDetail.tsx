@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, Boxes, FileJson, FileText, Recycle, ShieldCheck, Workflow } from 'lucide-react';
+import { Archive, ArrowLeft, Boxes, FileJson, FileText, KeyRound, Recycle, ShieldCheck, Workflow } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -38,6 +38,19 @@ export function AdminUserDetail() {
     if (r.error) toast.error('Could not update', r.error);
     else { toast.success(next ? 'Administrator access granted' : 'Administrator access removed'); load(); }
     setConfirmAdmin(null);
+  };
+
+  // Lockout recovery: reset the user's two-factor auth so they can sign in
+  // with just their password and re-enroll.
+  const [confirmMfaReset, setConfirmMfaReset] = useState(false);
+  const [resettingMfa, setResettingMfa] = useState(false);
+  const resetMfa = async () => {
+    setResettingMfa(true);
+    const r = await api.adminResetMfa(userId);
+    setResettingMfa(false);
+    setConfirmMfaReset(false);
+    if (r.error) toast.error('Could not reset two-factor auth', r.error);
+    else { toast.success('Two-factor authentication reset', 'The user can sign in with their password and set it up again.'); load(); }
   };
 
   // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
@@ -127,6 +140,12 @@ export function AdminUserDetail() {
                 title="Schemas + sqlite file paths per form — never record data">
                 Backup manifest
               </Button>
+              {user.mfaEnabled && (
+                <Button size="sm" variant="outline" onClick={() => setConfirmMfaReset(true)} leftIcon={<KeyRound className="h-3.5 w-3.5" />}
+                  title="Lockout recovery: turns two-factor off so the user can sign in and re-enroll">
+                  Reset 2FA
+                </Button>
+              )}
             </div>
           </div>
 
@@ -247,6 +266,17 @@ export function AdminUserDetail() {
         title={`Restore the ${restoreDate ?? ''} backup?`}
         message={`This creates NEW copies of the apps, forms and records from that backup inside ${user?.email ?? 'this user'}'s account — nothing existing is overwritten or deleted. The restore is audited.`}
         confirmLabel="Restore backup"
+      />
+
+      <ConfirmDialog
+        isOpen={confirmMfaReset}
+        onClose={() => setConfirmMfaReset(false)}
+        onConfirm={() => { void resetMfa(); }}
+        title="Reset two-factor authentication?"
+        message={`Two-factor auth is switched OFF for ${user?.email ?? 'this user'}: their authenticator secret, recovery codes and remembered browsers are wiped, and their password alone signs them in until they re-enroll. Use this when they're locked out. The reset is audited.`}
+        confirmLabel="Reset 2FA"
+        variant="danger"
+        isLoading={resettingMfa}
       />
 
       <ConfirmDialog

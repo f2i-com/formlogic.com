@@ -162,7 +162,8 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         $c->get(AuditService::class),
         $c->get(LoggerInterface::class),
         $c->get(\FormLogic\Services\AccountBackupService::class),
-        $c->get(\FormLogic\Services\ScheduledBackupService::class)
+        $c->get(\FormLogic\Services\ScheduledBackupService::class),
+        $c->get(\FormLogic\Services\MfaService::class)
     );
 });
 
@@ -940,6 +941,11 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/users/{id}/admin', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->setAdmin($request, $response, $adminArgs($request));
+    });
+    // Lockout recovery: reset a user's two-factor auth (secret + recovery codes
+    // + remembered browsers wiped) so they can sign in and re-enroll. Audited.
+    $group->post('/users/{id}/mfa/reset', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->resetMfa($request, $response, $adminArgs($request));
     });
     // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
     // PATHS and sizes — never record data (the admin panel lists, it never exports).

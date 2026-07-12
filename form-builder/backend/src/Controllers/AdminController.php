@@ -45,6 +45,7 @@ class AdminController
         private ?LoggerInterface $logger = null,
         private ?AccountBackupService $backup = null,
         private ?ScheduledBackupService $scheduledBackup = null,
+        private ?\FormLogic\Services\MfaService $mfaService = null,
     ) {
     }
 
@@ -90,6 +91,27 @@ class AdminController
         }
         $this->audit($request, $isAdmin ? 'admin.grant_admin' : 'admin.revoke_admin', (string) $args['id']);
         return $this->jsonResponse($response, ['success' => true, 'isAdmin' => $isAdmin]);
+    }
+
+    /**
+     * POST /api/admin/users/{id}/mfa/reset — lockout recovery: switch the user's
+     * two-factor auth OFF (secret, recovery codes and every remembered browser
+     * wiped) so they can sign in with just their password and re-enroll.
+     * Audited with the true admin actor.
+     */
+    public function resetMfa(Request $request, Response $response, array $args): Response
+    {
+        if ($this->mfaService === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Two-factor authentication is not available'], 503);
+        }
+        $userId = (string) $args['id'];
+        if ($this->admin->getUserOverview($userId) === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+        $wasEnabled = $this->mfaService->isEnabled($userId);
+        $this->mfaService->disable($userId);
+        $this->audit($request, 'admin.mfa_reset', $userId, ['wasEnabled' => $wasEnabled]);
+        return $this->jsonResponse($response, ['success' => true, 'mfaEnabled' => false]);
     }
 
     /**

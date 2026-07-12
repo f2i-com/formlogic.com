@@ -173,6 +173,10 @@ class MfaService
     /** Remember this browser: returns the RAW cookie token (only its hash is stored). */
     public function mintTrust(string $userId, string $userAgent): string
     {
+        // Opportunistic hygiene: expired rows for this user serve nothing and
+        // would otherwise accumulate every time a browser is re-remembered.
+        $this->mysql->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :uid AND expires_at <= NOW()')
+            ->execute(['uid' => $userId]);
         $token = bin2hex(random_bytes(32));
         $stmt = $this->mysql->prepare(
             'INSERT INTO mfa_trusted_browsers (id, user_id, token_hash, label, created_at, last_used_at, expires_at)

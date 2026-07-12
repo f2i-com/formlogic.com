@@ -2600,6 +2600,11 @@ class ApiClient {
     return this.request(`/admin/users/${encodeURIComponent(id)}/admin`, { method: 'POST', body: JSON.stringify({ isAdmin }) });
   }
 
+  /** Lockout recovery: switch a user's two-factor auth OFF (they re-enroll themselves). */
+  async adminResetMfa(id: string): Promise<ApiResponse<{ success: boolean; mfaEnabled: boolean }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/mfa/reset`, { method: 'POST' });
+  }
+
   async adminGetForm(id: string): Promise<ApiResponse<{ form: Record<string, unknown> & { responseCount?: number | null }; ownerId?: string }>> {
     return this.request(`/admin/forms/${encodeURIComponent(id)}`);
   }
@@ -2768,6 +2773,8 @@ export interface AdminUser {
 }
 
 export interface AdminUserDetail extends AdminUser {
+  /** Two-factor auth switched on — shows the lockout-recovery "Reset 2FA" control. */
+  mfaEnabled?: boolean;
   apps: Array<{ id: string; name: string; slug?: string | null; status?: string | null; createdAt?: string; formCount: number; flowCount: number; bindingCount: number; memberCount: number }>;
   forms: Array<{ id: string; title: string; status?: string | null; createdAt?: string; updatedAt?: string; responseCount: number | null; apps?: string | null }>;
   flows: Array<{ id: string; appId?: string | null; appName?: string | null; name: string; slug: string; enabled: boolean; version: number; updatedAt?: string }>;
