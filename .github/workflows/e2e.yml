@@ -7,15 +7,18 @@ name: E2E (Playwright) — release gate
 # nightly, on every v* release tag, and on demand. (It was temporarily manual-only while
 # resource-heavy; the checklist and reality must match, and tag pushes are rare enough
 # that the cost is fine.)
+# PAUSED 2026-07-12: the nightly schedule is disabled while the account is near its
+# GitHub Actions usage limit. Run manually from the Actions tab. Restore the
+# schedule block below when usage resets.
 on:
   workflow_dispatch:
   # Callable as a reusable workflow (audit FL-E2E-001/FL-REL-001): package.yml
   # invokes it on v* tags and HARD-DEPENDS on it — the standalone tag trigger
   # is gone so a tag runs the suite exactly once, as a release requirement.
   workflow_call:
-  schedule:
-    # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
-    - cron: '20 15 * * *'
+  # schedule:
+  #   # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
+  #   - cron: '20 15 * * *'
 
 jobs:
   e2e:

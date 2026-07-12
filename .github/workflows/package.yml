@@ -4,11 +4,14 @@ name: Package (distributable zip)
 # under api/, INSTALL.txt/UPGRADE.txt/VERSION) via scripts/package-dist.mjs — the SAME script
 # devs run locally. Runs on every v* tag (and attaches the zip to the GitHub release) and on
 # demand from the Actions tab (artifact only).
+# PAUSED 2026-07-12: the automatic v* tag trigger is disabled while the account is
+# near its GitHub Actions usage limit. Run manually from the Actions tab (pick the
+# tag as the ref to build a release). Restore the push:tags block when usage resets.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+  # push:
+  #   tags:
+  #     - 'v*'
 
 permissions:
   # Needed to create/upload assets on the GitHub release for tag builds.

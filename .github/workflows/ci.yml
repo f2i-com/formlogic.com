@@ -1,10 +1,14 @@
 name: CI
 
+# PAUSED 2026-07-12: automatic triggers (push/PR) disabled while the account is near
+# its GitHub Actions usage limit. Run manually from the Actions tab. Restore the
+# push/pull_request triggers below when usage resets.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
 
 jobs:
   backend:
