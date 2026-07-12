@@ -62,14 +62,15 @@ is loopback-only.
 - `GET    /api/services/:id/logs?tail=N`
 
 ### Models (downloads + on-disk files)
-- `GET    /api/models` — `{ rootDir, models[] }`
-- `GET    /api/models/catalog` — curated quick-add list (every URL verified downloadable)
-- `POST   /api/models/download` — body `{ url, filename?, subdir? }`; HuggingFace `/blob/` URLs auto-rewrite to `/resolve/`
-- `GET    /api/models/downloads` — in-flight + recent
+- `GET    /api/models` — `{ rootDir, models[] }`; each file carries `sha256` + `verification` (`verified`/`modified`/`unverified`) from the install manifest
+- `GET    /api/models/catalog` — curated quick-add list (every URL verified downloadable; every bundled entry ships a pinned `sha256` + `license` + `provenance`, and entries are labelled `builtin` vs `local` when the on-disk copy was edited)
+- `POST   /api/models/download` — body `{ url, filename?, subdir?, sha256?, sizeBytes? }`; HuggingFace `/blob/` URLs auto-rewrite to `/resolve/`. MODEL-001: transfers are SHA-256-hashed in flight (resume re-hashes the `.part` prefix) and a pinned download REFUSES to install on digest/size mismatch (the `.part` is deleted). Catalog URLs get the CATALOG's pin enforced server-side regardless of the request body.
+- `POST   /api/models/verify` — re-hash every manifest-tracked model (Doctor/repair); mismatches are quarantined (`<name>.quarantine-<ts>`) and their manifest rows dropped. 409 while a pass is running.
+- `GET    /api/models/downloads` — in-flight + recent (`expectedSha256`/`sha256`/`verified` per row)
 - `POST   /api/models/downloads/:id/pause` — preserves .part for HTTP-Range resume
 - `POST   /api/models/downloads/:id/resume`
 - `POST   /api/models/downloads/:id/cancel` — deletes .part
-- `DELETE /api/models/:name`
+- `DELETE /api/models/:name` — also drops the file's manifest row
 
 ### Python
 - `GET    /api/python` — `{ installed, runtimeDir, interpreterPath, venvsDir, venvs[], currentJob }`

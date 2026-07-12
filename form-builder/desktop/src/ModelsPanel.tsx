@@ -34,7 +34,9 @@ export default function ModelsPanel() {
   const [url, setUrl] = useState('');
   const [filename, setFilename] = useState('');
   const [subdir, setSubdir] = useState('');
+  const [sha256, setSha256] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const toast = useToast();
@@ -147,10 +149,12 @@ export default function ModelsPanel() {
           url.trim(),
           filename.trim() || undefined,
           subdir.trim() || undefined,
+          sha256.trim() || undefined,
         );
         setUrl('');
         setFilename('');
         setSubdir('');
+        setSha256('');
         await refresh();
       } catch (e) {
         setActionError(e instanceof Error ? e.message : String(e));
@@ -158,8 +162,45 @@ export default function ModelsPanel() {
         setSubmitting(false);
       }
     },
-    [url, filename, subdir, submitting, refresh],
+    [url, filename, subdir, sha256, submitting, refresh],
   );
+
+  // Deep re-verification: re-hashes every manifest-tracked model, so it can
+  // take a while on a big library. Mismatching files are quarantined
+  // (renamed aside) server-side; the toast summarises what happened.
+  const onVerify = useCallback(async () => {
+    if (verifying) return;
+    setActionError(null);
+    setVerifying(true);
+    try {
+      const report = await models.verify();
+      const bad = report.checked.filter((r) => !r.ok);
+      if (bad.length === 0) {
+        toast.push({
+          kind: 'success',
+          title: 'All models verified',
+          body:
+            report.untracked.length > 0
+              ? `${report.checked.length} checked — ${report.untracked.length} file(s) have no recorded digest to check`
+              : `${report.checked.length} checked`,
+        });
+      } else {
+        toast.push({
+          kind: 'error',
+          title: `${bad.length} model(s) failed verification`,
+          body: bad
+            .map((r) => `${r.name}: ${r.action ?? 'mismatch'}`)
+            .join('; '),
+          timeoutMs: 12000,
+        });
+      }
+      await refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVerifying(false);
+    }
+  }, [verifying, toast, refresh]);
 
   const onAction = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -274,6 +315,15 @@ export default function ModelsPanel() {
               />
             </label>
           </div>
+          <label className="form-row">
+            <span>SHA-256 (optional)</span>
+            <input
+              type="text"
+              placeholder="pin the file's checksum — the download won't install on mismatch"
+              value={sha256}
+              onChange={(e) => setSha256(e.target.value)}
+            />
+          </label>
           <div className="form-actions">
             <button type="submit" className="btn btn-primary" disabled={!url.trim() || submitting}>
               Start download
@@ -281,7 +331,9 @@ export default function ModelsPanel() {
           </div>
           <p className="form-hint">
             HuggingFace browser URLs (containing <code>/blob/</code>) are
-            rewritten to direct downloads automatically.
+            rewritten to direct downloads automatically. Quick-add models are
+            checksum-verified automatically; paste a SHA-256 to get the same
+            protection for your own URLs.
           </p>
         </form>
         {actionError && (
@@ -337,6 +389,24 @@ export default function ModelsPanel() {
                       <div className="catalog-desc">{m.description}</div>
                       <div className="catalog-meta">
                         {m.sizeBytes ? formatBytes(m.sizeBytes) : 'size unknown'}
+                        {m.license && <> · {m.license}</>}
+                      </div>
+                      <div className="catalog-meta">
+                        {m.sha256 ? (
+                          <span
+                            title={`Pinned sha256 ${m.sha256}${m.provenance ? ` — from ${m.provenance}` : ''}${m.source === 'local' ? ' (local catalog edit)' : ''}`}
+                          >
+                            checksum-verified download
+                            {m.source === 'local' && ' · local entry'}
+                          </span>
+                        ) : (
+                          <span
+                            className="warn"
+                            title="This catalog entry has no sha256 — the download will install without an integrity check."
+                          >
+                            no pinned digest
+                          </span>
+                        )}
                       </div>
                       {onDisk ? (
                         <button className="btn btn-ghost" disabled>
@@ -358,6 +428,8 @@ export default function ModelsPanel() {
                                 m.url,
                                 m.filename,
                                 m.subdir ?? undefined,
+                                m.sha256 ?? undefined,
+                                m.sizeBytes || undefined,
                               ),
                             )
                           }
@@ -390,12 +462,24 @@ export default function ModelsPanel() {
       )}
 
       <section className="model-section">
-        <h3 className="section-title">
-          On disk{' '}
-          {snapshot && (
-            <span className="section-count">({snapshot.models.length})</span>
+        <div className="section-title-row">
+          <h3 className="section-title">
+            On disk{' '}
+            {snapshot && (
+              <span className="section-count">({snapshot.models.length})</span>
+            )}
+          </h3>
+          {snapshot && snapshot.models.length > 0 && (
+            <button
+              className="btn btn-ghost"
+              onClick={onVerify}
+              disabled={verifying}
+              title="Re-hash every downloaded model against its recorded checksum. Files that no longer match are quarantined (renamed aside)."
+            >
+              {verifying ? 'Verifying…' : 'Verify files'}
+            </button>
           )}
-        </h3>
+        </div>
         {!snapshot && !error && (
           <SectionLoading label="Scanning models on disk…" />
         )}
@@ -405,7 +489,9 @@ export default function ModelsPanel() {
         {snapshot?.models.map((m) => (
           <div key={m.path} className="model-row">
             <div className="model-info">
-              <div className="model-name">{m.name}</div>
+              <div className="model-name">
+                {m.name} <VerificationBadge state={m.verification} />
+              </div>
               <div className="model-meta">
                 {formatBytes(m.sizeBytes)} ·{' '}
                 <span className="path-code">{m.path}</span>
@@ -503,6 +589,12 @@ function DownloadRow({ dl, onPause, onResume, onCancel }: RowProps) {
           <> · {formatEta(dl.etaSecs)}</>
         )}
         {dl.finishedAt && <> · finished {formatTimestamp(dl.finishedAt)}</>}
+        {dl.verified === true && (
+          <> · <span title={`sha256 ${dl.sha256 ?? ''}`}>checksum verified</span></>
+        )}
+        {dl.status === 'active' && dl.expectedSha256 && (
+          <> · <span title={`Will refuse to install unless it hashes to sha256 ${dl.expectedSha256}`}>pinned</span></>
+        )}
         {dl.resumable === false && (
           <> · <span className="warn">no resume support</span></>
         )}
@@ -563,6 +655,44 @@ function DownloadRow({ dl, onPause, onResume, onCancel }: RowProps) {
           )}
       </div>
     </div>
+  );
+}
+
+/**
+ * On-disk integrity badge (MODEL-001). "verified" is the cheap list-time
+ * check (recorded digest exists + size unchanged); "modified" means the
+ * bytes drifted since install — run Verify files (or re-download) before
+ * trusting it; unverified files simply have nothing recorded to check.
+ */
+function VerificationBadge({
+  state,
+}: {
+  state: 'verified' | 'modified' | 'unverified';
+}) {
+  if (state === 'verified') {
+    return (
+      <span className="badge badge-ok" title="Checksum recorded at install; size unchanged since.">
+        verified
+      </span>
+    );
+  }
+  if (state === 'modified') {
+    return (
+      <span
+        className="badge badge-err"
+        title="This file changed since it was downloaded — its recorded checksum no longer describes it. Run 'Verify files' or re-download."
+      >
+        modified
+      </span>
+    );
+  }
+  return (
+    <span
+      className="badge badge-neutral"
+      title="No recorded checksum (downloaded before verification existed, or copied in by hand)."
+    >
+      unverified
+    </span>
   );
 }
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "Curated quick-add list shown in the Models tab. Every URL here is verified downloadable (ranged-GET 206) and sizeBytes is the exact Content-Range total as of 2026-05-29. Users can paste any URL too; this just gets popular weights one click closer. Seeded to APPDATA on first run, then user-editable.",
+  "_comment": "Curated quick-add list shown in the Models tab. Every URL here is verified downloadable (ranged-GET 206); sizeBytes and sha256 are the exact Content-Range total and git-LFS content digest from the upstream repo as of 2026-07-12 (MODEL-001: downloads are hashed in-flight and refuse to install on mismatch). Users can paste any URL too; this just gets popular weights one click closer. Seeded to APPDATA on first run, then user-editable — but edited/added entries lose the 'builtin' provenance badge, and removing a sha256 means that download installs unverified.",
   "categories": [
     {
       "id": "llm",
@@ -13,7 +13,10 @@
           "url": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
           "filename": "Qwen3-0.6B-Q8_0.gguf",
           "subdir": "llm",
-          "sizeBytes": 639446688
+          "sizeBytes": 639446688,
+          "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+          "license": "Apache-2.0",
+          "provenance": "huggingface.co/Qwen/Qwen3-0.6B-GGUF"
         },
         {
           "id": "gemma-3-4b-q4_k_m",
@@ -22,7 +25,10 @@
           "url": "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf",
           "filename": "google_gemma-3-4b-it-Q4_K_M.gguf",
           "subdir": "llm",
-          "sizeBytes": 2489758112
+          "sizeBytes": 2489758112,
+          "sha256": "4996030242583a40aa151ff93f49ed787ac8c25e4120c3ae4588b2e2a7d1ae94",
+          "license": "Gemma Terms of Use",
+          "provenance": "huggingface.co/bartowski/google_gemma-3-4b-it-GGUF"
         },
         {
           "id": "qwen3-4b-q4_k_m",
@@ -31,7 +37,10 @@
           "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
           "filename": "Qwen3-4B-Q4_K_M.gguf",
           "subdir": "llm",
-          "sizeBytes": 2497280256
+          "sizeBytes": 2497280256,
+          "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+          "license": "Apache-2.0",
+          "provenance": "huggingface.co/Qwen/Qwen3-4B-GGUF"
         },
         {
           "id": "qwen2.5-coder-7b-q4_k_m",
@@ -40,7 +49,10 @@
           "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
           "filename": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
           "subdir": "llm",
-          "sizeBytes": 4683074336
+          "sizeBytes": 4683074336,
+          "sha256": "1664fccab734674a50763490a8c6931b70e3f2f8ec10031b54806d30e5f956b6",
+          "license": "Apache-2.0",
+          "provenance": "huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF"
         },
         {
           "id": "llama-3.1-8b-q4_k_m",
@@ -49,7 +61,10 @@
           "url": "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
           "filename": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
           "subdir": "llm",
-          "sizeBytes": 4920739232
+          "sizeBytes": 4920739232,
+          "sha256": "7b064f5842bf9532c91456deda288a1b672397a54fa729aa665952863033557c",
+          "license": "Llama 3.1 Community License",
+          "provenance": "huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
         },
         {
           "id": "gemma-3-12b-q4_k_m",
@@ -58,7 +73,10 @@
           "url": "https://huggingface.co/bartowski/google_gemma-3-12b-it-GGUF/resolve/main/google_gemma-3-12b-it-Q4_K_M.gguf",
           "filename": "google_gemma-3-12b-it-Q4_K_M.gguf",
           "subdir": "llm",
-          "sizeBytes": 7300575264
+          "sizeBytes": 7300575264,
+          "sha256": "fc57f67efa46d711c346e587cbef7d049e95f3df8db2eb2271153343ef0acc7b",
+          "license": "Gemma Terms of Use",
+          "provenance": "huggingface.co/bartowski/google_gemma-3-12b-it-GGUF"
         }
       ]
     },
@@ -74,7 +92,10 @@
           "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf",
           "filename": "nomic-embed-text-v1.5.f16.gguf",
           "subdir": "embed",
-          "sizeBytes": 274290560
+          "sizeBytes": 274290560,
+          "sha256": "f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb",
+          "license": "Apache-2.0",
+          "provenance": "huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF"
         }
       ]
     }

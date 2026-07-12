@@ -194,6 +194,14 @@ export interface ModelFile {
   path: string;
   sizeBytes: number;
   modified: string | null;
+  /** Digest recorded at install time (null = predates MODEL-001 / copied in by hand). */
+  sha256: string | null;
+  /**
+   * Cheap status for the list view: 'verified' (manifest digest + size still
+   * match), 'modified' (size drifted since install) or 'unverified' (nothing
+   * recorded). A full re-hash is the explicit Verify action.
+   */
+  verification: 'verified' | 'modified' | 'unverified';
 }
 
 export interface ModelsSnapshot {
@@ -226,6 +234,13 @@ export interface DownloadProgress {
   resumable: boolean | null;
   speedBps: number | null;
   etaSecs: number | null;
+  /** SHA-256 the transfer is pinned to (null = nothing to check against). */
+  expectedSha256: string | null;
+  expectedSize: number | null;
+  /** Computed digest of the completed file. */
+  sha256: string | null;
+  /** true = pin matched before install; false = mismatch (never installed); null = no pin. */
+  verified: boolean | null;
 }
 
 export interface CatalogModel {
@@ -236,6 +251,12 @@ export interface CatalogModel {
   filename: string;
   subdir: string | null;
   sizeBytes: number;
+  /** Pinned content digest — the download refuses to install on mismatch. */
+  sha256: string | null;
+  license: string | null;
+  provenance: string | null;
+  /** 'builtin' = matches the entry compiled into the app; 'local' = user-edited/added. */
+  source: 'builtin' | 'local';
 }
 
 export interface CatalogCategory {
@@ -252,14 +273,31 @@ export interface CatalogSnapshot {
   };
 }
 
+export interface VerifyResult {
+  name: string;
+  ok: boolean;
+  expectedSha256: string;
+  actualSha256: string | null;
+  action: string | null;
+}
+
+export interface VerifyReport {
+  checked: VerifyResult[];
+  untracked: string[];
+  missing: string[];
+}
+
 export const models = {
   list: () => request<ModelsSnapshot>('/api/models'),
   catalog: () => request<CatalogSnapshot>('/api/models/catalog'),
-  download: (url: string, filename?: string, subdir?: string) =>
+  download: (url: string, filename?: string, subdir?: string, sha256?: string, sizeBytes?: number) =>
     request<{ downloadId: string }>('/api/models/download', {
       method: 'POST',
-      body: JSON.stringify({ url, filename, subdir }),
+      body: JSON.stringify({ url, filename, subdir, sha256, sizeBytes }),
     }),
+  /** Re-hash every manifest-tracked model; mismatches are quarantined. Slow on big libraries. */
+  verify: () =>
+    request<VerifyReport>('/api/models/verify', { method: 'POST' }),
   downloads: () => request<DownloadProgress[]>('/api/models/downloads'),
   pause: (id: string) =>
     request<void>(`/api/models/downloads/${encodeURIComponent(id)}/pause`, {

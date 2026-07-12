@@ -39,7 +39,7 @@ use axum::{
     middleware::{self, Next},
     response::{
         sse::{Event as SseEvent, KeepAlive, Sse},
-        IntoResponse,
+        IntoResponse, Response,
     },
     routing::{delete, get, post},
     Json, Router,
@@ -462,19 +462,95 @@ struct ModelDownloadRequest {
     /// Optional subdirectory under the models dir.
     #[serde(default)]
     subdir: Option<String>,
+    /// Optional SHA-256 pin (64 hex chars) the download must hash to
+    /// before it installs (MODEL-001). For catalog URLs the CATALOG's pin
+    /// is enforced server-side regardless of this field.
+    #[serde(default)]
+    sha256: Option<String>,
+    /// Optional exact size pin, checked with `sha256`.
+    #[serde(default, rename = "sizeBytes")]
+    size_bytes: Option<u64>,
+}
+
+/// Validate + canonicalise a client-supplied SHA-256 pin.
+fn normalise_sha256(s: &str) -> Result<String, String> {
+    let s = s.trim().to_lowercase();
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(s)
+    } else {
+        Err("sha256 must be 64 hex characters".into())
+    }
 }
 
 async fn start_model_download(
     State(state): State<AppState>,
     Json(req): Json<ModelDownloadRequest>,
-) -> impl IntoResponse {
+) -> Response {
+    use crate::services::catalog;
+    use crate::services::downloads::{self, ExpectedDigest};
+
+    // MODEL-001: digest pinning is decided SERVER-side. A URL that matches
+    // a catalog entry inherits the catalog's pin — a paired web page (or a
+    // request that simply omits the field) can't start a catalog model's
+    // download without its integrity check. Non-catalog URLs may carry an
+    // explicit client pin; without one the download is hashed + recorded
+    // but installs unverified (there is nothing to check it against).
+    let normalised = match downloads::normalise_hf_url(&req.url) {
+        Ok(u) => u,
+        Err(e) => return err400(&e),
+    };
+    let client_sha = match req.sha256.as_deref() {
+        Some(s) => match normalise_sha256(s) {
+            Ok(s) => Some(s),
+            Err(e) => return err400(&e),
+        },
+        None => None,
+    };
+    let catalog_pin = {
+        let cat = state.catalog.current();
+        catalog::find_by_url(&cat, &normalised)
+            .and_then(|m| m.sha256.clone().map(|sha| (sha.to_lowercase(), m.size_bytes)))
+    };
+    let expected = match catalog_pin {
+        Some((pin, size)) => {
+            if client_sha.as_deref().is_some_and(|cs| cs != pin) {
+                return err400(
+                    "the supplied sha256 conflicts with the catalog's pinned digest for this URL",
+                );
+            }
+            Some(ExpectedDigest {
+                sha256: pin,
+                size_bytes: (size > 0).then_some(size),
+            })
+        }
+        None => client_sha.map(|sha| ExpectedDigest {
+            sha256: sha,
+            size_bytes: req.size_bytes.filter(|s| *s > 0),
+        }),
+    };
+
     match state
         .downloads
-        .start(&req.url, req.filename.as_deref(), req.subdir.as_deref())
+        .start(&req.url, req.filename.as_deref(), req.subdir.as_deref(), expected)
     {
         Ok(id) => (StatusCode::ACCEPTED, Json(serde_json::json!({ "downloadId": id })))
             .into_response(),
         Err(e) => err400(&e),
+    }
+}
+
+/// MODEL-001 Doctor/repair hook: re-hash every manifest-tracked model and
+/// quarantine mismatches. Long-running on big libraries → blocking pool;
+/// concurrent passes are refused (409).
+async fn verify_models(State(state): State<AppState>) -> Response {
+    let downloads = state.downloads.clone();
+    match tokio::task::spawn_blocking(move || downloads.verify_all()).await {
+        Ok(Ok(report)) => (StatusCode::OK, Json(report)).into_response(),
+        Ok(Err(e)) if e.contains("already running") => {
+            (StatusCode::CONFLICT, Json(serde_json::json!({ "error": e }))).into_response()
+        }
+        Ok(Err(e)) => err500(&e),
+        Err(e) => err500(&format!("verify task failed: {e}")),
     }
 }
 
@@ -1538,6 +1614,9 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
                 path,
                 "/api/services"
                     | "/api/models/download"
+                    // verify quarantines (renames aside) mismatching model
+                    // files — a mutation of the library, same tier as delete.
+                    | "/api/models/verify"
                     | "/api/python/venvs"
                     | "/api/python/install"
             ) || (path.starts_with("/api/services/") && path.ends_with("/uninstall"))
@@ -1814,6 +1893,7 @@ pub async fn serve(
         // models
         .route("/api/models", get(list_models))
         .route("/api/models/catalog", get(model_catalog))
+        .route("/api/models/verify", post(verify_models))
         .route("/api/models/download", post(start_model_download))
         .route("/api/models/downloads", get(list_downloads))
         .route("/api/models/downloads/:id/pause", post(pause_download))
@@ -2080,6 +2160,7 @@ mod tests {
         for (m, p) in [
             (Method::POST, "/api/services"),
             (Method::POST, "/api/models/download"),
+            (Method::POST, "/api/models/verify"),
             (Method::POST, "/api/python/install"),
             (Method::POST, "/api/python/venvs"),
             (Method::POST, "/api/services/x/uninstall"),

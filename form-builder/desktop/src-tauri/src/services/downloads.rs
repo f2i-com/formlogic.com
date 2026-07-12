@@ -18,7 +18,8 @@
 
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -63,7 +64,72 @@ pub struct DownloadProgress {
     /// Seconds remaining at the current speed. `None` when `bytes_total`
     /// or `speed_bps` isn't known yet.
     pub eta_secs: Option<u64>,
+    /// MODEL-001: the SHA-256 this download is pinned to (from the catalog
+    /// or the caller). The transfer is hashed in flight and REFUSES to
+    /// install on mismatch. `None` = nothing to check against (arbitrary
+    /// pasted URL) — the computed digest is still reported in `sha256`.
+    pub expected_sha256: Option<String>,
+    /// Pinned size that must match the completed byte count exactly.
+    pub expected_size: Option<u64>,
+    /// Computed SHA-256 of the completed file (every download is hashed,
+    /// pinned or not, so the manifest always has a digest to reverify).
+    pub sha256: Option<String>,
+    /// `Some(true)` = pinned digest matched before install; `Some(false)`
+    /// = mismatch (never installed); `None` = no pin to check.
+    pub verified: Option<bool>,
 }
+
+/// A digest pin a download must satisfy before its `.part` may become the
+/// installed file.
+#[derive(Debug, Clone)]
+pub struct ExpectedDigest {
+    /// Lowercase hex SHA-256.
+    pub sha256: String,
+    /// Exact final size in bytes, when known.
+    pub size_bytes: Option<u64>,
+}
+
+/// One verified install, persisted in `.models-manifest.json` next to the
+/// models so Doctor/repair can re-hash files long after the download.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestEntry {
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub url: String,
+    pub verified_at: DateTime<Utc>,
+    /// Whether the digest was pinned ahead of the download (catalog/caller)
+    /// or merely computed from whatever arrived.
+    pub pinned: bool,
+}
+
+/// Result row from a re-verification pass (`verify_all`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyResult {
+    pub name: String,
+    pub ok: bool,
+    pub expected_sha256: String,
+    pub actual_sha256: Option<String>,
+    /// What happened to a failing file: "quarantined" (renamed aside) or
+    /// "quarantine-failed: <err>" when even the rename failed.
+    pub action: Option<String>,
+}
+
+/// Full report from a re-verification pass.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyReport {
+    pub checked: Vec<VerifyResult>,
+    /// Files on disk with no manifest entry — nothing to check them
+    /// against (downloaded before MODEL-001, or copied in by hand).
+    pub untracked: Vec<String>,
+    /// Manifest entries whose file no longer exists (stale rows are
+    /// dropped from the manifest as part of the pass).
+    pub missing: Vec<String>,
+}
+
+const MANIFEST_FILE: &str = ".models-manifest.json";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +138,15 @@ pub struct ModelFile {
     pub path: String,
     pub size_bytes: u64,
     pub modified: Option<DateTime<Utc>>,
+    /// Digest recorded when this file was installed, if the manifest has
+    /// one (i.e. it arrived through the downloader after MODEL-001).
+    pub sha256: Option<String>,
+    /// Cheap verification status for the list view: "verified" (manifest
+    /// digest exists and the size still matches — full re-hash is the
+    /// explicit verify endpoint's job), "modified" (size drifted from the
+    /// manifest — the file changed since install), or "unverified" (no
+    /// manifest entry to check against).
+    pub verification: &'static str,
 }
 
 /// Snapshot for the UI — wraps `list_models()` output with the designated
@@ -225,6 +300,12 @@ pub struct Downloads {
     /// hosts (incl. the CDN host the resolve URL 302-redirects to — that
     /// URL is already presigned, and reqwest strips auth across hosts).
     hf_token: Arc<Mutex<Option<String>>>,
+    /// Serialises read-modify-write of `.models-manifest.json` across
+    /// concurrently-completing downloads + delete/verify.
+    manifest_lock: Arc<Mutex<()>>,
+    /// Held for the duration of a `verify_all` pass so a double-POST
+    /// doesn't hash the whole library twice in parallel.
+    verify_lock: Arc<Mutex<()>>,
 }
 
 pub type DownloadsHandle = Arc<Downloads>;
@@ -240,6 +321,8 @@ impl Downloads {
             progress: Arc::new(Mutex::new(HashMap::new())),
             abort_handles: Arc::new(Mutex::new(HashMap::new())),
             hf_token: Arc::new(Mutex::new(None)),
+            manifest_lock: Arc::new(Mutex::new(())),
+            verify_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -285,6 +368,23 @@ impl Downloads {
         let mut models = Vec::new();
         walk_dir(&self.models_dir, &self.models_dir, &mut models)
             .map_err(|e| format!("scan failed: {e}"))?;
+        // Decorate with the verification manifest: digest + a CHEAP status
+        // (size comparison only — full re-hash on an 8s poll would thrash
+        // the disk; that's what POST /api/models/verify is for).
+        let manifest = manifest_load(&self.models_dir);
+        for m in &mut models {
+            match manifest.get(&m.name) {
+                Some(entry) => {
+                    m.sha256 = Some(entry.sha256.clone());
+                    m.verification = if entry.size_bytes == m.size_bytes {
+                        "verified"
+                    } else {
+                        "modified"
+                    };
+                }
+                None => m.verification = "unverified",
+            }
+        }
         models.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(ModelsSnapshot {
             root_dir: self.models_dir.display().to_string(),
@@ -346,16 +446,110 @@ impl Downloads {
         }
 
         std::fs::remove_file(&p).map_err(|e| format!("delete failed: {e}"))?;
+        // Drop the manifest row so a future file at the same path can't
+        // inherit a stale "verified" badge.
+        let key = name.replace('\\', "/");
+        let _g = self.manifest_lock.lock();
+        let mut manifest = manifest_load(&self.models_dir);
+        if manifest.remove(&key).is_some() {
+            manifest_store(&self.models_dir, &manifest);
+        }
         Ok(())
+    }
+
+    /// Re-hash every manifest-tracked model and quarantine mismatches
+    /// (MODEL-001 Doctor/repair hook). Blocking — call from
+    /// `spawn_blocking`. A failing file is renamed to
+    /// `<name>.quarantine-<unix-ts>` so services stop loading it, and its
+    /// manifest row is dropped; the report says exactly what happened.
+    pub fn verify_all(&self) -> Result<VerifyReport, String> {
+        let _guard = self
+            .verify_lock
+            .try_lock()
+            .map_err(|_| "a verification pass is already running".to_string())?;
+
+        let manifest = {
+            let _g = self.manifest_lock.lock();
+            manifest_load(&self.models_dir)
+        };
+        let mut on_disk = Vec::new();
+        walk_dir(&self.models_dir, &self.models_dir, &mut on_disk)
+            .map_err(|e| format!("scan failed: {e}"))?;
+
+        let mut checked = Vec::new();
+        let mut missing = Vec::new();
+        let mut drop_keys = Vec::new();
+        for (name, entry) in &manifest {
+            let path = self.models_dir.join(name.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if !path.is_file() {
+                missing.push(name.clone());
+                drop_keys.push(name.clone());
+                continue;
+            }
+            match hash_file_blocking(&path) {
+                Ok((digest, size)) => {
+                    let ok = digest == entry.sha256 && size == entry.size_bytes;
+                    let action = if ok {
+                        None
+                    } else {
+                        drop_keys.push(name.clone());
+                        Some(quarantine_file(&path))
+                    };
+                    checked.push(VerifyResult {
+                        name: name.clone(),
+                        ok,
+                        expected_sha256: entry.sha256.clone(),
+                        actual_sha256: Some(digest),
+                        action,
+                    });
+                }
+                Err(e) => {
+                    // Unreadable ≠ proven-bad: report it, keep the manifest
+                    // row (the file may be locked by a running service).
+                    checked.push(VerifyResult {
+                        name: name.clone(),
+                        ok: false,
+                        expected_sha256: entry.sha256.clone(),
+                        actual_sha256: None,
+                        action: Some(format!("unreadable: {e}")),
+                    });
+                }
+            }
+        }
+        let untracked: Vec<String> = on_disk
+            .iter()
+            .filter(|m| !manifest.contains_key(&m.name))
+            .map(|m| m.name.clone())
+            .collect();
+
+        if !drop_keys.is_empty() {
+            let _g = self.manifest_lock.lock();
+            let mut current = manifest_load(&self.models_dir);
+            for k in &drop_keys {
+                current.remove(k);
+            }
+            manifest_store(&self.models_dir, &current);
+        }
+        checked.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(VerifyReport {
+            checked,
+            untracked,
+            missing,
+        })
     }
 
     /// Kick off a download. Returns the assigned download id immediately;
     /// the actual transfer runs on a background task.
+    ///
+    /// `expected` pins the download to a SHA-256 (+ optional exact size):
+    /// the stream is hashed in flight and a mismatch means the `.part` is
+    /// deleted and the file is NEVER installed (MODEL-001).
     pub fn start(
         &self,
         url: &str,
         filename: Option<&str>,
         subdir: Option<&str>,
+        expected: Option<ExpectedDigest>,
     ) -> Result<String, String> {
         let normalised = normalise_hf_url(url)?;
         // SSRF guard: refuse a non-https URL or one pointing at an internal/special address
@@ -434,11 +628,26 @@ impl Downloads {
         // Already on disk? Don't re-download a model the user already has.
         // Surface a Completed entry (with the real on-disk size) so the UI
         // shows "already downloaded" instead of silently no-op'ing. This is
-        // the "check for existing before downloading" behaviour.
+        // the "check for existing before downloading" behaviour. Verification
+        // is reported from the manifest (cheap); a deep re-check of an
+        // already-installed file is the verify endpoint's job.
         if let Ok(meta) = std::fs::metadata(&dest) {
             if meta.is_file() && meta.len() > 0 {
                 let id = Uuid::new_v4().to_string();
                 let now = Utc::now();
+                let manifest_entry = {
+                    let key = dest
+                        .strip_prefix(&self.models_dir)
+                        .map(|r| r.display().to_string().replace('\\', "/"))
+                        .unwrap_or_else(|_| chosen_filename.clone());
+                    manifest_load(&self.models_dir).remove(&key)
+                };
+                let verified = match (&expected, &manifest_entry) {
+                    (Some(exp), Some(m)) => {
+                        Some(m.sha256 == exp.sha256 && m.size_bytes == meta.len())
+                    }
+                    _ => None,
+                };
                 if let Ok(mut g) = self.progress.lock() {
                     g.insert(
                         id.clone(),
@@ -457,6 +666,10 @@ impl Downloads {
                             resumable: None,
                             speed_bps: None,
                             eta_secs: None,
+                            expected_sha256: expected.as_ref().map(|e| e.sha256.clone()),
+                            expected_size: expected.as_ref().and_then(|e| e.size_bytes),
+                            sha256: manifest_entry.map(|m| m.sha256),
+                            verified,
                         },
                     );
                 }
@@ -512,12 +725,16 @@ impl Downloads {
             resumable: None,
             speed_bps: None,
             eta_secs: None,
+            expected_sha256: expected.as_ref().map(|e| e.sha256.clone()),
+            expected_size: expected.as_ref().and_then(|e| e.size_bytes),
+            sha256: None,
+            verified: None,
         };
         if let Ok(mut g) = self.progress.lock() {
             g.insert(id.clone(), progress);
         }
 
-        self.spawn_transfer(id.clone(), normalised, dest, /* resume_from = */ 0);
+        self.spawn_transfer(id.clone(), normalised, dest, /* resume_from = */ 0, expected);
         Ok(id)
     }
 
@@ -550,10 +767,16 @@ impl Downloads {
     /// byte counter; if the server refuses, the .part is wiped and we
     /// restart from 0 (with a warning surfaced on `error`).
     pub fn resume(&self, id: &str) -> Result<(), String> {
-        let (url, dest, status) = {
+        let (url, dest, status, expected) = {
             let g = self.progress.lock().map_err(|_| "lock poisoned")?;
             let p = g.get(id).ok_or("unknown download")?;
-            (p.url.clone(), PathBuf::from(&p.dest_path), p.status)
+            // The digest pin survives pause/resume — a resumed transfer is
+            // still the same catalog download and must satisfy the same pin.
+            let expected = p.expected_sha256.as_ref().map(|sha| ExpectedDigest {
+                sha256: sha.clone(),
+                size_bytes: p.expected_size,
+            });
+            (p.url.clone(), PathBuf::from(&p.dest_path), p.status, expected)
         };
         if !matches!(status, DownloadStatus::Paused | DownloadStatus::Failed) {
             return Err(format!("can't resume download in state {status:?}"));
@@ -579,7 +802,7 @@ impl Downloads {
             p.error = None;
             p.bytes_downloaded = resume_from;
         });
-        self.spawn_transfer(id.to_string(), url, dest, resume_from);
+        self.spawn_transfer(id.to_string(), url, dest, resume_from, expected);
         Ok(())
     }
 
@@ -618,7 +841,14 @@ impl Downloads {
         }
     }
 
-    fn spawn_transfer(&self, id: String, url: String, dest: PathBuf, resume_from: u64) {
+    fn spawn_transfer(
+        &self,
+        id: String,
+        url: String,
+        dest: PathBuf,
+        resume_from: u64,
+        expected: Option<ExpectedDigest>,
+    ) {
         let progress_map = self.progress.clone();
         // The abort_map clone is moved into the task so it can remove its
         // own AbortHandle entry on completion — without this, finished
@@ -628,8 +858,23 @@ impl Downloads {
         let abort_map = self.abort_handles.clone();
         let id_for_task = id.clone();
         let token = self.hf_token.lock().ok().and_then(|g| g.clone());
+        let ctx = TransferCtx {
+            expected,
+            models_dir: self.models_dir.clone(),
+            manifest_lock: self.manifest_lock.clone(),
+        };
         let handle = tokio::spawn(async move {
-            run_download(progress_map, abort_map, id_for_task, url, dest, resume_from, token).await;
+            run_download(
+                progress_map,
+                abort_map,
+                id_for_task,
+                url,
+                dest,
+                resume_from,
+                token,
+                ctx,
+            )
+            .await;
         });
         if let Ok(mut g) = self.abort_handles.lock() {
             g.insert(id, handle.abort_handle());
@@ -637,6 +882,15 @@ impl Downloads {
     }
 }
 
+/// Verification context a transfer needs at completion time: the digest
+/// pin plus where/how to record the manifest row.
+struct TransferCtx {
+    expected: Option<ExpectedDigest>,
+    models_dir: PathBuf,
+    manifest_lock: Arc<Mutex<()>>,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_download(
     progress_map: Arc<Mutex<HashMap<String, DownloadProgress>>>,
     abort_map: Arc<Mutex<HashMap<String, AbortHandle>>>,
@@ -645,6 +899,7 @@ async fn run_download(
     dest: PathBuf,
     resume_from: u64,
     hf_token: Option<String>,
+    ctx: TransferCtx,
 ) {
     let update = |f: Box<dyn FnOnce(&mut DownloadProgress)>| {
         if let Ok(mut g) = progress_map.lock() {
@@ -841,6 +1096,38 @@ async fn run_download(
         return;
     }
 
+    // MODEL-001: every transfer is hashed in flight. On a resume the hasher
+    // must first replay the bytes already on disk — the .part prefix is
+    // exactly `resume_from` bytes (resume() derives the offset from the
+    // file's length). Re-hashing GBs is disk-bound, so it runs on the
+    // blocking pool; a prefix that can't be re-hashed fails the download
+    // rather than installing a file whose digest we can't attest.
+    let mut hasher = Sha256::new();
+    if resuming && resume_accepted && resume_from > 0 {
+        let part_for_hash = part.clone();
+        match tokio::task::spawn_blocking(move || hash_prefix_blocking(&part_for_hash, resume_from))
+            .await
+        {
+            Ok(Ok(h)) => hasher = h,
+            Ok(Err(e)) => {
+                update(Box::new(move |p| {
+                    p.status = DownloadStatus::Failed;
+                    p.error = Some(format!("re-hash of partial file failed: {e}"));
+                    p.finished_at = Some(Utc::now());
+                }));
+                return;
+            }
+            Err(e) => {
+                update(Box::new(move |p| {
+                    p.status = DownloadStatus::Failed;
+                    p.error = Some(format!("re-hash task failed: {e}"));
+                    p.finished_at = Some(Utc::now());
+                }));
+                return;
+            }
+        }
+    }
+
     let mut file = if resuming && resume_accepted {
         match tokio::fs::OpenOptions::new()
             .append(true)
@@ -906,6 +1193,7 @@ async fn run_download(
             }));
             return;
         }
+        hasher.update(&chunk);
         downloaded += chunk.len() as u64;
 
         // Throttle progress writes — 1 MiB OR 250ms granularity (whichever
@@ -949,24 +1237,61 @@ async fn run_download(
         }
     }
 
-    if let Err(e) = tokio::fs::rename(&part, &dest).await {
-        update(Box::new(move |p| {
-            p.status = DownloadStatus::Failed;
-            p.error = Some(format!("rename: {e}"));
-            p.finished_at = Some(Utc::now());
-        }));
-        return;
+    // MODEL-001: enforce the pinned size + digest BEFORE the atomic rename —
+    // a corrupt, truncated or substituted body must never become "installed".
+    let digest = to_hex(&hasher.finalize());
+    match finalize_download(&part, &dest, downloaded, &digest, ctx.expected.as_ref()) {
+        Ok(verified) => {
+            // Record the verified install so Doctor/repair can re-hash it
+            // later (every download is recorded, pinned or not).
+            let key = dest
+                .strip_prefix(&ctx.models_dir)
+                .map(|r| r.display().to_string().replace('\\', "/"))
+                .unwrap_or_else(|_| dest.display().to_string());
+            let entry = ManifestEntry {
+                sha256: digest.clone(),
+                size_bytes: downloaded,
+                url: url.clone(),
+                verified_at: Utc::now(),
+                pinned: ctx.expected.is_some(),
+            };
+            {
+                let _g = ctx.manifest_lock.lock();
+                let mut manifest = manifest_load(&ctx.models_dir);
+                manifest.insert(key, entry);
+                manifest_store(&ctx.models_dir, &manifest);
+            }
+            update(Box::new(move |p| {
+                p.status = DownloadStatus::Completed;
+                p.bytes_downloaded = downloaded;
+                p.finished_at = Some(Utc::now());
+                p.sha256 = Some(digest);
+                p.verified = verified;
+                // Clear speed/ETA on completion — leaving them stale would say
+                // "12 MiB/s · 0 min remaining" on a finished row.
+                p.speed_bps = None;
+                p.eta_secs = None;
+            }));
+        }
+        Err(FinalizeError::Mismatch(msg)) => {
+            update(Box::new(move |p| {
+                p.status = DownloadStatus::Failed;
+                p.error = Some(msg);
+                p.finished_at = Some(Utc::now());
+                p.sha256 = Some(digest);
+                p.verified = Some(false);
+            }));
+            return;
+        }
+        Err(FinalizeError::Io(msg)) => {
+            update(Box::new(move |p| {
+                p.status = DownloadStatus::Failed;
+                p.error = Some(msg);
+                p.finished_at = Some(Utc::now());
+            }));
+            return;
+        }
     }
-
-    update(Box::new(move |p| {
-        p.status = DownloadStatus::Completed;
-        p.bytes_downloaded = downloaded;
-        p.finished_at = Some(Utc::now());
-        // Clear speed/ETA on completion — leaving them stale would say
-        // "12 MiB/s · 0 min remaining" on a finished row.
-        p.speed_bps = None;
-        p.eta_secs = None;
-    }));
 
     // Drop our AbortHandle from the map — the task's about to exit
     // normally; future pause/cancel calls would no-op anyway, but a
@@ -1011,6 +1336,151 @@ fn part_path_for(dest: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Why a completed body was refused (MODEL-001).
+#[derive(Debug)]
+enum FinalizeError {
+    /// Pinned size/digest didn't match — the `.part` has been DELETED (a
+    /// complete-but-wrong body has no resume value) and nothing installed.
+    Mismatch(String),
+    /// Filesystem error (rename) — the `.part` is kept for a retry.
+    Io(String),
+}
+
+/// Enforce the pinned size + digest, then atomically rename the `.part`
+/// into place. Pure fs mechanics, split from `run_download` so mismatch
+/// behaviour is unit-testable. Returns the `verified` flag for the
+/// progress row: `Some(true)` when a pin was checked and matched, `None`
+/// when there was no pin.
+fn finalize_download(
+    part: &Path,
+    dest: &Path,
+    downloaded: u64,
+    digest: &str,
+    expected: Option<&ExpectedDigest>,
+) -> Result<Option<bool>, FinalizeError> {
+    if let Some(exp) = expected {
+        if let Some(size) = exp.size_bytes {
+            if downloaded != size {
+                let _ = std::fs::remove_file(part);
+                return Err(FinalizeError::Mismatch(format!(
+                    "size mismatch: the pinned size is {size} bytes but the download is \
+                     {downloaded} — refusing to install (the server's file does not match \
+                     the catalog pin)"
+                )));
+            }
+        }
+        if !digest.eq_ignore_ascii_case(&exp.sha256) {
+            let _ = std::fs::remove_file(part);
+            return Err(FinalizeError::Mismatch(format!(
+                "checksum mismatch: expected sha256 {} but the download hashed to {digest} — \
+                 refusing to install (corrupt or substituted file)",
+                exp.sha256
+            )));
+        }
+    }
+    std::fs::rename(part, dest).map_err(|e| FinalizeError::Io(format!("rename: {e}")))?;
+    Ok(expected.map(|_| true))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// Re-hash exactly `len` bytes of `path` (the resume prefix). Errors if
+/// the file is shorter — the resume offset then doesn't describe the disk
+/// and the transfer must not proceed. Blocking (call via `spawn_blocking`).
+fn hash_prefix_blocking(path: &Path, len: u64) -> Result<Sha256, String> {
+    use std::io::Read;
+    let mut hasher = Sha256::new();
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open partial file: {e}"))?;
+    let mut remaining = len;
+    let mut buf = vec![0u8; 1 << 20];
+    while remaining > 0 {
+        let want = remaining.min(buf.len() as u64) as usize;
+        let n = f
+            .read(&mut buf[..want])
+            .map_err(|e| format!("read partial file: {e}"))?;
+        if n == 0 {
+            return Err(format!(
+                "partial file is {} bytes short of the resume offset",
+                remaining
+            ));
+        }
+        hasher.update(&buf[..n]);
+        remaining -= n as u64;
+    }
+    Ok(hasher)
+}
+
+/// SHA-256 + size of a whole file. Blocking (call via `spawn_blocking`).
+fn hash_file_blocking(path: &Path) -> Result<(String, u64), String> {
+    use std::io::Read;
+    let mut hasher = Sha256::new();
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open: {e}"))?;
+    let mut size: u64 = 0;
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("read: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        size += n as u64;
+    }
+    Ok((to_hex(&hasher.finalize()), size))
+}
+
+/// Move a verification-failed file aside as `<name>.quarantine-<unix-ts>`
+/// so services stop loading it while the user can still inspect it.
+/// Returns a human-readable description of what happened.
+fn quarantine_file(path: &Path) -> String {
+    let mut q = path.as_os_str().to_owned();
+    q.push(format!(".quarantine-{}", Utc::now().timestamp()));
+    let q = PathBuf::from(q);
+    match std::fs::rename(path, &q) {
+        Ok(()) => format!("quarantined to {}", q.display()),
+        Err(e) => format!("quarantine-failed: {e}"),
+    }
+}
+
+/// Load `.models-manifest.json` (relative-path → entry). Missing or
+/// malformed = empty: the manifest is a verification CACHE — worst case a
+/// file shows "unverified", never "verified" by accident.
+fn manifest_load(models_dir: &Path) -> HashMap<String, ManifestEntry> {
+    let path = models_dir.join(MANIFEST_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// Persist the manifest atomically (tmp + rename) so a crash mid-write
+/// can't leave a torn file that erases every recorded digest.
+fn manifest_store(models_dir: &Path, manifest: &HashMap<String, ManifestEntry>) {
+    let path = models_dir.join(MANIFEST_FILE);
+    let tmp = models_dir.join(format!("{MANIFEST_FILE}.tmp"));
+    let json = match serde_json::to_string_pretty(manifest) {
+        Ok(j) => j,
+        Err(e) => {
+            log::warn!("models manifest serialize failed: {e}");
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(&tmp, json) {
+        log::warn!("models manifest write failed: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        log::warn!("models manifest rename failed: {e}");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
 /// Recursively walk `root` collecting ModelFile entries with paths
 /// relative to `root_base`. Skips .part files (in-flight downloads).
 fn walk_dir(root: &Path, root_base: &Path, out: &mut Vec<ModelFile>) -> std::io::Result<()> {
@@ -1034,6 +1504,15 @@ fn walk_dir(root: &Path, root_base: &Path, out: &mut Vec<ModelFile>) -> std::io:
         if p.extension().and_then(|e| e.to_str()) == Some("part") {
             continue;
         }
+        // The verification manifest (and its tmp file) are bookkeeping,
+        // not models.
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| n == MANIFEST_FILE || n == concat!(".models-manifest.json", ".tmp"))
+        {
+            continue;
+        }
         let rel = p.strip_prefix(root_base).unwrap_or(&p);
         let name = rel.display().to_string().replace('\\', "/");
         let modified = meta.modified().ok().and_then(|t| {
@@ -1048,14 +1527,18 @@ fn walk_dir(root: &Path, root_base: &Path, out: &mut Vec<ModelFile>) -> std::io:
             path: p.display().to_string(),
             size_bytes: meta.len(),
             modified,
+            sha256: None,
+            verification: "unverified", // decorated from the manifest by list_models
         });
     }
     Ok(())
 }
 
 /// Convert a HF browser URL (`/blob/`) to a direct download URL
-/// (`/resolve/`). Leaves direct URLs and non-HF URLs untouched.
-fn normalise_hf_url(input: &str) -> Result<String, String> {
+/// (`/resolve/`). Leaves direct URLs and non-HF URLs untouched. Public so
+/// the download route can match the SAME normalised URL against the
+/// catalog when pinning digests server-side.
+pub fn normalise_hf_url(input: &str) -> Result<String, String> {
     let parsed = url::Url::parse(input).map_err(|e| format!("invalid URL: {e}"))?;
     if parsed.host_str() != Some("huggingface.co") {
         return Ok(input.to_string());
@@ -1248,6 +1731,248 @@ mod tests {
         assert!(validate_download_url("https://[::1]/x").is_err());
         assert!(validate_download_url("https://10.0.0.5:8080/x").is_err());
         assert!(validate_download_url("https://1.1.1.1/model.gguf").is_ok()); // public IP literal
+    }
+
+    /// Unique scratch dir per test so parallel tests can't collide.
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fl-model001-{tag}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn sha_of(bytes: &[u8]) -> String {
+        let mut h = Sha256::new();
+        h.update(bytes);
+        to_hex(&h.finalize())
+    }
+
+    #[test]
+    fn to_hex_known_vector() {
+        // NIST test vector: sha256("abc").
+        assert_eq!(
+            sha_of(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn finalize_rejects_checksum_mismatch_and_deletes_part() {
+        let d = tmp_dir("fin-hash");
+        let part = d.join("m.gguf.part");
+        let dest = d.join("m.gguf");
+        std::fs::write(&part, b"evil bytes").unwrap();
+        let exp = ExpectedDigest {
+            sha256: sha_of(b"good bytes"),
+            size_bytes: Some(10),
+        };
+        let digest = sha_of(b"evil bytes");
+        let res = finalize_download(&part, &dest, 10, &digest, Some(&exp));
+        match res {
+            Err(FinalizeError::Mismatch(msg)) => assert!(msg.contains("checksum mismatch")),
+            other => panic!("expected Mismatch, got {other:?}"),
+        }
+        // The wrong body is GONE and nothing was installed.
+        assert!(!part.exists(), ".part deleted on mismatch");
+        assert!(!dest.exists(), "never installed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn finalize_rejects_size_mismatch() {
+        let d = tmp_dir("fin-size");
+        let part = d.join("m.gguf.part");
+        let dest = d.join("m.gguf");
+        std::fs::write(&part, b"short").unwrap();
+        let exp = ExpectedDigest {
+            sha256: sha_of(b"short"),
+            size_bytes: Some(999),
+        };
+        let res = finalize_download(&part, &dest, 5, &sha_of(b"short"), Some(&exp));
+        match res {
+            Err(FinalizeError::Mismatch(msg)) => assert!(msg.contains("size mismatch")),
+            other => panic!("expected Mismatch, got {other:?}"),
+        }
+        assert!(!part.exists());
+        assert!(!dest.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn finalize_installs_on_match_and_without_pin() {
+        let d = tmp_dir("fin-ok");
+        // Pinned + matching → installed, verified=Some(true).
+        let part = d.join("a.gguf.part");
+        let dest = d.join("a.gguf");
+        std::fs::write(&part, b"payload").unwrap();
+        let exp = ExpectedDigest {
+            sha256: sha_of(b"payload"),
+            size_bytes: Some(7),
+        };
+        let v = finalize_download(&part, &dest, 7, &sha_of(b"payload"), Some(&exp)).unwrap();
+        assert_eq!(v, Some(true));
+        assert!(dest.exists() && !part.exists());
+        // Unpinned → installed, verified=None.
+        let part2 = d.join("b.gguf.part");
+        let dest2 = d.join("b.gguf");
+        std::fs::write(&part2, b"whatever").unwrap();
+        let v2 = finalize_download(&part2, &dest2, 8, &sha_of(b"whatever"), None).unwrap();
+        assert_eq!(v2, None);
+        assert!(dest2.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn resume_prefix_hash_matches_full_hash() {
+        // Hashing the first N bytes from disk then streaming the rest must
+        // equal hashing the whole file — the resume path's correctness.
+        let d = tmp_dir("prefix");
+        let full: Vec<u8> = (0..100_000u32).flat_map(|i| i.to_le_bytes()).collect();
+        let split = 123_457; // deliberately not chunk-aligned
+        let part = d.join("m.part");
+        std::fs::write(&part, &full[..split]).unwrap();
+        let mut hasher = hash_prefix_blocking(&part, split as u64).unwrap();
+        hasher.update(&full[split..]);
+        assert_eq!(to_hex(&hasher.finalize()), sha_of(&full));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn prefix_hash_fails_on_short_file() {
+        let d = tmp_dir("prefix-short");
+        let part = d.join("m.part");
+        std::fs::write(&part, b"only ten b").unwrap();
+        let err = hash_prefix_blocking(&part, 1000).unwrap_err();
+        assert!(err.contains("short"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn manifest_round_trip_and_malformed_is_empty() {
+        let d = tmp_dir("manifest");
+        assert!(manifest_load(&d).is_empty(), "missing = empty");
+        let mut m = HashMap::new();
+        m.insert(
+            "llm/a.gguf".to_string(),
+            ManifestEntry {
+                sha256: sha_of(b"a"),
+                size_bytes: 1,
+                url: "https://example.com/a.gguf".into(),
+                verified_at: Utc::now(),
+                pinned: true,
+            },
+        );
+        manifest_store(&d, &m);
+        let loaded = manifest_load(&d);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded["llm/a.gguf"].sha256, sha_of(b"a"));
+        assert!(loaded["llm/a.gguf"].pinned);
+        // Malformed manifest degrades to empty (verification CACHE — a
+        // corrupt file may only ever remove "verified", never grant it).
+        std::fs::write(d.join(MANIFEST_FILE), b"{not json").unwrap();
+        assert!(manifest_load(&d).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn list_models_reports_verification_states() {
+        let d = tmp_dir("list");
+        let dl = Downloads::new(d.clone());
+        std::fs::write(d.join("ok.gguf"), b"okay data").unwrap();
+        std::fs::write(d.join("drifted.gguf"), b"now longer than recorded").unwrap();
+        std::fs::write(d.join("alien.gguf"), b"copied in by hand").unwrap();
+        let mut m = HashMap::new();
+        m.insert(
+            "ok.gguf".to_string(),
+            ManifestEntry {
+                sha256: sha_of(b"okay data"),
+                size_bytes: 9,
+                url: String::new(),
+                verified_at: Utc::now(),
+                pinned: true,
+            },
+        );
+        m.insert(
+            "drifted.gguf".to_string(),
+            ManifestEntry {
+                sha256: sha_of(b"original"),
+                size_bytes: 8,
+                url: String::new(),
+                verified_at: Utc::now(),
+                pinned: false,
+            },
+        );
+        manifest_store(&d, &m);
+        let snap = dl.list_models().unwrap();
+        let get = |n: &str| snap.models.iter().find(|f| f.name == n).unwrap();
+        assert_eq!(get("ok.gguf").verification, "verified");
+        assert_eq!(get("drifted.gguf").verification, "modified");
+        assert_eq!(get("alien.gguf").verification, "unverified");
+        // The manifest itself must not be listed as a model.
+        assert!(!snap.models.iter().any(|f| f.name.contains("manifest")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn verify_all_quarantines_mismatches() {
+        let d = tmp_dir("verify");
+        let dl = Downloads::new(d.clone());
+        std::fs::write(d.join("good.gguf"), b"still intact").unwrap();
+        std::fs::write(d.join("bad.gguf"), b"tampered!!").unwrap();
+        std::fs::write(d.join("untracked.gguf"), b"no entry").unwrap();
+        let mut m = HashMap::new();
+        m.insert(
+            "good.gguf".to_string(),
+            ManifestEntry {
+                sha256: sha_of(b"still intact"),
+                size_bytes: 12,
+                url: String::new(),
+                verified_at: Utc::now(),
+                pinned: true,
+            },
+        );
+        m.insert(
+            "bad.gguf".to_string(),
+            ManifestEntry {
+                sha256: sha_of(b"original contents"),
+                size_bytes: 17,
+                url: String::new(),
+                verified_at: Utc::now(),
+                pinned: true,
+            },
+        );
+        m.insert(
+            "gone.gguf".to_string(),
+            ManifestEntry {
+                sha256: sha_of(b"x"),
+                size_bytes: 1,
+                url: String::new(),
+                verified_at: Utc::now(),
+                pinned: false,
+            },
+        );
+        manifest_store(&d, &m);
+
+        let report = dl.verify_all().unwrap();
+        let get = |n: &str| report.checked.iter().find(|r| r.name == n).unwrap();
+        assert!(get("good.gguf").ok);
+        let bad = get("bad.gguf");
+        assert!(!bad.ok);
+        assert!(bad.action.as_deref().unwrap().starts_with("quarantined"));
+        // The tampered file is renamed aside so services stop loading it…
+        assert!(!d.join("bad.gguf").exists());
+        assert!(std::fs::read_dir(&d)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with("bad.gguf.quarantine-")));
+        // …and its manifest row is dropped (next list shows unverified,
+        // never a stale "verified").
+        let after = manifest_load(&d);
+        assert!(after.contains_key("good.gguf"));
+        assert!(!after.contains_key("bad.gguf"));
+        assert!(!after.contains_key("gone.gguf"), "missing rows pruned");
+        assert_eq!(report.missing, vec!["gone.gguf".to_string()]);
+        assert!(report.untracked.iter().any(|n| n == "untracked.gguf"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
