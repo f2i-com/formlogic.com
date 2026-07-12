@@ -145,16 +145,27 @@ export function AokieGuidePage() {
         <div className="mx-auto max-w-3xl px-5 py-14">
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
             Aokie · AI Receptionist
+            <span className="ml-2 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold tracking-normal text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+              Hardware beta
+            </span>
           </p>
           <h1 className="mt-3 text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
             Run your own AI phone receptionist — on your own machine.
           </h1>
           <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-gray-600 dark:text-slate-300">
             Aokie turns a Windows PC, a USB Bluetooth dongle and the phone you already own into a
-            local AI receptionist: it answers calls, talks to callers, books appointments and files
-            every call, transcript and booking into your FormLogic app. Speech recognition, the
-            language model and the voice all run <strong>locally on your hardware</strong> — no
-            per-minute fees, and audio never leaves your machine.
+            local AI receptionist: it answers calls, talks to callers, captures appointment
+            requests and files every call, transcript and request into your FormLogic app.
+            Speech recognition, the language model and the voice run{' '}
+            <strong>locally on your hardware by default</strong> — no per-minute fees, and with
+            the standard local models your call audio stays on your machine. (If you point Aokie
+            at a remote AI or speech endpoint, that provider receives the audio or transcripts it
+            needs.)
+          </p>
+          <p className="mt-3 max-w-2xl text-[13px] leading-relaxed text-gray-500 dark:text-slate-400">
+            Aokie is in <strong>hardware beta</strong>: it needs Windows 10/11, a supported USB
+            Bluetooth dongle and a GPU for comfortable local AI — see{' '}
+            <a href="#requirements" className="underline hover:no-underline">what you need</a> below.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-3">
             <Link
@@ -186,7 +197,7 @@ export function AokieGuidePage() {
           <li className="flex gap-3"><Mic className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> A local speech-recognition model (Parakeet) turns it into text in real time.</li>
           <li className="flex gap-3"><Cpu className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> A local language model decides what to say — using the business name, services and instructions from the Receptionist Settings you control.</li>
           <li className="flex gap-3"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> A local text-to-speech voice (pocket-tts) speaks the reply to the caller — who can interrupt it naturally (barge-in).</li>
-          <li className="flex gap-3"><HardDrive className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> FormLogic flows file the call: caller, transcript, summary, bookings and follow-up tasks land as records in your app.</li>
+          <li className="flex gap-3"><HardDrive className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> FormLogic flows file the call: caller, transcript, summary, appointment requests and follow-up tasks land as records in your app — your team confirms bookings from there.</li>
         </ol>
 
         {/* Requirements */}
@@ -282,6 +293,12 @@ export function AokieGuidePage() {
               (or the <a className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-400" href={DESKTOP_RELEASES} target="_blank" rel="noreferrer">latest GitHub release</a>, with SHA-256 checksums) and run it.
               Desktop lives in your system tray and supervises everything local: models, services,
               plugins and the flow runtime.
+            </p>
+            <p className="text-[13px] text-gray-500 dark:text-slate-400">
+              During the beta the release downloads require beta access — if a release link asks you
+              to sign in to GitHub, email{' '}
+              <a className="underline hover:no-underline" href="mailto:hello@formlogic.com">hello@formlogic.com</a>{' '}
+              for an invite.
             </p>
           </Step>
 

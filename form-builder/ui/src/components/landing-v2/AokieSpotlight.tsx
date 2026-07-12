@@ -35,7 +35,7 @@ export function AokieSpotlight() {
       <div className="lv2-container lv2-split">
         <div className="lv2-split__copy" data-reveal="">
           <SectionLabel>Meet Aokie</SectionLabel>
-          <span className="lv2-new-badge">New · Desktop-powered</span>
+          <span className="lv2-new-badge">Hardware beta · Desktop-powered</span>
           <h2 className="lv2-h2">Turn the phone you already use into a smarter front desk.</h2>
           <p className="lv2-lead">
             Aokie can answer business calls, recognise returning callers and capture what happens as

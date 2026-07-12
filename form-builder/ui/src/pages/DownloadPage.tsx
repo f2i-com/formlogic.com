@@ -53,18 +53,24 @@ export function DownloadPage() {
 
         <div className="mt-8 flex flex-col gap-3 text-left">
           {hasInstaller ? (
-            <a
-              href={RELEASES_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-3 rounded-xl bg-primary-600 px-5 py-4 text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-            >
-              <Monitor className="h-5 w-5 shrink-0" />
-              <span className="min-w-0">
-                <span className="block text-sm font-semibold">Download for Windows</span>
-                <span className="block text-xs opacity-80">Installer from the latest release (with SHA-256 checksums)</span>
-              </span>
-            </a>
+            <>
+              <a
+                href={RELEASES_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 rounded-xl bg-primary-600 px-5 py-4 text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              >
+                <Monitor className="h-5 w-5 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold">Download for Windows <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">Beta</span></span>
+                  <span className="block text-xs opacity-80">Installer from the latest release (with SHA-256 checksums)</span>
+                </span>
+              </a>
+              <p className="text-center text-xs leading-relaxed text-gray-400 dark:text-slate-500">
+                Desktop is in beta — if the release link asks you to sign in to GitHub, email{' '}
+                <a className="underline hover:no-underline" href="mailto:hello@formlogic.com">hello@formlogic.com</a> for access.
+              </p>
+            </>
           ) : (
             <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-900">
               <Smartphone className="mt-0.5 h-5 w-5 shrink-0 text-gray-400 dark:text-slate-500" />
@@ -87,7 +93,7 @@ export function DownloadPage() {
             <Globe className="h-5 w-5 shrink-0 text-gray-400 dark:text-slate-500" />
             <span className="min-w-0">
               <span className="block text-sm font-semibold">Continue in your browser</span>
-              <span className="block text-xs text-gray-500 dark:text-slate-400">Everything works on the web — no install needed</span>
+              <span className="block text-xs text-gray-500 dark:text-slate-400">Forms, apps, flows and dashboards run on the web — Desktop adds local models, hardware and headless flows</span>
             </span>
           </Link>
 
