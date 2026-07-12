@@ -35,6 +35,8 @@ class AppManifestControllerTest extends TestCase
             'slug' => 'demo',
             'name' => 'Demo App',
             'description' => 'A demo',
+            'ownerId' => 'owner-uuid-1',
+            'updatedAt' => '2026-07-12 10:00:00',
             'settings' => [],
             'theme' => [],
             'customLogic' => [],
@@ -90,6 +92,27 @@ class AppManifestControllerTest extends TestCase
     {
         $manifest = $this->build('https://mine.example.com/', 'mine.example.com');
         $this->assertSame('https://mine.example.com/app/demo', $manifest['source']['url']);
+    }
+
+    /**
+     * NATIVE-SEC-001: the SIGNED manifest carries the app identity the native runtime
+     * partitions verified state + offline queues by — appId, an OPAQUE account hash
+     * (never the raw owner UUID), and a manifest version.
+     */
+    public function testManifestCarriesSignedAppIdentityForPartitioning(): void
+    {
+        $manifest = $this->build(null, null);
+
+        $this->assertSame('app-1', $manifest['appId']);
+        $this->assertSame('2026-07-12 10:00:00', $manifest['manifestVersion']);
+        // accountId is a one-way hash of the owner id: stable, opaque, and the raw
+        // UUID must never appear in this public document.
+        $this->assertSame(substr(hash('sha256', 'fl-account:owner-uuid-1'), 0, 16), $manifest['accountId']);
+        $this->assertStringNotContainsString(
+            'owner-uuid-1',
+            json_encode($manifest, JSON_THROW_ON_ERROR),
+            'raw owner id must not leak into the public manifest'
+        );
     }
 
     public function testPlatformSlugManifestUsesPlatformBaseAndOmitsDomain(): void

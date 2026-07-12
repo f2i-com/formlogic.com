@@ -45,6 +45,17 @@ app it navigates to — so app-logic / SDK screens call the same API in-browser 
   ones the server accepted (removed) and `sync.fail(ids, error)` for the rest (kept, with
   incremented `attempts` + `lastError`). Nothing is silently dropped.
 
+  **NATIVE-SEC-001 hardening:** the queue is **partitioned by verified app identity**
+  (`origin | accountId | appId`, all lifted from the SIGNED manifest — caller-supplied fields are
+  ignored), so an app can only ever see/flush/ack/fail **its own** items, even against another app
+  on the same origin. The file is **sealed at rest** (XChaCha20-Poly1305, per-install
+  `sync-queue.key` in the app-data sandbox); every mutation is **fail-closed** (fsync'd tmp+rename
+  BEFORE success is reported; on failure the change is rolled back and the caller gets a typed
+  `queue_persist_failed` error — the web layer then uses its browser IndexedDB queue). Per-app
+  quotas (500 items / 10 MB) reject with `queue_full`; a corrupt queue file is **quarantined** to
+  `.corrupt-<ts>` (surfaced via `flush().corruptionRecovered`), never silently discarded. Legacy
+  (pre-partitioning) rows are adopted only by a VERIFIED app whose slug matches.
+
 ## Deep links — "open in app" without typing a URL
 
 The runtime registers as a handler for FormLogic app links (spec §26):
@@ -69,11 +80,14 @@ adb shell am start -a android.intent.action.VIEW \
 ```
 src/                     shell frontend: branded loader + "no app loaded" placeholder (main.ts, index.html, styles.css)
 src-tauri/
-  src/lib.rs             Rust commands (runtime_info, connector_* [typed errors], sync_* [persisted queue:
+  src/lib.rs             Rust commands (runtime_info, connector_* [typed errors], sync_* [partitioned queue:
                          enqueue/get_queue/flush/ack/fail], pending_deep_link) + mock vehicle connector +
-                         signed client-manifest Ed25519 verification (canonical-JSON reproduction, per-origin
+                         signed client-manifest Ed25519 verification (canonical-JSON reproduction, per-APP
                          capability gating) + bridge init-script (window.FormLogicNative + loading overlay)
                          + deep-link handling (open/warm/cold, scheme validation)
+  src/sync_queue.rs      NATIVE-SEC-001 offline queue: partitioned by verified app identity, sealed at rest
+                         (XChaCha20-Poly1305), fail-closed persistence, per-app quotas, corruption quarantine
+  src/trust.rs           NATIVE-SEC-001 TOFU signing-key pin store + consent prompts (first-use / rotation)
   tauri.conf.json        withGlobalTauri; window built in setup() to carry the init script; deep-link plugin config
   capabilities/          IPC grants incl. remote.urls for approved FormLogic origins + deep-link:default
   gen/android/           Tauri-generated Android Gradle project (themes = fl_navy splash; build outputs gitignored)
@@ -146,11 +160,13 @@ release `.so` + package `assemble<Abi>Release`, then verify with
 - **Device connector**: returns real phone data in the runtime (device info, network, battery, …)
   via the `/device-check` page.
 - **Loading**: navy FL splash → FL spinner → app, no white flash and no shell flash.
-- `cargo test` (12 tests): connector telemetry shape + command routing + **typed connector errors**;
-  **persisted sync queue** (enqueue → persist → reload → flush/ack/fail, restart survival, poison-item
-  cap); **canonical-JSON reproduction** + **Ed25519 verify** — including a cross-language vector using a
-  signature produced by the real PHP libsodium server crypto over `SigningService::canonical`; deep-link
-  target parsing/validation.
+- `cargo test` (37 tests): connector telemetry shape + command routing + **typed connector errors**;
+  **partitioned sync queue** (cross-app isolation incl. steal-ack/steal-fail, encryption at rest,
+  fail-closed persistence rollback, item/byte quotas, corruption quarantine, legacy adoption,
+  restart survival, poison-item cap); **TOFU key pinning** (first-use consent, rotation hard-stop,
+  per-origin independence, unpersistable-pin refusal); **canonical-JSON reproduction** + **Ed25519
+  verify** — including a cross-language vector using a signature produced by the real PHP libsodium
+  server crypto over `SigningService::canonical`; deep-link target parsing/validation.
 
 > **Not re-verified on-device in this pass:** the full page-load manifest-verification flow (Rust HTTP
 > GET of `/client-manifest` + `/public/signing-key` against a running server, then live connector
@@ -160,16 +176,33 @@ release `.so` + package `assemble<Abi>Release`, then verify with
 
 ## Security
 
-- Only signed FormLogic apps on approved origins get bridge access. Two layers: (1) the remote-IPC
-  allowlist in `capabilities/` (coarse origin gate for `window.__TAURI__`); (2) on each top-level
-  navigation the runtime fetches the app's signed
-  [client manifest](../../docs/CUSTOM_APP_PLATFORM.md#client-manifest) + the server's Ed25519 public
-  key and verifies the detached signature over the manifest's canonical JSON (reproduced byte-for-byte
-  from `SigningService::canonical`). Only a **verified** origin is granted the connector commands its
-  manifest declares — `connector_request`/`connector_status`/`sync_*` reject an unverified origin with
-  a typed `origin_denied` error (and an ungranted command with `capability_denied`), and the JS shim
-  flips `window.FormLogicNative.available=false` so a failed page is display-only. Arbitrary PWAs can
+- Only signed FormLogic apps on approved origins get bridge access. Three layers (NATIVE-SEC-001):
+  1. the remote-IPC allowlist in `capabilities/` (coarse origin gate for `window.__TAURI__`);
+  2. on each top-level navigation the runtime fetches the app's signed
+     [client manifest](../../docs/CUSTOM_APP_PLATFORM.md#client-manifest) + the server's Ed25519
+     public key and verifies the detached signature over the manifest's canonical JSON (reproduced
+     byte-for-byte from `SigningService::canonical`), then pins the manifest's `appSlug`/`domain`
+     to the navigated slug + origin host;
+  3. **TOFU signing-key pinning** — because the manifest AND the key come from the same navigated
+     origin, signature verification alone would let any origin self-assert trust. The FIRST time an
+     origin presents a signing key, a **native consent dialog** shows its SHA-256 fingerprint and
+     the user must explicitly choose "Trust this server" (else the app stays display-only); the key
+     is then pinned (`pinned-keys.json`) and every later verification requires the SAME key. A
+     **changed key is a hard stop** with a stern rotation warning until explicitly re-trusted. Pin
+     writes are fail-closed: if the pin can't be persisted, trust is not granted.
+- Verification state is keyed **per app** (`origin | slug`), never per origin — two apps on the
+  platform host verify independently, so navigating app A → app B never carries A's capabilities
+  (or queued answers — see the partitioned queue above) across. `connector_request`/
+  `connector_status`/`sync_*` reject an unverified page with a typed `origin_denied` error (and an
+  ungranted command with `capability_denied`), and the JS shim flips
+  `window.FormLogicNative.available=false` so a failed page is display-only. Arbitrary PWAs can
   render but cannot touch connectors.
+- **Custom domains are display-only in this runtime today.** The capability allowlist is the
+  authoritative IPC boundary and names only FormLogic origins; an app on a custom domain renders
+  fine but its bridge reports `ipc_unavailable` and the web runtime falls back to browser
+  connectors + the browser queue. Signed custom-domain manifests (`/.well-known/formlogic-app.json`)
+  stay verifiable so a build whose allowlist includes a custom origin gets the full TOFU + partition
+  treatment with no code change — but no runtime-time origin grants exist, by design.
 - Deep links open **http/https targets only** — `javascript:`/`file:`/`data:` are rejected, so a
   crafted link can't execute in the privileged shell origin. The `device` connector's phone-ability
   access is gated per-command by app-logic permissions (`connector.device.<cmd>`), and device I/O

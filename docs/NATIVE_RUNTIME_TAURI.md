@@ -167,18 +167,27 @@ so a web caller feature-detects them (older runtimes predate them).
 
 ## Offline sync queue — flush / ack / fail contract
 
-The native side **persists** queued submissions (JSON file in the app data dir, atomic temp-file +
+The native side **persists** queued submissions (sealed file in the app data dir, fsync'd temp-file +
 rename write, so they survive a process restart) but **never POSTs to the server itself** — the
 WebView holds the session cookie, so the web layer does the HTTP and the Rust side is a durable store.
-The loop (`nativeOfflineQueue.ts` `flushNativeQueue()` drives it; `lib.rs` `PersistentSyncQueue`
-implements it):
+The loop (`nativeOfflineQueue.ts` `flushNativeQueue()` drives it; `sync_queue.rs`
+`PartitionedSyncQueue` implements it):
 
-1. **`enqueueSubmission(item)`** — the runtime store appends `{ appSlug, formId, idempotencyKey,
-   answers }` (an id / `createdAt` / `status:"pending"` are filled in if absent) and persists. Returns
-   `{ id }`.
-2. **`flush()`** — returns pending items **grouped by appSlug**: `{ pending: [{ appSlug, items[] }] }`.
-   It **increments each returned item's `attempts`** (this counts as a delivery attempt) but **removes
-   nothing** — so a failed POST can never silently drop data.
+**NATIVE-SEC-001:** every operation below is bound to the calling page's **trust partition**
+(`origin | accountId | appId` — all lifted from the app's SIGNED manifest, never from payload
+fields), so an app only ever sees/delivers/acks/fails its own items even against another app on the
+same origin. The file is **encrypted at rest** (XChaCha20-Poly1305, per-install `sync-queue.key`),
+mutations are **fail-closed** (persist before success; rollback + typed `queue_persist_failed` error
+on failure — the web layer then falls back to its browser IndexedDB queue), per-app quotas reject
+with `queue_full`, and a corrupt file is **quarantined** to `.corrupt-<ts>` (surfaced via
+`flush().corruptionRecovered`), never silently discarded.
+
+1. **`enqueueSubmission(item)`** — the runtime store appends `{ formId, idempotencyKey, answers }`
+   (an id / `createdAt` / `status:"pending"` are filled in if absent; `appSlug` is stamped from the
+   VERIFIED app — a caller-supplied slug is ignored) and persists. Returns `{ id }`.
+2. **`flush()`** — returns the partition's pending items **grouped by appSlug**:
+   `{ pending: [{ appSlug, items[] }] }`. Read-only: it mutates **no attempts** and **removes
+   nothing** — so a failed POST can never silently drop data and polling never burns retries.
 3. The web layer POSTs each group to **`/api/app/{slug}/sync/batch`** (session cookie attached),
    which replays through the idempotency ledger and returns **per-item results keyed by
    `idempotencyKey`** (`{ results: [{ idempotencyKey, success, error }] }`).
@@ -196,8 +205,8 @@ Notes:
 - `getQueue()` returns the full queue (including terminal `failed` items) so the UI can show
   pending vs failed counts (`OfflineQueuePanel` / `nativeQueueCounts()`).
 - Reconnect auto-flushes: the web layer registers an `online` listener that calls `flushNativeQueue()`.
-- Every `sync_*` command is gated by `require_verified_origin` — the queue is inaccessible from an
-  unverified page.
+- Every `sync_*` command is gated by `require_verified_partition` — the queue is inaccessible from an
+  unverified page, and a verified page only ever reaches its own app's partition.
 
 ## Manifest routes: slug endpoint vs. custom-domain `/.well-known/formlogic-app.json`
 
@@ -225,19 +234,32 @@ validly-signed manifest replayed from another origin is refused).
 
 ## Security
 Only signed FormLogic apps on approved origins get bridge access: a remote-IPC origin allowlist PLUS
-per-app **signed client-manifest verification**. On each page load of a hosted app (`/app/<slug>`) the
-runtime fetches the signed client manifest (preferring `/.well-known/formlogic-app.json`, falling back
-to `/api/app/{slug}/client-manifest`) + `/api/public/signing-key`, verifies the detached Ed25519
-signature over the PHP-canonical payload, and **pins identity**: `payload.appSlug` must match the
-navigated slug and `payload.domain` must match the serving origin host (missing/mismatched → hard
-failure). Only then does it expose `connectors`/`sync` for the connector commands the manifest grants —
-unverified origin → `origin_denied`, ungranted command → `capability_denied`, and the webview otherwise
-stays display-only. Arbitrary PWAs can render but not touch connectors. Connector errors are typed
-(`{code,message}`) so the web client never masks a capability denial with mock data.
+per-app **signed client-manifest verification** PLUS **TOFU signing-key pinning** (NATIVE-SEC-001).
+On each page load of a hosted app (`/app/<slug>`) the runtime fetches the signed client manifest
+(preferring `/.well-known/formlogic-app.json`, falling back to `/api/app/{slug}/client-manifest`) +
+`/api/public/signing-key`, verifies the detached Ed25519 signature over the PHP-canonical payload,
+and **pins identity**: `payload.appSlug` must match the navigated slug and `payload.domain` must
+match the serving origin host (missing/mismatched → hard failure).
+
+Because the manifest AND the key come from the same navigated origin, the signature alone only
+proves internal consistency — so the origin's signing key is additionally **pinned trust-on-first-use**
+(`trust.rs`, `pinned-keys.json`): the first key an origin presents requires an explicit native
+consent dialog showing its SHA-256 fingerprint ("Trust this server" / "Keep display-only"), and a
+**changed key is a hard stop** with a rotation warning until explicitly re-trusted. Pin writes are
+fail-closed — an unpersistable pin grants nothing.
+
+Verification state is keyed **per app** (`origin | slug`), never per origin: two apps on the same
+host verify independently, so navigating app A → app B never carries A's capabilities (or queued
+answers — the sync queue partitions by signed app identity, above) across. Only a verified app gets
+`connectors`/`sync` for the connector commands its manifest grants — unverified page →
+`origin_denied`, ungranted command → `capability_denied`, and the webview otherwise stays
+display-only. Arbitrary PWAs can render but not touch connectors. Connector errors are typed
+(`{code,message}`) so the web client never masks a capability denial with mock data. The manifest's
+signed `appId`/`accountId`/`manifestVersion` fields feed the queue partition.
 
 `runtime.ready()` (bridge → the `runtime_ready` command) lets the web layer **await the current
-origin's verification outcome** before its first native connector request (so an early
-`onScreenEnter` read can't race the async verifier into `origin_denied`): it resolves
+APP's verification outcome** (keyed origin+slug) before its first native connector request (so an
+early `onScreenEnter` read can't race the async verifier into `origin_denied`): it resolves
 `{ verified: true }` once the manifest verified, `{ verified: false }` on definitive failure or for
 any page that isn't a hosted app (a 10s hard backstop in the Rust command bounds the wait; the web
 caller applies its own ~3s timeout and proceeds best-effort).

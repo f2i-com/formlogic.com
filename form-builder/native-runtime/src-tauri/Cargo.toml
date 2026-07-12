@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
+# NATIVE-SEC-001: explicit user consent for trust-on-first-use signing-key pinning.
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: canonical-JSON signature verification (#12) must keep manifest key order
 # byte-for-byte with PHP SigningService::canonical (json_encode preserves array order).
@@ -31,4 +33,8 @@ base64 = "0.22"
 # Blocking HTTP to fetch the app's signed manifest + the server's public key. native-tls uses
 # Windows SChannel on the desktop target (no aws-lc-rs/nasm build step that rustls-tls needs).
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"] }
+# NATIVE-SEC-001: offline queue sealed at rest + signing-key fingerprints for the TOFU prompt.
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
+sha2 = "0.10"
 

@@ -7,21 +7,36 @@
 // "status.read") and never touch the transport — here the transport is a mock,
 // later it can be Bluetooth/USB/local-HTTP without the app changing.
 //
-// Trust boundary (spec §25): the bridge is injected into every page, but connector /
-// sync access is granted ONLY to an origin whose SIGNED client manifest we have fetched
-// and Ed25519-verified (see `verify` module). An unverified origin can still render, but
+// Trust boundary (spec §25 + NATIVE-SEC-001): the bridge is injected into every page, but
+// connector / sync access is granted ONLY to an APP — keyed (origin, slug), never origin
+// alone — whose SIGNED client manifest we have fetched and Ed25519-verified, AND whose
+// origin's signing key the user explicitly trusts (TOFU pinning in `trust`; first use and
+// key changes require a native consent dialog). An unverified page can still render, but
 // its bridge is display-only — connector/sync calls reject with typed errors and the JS
 // shim marks `available=false` so the web runtime falls back to browser mock connectors.
+// The offline sync queue is partitioned by the verified app's signed identity and sealed
+// at rest (`sync_queue`); every queue operation binds to the calling page's partition.
+//
+// Custom domains: the Tauri capability allowlist (capabilities/default.json) is the
+// authoritative IPC boundary — only the origins listed there ever get `window.__TAURI__`.
+// An app served from a custom domain therefore runs DISPLAY-ONLY in this runtime today
+// (its bridge reports ipc_unavailable and the web runtime falls back), even though signed
+// custom-domain manifests exist; enabling one requires shipping a build whose allowlist
+// names that origin, at which point the TOFU pin + partition machinery covers it.
 
-use serde::{Deserialize, Serialize};
+mod sync_queue;
+mod trust;
+
+use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+use sync_queue::{Partition, PartitionedSyncQueue, QueueError, SyncItem};
 use tauri::{window::Color, Manager, Url};
 use tauri_plugin_deep_link::DeepLinkExt;
+use trust::PinnedKeys;
 
 // Coordinates deep-link navigation across the shell's initial load. On a COLD start the
 // launch intent arrives (via the plugin) before the shell's index.html has loaded, so a
@@ -127,16 +142,18 @@ async fn runtime_ready(
     verified: tauri::State<'_, VerifiedOrigins>,
 ) -> Result<Value, String> {
     // Only a hosted app page under `/app/<slug>` triggers manifest verification; the shell and
-    // any other page have no manifest, so they are never "verified".
+    // any other page have no manifest, so they are never "verified". State is keyed per
+    // (origin, slug): waiting on app B never resolves from app A's verification.
     let url = webview.url().ok();
     let origin = url.as_ref().and_then(hosted_app_origin);
-    let has_slug = url.as_ref().and_then(slug_of).is_some();
-    let Some(origin) = origin.filter(|_| has_slug) else {
+    let slug = url.as_ref().and_then(slug_of);
+    let (Some(origin), Some(slug)) = (origin, slug) else {
         return Ok(json!({ "verified": false }));
     };
+    let key = app_key(&origin, &slug);
     let origins = verified.inner().clone();
     let flag = tauri::async_runtime::spawn_blocking(move || {
-        origins.await_terminal(&origin, Duration::from_secs(READY_WAIT_SECS))
+        origins.await_terminal(&key, Duration::from_secs(READY_WAIT_SECS))
     })
     .await
     .unwrap_or(false); // a join failure (verifier panic) is treated as "not verified".
@@ -145,10 +162,10 @@ async fn runtime_ready(
 
 #[tauri::command]
 fn connector_list(webview: tauri::Webview, verified: tauri::State<VerifiedOrigins>) -> Vec<ConnectorSummary> {
-    // Only a verified origin discovers native connectors; an unverified page is display-only
+    // Only a verified APP discovers native connectors; an unverified page is display-only
     // (the web runtime then sees no native connectors and uses its browser registry).
-    let Some(origin) = caller_origin(&webview) else { return vec![] };
-    let Some(caps) = verified.get(&origin) else { return vec![] };
+    let Some((origin, slug)) = caller_identity(&webview) else { return vec![] };
+    let Some(caps) = verified.get(&app_key(&origin, &slug)) else { return vec![] };
     if caps.grants_any("vehicle") {
         vec![ConnectorSummary {
             id: "vehicle".into(),
@@ -266,155 +283,28 @@ fn connector_request(
 }
 
 // ---------------------------------------------------------------------------
-// Offline sync queue (review #15) — PERSISTED so queued submissions survive a process
-// restart. Backed by a JSON file in the app data dir (std::fs; no external store crate,
-// so it is directly unit-testable and adds no dependency/offline-resolve risk).
+// Offline sync queue — persisted, ENCRYPTED, and PARTITIONED by the caller's
+// verified app identity (NATIVE-SEC-001; implementation in sync_queue.rs).
 //
 // The native side does NOT POST to the server: the WebView holds the session cookie, so
 // `sync_flush` RETURNS pending items grouped by appSlug to the caller (read-only — it never
 // mutates attempts), which POSTs them to `/api/app/{slug}/sync/batch`, then calls
 // `sync_ack(ids)` for the ones the server accepted (removing them) and `sync_fail(ids, error)`
-// for the rest. A non-terminal fail records ONE attempt (+ lastError) and promotes to terminal
-// "failed" at MAX_SYNC_ATTEMPTS; `sync_fail(ids, error, terminal:true)` marks "failed"
-// immediately (e.g. an idempotency conflict that can never succeed on retry).
+// for the rest. Every one of those operations is bound to the trust partition of the PAGE
+// making the call — an app can only ever see/deliver/ack/fail its own items.
+//
+// Mutations are fail-closed: a persistence failure rejects with the typed
+// `queue_persist_failed` error (the web layer falls back to its browser
+// IndexedDB queue) instead of reporting success for a row the disk doesn't
+// hold. A partition at quota rejects with `queue_full`.
 // ---------------------------------------------------------------------------
-const MAX_SYNC_ATTEMPTS: u32 = 5;
-static QUEUE_SEQ: AtomicU64 = AtomicU64::new(0);
+const CODE_QUEUE_PERSIST_FAILED: &str = "queue_persist_failed";
+const CODE_QUEUE_FULL: &str = "queue_full";
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-struct SyncItem {
-    id: String,
-    app_slug: String,
-    form_id: String,
-    idempotency_key: String,
-    answers: Value,
-    /// "pending" (retryable) | "completed" (removed by ack) | "failed" (max attempts hit).
-    status: String,
-    attempts: u32,
-    last_error: Option<String>,
-    created_at: String,
-}
-
-impl SyncItem {
-    /// Normalize an item enqueued from the web into a full queue record, filling in an id,
-    /// status, and createdAt when the caller did not supply them.
-    fn from_incoming(v: &Value) -> Self {
-        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
-        let id = s("id").filter(|x| !x.is_empty()).unwrap_or_else(gen_id);
-        let idempotency_key = s("idempotencyKey").filter(|x| !x.is_empty()).unwrap_or_else(|| id.clone());
-        SyncItem {
-            app_slug: s("appSlug").unwrap_or_default(),
-            form_id: s("formId").unwrap_or_default(),
-            idempotency_key,
-            answers: v.get("answers").cloned().unwrap_or(Value::Null),
-            status: "pending".into(),
-            attempts: v.get("attempts").and_then(Value::as_u64).unwrap_or(0) as u32,
-            last_error: s("lastError"),
-            created_at: s("createdAt").filter(|x| !x.is_empty()).unwrap_or_else(now_iso),
-            id,
-        }
-    }
-}
-
-struct PersistentSyncQueue {
-    path: PathBuf,
-    items: Mutex<Vec<SyncItem>>,
-}
-
-impl PersistentSyncQueue {
-    /// Load an existing queue file (surviving a restart), or start empty.
-    fn load(path: PathBuf) -> Self {
-        let items = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Vec<SyncItem>>(&s).ok())
-            .unwrap_or_default();
-        PersistentSyncQueue { path, items: Mutex::new(items) }
-    }
-
-    fn persist(&self, items: &[SyncItem]) {
-        let Ok(text) = serde_json::to_string(items) else { return };
-        // Write to a sibling temp file then rename, so a crash mid-write can't corrupt the queue.
-        let tmp = self.path.with_extension("json.tmp");
-        if std::fs::write(&tmp, &text).is_ok() && std::fs::rename(&tmp, &self.path).is_ok() {
-            return;
-        }
-        let _ = std::fs::write(&self.path, &text);
-    }
-
-    /// Append an item and persist; returns the (possibly generated) item id.
-    fn enqueue(&self, incoming: &Value) -> String {
-        let mut items = self.items.lock().unwrap();
-        let item = SyncItem::from_incoming(incoming);
-        let id = item.id.clone();
-        items.push(item);
-        self.persist(&items);
-        id
-    }
-
-    fn get_queue(&self) -> Vec<SyncItem> {
-        self.items.lock().unwrap().clone()
-    }
-
-    /// Return pending items grouped by appSlug for the caller to POST. Read-only: flushing
-    /// must NOT mutate `attempts` (otherwise mere polling of a long-'processing' item would
-    /// creep it toward the terminal cap without any recorded failure) — items are NOT removed
-    /// here either, so a failed POST never silently drops data; `sync_ack` removes the
-    /// accepted ones and `fail` records each retryable failure as one attempt.
-    fn flush(&self) -> Value {
-        let items = self.items.lock().unwrap();
-        let mut by_slug: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        for it in items.iter().filter(|i| i.status == "pending") {
-            by_slug
-                .entry(it.app_slug.clone())
-                .or_default()
-                .push(serde_json::to_value(it).unwrap_or(Value::Null));
-        }
-        let pending: Vec<Value> = by_slug
-            .into_iter()
-            .map(|(slug, group)| json!({ "appSlug": slug, "items": group }))
-            .collect();
-        json!({ "pending": pending })
-    }
-
-    /// Mark the given ids completed and remove them (called after a successful POST).
-    fn ack(&self, ids: &[String]) -> Value {
-        let mut items = self.items.lock().unwrap();
-        let set: HashSet<&String> = ids.iter().collect();
-        let before = items.len();
-        items.retain(|i| !set.contains(&i.id));
-        let removed = before - items.len();
-        self.persist(&items);
-        json!({ "acked": removed, "remaining": items.len() })
-    }
-
-    /// Record a failure for the given ids with `lastError` set.
-    ///
-    /// Non-terminal (`terminal == false`): a recorded retryable failure counts as ONE attempt
-    /// (`flush` never touches attempts), and the item promotes to terminal "failed" once
-    /// attempts reach MAX_SYNC_ATTEMPTS so a poison item stops being retried.
-    ///
-    /// Terminal (`terminal == true`): mark "failed" immediately regardless of attempts — used
-    /// for failures that can never succeed on retry (e.g. an idempotency-key conflict where
-    /// the key was already used with a different submission).
-    fn fail(&self, ids: &[String], error: &str, terminal: bool) -> Value {
-        let mut items = self.items.lock().unwrap();
-        let set: HashSet<&String> = ids.iter().collect();
-        let mut n = 0;
-        for it in items.iter_mut().filter(|i| set.contains(&i.id)) {
-            it.last_error = Some(error.to_string());
-            if terminal {
-                it.status = "failed".into();
-            } else {
-                it.attempts += 1;
-                if it.attempts >= MAX_SYNC_ATTEMPTS {
-                    it.status = "failed".into();
-                }
-            }
-            n += 1;
-        }
-        self.persist(&items);
-        json!({ "failed": n })
+fn queue_err(e: QueueError) -> String {
+    match e {
+        QueueError::Full(msg) => conn_err(CODE_QUEUE_FULL, msg),
+        QueueError::Persist(msg) => conn_err(CODE_QUEUE_PERSIST_FAILED, msg),
     }
 }
 
@@ -422,87 +312,60 @@ impl PersistentSyncQueue {
 fn sync_enqueue(
     webview: tauri::Webview,
     verified: tauri::State<VerifiedOrigins>,
-    state: tauri::State<PersistentSyncQueue>,
+    state: tauri::State<PartitionedSyncQueue>,
     item: Value,
 ) -> Result<Value, String> {
-    require_verified_origin(&webview, &verified)?;
-    Ok(json!({ "id": state.enqueue(&item) }))
+    let partition = require_verified_partition(&webview, &verified)?;
+    let id = state.enqueue(&partition, &item).map_err(queue_err)?;
+    Ok(json!({ "id": id }))
 }
 
 #[tauri::command]
 fn sync_get_queue(
     webview: tauri::Webview,
     verified: tauri::State<VerifiedOrigins>,
-    state: tauri::State<PersistentSyncQueue>,
+    state: tauri::State<PartitionedSyncQueue>,
 ) -> Result<Vec<SyncItem>, String> {
-    require_verified_origin(&webview, &verified)?;
-    Ok(state.get_queue())
+    let partition = require_verified_partition(&webview, &verified)?;
+    Ok(state.get_queue(&partition))
 }
 
 #[tauri::command]
 fn sync_flush(
     webview: tauri::Webview,
     verified: tauri::State<VerifiedOrigins>,
-    state: tauri::State<PersistentSyncQueue>,
+    state: tauri::State<PartitionedSyncQueue>,
 ) -> Result<Value, String> {
-    require_verified_origin(&webview, &verified)?;
-    Ok(state.flush())
+    let partition = require_verified_partition(&webview, &verified)?;
+    Ok(state.flush(&partition))
 }
 
 #[tauri::command]
 fn sync_ack(
     webview: tauri::Webview,
     verified: tauri::State<VerifiedOrigins>,
-    state: tauri::State<PersistentSyncQueue>,
+    state: tauri::State<PartitionedSyncQueue>,
     ids: Vec<String>,
 ) -> Result<Value, String> {
-    require_verified_origin(&webview, &verified)?;
-    Ok(state.ack(&ids))
+    let partition = require_verified_partition(&webview, &verified)?;
+    state.ack(&partition, &ids).map_err(queue_err)
 }
 
 #[tauri::command]
 fn sync_fail(
     webview: tauri::Webview,
     verified: tauri::State<VerifiedOrigins>,
-    state: tauri::State<PersistentSyncQueue>,
+    state: tauri::State<PartitionedSyncQueue>,
     ids: Vec<String>,
     error: String,
     terminal: Option<bool>,
 ) -> Result<Value, String> {
-    require_verified_origin(&webview, &verified)?;
+    let partition = require_verified_partition(&webview, &verified)?;
     // `terminal` is an optional third argument so callers built against the older
     // two-argument shape keep the retryable (attempt-counting) behavior.
-    Ok(state.fail(&ids, &error, terminal.unwrap_or(false)))
-}
-
-fn gen_id() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let seq = QUEUE_SEQ.fetch_add(1, Ordering::Relaxed);
-    format!("q_{millis}_{seq}")
-}
-
-/// Current UTC time as an RFC3339 string, dependency-free (Howard Hinnant's civil-from-days).
-fn now_iso() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0) as i64;
-    let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
-    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+    state
+        .fail(&partition, &ids, &error, terminal.unwrap_or(false))
+        .map_err(queue_err)
 }
 
 // ---------------------------------------------------------------------------
@@ -517,12 +380,20 @@ fn now_iso() -> String {
 // JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE).
 // ---------------------------------------------------------------------------
 
-/// Native capabilities granted to a verified origin (flattened "connector.command" keys).
+/// Native capabilities granted to one verified APP (flattened
+/// "connector.command" keys), plus the signed identity used to partition
+/// the offline queue (NATIVE-SEC-001): appId/accountId/manifestVersion all
+/// come from the Ed25519-verified manifest payload, never from the page.
 #[derive(Clone, Default)]
 struct VerifiedCaps {
-    #[allow(dead_code)]
     slug: String,
     capabilities: HashSet<String>,
+    /// Signed `appId` (empty on servers that predate NATIVE-SEC-001).
+    app_id: String,
+    /// Signed opaque `accountId` (empty on older servers).
+    account_id: String,
+    /// Signed `manifestVersion` (empty on older servers).
+    manifest_version: String,
 }
 
 impl VerifiedCaps {
@@ -533,12 +404,38 @@ impl VerifiedCaps {
         let prefix = format!("{connector}.");
         self.capabilities.iter().any(|k| k.starts_with(&prefix))
     }
+
+    /// The trust partition queue operations bind to. Older servers without
+    /// signed appId fall back to the verified slug — still app-scoped,
+    /// because check_manifest_identity pinned the slug to the manifest.
+    fn partition(&self, origin: &str) -> Partition {
+        Partition {
+            origin: origin.to_string(),
+            account_id: self.account_id.clone(),
+            app_id: if self.app_id.is_empty() {
+                self.slug.clone()
+            } else {
+                self.app_id.clone()
+            },
+            app_slug: self.slug.clone(),
+            manifest_version: self.manifest_version.clone(),
+        }
+    }
 }
 
-/// The verification state of one origin. The bridge injects `available=true` optimistically
-/// and verifies the signed manifest asynchronously, so an origin passes through `Pending`
-/// (verifier thread running) before reaching a terminal `Verified`/`Failed`. `runtime.ready()`
-/// awaits that terminal transition so an early connector read never races the verifier.
+/// Verification-state key: one entry per (origin, app slug) — NEVER per
+/// origin alone. Two apps on the same origin (the platform host serves
+/// every /app/<slug>) verify independently, so navigating app A → app B
+/// can't carry A's capabilities across (NATIVE-SEC-001).
+fn app_key(origin: &str, slug: &str) -> String {
+    format!("{origin}|{slug}")
+}
+
+/// The verification state of one APP (key = `app_key(origin, slug)`). The bridge injects
+/// `available=true` optimistically and verifies the signed manifest asynchronously, so an app
+/// passes through `Pending` (verifier thread running) before reaching a terminal
+/// `Verified`/`Failed`. `runtime.ready()` awaits that terminal transition so an early
+/// connector read never races the verifier.
 #[derive(Clone)]
 enum OriginVerification {
     /// Signed-manifest verification is in flight (thread spawned, not yet terminal).
@@ -549,9 +446,10 @@ enum OriginVerification {
     Failed,
 }
 
-/// Per-origin verification state. Shared (Arc) between the page-load verifier and the bridge
-/// command handlers. The `Condvar` lets `runtime.ready()` park until an origin becomes terminal
-/// (Verified/Failed) instead of racing the async verifier or busy-polling.
+/// Per-APP verification state, keyed `origin|slug` (NATIVE-SEC-001). Shared (Arc) between the
+/// page-load verifier and the bridge command handlers. The `Condvar` lets `runtime.ready()`
+/// park until an app becomes terminal (Verified/Failed) instead of racing the async verifier
+/// or busy-polling.
 #[derive(Clone)]
 struct VerifiedOrigins(Arc<(Mutex<HashMap<String, OriginVerification>>, Condvar)>);
 
@@ -575,8 +473,9 @@ impl VerifiedOrigins {
         }
     }
 
-    /// True only once the origin has reached the terminal `Verified` state (gates sync commands
-    /// and lets the page-load hook skip re-verifying an already-verified origin).
+    /// True only once the key has reached the terminal `Verified` state. Production paths
+    /// read caps via `get`; this remains for the state-transition tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn contains(&self, origin: &str) -> bool {
         matches!(self.lock().get(origin), Some(OriginVerification::Verified(_)))
     }
@@ -639,34 +538,44 @@ impl VerifiedOrigins {
     }
 }
 
-/// The http/https origin of the calling webview, or None for the shell / a non-web origin.
-fn caller_origin(webview: &tauri::Webview) -> Option<String> {
-    webview.url().ok().and_then(|u| hosted_app_origin(&u))
+/// The (origin, slug) identity of the calling webview's CURRENT page, or
+/// None for the shell / a non-web origin / a page outside /app/<slug>.
+/// Re-derived on every command, so a navigation to another app immediately
+/// changes which verification (if any) the caller is bound to.
+fn caller_identity(webview: &tauri::Webview) -> Option<(String, String)> {
+    let url = webview.url().ok()?;
+    let origin = hosted_app_origin(&url)?;
+    let slug = slug_of(&url)?;
+    Some((origin, slug))
 }
 
-/// A verified origin's caps, or the origin_denied typed error.
+/// The calling APP's verified caps, or the origin_denied typed error.
 fn require_caps(webview: &tauri::Webview, verified: &VerifiedOrigins) -> Result<VerifiedCaps, String> {
-    let origin = caller_origin(webview)
-        .ok_or_else(|| conn_err(CODE_ORIGIN_DENIED, "This origin has no verified FormLogic manifest."))?;
-    verified.get(&origin).ok_or_else(|| {
+    let (origin, slug) = caller_identity(webview)
+        .ok_or_else(|| conn_err(CODE_ORIGIN_DENIED, "This page has no verified FormLogic manifest."))?;
+    verified.get(&app_key(&origin, &slug)).ok_or_else(|| {
         conn_err(
             CODE_ORIGIN_DENIED,
-            format!("Origin {origin} has not passed signed-manifest verification."),
+            format!("App \"{slug}\" on {origin} has not passed signed-manifest verification."),
         )
     })
 }
 
-/// Gate for sync commands (origin must be verified; no per-command capability).
-fn require_verified_origin(webview: &tauri::Webview, verified: &VerifiedOrigins) -> Result<String, String> {
-    let origin = caller_origin(webview)
-        .ok_or_else(|| conn_err(CODE_ORIGIN_DENIED, "This origin has no verified FormLogic manifest."))?;
-    if !verified.contains(&origin) {
-        return Err(conn_err(
+/// Gate for sync commands: the caller must be a VERIFIED app, and every
+/// queue operation binds to that app's trust partition (NATIVE-SEC-001).
+fn require_verified_partition(
+    webview: &tauri::Webview,
+    verified: &VerifiedOrigins,
+) -> Result<Partition, String> {
+    let (origin, slug) = caller_identity(webview)
+        .ok_or_else(|| conn_err(CODE_ORIGIN_DENIED, "This page has no verified FormLogic manifest."))?;
+    let caps = verified.get(&app_key(&origin, &slug)).ok_or_else(|| {
+        conn_err(
             CODE_ORIGIN_DENIED,
-            format!("Origin {origin} has not passed signed-manifest verification."),
-        ));
-    }
-    Ok(origin)
+            format!("App \"{slug}\" on {origin} has not passed signed-manifest verification."),
+        )
+    })?;
+    Ok(caps.partition(&origin))
 }
 
 /// The tuple origin (scheme://host[:port]) for an http/https app URL, excluding the runtime
@@ -751,7 +660,8 @@ fn verify_ed25519(payload: &Value, sig_b64url: &str, pubkey_b64: &str) -> Result
         .map_err(|e| format!("signature verification failed: {e}"))
 }
 
-/// Flatten `payload.native.capabilities` into a set of "connector.command" grant keys.
+/// Flatten `payload.native.capabilities` into a set of "connector.command" grant keys,
+/// and lift the signed identity fields the queue partition is built from.
 fn extract_caps(payload: &Value) -> VerifiedCaps {
     let mut capabilities = HashSet::new();
     if let Some(list) = payload.pointer("/native/capabilities").and_then(Value::as_array) {
@@ -769,8 +679,14 @@ fn extract_caps(payload: &Value) -> VerifiedCaps {
             }
         }
     }
-    let slug = payload.get("appSlug").and_then(Value::as_str).unwrap_or("").to_string();
-    VerifiedCaps { slug, capabilities }
+    let field = |k: &str| payload.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    VerifiedCaps {
+        slug: field("appSlug"),
+        capabilities,
+        app_id: field("appId"),
+        account_id: field("accountId"),
+        manifest_version: field("manifestVersion"),
+    }
 }
 
 fn http_get(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
@@ -877,8 +793,19 @@ fn verify_manifest_envelope(
 /// Fetch the app's signed client manifest (preferring the same-origin custom-domain manifest at
 /// `/.well-known/formlogic-app.json`, else the slug-addressed `/api/app/{slug}/client-manifest`)
 /// plus `{origin}/api/public/signing-key`, verify the manifest's detached Ed25519 signature, and
-/// enforce that its appSlug/domain match the navigated slug + origin host. Returns the granted caps.
-fn fetch_and_verify(origin: &str, slug: &str) -> Result<VerifiedCaps, String> {
+/// enforce that its appSlug/domain match the navigated slug + origin host.
+///
+/// NATIVE-SEC-001: the manifest AND the key come from the SAME navigated origin, so the
+/// signature alone only proves internal consistency — a malicious origin could serve its own
+/// manifest signed by its own key. The TOFU pin store (`trust.rs`) breaks that self-assertion:
+/// a first-seen key needs the user's explicit confirmation (fingerprint shown) before ANY
+/// native capability is granted, and a CHANGED key is a hard stop until explicitly re-trusted.
+fn fetch_and_verify(
+    origin: &str,
+    slug: &str,
+    pins: &PinnedKeys,
+    confirm: &dyn Fn(&trust::TrustPrompt) -> bool,
+) -> Result<VerifiedCaps, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()
@@ -894,7 +821,11 @@ fn fetch_and_verify(origin: &str, slug: &str) -> Result<VerifiedCaps, String> {
         .filter(|s| !s.is_empty())
         .ok_or("server exposes no Ed25519 public key")?;
 
-    verify_manifest_envelope(&envelope, public_key, slug, origin_host(origin).as_deref())
+    // Signature + identity first (never prompt the user about a key that can't even
+    // produce a valid manifest), then the origin-trust decision.
+    let caps = verify_manifest_envelope(&envelope, public_key, slug, origin_host(origin).as_deref())?;
+    trust::evaluate_trust(pins, origin, slug, public_key, sync_queue::now_iso(), confirm)?;
+    Ok(caps)
 }
 
 /// The deep-link target the runtime was cold-started with (consumed once), so the shell
@@ -1082,24 +1013,34 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let nav_state = Arc::new(DeepLinkNav::default());
             app.manage(nav_state.clone()); // read by the `pending_deep_link` command
 
-            // Per-origin verified capabilities, shared with the bridge command handlers.
+            // Per-APP verified capabilities (keyed origin|slug), shared with the bridge
+            // command handlers.
             let verified = VerifiedOrigins::default();
             app.manage(verified.clone());
 
-            // Persisted offline sync queue (survives restart) in the app data dir.
-            let queue_path = app
+            // App data dir hosts the queue, its encryption key, and the TOFU pin store.
+            let data_dir = app
                 .path()
                 .app_data_dir()
-                .map(|dir| {
-                    let _ = std::fs::create_dir_all(&dir);
-                    dir.join("sync-queue.json")
+                .inspect(|dir| {
+                    let _ = std::fs::create_dir_all(dir);
                 })
-                .unwrap_or_else(|_| std::env::temp_dir().join("formlogic-sync-queue.json"));
-            app.manage(PersistentSyncQueue::load(queue_path));
+                .unwrap_or_else(|_| std::env::temp_dir());
+
+            // TOFU signing-key pins (NATIVE-SEC-001) — read by the page-load verifier.
+            app.manage(PinnedKeys::load(data_dir.join("pinned-keys.json")));
+
+            // Persisted offline sync queue: partitioned by verified app identity,
+            // sealed at rest, fail-closed on persistence errors.
+            app.manage(PartitionedSyncQueue::load(
+                data_dir.join("sync-queue.json"),
+                &data_dir,
+            ));
 
             // The shell loads at index.html on a dark background (no white flash during
             // the WebView cold-start), and boots straight into its loader. It reveals the
@@ -1121,27 +1062,55 @@ pub fn run() {
                     state_load.shell_ready.store(true, Ordering::SeqCst);
                     // On a top-level navigation to a hosted app, verify its signed client
                     // manifest off-thread; grant native caps only on success, else make the
-                    // bridge display-only. Skip if this origin is already verified.
+                    // bridge display-only. Verification is keyed per (origin, slug) — app B
+                    // on the same origin NEVER inherits app A's verification — and gated by
+                    // the TOFU signing-key pin (explicit user consent on first use / change).
                     let url = payload.url().clone();
                     if let (Some(origin), Some(slug)) = (hosted_app_origin(&url), slug_of(&url)) {
-                        // Claim verification: mark the origin Pending (so runtime.ready() can await
+                        let key = app_key(&origin, &slug);
+                        // Claim verification: mark the app Pending (so runtime.ready() can await
                         // it) and only spawn when no verification is already done/in-flight.
-                        if verified_pl.begin_verification(&origin) {
+                        if verified_pl.begin_verification(&key) {
                             let wv = webview.clone();
                             let vmap = verified_pl.clone();
-                            std::thread::spawn(move || match fetch_and_verify(&origin, &slug) {
-                                Ok(caps) => {
-                                    eprintln!("[formlogic] manifest verified for {origin} ({slug})");
-                                    vmap.insert_verified(origin, caps);
-                                }
-                                Err(e) => {
-                                    eprintln!("[formlogic] manifest verification FAILED for {origin} ({slug}): {e}");
-                                    // Record the terminal failure (unblocks ready() with verified=false)
-                                    // and flip the bridge to display-only so the web runtime falls back.
-                                    vmap.mark_failed(origin);
-                                    let _ = wv.eval(
-                                        "try{if(window.FormLogicNative){window.FormLogicNative.available=false;delete window.FormLogicNative.connectors;delete window.FormLogicNative.sync;}}catch(_){}"
-                                    );
+                            std::thread::spawn(move || {
+                                let app = wv.app_handle();
+                                let pins = app.state::<PinnedKeys>();
+                                // Explicit-consent hook: a NATIVE dialog (not page content, which
+                                // an untrusted origin controls). blocking_show is safe here — this
+                                // is a spawned thread, never the main/UI thread.
+                                let dialog_app = app.clone();
+                                let confirm = move |p: &trust::TrustPrompt| -> bool {
+                                    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+                                    let (title, body) = trust::prompt_text(p);
+                                    dialog_app
+                                        .dialog()
+                                        .message(body)
+                                        .title(title)
+                                        .kind(match p {
+                                            trust::TrustPrompt::FirstUse { .. } => MessageDialogKind::Warning,
+                                            trust::TrustPrompt::Rotation { .. } => MessageDialogKind::Error,
+                                        })
+                                        .buttons(MessageDialogButtons::OkCancelCustom(
+                                            "Trust this server".into(),
+                                            "Keep display-only".into(),
+                                        ))
+                                        .blocking_show()
+                                };
+                                match fetch_and_verify(&origin, &slug, &pins, &confirm) {
+                                    Ok(caps) => {
+                                        eprintln!("[formlogic] manifest verified for {origin} ({slug})");
+                                        vmap.insert_verified(key, caps);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[formlogic] manifest verification FAILED for {origin} ({slug}): {e}");
+                                        // Record the terminal failure (unblocks ready() with verified=false)
+                                        // and flip the bridge to display-only so the web runtime falls back.
+                                        vmap.mark_failed(key);
+                                        let _ = wv.eval(
+                                            "try{if(window.FormLogicNative){window.FormLogicNative.available=false;delete window.FormLogicNative.connectors;delete window.FormLogicNative.sync;}}catch(_){}"
+                                        );
+                                    }
                                 }
                             });
                         }
@@ -1254,7 +1223,7 @@ mod tests {
     fn caps_grant_matching() {
         let mut capabilities = HashSet::new();
         capabilities.insert("vehicle.status.read".to_string());
-        let caps = VerifiedCaps { slug: "demo".into(), capabilities };
+        let caps = VerifiedCaps { slug: "demo".into(), capabilities, ..Default::default() };
         assert!(caps.grants("vehicle", "status.read"));
         assert!(!caps.grants("vehicle", "gps.read"));
         assert!(caps.grants_any("vehicle"));
@@ -1284,7 +1253,10 @@ mod tests {
             thread::sleep(Duration::from_millis(40));
             let mut caps = HashSet::new();
             caps.insert("vehicle.status.read".to_string());
-            bg.insert_verified(org, VerifiedCaps { slug: "demo".into(), capabilities: caps });
+            bg.insert_verified(
+                org,
+                VerifiedCaps { slug: "demo".into(), capabilities: caps, ..Default::default() },
+            );
         });
         assert!(
             origins.await_terminal(&origin, Duration::from_secs(5)),
@@ -1365,134 +1337,71 @@ mod tests {
         assert_eq!(hosted_app_origin(&Url::parse("tauri://localhost/").unwrap()), None);
     }
 
-    // ---- #15: persistent offline sync queue ----
+    // (The offline sync queue's tests — partitioning, encryption at rest,
+    // fail-closed persistence, quotas, corruption quarantine, legacy
+    // adoption, attempt semantics — live in sync_queue.rs; the TOFU pin
+    // store's tests live in trust.rs.)
 
-    fn temp_queue_path(tag: &str) -> PathBuf {
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        std::env::temp_dir().join(format!("fl-sync-test-{tag}-{n}.json"))
+    // ---- NATIVE-SEC-001: per-app verification keys + queue partitions ----
+
+    #[test]
+    fn app_keys_separate_apps_on_one_origin() {
+        // Two apps on the SAME origin verify independently — the key is the
+        // unit of trust, so navigating app A → app B can't reuse A's caps.
+        let origins = VerifiedOrigins::default();
+        let key_a = app_key("https://formlogic.com", "alpha");
+        let key_b = app_key("https://formlogic.com", "beta");
+        assert_ne!(key_a, key_b);
+        let mut capabilities = HashSet::new();
+        capabilities.insert("vehicle.status.read".to_string());
+        origins.insert_verified(
+            key_a.clone(),
+            VerifiedCaps { slug: "alpha".into(), capabilities, ..Default::default() },
+        );
+        assert!(origins.contains(&key_a));
+        assert!(!origins.contains(&key_b), "app B is NOT verified by app A's manifest");
+        assert!(origins.get(&key_b).is_none());
     }
 
     #[test]
-    fn sync_queue_enqueue_persist_reload_ack() {
-        let path = temp_queue_path("main");
-        let _ = std::fs::remove_file(&path);
-
-        let queue = PersistentSyncQueue::load(path.clone());
-        let id1 = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f1", "answers": { "a": 1 } }));
-        let id2 = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f2", "idempotencyKey": "k2", "answers": {} }));
-        assert!(!id1.is_empty() && !id2.is_empty());
-        assert_eq!(queue.get_queue().len(), 2);
-
-        // flush groups pending items by appSlug WITHOUT removing them and WITHOUT touching
-        // attempts (reading the queue is not a failure; only sync_fail records attempts).
-        let flushed = queue.flush();
-        let pending = flushed["pending"].as_array().unwrap();
-        assert_eq!(pending.len(), 1, "one appSlug group");
-        assert_eq!(pending[0]["appSlug"], "demo");
-        assert_eq!(pending[0]["items"].as_array().unwrap().len(), 2);
-        assert_eq!(pending[0]["items"][0]["attempts"], 0);
-        assert_eq!(pending[0]["items"][0]["status"], "pending");
-
-        // Survives a process restart: a fresh queue reloads the same 2 items from disk.
-        let reloaded = PersistentSyncQueue::load(path.clone());
-        assert_eq!(reloaded.get_queue().len(), 2);
-
-        // ack the first (accepted by the server) → removed; the other remains.
-        let acked = reloaded.ack(&[id1.clone()]);
-        assert_eq!(acked["acked"], 1);
-        assert_eq!(acked["remaining"], 1);
-
-        // Reload again → the ack persisted (1 item left), and it is id2.
-        let after = PersistentSyncQueue::load(path.clone());
-        let items = after.get_queue();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, id2);
-
-        // A non-terminal fail records lastError + ONE attempt and keeps the item (still
-        // retryable under the attempt cap).
-        let failed = after.fail(&[id2.clone()], "network down", false);
-        assert_eq!(failed["failed"], 1);
-        let final_items = PersistentSyncQueue::load(path.clone()).get_queue();
-        assert_eq!(final_items.len(), 1);
-        assert_eq!(final_items[0].last_error.as_deref(), Some("network down"));
-        assert_eq!(final_items[0].attempts, 1);
-        assert_eq!(final_items[0].status, "pending");
-
-        let _ = std::fs::remove_file(&path);
+    fn partition_uses_signed_identity_with_slug_fallback() {
+        // A manifest with signed appId/accountId partitions by them…
+        let caps = VerifiedCaps {
+            slug: "demo".into(),
+            app_id: "app-uuid-1".into(),
+            account_id: "acct-hash".into(),
+            manifest_version: "2026-07-12".into(),
+            ..Default::default()
+        };
+        let p = caps.partition("https://x.example");
+        assert_eq!(p.key(), "https://x.example|acct-hash|app-uuid-1");
+        assert_eq!(p.app_slug, "demo");
+        assert_eq!(p.manifest_version, "2026-07-12");
+        // …an older server without them still partitions per app via the slug
+        // (which check_manifest_identity pinned to the signed manifest).
+        let legacy = VerifiedCaps { slug: "demo".into(), ..Default::default() };
+        assert_eq!(legacy.partition("https://x.example").key(), "https://x.example||demo");
     }
 
     #[test]
-    fn sync_queue_flush_does_not_bump_attempts() {
-        // Reading/flushing the queue must be attempt-neutral: a long-'processing' item that is
-        // polled repeatedly (flush → keep, no fail) must never creep toward the terminal cap.
-        let path = temp_queue_path("flush-neutral");
-        let _ = std::fs::remove_file(&path);
-        let queue = PersistentSyncQueue::load(path.clone());
-        queue.enqueue(&json!({ "appSlug": "demo", "formId": "f", "answers": {} }));
-        for _ in 0..(MAX_SYNC_ATTEMPTS * 3) {
-            queue.flush();
-        }
-        let items = queue.get_queue();
-        assert_eq!(items[0].attempts, 0, "flush must not mutate attempts");
-        assert_eq!(items[0].status, "pending");
-        // And it is still returned by flush().
-        let pending = queue.flush();
-        assert_eq!(pending["pending"].as_array().unwrap().len(), 1);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn sync_queue_fail_bumps_attempts_and_promotes_at_cap() {
-        let path = temp_queue_path("poison");
-        let _ = std::fs::remove_file(&path);
-        let queue = PersistentSyncQueue::load(path.clone());
-        let id = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f", "answers": {} }));
-        // Each recorded retryable failure = one attempt; the item stays pending below the cap...
-        for i in 1..MAX_SYNC_ATTEMPTS {
-            queue.fail(&[id.clone()], "boom", false);
-            let items = queue.get_queue();
-            assert_eq!(items[0].attempts, i);
-            assert_eq!(items[0].status, "pending", "still retryable below the cap");
-        }
-        // ...and the MAX_SYNC_ATTEMPTS-th failure promotes it to terminal "failed".
-        queue.fail(&[id], "boom", false);
-        let items = queue.get_queue();
-        assert_eq!(items[0].attempts, MAX_SYNC_ATTEMPTS);
-        assert_eq!(items[0].status, "failed");
-        // A terminal item is no longer returned by flush().
-        let pending = queue.flush();
-        assert_eq!(pending["pending"].as_array().unwrap().len(), 0);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn sync_queue_terminal_fail_marks_failed_immediately() {
-        // terminal:true (e.g. an idempotency conflict — the key was already used with a
-        // different submission, so no retry can ever succeed) marks "failed" on the FIRST
-        // failure, regardless of attempts.
-        let path = temp_queue_path("terminal");
-        let _ = std::fs::remove_file(&path);
-        let queue = PersistentSyncQueue::load(path.clone());
-        let id = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f", "answers": {} }));
-        let other = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f2", "answers": {} }));
-
-        let res = queue.fail(&[id.clone()], "idempotency conflict", true);
-        assert_eq!(res["failed"], 1);
-        let items = queue.get_queue();
-        let it = items.iter().find(|i| i.id == id).unwrap();
-        assert_eq!(it.status, "failed");
-        assert_eq!(it.last_error.as_deref(), Some("idempotency conflict"));
-        assert_eq!(it.attempts, 0, "terminal fail does not count as a retry attempt");
-
-        // The terminal state persists across a restart, and only the OTHER item still flushes.
-        let reloaded = PersistentSyncQueue::load(path.clone());
-        let pending = reloaded.flush();
-        let groups = pending["pending"].as_array().unwrap();
-        assert_eq!(groups.len(), 1);
-        let group_items = groups[0]["items"].as_array().unwrap();
-        assert_eq!(group_items.len(), 1);
-        assert_eq!(group_items[0]["id"], Value::String(other));
-        let _ = std::fs::remove_file(&path);
+    fn extract_caps_lifts_signed_identity() {
+        let payload = json!({
+            "appSlug": "fleet",
+            "appId": "0b1c2d3e",
+            "accountId": "a1b2c3d4e5f60708",
+            "manifestVersion": "2026-07-12 10:00:00",
+            "native": { "capabilities": [
+                { "connector": "vehicle", "commands": ["status.read"] }
+            ]}
+        });
+        let caps = extract_caps(&payload);
+        assert_eq!(caps.app_id, "0b1c2d3e");
+        assert_eq!(caps.account_id, "a1b2c3d4e5f60708");
+        assert_eq!(caps.manifest_version, "2026-07-12 10:00:00");
+        // Absent fields (older server) degrade to empty, not panic.
+        let old = extract_caps(&json!({ "appSlug": "fleet", "native": {} }));
+        assert_eq!(old.app_id, "");
+        assert_eq!(old.account_id, "");
     }
 
     // ---- #12: canonical JSON reproduction + Ed25519 verification ----
@@ -1716,6 +1625,48 @@ mod tests {
         let tampered = json!({ "version": 1, "appSlug": "demo", "domain": "fleet.acme.co", "native": {} });
         let bad = json!({ "alg": "Ed25519", "payload": tampered, "signature": envelope["signature"] });
         assert!(verify_manifest_envelope(&bad, &pubkey_b64, "demo", Some("fleet.acme.co")).is_err());
+    }
+
+    /// LIVE integration of the full verification chain — real HTTP fetch of the
+    /// signed manifest + signing key from the local dev server, Ed25519 verify,
+    /// identity pinning, and the TOFU consent flow (consent injected; the native
+    /// dialog itself is a thin blocking_show over the unit-tested prompt_text).
+    /// Ignored by default: needs the local stack. Run with
+    ///   FL_LIVE_SLUG=<published-app-slug> cargo test -- --ignored live_fetch
+    #[test]
+    #[ignore]
+    fn live_fetch_and_verify_against_local_server() {
+        let slug = std::env::var("FL_LIVE_SLUG").expect("set FL_LIVE_SLUG to a published app slug");
+        let origin = std::env::var("FL_LIVE_ORIGIN").unwrap_or("http://formlogic.local".into());
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pin_path = std::env::temp_dir().join(format!("fl-live-pins-{n}.json"));
+        let pins = PinnedKeys::load(pin_path.clone());
+
+        // 1. First use + declined consent → NO caps, NO pin.
+        let declined = fetch_and_verify(&origin, &slug, &pins, &|p| {
+            assert!(matches!(p, trust::TrustPrompt::FirstUse { .. }));
+            false
+        });
+        assert!(declined.is_err(), "declined TOFU must not grant caps");
+
+        // 2. First use + accepted consent → verified caps + pin recorded.
+        let caps = fetch_and_verify(&origin, &slug, &pins, &|_| true)
+            .expect("live manifest must verify");
+        assert_eq!(caps.slug, slug);
+        assert!(!caps.app_id.is_empty(), "server ships signed appId");
+        assert!(!caps.account_id.is_empty(), "server ships signed accountId");
+        let partition = caps.partition(&origin);
+        assert!(partition.key().contains(&caps.app_id));
+
+        // 3. Re-verify → pin matches, NO prompt fires.
+        let no_prompt = fetch_and_verify(&origin, &slug, &pins, &|_| {
+            panic!("a matching pin must not prompt")
+        });
+        assert!(no_prompt.is_ok());
+        let _ = std::fs::remove_file(&pin_path);
     }
 
     #[test]

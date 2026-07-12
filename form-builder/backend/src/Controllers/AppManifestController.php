@@ -270,6 +270,14 @@ class AppManifestController
             'version' => 1,
             'kind' => 'formlogic.clientApp',
             'appSlug' => $slug,
+            // NATIVE-SEC-001: signed app identity so the native runtime can partition
+            // verified state + offline queues by (origin, account, app) instead of by
+            // origin alone. `accountId` is an opaque one-way hash of the owner id — a
+            // stable partition key that never exposes the raw user UUID in a public
+            // document. `manifestVersion` tracks the app row's last update.
+            'appId' => (string) $app['id'],
+            'accountId' => substr(hash('sha256', 'fl-account:' . (string) ($app['ownerId'] ?? '')), 0, 16),
+            'manifestVersion' => (string) ($app['updatedAt'] ?? '1'),
             'display' => [
                 'name' => $app['name'],
                 'shortName' => $settings['pwaShortName'] ?? mb_substr((string) $app['name'], 0, 12),
