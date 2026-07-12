@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="680" viewBox="0 0 1600 680" role="img" aria-labelledby="title desc">
+  <title id="title">One FormLogic backend powering many portals</title>
+  <desc id="desc">A client portal, staff app and admin console share the same forms and records while retaining separate branding, members, roles, navigation and dashboards.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#090f1d"/>
+      <stop offset="1" stop-color="#10182b"/>
+    </linearGradient>
+    <linearGradient id="shared" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8268ff"/>
+      <stop offset="1" stop-color="#6847eb"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000713" flood-opacity=".5"/>
+    </filter>
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M50 0H0V50" fill="none" stroke="#ffffff" stroke-opacity=".032"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="680" rx="30" fill="url(#bg)"/>
+  <rect width="1600" height="680" rx="30" fill="url(#grid)"/>
+  <circle cx="800" cy="390" r="330" fill="#7657f6" opacity=".065"/>
+
+  <!-- Connection lines -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M290 282v70q0 38 38 38h362" stroke="#927cff" stroke-width="4"/>
+    <path d="M800 282v108" stroke="#4cc7d8" stroke-width="4"/>
+    <path d="M1310 282v70q0 38-38 38H910" stroke="#c9fb68" stroke-width="4"/>
+    <path d="M800 500v62" stroke="#927cff" stroke-width="4"/>
+  </g>
+  <g fill="#10182b" stroke-width="3">
+    <circle cx="290" cy="322" r="8" stroke="#927cff"/><circle cx="800" cy="335" r="8" stroke="#4cc7d8"/><circle cx="1310" cy="322" r="8" stroke="#c9fb68"/>
+  </g>
+
+  <!-- Portal cards -->
+  <g filter="url(#shadow)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif">
+    <g>
+      <rect x="90" y="70" width="400" height="212" rx="24" fill="#121a2e" stroke="#927cff" stroke-opacity=".5"/>
+      <rect x="90" y="70" width="400" height="54" rx="24" fill="#7657f6" opacity=".13"/>
+      <circle cx="124" cy="97" r="7" fill="#927cff"/><circle cx="148" cy="97" r="7" fill="#4cc7d8"/><circle cx="172" cy="97" r="7" fill="#c9fb68"/>
+      <rect x="122" y="150" width="64" height="64" rx="18" fill="#7657f6" opacity=".22"/>
+      <path d="M141 188c4-12 22-12 26 0M154 179a9 9 0 1 0 0-18 9 9 0 0 0 0 18" fill="none" stroke="#b8a9ff" stroke-width="3" stroke-linecap="round"/>
+      <text x="210" y="169" fill="#f3f5fa" font-size="27" font-weight="750">Client portal</text>
+      <text x="210" y="199" fill="#9ea8ba" font-size="16">Submit · view own · track progress</text>
+      <rect x="122" y="235" width="102" height="28" rx="14" fill="#7657f6" opacity=".16"/><text x="143" y="254" fill="#c8bdff" font-size="13" font-weight="650">Branded</text>
+      <rect x="234" y="235" width="98" height="28" rx="14" fill="#7657f6" opacity=".16"/><text x="257" y="254" fill="#c8bdff" font-size="13" font-weight="650">Private</text>
+    </g>
+
+    <g>
+      <rect x="600" y="70" width="400" height="212" rx="24" fill="#121a2e" stroke="#4cc7d8" stroke-opacity=".5"/>
+      <rect x="600" y="70" width="400" height="54" rx="24" fill="#4cc7d8" opacity=".1"/>
+      <circle cx="634" cy="97" r="7" fill="#927cff"/><circle cx="658" cy="97" r="7" fill="#4cc7d8"/><circle cx="682" cy="97" r="7" fill="#c9fb68"/>
+      <rect x="632" y="150" width="64" height="64" rx="18" fill="#4cc7d8" opacity=".18"/>
+      <path d="M649 190h30M654 181v-19h20v19M660 162v-7h8v7" fill="none" stroke="#89e1ec" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="720" y="169" fill="#f3f5fa" font-size="27" font-weight="750">Staff app</text>
+      <text x="720" y="199" fill="#9ea8ba" font-size="16">Work queues · updates · field views</text>
+      <rect x="632" y="235" width="98" height="28" rx="14" fill="#4cc7d8" opacity=".14"/><text x="653" y="254" fill="#afeaf1" font-size="13" font-weight="650">Focused</text>
+      <rect x="740" y="235" width="108" height="28" rx="14" fill="#4cc7d8" opacity=".14"/><text x="762" y="254" fill="#afeaf1" font-size="13" font-weight="650">Mobile</text>
+    </g>
+
+    <g>
+      <rect x="1110" y="70" width="400" height="212" rx="24" fill="#121a2e" stroke="#c9fb68" stroke-opacity=".46"/>
+      <rect x="1110" y="70" width="400" height="54" rx="24" fill="#c9fb68" opacity=".08"/>
+      <circle cx="1144" cy="97" r="7" fill="#927cff"/><circle cx="1168" cy="97" r="7" fill="#4cc7d8"/><circle cx="1192" cy="97" r="7" fill="#c9fb68"/>
+      <rect x="1142" y="150" width="64" height="64" rx="18" fill="#c9fb68" opacity=".13"/>
+      <path d="M1159 192v-17h9v17M1173 192v-29h9v29M1187 192v-23h9v23" fill="none" stroke="#dafe98" stroke-width="3" stroke-linecap="round"/>
+      <text x="1230" y="169" fill="#f3f5fa" font-size="27" font-weight="750">Admin console</text>
+      <text x="1230" y="199" fill="#9ea8ba" font-size="16">Full visibility · reports · control</text>
+      <rect x="1142" y="235" width="102" height="28" rx="14" fill="#c9fb68" opacity=".11"/><text x="1161" y="254" fill="#ddff9d" font-size="13" font-weight="650">Complete</text>
+      <rect x="1254" y="235" width="108" height="28" rx="14" fill="#c9fb68" opacity=".11"/><text x="1275" y="254" fill="#ddff9d" font-size="13" font-weight="650">Audited</text>
+    </g>
+  </g>
+
+  <!-- Shared model -->
+  <g filter="url(#shadow)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif">
+    <rect x="540" y="390" width="600" height="110" rx="26" fill="url(#shared)"/>
+    <g transform="translate(580 416)" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 7c0-4 10-7 22-7s22 3 22 7-10 7-22 7S2 11 2 7zM2 7v30c0 4 10 7 22 7s22-3 22-7V7M2 22c0 4 10 7 22 7s22-3 22-7"/>
+    </g>
+    <text x="652" y="429" fill="#ede9ff" font-size="13" font-weight="750" letter-spacing="2">SHARED FORMS</text>
+    <text x="652" y="466" fill="#ffffff" font-size="29" font-weight="750">One backend · many experiences</text>
+    <text x="652" y="490" fill="#ddd7ff" font-size="15">Jobs · clients · bookings · invoices · calls · anything you model</text>
+
+    <rect x="430" y="562" width="740" height="74" rx="22" fill="#121a2e" stroke="#ffffff" stroke-opacity=".12"/>
+    <circle cx="476" cy="599" r="20" fill="#4cc7d8" opacity=".18"/>
+    <path d="M466 593h20M466 600h20M466 607h13" stroke="#8de0eb" stroke-width="3" stroke-linecap="round"/>
+    <text x="516" y="593" fill="#f3f5fa" font-size="21" font-weight="750">Shared records</text>
+    <text x="516" y="617" fill="#9ea8ba" font-size="15">Every portal reads and writes the same source of truth—filtered by server-enforced permissions.</text>
+  </g>
+</svg>

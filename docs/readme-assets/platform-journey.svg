@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500" role="img" aria-labelledby="title desc">
+  <title id="title">FormLogic product journey: Capture, Operate, Automate</title>
+  <desc id="desc">Forms, calls and messages become shared records, purpose-built apps and automated actions in one connected workspace.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#090f1d"/>
+      <stop offset="1" stop-color="#10182b"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b73ff"/>
+      <stop offset="1" stop-color="#6847eb"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#71d9e7"/>
+      <stop offset="1" stop-color="#198fb2"/>
+    </linearGradient>
+    <linearGradient id="lime" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#dcff96"/>
+      <stop offset="1" stop-color="#92c83e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-25%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="20" flood-color="#000713" flood-opacity=".45"/>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity=".035"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="500" rx="30" fill="url(#bg)"/>
+  <rect width="1600" height="500" rx="30" fill="url(#grid)"/>
+  <circle cx="220" cy="50" r="260" fill="#7657f6" opacity=".09"/>
+  <circle cx="1380" cy="470" r="270" fill="#4cc7d8" opacity=".07"/>
+
+  <g filter="url(#shadow)">
+    <rect x="78" y="80" width="420" height="310" rx="24" fill="#121a2e" stroke="#ffffff" stroke-opacity=".11"/>
+    <rect x="590" y="80" width="420" height="310" rx="24" fill="#121a2e" stroke="#ffffff" stroke-opacity=".11"/>
+    <rect x="1102" y="80" width="420" height="310" rx="24" fill="#121a2e" stroke="#ffffff" stroke-opacity=".11"/>
+  </g>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif">
+    <!-- Capture -->
+    <rect x="112" y="114" width="60" height="60" rx="17" fill="url(#violet)"/>
+    <g transform="translate(128 128)" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 2h20l8 8v24H4z"/>
+      <path d="M24 2v9h8M10 18h16M10 25h12"/>
+    </g>
+    <text x="112" y="213" fill="#a795ff" font-size="14" font-weight="750" letter-spacing="2.2">01 · CAPTURE</text>
+    <text x="112" y="253" fill="#f5f7fb" font-size="30" font-weight="750">Bring the work in</text>
+    <text x="112" y="290" fill="#aeb7c8" font-size="17">Forms, calls and messages become</text>
+    <text x="112" y="317" fill="#aeb7c8" font-size="17">clean, structured business records.</text>
+    <g font-size="14" font-weight="650">
+      <rect x="112" y="342" width="94" height="32" rx="16" fill="#7657f6" opacity=".18"/><text x="135" y="363" fill="#c9beff">Forms</text>
+      <rect x="216" y="342" width="84" height="32" rx="16" fill="#7657f6" opacity=".18"/><text x="239" y="363" fill="#c9beff">Calls</text>
+      <rect x="310" y="342" width="120" height="32" rx="16" fill="#7657f6" opacity=".18"/><text x="333" y="363" fill="#c9beff">Messages</text>
+    </g>
+
+    <!-- Operate -->
+    <rect x="624" y="114" width="60" height="60" rx="17" fill="url(#cyan)"/>
+    <g transform="translate(638 129)" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="2" width="34" height="30" rx="4"/>
+      <path d="M2 11h34M11 11v21M16 18h13M16 25h9"/>
+    </g>
+    <text x="624" y="213" fill="#7cd6e4" font-size="14" font-weight="750" letter-spacing="2.2">02 · OPERATE</text>
+    <text x="624" y="253" fill="#f5f7fb" font-size="30" font-weight="750">Run the business</text>
+    <text x="624" y="290" fill="#aeb7c8" font-size="17">Give every role the right portal, live</text>
+    <text x="624" y="317" fill="#aeb7c8" font-size="17">dashboard, records and reports.</text>
+    <g font-size="14" font-weight="650">
+      <rect x="624" y="342" width="82" height="32" rx="16" fill="#4cc7d8" opacity=".16"/><text x="648" y="363" fill="#aeeaf1">Apps</text>
+      <rect x="716" y="342" width="98" height="32" rx="16" fill="#4cc7d8" opacity=".16"/><text x="738" y="363" fill="#aeeaf1">Roles</text>
+      <rect x="824" y="342" width="140" height="32" rx="16" fill="#4cc7d8" opacity=".16"/><text x="846" y="363" fill="#aeeaf1">Dashboards</text>
+    </g>
+
+    <!-- Automate -->
+    <rect x="1136" y="114" width="60" height="60" rx="17" fill="url(#lime)"/>
+    <g transform="translate(1150 128)" fill="none" stroke="#15210a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="5"/><circle cx="28" cy="18" r="5"/><circle cx="10" cy="32" r="5"/>
+      <path d="M12 10l11 6M24 22l-10 7"/>
+    </g>
+    <text x="1136" y="213" fill="#c3ec7d" font-size="14" font-weight="750" letter-spacing="2.2">03 · AUTOMATE</text>
+    <text x="1136" y="253" fill="#f5f7fb" font-size="30" font-weight="750">Keep it moving</text>
+    <text x="1136" y="290" fill="#aeb7c8" font-size="17">Flows connect decisions, AI, records,</text>
+    <text x="1136" y="317" fill="#aeb7c8" font-size="17">services, devices and follow-up work.</text>
+    <g font-size="14" font-weight="650">
+      <rect x="1136" y="342" width="84" height="32" rx="16" fill="#c9fb68" opacity=".13"/><text x="1159" y="363" fill="#dcff9d">Flows</text>
+      <rect x="1230" y="342" width="62" height="32" rx="16" fill="#c9fb68" opacity=".13"/><text x="1250" y="363" fill="#dcff9d">AI</text>
+      <rect x="1302" y="342" width="138" height="32" rx="16" fill="#c9fb68" opacity=".13"/><text x="1324" y="363" fill="#dcff9d">Connectors</text>
+    </g>
+
+    <!-- Connectors -->
+    <path d="M510 235h58" stroke="#927cff" stroke-width="3" stroke-linecap="round"/>
+    <path d="M556 225l12 10-12 10" fill="none" stroke="#927cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M1022 235h58" stroke="#63d1df" stroke-width="3" stroke-linecap="round"/>
+    <path d="M1068 225l12 10-12 10" fill="none" stroke="#63d1df" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="515" y="430" width="570" height="42" rx="21" fill="#ffffff" opacity=".055" stroke="#ffffff" stroke-opacity=".1"/>
+    <circle cx="545" cy="451" r="5" fill="#c9fb68"/>
+    <text x="565" y="457" fill="#d5dbea" font-size="15" font-weight="650">One connected workspace · one source of truth</text>
+  </g>
+</svg>

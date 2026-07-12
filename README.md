@@ -1,276 +1,373 @@
-# FormLogic
-
-**FormLogic is a self-hostable platform that turns forms into complete business apps.** Build (or install) a set of linked forms, compose them into an app with roles and dashboards, and run it on the web, on your own domain, or in a native desktop/mobile shell — with your own AI able to build and edit apps for you over MCP.
-
-![FormLogic form builder — drag-and-drop canvas, field palette, and per-field settings](docs/images/builder.png)
-
 <p align="center">
-  <img src="docs/images/public-form.png" width="49%" alt="Public form fill — focused, one-question-at-a-time mode" />
-  &nbsp;
-  <img src="docs/images/app-runtime.png" width="49%" alt="Business app runtime — multi-form app with RBAC" />
-</p>
-<p align="center">
-  <img src="docs/images/doctor.png" width="49%" alt="Doctor — admin health diagnostics" />
-  &nbsp;
-  <img src="docs/images/landing.png" width="49%" alt="Landing page" />
+  <img src="docs/readme-assets/formlogic-hero.png" alt="FormLogic product illustration showing a form builder, business dashboard, visual workflow and phone call becoming connected records" width="100%" />
 </p>
 
-<p align="center"><sub>Form builder · public form (focused mode) · business app runtime · Doctor diagnostics · landing</sub></p>
+<h1 align="center">FormLogic</h1>
 
-## The idea, in plain words
+<p align="center"><strong>Forms become apps. Calls become work. Automations keep it moving.</strong></p>
 
-1. **Forms** are the unit of data. Each form is a drag-and-drop schema (23 field types) with its own response database, validation, conditional logic, and an optional server-side `onSubmit` script.
-2. **Apps** are forms composed into a product: navigation, members, roles with per-form permissions, linked records across forms, and a slug of their own (`/app/your-app`).
-3. **Dashboards** make apps look like software, not paperwork: every app home screen and every form section is a no-code, drag-and-drop grid of chart/KPI/list widgets, plus a Reports section with exportable PDFs.
-4. **Everywhere**: the same app installs as a PWA, runs on the owner's own domain with a branded launch page, or opens inside the FormLogic Native Runtime (a Tauri desktop/mobile shell) with device connectors and an offline queue.
+<p align="center">
+  FormLogic is a source-available, self-hostable platform for building connected forms, business apps, portals, dashboards and flows. Add FormLogic Desktop for local AI, hardware and headless automation—including <strong>Aokie</strong>, the AI receptionist that brings real phone calls into your business workflows.
+</p>
 
-Don't want to start from a blank canvas? Install one of the **29 marketplace apps** ([catalog below](#app-marketplace)) and customise it — or point your own AI at the built-in [MCP server](docs/MCP.md) and have it build the app for you.
+<p align="center">
+  <img src="https://img.shields.io/badge/status-public_beta-7657F6?style=for-the-badge&labelColor=090F1D" alt="Public beta" />
+  <img src="https://img.shields.io/badge/marketplace-29_apps-4CC7D8?style=for-the-badge&labelColor=090F1D" alt="29 marketplace apps" />
+  <img src="https://img.shields.io/badge/form_builder-23_field_types-C9FB68?style=for-the-badge&labelColor=090F1D" alt="23 form field types" />
+  <img src="https://img.shields.io/badge/deploy-cloud_%7C_self--hosted-8268FF?style=for-the-badge&labelColor=090F1D" alt="Cloud or self-hosted" />
+</p>
+
+<p align="center">
+  <a href="https://formlogic.com/#live-demo"><strong>Try the live demo</strong></a>
+  ·
+  <a href="https://formlogic.com/signup"><strong>Build your first app</strong></a>
+  ·
+  <a href="https://formlogic.com/aokie"><strong>Meet Aokie</strong></a>
+  ·
+  <a href="#self-host-formlogic"><strong>Self-host FormLogic</strong></a>
+</p>
+
+<p align="center"><sub>Product illustration. Real product screens are shown below.</sub></p>
+
+---
+
+## Most form tools stop at submit. FormLogic carries the work forward.
+
+Start with a form. Turn its data into a branded client portal, a focused staff app and a full admin console. Add live dashboards and printable reports. Then connect events, decisions, AI, records, services and devices in visual flows.
+
+<p align="center">
+  <img src="docs/readme-assets/platform-journey.svg" alt="Capture, Operate and Automate with FormLogic" width="100%" />
+</p>
+
+| Capture | Operate | Automate |
+|---|---|---|
+| Collect structured data through **23 field types**, public forms, embedded forms, calls and messages. | Turn shared forms into **apps and portals** with their own branding, navigation, roles, dashboards and reports. | Connect triggers, decisions, AI, records and devices in **flows** that can keep running through Desktop with the browser closed. |
+
+FormLogic is designed around one idea: the interface, the data and the automation should stay connected. A submission is not the end of the workflow—it is the beginning.
+
+## See the product, not just the promise
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/builder.png" alt="FormLogic drag-and-drop form builder" />
+      <br />
+      <sub><strong>Build:</strong> drag-and-drop fields, validation, logic, themes, screens, flows and live preview.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/app-runtime.png" alt="FormLogic business app dashboard" />
+      <br />
+      <sub><strong>Operate:</strong> real records, KPI cards, charts, activity, role-aware navigation and reports.</sub>
+    </td>
+  </tr>
+</table>
+
+The same form can work on its own, appear inside several apps, feed a dashboard, trigger a flow, expose a scoped API and become part of a portable app package.
+
+## One connected platform
+
+| Layer | What it owns | What it unlocks |
+|---|---|---|
+| **FormLogic Web** | Forms, records, apps, roles, dashboards, reports, flows, marketplace and APIs | A shared operational workspace your team can reach anywhere |
+| **FormLogic Desktop** | Local models, services, supervised plugins, hardware connectors and headless flow execution | Local capability with cloud visibility—even when the browser is closed |
+| **Aokie** | Bluetooth phone control, live call audio, speech and durable call/SMS events | A phone receptionist whose conversations become structured business work |
+
+You can use FormLogic entirely in the browser. Desktop is the optional local capability layer; Aokie is its flagship hardware plugin.
+
+---
+
+## Meet Aokie: your phone, now with a front desk
+
+<p align="center">
+  <img src="docs/readme-assets/aokie-front-desk.png" alt="Aokie product illustration showing a mobile call passing through local AI into structured FormLogic records" width="100%" />
+</p>
+
+<p align="center"><sub>Product illustration. Aokie is currently a Windows hardware beta.</sub></p>
+
+**Aokie brings the phone into FormLogic.** Pair a supported USB Bluetooth dongle with the business mobile you already use and Aokie can answer through the phone's hands-free link, understand the caller, speak naturally and file the result into FormLogic.
+
+> **Your phone stays the phone. Aokie behaves like a hands-free kit. FormLogic becomes the front desk.**
+
+### What happens on a call
+
+1. A call rings on the paired mobile phone.
+2. Aokie receives call control and audio over Bluetooth HFP/SCO.
+3. Local speech recognition turns the caller's voice into text.
+4. A local—or explicitly configured remote—language model chooses a reply and text-to-speech plays it back.
+5. Durable events become FormLogic call records, transcript turns, caller details, summaries, appointment requests and follow-up work.
+6. Flows can notify staff, look up a returning caller, update records, draft a response or route the next action.
+
+### Built for an actual front desk
+
+- **Custom receptionist** with your business name, greeting, voice, model and instructions.
+- **Real call controls** for answer, reject, hang up and operator speech.
+- **Natural interruption** with optional barge-in and echo cancellation.
+- **Local-first voice loop** using local speech recognition, a local LLM and local text-to-speech by default.
+- **Remote visibility** through the FormLogic app while Desktop handles the local phone connection.
+- **Crash-safe delivery** through a write-before-emit event outbox with acknowledgements, replay and idempotency.
+- **Privacy-aware operation** with DPAPI-protected transcript/SMS outbox payloads and conversation content excluded from logs by default.
+- **Safer defaults**: auto-answer is opt-in and defaults off.
+
+> [!IMPORTANT]
+> Aokie is a **hardware beta** for Windows 10/11 x64 and requires a supported USB Bluetooth dongle. It captures appointment requests for staff or a configured flow to confirm; it should not be treated as silently confirming bookings on its own. Local processing is the default path, but any remote AI or speech endpoint you configure receives the audio or text it needs.
+
+[Explore Aokie](https://formlogic.com/aokie) · [Read the hardware guide](https://github.com/f2i-com/aokie.com/blob/main/docs/HARDWARE.md) · [Open the Aokie repository](https://github.com/f2i-com/aokie.com)
+
+---
 
 ## One backend, many portals
 
-Apps are *windows onto shared data*, not silos. A form can be attached to any number of apps, and every app reads and writes the **same records** — so "client portal + staff app + admin console" is three apps over one set of forms, each with its own branding, members, roles, and dashboards. One click ("Create companion app") splits an admin console off an existing app.
-
-```
-   Client Portal          Staff App             Admin Console
-   (own slug, users,      (own slug, users,     (companion app: every
-    roles, branding,       roles, dashboards,    form attached, full-
-    dashboards, domain)    reports)              visibility roles)
-        │                      │                      │
-        └──────────────┬───────┴──────────────────────┘
-                       │   app_forms (many-to-many)
-        ┌──────────────┴───────────────────┐
-        │           SHARED FORMS           │
-        │   Jobs   Clients   Invoices ...  │
-        └──────────────┬───────────────────┘
-                       │   form_id
-        ┌──────────────┴───────────────────┐
-        │         SHARED RESPONSES         │
-        │   one SQLite database per form   │
-        └──────────────────────────────────┘
-```
-
-Visibility is enforced server-side: a member's runtime payload contains only the forms their role can see, and dashboards/reports/navigation are stripped of anything else. The full model is in **[docs/ONE_BACKEND_MANY_PORTALS.md](docs/ONE_BACKEND_MANY_PORTALS.md)**.
-
----
-
-## Quick start
-
-### Requirements
-
-| Requirement | Version |
-|-------------|---------|
-| PHP | 8.2+ with `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl`, `fileinfo` |
-| MySQL | 8.0+ |
-| Node.js | 20.19+ or 22.12+ (required by Vite 7) |
-| Composer | any recent |
-
-No Node.js is needed on the *server* at runtime — the server-side script sandbox is a vendored static QuickJS binary.
-
-### Assisted install (recommended)
-
-Two installers live in `form-builder/`. Both create the `.env` files, generate security keys, and set up the database:
-
-- **Web wizard** (WAMP / XAMPP / any PHP web server): serve the repo from your web root and open
-  `http://localhost/<your-folder>/form-builder/install.php` in a browser. **Delete `install.php` when you're done.**
-- **CLI** (Linux / macOS / Git Bash):
-
-  ```bash
-  cd form-builder
-  chmod +x install.sh && ./install.sh
-  ```
-
-### Manual setup
-
-```bash
-git clone git@github.com:f2i-com/formlogic.com.git
-cd formlogic.com
-
-# 1. Create the database (the app creates the tables on first request)
-mysql -u root -p -e "CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-
-# 2. Backend
-cd form-builder/backend
-composer install
-cp .env.example .env
-# Edit .env: set DB_USERNAME/DB_PASSWORD and a 32+ char JWT_SECRET
-#   (generate one: php -r "echo bin2hex(random_bytes(32));")
-composer start          # API at http://localhost:8080/api
-
-# 3. Frontend (second terminal)
-cd form-builder/ui
-npm install
-npm run dev             # app at http://localhost:5173
-```
-
-Open <http://localhost:5173> and create your account. Full developer instructions — production web-server configs, HTTPS notes, environment variables, tests, troubleshooting — are in **[form-builder/README.md](form-builder/README.md)**; the production launch checklist is **[DEPLOYMENT.md](DEPLOYMENT.md)**.
-
----
-
-## Feature tour
-
-### Form builder
-
-A Typeform-style drag-and-drop editor with 23 field types (text, choices, rating, signature, file upload, location, linked record, calculated, hidden, …), live WYSIWYG preview, themes, form version history with restore, per-form analytics, webhooks with delivery tracking, and CSV/JSON/SQLite export. Forms work standalone — public link, embed, one-question-at-a-time mode — before any app exists.
-
-### Real JavaScript, safely sandboxed
-
-Conditional logic, validation, calculated fields, and post-submit `onSubmit` scripts are **real JavaScript** running in a [QuickJS](https://github.com/quickjs-ng/quickjs) sandbox — the same engine and standard-library prelude in the browser (WASM in a Web Worker) and on the server (vendored static `qjs` binary, no Node.js). The sandbox has no `eval`, DOM, filesystem, or network access; `onSubmit` scripts get a server-brokered, SSRF-guarded `ctx.http` and `ctx.db` for reading/writing the record. Built-in helper modules: `validators`, `format`, `compliance`, `finance`, `safety`.
-
-### Apps, roles, and shared data
-
-Compose forms into an app: pick forms, define roles with granular per-form permissions (submit / view own / view all / edit / delete / export), invite members, deploy at `/app/{slug}`. Linked-record fields reference other forms' responses, a relations map shows how forms connect, and an activity feed shows recent submissions across everything the member can see. Because forms are shareable across apps, one dataset can power several portals — and **Create companion app** clones the window (forms attached, theme, nav, optional dashboards/reports) without cloning the data.
-
-### No-code widget dashboards and reports
-
-Every app screen — the home dashboard and each form's section screen — is a drag-and-drop grid of chart widgets (KPI, bar, line, area, pie, donut, table, record list, activity feed) whose queries you edit inline, with one-click templates tuned to the kind of app you're building (admin console, client portal, staff app, …). The Reports section composes the same charts plus text blocks into documents and exports them as PDFs, including cross-form joins over linked records. No code runs in any of it — it's all declarative.
-
-### Custom code, when you want it
-
-Three escape hatches, each with a clear trust boundary:
-
-- **App logic (QuickJS)** — sandboxed scripts on lifecycle hooks (`onScreenEnter`, `onBeforeSubmit`, `onConnectorEvent`, …) that describe *effects* (set values, toast, navigate, request connector data); the host applies effects only after permission checks, and the backend still re-validates every submission.
-- **Custom screens** — sandboxed HTML/CSS/JS frontends (the iframe is the security boundary) over a form's or app's data via a postMessage SDK, with an in-app live-preview Studio and AI generation.
-- **FormLogic SDK** — permission-aware React hooks and components for first-party, host-rendered screens.
-
-The map of every custom-code surface is in [docs/CUSTOM_APP_PLATFORM.md](docs/CUSTOM_APP_PLATFORM.md).
-
-### Marketplace and portable packages
-
-Every app is portable. Export it as a **signed `.formlogic` package** — a ZIP with the app, forms, screens, dashboards, reports, QuickJS logic, and assets, Ed25519-signed so tampering is detected on import — or as a plain `.formlogic.json` pack. Imports are atomic (all-or-nothing), show a capability review first ("this app can: read vehicle status, set form values, …"), and carry a server-derived trust level (`official` / `community` / `unverified`). Publish packs to the built-in catalog with dynamic categories and tags. Format details: [docs/PACK_FORMAT.md](docs/PACK_FORMAT.md).
-
-### Custom domains, PWA, and the native runtime
-
-- **Custom domains** — connect `yourapp.com` to an app (DNS TXT verification), choose a branded launch page or straight-into-the-app mode, and get same-origin PWA manifests so it installs under your brand.
-- **PWA** — the platform and every app are installable, offline-capable progressive web apps.
-- **FormLogic Native Runtime** — a generic Tauri v2 desktop/mobile shell (Windows + Android built) that opens any FormLogic app via deep links (`formlogic://` or verified https App Links), verifies the app's Ed25519-signed client manifest before enabling native powers, and adds device connectors plus a disk-persisted offline queue. See [docs/NATIVE_RUNTIME_TAURI.md](docs/NATIVE_RUNTIME_TAURI.md).
-- **Connectors** — apps ask for abstract commands (`vehicle status.read`, `device gps.read`, battery, network, clipboard, …) and never care about the transport; the same app logic works against the browser mock, the phone's Web APIs, or the native bridge.
-
-### Bring your own AI (MCP) — or use the built-in one
-
-- **Connect an AI**: FormLogic ships an MCP server (`POST /api/mcp`) so Claude, Cursor, or any MCP client can build and edit whole apps — forms, screens, reports, logic — using short-lived, scoped tokens that by default cannot read submission data. See [docs/MCP.md](docs/MCP.md).
-- **Built-in AI generation**: generate forms and multi-form apps from a text prompt, a document, or an image, using any OpenAI-compatible provider — including keyless local servers (LM Studio, Ollama, vLLM). Optional; the platform works without it.
-- **External REST API**: scoped API keys (`Authorization: Bearer flk_…`) give programmatic access; API submissions run the *full* pipeline including your `onSubmit` script. See [docs/API.md](docs/API.md).
-
-### Flows, the Desktop, and an AI receptionist
-
-- **FormLogic Flows** — visual, event-driven automations (`/flows`): triggers from form events, schedules, or device connectors, and a node executor (branching, loops, AI calls, connector commands, form reads/writes) that runs in the browser and headlessly on FormLogic Desktop. See [docs/FORMLOGIC_FLOWS.md](docs/FORMLOGIC_FLOWS.md).
-- **FormLogic Desktop** — a desktop workspace (Tauri v2, `form-builder/desktop/`) that pairs with your account over OAuth, executes flows headlessly, and hosts local services — a llama.cpp LLM server and the Aokie Voice speech server — plus hardware connector plugins. See [docs/FORMLOGIC_DESKTOP.md](docs/FORMLOGIC_DESKTOP.md).
-- **Aokie Receptionist** — the flagship pack: an AI phone receptionist that answers real phone calls on FormLogic Desktop with local speech-to-text, a local LLM, and text-to-speech. Live calls stream into the app's front-desk console; every call lands as records — calls with chat-style transcripts, customers, bookings, orders, and SMS threads — that your flows act on.
-
-### Offline and sync
-
-Forms can live locally in the browser (no account) or in the cloud, with change-aware sync and conflict prompts. Inside apps, submissions queue while offline and flush to an idempotent batch endpoint — from the browser, the PWA, or the native runtime's persisted queue — so nothing is lost or double-submitted.
-
-### Security
-
-HttpOnly JWT-signed session cookies, CSRF double-submit protection, per-endpoint rate limits (auth 10/min, submissions 30/min), SSRF-guarded webhooks and outbound probes, sandboxed user scripts with instruction/memory/time budgets, a hash-chained (HMAC-SHA256) audit log with integrity verification, signed packages and client manifests, and strict security headers.
-
----
-
-## App marketplace
-
-FormLogic ships a catalog of **29 ready-made vertical apps** — each a real working system (several linked forms, roles, seeded demo data, a configurable widget dashboard, reports), not a "Contact Us" form. Install one in a click, customise it, hand it to your AI, or export it as a `.formlogic` package. The no-signup **Live Demo** has the whole catalog pre-installed and populated — 32 demo apps across the 29 packs, since a few packs ship more than one portal (e.g. Finance OS ships onboarding *and* a transition hub).
+Forms are shared data models—not copies trapped inside separate apps. Attach the same forms to several experiences and give each one its own audience, branding and permissions.
 
 <p align="center">
-  <img src="docs/images/packs/plumbing.png" width="49%" alt="Plumbing & Trades Field Service — invoiced-over-time, jobs-by-status, and recent jobs" />
-  &nbsp;
-  <img src="docs/images/packs/salon.png" width="49%" alt="Hair Salon & Beauty Studio — revenue KPIs, appointments by status, bookings over time" />
+  <img src="docs/readme-assets/one-backend-many-portals.svg" alt="Client portal, staff app and admin console sharing the same FormLogic forms and records" width="100%" />
 </p>
-<p align="center">
-  <img src="docs/images/packs/fitstudio.png" width="49%" alt="FitStudio — client and session KPIs, revenue trend, sessions by trainer" />
-  &nbsp;
-  <img src="docs/images/packs/stayready.png" width="49%" alt="StayReady — short-stay bookings, turnovers by status, guests hosted" />
-</p>
-<p align="center">
-  <img src="docs/images/packs/brewdesk.png" width="49%" alt="BrewDesk — café orders over time, drinks by type, stock-to-reorder donut" />
-  &nbsp;
-  <img src="docs/images/packs/counterflow.png" width="49%" alt="CounterFlow — retail stock movements, products by category, recent movements" />
-</p>
-<p align="center">
-  <img src="docs/images/packs/fleetflow.png" width="49%" alt="FleetFlow — trips over time, fleet by status donut, incidents by severity" />
-  &nbsp;
-  <img src="docs/images/packs/ohs.png" width="49%" alt="OHS & Quality Management — incidents by severity, incidents over time, recent incidents" />
-</p>
-<p align="center"><sub>Eight of the marketplace apps — each thumbnail is the full app frame (navigation, forms, records, reports) around a no-code widget dashboard. Everything renders in light &amp; dark.</sub></p>
+
+A customer can submit and track their own request. A field worker can see the queue and update the job. An administrator can access every record, dashboard and report. All three views work over the same data.
+
+- Each app keeps its own slug, branding, members, roles, navigation and dashboards.
+- The form keeps its schema, validation, linked records, scripts, webhooks and responses.
+- Server-side filtering removes forms, navigation, reports and widgets a member cannot see.
+- **Create companion app** builds a second portal over the existing forms without cloning the records.
+
+The complete model is documented in [One backend, many portals](docs/ONE_BACKEND_MANY_PORTALS.md).
+
+## Build it your way
+
+### Forms that grow into software
+
+Build focused public forms or complete data models with short and long text, email, phone, number, date/time, choices, ratings, signatures, uploads, locations, calculated values, hidden values and linked records. Add validation, conditional logic, version history, webhooks and a server-side `onSubmit` script.
+
+### Dashboards without dashboard code
+
+Compose KPI, bar, line, area, pie, donut, table, record-list and activity widgets in a drag-and-drop grid. Give the app home screen and each form section its own operational view, then turn the same data into printable PDF reports.
+
+### Real code—behind explicit boundaries
+
+- **QuickJS app logic** runs lifecycle hooks and returns permission-checked effects.
+- **Custom screens** run as sandboxed HTML/CSS/JavaScript behind an iframe and postMessage SDK.
+- **FormLogic SDK** provides permission-aware React hooks and components for first-party screens.
+- **Server scripts** run in a budgeted QuickJS sandbox with guarded access to record and HTTP helpers.
+
+### Visual flows that do real work
+
+React to form submissions, connector events and manual runs. Branch, transform and format data, call an OpenAI-compatible model, operate connectors, drive approved local services and read or write FormLogic records. Runs are tracked with correlation IDs, idempotency and history.
+
+### AI on your terms
+
+- Generate forms and multi-form apps from a prompt, document or image with an OpenAI-compatible provider.
+- Use a cloud model, LM Studio, Ollama, vLLM or another compatible local endpoint.
+- Connect Claude, Cursor or another MCP client through scoped OAuth and let it create or edit forms, apps, screens, dashboards, reports and flows.
+- MCP access is scoped; submission data is not exposed by default.
+
+### Portable by design
+
+- Export forms and responses as familiar files.
+- Export a complete app as a signed `.formlogic` package or editable JSON pack.
+- Review capabilities and trust level before importing a package.
+- Run in the hosted service, on your own infrastructure, as a PWA or through the native runtime.
+
+## Start from a working business app
+
+FormLogic ships **29 marketplace packs** backed by real forms, linked records, roles, dashboards, reports and populated demos. Several packs include more than one portal, producing **32 demo apps** in the no-signup gallery.
+
+| Trades & field service | Hospitality & food | Health, beauty & fitness |
+|---|---|---|
+| Plumbing, workshop, handyman, cleaning and pet-care operations | Café, burger, restaurant, catering and short-stay operations | Salon, training/coaching and clinic front-desk operations |
+
+| Retail & operations | Compliance & field ops | Business, finance & voice |
+|---|---|---|
+| Inventory, retail-store and fleet operations | OHS/quality, construction and agriculture | Billing, repairs, HR, service, events, finance and Aokie |
+
+<details>
+<summary><strong>View all 29 marketplace packs</strong></summary>
 
 | App | Category | What it runs |
-|-----|----------|--------------|
-| Plumbing & Trades Field Service | Trades & Field Service | Customers → jobs → site visits → invoices → parts requests |
+|---|---|---|
+| Plumbing & Trades Field Service | Trades & Field Service | Customers → jobs → site visits → invoices → parts |
 | Mechanic Workshop Manager | Trades & Field Service | Customers → vehicles → job cards → parts → invoices |
 | Property Maintenance & Handyman | Trades & Field Service | Properties → tenants → requests → work orders → inspections |
 | CleanShift — Cleaning Scheduler | Trades & Field Service | Clients → teams → jobs → quality checks → supplies → issues |
-| PawRoute — Dog Walking & Pet Care | Trades & Field Service | Clients → pets → bookings → walks/visits → incidents & care notes |
-| BrewDesk — Cafe & Barista Ops | Hospitality & Food | Orders → barista queue → menu → bean/milk stock → roster → daily close |
-| GrillStack — Burger Command Center | Hospitality & Food | Order board → kitchen pass → prep → stock → shifts → daily close |
-| PassMaster — Restaurant Service | Hospitality & Food | Reservations → tables → orders → kitchen tickets → prep → shift close |
-| CaterCraft — Catering & Events | Hospitality & Food | Clients → menu packages → event pipeline → production → deliveries |
-| StayReady — Short-Stay Turnover | Hospitality & Food | Properties → bookings → cleaner turnovers → inspections → supplies |
+| PawRoute — Dog Walking & Pet Care | Trades & Field Service | Clients → pets → bookings → visits → incidents → care notes |
+| BrewDesk — Cafe & Barista Ops | Hospitality & Food | Orders → barista queue → menu → stock → roster → daily close |
+| GrillStack — Burger Command Center | Hospitality & Food | Orders → kitchen pass → prep → stock → shifts → close |
+| PassMaster — Restaurant Service | Hospitality & Food | Reservations → tables → orders → kitchen tickets → shift close |
+| CaterCraft — Catering & Events | Hospitality & Food | Clients → packages → events → production → deliveries |
+| StayReady — Short-Stay Turnover | Hospitality & Food | Properties → bookings → turnovers → inspections → supplies |
 | Hair Salon & Beauty Studio | Beauty, Health & Fitness | Clients → services → stylists → appointments → product sales |
-| FitStudio — Training & Coaching | Beauty, Health & Fitness | Clients → trainers → sessions → assessments → programs → payments |
-| Clinic Appointment & Intake | Beauty, Health & Fitness | Patients → providers → appointments → intake → follow-ups (front-desk) |
-| Inventory & Purchase Orders | Retail & Operations | Products → suppliers → purchase orders → line items → stock movements |
-| CounterFlow — Retail Store Ops | Retail & Operations | Products → suppliers → stock movements → store tasks → staff → returns |
+| FitStudio — Training & Coaching | Beauty, Health & Fitness | Clients → trainers → sessions → assessments → payments |
+| Clinic Appointment & Intake | Beauty, Health & Fitness | Patients → providers → requests → intake → follow-ups |
+| Inventory & Purchase Orders | Retail & Operations | Products → suppliers → purchase orders → stock movements |
+| CounterFlow — Retail Store Ops | Retail & Operations | Products → suppliers → stock → tasks → returns |
 | FleetFlow — Fleet & Driver Log | Retail & Operations | Vehicles → drivers → trips → fuel → maintenance → incidents |
-| OHS & Quality Management | Field Ops & Compliance | Incidents, hazards, audits, corrective actions, NCRs (ISO 45001 / 9001) |
-| SitePulse — Construction Site Diary | Field Ops & Compliance | Projects → daily diaries → deliveries → defects → variations → insurances |
-| AgriLog — Farm Jobs & Harvest | Field Ops & Compliance | Paddocks → crop jobs → harvests → chemical register → machinery |
+| OHS & Quality Management | Field Ops & Compliance | Incidents → hazards → audits → corrective actions → NCRs |
+| SitePulse — Construction Site Diary | Field Ops & Compliance | Projects → diaries → deliveries → defects → variations |
+| AgriLog — Farm Jobs & Harvest | Field Ops & Compliance | Paddocks → jobs → harvests → chemicals → machinery |
 | VenueOps — Venue Hire & Bookings | Bookings & Education | Spaces → hirers → bookings → setups → payments → incidents |
-| TutorTrack — Tutoring & Lessons | Bookings & Education | Students → tutors → lessons → progress notes → invoices |
-| Event Management | Bookings & Education | Registration, speakers, vendors, volunteers, incidents, budget, feedback |
+| TutorTrack — Tutoring & Lessons | Bookings & Education | Students → tutors → lessons → progress → invoices |
+| Event Management | Bookings & Education | Registration → speakers → vendors → volunteers → feedback |
 | Job & Invoice Management | Billing & Business | Clients → jobs → quotes → invoices → payments |
-| RepairBench — Device Repair Shop | Billing & Business | Customers → devices → repair jobs → parts → quality sign-off → pickup |
-| HR & People Management | Billing & Business | Recruitment, onboarding, leave, reviews, expenses, training, exits |
-| Customer Service | Billing & Business | Tickets, bugs, feature requests, feedback, refunds, escalations, KB |
-| Finance OS (US) | Finance | RIA/broker-dealer onboarding, compliance & advisory (Reg BI, Form CRS) |
-| Finance OS (AU) | Finance | AFSL advice, Best Interest Duty, super, AUSTRAC |
-| Aokie Receptionist | AI & Voice | AI phone receptionist: live call console → call records with chat-style transcripts → customers → bookings, orders & SMS threads |
+| RepairBench — Device Repair Shop | Billing & Business | Customers → devices → repairs → parts → sign-off → pickup |
+| HR & People Management | Billing & Business | Recruitment → onboarding → leave → reviews → training → exits |
+| Customer Service | Billing & Business | Tickets → bugs → requests → refunds → escalations → knowledge |
+| Finance OS (US) | Finance | RIA/broker-dealer onboarding, compliance and advisory |
+| Finance OS (AU) | Finance | AFSL advice, Best Interest Duty, super and AUSTRAC workflows |
+| Aokie Receptionist | AI & Voice | Calls → transcript turns → callers → requests → follow-ups |
 
-There are also bundled **sample apps** (Apps → "Try a sample app"): a CRM, an expense manager, people onboarding, the MineCab connector reference app, and a device-capability check.
+</details>
 
 ---
+
+## Start in the way that suits you
+
+| Path | Best for | Start here |
+|---|---|---|
+| **Explore** | Seeing complete apps before creating an account | [Open the populated live demo](https://formlogic.com/#live-demo) |
+| **Hosted** | Getting started without managing infrastructure | [Create an account](https://formlogic.com/signup)—free during public beta, no card required |
+| **Self-hosted** | Keeping the full deployment on infrastructure you control | Use the assisted installer below |
+| **Desktop + Aokie** | Local AI, devices, headless flows and phone calls | [Follow the Aokie setup guide](https://formlogic.com/aokie) |
+
+Hosted FormLogic is free during public beta. After beta, Personal access is prepaid at **$5 per 30 days** with no auto-renewal; self-hosting remains free, and Enterprise deployment/support is available separately.
+
+## Self-host FormLogic
+
+### Requirements
+
+| Requirement | Version / notes |
+|---|---|
+| PHP | 8.2+ with `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl` and `fileinfo` |
+| MySQL | 8.0+ |
+| Node.js | 20.19+ or 22.12+ for the Vite frontend build |
+| Composer | Any recent release |
+
+Node.js is not needed on the production server at runtime. Server-side user logic runs through the vendored QuickJS binary.
+
+### Assisted CLI install
+
+```bash
+git clone git@github.com:f2i-com/formlogic.com.git
+cd formlogic.com/form-builder
+chmod +x install.sh
+./install.sh
+```
+
+The installer creates the environment files, generates security keys and prepares the database.
+
+### Browser installer
+
+Serve the repository from your web root and open:
+
+```text
+http://localhost/<your-folder>/form-builder/install.php
+```
+
+> [!WARNING]
+> Delete `install.php` after setup, serve only the backend `public/` directory and use HTTPS in production.
+
+For manual development setup, production web-server examples, environment variables, tests and troubleshooting, see [form-builder/README.md](form-builder/README.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Under the hood
 
 | Layer | Technology |
-|-------|-----------|
-| Backend | PHP 8.2+ / Slim 4, PHP-DI, Monolog |
-| Data | MySQL (users, forms, apps, roles, audit) + one SQLite database per form (responses) |
-| Frontend | React 19 + TypeScript, Vite 7, Tailwind CSS 4, Zustand 5, React Router 7, recharts |
-| Scripting | QuickJS sandbox — `quickjs-emscripten` (WASM Web Worker) in the browser, vendored static `qjs` binary on the server |
-| Native | Tauri v2 (Rust) shell in `form-builder/native-runtime/` |
-| Auth | HttpOnly cookie sessions (JWT-signed) + scoped API keys + ephemeral MCP tokens |
+|---|---|
+| Web client | React 19, TypeScript, Vite 7, Tailwind CSS 4, Zustand, React Router and Recharts |
+| Builder & flows | dnd-kit, XYFlow, Monaco, QuickJS WASM and Web Workers |
+| API | PHP 8.2+, Slim 4, PHP-DI and Monolog |
+| Data | MySQL for platform metadata plus one SQLite response database per form |
+| Sandboxed scripting | QuickJS in the browser and a vendored static QuickJS binary on the server |
+| Desktop | Tauri v2 and Rust; Windows UI plus a headless runtime |
+| Aokie | Rust, WinUSB, Bluetooth HFP/SCO/MAP, ONNX speech and a versioned JSON-RPC plugin contract |
+| Authentication | HttpOnly signed sessions, scoped API keys, OAuth/MCP tokens and optional TOTP MFA |
 
-```
+```text
 formlogic.com/
-├── DEPLOYMENT.md                  # Production launch checklist & operations
-├── docs/                          # Design docs, API & MCP reference (below)
-└── form-builder/
-    ├── install.php / install.sh   # Assisted installers
-    ├── backend/                   # PHP Slim API (public/index.php = routes)
-    ├── ui/                        # React SPA (builder, app runtime, marketplace)
-    ├── desktop/                   # FormLogic Desktop (Tauri v2): headless flows, local AI services, plugins
-    └── native-runtime/            # Tauri v2 shell that opens any FormLogic app natively
+├── form-builder/
+│   ├── backend/          PHP/Slim API, workers, migrations and storage
+│   ├── ui/               React builder, app runtime, dashboards and flows
+│   ├── desktop/          Tauri Desktop, local services, plugins and flow runner
+│   └── native-runtime/   Signed-manifest native application shell
+├── docs/                 Architecture, API, MCP, pack and operations docs
+└── DEPLOYMENT.md         Production deployment and recovery guide
+
+aokie.com/
+├── crates/aokie-plugin/      FormLogic Desktop plugin and durable event bridge
+├── crates/aokie-bluetooth/   HFP/SCO/MAP/PBAP radio runtime
+├── crates/aokie-dongle/      Dongle discovery and guarded driver management
+├── crates/aokie-ai/          Local ONNX speech runtimes
+└── docs/                     Architecture, hardware and frozen contracts
 ```
+
+## Quality and security gates
+
+Release tags are gated by backend tests, frontend unit tests, type checking, linting, production builds, security invariants and full-stack Playwright golden paths. Desktop and Aokie have their own Rust/Windows test gates.
+
+```bash
+# Backend
+cd form-builder/backend
+composer test
+composer analyse
+
+# Frontend
+cd ../ui
+npm test
+npm run lint
+npm run build
+npm run test:e2e
+
+# Aokie repository
+cargo test --workspace
+cargo check -p aokie-plugin --features voice
+cargo clippy --workspace --all-targets
+```
+
+Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF protection, endpoint-specific rate limits, optional TOTP MFA, sandboxed user code, SSRF-guarded outbound requests, custom-screen no-egress CSP, signed packages/manifests and a hash-chained audit log. The authenticated **Doctor** view checks critical production dependencies and configuration after a deploy or restore.
+
+<details>
+<summary><strong>Current beta boundaries</strong></summary>
+
+- The hosted service is in public beta.
+- FormLogic Desktop's packaged UI currently targets Windows; the web app works across modern browsers.
+- Aokie is a Windows hardware beta and only catalogued Bluetooth dongles are supported.
+- Aokie auto-answer defaults off and must be explicitly enabled.
+- Local models are the default Aokie path; configured remote providers receive the data required for their request.
+- Aokie records appointment requests for confirmation unless you deliberately build a flow that performs the final booking.
+- Desktop/Aokie Windows release artifacts may trigger SmartScreen until production code signing is completed.
+- The Aokie plugin emits SMS records and can send messages; it should not yet be presented as a full mirrored phone inbox.
+
+</details>
 
 ## Documentation
 
-| Doc | What's in it |
-|-----|--------------|
-| [form-builder/README.md](form-builder/README.md) | Developer setup: install, dev servers, tests, env vars, deployment configs |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Production checklist, backups, webhook retry worker, health diagnostics |
-| [docs/API.md](docs/API.md) | External REST API (API keys, scopes, full endpoint reference) |
-| [docs/MCP.md](docs/MCP.md) | Connect your own AI over MCP: setup, scopes, tool list |
-| [docs/PACK_FORMAT.md](docs/PACK_FORMAT.md) | The pack / `.formlogic` package format (v1) |
-| [docs/ONE_BACKEND_MANY_PORTALS.md](docs/ONE_BACKEND_MANY_PORTALS.md) | The multi-portal model: shared forms, companion apps, appKind |
-| [docs/CUSTOM_APP_PLATFORM.md](docs/CUSTOM_APP_PLATFORM.md) | App logic (QuickJS), SDK, connectors, signed packages, custom domains |
-| [docs/NATIVE_RUNTIME_TAURI.md](docs/NATIVE_RUNTIME_TAURI.md) | The native runtime: bridge, deep links, manifest verification, offline queue |
-| [docs/FORMLOGIC_FLOWS.md](docs/FORMLOGIC_FLOWS.md) | FormLogic Flows: triggers, node executor, bindings, desktop parity |
-| [docs/FORMLOGIC_DESKTOP.md](docs/FORMLOGIC_DESKTOP.md) | FormLogic Desktop: account pairing, headless flows, local services, plugins |
-| [docs/WIDGET_DASHBOARD_DESIGN.md](docs/WIDGET_DASHBOARD_DESIGN.md) | The no-code widget dashboard system |
-| [docs/APP_SECTIONS_SPEC.md](docs/APP_SECTIONS_SPEC.md) | Per-form section screens |
-| [docs/CUSTOM_APP_SPEC.md](docs/CUSTOM_APP_SPEC.md) | The master platform design spec |
-| [docs/RELEASE_RUNBOOK.md](docs/RELEASE_RUNBOOK.md) | Pre-release checklist |
+| Guide | What it covers |
+|---|---|
+| [Developer setup](form-builder/README.md) | Local development, environment variables, tests and web-server configuration |
+| [Deployment](DEPLOYMENT.md) | Production checklist, backups, workers, health checks and recovery |
+| [External API](docs/API.md) | Scoped API keys and the REST endpoint reference |
+| [MCP](docs/MCP.md) | Connecting your own AI with scoped access |
+| [FormLogic Flows](docs/FORMLOGIC_FLOWS.md) | Graph contract, bindings, execution and run history |
+| [FormLogic Desktop](docs/FORMLOGIC_DESKTOP.md) | Pairing, local services, plugins and headless flows |
+| [Custom app platform](docs/CUSTOM_APP_PLATFORM.md) | QuickJS logic, custom screens, SDK, connectors and domains |
+| [Package format](docs/PACK_FORMAT.md) | Signed `.formlogic` packages, manifests and trust |
+| [Native runtime](docs/NATIVE_RUNTIME_TAURI.md) | Deep links, signed manifests, connectors and offline queue |
+| [Aokie operations](docs/AOKIE_OPERATIONS.md) | Desktop stack, deployment, diagnostics and event recovery |
+| [Aokie troubleshooting](docs/AOKIE_TROUBLESHOOTING.md) | Concrete call, audio, flow and hardware failure modes |
 
 ## License
 
-FormLogic is **proprietary, source-available** software — it is *not* open source. In short (the [LICENSE](LICENSE) terms govern): you may self-host and use it for free for any purpose, including running your own for-profit business on it, and you may read and modify the source for your own use. You may **not** sell it, offer it as a paid product or hosted/managed service, or charge others to run it — those rights are reserved to FormLogic. For commercial licensing, see the contact note in [LICENSE](LICENSE).
+FormLogic is **proprietary, source-available software**—it is not open source. Subject to the full [LICENSE](LICENSE), you may self-host it, use it for free and modify it for your own use, including to run your own for-profit business. You may not resell FormLogic, offer it as a competing paid/hosted service or charge others to run it without a commercial licence.
+
+Aokie is also proprietary and versioned separately in the [Aokie repository](https://github.com/f2i-com/aokie.com).
+
+---
+
+<p align="center">
+  <strong>Build the front door. Run the work behind it. Automate what comes next.</strong>
+</p>
+
+<p align="center">
+  <a href="https://formlogic.com/">FormLogic.com</a>
+  ·
+  <a href="https://formlogic.com/docs">Documentation</a>
+  ·
+  <a href="mailto:hello@formlogic.com">hello@formlogic.com</a>
+</p>
