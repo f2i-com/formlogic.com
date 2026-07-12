@@ -982,8 +982,33 @@ async fn check_connector_capability(
     connector_id: &str,
     command: &str,
 ) -> Result<(), axum::response::Response> {
+    let grants = match resolve_capability_grants(st, headers).await? {
+        None => return Ok(()), // unlinked — legacy local gating
+        Some(g) => g,
+    };
+    if !capability_grants_allow(&grants, connector_id, command) {
+        return Err(desktop_err(
+            StatusCode::FORBIDDEN,
+            "capability_denied",
+            &format!("your role does not allow {connector_id}.{command}"),
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve the caller's VERIFIED capability grants from `X-FormLogic-Capability`
+/// (audit SEC-001/DESK-CAP-001, shared by the direct connector gateway and the
+/// flow runner's request-capability check — FLOW-SEC-001). `Ok(None)` means the
+/// desktop is UNLINKED (no cloud account): local single-user use, where the
+/// legacy origin-pairing gate stands alone. Linked resolution verifies the
+/// token server-side (cached for its lifetime, bounded offline grace for
+/// previously verified tokens) and fails closed everywhere else.
+async fn resolve_capability_grants(
+    st: &DesktopState,
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<Vec<String>>, axum::response::Response> {
     let Some(client) = st.flow_runtime.as_ref().and_then(|rt| rt.api_client()) else {
-        return Ok(()); // unlinked — legacy local gating
+        return Ok(None); // unlinked — legacy local gating
     };
     // The token is interpolated into the introspection URL path
     // (`connector-capabilities/{token}`), so it must be opaque-safe: reject
@@ -1082,14 +1107,32 @@ async fn check_connector_capability(
             }
         },
     };
-    if !capability_grants_allow(&grants, connector_id, command) {
-        return Err(desktop_err(
-            StatusCode::FORBIDDEN,
-            "capability_denied",
-            &format!("your role does not allow {connector_id}.{command}"),
-        ));
+    Ok(Some(grants))
+}
+
+/// True when the verified grant patterns cover ONE requested flow capability
+/// (audit FLOW-SEC-001). `*` (owner) covers everything. `connector.<id>...`
+/// requests map onto the same pattern semantics as the direct connector
+/// gateway (`capability_grants_allow`), so a wildcard request needs a
+/// wildcard/whole-connector grant. Every non-connector capability
+/// (formlogic.kv.write, formlogic.responses.*, model.*) requires the owner
+/// grant — no member role mints those today, and an unknown capability must
+/// never be covered by accident.
+fn grant_covers_capability(grants: &[String], cap: &str) -> bool {
+    if grants.iter().any(|g| g == "*") {
+        return true;
     }
-    Ok(())
+    if let Some(rest) = cap.strip_prefix("connector.") {
+        let (id, command) = match rest.split_once('.') {
+            Some((id, command)) => (id, command),
+            None => (rest, ""), // bare `connector.<id>` — whole-connector request
+        };
+        if id.is_empty() {
+            return false;
+        }
+        return capability_grants_allow(grants, id, command);
+    }
+    false
 }
 
 async fn connector_request(
@@ -1277,7 +1320,11 @@ async fn revoke_origin(
 /// `POST /api/flows/run` — run a flow by slug (resolved via the linked account)
 /// or an inline `flowJson`, per `docs/contracts/flow-run-request.schema.json`.
 /// Returns a `flow-run-result`-shaped `{runId, status, result?, error?}`.
-async fn flows_run(State(st): State<DesktopState>, body: axum::body::Bytes) -> impl IntoResponse {
+async fn flows_run(
+    State(st): State<DesktopState>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
     let rt = match &st.flow_runtime {
         Some(r) => r.clone(),
         None => {
@@ -1315,11 +1362,42 @@ async fn flows_run(State(st): State<DesktopState>, body: axum::body::Bytes) -> i
         .map(str::to_string);
     let inputs = v.get("inputs").cloned().unwrap_or_else(|| serde_json::json!({}));
     let timeout = v.get("timeoutMs").and_then(|x| x.as_u64());
-    let caps = v
+    let caps: Vec<String> = v
         .get("capabilities")
         .and_then(|x| x.as_array())
         .map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
+    // FLOW-SEC-001: the request's capability vector is a REQUEST, not a grant.
+    // On a linked desktop every requested capability must be covered by the
+    // caller's verified `X-FormLogic-Capability` grants (the same token +
+    // introspection path as the direct connector gateway) or the run refuses —
+    // exactly what flow-run-request.schema.json documents. A request with no
+    // capabilities needs no token: the runner's node gates deny connector/KV
+    // nodes without declared capabilities anyway. Unlinked desktops keep the
+    // legacy local single-user gating (pairing stands alone).
+    if !caps.is_empty() {
+        match resolve_capability_grants(&st, &headers).await {
+            Err(resp) => return resp,
+            Ok(None) => {} // unlinked — local single-user machine
+            Ok(Some(grants)) => {
+                let uncovered: Vec<&str> = caps
+                    .iter()
+                    .filter(|c| !grant_covers_capability(&grants, c))
+                    .map(String::as_str)
+                    .collect();
+                if !uncovered.is_empty() {
+                    return desktop_err(
+                        StatusCode::FORBIDDEN,
+                        "capability_denied",
+                        &format!(
+                            "your grants do not cover the requested capabilities: {}",
+                            uncovered.join(", ")
+                        ),
+                    );
+                }
+            }
+        }
+    }
     match rt.run_flow_direct(flow_json, flow_slug, app_slug, inputs, correlation, idem, timeout, caps).await {
         Ok(body) => (StatusCode::OK, Json(body)).into_response(),
         Err(msg) => {
@@ -1847,12 +1925,48 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::{
-        connector_failure_status, desktop_auth_decision, desktop_info_body, health_body,
-        is_desktop_api_path, is_restricted_read_path, offline_grace_grants, privileged_allowed,
-        OFFLINE_GRACE_MAX_AGE,
+        connector_failure_status, desktop_auth_decision, desktop_info_body, grant_covers_capability,
+        health_body, is_desktop_api_path, is_restricted_read_path, offline_grace_grants,
+        privileged_allowed, OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::StatusCode;
+
+    #[test]
+    fn flow_run_capability_requests_map_onto_grants() {
+        // FLOW-SEC-001: the /api/flows/run capability vector is a REQUEST that
+        // must be covered by the caller's verified grants — decision table.
+        let g = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // Owner grant covers everything, including non-connector capabilities.
+        let owner = g(&["*"]);
+        for cap in ["connector.aokie.call.answer", "connector.aokie.*", "formlogic.kv.write", "model.llm.local"] {
+            assert!(grant_covers_capability(&owner, cap), "owner covers {cap}");
+        }
+
+        // Whole-connector grants cover exact commands and the wildcard request.
+        for grants in [g(&["connector.aokie"]), g(&["connector.aokie.*"])] {
+            assert!(grant_covers_capability(&grants, "connector.aokie.call.answer"));
+            assert!(grant_covers_capability(&grants, "connector.aokie.*"));
+            assert!(grant_covers_capability(&grants, "connector.aokie"));
+            assert!(!grant_covers_capability(&grants, "connector.other.thing"), "no cross-connector bleed");
+        }
+
+        // An exact-command grant covers exactly that command — never the wildcard.
+        let exact = g(&["connector.aokie.call.answer"]);
+        assert!(grant_covers_capability(&exact, "connector.aokie.call.answer"));
+        assert!(!grant_covers_capability(&exact, "connector.aokie.*"), "wildcard request needs a wildcard grant");
+        assert!(!grant_covers_capability(&exact, "connector.aokie.call.reject"));
+        assert!(!grant_covers_capability(&exact, "connector.aokie"));
+
+        // Non-connector capabilities require the owner grant; unknown shapes
+        // are never covered by accident. Forged/enlarged vectors die here.
+        for grants in [g(&["connector.aokie.*"]), g(&["connector.aokie"]), g(&[])] {
+            for cap in ["formlogic.kv.write", "formlogic.responses.write", "model.llm.local", "connector.", ""] {
+                assert!(!grant_covers_capability(&grants, cap), "{cap} must not be covered by {grants:?}");
+            }
+        }
+    }
 
     #[test]
     fn offline_grace_honours_only_recent_verified_tokens_with_their_grants() {
