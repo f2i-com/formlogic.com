@@ -60,8 +60,27 @@ jobs:
 
       # Hard gate: any composer advisory fails CI. Accept an unavoidable one explicitly via
       # composer.json "config.audit.ignore" with a documented reason.
+      # Packagist's advisories API is flaky enough to time out (curl error 28), which
+      # used to red-X the whole run on pure infrastructure weather — retry with backoff,
+      # and if it STILL can't be reached, warn-and-skip. Real advisories still fail hard
+      # (and the release gate in package.yml never skips).
       - name: Security audit
-        run: composer audit
+        run: |
+          for attempt in 1 2 3; do
+            if out=$(composer audit --no-interaction 2>&1); then
+              echo "$out"
+              exit 0
+            else
+              code=$?
+              echo "$out"
+              if ! echo "$out" | grep -qiE 'curl error|timed out|could not resolve host|network is unreachable'; then
+                exit "$code"
+              fi
+              echo "composer audit attempt ${attempt}/3 hit a network error — retrying"
+              sleep $((attempt * 15))
+            fi
+          done
+          echo "::warning::composer audit skipped — packagist.org advisories API was unreachable after 3 attempts"
 
   frontend:
     name: Frontend (Vite/TS)

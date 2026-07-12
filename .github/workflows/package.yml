@@ -60,7 +60,26 @@ jobs:
           find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
           composer test
           composer analyse
-          composer audit
+          # Release gate stays STRICTER than main CI: retry packagist timeouts
+          # (curl error 28), but never skip the audit for a release.
+          for attempt in 1 2 3; do
+            if out=$(composer audit --no-interaction 2>&1); then
+              echo "$out"
+              break
+            else
+              code=$?
+              echo "$out"
+              if ! echo "$out" | grep -qiE 'curl error|timed out|could not resolve host|network is unreachable'; then
+                exit "$code"
+              fi
+              if [ "$attempt" = "3" ]; then
+                echo "::error::composer audit unreachable after 3 attempts — a release requires a completed audit"
+                exit "$code"
+              fi
+              echo "composer audit attempt ${attempt}/3 hit a network error — retrying"
+              sleep $((attempt * 15))
+            fi
+          done
 
       - name: Set up Node
         uses: actions/setup-node@v4
