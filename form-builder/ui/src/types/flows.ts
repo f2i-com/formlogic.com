@@ -217,7 +217,12 @@ export interface ConnectorCommand {
   result: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
   requestedByUserId: string;
+  /** ROUTE-001: the ONE desktop instance this command is routed to (null = legacy fan-out). */
+  targetInstanceId?: string | null;
   claimedBy: string | null;
+  /** ROUTE-001: device names resolved by the server for the target / claimant, when known. */
+  targetDeviceName?: string;
+  claimedByDeviceName?: string;
   createdAt: string;
   claimedAt: string | null;
   finishedAt: string | null;

@@ -749,6 +749,15 @@ class McpController
                                 ? 'No linked FormLogic Desktop has polled the relay — start it and link with the connector:relay scope.'
                                 : "The linked desktop was last seen {$seen}s ago and looks offline — start FormLogic Desktop, then retry."),
                     ];
+                    // ROUTE-001: the registered machines, so a client can see WHICH desktop
+                    // would service a command (and spot an ambiguous multi-desktop setup).
+                    if ($this->flowService !== null) {
+                        $data['desktops'] = array_map(static fn (array $c) => [
+                            'deviceName' => $c['deviceName'],
+                            'desktopInstanceId' => $c['desktopInstanceId'],
+                            'lastSeenAt' => $c['lastSeenAt'],
+                        ], $this->flowService->listDesktopConnections($userId));
+                    }
                     break;
                 }
                 case 'connector_command': {
@@ -778,12 +787,27 @@ class McpController
                     // coming online.
                     $seen = $this->desktopCommands->ownerDesktopLastSeenSeconds($userId);
                     $online = $seen !== null && $seen <= self::DESKTOP_ONLINE_WINDOW;
+                    // ROUTE-001: route the command at ONE desktop instance (connector assignment /
+                    // implicit single fresh connection). Two+ online desktops with no assignment is
+                    // ambiguous — refuse with the machine list instead of letting the wrong computer
+                    // claim-and-fail a phone command.
+                    $resolved = $this->desktopCommands->resolveTargetInstance($userId, $connectorId);
+                    if ($resolved['error'] === 'ambiguous_desktop') {
+                        $names = implode(', ', array_map(
+                            static fn (array $d) => (string) $d['deviceName'],
+                            $resolved['desktops']
+                        ));
+                        throw new \Exception(
+                            "More than one FormLogic Desktop is online ({$names}) — assign the '{$connectorId}' connector to one machine (PUT /api/connector-assignments {desktopConnectionId}) before sending commands."
+                        );
+                    }
                     // Enqueue for the token owner's desktop runtime; the desktop (its connector:relay
                     // key) claims + executes it exactly-once and completes the result back.
                     $enq = $this->desktopCommands->enqueue($userId, $userId, $scopedApp, [
                         'connectorId' => $connectorId,
                         'command' => $command,
                         'payload' => $payload,
+                        'targetInstanceId' => $resolved['target'],
                     ]);
                     $cmdId = (string) ($enq['command']['commandId'] ?? '');
                     $this->audit($request, 'mcp.connector_command', $userId, ['connectorId' => $connectorId, 'command' => $command, 'commandId' => $cmdId, 'desktopOnline' => $online]);

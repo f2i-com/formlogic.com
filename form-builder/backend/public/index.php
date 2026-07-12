@@ -2028,6 +2028,14 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->delete('/desktop-connections/self', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->deleteOwnDesktopConnection($request, $response);
     })->add($flowsWriteAuth);
+
+    // Desktop heartbeat (ROUTE-001): the linked runtime registers/refreshes its connection row
+    // (stable instance id + device name) every 45s over its flk_ key, BOUND to that key. This is
+    // the presence signal command targeting resolves against — the desktop's old heartbeat went
+    // to the session-auth POST /api/desktop-connections and silently 404'd on /api/v1.
+    $group->post('/desktop-connections', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->upsertDesktopConnectionV1($request, $response);
+    })->add($connectorRelayAuth);
 })->add($apiRateLimiter);
 
 // Audit verification route (admin, protected — restricted to platform owner)
@@ -2273,6 +2281,16 @@ $app->post('/api/desktop-connections', function ($request, $response) use ($cont
 })->add($authRequired);
 $app->delete('/api/desktop-connections/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FlowController::class)->deleteDesktopConnection($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// Connector routing (ROUTE-001): the owner's session surface for the same connector→app(+desktop)
+// assignments the desktop reads over /api/v1 — this is where "which machine runs the phone" gets
+// picked when more than one desktop is linked. Owner-scoped by construction (session user = owner).
+$app->get('/api/connector-assignments', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\FlowController::class)->listConnectorAssignments($request, $response);
+})->add($authRequired);
+$app->put('/api/connector-assignments', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\FlowController::class)->putConnectorAssignment($request, $response);
 })->add($authRequired);
 
 // FormLogic Flows — WORKSPACE scope: app-independent flows owned by the user (auth like

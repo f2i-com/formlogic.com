@@ -13,6 +13,7 @@ import { TimezoneSelect } from '../components/ui/TimezoneSelect';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
+import { ConnectorRoutingPanel } from '../components/desktop/ConnectorRoutingPanel';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { parseServerDate, formatRelativeTime } from '../lib/utils';
 import {
@@ -1040,6 +1041,10 @@ export function Settings() {
                     );
                   })}
                 </div>
+              )}
+              {/* ROUTE-001: pick which machine services each connector's remote commands. */}
+              {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
+                <ConnectorRoutingPanel />
               )}
             </div>
           </CardContent>

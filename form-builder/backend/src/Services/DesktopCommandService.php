@@ -41,6 +41,13 @@ class DesktopCommandService
     public const MAX_WAIT_MS = 25000;
     private const POLL_INTERVAL_MS = 500;
 
+    /** ROUTE-001: a desktop connection heartbeated within this window counts as online —
+     *  the same 90s the MCP desktop_status check uses (a linked desktop long-polls ≤25s). */
+    public const DESKTOP_FRESH_SECONDS = 90;
+    /** Same shape FlowService::upsertDesktopConnection() enforces for desktop instance ids. */
+    private const INSTANCE_ID_PATTERN = '/^[A-Za-z0-9._-]+$/';
+    private const MAX_INSTANCE_ID = 128;
+
     private PDO $mysql;
 
     public function __construct(MySQLConnection $mysql)
@@ -87,14 +94,27 @@ class DesktopCommandService
             throw new \InvalidArgumentException('idempotencyKey must be a string (max ' . self::MAX_IDEMPOTENCY_KEY . ' chars)');
         }
 
+        // ROUTE-001: an optional TARGET desktop instance. Set by the CONTROLLERS from
+        // resolveTargetInstance() (assignment / implicit-single) — ingress surfaces must
+        // never pass a client-supplied value through unvalidated, since the target decides
+        // which machine may act on the command.
+        $targetInstanceId = null;
+        if (isset($data['targetInstanceId']) && $data['targetInstanceId'] !== null && $data['targetInstanceId'] !== '') {
+            $t = $data['targetInstanceId'];
+            if (!is_string($t) || strlen($t) > self::MAX_INSTANCE_ID || !preg_match(self::INSTANCE_ID_PATTERN, $t)) {
+                throw new \InvalidArgumentException('targetInstanceId must match the desktop instance id shape');
+            }
+            $targetInstanceId = $t;
+        }
+
         $id = $this->uuid();
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO desktop_commands
                     (id, owner_user_id, app_id, connector_id, command, payload_json, idempotency_key,
-                     status, requested_by_user_id, expires_at)
+                     status, requested_by_user_id, target_instance_id, expires_at)
                 VALUES
-                    (:id, :owner, :app, :connector, :command, :payload, :key, 'pending', :req, :exp)
+                    (:id, :owner, :app, :connector, :command, :payload, :key, 'pending', :req, :target, :exp)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -105,6 +125,7 @@ class DesktopCommandService
                 'payload' => $payloadJson,
                 'key' => $idempotencyKey,
                 'req' => $requestedByUserId,
+                'target' => $targetInstanceId,
                 'exp' => date('Y-m-d H:i:s', time() + $this->ttlFor($command)),
             ]);
         } catch (\PDOException $e) {
@@ -157,15 +178,26 @@ class DesktopCommandService
      * Pending, non-expired commands for the owner's runtime, oldest first. Sweeps stale pending
      * rows to 'expired' first. $sinceId, when given, returns only commands created strictly after
      * that command's created_at (a simple cursor the long-poll advances).
+     *
+     * ROUTE-001: $instanceId is the POLLING desktop's identity. A targeted command is visible
+     * ONLY to its target; untargeted rows stay visible to every poller (legacy fan-out). A
+     * poller that doesn't identify itself sees only untargeted rows — a non-target IGNORES
+     * (never even sees) another machine's commands rather than racing to claim-and-fail them.
      * @return array[]
      */
-    public function listPending(string $ownerUserId, ?string $sinceId = null, int $limit = 50): array
+    public function listPending(string $ownerUserId, ?string $sinceId = null, int $limit = 50, ?string $instanceId = null): array
     {
         $this->expireStale($ownerUserId);
         $limit = max(1, min(200, $limit));
 
         $where = "owner_user_id = :o AND status = 'pending' AND expires_at > NOW()";
         $params = ['o' => $ownerUserId];
+        if ($instanceId !== null && $instanceId !== '') {
+            $where .= " AND (target_instance_id IS NULL OR target_instance_id = :inst)";
+            $params['inst'] = $instanceId;
+        } else {
+            $where .= " AND target_instance_id IS NULL";
+        }
         if ($sinceId !== null && $sinceId !== '') {
             $where .= " AND created_at > (SELECT created_at FROM desktop_commands WHERE id = :since AND owner_user_id = :o2)";
             $params['since'] = $sinceId;
@@ -183,12 +215,12 @@ class DesktopCommandService
      * up within one interval.
      * @return array[]
      */
-    public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50): array
+    public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50, ?string $instanceId = null): array
     {
         $waitMs = max(0, min($waitMs, self::MAX_WAIT_MS));
         $deadline = microtime(true) + ($waitMs / 1000);
         do {
-            $pending = $this->listPending($ownerUserId, $sinceId, $limit);
+            $pending = $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
             if ($pending !== [] || $waitMs === 0) {
                 return $pending;
             }
@@ -197,7 +229,7 @@ class DesktopCommandService
             }
             usleep(self::POLL_INTERVAL_MS * 1000);
         } while (microtime(true) < $deadline);
-        return $this->listPending($ownerUserId, $sinceId, $limit);
+        return $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
     }
 
     /**
@@ -216,18 +248,37 @@ class DesktopCommandService
             $instanceId = $data['instanceId'];
         }
 
-        // Only a still-pending, non-expired command can be claimed.
+        // Only a still-pending, non-expired command can be claimed — and only by its
+        // TARGET when it has one (ROUTE-001). A claimer that doesn't identify itself
+        // can claim only untargeted rows; a mismatched instance can't claim at all,
+        // even if it somehow learned the command id (listPending already hides it).
+        $targetSql = $instanceId !== null
+            ? ' AND (target_instance_id IS NULL OR target_instance_id = :ti)'
+            : ' AND target_instance_id IS NULL';
+        $params = ['cb' => $instanceId, 'id' => $id, 'o' => $ownerUserId];
+        if ($instanceId !== null) {
+            $params['ti'] = $instanceId;
+        }
         $stmt = $this->mysql->prepare("
             UPDATE desktop_commands
             SET status = 'claimed', claimed_by = :cb, claimed_at = NOW()
-            WHERE id = :id AND owner_user_id = :o AND status = 'pending' AND expires_at > NOW()
+            WHERE id = :id AND owner_user_id = :o AND status = 'pending' AND expires_at > NOW(){$targetSql}
         ");
-        $stmt->execute(['cb' => $instanceId, 'id' => $id, 'o' => $ownerUserId]);
+        $stmt->execute($params);
 
         if ($stmt->rowCount() === 0) {
             $existing = $this->get($id, $ownerUserId);
             if ($existing === null) {
                 return null;
+            }
+            // Distinguish "someone else beat you" from "this was never yours": a
+            // still-pending row we refused to claim can only mean a target mismatch.
+            if (
+                ($existing['status'] ?? '') === 'pending'
+                && ($existing['targetInstanceId'] ?? null) !== null
+                && $existing['targetInstanceId'] !== $instanceId
+            ) {
+                throw new \RuntimeException('targeted_elsewhere');
             }
             throw new \RuntimeException('already_claimed');
         }
@@ -306,6 +357,94 @@ class DesktopCommandService
             throw new \RuntimeException('not_claimed');
         }
         return $this->get($id, $ownerUserId);
+    }
+
+    /**
+     * ROUTE-001: which desktop instance should a command for this connector be TARGETED at?
+     *
+     * Resolution order (deterministic; NO implicit failover):
+     *   1. Explicit connector assignment with a pinned desktop connection → that connection's
+     *      instance id, EVEN IF it is currently offline — the command then expires visibly
+     *      instead of being silently serviced by a machine without the phone attached.
+     *   2. No pin, exactly ONE fresh (≤90s) desktop connection → implicit single target
+     *      (mirrors INT-004's implicit-single app routing).
+     *   3. No pin, ZERO fresh connections → untargeted (legacy fan-out): a desktop that is
+     *      just (re)starting — or one that predates connection registration — can still pick
+     *      the command up inside its TTL.
+     *   4. No pin, 2+ fresh connections → AMBIGUOUS: refuse, naming the candidates, so the
+     *      wrong computer can never claim-and-fail a call command (the audit's core scenario).
+     *
+     * @return array{target: ?string, error: ?string, desktops: array[]}
+     *         desktops = the fresh candidates (id/deviceName/instance/lastSeenAt) when ambiguous.
+     */
+    public function resolveTargetInstance(string $ownerUserId, string $connectorId): array
+    {
+        // 1) Explicit pin via the connector assignment.
+        $stmt = $this->mysql->prepare("
+            SELECT dc.desktop_instance_id
+            FROM connector_assignments ca
+            JOIN desktop_connections dc ON dc.id = ca.desktop_connection_id
+            WHERE ca.owner_user_id = :o AND ca.connector_id = :c AND ca.desktop_connection_id IS NOT NULL
+            LIMIT 1
+        ");
+        $stmt->execute(['o' => $ownerUserId, 'c' => $connectorId]);
+        $pinned = $stmt->fetchColumn();
+        if (is_string($pinned) && $pinned !== '') {
+            return ['target' => $pinned, 'error' => null, 'desktops' => []];
+        }
+
+        // 2-4) Fresh connections decide.
+        $fresh = self::DESKTOP_FRESH_SECONDS;
+        $stmt = $this->mysql->prepare("
+            SELECT id, device_name, desktop_instance_id, last_seen_at
+            FROM desktop_connections
+            WHERE owner_user_id = :o AND last_seen_at IS NOT NULL
+              AND last_seen_at > (NOW() - INTERVAL {$fresh} SECOND)
+            ORDER BY last_seen_at DESC
+        ");
+        $stmt->execute(['o' => $ownerUserId]);
+        $rows = $stmt->fetchAll();
+        if (count($rows) === 1) {
+            return ['target' => (string) $rows[0]['desktop_instance_id'], 'error' => null, 'desktops' => []];
+        }
+        if (count($rows) === 0) {
+            return ['target' => null, 'error' => null, 'desktops' => []];
+        }
+        return [
+            'target' => null,
+            'error' => 'ambiguous_desktop',
+            'desktops' => array_map(static fn (array $r) => [
+                'id' => $r['id'],
+                'deviceName' => $r['device_name'],
+                'desktopInstanceId' => $r['desktop_instance_id'],
+                'lastSeenAt' => $r['last_seen_at'],
+            ], $rows),
+        ];
+    }
+
+    /**
+     * ROUTE-001: map desktop instance ids → device names (owner-scoped), so command
+     * read-backs can show WHICH machine a command was aimed at / handled by.
+     * @param string[] $instanceIds
+     * @return array<string, string> instanceId => deviceName
+     */
+    public function describeInstances(string $ownerUserId, array $instanceIds): array
+    {
+        $ids = array_values(array_unique(array_filter($instanceIds, static fn ($v) => is_string($v) && $v !== '')));
+        if ($ids === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->mysql->prepare(
+            "SELECT desktop_instance_id, device_name FROM desktop_connections
+             WHERE owner_user_id = ? AND desktop_instance_id IN ({$placeholders})"
+        );
+        $stmt->execute([$ownerUserId, ...$ids]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(string) $row['desktop_instance_id']] = (string) $row['device_name'];
+        }
+        return $out;
     }
 
     /** Seconds a freshly-enqueued command stays claimable (audit INT-005: call control is short). */
@@ -399,6 +538,7 @@ class DesktopCommandService
             'result' => $this->decodeJson($row['result_json']),
             'error' => $this->decodeJson($row['error_json']),
             'requestedByUserId' => $row['requested_by_user_id'],
+            'targetInstanceId' => $row['target_instance_id'] ?? null,
             'claimedBy' => $row['claimed_by'] ?? null,
             'createdAt' => $row['created_at'],
             'claimedAt' => $row['claimed_at'] ?? null,

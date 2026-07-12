@@ -2039,7 +2039,7 @@ class FlowService
      * device_name / capabilities / trusted origins and stamps last_seen_at.
      * @throws \InvalidArgumentException on invalid payload
      */
-    public function upsertDesktopConnection(string $userId, array $data): array
+    public function upsertDesktopConnection(string $userId, array $data, ?string $apiKeyId = null): array
     {
         $instanceId = $data['desktopInstanceId'] ?? null;
         if (!is_string($instanceId) || $instanceId === '' || strlen($instanceId) > 128 || !preg_match('/^[A-Za-z0-9._-]+$/', $instanceId)) {
@@ -2054,14 +2054,51 @@ class FlowService
         $capabilities = $this->sanitizeStringList($data['capabilities'] ?? null, 64, 128, 'capabilities');
         $trustedOrigins = $this->sanitizeStringList($data['trustedOrigins'] ?? null, 32, 255, 'trustedOrigins');
 
+        // ROUTE-001: an api-key-authenticated heartbeat BINDS the row to that key —
+        // the instance identity is then anchored to a credential the server minted,
+        // not just a self-asserted string. The OAuth link creates a placeholder row
+        // ('oauth-…' synthetic instance id) for the same key before the desktop's
+        // first real heartbeat; absorb it here (one install = ONE row, ghost-free)
+        // instead of accumulating a sibling that would trip ambiguity resolution.
+        if ($apiKeyId !== null) {
+            $existing = $this->mysql->prepare(
+                "SELECT id FROM desktop_connections WHERE owner_user_id = :o AND desktop_instance_id = :i"
+            );
+            $existing->execute(['o' => $userId, 'i' => $instanceId]);
+            if ($existing->fetch() === false) {
+                $absorb = $this->mysql->prepare("
+                    UPDATE desktop_connections
+                    SET desktop_instance_id = :i, device_name = :name,
+                        capabilities_json = :caps, trusted_origins_json = :origins, last_seen_at = NOW()
+                    WHERE owner_user_id = :o AND api_key_id = :k
+                    LIMIT 1
+                ");
+                $absorb->execute([
+                    'i' => $instanceId,
+                    'name' => $deviceName,
+                    'caps' => $capabilities !== null ? json_encode($capabilities) : null,
+                    'origins' => $trustedOrigins !== null ? json_encode($trustedOrigins) : null,
+                    'o' => $userId,
+                    'k' => $apiKeyId,
+                ]);
+                if ($absorb->rowCount() > 0) {
+                    $find = $this->mysql->prepare("SELECT * FROM desktop_connections WHERE owner_user_id = :o AND desktop_instance_id = :i");
+                    $find->execute(['o' => $userId, 'i' => $instanceId]);
+                    $row = $find->fetch();
+                    return $row ? $this->formatDesktopConnection($row) : throw new \RuntimeException('Desktop connection upsert failed');
+                }
+            }
+        }
+
         $id = $this->uuidV4();
         $stmt = $this->mysql->prepare("
             INSERT INTO desktop_connections
-                (id, owner_user_id, device_name, desktop_instance_id, capabilities_json, trusted_origins_json, last_seen_at)
+                (id, owner_user_id, device_name, desktop_instance_id, api_key_id, capabilities_json, trusted_origins_json, last_seen_at)
             VALUES
-                (:id, :owner, :name, :instance, :caps, :origins, NOW())
+                (:id, :owner, :name, :instance, :apikey, :caps, :origins, NOW())
             ON DUPLICATE KEY UPDATE
                 device_name = VALUES(device_name),
+                api_key_id = COALESCE(VALUES(api_key_id), api_key_id),
                 capabilities_json = VALUES(capabilities_json),
                 trusted_origins_json = VALUES(trusted_origins_json),
                 last_seen_at = NOW()
@@ -2071,9 +2108,21 @@ class FlowService
             'owner' => $userId,
             'name' => $deviceName,
             'instance' => $instanceId,
+            'apikey' => $apiKeyId,
             'caps' => $capabilities !== null ? json_encode($capabilities) : null,
             'origins' => $trustedOrigins !== null ? json_encode($trustedOrigins) : null,
         ]);
+
+        if ($apiKeyId !== null) {
+            // One key = one install = ONE row: sweep any stray sibling still holding
+            // this key under a different instance id (e.g. an unabsorbed placeholder),
+            // so it can never make target resolution ambiguous.
+            $sweep = $this->mysql->prepare(
+                "DELETE FROM desktop_connections
+                 WHERE owner_user_id = :o AND api_key_id = :k AND desktop_instance_id != :i"
+            );
+            $sweep->execute(['o' => $userId, 'k' => $apiKeyId, 'i' => $instanceId]);
+        }
 
         $find = $this->mysql->prepare("SELECT * FROM desktop_connections WHERE owner_user_id = :o AND desktop_instance_id = :i");
         $find->execute(['o' => $userId, 'i' => $instanceId]);
@@ -2327,9 +2376,12 @@ class FlowService
     public function getConnectorAssignments(string $ownerUserId): array
     {
         $stmt = $this->mysql->prepare("
-            SELECT ca.connector_id, ca.app_id, a.name AS app_name, a.slug AS app_slug
+            SELECT ca.connector_id, ca.app_id, a.name AS app_name, a.slug AS app_slug,
+                   ca.desktop_connection_id, dc.device_name AS desktop_device_name,
+                   dc.desktop_instance_id, dc.last_seen_at AS desktop_last_seen_at
             FROM connector_assignments ca
             JOIN apps a ON a.id = ca.app_id
+            LEFT JOIN desktop_connections dc ON dc.id = ca.desktop_connection_id
             WHERE ca.owner_user_id = :o
             ORDER BY ca.connector_id ASC
         ");
@@ -2339,6 +2391,12 @@ class FlowService
             'appId' => $r['app_id'],
             'appName' => $r['app_name'],
             'appSlug' => $r['app_slug'],
+            // ROUTE-001: the pinned desktop that runs this connector's commands (null =
+            // implicit-single / ambiguous resolution at enqueue time).
+            'desktopConnectionId' => $r['desktop_connection_id'],
+            'desktopDeviceName' => $r['desktop_device_name'],
+            'desktopInstanceId' => $r['desktop_instance_id'],
+            'desktopLastSeenAt' => $r['desktop_last_seen_at'],
         ], $stmt->fetchAll());
 
         $stmt = $this->mysql->prepare("
@@ -2355,16 +2413,33 @@ class FlowService
         foreach ($stmt->fetchAll() as $r) {
             $candidates[$r['connector_id']][] = ['appId' => $r['app_id'], 'appName' => $r['app_name']];
         }
-        return ['assignments' => $assignments, 'candidates' => $candidates];
+        // ROUTE-001: the owner's registered desktops ride along so assignment UIs can
+        // offer the machine picker without a second request.
+        $desktops = array_map(static fn (array $c) => [
+            'id' => $c['id'],
+            'deviceName' => $c['deviceName'],
+            'desktopInstanceId' => $c['desktopInstanceId'],
+            'lastSeenAt' => $c['lastSeenAt'],
+        ], $this->listDesktopConnections($ownerUserId));
+        return ['assignments' => $assignments, 'candidates' => $candidates, 'desktops' => $desktops];
     }
 
     /**
      * Assign a connector to ONE of the owner's apps (upsert), or clear the
      * assignment with appId null. Throws InvalidArgumentException on a bad
      * connector id or an app the owner does not own.
+     *
+     * ROUTE-001: $desktopConnectionId optionally pins WHICH desktop connection
+     * runs this connector's relay commands. Passed as ['set' => ?string] so
+     * "leave unchanged" (key absent) is distinct from "clear the pin" (null):
+     * a plain app re-assignment must never silently drop the machine pin.
      */
-    public function setConnectorAssignment(string $ownerUserId, string $connectorId, ?string $appId): array
-    {
+    public function setConnectorAssignment(
+        string $ownerUserId,
+        string $connectorId,
+        ?string $appId,
+        array $desktopConnectionId = [],
+    ): array {
         if (!preg_match('/^[a-z0-9][a-z0-9_-]{0,63}$/', $connectorId)) {
             throw new \InvalidArgumentException('Invalid connector id');
         }
@@ -2380,12 +2455,34 @@ class FlowService
         if (!$stmt->fetch()) {
             throw new \InvalidArgumentException('App not found or not owned by you');
         }
-        $stmt = $this->mysql->prepare("
-            INSERT INTO connector_assignments (id, owner_user_id, connector_id, app_id)
-            VALUES (:id, :o, :c, :a)
-            ON DUPLICATE KEY UPDATE app_id = VALUES(app_id)
-        ");
-        $stmt->execute(['id' => $this->uuidV4(), 'o' => $ownerUserId, 'c' => $connectorId, 'a' => $appId]);
+
+        $desktopProvided = array_key_exists('set', $desktopConnectionId);
+        $desktopId = $desktopProvided ? $desktopConnectionId['set'] : null;
+        if ($desktopProvided && $desktopId !== null && $desktopId !== '') {
+            if (!is_string($desktopId)) {
+                throw new \InvalidArgumentException('desktopConnectionId must be a string or null');
+            }
+            $stmt = $this->mysql->prepare('SELECT id FROM desktop_connections WHERE id = :d AND owner_user_id = :o');
+            $stmt->execute(['d' => $desktopId, 'o' => $ownerUserId]);
+            if (!$stmt->fetch()) {
+                throw new \InvalidArgumentException('Desktop connection not found or not owned by you');
+            }
+        } elseif ($desktopProvided) {
+            $desktopId = null; // explicit clear
+        }
+
+        $desktopSql = $desktopProvided ? ', desktop_connection_id = VALUES(desktop_connection_id)' : '';
+        $sql = "
+            INSERT INTO connector_assignments (id, owner_user_id, connector_id, app_id" . ($desktopProvided ? ', desktop_connection_id' : '') . ")
+            VALUES (:id, :o, :c, :a" . ($desktopProvided ? ', :d' : '') . ")
+            ON DUPLICATE KEY UPDATE app_id = VALUES(app_id){$desktopSql}
+        ";
+        $params = ['id' => $this->uuidV4(), 'o' => $ownerUserId, 'c' => $connectorId, 'a' => $appId];
+        if ($desktopProvided) {
+            $params['d'] = $desktopId;
+        }
+        $stmt = $this->mysql->prepare($sql);
+        $stmt->execute($params);
         return $this->getConnectorAssignments($ownerUserId);
     }
 

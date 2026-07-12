@@ -36,6 +36,9 @@ export interface RelayOutcome {
   result?: Record<string, unknown> | null;
   error?: Record<string, unknown> | null;
   commandId?: string;
+  /** ROUTE-001: the machine that handled (or was routed) this command, when the
+   *  server could name it — lets outcome copy say WHICH desktop acted. */
+  handledBy?: string;
 }
 
 /** Structural shape of the two lib/api relay methods (the real `api` satisfies this). */
@@ -99,20 +102,24 @@ export async function runRelayCommand(
 
   const startedAt = now();
   let lastStatus: ConnectorCommandStatus = enq.data.status;
+  let handledBy: string | undefined;
   for (;;) {
     await sleep(pollMs);
     const res = await api.getConnectorCommand(slug, commandId);
     const cmd = res.data?.command;
     if (cmd) {
       lastStatus = cmd.status;
+      // ROUTE-001: prefer the machine that actually claimed it; fall back to
+      // the routed target so even an unclaimed command can be named.
+      handledBy = cmd.claimedByDeviceName ?? cmd.targetDeviceName ?? handledBy;
       if (isTerminalStatus(cmd.status)) {
-        return { status: cmd.status, result: cmd.result, error: cmd.error, commandId };
+        return { status: cmd.status, result: cmd.result, error: cmd.error, commandId, handledBy };
       }
     }
     if (now() - startedAt >= timeoutMs) {
       // Give-up semantics must stay truthful: a command a desktop CLAIMED may
       // have executed on the phone — that is 'uncertain', not a failure.
-      return { status: lastStatus === 'claimed' ? 'uncertain' : 'expired', commandId };
+      return { status: lastStatus === 'claimed' ? 'uncertain' : 'expired', commandId, handledBy };
     }
   }
 }
@@ -245,9 +252,16 @@ export interface OutcomeToast {
  * Map a terminal relay outcome to the toast the operator sees. 'expired' is the load-bearing case:
  * it means no FormLogic Desktop claimed the command, so we say so plainly rather than "timed out".
  */
-export function describeRelayOutcome(command: string, outcome: RelayOutcome, deviceName?: string): OutcomeToast {
+export function describeRelayOutcome(command: string, outcome: RelayOutcome, presenceDeviceName?: string): OutcomeToast {
+  // ROUTE-001: the machine the SERVER says handled/targets this command beats a
+  // presence-derived guess (the freshest sibling isn't necessarily the claimant).
+  const deviceName = outcome.handledBy ?? presenceDeviceName;
   if (outcome.status === 'done') {
-    return { kind: 'success', title: COMMAND_SUCCESS_LABEL[command] ?? 'Command sent' };
+    return {
+      kind: 'success',
+      title: COMMAND_SUCCESS_LABEL[command] ?? 'Command sent',
+      message: deviceName ? `Handled by ${deviceName}.` : undefined,
+    };
   }
   if (outcome.status === 'uncertain') {
     // Audit INT-005: claimed but unreported when we gave up — the phone may

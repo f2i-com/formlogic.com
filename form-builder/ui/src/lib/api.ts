@@ -2574,6 +2574,23 @@ class ApiClient {
     return this.request(`/desktop-connections/${id}`, { method: 'DELETE' });
   }
 
+  // Connector routing (ROUTE-001): connector→app(+desktop) assignments — which ONE
+  // machine services a connector's relay commands when several desktops are linked.
+  async getConnectorAssignments(): Promise<ApiResponse<ConnectorAssignments>> {
+    return this.request('/connector-assignments');
+  }
+
+  async putConnectorAssignment(payload: {
+    connectorId: string;
+    appId: string | null;
+    desktopConnectionId?: string | null;
+  }): Promise<ApiResponse<ConnectorAssignments>> {
+    return this.request('/connector-assignments', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // ── Broadcast notices (signed-in dashboards poll this) ──────────────────────
 
   async getNotices(): Promise<ApiResponse<{ notices: AdminNotice[]; maintenance?: boolean; message?: string }>> {
@@ -3227,6 +3244,29 @@ interface DesktopConnection {
   lastSeenAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Connector routing (ROUTE-001): assignments + candidates + the machines to pick from. */
+export interface ConnectorAssignment {
+  connectorId: string;
+  appId: string;
+  appName: string;
+  appSlug: string;
+  desktopConnectionId: string | null;
+  desktopDeviceName: string | null;
+  desktopInstanceId: string | null;
+  desktopLastSeenAt: string | null;
+}
+
+export interface ConnectorAssignments {
+  assignments: ConnectorAssignment[];
+  candidates: Record<string, Array<{ appId: string; appName: string }>>;
+  desktops: Array<{
+    id: string;
+    deviceName: string;
+    desktopInstanceId: string;
+    lastSeenAt: string | null;
+  }>;
 }
 
 interface UploadedFileMetadata {

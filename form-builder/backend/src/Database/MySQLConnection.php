@@ -718,6 +718,7 @@ class MySQLConnection
                 result_json JSON NULL,
                 error_json JSON NULL,
                 requested_by_user_id VARCHAR(36) NOT NULL,
+                target_instance_id VARCHAR(128) NULL,
                 claimed_by VARCHAR(120) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 claimed_at TIMESTAMP NULL,
@@ -763,10 +764,12 @@ class MySQLConnection
                 owner_user_id VARCHAR(36) NOT NULL,
                 connector_id VARCHAR(64) NOT NULL,
                 app_id VARCHAR(36) NOT NULL,
+                desktop_connection_id VARCHAR(36) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (desktop_connection_id) REFERENCES desktop_connections(id) ON DELETE SET NULL,
                 UNIQUE KEY uniq_connector_assignment (owner_user_id, connector_id),
                 INDEX idx_connector_assignment_owner (owner_user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -1507,6 +1510,19 @@ class MySQLConnection
         // predate the OAuth linking flow. Fresh installs already carry it (createFlowTables above).
         if ($pdo->query("SHOW COLUMNS FROM desktop_connections LIKE 'api_key_id'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE desktop_connections ADD COLUMN api_key_id VARCHAR(36) NULL AFTER desktop_instance_id");
+        }
+        // ROUTE-001: a relay command may be TARGETED at one desktop instance — only that
+        // instance sees/claims it; NULL keeps the legacy owner-wide first-to-claim fan-out.
+        if ($pdo->query("SHOW COLUMNS FROM desktop_commands LIKE 'target_instance_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE desktop_commands ADD COLUMN target_instance_id VARCHAR(128) NULL AFTER requested_by_user_id");
+        }
+        // ROUTE-001: a connector assignment may also pin WHICH desktop connection runs the
+        // connector's commands (SET NULL on unlink so a deleted connection falls back to
+        // implicit-single / ambiguous resolution rather than dangling).
+        if ($pdo->query("SHOW COLUMNS FROM connector_assignments LIKE 'desktop_connection_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE connector_assignments ADD COLUMN desktop_connection_id VARCHAR(36) NULL AFTER app_id");
+            $pdo->exec("ALTER TABLE connector_assignments ADD CONSTRAINT fk_connector_assignment_desktop
+                        FOREIGN KEY (desktop_connection_id) REFERENCES desktop_connections(id) ON DELETE SET NULL");
         }
         // mcp_oauth_codes.device_label carries the sanitized ?device= label from the desktop
         // OAuth device-link consent through to the token exchange (names the minted key/connection).

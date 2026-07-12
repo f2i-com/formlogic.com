@@ -477,7 +477,10 @@ class FlowController
 
     /**
      * Assign a connector to one app / clear the assignment
-     * (PUT /api/v1/connector-assignments {connectorId, appId|null}). flows:write scoped.
+     * (PUT /api/v1/connector-assignments {connectorId, appId|null, desktopConnectionId?}).
+     * flows:write scoped. ROUTE-001: desktopConnectionId (when the key is present) pins /
+     * clears WHICH desktop runs the connector's relay commands; omitting the key leaves
+     * the existing pin untouched.
      */
     public function putConnectorAssignment(Request $request, Response $response): Response
     {
@@ -488,8 +491,11 @@ class FlowController
         $body = $request->getParsedBody() ?? [];
         $connectorId = (string) ($body['connectorId'] ?? '');
         $appId = array_key_exists('appId', $body) && $body['appId'] !== null ? (string) $body['appId'] : null;
+        $desktop = array_key_exists('desktopConnectionId', $body)
+            ? ['set' => $body['desktopConnectionId'] !== null && $body['desktopConnectionId'] !== '' ? (string) $body['desktopConnectionId'] : null]
+            : [];
         try {
-            $result = $this->flows->setConnectorAssignment($userId, $connectorId, $appId);
+            $result = $this->flows->setConnectorAssignment($userId, $connectorId, $appId, $desktop);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
@@ -757,6 +763,33 @@ class FlowController
         }
         try {
             $connection = $this->flows->upsertDesktopConnection($userId, $request->getParsedBody() ?? []);
+            return $this->jsonResponse($response, ['connection' => $connection], 201);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * Desktop heartbeat over /api/v1 (API-key auth) — ROUTE-001. The linked desktop
+     * registers/refreshes its connection row every 45s (stable instance id, device
+     * name, capabilities); the row is BOUND to the calling flk_ key, which also
+     * absorbs the OAuth link's placeholder row so one install is one row. This is
+     * what makes a desktop targetable: last_seen_at drives the 90s freshness window
+     * behind implicit-single routing and the ambiguity check.
+     */
+    public function upsertDesktopConnectionV1(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $apiKeyId = $request->getAttribute('apiKeyId');
+        try {
+            $connection = $this->flows->upsertDesktopConnection(
+                (string) $userId,
+                $request->getParsedBody() ?? [],
+                is_string($apiKeyId) && $apiKeyId !== '' ? $apiKeyId : null,
+            );
             return $this->jsonResponse($response, ['connection' => $connection], 201);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);

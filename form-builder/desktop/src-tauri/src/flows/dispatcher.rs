@@ -317,6 +317,49 @@ fn recovery_candidates(
     out.into_iter().map(|(_, k, e)| (k, e)).collect()
 }
 
+/// ROUTE-001: the per-install desktop instance id, persisted at
+/// `<dir>/desktop-instance.json`. Loaded when present and well-formed
+/// (the server's `^[A-Za-z0-9._-]+$` ≤128 shape); otherwise a fresh
+/// `desktop-<uuid>` is generated and written atomically (tmp + rename).
+/// A write failure degrades to the generated id for this session only —
+/// loudly, since an unstable id makes this machine untargetable.
+fn load_or_create_instance_id(dir: &std::path::Path) -> String {
+    let path = dir.join("desktop-instance.json");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Some(id) = serde_json::from_str::<Value>(&text)
+            .ok()
+            .as_ref()
+            .and_then(|v| v.get("instanceId"))
+            .and_then(Value::as_str)
+        {
+            if !id.is_empty()
+                && id.len() <= 128
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            {
+                return id.to_string();
+            }
+        }
+        eprintln!("[flows] desktop-instance.json is malformed — minting a fresh instance id");
+    }
+    let id = format!("desktop-{}", uuid::Uuid::new_v4().simple());
+    let body = serde_json::to_string_pretty(&json!({
+        "instanceId": id,
+        "createdAt": chrono::Utc::now().to_rfc3339(),
+    }))
+    .unwrap_or_default();
+    let tmp = dir.join("desktop-instance.json.tmp");
+    let persisted = std::fs::create_dir_all(dir)
+        .and_then(|()| std::fs::write(&tmp, body.as_bytes()))
+        .and_then(|()| std::fs::rename(&tmp, &path));
+    if let Err(e) = persisted {
+        eprintln!(
+            "[flows] could not persist the desktop instance id ({e}) — this machine's id \
+             will CHANGE on restart, which breaks command targeting until fixed"
+        );
+    }
+    id
+}
+
 impl FlowRuntime {
     pub fn new(
         host: Arc<PluginHost>,
@@ -331,7 +374,12 @@ impl FlowRuntime {
         let client = FormLogicClient::new(&config).map(Arc::new);
         let linked = client.is_some();
         let base_url = if config.base_url.trim().is_empty() { None } else { Some(config.base_url.clone()) };
-        let instance_id = format!("desktop-{}", uuid::Uuid::new_v4().simple());
+        // ROUTE-001: the instance id is STABLE per install (persisted beside the
+        // journals), not per process. It names this machine in the desktop-connection
+        // registry, in relay claims/completions, and as the TARGET of routed commands
+        // — a fresh id every launch would make the machine untargetable and litter
+        // the registry with one ghost row per restart.
+        let instance_id = load_or_create_instance_id(&host.plugin_data_root);
         let device_name = std::env::var("COMPUTERNAME")
             .or_else(|_| std::env::var("HOSTNAME"))
             .unwrap_or_else(|_| "FormLogic Desktop".to_string());
@@ -2192,8 +2240,12 @@ impl FlowRuntime {
         };
         // `since=None`: pending only ever returns still-`pending` rows, and our
         // claim removes each from that set, so no cursor is needed for
-        // exactly-once (the claim is the gate).
-        match client.poll_pending_commands(None, 25_000, 50).await {
+        // exactly-once (the claim is the gate). ROUTE-001: identifying ourselves
+        // is what surfaces commands TARGETED at this machine.
+        match client
+            .poll_pending_commands(None, 25_000, 50, Some(&self.instance_id))
+            .await
+        {
             Ok(commands) => {
                 self.note_relay_poll(true);
                 if commands.is_empty() {
@@ -2297,6 +2349,40 @@ mod tests {
     fn runtime() -> Arc<FlowRuntime> {
         let host = PluginHost::new(&std::env::temp_dir().join(format!("flrt-{}", uuid::Uuid::new_v4().simple())), false, crate::events::EventBus::new());
         FlowRuntime::new(host, None, FormLogicConfig { base_url: String::new(), api_key: String::new() })
+    }
+
+    // ── Stable per-install instance identity (ROUTE-001) ────────────────────
+
+    #[test]
+    fn instance_id_is_persisted_and_stable_across_loads() {
+        let dir = std::env::temp_dir().join(format!("fl-instid-{}", uuid::Uuid::new_v4().simple()));
+        let first = load_or_create_instance_id(&dir);
+        assert!(first.starts_with("desktop-"), "got: {first}");
+        // A second "process start" reads the SAME id back — targeting depends on it.
+        let second = load_or_create_instance_id(&dir);
+        assert_eq!(first, second, "instance id must be stable per install");
+        // The file is the persistence, not process state.
+        let on_disk: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("desktop-instance.json")).unwrap()).unwrap();
+        assert_eq!(on_disk["instanceId"], json!(first));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_instance_file_is_replaced_not_trusted() {
+        let dir = std::env::temp_dir().join(format!("fl-instid-bad-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("desktop-instance.json");
+        // Shapes the server would reject (spaces / over-long / non-string) must
+        // never be adopted — a poisoned file can't smuggle an invalid identity.
+        std::fs::write(&path, r#"{"instanceId": "evil id with spaces"}"#).unwrap();
+        let id = load_or_create_instance_id(&dir);
+        assert!(id.starts_with("desktop-"), "got: {id}");
+        assert!(!id.contains(' '));
+        // And the fresh id was persisted over the malformed file.
+        let again = load_or_create_instance_id(&dir);
+        assert_eq!(id, again);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── Crash-recovery candidate planning (audit FL-001) ────────────────────

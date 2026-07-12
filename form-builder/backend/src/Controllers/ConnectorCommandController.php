@@ -198,6 +198,23 @@ class ConnectorCommandController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'You do not have permission to run this connector command'], 403);
         }
 
+        // ROUTE-001: the SERVER picks the target machine (connector assignment /
+        // implicit single fresh desktop). A member-supplied targetInstanceId is
+        // discarded — members must not aim commands past the owner's routing.
+        unset($body['targetInstanceId']);
+        $resolved = $this->commands->resolveTargetInstance($app['ownerId'], $connectorId);
+        if ($resolved['error'] === 'ambiguous_desktop') {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'ambiguous_desktop',
+                'message' => 'More than one FormLogic Desktop is online for this workspace — the owner must assign the connector to one machine before remote commands can be routed.',
+                'desktops' => $resolved['desktops'],
+            ], 409);
+        }
+        if ($resolved['target'] !== null) {
+            $body['targetInstanceId'] = $resolved['target'];
+        }
+
         try {
             $result = $this->commands->enqueue($app['ownerId'], $userId, $app['id'], $body);
         } catch (\InvalidArgumentException $e) {
@@ -205,6 +222,9 @@ class ConnectorCommandController
         }
         $command = $result['command'];
         $payload = ['commandId' => $command['commandId'], 'status' => $command['status']];
+        if (($command['targetInstanceId'] ?? null) !== null) {
+            $payload['targetInstanceId'] = $command['targetInstanceId'];
+        }
         if ($result['created']) {
             return $this->jsonResponse($response, $payload, 201);
         }
@@ -224,12 +244,28 @@ class ConnectorCommandController
         if (!$command || ($command['appId'] ?? null) !== $app['id']) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Command not found'], 404);
         }
+        // ROUTE-001: name the machine(s) involved so the UI can show "handled by
+        // <device>" instead of an opaque instance id.
+        $devices = $this->commands->describeInstances($app['ownerId'], array_filter([
+            $command['targetInstanceId'] ?? null,
+            $command['claimedBy'] ?? null,
+        ]));
+        if (($command['targetInstanceId'] ?? null) !== null && isset($devices[$command['targetInstanceId']])) {
+            $command['targetDeviceName'] = $devices[$command['targetInstanceId']];
+        }
+        if (($command['claimedBy'] ?? null) !== null && isset($devices[$command['claimedBy']])) {
+            $command['claimedByDeviceName'] = $devices[$command['claimedBy']];
+        }
         return $this->jsonResponse($response, ['command' => $command]);
     }
 
     // ── Desktop surface (API-key connector:relay; userId == owner) ──────────────────────────
 
-    /** GET /api/v1/connector-commands/pending?since=&wait=<ms> — long-poll for the owner's runtime. */
+    /**
+     * GET /api/v1/connector-commands/pending?since=&wait=<ms>&instanceId= — long-poll for the
+     * owner's runtime. ROUTE-001: instanceId identifies the polling desktop, which then also
+     * receives commands TARGETED at it; without it only untargeted (legacy fan-out) rows show.
+     */
     public function pending(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -240,7 +276,8 @@ class ConnectorCommandController
         $since = isset($q['since']) && $q['since'] !== '' ? (string) $q['since'] : null;
         $wait = (int) ($q['wait'] ?? 0);
         $limit = (int) ($q['limit'] ?? 50);
-        $commands = $this->commands->pollPending((string) $userId, $since, $wait, $limit);
+        $instanceId = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        $commands = $this->commands->pollPending((string) $userId, $since, $wait, $limit, $instanceId);
         return $this->jsonResponse($response, ['commands' => $commands]);
     }
 
@@ -258,6 +295,15 @@ class ConnectorCommandController
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'already_claimed') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This command was already claimed or has expired'], 409);
+            }
+            if ($e->getMessage() === 'targeted_elsewhere') {
+                // ROUTE-001: this command is pinned to a DIFFERENT desktop instance.
+                // The claimer should treat this as "not mine" and move on, not retry.
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'targeted_elsewhere',
+                    'message' => 'This command is targeted at a different desktop instance',
+                ], 409);
             }
             throw $e;
         }

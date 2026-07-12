@@ -326,6 +326,7 @@ CREATE TABLE `desktop_commands` (
   `result_json` json DEFAULT NULL,
   `error_json` json DEFAULT NULL,
   `requested_by_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `target_instance_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `claimed_by` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `claimed_at` timestamp NULL DEFAULT NULL,

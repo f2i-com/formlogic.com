@@ -440,11 +440,16 @@ impl FormLogicClient {
     /// is an optional cursor (a commandId — returns only commands created after
     /// it). We give the HTTP request `wait_ms + 10s` of headroom so the connection
     /// isn't torn down mid-long-poll.
+    ///
+    /// ROUTE-001: `instance_id` identifies THIS machine, so the server also
+    /// returns commands TARGETED at it (a poll without it sees only untargeted
+    /// legacy fan-out rows — another machine's commands are never even visible).
     pub async fn poll_pending_commands(
         &self,
         since: Option<&str>,
         wait_ms: u32,
         limit: u32,
+        instance_id: Option<&str>,
     ) -> FlResult<Vec<Value>> {
         let wait_ms = wait_ms.min(25_000);
         let wait_s = wait_ms.to_string();
@@ -453,6 +458,11 @@ impl FormLogicClient {
         if let Some(s) = since {
             if !s.is_empty() {
                 q.push(("since", s));
+            }
+        }
+        if let Some(i) = instance_id {
+            if !i.is_empty() {
+                q.push(("instanceId", i));
             }
         }
         let timeout = Duration::from_millis(wait_ms as u64) + Duration::from_secs(10);
