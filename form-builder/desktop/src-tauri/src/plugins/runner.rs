@@ -395,7 +395,15 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         data_dir.join("host-event-receipts.jsonl"),
         crate::journal_crypto::shared(&host.plugin_data_root),
     ) {
-        Ok(r) => Some(Arc::new(r)),
+        Ok(r) => {
+            // WORK-DUR-001: rotation/retention must never drop an entry the
+            // work ledger hasn't accounted for — this receipt may be the only
+            // durable copy of an event we already acked to the plugin.
+            if let Some(guard) = host.receipts_guard() {
+                r.set_accounted_guard(guard);
+            }
+            Some(Arc::new(r))
+        }
         Err(e) => {
             logs.push(
                 "stderr",

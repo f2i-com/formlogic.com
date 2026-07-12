@@ -224,12 +224,21 @@ struct Inner {
     map: BTreeMap<String, EventWork>,
     /// received-order index (BTreeMap iteration is key-order; recovery wants arrival order).
     order: Vec<String>,
+    /// Why the last durable append failed (WORK-DUR-001 item 5): the ledger
+    /// is BLOCKED — mutators fail closed — until an append succeeds again.
+    blocked: Option<String>,
 }
 
 pub struct WorkLedger {
     inner: Mutex<Inner>,
     crypto: Option<Arc<JournalCrypto>>,
     retention: Retention,
+    /// Set when open() recovered past corrupt journal content (quarantined
+    /// copy kept beside the journal) — surfaced through health/status.
+    recovered_corruption: Option<String>,
+    /// TEST-ONLY fault injection: force the next appends to fail like EIO.
+    #[cfg(test)]
+    fail_appends: std::sync::atomic::AtomicBool,
 }
 
 impl WorkLedger {
@@ -247,15 +256,47 @@ impl WorkLedger {
         let mut order: Vec<String> = Vec::new();
         let mut lines = 0usize;
         let mut plaintext_payloads = false;
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            for line in text.lines() {
-                lines += 1;
-                let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-                if v.get("env").is_some_and(Value::is_object) {
-                    plaintext_payloads = true;
-                }
-                Self::apply_line(&mut map, &mut order, &v, crypto.as_deref());
+        // WORK-DUR-001 item 4: recover to the last verified record. Torn
+        // bytes must not make the WHOLE journal unreadable (read_to_string
+        // fails on invalid UTF-8), and corrupt lines are counted so mid-file
+        // damage quarantines a copy instead of being silently skipped.
+        let mut corrupt: Vec<usize> = Vec::new();
+        let raw = std::fs::read(&path).unwrap_or_default();
+        let text = String::from_utf8_lossy(&raw);
+        for line in text.lines() {
+            lines += 1;
+            if line.trim().is_empty() {
+                continue;
             }
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                corrupt.push(lines);
+                continue;
+            };
+            if v.get("env").is_some_and(Value::is_object) {
+                plaintext_payloads = true;
+            }
+            Self::apply_line(&mut map, &mut order, &v, crypto.as_deref());
+        }
+        // A single unparsable FINAL line is the expected crash-mid-append
+        // artifact; anything else is real corruption — keep a quarantined
+        // copy for forensics before the compaction below rewrites the file.
+        let torn_tail_only = corrupt.len() == 1 && corrupt[0] == lines;
+        let mut recovered_corruption = None;
+        if !corrupt.is_empty() && !torn_tail_only {
+            let quarantine = path.with_extension(format!(
+                "jsonl.corrupt-{}",
+                Utc::now().format("%Y%m%dT%H%M%S")
+            ));
+            let note = format!(
+                "{} corrupt journal line(s) skipped (recovered to last verified record; copy at {})",
+                corrupt.len(),
+                quarantine.display()
+            );
+            if let Err(e) = std::fs::copy(&path, &quarantine) {
+                eprintln!("[flows] work-ledger quarantine copy failed: {e}");
+            }
+            eprintln!("[flows] work-ledger: {note}");
+            recovered_corruption = Some(note);
         }
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let ledger = WorkLedger {
@@ -265,22 +306,50 @@ impl WorkLedger {
                 lines,
                 map,
                 order,
+                blocked: None,
             }),
             crypto,
             retention,
+            recovered_corruption,
+            #[cfg(test)]
+            fail_appends: std::sync::atomic::AtomicBool::new(false),
         };
         // Compact at open when the journal is oversized, when any terminal
         // record has aged past retention (time-based purge must not wait for
-        // volume — DATA-PRIV-001), or to re-seal a legacy plaintext journal
-        // under the newly wired crypto.
+        // volume — DATA-PRIV-001), to re-seal a legacy plaintext journal
+        // under the newly wired crypto, or to trim recovered corruption.
         let now = Utc::now();
         if lines > COMPACT_AT_LINES
             || (plaintext_payloads && ledger.crypto.is_some())
             || ledger.has_expired_terminal(now)
+            || !corrupt.is_empty()
         {
             ledger.compact(now);
         }
         Ok(ledger)
+    }
+
+    /// Why the last durable append failed, if the ledger is currently
+    /// BLOCKED (disk full / EIO / read-only dir) — WORK-DUR-001 item 5.
+    /// `None` = healthy. Clears automatically on the next successful append.
+    pub fn blocked(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .map(|i| i.blocked.clone())
+            .unwrap_or_else(|e| e.into_inner().blocked.clone())
+    }
+
+    /// The corruption-recovery note from open(), if the journal had damage
+    /// beyond a torn tail (quarantined copy kept beside the journal).
+    pub fn recovered_corruption(&self) -> Option<&str> {
+        self.recovered_corruption.as_deref()
+    }
+
+    /// TEST-ONLY fault injection: make every append fail like EIO.
+    #[cfg(test)]
+    pub(crate) fn set_fail_appends(&self, on: bool) {
+        self.fail_appends
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Whether any terminal record is past its retention window.
@@ -424,36 +493,54 @@ impl WorkLedger {
         }
     }
 
-    /// Append + flush one transition. The flush-before-return IS the
-    /// durability contract: every state the dispatcher acts on has hit the OS
-    /// before the next stage runs. `disk` and `mem` differ only for `recv`
-    /// lines (the on-disk twin carries the SEALED payload) — applying the
-    /// plaintext twin avoids a decrypt round-trip of what we just encrypted.
-    fn append_with(inner: &mut Inner, disk: Value, mem: &Value) {
-        if let Err(e) = writeln!(inner.writer, "{disk}").and_then(|()| inner.writer.flush()) {
-            eprintln!("[flows] work-ledger append failed: {e}");
-            return;
+    /// Append + flush + FSYNC one transition (WORK-DUR-001 items 1/2): the
+    /// sync-before-return IS the durability contract — every state the
+    /// dispatcher acts on has hit the DISK before the next stage runs, and a
+    /// failure is RETURNED (fail closed: memory is not updated, the ledger is
+    /// marked blocked) instead of logged-and-forgotten. `disk` and `mem`
+    /// differ only for `recv` lines (the on-disk twin carries the SEALED
+    /// payload) — applying the plaintext twin avoids a decrypt round-trip.
+    fn append_with(&self, inner: &mut Inner, disk: Value, mem: &Value) -> Result<(), String> {
+        #[cfg(test)]
+        if self.fail_appends.load(std::sync::atomic::Ordering::Relaxed) {
+            let e = "injected append failure (test)".to_string();
+            inner.blocked = Some(e.clone());
+            return Err(e);
         }
+        let write = writeln!(inner.writer, "{disk}")
+            .and_then(|()| inner.writer.flush())
+            .and_then(|()| inner.writer.get_ref().sync_data());
+        if let Err(e) = write {
+            let msg = format!("work-ledger append failed: {e}");
+            eprintln!("[flows] {msg} — ledger BLOCKED until a write succeeds");
+            inner.blocked = Some(msg.clone());
+            return Err(msg);
+        }
+        inner.blocked = None;
         inner.lines += 1;
         let mut order_sink = Vec::new();
         Self::apply_line(&mut inner.map, &mut order_sink, mem, None);
         inner.order.extend(order_sink);
+        Ok(())
     }
 
-    fn append(inner: &mut Inner, v: Value) {
+    fn append(&self, inner: &mut Inner, v: Value) -> Result<(), String> {
         let mem = v.clone();
-        Self::append_with(inner, v, &mem);
+        self.append_with(inner, v, &mem)
     }
 
     /// Durably record an envelope BEFORE any processing (stage `received`).
-    pub fn receive(&self, key: &str, envelope: &Value) -> ReceiveOutcome {
+    /// `Err` = the claim did NOT persist (disk failure): the caller must not
+    /// process the event — the receipt journal still owns it, and the
+    /// continuous reconciler re-imports it once the ledger unblocks.
+    pub fn receive(&self, key: &str, envelope: &Value) -> Result<ReceiveOutcome, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(w) = inner.map.get(key) {
-            return if w.status == WorkStatus::Pending {
+            return Ok(if w.status == WorkStatus::Pending {
                 ReceiveOutcome::PendingResume
             } else {
                 ReceiveOutcome::Terminal
-            };
+            });
         }
         let at = Utc::now().to_rfc3339();
         let mem = json!({"op": "recv", "key": key, "at": at, "env": envelope});
@@ -465,34 +552,42 @@ impl WorkLedger {
             None if self.crypto.is_none() => mem.clone(),
             None => json!({"op": "recv", "key": key, "at": at}),
         };
-        Self::append_with(&mut inner, disk, &mem);
-        ReceiveOutcome::New
+        self.append_with(&mut inner, disk, &mem)?;
+        Ok(ReceiveOutcome::New)
     }
 
-    pub fn mark_app_logic_done(&self, key: &str) {
+    pub fn mark_app_logic_done(&self, key: &str) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.map.get(key).is_some_and(|w| !w.app_logic_done) {
-            Self::append(&mut inner, json!({"op": "alogic", "key": key}));
+            self.append(&mut inner, json!({"op": "alogic", "key": key}))?;
         }
+        Ok(())
     }
 
     /// Fix the binding fan-out for this event (journaled BEFORE any binding
     /// executes, so a crash mid-fan-out knows exactly what was planned).
     /// Idempotent: a second plan for the same key is ignored.
-    pub fn plan_bindings(&self, key: &str, binding_ids: &[String]) {
+    pub fn plan_bindings(&self, key: &str, binding_ids: &[String]) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.map.get(key).is_some_and(|w| w.bindings.is_none()) {
-            Self::append(&mut inner, json!({"op": "plan", "key": key, "bindings": binding_ids}));
+            self.append(&mut inner, json!({"op": "plan", "key": key, "bindings": binding_ids}))?;
         }
+        Ok(())
     }
 
-    pub fn set_binding(&self, key: &str, binding_id: &str, state: BindingState, error: Option<&str>) {
+    pub fn set_binding(
+        &self,
+        key: &str,
+        binding_id: &str,
+        state: BindingState,
+        error: Option<&str>,
+    ) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let mut line = json!({"op": "bind", "key": key, "id": binding_id, "state": state.as_str()});
         if let Some(e) = error {
             line["err"] = json!(e);
         }
-        Self::append(&mut inner, line);
+        self.append(&mut inner, line)
     }
 
     /// Reschedule a pending event after a failure.
@@ -502,49 +597,51 @@ impl WorkLedger {
     /// readiness failures (no linked account, snapshot unavailable): those
     /// retry forever with backoff, because "the desktop is offline" must
     /// never destroy work. Returns the resulting status.
-    pub fn note_retry(&self, key: &str, error: &str, count_attempt: bool) -> WorkStatus {
+    pub fn note_retry(&self, key: &str, error: &str, count_attempt: bool) -> Result<WorkStatus, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(w) = inner.map.get(key) else { return WorkStatus::Pending };
+        let Some(w) = inner.map.get(key) else { return Ok(WorkStatus::Pending) };
         if w.status != WorkStatus::Pending {
-            return w.status;
+            return Ok(w.status);
         }
         let attempts = if count_attempt { w.attempts + 1 } else { w.attempts };
         if count_attempt && attempts >= MAX_EVENT_ATTEMPTS {
-            Self::append(&mut inner, json!({"op": "dead", "key": key, "err": error}));
-            return WorkStatus::Dead;
+            self.append(&mut inner, json!({"op": "dead", "key": key, "err": error}))?;
+            return Ok(WorkStatus::Dead);
         }
         let next = Utc::now() + chrono::Duration::seconds(backoff_secs(attempts));
-        Self::append(
+        self.append(
             &mut inner,
             json!({"op": "retry", "key": key, "attempts": attempts, "next": next.to_rfc3339(), "err": error}),
-        );
-        WorkStatus::Pending
+        )?;
+        Ok(WorkStatus::Pending)
     }
 
     /// Dead-letter an event outright (deterministic rejection, e.g. ambiguous
     /// connector routing) — visible with its reason, redrivable once fixed.
-    pub fn mark_dead(&self, key: &str, error: &str) {
+    pub fn mark_dead(&self, key: &str, error: &str) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.map.get(key).is_some_and(|w| w.status == WorkStatus::Pending) {
-            Self::append(&mut inner, json!({"op": "dead", "key": key, "err": error}));
+            self.append(&mut inner, json!({"op": "dead", "key": key, "err": error}))?;
         }
+        Ok(())
     }
 
     /// Complete the event iff every stage is terminal (app-logic done,
     /// bindings planned, every planned binding terminal). Returns whether the
-    /// event is now (or already was) completed.
-    pub fn try_complete(&self, key: &str) -> bool {
+    /// event is now (or already was) completed; `Err` = completion could not
+    /// be durably recorded (the event stays pending — fail closed).
+    pub fn try_complete(&self, key: &str) -> Result<bool, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(w) = inner.map.get(key) else { return false };
+        let Some(w) = inner.map.get(key) else { return Ok(false) };
         match w.status {
-            WorkStatus::Completed => true,
-            WorkStatus::Dead => false,
+            WorkStatus::Completed => Ok(true),
+            WorkStatus::Dead => Ok(false),
             WorkStatus::Pending => {
                 if w.app_logic_done && w.bindings_all_terminal() {
-                    Self::append(&mut inner, json!({"op": "done", "key": key}));
-                    true
+                    self.append(&mut inner, json!({"op": "done", "key": key}))?;
+                    Ok(true)
                 } else {
-                    false
+                    Ok(false)
                 }
             }
         }
@@ -638,12 +735,36 @@ impl WorkLedger {
             .collect();
         let mut revived = Vec::new();
         for k in keys {
-            Self::append(&mut inner, json!({"op": "redrive", "key": k}));
+            // Fail closed per row: a redrive that could not be durably
+            // journaled is not revived (the row stays dead + visible).
+            if self.append(&mut inner, json!({"op": "redrive", "key": k})).is_err() {
+                continue;
+            }
             if let Some(w) = inner.map.get(&k) {
                 revived.push((k.clone(), w.envelope.clone()));
             }
         }
         revived
+    }
+
+    /// Pending events with NO scheduled retry that have sat longer than
+    /// `grace` (WORK-DUR-001 item 6): rows normally owned by the live path —
+    /// a crash after `recv`, a failed retry-append, or a dropped bus delivery
+    /// leaves them orphaned. The periodic reconciler re-enqueues them; the
+    /// in-flight guard + stage flags make the re-drive idempotent.
+    pub fn stale_pending(&self, now: DateTime<Utc>, grace: chrono::Duration) -> Vec<(String, Value)> {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner
+            .order
+            .iter()
+            .filter_map(|k| inner.map.get(k))
+            .filter(|w| {
+                w.status == WorkStatus::Pending
+                    && w.next_attempt_at.is_none()
+                    && now - w.received_at >= grace
+            })
+            .map(|w| (w.key.clone(), w.envelope.clone()))
+            .collect()
     }
 
     /// Compact the journal: rewrite it as one snapshot per LIVE record,
@@ -757,9 +878,27 @@ impl WorkLedger {
             }
         }
 
+        // Atomic tmp+fsync+rename (WORK-DUR-001 item 3): the tmp file is
+        // synced BEFORE the rename so a crash can never leave a truncated
+        // journal under the real name; the directory is synced where the
+        // platform supports it (unix — NTFS journals metadata itself).
         let tmp = inner.path.with_extension("jsonl.tmp");
         let path = inner.path.clone();
-        let write = std::fs::write(&tmp, &out).and_then(|()| std::fs::rename(&tmp, &path));
+        let write = (|| -> std::io::Result<()> {
+            {
+                let mut f = File::create(&tmp)?;
+                f.write_all(out.as_bytes())?;
+                f.sync_data()?;
+            }
+            std::fs::rename(&tmp, &path)?;
+            #[cfg(unix)]
+            if let Some(dir) = path.parent() {
+                if let Ok(d) = File::open(dir) {
+                    let _ = d.sync_all();
+                }
+            }
+            Ok(())
+        })();
         match write {
             Ok(()) => match OpenOptions::new().create(true).append(true).open(&path) {
                 Ok(f) => {
@@ -822,16 +961,16 @@ mod tests {
     #[test]
     fn full_lifecycle_reaches_completed() {
         let led = WorkLedger::open(temp_path("lifecycle")).unwrap();
-        assert_eq!(led.receive("k1", &env("aokie.call.ended")), ReceiveOutcome::New);
-        assert!(!led.try_complete("k1"), "app-logic not done yet");
+        assert_eq!(led.receive("k1", &env("aokie.call.ended")).unwrap(), ReceiveOutcome::New);
+        assert!(!led.try_complete("k1").unwrap(), "app-logic not done yet");
         led.mark_app_logic_done("k1");
-        assert!(!led.try_complete("k1"), "bindings not planned yet");
+        assert!(!led.try_complete("k1").unwrap(), "bindings not planned yet");
         led.plan_bindings("k1", &["b1".into(), "b2".into()]);
-        assert!(!led.try_complete("k1"), "bindings pending");
+        assert!(!led.try_complete("k1").unwrap(), "bindings pending");
         led.set_binding("k1", "b1", BindingState::Done, None);
         led.set_binding("k1", "b2", BindingState::Skipped, None);
-        assert!(led.try_complete("k1"));
-        assert_eq!(led.receive("k1", &env("aokie.call.ended")), ReceiveOutcome::Terminal);
+        assert!(led.try_complete("k1").unwrap());
+        assert_eq!(led.receive("k1", &env("aokie.call.ended")).unwrap(), ReceiveOutcome::Terminal);
         let (pending, dead) = led.counts();
         assert_eq!((pending, dead), (0, 0));
     }
@@ -862,11 +1001,11 @@ mod tests {
             let w = led.get("k1").unwrap();
             assert_eq!(w.bindings.as_ref().unwrap().len(), 1, "plan survives");
             led.set_binding("k1", "b1", BindingState::Done, None);
-            assert!(led.try_complete("k1"));
+            assert!(led.try_complete("k1").unwrap());
         }
         {
             let led = WorkLedger::open(path.clone()).unwrap();
-            assert_eq!(led.receive("k1", &env("x")), ReceiveOutcome::Terminal);
+            assert_eq!(led.receive("k1", &env("x")).unwrap(), ReceiveOutcome::Terminal);
             assert!(led.all_pending().is_empty(), "completed events are not re-driven");
         }
         let _ = std::fs::remove_file(&path);
@@ -879,15 +1018,15 @@ mod tests {
 
         // Readiness failures never consume attempts.
         for _ in 0..50 {
-            assert_eq!(led.note_retry("k1", "not linked", false), WorkStatus::Pending);
+            assert_eq!(led.note_retry("k1", "not linked", false).unwrap(), WorkStatus::Pending);
         }
         assert_eq!(led.get("k1").unwrap().attempts, 0);
 
         // Real failures do — and dead-letter at the cap.
         for i in 1..MAX_EVENT_ATTEMPTS {
-            assert_eq!(led.note_retry("k1", "api 500", true), WorkStatus::Pending, "attempt {i}");
+            assert_eq!(led.note_retry("k1", "api 500", true).unwrap(), WorkStatus::Pending, "attempt {i}");
         }
-        assert_eq!(led.note_retry("k1", "api 500", true), WorkStatus::Dead);
+        assert_eq!(led.note_retry("k1", "api 500", true).unwrap(), WorkStatus::Dead);
         let dead = led.dead_letters();
         assert_eq!(dead.len(), 1);
         assert_eq!(dead[0]["error"], json!("api 500"));
@@ -905,7 +1044,7 @@ mod tests {
         let led = WorkLedger::open(temp_path("due")).unwrap();
         led.receive("fresh", &env("a"));
         led.receive("failed", &env("b"));
-        led.note_retry("failed", "blip", true);
+        led.note_retry("failed", "blip", true).unwrap();
         // Fresh row (live path owns it) and future-backoff row are excluded…
         assert!(led.due_retries(Utc::now()).is_empty());
         // …but once the backoff elapses the failed row is due.
@@ -922,7 +1061,7 @@ mod tests {
         led.receive("old-done", &env("a"));
         led.mark_app_logic_done("old-done");
         led.plan_bindings("old-done", &[]);
-        assert!(led.try_complete("old-done"));
+        assert!(led.try_complete("old-done").unwrap());
         led.receive("old-pending", &env("b"));
         led.receive("old-dead", &env("c"));
         led.mark_dead("old-dead", "boom");
@@ -960,7 +1099,7 @@ mod tests {
         let path = temp_path("sealed");
         {
             let led = WorkLedger::open_with(path.clone(), Some(crypto()), Retention::default()).unwrap();
-            assert_eq!(led.receive("k1", &pii_env()), ReceiveOutcome::New);
+            assert_eq!(led.receive("k1", &pii_env()).unwrap(), ReceiveOutcome::New);
         }
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains("61400123456"), "caller number not on disk");
@@ -982,13 +1121,13 @@ mod tests {
         led.receive("k1", &pii_env());
         led.mark_app_logic_done("k1");
         led.plan_bindings("k1", &[]);
-        assert!(led.try_complete("k1"));
+        assert!(led.try_complete("k1").unwrap());
 
         let w = led.get("k1").unwrap();
         assert!(w.envelope.is_null(), "completed payload dropped in memory");
         assert!(w.env_hash.is_some(), "fingerprint retained");
         // The dedupe answer is unchanged.
-        assert_eq!(led.receive("k1", &pii_env()), ReceiveOutcome::Terminal);
+        assert_eq!(led.receive("k1", &pii_env()).unwrap(), ReceiveOutcome::Terminal);
 
         // After compaction (within retention) the journal keeps the terminal
         // record — key/state/hash — but NO payload in any form.
@@ -1001,7 +1140,7 @@ mod tests {
         // And the stripped snapshot replays to the same terminal state.
         drop(led);
         let led = WorkLedger::open_with(path.clone(), Some(crypto()), Retention::default()).unwrap();
-        assert_eq!(led.receive("k1", &pii_env()), ReceiveOutcome::Terminal);
+        assert_eq!(led.receive("k1", &pii_env()).unwrap(), ReceiveOutcome::Terminal);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1046,7 +1185,7 @@ mod tests {
         led.receive("k1", &env("a"));
         led.mark_app_logic_done("k1");
         led.plan_bindings("k1", &[]);
-        assert!(led.try_complete("k1"));
+        assert!(led.try_complete("k1").unwrap());
 
         // A handful of lines — far below the size threshold. Time alone must purge.
         led.maybe_compact(Utc::now());
@@ -1062,7 +1201,7 @@ mod tests {
         led.receive("done", &env("a"));
         led.mark_app_logic_done("done");
         led.plan_bindings("done", &[]);
-        assert!(led.try_complete("done"));
+        assert!(led.try_complete("done").unwrap());
         led.receive("dead", &env("b"));
         led.mark_dead("dead", "boom");
         led.receive("pending", &env("c"));
@@ -1070,6 +1209,136 @@ mod tests {
         assert_eq!(led.clear_terminal(), (1, 1));
         assert_eq!(led.counts_full(), (1, 0, 0), "pending survives Clear history");
         assert!(led.get("pending").is_some());
+    }
+
+    // ── WORK-DUR-001 ────────────────────────────────────────────────────────
+
+    /// Item 1 acceptance: a claim that cannot be durably journaled is NOT a
+    /// claim — receive() returns Err, memory is untouched, the ledger reports
+    /// blocked, and the same event claims cleanly once the disk recovers.
+    #[test]
+    fn failed_append_fails_the_claim_and_blocks_the_ledger() {
+        let led = WorkLedger::open(temp_path("blocked")).unwrap();
+        led.set_fail_appends(true);
+
+        assert!(led.receive("k1", &env("aokie.call.ended")).is_err(), "no durable row → no claim");
+        assert!(led.get("k1").is_none(), "memory mirrors only durable state");
+        assert!(led.blocked().is_some(), "blocked state is operator-visible");
+        assert!(led.all_pending().is_empty());
+
+        // Disk recovers → the SAME event claims as New (nothing was lost or
+        // falsely deduped), and the blocked state clears.
+        led.set_fail_appends(false);
+        assert_eq!(led.receive("k1", &env("aokie.call.ended")).unwrap(), ReceiveOutcome::New);
+        assert!(led.blocked().is_none(), "blocked clears on the next successful append");
+    }
+
+    /// Stage transitions fail closed too: an un-journaled stage flag is not
+    /// applied in memory, so the next drive pass re-runs the stage exactly
+    /// like a crash immediately after it — never silently skips it.
+    #[test]
+    fn failed_transition_appends_do_not_advance_state() {
+        let led = WorkLedger::open(temp_path("stagefail")).unwrap();
+        led.receive("k1", &env("aokie.sms.received")).unwrap();
+
+        led.set_fail_appends(true);
+        assert!(led.mark_app_logic_done("k1").is_err());
+        assert!(!led.get("k1").unwrap().app_logic_done, "stage flag not applied");
+        assert!(led.plan_bindings("k1", &["b1".into()]).is_err());
+        assert!(led.get("k1").unwrap().bindings.is_none());
+        assert!(led.try_complete("k1").is_ok(), "not completable → Ok(false), no append needed");
+        assert!(led.mark_dead("k1", "x").is_err());
+        assert_eq!(led.get("k1").unwrap().status, WorkStatus::Pending);
+
+        led.set_fail_appends(false);
+        led.mark_app_logic_done("k1").unwrap();
+        led.plan_bindings("k1", &[]).unwrap();
+        assert!(led.try_complete("k1").unwrap(), "recovers to a clean completion");
+    }
+
+    /// Item 4: a torn tail (crash mid-append) recovers to the last verified
+    /// record with no quarantine noise; damage BEFORE the tail quarantines a
+    /// copy and still recovers every parseable record.
+    #[test]
+    fn corrupt_journals_recover_to_last_verified_record() {
+        // Torn tail: expected crash artifact.
+        let path = temp_path("torn");
+        {
+            let led = WorkLedger::open(path.clone()).unwrap();
+            led.receive("k1", &env("a")).unwrap();
+        }
+        {
+            use std::io::Write as _;
+            let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(b"{\"op\":\"recv\",\"key\":\"half").unwrap();
+        }
+        {
+            let led = WorkLedger::open(path.clone()).unwrap();
+            assert!(led.get("k1").is_some(), "verified records survive");
+            assert!(led.recovered_corruption().is_none(), "a torn tail is not corruption");
+        }
+
+        // Mid-file damage: quarantined + recovered.
+        let path2 = temp_path("midfile");
+        {
+            let led = WorkLedger::open(path2.clone()).unwrap();
+            led.receive("k1", &env("a")).unwrap();
+            led.receive("k2", &env("b")).unwrap();
+        }
+        {
+            // Corrupt the FIRST line (invalid UTF-8 + broken JSON), keep the rest.
+            let raw = std::fs::read(&path2).unwrap();
+            let mut lines: Vec<&[u8]> = raw.split(|b| *b == b'\n').collect();
+            let garbage: &[u8] = b"\xff\xfe{{{corrupt";
+            lines[0] = garbage;
+            std::fs::write(&path2, lines.join(&b'\n')).unwrap();
+        }
+        {
+            let led = WorkLedger::open(path2.clone()).unwrap();
+            assert!(led.get("k2").is_some(), "later records recovered");
+            assert!(led.recovered_corruption().is_some(), "corruption is reported");
+            // A quarantined copy sits beside the journal for forensics.
+            let dir = path2.parent().unwrap();
+            let stem = path2.file_stem().unwrap().to_string_lossy().to_string();
+            let quarantined = std::fs::read_dir(dir).unwrap().flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with(&stem) && n.contains("corrupt-")
+            });
+            assert!(quarantined, "quarantine copy exists");
+            // And the rewritten journal replays cleanly on the next open.
+            drop(led);
+            let led = WorkLedger::open(path2.clone()).unwrap();
+            assert!(led.recovered_corruption().is_none(), "journal is clean after recovery");
+            for f in std::fs::read_dir(path2.parent().unwrap()).unwrap().flatten() {
+                let n = f.file_name().to_string_lossy().to_string();
+                if n.starts_with(&path2.file_stem().unwrap().to_string_lossy().to_string()) {
+                    let _ = std::fs::remove_file(f.path());
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Item 6: pending rows the live path lost (crash after claim, failed
+    /// retry append, dropped bus delivery) surface through stale_pending —
+    /// scheduled rows and fresh rows stay owned by their normal paths.
+    #[test]
+    fn stale_pending_finds_only_orphaned_unscheduled_rows() {
+        let led = WorkLedger::open(temp_path("stale")).unwrap();
+        led.receive("orphan", &env("a")).unwrap();
+        led.receive("scheduled", &env("b")).unwrap();
+        led.note_retry("scheduled", "blip", true).unwrap();
+        led.receive("done", &env("c")).unwrap();
+        led.mark_app_logic_done("done").unwrap();
+        led.plan_bindings("done", &[]).unwrap();
+        assert!(led.try_complete("done").unwrap());
+
+        let grace = chrono::Duration::seconds(300);
+        assert!(led.stale_pending(Utc::now(), grace).is_empty(), "fresh rows are not stale");
+        let later = Utc::now() + chrono::Duration::seconds(301);
+        let stale = led.stale_pending(later, grace);
+        assert_eq!(stale.len(), 1, "only the unscheduled pending row");
+        assert_eq!(stale[0].0, "orphan");
     }
 
     #[test]
@@ -1089,7 +1358,7 @@ mod tests {
         led.receive("k1", &env("aokie.call.incoming"));
         led.mark_dead("k1", "2 apps use connector 'aokie' and none is assigned");
         assert_eq!(led.counts(), (0, 1));
-        assert_eq!(led.receive("k1", &env("aokie.call.incoming")), ReceiveOutcome::Terminal);
+        assert_eq!(led.receive("k1", &env("aokie.call.incoming")).unwrap(), ReceiveOutcome::Terminal);
         let revived = led.redrive(None);
         assert_eq!(revived.len(), 1);
         assert_eq!(led.counts(), (1, 0));

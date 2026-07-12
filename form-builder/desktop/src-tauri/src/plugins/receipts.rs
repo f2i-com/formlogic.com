@@ -80,12 +80,19 @@ struct Inner {
     lines: usize,
 }
 
+/// "Is this key's event durably accounted for elsewhere?" (WORK-DUR-001
+/// item 6). True = the work ledger owns it (any status) or a processed
+/// marker exists, so the receipt is droppable; false = this receipt is the
+/// ONLY durable copy and every rotation/retention/clear pass must keep it.
+pub type AccountedFn = dyn Fn(&str) -> bool + Send + Sync;
+
 pub struct EventReceipts {
     path: PathBuf,
     rotate_at: usize,
     rotate_keep: usize,
     retention: chrono::Duration,
     crypto: Option<Arc<JournalCrypto>>,
+    accounted: Mutex<Option<Arc<AccountedFn>>>,
     inner: Mutex<Inner>,
 }
 
@@ -148,6 +155,7 @@ impl EventReceipts {
             rotate_keep,
             retention: default_retention(),
             crypto,
+            accounted: Mutex::new(None),
             inner: Mutex::new(Inner { file, seen, lines }),
         };
         {
@@ -220,8 +228,35 @@ impl EventReceipts {
         self.len() == 0
     }
 
-    /// Drop every entry older than `cutoff` (DATA-PRIV-001 retention sweep /
-    /// "clear history"). Returns how many lines were removed.
+    /// Register the accountability guard (WORK-DUR-001 item 6): once set,
+    /// rotation, retention and clear-history keep any entry that is NOT yet
+    /// durably accounted for elsewhere, whatever its age or position — a
+    /// receipt may be the only durable copy of an acked event.
+    pub fn set_accounted_guard(&self, guard: Arc<AccountedFn>) {
+        *self.accounted.lock().unwrap_or_else(|e| e.into_inner()) = Some(guard);
+    }
+
+    fn accounted_guard(&self) -> Option<Arc<AccountedFn>> {
+        self.accounted
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// True when the entry may be dropped: no guard registered (markers /
+    /// standalone journals), or the guard confirms the key is accounted for.
+    fn droppable(&self, key: Option<&str>) -> bool {
+        match (self.accounted_guard(), key) {
+            (Some(guard), Some(k)) => guard(k),
+            (Some(_), None) => true, // keyless line: nothing to account
+            (None, _) => true,
+        }
+    }
+
+    /// Drop every ACCOUNTED entry older than `cutoff` (DATA-PRIV-001
+    /// retention sweep / "clear history"). Entries that are the only durable
+    /// copy of their event are kept regardless of age (WORK-DUR-001).
+    /// Returns how many lines were removed.
     pub fn retain_since(&self, cutoff: DateTime<Utc>) -> std::io::Result<usize> {
         let mut inner = self.inner.lock().expect("receipts lock");
         self.retain_since_locked(&mut inner, cutoff)
@@ -236,11 +271,14 @@ impl EventReceipts {
         let kept: Vec<String> = all
             .iter()
             .filter(|l| {
-                serde_json::from_str::<Value>(l)
-                    .ok()
-                    .and_then(|v| line_received_at(&v))
-                    // Unparsable/undated lines are dropped — they can't be aged.
-                    .is_some_and(|at| at >= cutoff)
+                let Ok(v) = serde_json::from_str::<Value>(l) else {
+                    return false; // unparsable lines can't be aged or replayed
+                };
+                let expired = line_received_at(&v).map_or(true, |at| at < cutoff);
+                if !expired {
+                    return true;
+                }
+                !self.droppable(v.get("key").and_then(Value::as_str))
             })
             .cloned()
             .collect();
@@ -320,12 +358,27 @@ impl EventReceipts {
         Ok(())
     }
 
-    /// Rewrite the journal keeping the newest `rotate_keep` lines.
+    /// Rewrite the journal keeping the newest `rotate_keep` lines — PLUS
+    /// every older entry that is not yet accounted for elsewhere
+    /// (WORK-DUR-001 item 6: a backlog past the rotation window must never
+    /// rotate away the only durable copy of an acked event).
     fn rotate(&self, inner: &mut Inner) -> std::io::Result<()> {
         inner.file.flush()?;
         let all = self.read_lines()?;
         let keep_from = all.len().saturating_sub(self.rotate_keep);
-        let kept: Vec<String> = all[keep_from..].to_vec();
+        let mut kept: Vec<String> = Vec::with_capacity(self.rotate_keep);
+        for (i, line) in all.iter().enumerate() {
+            if i >= keep_from {
+                kept.push(line.clone());
+                continue;
+            }
+            let key = serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|v| v.get("key").and_then(Value::as_str).map(str::to_owned));
+            if !self.droppable(key.as_deref()) {
+                kept.push(line.clone());
+            }
+        }
         self.replace_journal(inner, &kept)
     }
 }
@@ -488,6 +541,52 @@ mod tests {
         assert_eq!(r.retain_since(Utc::now() + chrono::Duration::seconds(1)).unwrap(), 2);
         assert_eq!(r.len(), 0);
         assert_eq!(r.record("old", &json!({})).unwrap(), ReceiptOutcome::New, "aged key reusable");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── WORK-DUR-001 ────────────────────────────────────────────────────────
+
+    /// Item 6 acceptance: a backlog past the rotation window must never
+    /// rotate away the only durable copy of an acked event — with the
+    /// accountability guard set, unaccounted entries survive rotation
+    /// whatever their age; accounted ones still age out.
+    #[test]
+    fn rotation_never_drops_unaccounted_entries() {
+        let path = temp_path("guarded-rotate");
+        let r = EventReceipts::open_with_limits(path.clone(), 10, 5).unwrap();
+        // k0/k1 are NOT yet accounted for anywhere else.
+        r.set_accounted_guard(Arc::new(|key: &str| key != "k0" && key != "k1"));
+        for i in 0..10 {
+            r.record(&format!("k{i}"), &json!({"i": i})).unwrap();
+        }
+        // Rotation ran at 10 lines. The newest 5 survive as usual…
+        assert_eq!(r.record("k9", &json!({})).unwrap(), ReceiptOutcome::Duplicate);
+        // …accounted old entries aged out…
+        assert_eq!(r.record("k2", &json!({})).unwrap(), ReceiptOutcome::New);
+        // …but the UNACCOUNTED old entries were kept: they are the only
+        // durable copy of their events.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"key\":\"k0\""), "unaccounted k0 survives rotation");
+        assert!(raw.contains("\"key\":\"k1\""), "unaccounted k1 survives rotation");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Retention and clear-history honour the same guard: an expired entry
+    /// that is not yet accounted for is kept, not aged out.
+    #[test]
+    fn retention_keeps_unaccounted_entries_whatever_their_age() {
+        let path = temp_path("guarded-ttl");
+        let r = EventReceipts::open(path.clone()).unwrap();
+        r.record("accounted", &json!({"n": 1})).unwrap();
+        r.record("unaccounted", &json!({"n": 2})).unwrap();
+        r.set_accounted_guard(Arc::new(|key: &str| key == "accounted"));
+
+        // A cutoff in the future expires BOTH — only the accounted one goes.
+        let removed = r.retain_since(Utc::now() + chrono::Duration::seconds(1)).unwrap();
+        assert_eq!(removed, 1);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("\"key\":\"accounted\""));
+        assert!(raw.contains("\"key\":\"unaccounted\""), "sole durable copy kept");
         let _ = std::fs::remove_file(&path);
     }
 

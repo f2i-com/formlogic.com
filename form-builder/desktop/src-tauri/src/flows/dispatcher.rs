@@ -87,6 +87,10 @@ pub struct FlowRuntimeStatus {
     /// events awaiting operator redrive (`POST /api/flows/event-work/redrive`).
     pub event_work_pending: u64,
     pub event_work_dead: u64,
+    /// WORK-DUR-001 item 5: why the ledger's last durable append failed
+    /// (disk full / EIO / read-only dir), `None` when healthy. While set,
+    /// new events are NOT claimed — receipts hold them for the reconciler.
+    pub event_work_blocked: Option<String>,
 }
 
 struct Inner {
@@ -501,19 +505,38 @@ impl FlowRuntime {
         // when terminal records age past retention. Hourly, the receipt +
         // processed-marker journals are retention-swept too, so a low-volume
         // install purges PII on the clock (DATA-PRIV-001 item 4).
+        // Receipt accountability guard (WORK-DUR-001 item 6): rotation and
+        // retention may only drop a receipt once the work ledger owns its
+        // event (any status) or a processed marker exists — a receipt can be
+        // the ONLY durable copy of an event we already acked to the plugin.
+        if let Some(work) = self.work.clone() {
+            let processed = self.processed.clone();
+            self.host.set_receipts_guard(Arc::new(move |key: &str| {
+                work.get(key).is_some()
+                    || processed.as_ref().is_some_and(|p| p.contains(key))
+            }));
+        }
         {
             let rt = self.clone();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(30));
                 let mut last_receipt_sweep = std::time::Instant::now();
+                let mut ticks: u64 = 0;
                 loop {
                     tick.tick().await;
+                    ticks += 1;
                     let now = chrono::Utc::now();
                     if let Some(work) = rt.work.clone() {
                         for (_key, envelope) in work.due_retries(now) {
                             rt.enqueue_envelope(envelope);
                         }
                         work.maybe_compact(now);
+                    }
+                    // Continuous reconciliation (WORK-DUR-001 item 6), every
+                    // 5 minutes: import unaccounted receipts + re-drive
+                    // stalled pending rows — the startup sweep, kept live.
+                    if ticks % 10 == 0 {
+                        rt.reconcile_pass();
                     }
                     if last_receipt_sweep.elapsed() >= Duration::from_secs(3600) {
                         last_receipt_sweep = std::time::Instant::now();
@@ -573,36 +596,9 @@ impl FlowRuntime {
     ///    backoff (without consuming attempts) and the retry pump re-drives.
     async fn recovery_sweep(self: Arc<Self>) {
         let Some(work) = self.work.clone() else { return };
-        if let Some(processed) = self.processed.clone() {
-            // Normalise each receipt line to {key, receivedAt, event}: sealed
-            // payloads (`envEnc`, DATA-PRIV-001) are opened here — recovery is
-            // exactly the read path the sealed copy exists for.
-            let crypto = self.journal_crypto.as_deref();
-            let mut lines: Vec<Value> = Vec::new();
-            if let Ok(dirs) = std::fs::read_dir(&self.host.plugin_data_root) {
-                for entry in dirs.flatten() {
-                    let path = entry.path().join("host-event-receipts.jsonl");
-                    let Ok(text) = std::fs::read_to_string(&path) else { continue };
-                    lines.extend(text.lines().filter_map(|l| {
-                        let mut v = serde_json::from_str::<Value>(l).ok()?;
-                        if let Some(env) = crate::plugins::receipts::line_envelope(&v, crypto) {
-                            v["event"] = env;
-                        }
-                        Some(v)
-                    }));
-                }
-            }
-            let mut imported = 0usize;
-            for (key, envelope) in
-                recovery_candidates(lines, &|k| processed.contains(k), self.session_start)
-            {
-                if work.receive(&key, &envelope) == ReceiveOutcome::New {
-                    imported += 1;
-                }
-            }
-            if imported > 0 {
-                eprintln!("[flows] crash recovery: imported {imported} pre-ledger receipt(s) as pending event work");
-            }
+        let imported = self.import_unaccounted_receipts(self.session_start).len();
+        if imported > 0 {
+            eprintln!("[flows] crash recovery: imported {imported} unaccounted receipt(s) as pending event work");
         }
 
         let pending = work.all_pending();
@@ -615,6 +611,69 @@ impl FlowRuntime {
         );
         for (_key, envelope) in pending {
             self.enqueue_envelope(envelope);
+        }
+    }
+
+    /// Import receipts journaled (and acked to the plugin) but not yet owned
+    /// by the work ledger — the ack→ledger crash window, a lagged bus
+    /// delivery, or a `receive()` that failed on a blocked ledger. Only
+    /// receipts older than `cutoff` are considered (live deliveries are
+    /// racing the bus; the startup sweep passes session start, the periodic
+    /// reconciler a short grace). Returns the newly imported events.
+    fn import_unaccounted_receipts(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Vec<(String, Value)> {
+        let Some(work) = self.work.clone() else { return Vec::new() };
+        let Some(processed) = self.processed.clone() else { return Vec::new() };
+        // Normalise each receipt line to {key, receivedAt, event}: sealed
+        // payloads (`envEnc`, DATA-PRIV-001) are opened here — recovery is
+        // exactly the read path the sealed copy exists for.
+        let crypto = self.journal_crypto.as_deref();
+        let mut lines: Vec<Value> = Vec::new();
+        if let Ok(dirs) = std::fs::read_dir(&self.host.plugin_data_root) {
+            for entry in dirs.flatten() {
+                let path = entry.path().join("host-event-receipts.jsonl");
+                let Ok(raw) = std::fs::read(&path) else { continue };
+                let text = String::from_utf8_lossy(&raw);
+                lines.extend(text.lines().filter_map(|l| {
+                    let mut v = serde_json::from_str::<Value>(l).ok()?;
+                    if let Some(env) = crate::plugins::receipts::line_envelope(&v, crypto) {
+                        v["event"] = env;
+                    }
+                    Some(v)
+                }));
+            }
+        }
+        let mut imported = Vec::new();
+        for (key, envelope) in recovery_candidates(
+            lines,
+            &|k| processed.contains(k) || work.get(k).is_some(),
+            cutoff,
+        ) {
+            if matches!(work.receive(&key, &envelope), Ok(ReceiveOutcome::New)) {
+                imported.push((key, envelope));
+            }
+        }
+        imported
+    }
+
+    /// Continuous reconciliation (WORK-DUR-001 item 6): the startup sweep's
+    /// guarantees, kept LIVE. Unaccounted receipts past a short grace are
+    /// imported and driven; pending rows with no retry schedule that have sat
+    /// past the grace (crash after claim, failed retry append, dropped bus
+    /// delivery) are re-driven. The in-flight guard and durable stage flags
+    /// make every re-drive idempotent.
+    fn reconcile_pass(self: &Arc<Self>) {
+        let now = chrono::Utc::now();
+        for (key, envelope) in self.import_unaccounted_receipts(now - chrono::Duration::seconds(120)) {
+            eprintln!("[flows] reconciler: imported unaccounted receipt {key}");
+            self.enqueue_envelope(envelope);
+        }
+        if let Some(work) = self.work.clone() {
+            for (key, envelope) in work.stale_pending(now, chrono::Duration::seconds(300)) {
+                if !self.is_inflight(&key) {
+                    eprintln!("[flows] reconciler: re-driving stalled pending event {key}");
+                    self.enqueue_envelope(envelope);
+                }
+            }
         }
     }
 
@@ -670,6 +729,7 @@ impl FlowRuntime {
             let (pending, dead) = work.counts();
             s.event_work_pending = pending;
             s.event_work_dead = dead;
+            s.event_work_blocked = work.blocked();
         }
         s
     }
@@ -866,9 +926,21 @@ impl FlowRuntime {
             .map(|w| w.counts_full())
             .unwrap_or_default();
         let retention = crate::flows::work_ledger::Retention::from_env();
+        // WORK-DUR-001 item 5: durability health — the ledger's blocked
+        // state, corruption-recovery note, and a live writability probe of
+        // the journal directory (permissions / disk space).
+        let probe = self.journal_dir_writable_error();
         json!({
             "receipts": receipts,
-            "eventWork": { "pending": pending, "completed": completed, "dead": dead },
+            "eventWork": {
+                "pending": pending,
+                "completed": completed,
+                "dead": dead,
+                "blocked": self.work.as_ref().and_then(|w| w.blocked()),
+                "recoveredCorruption": self.work.as_ref().and_then(|w| w.recovered_corruption().map(str::to_owned)),
+            },
+            "journalDirWritable": probe.is_none(),
+            "journalDirError": probe,
             "retention": {
                 "receiptsDays": crate::plugins::receipts::default_retention().num_days(),
                 "completedHours": retention.completed.num_hours(),
@@ -876,6 +948,23 @@ impl FlowRuntime {
             },
             "encrypted": self.journal_crypto.is_some(),
         })
+    }
+
+    /// Probe the journal directory for writability (permissions/free space —
+    /// WORK-DUR-001 item 5): create+sync+delete a tiny file. `Some(reason)`
+    /// on failure, `None` when healthy.
+    fn journal_dir_writable_error(&self) -> Option<String> {
+        let probe = self.host.plugin_data_root.join(".write-probe");
+        let attempt = (|| -> std::io::Result<()> {
+            {
+                use std::io::Write as _;
+                let mut f = std::fs::File::create(&probe)?;
+                f.write_all(b"ok")?;
+                f.sync_data()?;
+            }
+            std::fs::remove_file(&probe)
+        })();
+        attempt.err().map(|e| e.to_string())
     }
 
     /// "Clear call/SMS history" for the LOCAL operational journals
@@ -945,8 +1034,18 @@ impl FlowRuntime {
             return;
         };
         // Durable FIRST. A replayed delivery of a terminal event stops here.
-        if work.receive(&idem, &envelope) == ReceiveOutcome::Terminal {
-            return;
+        // WORK-DUR-001: a claim that could not be durably journaled is NOT a
+        // claim — the event is not processed now. Its receipt (fsynced before
+        // the plugin ack) stays the durable copy, protected from rotation by
+        // the accountability guard, and the continuous reconciler re-imports
+        // it once the ledger unblocks.
+        match work.receive(&idem, &envelope) {
+            Ok(ReceiveOutcome::Terminal) => return,
+            Ok(_) => {}
+            Err(e) => {
+                self.note_error(format!("event {idem} not claimed (ledger blocked): {e}"));
+                return;
+            }
         }
         // In-process guard: one task drives a key at a time.
         if !self.begin_inflight(&idem) {
@@ -970,13 +1069,15 @@ impl FlowRuntime {
         envelope: &Value,
     ) -> bool {
         // Readiness failures reschedule WITHOUT consuming attempts — being
-        // offline/unlinked must never dead-letter acked work.
+        // offline/unlinked must never dead-letter acked work. A failed retry
+        // append leaves the row pending with no schedule; the reconciler's
+        // stale-pending sweep re-drives it (WORK-DUR-001).
         let Some(client) = self.client() else {
-            work.note_retry(idem, "no FormLogic account linked", false);
+            let _ = work.note_retry(idem, "no FormLogic account linked", false);
             return false;
         };
         if !self.ensure_snapshot(&client).await {
-            work.note_retry(idem, "flows/bindings snapshot unavailable", false);
+            let _ = work.note_retry(idem, "flows/bindings snapshot unavailable", false);
             return false;
         }
         if let Ok(mut s) = self.status.lock() {
@@ -999,25 +1100,44 @@ impl FlowRuntime {
                 connector.as_deref().unwrap_or("?"),
             );
             self.note_error(msg.clone());
-            work.mark_dead(idem, &msg);
+            // Fail closed (WORK-DUR-001): the dead state must be durable
+            // before the processed marker — otherwise a crash forgets WHY the
+            // event stopped. On a blocked ledger the event stays pending and
+            // the same deterministic rejection recurs on the re-drive.
+            if work.mark_dead(idem, &msg).is_err() {
+                return false;
+            }
             self.mark_processed(idem);
             return true;
         }
 
         // Stage 1 — app-logic onConnectorEvent (the raw record writes). Its
         // effect keys make re-runs idempotent; skipped once durably done.
+        // WORK-DUR-001: if the stage FLAG cannot be journaled, abort the pass
+        // — the stage already ran, and its effect keys make the re-run on the
+        // next drive idempotent, which is the same boundary as a crash
+        // immediately after the stage.
         if !work.get(idem).is_some_and(|w| w.app_logic_done) {
             match self.run_app_logic(envelope, &client, &routing).await {
-                StageOutcome::Success => work.mark_app_logic_done(idem),
+                StageOutcome::Success => {
+                    if work.mark_app_logic_done(idem).is_err() {
+                        return false;
+                    }
+                }
                 StageOutcome::Permanent(e) => {
                     // Deterministic failure: recorded, not retried — the
                     // record-write gap is visible in status/last_error.
                     self.note_error(format!("app-logic (permanent): {e}"));
-                    work.mark_app_logic_done(idem);
+                    if work.mark_app_logic_done(idem).is_err() {
+                        return false;
+                    }
                 }
                 StageOutcome::Retryable(e) => {
                     self.note_error(format!("app-logic: {e}"));
-                    return work.note_retry(idem, &e, true) != WorkStatus::Pending;
+                    return work
+                        .note_retry(idem, &e, true)
+                        .map(|s| s != WorkStatus::Pending)
+                        .unwrap_or(false);
                 }
             }
         }
@@ -1034,7 +1154,11 @@ impl FlowRuntime {
                 .filter_map(|b| b.get("id").and_then(Value::as_str))
                 .map(str::to_string)
                 .collect();
-            work.plan_bindings(idem, &ids);
+            // WORK-DUR-001: no binding may execute before the plan is
+            // durable — a crash mid-fan-out must know exactly what was owed.
+            if work.plan_bindings(idem, &ids).is_err() {
+                return false;
+            }
         }
         let planned = work.get(idem).and_then(|w| w.bindings).unwrap_or_default();
 
@@ -1070,7 +1194,9 @@ impl FlowRuntime {
                     rt.settle_binding(&work, &idem, &binding_id, outcome);
                     rt.release_inflight(&inflight_key);
                     // The last async binding to finish completes the event.
-                    if work.try_complete(&idem) {
+                    // A completion that couldn't persist leaves it pending —
+                    // the reconciler's stale-pending sweep re-drives it.
+                    if work.try_complete(&idem).unwrap_or(false) {
                         rt.mark_processed(&idem);
                         rt.begin_inflight(&idem); // terminal: keep the fast dedupe entry
                     }
@@ -1078,14 +1204,15 @@ impl FlowRuntime {
             }
         }
         // Planned bindings that no longer exist in the snapshot can never
-        // execute — settle them as skipped so the event can complete.
+        // execute — settle them as skipped so the event can complete. A
+        // failed settle leaves the binding pending for the next drive pass.
         for (binding_id, state) in &planned {
             if !state.terminal() && !bindings.iter().any(|b| b.get("id").and_then(Value::as_str) == Some(binding_id)) {
-                work.set_binding(idem, binding_id, BindingState::Skipped, Some("binding no longer exists in the snapshot"));
+                let _ = work.set_binding(idem, binding_id, BindingState::Skipped, Some("binding no longer exists in the snapshot"));
             }
         }
 
-        if work.try_complete(idem) {
+        if work.try_complete(idem).unwrap_or(false) {
             self.mark_processed(idem);
             return true;
         }
@@ -1103,21 +1230,29 @@ impl FlowRuntime {
         binding_id: &str,
         outcome: BindingRunOutcome,
     ) {
+        // A settle that cannot be journaled (ledger blocked) leaves the
+        // binding pending: the next drive pass re-runs it, and the SERVER's
+        // claimant-bound run reservation (INT-005) dedupes the re-execution —
+        // so failing closed here cannot double-run a flow.
         match outcome {
-            BindingRunOutcome::Done => work.set_binding(idem, binding_id, BindingState::Done, None),
+            BindingRunOutcome::Done => {
+                let _ = work.set_binding(idem, binding_id, BindingState::Done, None);
+            }
             BindingRunOutcome::Skipped(reason) => {
-                work.set_binding(idem, binding_id, BindingState::Skipped, Some(&reason))
+                let _ = work.set_binding(idem, binding_id, BindingState::Skipped, Some(&reason));
             }
             BindingRunOutcome::Permanent(e) => {
                 self.note_error(format!("binding {binding_id}: {e}"));
-                work.set_binding(idem, binding_id, BindingState::Dead, Some(&e));
+                let _ = work.set_binding(idem, binding_id, BindingState::Dead, Some(&e));
             }
             BindingRunOutcome::Retryable(e) => {
                 self.note_error(format!("binding {binding_id}: {e}"));
-                if work.note_retry(idem, &format!("binding {binding_id}: {e}"), true) == WorkStatus::Dead {
+                if work.note_retry(idem, &format!("binding {binding_id}: {e}"), true)
+                    == Ok(WorkStatus::Dead)
+                {
                     // Attempt budget exhausted: the event is dead — settle the
                     // binding so the DLQ row tells the whole story.
-                    work.set_binding(idem, binding_id, BindingState::Dead, Some(&e));
+                    let _ = work.set_binding(idem, binding_id, BindingState::Dead, Some(&e));
                     self.mark_processed(idem);
                 }
             }
@@ -1982,6 +2117,12 @@ impl FlowRuntime {
             }
         }
         true
+    }
+
+    /// Whether a key is currently claimed in-process (or terminally deduped).
+    fn is_inflight(&self, idem: &str) -> bool {
+        let g = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        g.1.contains(idem)
     }
 
     /// Release a non-terminal key so a later pass (retry pump, plugin replay)

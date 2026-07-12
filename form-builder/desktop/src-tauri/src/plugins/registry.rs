@@ -190,6 +190,10 @@ pub struct PluginHost {
     /// Handler for inbound plugin requests (`flow.run`); set once a FormLogic
     /// account is linked. `None` ⇒ answer `flow.run` with a "not linked" error.
     pub(crate) rpc_handler: Mutex<Option<Arc<dyn PluginRpcHandler>>>,
+    /// Receipt accountability guard (WORK-DUR-001): applied to every plugin's
+    /// receipt journal so rotation/retention never drops an entry that is the
+    /// only durable copy of an acked event. Set by the flow runtime.
+    pub(crate) receipts_guard: Mutex<Option<Arc<crate::plugins::receipts::AccountedFn>>>,
 }
 
 impl PluginHost {
@@ -208,9 +212,32 @@ impl PluginHost {
             events,
             plugins: Mutex::new(HashMap::new()),
             rpc_handler: Mutex::new(None),
+            receipts_guard: Mutex::new(None),
         });
         host.scan();
         host
+    }
+
+    /// Register the receipt accountability guard (WORK-DUR-001) and apply it
+    /// to every journal instance already open; future runner registrations
+    /// pick it up via [`receipts_guard`](Self::receipts_guard).
+    pub fn set_receipts_guard(&self, guard: Arc<crate::plugins::receipts::AccountedFn>) {
+        *self
+            .receipts_guard
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(guard.clone());
+        for slot in self.lock_plugins().values() {
+            if let Some(r) = &slot.receipts {
+                r.set_accounted_guard(guard.clone());
+            }
+        }
+    }
+
+    pub(crate) fn receipts_guard(&self) -> Option<Arc<crate::plugins::receipts::AccountedFn>> {
+        self.receipts_guard
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn events(&self) -> &EventBus {
@@ -276,10 +303,18 @@ impl PluginHost {
                         continue;
                     }
                     match crate::plugins::receipts::EventReceipts::open(path) {
-                        Ok(r) => match r.retain_since(cutoff) {
-                            Ok(n) => removed += n,
-                            Err(e) => log::warn!("receipt sweep failed for {id}: {e}"),
-                        },
+                        Ok(r) => {
+                            // The accountability guard applies to fresh opens
+                            // too (WORK-DUR-001): an unaccounted entry is
+                            // never dropped, whichever path sweeps it.
+                            if let Some(guard) = self.receipts_guard() {
+                                r.set_accounted_guard(guard);
+                            }
+                            match r.retain_since(cutoff) {
+                                Ok(n) => removed += n,
+                                Err(e) => log::warn!("receipt sweep failed for {id}: {e}"),
+                            }
+                        }
                         Err(e) => log::warn!("receipt sweep open failed for {id}: {e}"),
                     }
                 }
