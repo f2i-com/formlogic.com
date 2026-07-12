@@ -7,6 +7,7 @@ import {
   PhoneCallIcon,
   PuzzleIcon,
   RadioIcon,
+  ServerIcon,
   SmartphoneIcon,
 } from '../Icons';
 import { AokieCard } from './AokieCard';
@@ -166,6 +167,33 @@ export default function ReceptionistPanel() {
       note: health?.detail ?? (running ? 'no health report yet' : 'plugin not running'),
       ok: health ? health.ok : null,
     },
+    // PROC-001: the RESPONDER — whatever produces replies — is part of
+    // readiness, not just ears/mouth. Agent mode probes the LLM; flow mode
+    // points at the FormLogic link that actually produces replies.
+    (() => {
+      const responder = (health?.components as
+        | { responder?: { mode?: string; ready?: boolean; llmError?: string | null; note?: string | null } }
+        | undefined)?.responder;
+      return {
+        icon: ServerIcon,
+        label: 'AI responder',
+        value: !running
+          ? '—'
+          : responder == null
+            ? '…'
+            : responder.mode === 'agent'
+              ? responder.ready
+                ? 'LLM ready'
+                : 'LLM down'
+              : 'Flow replies',
+        note: !running
+          ? 'plugin not running'
+          : (responder?.llmError ??
+            responder?.note ??
+            (responder?.mode === 'agent' ? 'local LLM answering' : 'no health report yet')),
+        ok: !running || responder == null ? null : responder.ready !== false,
+      } as ReadinessItem;
+    })(),
     {
       icon: CloudIcon,
       label: 'Data delivery',

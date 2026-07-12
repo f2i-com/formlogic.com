@@ -45,7 +45,13 @@ pub struct RunningPlugin {
 enum RunOutcome {
     /// Graceful stop; ack to fire AFTER the slot reads `stopped`.
     Stopped(oneshot::Sender<()>),
-    Crashed(String),
+    /// Abnormal end. `exit_code` is the process's code when it actually ran
+    /// and exited (None for spawn/init failures and signal kills — the reason
+    /// string says which); PROC-001 turns it into structured exit diagnostics.
+    Crashed {
+        reason: String,
+        exit_code: Option<i32>,
+    },
     /// Someone re-started/stopped underneath us — do nothing.
     Stale,
 }
@@ -352,13 +358,43 @@ async fn supervise(host: Arc<PluginHost>, id: String, gen: u64) {
                 let _ = ack.send(());
                 return;
             }
-            RunOutcome::Crashed(reason) => {
+            RunOutcome::Crashed { reason, exit_code } => {
                 let attempts = {
                     let mut map = host.lock_plugins();
                     match map.get_mut(&id) {
                         Some(slot) if slot.generation == gen => {
                             slot.state = PluginState::Crashed;
                             slot.reason = Some(reason.clone());
+                            // PROC-001: structured exit diagnostics — the exit
+                            // code, when, and the final stderr lines — so the
+                            // snapshot names the failure without a log trawl.
+                            slot.last_exit = Some(crate::plugins::registry::PluginExit {
+                                code: exit_code,
+                                at: chrono::Utc::now(),
+                                stderr_tail: slot
+                                    .logs
+                                    .snapshot(None)
+                                    .iter()
+                                    .filter(|l| l.stream == "stderr")
+                                    .rev()
+                                    .take(6)
+                                    .map(|l| {
+                                        let mut t = l.text.clone();
+                                        if t.len() > 300 {
+                                            let mut cap = 300;
+                                            while cap > 0 && !t.is_char_boundary(cap) {
+                                                cap -= 1;
+                                            }
+                                            t.truncate(cap);
+                                            t.push('…');
+                                        }
+                                        t
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_iter()
+                                    .rev()
+                                    .collect(),
+                            });
                             slot.running = None;
                             slot.pid = None;
                             slot.started_at = None;
@@ -401,7 +437,12 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         match map.get(id) {
             Some(slot) if slot.generation == gen => match &slot.manifest {
                 Some(m) => (slot.dir.clone(), m.clone(), slot.logs.clone()),
-                None => return RunOutcome::Crashed("manifest missing".into()),
+                None => {
+                    return RunOutcome::Crashed {
+                        reason: "manifest missing".into(),
+                        exit_code: None,
+                    }
+                }
             },
             _ => return RunOutcome::Stale,
         }
@@ -447,7 +488,12 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
     };
     let proc = match rpc::spawn_plugin(&spec, logs.clone()) {
         Ok(p) => p,
-        Err(e) => return RunOutcome::Crashed(format!("spawn failed: {e}")),
+        Err(e) => {
+            return RunOutcome::Crashed {
+                reason: format!("spawn failed: {e}"),
+                exit_code: None,
+            }
+        }
     };
     let mut child = proc.child;
     let client = proc.client;
@@ -590,7 +636,10 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
             if let Err(f) = res {
                 let _ = child.start_kill();
                 let _ = child.wait().await;
-                return RunOutcome::Crashed(format!("plugin.init failed: {}", failure_text(&f)));
+                return RunOutcome::Crashed {
+                    reason: format!("plugin.init failed: {}", failure_text(&f)),
+                    exit_code: None,
+                };
             }
         }
         msg = ctl_rx.recv() => {
@@ -629,10 +678,13 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         tokio::select! {
             status = child.wait() => {
                 let code = status.ok().and_then(|s| s.code());
-                return RunOutcome::Crashed(match code {
-                    Some(c) => format!("process exited with code {c}"),
-                    None => "process exited (killed by signal)".into(),
-                });
+                return RunOutcome::Crashed {
+                    reason: match code {
+                        Some(c) => format!("process exited with code {c}"),
+                        None => "process exited (killed by signal)".into(),
+                    },
+                    exit_code: code,
+                };
             }
             msg = ctl_rx.recv() => {
                 if let Some(ControlMsg::Stop(ack)) = msg {

@@ -279,6 +279,48 @@ async fn start_service(
     }
 }
 
+/// PROC-001: one-click repair — resets the crash-loop breaker + scheduled
+/// restarts, tears down any stale process tree, verifies the port is actually
+/// free (naming a foreign holder instead of spawning into a doomed bind race)
+/// and starts fresh.
+async fn repair_service(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let result = state
+        .registry
+        .lock()
+        .map_err(|_| "registry mutex poisoned".to_string())
+        .and_then(|mut reg| reg.repair(&id));
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct AutostartBody {
+    policy: crate::services::registry::AutostartPolicy,
+}
+
+/// PROC-001: set a service's persisted boot-autostart policy
+/// (`auto` = restore last session, `always`, `never`).
+async fn set_service_autostart(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<AutostartBody>,
+) -> impl IntoResponse {
+    let result = state
+        .registry
+        .lock()
+        .map_err(|_| "registry mutex poisoned".to_string())
+        .and_then(|mut reg| reg.set_autostart(&id, body.policy));
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
 async fn stop_service(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1945,6 +1987,8 @@ pub async fn serve(
         .route("/api/services/:id", delete(delete_service))
         .route("/api/services/:id/start", post(start_service))
         .route("/api/services/:id/stop", post(stop_service))
+        .route("/api/services/:id/repair", post(repair_service))
+        .route("/api/services/:id/autostart", post(set_service_autostart))
         .route("/api/services/:id/install", post(install_service))
         .route("/api/services/:id/uninstall", post(uninstall_service))
         .route(

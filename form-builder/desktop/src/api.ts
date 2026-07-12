@@ -84,6 +84,14 @@ export interface ServiceSnapshot {
   /** GPU index this service is pinned to (CUDA_VISIBLE_DEVICES), or null for default
    *  placement. Set via the GPU picker. */
   gpu: number | null;
+  /** PROC-001: boot-autostart policy — auto (restore last session), always, never. */
+  autostart: 'auto' | 'always' | 'never';
+  /** PROC-001: the last spontaneous exit's diagnostics, when one happened. */
+  lastExit: {
+    code: number | null;
+    at: string;
+    stderrTail: string[];
+  } | null;
 }
 
 /** A CUDA GPU present on the machine (from nvidia-smi). */
@@ -166,6 +174,18 @@ export const services = {
   stop: (id: string) =>
     request<void>(`/api/services/${encodeURIComponent(id)}/stop`, {
       method: 'POST',
+    }),
+  /** PROC-001 one-click repair: reset the crash-loop breaker + stale state,
+   *  verify the port is actually free, and start fresh. */
+  repair: (id: string) =>
+    request<void>(`/api/services/${encodeURIComponent(id)}/repair`, {
+      method: 'POST',
+    }),
+  /** PROC-001: persist the boot-autostart policy for one service. */
+  setAutostart: (id: string, policy: 'auto' | 'always' | 'never') =>
+    request<void>(`/api/services/${encodeURIComponent(id)}/autostart`, {
+      method: 'POST',
+      body: JSON.stringify({ policy }),
     }),
   install: (id: string) =>
     request<void>(`/api/services/${encodeURIComponent(id)}/install`, {
@@ -386,6 +406,8 @@ export interface PluginHealthReport {
   /** "ok" | "degraded" | "error" from the plugin, "unreachable" on a miss. */
   status: string;
   detail?: string;
+  /** The plugin's full component readiness, verbatim (radio/responder/outbox/…). */
+  components?: Record<string, unknown>;
 }
 
 export interface PluginSnapshot {

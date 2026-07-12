@@ -263,6 +263,10 @@ export default function ServicesPanel() {
               }
               onStart={() => runAction(() => services.start(svc.id), svc.id)}
               onStop={() => runAction(() => services.stop(svc.id), svc.id)}
+              onRepair={() => runAction(() => services.repair(svc.id), svc.id)}
+              onAutostart={(policy) =>
+                runAction(() => services.setAutostart(svc.id, policy), svc.id)
+              }
               onInstall={() =>
                 runAction(async () => {
                   cancelledInstallIdsRef.current.delete(svc.id);
@@ -525,6 +529,10 @@ interface CardProps {
   onToggle: () => void;
   onStart: () => void;
   onStop: () => void;
+  /** PROC-001: reset crash-loop state + stale processes, then start fresh. */
+  onRepair: () => void;
+  /** PROC-001: persist the boot-autostart policy. */
+  onAutostart: (policy: 'auto' | 'always' | 'never') => void;
   onInstall: () => void;
   onUninstall: () => void;
   onCancelInstall: () => void;
@@ -877,6 +885,8 @@ function ServiceCard({
   onToggle,
   onStart,
   onStop,
+  onRepair,
+  onAutostart,
   onInstall,
   onUninstall,
   onCancelInstall,
@@ -932,6 +942,20 @@ function ServiceCard({
               {service.error}
             </div>
           )}
+          {/* PROC-001: the last spontaneous exit, summarised — code, when, and
+              the final stderr lines (hover) — so a crash names itself without
+              a trip through Logs. */}
+          {service.lastExit && service.status !== 'running' && (
+            <div
+              className="service-meta"
+              title={service.lastExit.stderrTail.join('\n')}
+            >
+              Last exit: code {service.lastExit.code ?? '—'} at{' '}
+              {new Date(service.lastExit.at).toLocaleTimeString()}
+              {service.lastExit.stderrTail.length > 0 &&
+                ` — ${service.lastExit.stderrTail[service.lastExit.stderrTail.length - 1]}`}
+            </div>
+          )}
           {service.id === 'llama-cpp' && (
             <LlamaModelSelector
               running={service.status === 'running' || service.status === 'starting'}
@@ -939,6 +963,20 @@ function ServiceCard({
           )}
           {service.id === 'ollama' && <OllamaModelSelector />}
           <GpuSelector serviceId={service.id} currentGpu={service.gpu} />
+          {/* PROC-001: explicit per-service boot policy. Auto = restore whatever
+              was running last session (the default); Always/Never override it. */}
+          <label className="service-meta" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Start at launch:
+            <select
+              value={service.autostart}
+              disabled={pending}
+              onChange={(e) => onAutostart(e.target.value as 'auto' | 'always' | 'never')}
+            >
+              <option value="auto">Auto (restore last session)</option>
+              <option value="always">Always</option>
+              <option value="never">Never</option>
+            </select>
+          </label>
         </div>
         <div className="service-actions">
           {/* Start / Stop — only meaningful once installed (you can't start what isn't
@@ -954,6 +992,19 @@ function ServiceCard({
               Start
             </button>
           ) : null}
+          {/* PROC-001 one-click repair: visible on a faulted service — resets the
+              crash-loop breaker + stale state, verifies the port is free (naming a
+              foreign holder), and starts fresh. */}
+          {service.status === 'errored' && (
+            <button
+              onClick={onRepair}
+              disabled={pending}
+              className="btn btn-secondary"
+              title="Reset crash-loop state, verify the port is free, and start fresh"
+            >
+              Repair
+            </button>
+          )}
 
           {/* A SINGLE install-state button (not separate Install + Uninstall):
               Install when not installed → Uninstall when installed (or Reinstall if the

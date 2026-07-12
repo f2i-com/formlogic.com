@@ -20,6 +20,20 @@
 //! Both are best-effort: a failure is logged and startup continues (the other
 //! guarantee still applies, and on an exotic host the previous behaviour is no
 //! worse than before).
+//!
+//! PROC-001 handle-scoping posture beyond these two: every other handle class
+//! this process creates is non-inheritable by default — Rust `std`/`tokio`
+//! open files with `bInheritHandle = FALSE`, sockets with
+//! `WSA_FLAG_NO_HANDLE_INHERIT`, and child stdio pipes are created
+//! non-inheritable with only the child's own ends briefly marked inheritable
+//! under std's process-spawn lock. The API listener above gets the explicit
+//! belt-and-braces treatment because it predates that guarantee (created by
+//! the async stack) and was the one observed wedge; the Job Object is the
+//! backstop for anything that still slips through — an inherited handle dies
+//! with the job. A stricter `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` allow-list
+//! would require hand-rolling `CreateProcessW` (std doesn't expose it on
+//! stable) — deliberately not worth that risk while nothing inheritable
+//! remains to scope.
 
 #[cfg(windows)]
 mod imp {

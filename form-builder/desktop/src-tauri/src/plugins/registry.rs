@@ -99,6 +99,21 @@ pub(crate) struct PluginSlot {
     /// TRUST-001: the package-signature assessment from the last scan
     /// (re-checked again at launch). Tampered ⇒ quarantined (Disabled).
     pub package_trust: crate::plugins::package_trust::PackageTrust,
+    /// PROC-001: structured record of the last crash — exit code, when, and
+    /// the final stderr lines (kept until the next crash replaces it).
+    pub last_exit: Option<PluginExit>,
+}
+
+/// PROC-001: privacy-safe structured exit diagnostics for a plugin crash —
+/// the same class of data as the plugin's logs endpoint, summarised so the
+/// snapshot names the failure directly.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginExit {
+    /// Exit code (None = spawn/init failure or signal kill — see `reason`).
+    pub code: Option<i32>,
+    pub at: DateTime<Utc>,
+    pub stderr_tail: Vec<String>,
 }
 
 impl PluginSlot {
@@ -118,6 +133,7 @@ impl PluginSlot {
             started_at: None,
             pid: None,
             package_trust: crate::plugins::package_trust::PackageTrust::Unsigned,
+            last_exit: None,
         }
     }
 }
@@ -146,6 +162,9 @@ pub struct PluginSnapshot {
     pub started_at: Option<DateTime<Utc>>,
     pub last_health: Option<HealthReport>,
     pub restart_attempts: u32,
+    /// PROC-001: the last crash's structured exit diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_exit: Option<PluginExit>,
     /// TRUST-001: "verified" | "unsigned" | "tampered".
     pub package: &'static str,
     /// Publisher key id + bundle version for a verified package.
@@ -599,6 +618,7 @@ fn snapshot_of(id: &str, slot: &PluginSlot) -> PluginSnapshot {
         started_at: slot.started_at,
         last_health: slot.last_health.clone(),
         restart_attempts: slot.restart_attempts,
+        last_exit: slot.last_exit.clone(),
         package: slot.package_trust.label(),
         package_detail: match &slot.package_trust {
             crate::plugins::package_trust::PackageTrust::Verified { key_id, version, .. } => {

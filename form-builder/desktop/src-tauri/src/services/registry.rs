@@ -106,6 +106,34 @@ pub enum ServiceStatus {
     Errored,
 }
 
+/// PROC-001: per-service boot-autostart policy.
+///   `Auto`   — restore whatever was running last session (the DESK-PROC-001
+///              remembered-running behaviour; the default).
+///   `Always` — start at every boot, even after an explicit Stop last session.
+///   `Never`  — never start at boot, even if it was left running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AutostartPolicy {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+/// PROC-001: privacy-safe structured record of a service's last spontaneous
+/// exit — what the operator (and a support bundle) needs to diagnose WITHOUT
+/// trawling the full log: the exit code, when, and the final stderr lines.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitDiagnostics {
+    /// The process exit code (None = killed by signal / unknowable).
+    pub code: Option<i32>,
+    pub at: DateTime<Utc>,
+    /// The last few stderr lines at exit, each length-capped. Same privacy
+    /// class as the logs endpoint this summarises (same auth surface).
+    pub stderr_tail: Vec<String>,
+}
+
 /// Runtime status of one service.
 #[derive(Clone)]
 pub struct ServiceRuntime {
@@ -130,6 +158,13 @@ pub struct ServiceRuntime {
     pub restart_at: Option<DateTime<Utc>>,
     /// When the service last crashed — the quiet-period anchor.
     pub last_crash_at: Option<DateTime<Utc>>,
+    /// PROC-001: whether THIS run has ever passed a health probe. Separates
+    /// "never became ready" (readiness-deadline breach — likely misconfigured)
+    /// from "was ready, then stopped answering" (a runtime fault).
+    pub ever_healthy: bool,
+    /// PROC-001: the last spontaneous exit's diagnostics (kept across
+    /// restarts until the next spontaneous exit replaces it).
+    pub last_exit: Option<ExitDiagnostics>,
 }
 
 impl ServiceRuntime {
@@ -146,6 +181,8 @@ impl ServiceRuntime {
             restart_attempts: 0,
             restart_at: None,
             last_crash_at: None,
+            ever_healthy: false,
+            last_exit: None,
         }
     }
 
@@ -186,6 +223,10 @@ pub struct ServiceSnapshot {
     /// How to call this service as a flow node (from the template), so the web
     /// app can surface it pre-wired. None → the client falls back to a convention.
     pub node: Option<NodeSpec>,
+    /// PROC-001: this service's boot-autostart policy (auto|always|never).
+    pub autostart: AutostartPolicy,
+    /// PROC-001: the last spontaneous exit's diagnostics, when one happened.
+    pub last_exit: Option<ExitDiagnostics>,
 }
 
 /// Result of `ensure_by_port` — surfaced to formlogic-web so it can tell the
@@ -359,6 +400,10 @@ pub struct Registry {
     /// via [`Registry::autostart_remembered`]. Explicit Stop forgets; the
     /// shutdown-path `stop_all` deliberately does NOT.
     remembered_running: std::collections::HashSet<String>,
+    /// PROC-001: explicit per-service boot policy, persisted to
+    /// `<dataDir>/services-autostart.json` (only non-Auto entries). Combined
+    /// with `remembered_running` by [`Registry::autostart_remembered`].
+    autostart_policies: HashMap<String, AutostartPolicy>,
 }
 
 /// DESK-PROC-001 backoff policy, factored pure for tests: given how many
@@ -402,6 +447,101 @@ fn persist_remembered_running(path: &Path, ids: &std::collections::HashSet<Strin
             }
         }
         Err(e) => log::warn!("could not serialize the running-services list: {e}"),
+    }
+}
+
+/// PROC-001: the explicit autostart-policy map on disk (`{"id": "always"|"never"}`;
+/// Auto entries are omitted). Missing/corrupt collapses to empty = all Auto,
+/// exactly the pre-feature behaviour.
+fn load_autostart_policies(path: &Path) -> HashMap<String, AutostartPolicy> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, AutostartPolicy>>(&s).ok())
+        .unwrap_or_default()
+}
+
+fn persist_autostart_policies(path: &Path, policies: &HashMap<String, AutostartPolicy>) {
+    let trimmed: std::collections::BTreeMap<&String, AutostartPolicy> = policies
+        .iter()
+        .filter(|(_, p)| **p != AutostartPolicy::Auto)
+        .map(|(k, v)| (k, *v))
+        .collect();
+    match serde_json::to_string_pretty(&trimmed) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                log::warn!("could not persist the autostart policies: {e}");
+            }
+        }
+        Err(e) => log::warn!("could not serialize the autostart policies: {e}"),
+    }
+}
+
+/// PROC-001: the boot-autostart decision, factored pure for tests.
+/// `Always` starts regardless of last session; `Never` never starts;
+/// `Auto` (or no entry) restores the remembered-running set.
+fn should_autostart(
+    policy: AutostartPolicy,
+    remembered: bool,
+) -> bool {
+    match policy {
+        AutostartPolicy::Always => true,
+        AutostartPolicy::Never => false,
+        AutostartPolicy::Auto => remembered,
+    }
+}
+
+/// PROC-001: the health-failure message, factored pure for tests. A service
+/// that has NEVER answered its health probe breached its readiness deadline
+/// (likely misconfigured / stuck loading); one that WAS ready has a runtime
+/// fault. Same state, different operator action — say which.
+fn readiness_failure_message(ever_healthy: bool, grace_secs: i64) -> String {
+    if ever_healthy {
+        "health check failed — process is running but stopped responding on its port".to_string()
+    } else {
+        format!(
+            "did not become ready within {grace_secs}s (readiness deadline) — the process is up \
+             but its port never answered; open Logs, or press Repair to reset and retry"
+        )
+    }
+}
+
+/// PROC-001: cap an exit's stderr tail for the structured diagnostics —
+/// enough to name the failure, small enough to embed in every snapshot.
+fn exit_stderr_tail(lines: &[crate::services::runner::LogLine]) -> Vec<String> {
+    const TAIL_LINES: usize = 6;
+    const LINE_CAP: usize = 300;
+    lines
+        .iter()
+        .filter(|l| l.stream == "stderr")
+        .rev()
+        .take(TAIL_LINES)
+        .map(|l| {
+            let mut t = l.text.clone();
+            if t.len() > LINE_CAP {
+                let mut cap = LINE_CAP;
+                while cap > 0 && !t.is_char_boundary(cap) {
+                    cap -= 1;
+                }
+                t.truncate(cap);
+                t.push('…');
+            }
+            t
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// PROC-001: is `port` already claimed on loopback by SOMEONE ELSE? Used as a
+/// pre-spawn probe so "the port is busy" is a named diagnosis instead of a
+/// service that spawns and then crash-loops against EADDRINUSE. Probe errors
+/// other than AddrInUse are treated as free — the probe must never block a
+/// legitimate start.
+fn port_in_use(port: u16) -> bool {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(_) => false,
+        Err(e) => e.kind() == std::io::ErrorKind::AddrInUse,
     }
 }
 
@@ -660,6 +800,7 @@ impl Registry {
         );
         let model_dirs = combine_model_dirs(&models_dir, extra_model_dirs);
         let remembered_running = load_remembered_running(&data_dir.join("services-running.json"));
+        let autostart_policies = load_autostart_policies(&data_dir.join("services-autostart.json"));
         Ok(Self {
             services,
             data_dir,
@@ -669,6 +810,7 @@ impl Registry {
             ollama_model: None,
             service_gpus: HashMap::new(),
             remembered_running,
+            autostart_policies,
         })
     }
 
@@ -686,6 +828,7 @@ impl Registry {
             ollama_model: None,
             service_gpus: HashMap::new(),
             remembered_running: std::collections::HashSet::new(),
+            autostart_policies: HashMap::new(),
         }
     }
 
@@ -1078,6 +1221,12 @@ impl Registry {
                 uninstallable: s.template.uninstall.is_some(),
                 installed: self.run_installed(&s.template, s.port),
                 gpu: self.service_gpus.get(&s.template.id).copied(),
+                autostart: self
+                    .autostart_policies
+                    .get(&s.template.id)
+                    .copied()
+                    .unwrap_or_default(),
+                last_exit: s.last_exit.clone(),
                 node: s.template.node.as_ref().map(|n| {
                     // Resolve companion-side `${...}` placeholders (e.g.
                     // `${ollamaModel}`) in the node body BEFORE the web app sees
@@ -1308,14 +1457,40 @@ impl Registry {
             cwd: cwd.as_deref().or(Some(data_dir_cwd.as_str())),
         };
 
+        // PROC-001: name a missing binary BEFORE spawning — "spawn failed: The
+        // system cannot find the file specified" tells the operator nothing;
+        // "not installed — run Install" does. Only when the command resolved to
+        // a concrete path (bare names legitimately fall back to PATH lookup).
+        if resolved_cmd.contains(std::path::is_separator) && !Path::new(&resolved_cmd).exists() {
+            let msg = format!(
+                "{id}: binary not installed ({resolved_cmd} is missing) — run Install first"
+            );
+            let svc = self.services.get_mut(id).ok_or("unknown service")?;
+            svc.set_status(ServiceStatus::Errored, Some(msg.clone()));
+            return Err(msg);
+        }
+
         // Now take a mutable borrow to update status + stash the runner.
         let svc = self.services.get_mut(id).ok_or("unknown service")?;
         // Tear down any lingering process from a previous (Errored / health-failed)
         // run before replacing it. Runner has no Drop, so simply overwriting
         // svc.runner below would orphan the old process (zombie + port conflict).
+        let had_own_process = svc.runner.is_some();
         if let Some(old) = svc.runner.take() {
             kill_process_tree(old.pid);
             let _ = old.stop();
+        }
+        // PROC-001: name a busy port BEFORE spawning. Only when WE didn't just
+        // tear our own previous process down (its port can linger for a beat) —
+        // a fresh start against a foreign holder would otherwise spawn, lose
+        // the bind race, and surface as an opaque crash loop.
+        if !had_own_process && port_in_use(port) {
+            let msg = format!(
+                "{id}: port {port} is already in use by another process (not one this desktop \
+                 started) — close it, or change the service's port, then press Start"
+            );
+            svc.set_status(ServiceStatus::Errored, Some(msg.clone()));
+            return Err(msg);
         }
         svc.set_status(ServiceStatus::Starting, None);
         // DESK-PROC-001: a manual start resets crash supervision (the
@@ -1326,6 +1501,8 @@ impl Registry {
             svc.restart_at = None;
             svc.last_crash_at = None;
         }
+        // PROC-001: a fresh run has not proven readiness yet.
+        svc.ever_healthy = false;
 
         match Runner::spawn(cfg) {
             Ok(runner) => {
@@ -1354,26 +1531,88 @@ impl Registry {
         }
     }
 
-    /// DESK-PROC-001: start every service remembered as running from the
-    /// previous desktop session. Called once at boot AFTER the saved model
-    /// selection + GPU pins are applied (they affect the spawn env). Failures
-    /// are logged per service and never block the rest.
+    /// DESK-PROC-001 + PROC-001: start services at boot per their autostart
+    /// policy — `Always` starts unconditionally, `Never` never starts, `Auto`
+    /// (default) restores the remembered-running set from the previous
+    /// session. Called once at boot AFTER the saved model selection + GPU
+    /// pins are applied (they affect the spawn env). Failures are logged per
+    /// service and never block the rest.
     pub fn autostart_remembered(&mut self) -> Vec<String> {
-        let ids: Vec<String> = self.remembered_running.iter().cloned().collect();
+        let ids: Vec<String> = self
+            .services
+            .keys()
+            .filter(|id| {
+                should_autostart(
+                    self.autostart_policies.get(*id).copied().unwrap_or_default(),
+                    self.remembered_running.contains(*id),
+                )
+            })
+            .cloned()
+            .collect();
         let mut restored = Vec::new();
         for id in ids {
-            if !self.services.contains_key(&id) {
-                continue; // template gone since last session
-            }
             match self.start_with(&id, true) {
                 Ok(()) => {
-                    log::info!("restored service {id} from the previous session");
+                    log::info!("autostarted service {id} (policy/previous session)");
                     restored.push(id);
                 }
-                Err(e) => log::warn!("could not restore service {id}: {e}"),
+                Err(e) => log::warn!("could not autostart service {id}: {e}"),
             }
         }
         restored
+    }
+
+    /// PROC-001: set (and persist) a service's boot-autostart policy.
+    pub fn set_autostart(&mut self, id: &str, policy: AutostartPolicy) -> Result<(), String> {
+        if !self.services.contains_key(id) {
+            return Err("unknown service".to_string());
+        }
+        if policy == AutostartPolicy::Auto {
+            self.autostart_policies.remove(id);
+        } else {
+            self.autostart_policies.insert(id.to_string(), policy);
+        }
+        persist_autostart_policies(
+            &self.data_dir.join("services-autostart.json"),
+            &self.autostart_policies,
+        );
+        Ok(())
+    }
+
+    /// PROC-001: one-click repair — reset every piece of supervision state a
+    /// wedged service can be stuck on (crash-loop breaker, scheduled restart,
+    /// stale process tree, stale error) and start it fresh. When the port is
+    /// held by a FOREIGN process even after our own tree is gone, refuse with
+    /// a named diagnosis instead of spawning into a doomed bind race.
+    pub fn repair(&mut self, id: &str) -> Result<(), String> {
+        {
+            let svc = self.services.get_mut(id).ok_or("unknown service")?;
+            if svc.status == ServiceStatus::Installing {
+                return Err(format!(
+                    "{id}: install in progress — wait for it to finish before repairing"
+                ));
+            }
+            // Tear down anything of ours that's still alive.
+            if let Some(runner) = svc.runner.take() {
+                kill_process_tree(runner.pid);
+                let _ = runner.stop();
+            }
+            // Reset supervision state: the operator explicitly re-armed it.
+            svc.restart_attempts = 0;
+            svc.restart_at = None;
+            svc.last_crash_at = None;
+            svc.set_status(ServiceStatus::Stopped, None);
+            let port = svc.port;
+            if port_in_use(port) {
+                let msg = format!(
+                    "{id}: port {port} is still in use by another process (not one this desktop \
+                     started) — close it, then press Start"
+                );
+                svc.set_status(ServiceStatus::Errored, Some(msg.clone()));
+                return Err(msg);
+            }
+        }
+        self.start_with(id, true)
     }
 
     /// DESK-PROC-001: start any crashed service whose scheduled automatic
@@ -1563,6 +1802,14 @@ impl Registry {
                     // (e.g. Lance's "No module named flash_attn"). start() replaces
                     // it on restart; logs() prefers the runner's output once it has
                     // any, falling back to the installer otherwise.
+                    // PROC-001: record structured exit diagnostics — code, when,
+                    // and the final stderr lines — so the snapshot names the
+                    // failure without a trip through the full log.
+                    svc.last_exit = Some(ExitDiagnostics {
+                        code: Some(code),
+                        at: Utc::now(),
+                        stderr_tail: exit_stderr_tail(&runner.logs.snapshot(None)),
+                    });
                     if code == 0 {
                         // A clean spontaneous exit is presumed intentional
                         // (the service shut itself down) — no auto-restart.
@@ -1652,6 +1899,9 @@ impl Registry {
         for (id, ok) in results {
             let Some(svc) = self.services.get_mut(id) else { continue };
             if *ok {
+                // PROC-001: this run has proven readiness — a later probe
+                // failure is a runtime fault, not a readiness-deadline breach.
+                svc.ever_healthy = true;
                 // Healthy probe: bring a service that was faulted while it was
                 // still coming up back to Running — but ONLY if its process is
                 // genuinely alive, so a dead service isn't resurrected by some
@@ -1683,9 +1933,12 @@ impl Registry {
             if within_grace {
                 continue;
             }
+            // PROC-001: distinguish "never became ready" (readiness deadline,
+            // likely misconfigured) from "was ready, then failed" (runtime
+            // fault) — the operator's next step differs.
             svc.set_status(
                 ServiceStatus::Errored,
-                Some("health check failed — process is running but not responding on its port".into()),
+                Some(readiness_failure_message(svc.ever_healthy, grace)),
             );
         }
     }
@@ -2112,6 +2365,12 @@ pub type RegistryHandle = Arc<Mutex<Registry>>;
 mod tests {
     use super::venv_name_in;
     use super::{load_remembered_running, next_restart, persist_remembered_running};
+    use super::{
+        exit_stderr_tail, load_autostart_policies, persist_autostart_policies, port_in_use,
+        readiness_failure_message, should_autostart, AutostartPolicy,
+    };
+    use chrono::Utc;
+    use std::collections::HashMap;
 
     /// DESK-PROC-001 backoff decision table: exponential delays, then the
     /// crash-loop breaker.
@@ -2149,6 +2408,98 @@ mod tests {
         assert!(load_remembered_running(&path).is_empty(), "corrupt file → empty");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// PROC-001: the boot-autostart decision table — `Always` regardless of
+    /// last session, `Never` never, `Auto` restores the remembered set.
+    #[test]
+    fn autostart_policy_decision_table() {
+        use super::AutostartPolicy::*;
+        assert!(should_autostart(Always, false));
+        assert!(should_autostart(Always, true));
+        assert!(!should_autostart(Never, true));
+        assert!(!should_autostart(Never, false));
+        assert!(should_autostart(Auto, true));
+        assert!(!should_autostart(Auto, false));
+    }
+
+    /// PROC-001: autostart policies persist (Auto entries omitted) and a
+    /// missing/corrupt file collapses to all-Auto.
+    #[test]
+    fn autostart_policies_round_trip_and_tolerate_corruption() {
+        let dir = std::env::temp_dir().join(format!(
+            "fl-services-autostart-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("services-autostart.json");
+
+        assert!(load_autostart_policies(&path).is_empty(), "missing file → all Auto");
+
+        let mut policies = HashMap::new();
+        policies.insert("llama-cpp".to_string(), AutostartPolicy::Always);
+        policies.insert("krea2".to_string(), AutostartPolicy::Never);
+        policies.insert("ollama".to_string(), AutostartPolicy::Auto);
+        persist_autostart_policies(&path, &policies);
+        let loaded = load_autostart_policies(&path);
+        assert_eq!(loaded.get("llama-cpp"), Some(&AutostartPolicy::Always));
+        assert_eq!(loaded.get("krea2"), Some(&AutostartPolicy::Never));
+        assert_eq!(loaded.get("ollama"), None, "Auto is the default — never persisted");
+
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(load_autostart_policies(&path).is_empty(), "corrupt file → all Auto");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// PROC-001: a never-ready service reports a readiness-deadline breach
+    /// (misconfiguration posture, points at Repair); a was-ready one reports
+    /// a runtime fault. Same Errored state, different operator action.
+    #[test]
+    fn readiness_message_distinguishes_never_ready_from_fell_over() {
+        let never = readiness_failure_message(false, 30);
+        assert!(never.contains("did not become ready within 30s"), "got: {never}");
+        assert!(never.contains("Repair"), "got: {never}");
+        let fell = readiness_failure_message(true, 30);
+        assert!(fell.contains("stopped responding"), "got: {fell}");
+        assert!(!fell.contains("readiness deadline"), "got: {fell}");
+    }
+
+    /// PROC-001: the exit stderr tail keeps only the LAST stderr lines, in
+    /// order, length-capped — a summary, never a second log pipeline.
+    #[test]
+    fn exit_stderr_tail_filters_caps_and_preserves_order() {
+        use crate::services::runner::LogLine;
+        let line = |stream: &'static str, text: &str| LogLine {
+            timestamp: Utc::now(),
+            stream,
+            text: text.to_string(),
+        };
+        let mut lines: Vec<LogLine> = (0..10)
+            .map(|i| line("stderr", &format!("err {i}")))
+            .collect();
+        lines.push(line("stdout", "noise that must not appear"));
+        lines.push(line("stderr", &"x".repeat(400)));
+
+        let tail = exit_stderr_tail(&lines);
+        assert_eq!(tail.len(), 6, "capped at 6 lines");
+        assert!(tail.iter().all(|t: &String| !t.contains("noise")), "stdout excluded");
+        // Order preserved: the oldest kept line comes first, the capped long
+        // line (the newest) last.
+        assert_eq!(tail[0], "err 5");
+        assert!(tail[5].ends_with('…'), "long line capped: {}", &tail[5][..40]);
+        assert!(tail[5].len() < 400);
+    }
+
+    /// PROC-001: the pre-spawn port probe — busy loopback port detected,
+    /// free port passes.
+    #[test]
+    fn port_probe_names_a_busy_port() {
+        let holder = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = holder.local_addr().unwrap().port();
+        assert!(port_in_use(port), "held port must probe busy");
+        drop(holder);
+        assert!(!port_in_use(port), "released port must probe free");
     }
 
     #[test]
