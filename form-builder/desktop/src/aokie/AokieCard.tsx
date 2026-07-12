@@ -26,6 +26,12 @@ interface AokiePhoneStatus {
   /** AOK-BT-001 bounded pairing window — discoverable ONLY while this is open. */
   pairingOpen?: boolean;
   pairingSecondsRemaining?: number;
+  /** PAIR-001: the held SSP numeric comparison awaiting the operator, if any. */
+  pairingConfirm?: {
+    address?: string;
+    numericValue?: number;
+    expiresEpochSecs?: number;
+  } | null;
 }
 
 /** `phone.startPairing` response data. */
@@ -101,6 +107,11 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
   const [device, setDevice] = useState<{ name?: string; address?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // PAIR-001: the held numeric-comparison prompt (address + 6-digit code).
+  const [confirmPrompt, setConfirmPrompt] = useState<{
+    address: string;
+    numericValue: number;
+  } | null>(null);
   const bondedRef = useRef<string[]>([]);
   // Snapshot when a window opens, so "the phone arrived" is a TRANSITION
   // (new bond / fresh reconnect), not just "something was already connected".
@@ -131,6 +142,14 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
     setSecondsLeft(secs);
     setConnected(isConnected);
     setDevice(d.device ?? null);
+    // PAIR-001: surface (or clear) the numeric-comparison prompt. The plugin
+    // reports it only while the radio is actually holding the SSP reply.
+    const pc = d.pairingConfirm;
+    setConfirmPrompt(
+      pc && pc.address && typeof pc.numericValue === 'number'
+        ? { address: pc.address, numericValue: pc.numericValue }
+        : null,
+    );
     return { secs, connected: isConnected };
   }, []);
 
@@ -143,6 +162,7 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
       setConnected(false);
       setDevice(null);
       setError(null);
+      setConfirmPrompt(null);
       return;
     }
     Promise.all([pollStatus(), loadBonded()]).catch((e) =>
@@ -255,6 +275,34 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
     }
   };
 
+  // PAIR-001: answer the numeric comparison — the code shown here must match
+  // the one on the phone's pairing dialog before the operator confirms.
+  const resolvePairing = async (accept: boolean) => {
+    if (!confirmPrompt) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await plugins.command('aokie', 'phone.confirmPairing', {
+        address: confirmPrompt.address,
+        accept,
+      });
+      setConfirmPrompt(null);
+      if (!accept) {
+        toast.push({
+          kind: 'success',
+          title: 'Pairing refused',
+          body: 'The phone was not paired. The window stays open if you want to try again.',
+        });
+      }
+    } catch (e) {
+      // Most common cause: the prompt expired (~25s) before the click landed.
+      setConfirmPrompt(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const forget = async (address: string) => {
     const ok = await confirm({
       title: 'Forget this phone?',
@@ -283,11 +331,29 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
       <div className="aokie-card-head">
         <span className="section-title aokie-card-title">Bluetooth pairing</span>
       </div>
-      {windowOpen ? (
+      {confirmPrompt ? (
+        <>
+          <div className="service-meta">
+            Phone <strong>{confirmPrompt.address}</strong> wants to pair. Confirm ONLY if your
+            phone shows this same code:
+          </div>
+          <div className="aokie-pairing-code" style={{ fontSize: 24, fontWeight: 700, letterSpacing: 3, margin: '6px 0' }}>
+            {String(confirmPrompt.numericValue).padStart(6, '0')}
+          </div>
+          <div className="aokie-card-actions">
+            <button className="btn btn-primary" onClick={() => resolvePairing(true)} disabled={busy}>
+              Codes match — pair
+            </button>
+            <button className="btn btn-secondary" onClick={() => resolvePairing(false)} disabled={busy}>
+              Reject
+            </button>
+          </div>
+        </>
+      ) : windowOpen ? (
         <>
           <div className="service-meta">
             Discoverable as “Aokie AI Assistant” — {formatSeconds(secondsLeft)} left. On your
-            phone: Bluetooth → Pair new device.
+            phone: Bluetooth → Pair new device, then confirm the matching code here.
           </div>
           <div className="aokie-card-actions">
             <button className="btn btn-secondary" onClick={stopPairing} disabled={busy}>
@@ -799,6 +865,21 @@ function AokieSettingsForm({ running }: { running: boolean }) {
               <p className="form-hint">
                 Workaround for dongles whose audio is dead after a cold boot until replugged.
                 Leave blank unless you've hit that issue.
+              </p>
+              <label className="form-row form-row-checkbox" style={{ marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={settings.legacyPairingPin}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, legacyPairingPin: e.target.checked }))
+                  }
+                />
+                <span>Allow legacy PIN pairing (compatibility)</span>
+              </label>
+              <p className="form-hint">
+                ⚠️ Uses the fixed PIN 0000 for very old devices that can't do modern
+                code-confirmation pairing — it provides no protection against a nearby
+                impostor. Enable only while pairing such a device, then turn it back off.
               </p>
             </div>
 

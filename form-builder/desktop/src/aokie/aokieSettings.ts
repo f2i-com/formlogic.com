@@ -37,6 +37,10 @@ export interface AokieConnectorSettings {
   bargeSensitivity: number;
   hfpCodec: 'auto' | 'cvsd' | 'wbs';
   reenumerateHwid: string;
+  /** PAIR-001: legacy fixed-PIN ("0000") pairing for pre-SSP devices. OFF by
+   *  default — it provides no authentication; enable only to bond an old
+   *  device, then turn it back off. */
+  legacyPairingPin: boolean;
 }
 
 export const AOKIE_SETTINGS_DEFAULTS: AokieConnectorSettings = {
@@ -55,6 +59,7 @@ export const AOKIE_SETTINGS_DEFAULTS: AokieConnectorSettings = {
   bargeSensitivity: 650,
   hfpCodec: 'auto',
   reenumerateHwid: '',
+  legacyPairingPin: false,
 };
 
 /**
@@ -102,6 +107,7 @@ export function withAokieDefaults(raw: unknown): AokieConnectorSettings {
         : d.bargeSensitivity,
     hfpCodec: codec === 'cvsd' || codec === 'wbs' || codec === 'auto' ? codec : d.hfpCodec,
     reenumerateHwid: typeof src.reenumerateHwid === 'string' ? src.reenumerateHwid : d.reenumerateHwid,
+    legacyPairingPin: boolSetting(src.legacyPairingPin, d.legacyPairingPin),
   };
 }
 

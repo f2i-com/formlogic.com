@@ -57,6 +57,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.dongle.ready',
   'aokie.dongle.error',
   'aokie.phone.pairing_started',
+  'aokie.phone.pairing_confirm_required',
   'aokie.phone.paired',
   'aokie.phone.connected',
   'aokie.phone.disconnected',
@@ -86,6 +87,7 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'phone.status',
   'phone.startPairing',
   'phone.stopPairing',
+  'phone.confirmPairing',
   'phone.listPaired',
   'phone.removePaired',
   'call.current',
@@ -270,6 +272,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Phone pairing started',
     description: 'Aokie started pairing with a phone.',
     payloadHints: ['$event.data.dongleId', '$event.data.deviceName'],
+  },
+  {
+    kind: 'event',
+    id: 'aokie.phone.pairing_confirm_required',
+    group: 'aokie.device',
+    event: 'aokie.phone.pairing_confirm_required',
+    label: 'Pairing confirmation required',
+    description:
+      'A phone is pairing and the operator must confirm the matching code shown on both screens (answered in the Desktop app).',
+    payloadHints: ['$event.data.address', '$event.data.numericValue'],
   },
   {
     kind: 'event',
