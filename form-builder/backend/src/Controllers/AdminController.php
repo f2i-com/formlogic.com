@@ -47,6 +47,7 @@ class AdminController
         private ?ScheduledBackupService $scheduledBackup = null,
         private ?\FormLogic\Services\MfaService $mfaService = null,
         private ?\FormLogic\Services\AccountErasureService $erasure = null,
+        private ?\FormLogic\Services\EmailService $email = null,
     ) {
     }
 
@@ -96,10 +97,16 @@ class AdminController
     }
 
     /**
-     * POST /api/admin/users/{id}/mfa/reset — lockout recovery: switch the user's
-     * two-factor auth OFF (secret, recovery codes and every remembered browser
-     * wiped) so they can sign in with just their password and re-enroll.
-     * Audited with the true admin actor.
+     * POST /api/admin/users/{id}/mfa/reset { password } — lockout recovery:
+     * switch the user's two-factor auth OFF (secret, recovery codes, pending
+     * challenges and every remembered browser wiped; their sessions revoked)
+     * so they can sign in with just their password and re-enroll.
+     *
+     * Step-up required (audit MFA-001): the acting admin re-enters THEIR OWN
+     * password — a hijacked admin tab alone cannot strip a user's second
+     * factor. Self-reset is refused (Settings → Security is the audited,
+     * password+code-gated path for your own account), and the affected user
+     * is notified by email when transactional mail is configured.
      */
     public function resetMfa(Request $request, Response $response, array $args): Response
     {
@@ -107,12 +114,39 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Two-factor authentication is not available'], 503);
         }
         $userId = (string) $args['id'];
-        if ($this->admin->getUserOverview($userId) === null) {
+        $target = $this->admin->accountRow($userId);
+        if ($target === null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
         }
+        $adminId = (string) $request->getAttribute('userId');
+        if ($adminId === $userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Use Settings → Security to manage your own two-factor authentication'], 400);
+        }
+        $body = $request->getParsedBody() ?? [];
+        if (!$this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''))) {
+            $this->audit($request, 'admin.mfa_reset_denied', $userId, ['reason' => 'step_up_failed']);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Enter your own password to confirm this reset'], 401);
+        }
         $wasEnabled = $this->mfaService->isEnabled($userId);
-        $this->mfaService->disable($userId);
+        $this->mfaService->disable($userId); // transactional; bumps token_version = sessions + pending tokens revoked
         $this->audit($request, 'admin.mfa_reset', $userId, ['wasEnabled' => $wasEnabled]);
+        if ($wasEnabled && $this->email !== null && is_string($target['email'] ?? null)) {
+            // Best-effort notification — the reset must not fail on mail trouble.
+            try {
+                $this->email->send(
+                    (string) $target['email'],
+                    'Two-factor authentication was reset on your account',
+                    '<p>An administrator reset two-factor authentication on your FormLogic account. '
+                    . 'You can sign in with your password and re-enable it under Settings → Security.</p>'
+                    . '<p>If you did not request this, contact your administrator immediately.</p>',
+                    "An administrator reset two-factor authentication on your FormLogic account.\n"
+                    . "You can sign in with your password and re-enable it under Settings → Security.\n"
+                    . "If you did not request this, contact your administrator immediately."
+                );
+            } catch (\Throwable $e) {
+                $this->logger?->warning('Admin MFA reset: notification email failed', ['error' => $e->getMessage()]);
+            }
+        }
         return $this->jsonResponse($response, ['success' => true, 'mfaEnabled' => false]);
     }
 

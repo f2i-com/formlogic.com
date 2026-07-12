@@ -756,37 +756,55 @@ class AuthService
         return $this->generateToken($user);
     }
 
+    /** Lifetime of the password→MFA-code bridge token, in seconds. */
+    public const MFA_PENDING_TTL = 300;
+
     /**
      * Short-lived single-purpose token bridging the password step and the MFA
      * code step: it proves "password already verified for this user" for five
      * minutes and is useless as a session (distinct audience + purpose claim —
-     * validateToken() rejects it).
+     * validateToken() rejects it). Every token carries a random jti; the caller
+     * must register it as a one-time server-side challenge (MfaService) so the
+     * SAME token can never be exchanged for more than one session (audit MFA-001).
+     *
+     * @return array{token: string, jti: string}
      */
-    public function issueMfaPendingToken(User $user): string
+    public function issueMfaPendingToken(User $user): array
     {
         $now = time();
-        return JWT::encode([
+        $jti = bin2hex(random_bytes(16));
+        $token = JWT::encode([
             'iss' => $this->jwtConfig['issuer'] ?? 'formlogic',
             'aud' => 'formlogic-mfa',
             'purpose' => 'mfa_pending',
             'sub' => $user->id,
+            'jti' => $jti,
             'iat' => $now,
             'nbf' => $now,
-            'exp' => $now + 300,
+            'exp' => $now + self::MFA_PENDING_TTL,
             'tv' => $this->getTokenVersion($user->id),
         ], $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);
+        return ['token' => $token, 'jti' => $jti];
     }
 
-    /** Validate an MFA-pending token and return its user, or null. */
-    public function consumeMfaPendingToken(string $token): ?User
+    /**
+     * Validate an MFA-pending token; returns its user + jti, or null. Purely
+     * stateless — the one-time-use guarantee lives in the mfa_challenges row
+     * the jti points at (attempt-counted, atomically claimed on success).
+     *
+     * @return array{user: User, jti: string}|null
+     */
+    public function consumeMfaPendingToken(string $token): ?array
     {
         try {
             $decoded = JWT::decode($token, new Key($this->jwtConfig['secret'], $this->jwtConfig['algorithm']));
             $expectedIssuer = $this->jwtConfig['issuer'] ?? 'formlogic';
-            if (!isset($decoded->sub, $decoded->iss, $decoded->aud, $decoded->purpose)
+            if (!isset($decoded->sub, $decoded->iss, $decoded->aud, $decoded->purpose, $decoded->jti)
                 || $decoded->iss !== $expectedIssuer
                 || $decoded->aud !== 'formlogic-mfa'
                 || $decoded->purpose !== 'mfa_pending'
+                || !is_string($decoded->jti)
+                || $decoded->jti === ''
             ) {
                 return null;
             }
@@ -794,7 +812,8 @@ class AuthService
             if ($tokenTv !== $this->getTokenVersion($decoded->sub)) {
                 return null;
             }
-            return $this->getUserById($decoded->sub);
+            $user = $this->getUserById($decoded->sub);
+            return $user !== null ? ['user' => $user, 'jti' => $decoded->jti] : null;
         } catch (\Exception $e) {
             return null;
         }

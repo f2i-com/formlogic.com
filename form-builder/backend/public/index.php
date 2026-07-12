@@ -170,7 +170,8 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
             $c->get(AppService::class),
             $c->get(\FormLogic\Services\TrashService::class),
             $c->get(LoggerInterface::class)
-        )
+        ),
+        $c->get(\FormLogic\Services\EmailService::class)
     );
 });
 

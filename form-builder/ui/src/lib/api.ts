@@ -2603,9 +2603,10 @@ class ApiClient {
     return this.request(`/admin/users/${encodeURIComponent(id)}/admin`, { method: 'POST', body: JSON.stringify({ isAdmin }) });
   }
 
-  /** Lockout recovery: switch a user's two-factor auth OFF (they re-enroll themselves). */
-  async adminResetMfa(id: string): Promise<ApiResponse<{ success: boolean; mfaEnabled: boolean }>> {
-    return this.request(`/admin/users/${encodeURIComponent(id)}/mfa/reset`, { method: 'POST' });
+  /** Lockout recovery: switch a user's two-factor auth OFF (they re-enroll themselves).
+   *  Step-up: the acting admin confirms with their OWN password. */
+  async adminResetMfa(id: string, password: string): Promise<ApiResponse<{ success: boolean; mfaEnabled: boolean }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/mfa/reset`, { method: 'POST', body: JSON.stringify({ password }) });
   }
 
   /** Set (or generate) a user's password; their sessions are revoked. The temp password is shown ONCE. */

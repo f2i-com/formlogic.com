@@ -157,10 +157,20 @@ class AuthController
                 $trust = $request->getCookieParams()[\FormLogic\Services\MfaService::TRUST_COOKIE] ?? null;
                 if (!$this->mfaService->checkTrust($userId, is_string($trust) ? $trust : null)) {
                     $user = $this->authService->getUserById($userId);
+                    $mfaToken = '';
+                    if ($user !== null) {
+                        // The token's jti is registered as a ONE-TIME server-side
+                        // challenge — the code exchange claims it atomically, so a
+                        // replayed pending token cannot mint a second session
+                        // (audit MFA-001).
+                        $pending = $this->authService->issueMfaPendingToken($user);
+                        $this->mfaService->registerChallenge($userId, $pending['jti'], \FormLogic\Services\AuthService::MFA_PENDING_TTL);
+                        $mfaToken = $pending['token'];
+                    }
                     $this->audit($request, 'auth.login.mfa_challenge', 'user', $userId);
                     return $this->jsonResponse($response, [
                         'mfaRequired' => true,
-                        'mfaToken' => $user !== null ? $this->authService->issueMfaPendingToken($user) : '',
+                        'mfaToken' => $mfaToken,
                     ]);
                 }
             }
@@ -781,13 +791,27 @@ class AuthController
         if ($mfaToken === '' || $code === '') {
             return $this->jsonError($response, 'A verification code is required', 400);
         }
-        $user = $this->authService->consumeMfaPendingToken($mfaToken);
-        if ($user === null) {
+        $pending = $this->authService->consumeMfaPendingToken($mfaToken);
+        if ($pending === null) {
+            return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
+        }
+        $user = $pending['user'];
+        // One-time challenge gate (audit MFA-001): every answer burns an attempt
+        // from the per-token budget, and a consumed/expired/unknown challenge —
+        // including a replayed token that already minted a session — refuses.
+        if (!$this->mfaService->challengeAttempt($pending['jti'])) {
+            $this->audit($request, 'auth.mfa.failed', 'user', $user->id, ['reason' => 'challenge_spent']);
             return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
         }
         if (!$this->mfaService->verifyChallenge($user->id, $code)) {
             $this->audit($request, 'auth.mfa.failed', 'user', $user->id);
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 401);
+        }
+        // Correct code — atomically claim the challenge; exactly one exchange of
+        // this pending token can win, however the requests race.
+        if (!$this->mfaService->claimChallenge($pending['jti'])) {
+            $this->audit($request, 'auth.mfa.failed', 'user', $user->id, ['reason' => 'challenge_replayed']);
+            return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
         }
 
         $response = $this->setAuthCookie($response, $this->authService->issueToken($user));
@@ -862,6 +886,13 @@ class AuthController
             return $this->jsonError($response, 'Incorrect password', 401);
         }
         $this->mfaService->disable($user->id);
+        // disable() bumps token_version, revoking every OTHER session, pending
+        // MFA token and remembered browser (audit MFA-001) — re-issue this
+        // session's cookie so the user who made the change stays signed in.
+        $fresh = $this->authService->getUserById($user->id);
+        if ($fresh !== null) {
+            $response = $this->setAuthCookie($response, $this->authService->issueToken($fresh));
+        }
         $this->audit($request, 'auth.mfa.disabled', 'user', $user->id);
         return $this->jsonResponse($response, ['enabled' => false]);
     }

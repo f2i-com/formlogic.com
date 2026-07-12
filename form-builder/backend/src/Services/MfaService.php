@@ -25,6 +25,10 @@ class MfaService
     public const TRUST_COOKIE = 'formlogic_mfa_trust';
     public const TRUST_DAYS = 60;
     private const RECOVERY_CODE_COUNT = 8;
+    /** Wrong-code answers allowed per pending challenge before it burns (defence in depth beside the IP rate limit). */
+    public const CHALLENGE_MAX_ATTEMPTS = 5;
+    /** Bounded retries when a recovery-code consume loses a concurrent compare-and-swap. */
+    private const RECOVERY_CAS_RETRIES = 3;
 
     private PDO $mysql;
     private TotpService $totp;
@@ -115,12 +119,84 @@ class MfaService
         return $plain;
     }
 
-    /** Switch MFA off and forget every secret, recovery code and trusted browser. */
+    /**
+     * Switch MFA off and forget every secret, recovery code, pending login
+     * challenge and trusted browser — atomically (audit MFA-001: a partial
+     * failure must not leave, say, mfa_enabled=0 with live trusted-browser
+     * rows). Bumps token_version in the same statement so every outstanding
+     * session, pending-MFA token and remembered device is revoked; callers
+     * that want the CURRENT session to survive re-issue its cookie after.
+     */
     public function disable(string $userId): void
     {
-        $this->mysql->prepare('UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_recovery_codes = NULL WHERE id = :id')
-            ->execute(['id' => $userId]);
-        $this->mysql->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :id')->execute(['id' => $userId]);
+        $ownsTx = !$this->mysql->inTransaction();
+        if ($ownsTx) {
+            $this->mysql->beginTransaction();
+        }
+        try {
+            $this->mysql->prepare(
+                'UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_recovery_codes = NULL,
+                        token_version = token_version + 1 WHERE id = :id'
+            )->execute(['id' => $userId]);
+            $this->mysql->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :id')->execute(['id' => $userId]);
+            $this->mysql->prepare('DELETE FROM mfa_challenges WHERE user_id = :id')->execute(['id' => $userId]);
+            if ($ownsTx) {
+                $this->mysql->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($ownsTx && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    // ── One-time login challenges (audit MFA-001) ────────────────────────────
+
+    /**
+     * Register the pending token's jti as a one-time server-side challenge.
+     * Without a live row the code exchange refuses, so a pending token can
+     * never mint more than one session however many times it is replayed.
+     */
+    public function registerChallenge(string $userId, string $jti, int $ttlSeconds = 300): void
+    {
+        // Opportunistic hygiene — dead challenges serve nothing.
+        $this->mysql->prepare('DELETE FROM mfa_challenges WHERE expires_at <= DATE_SUB(NOW(), INTERVAL 1 HOUR)')->execute();
+        $stmt = $this->mysql->prepare(
+            'INSERT INTO mfa_challenges (jti_hash, user_id, expires_at)
+             VALUES (:hash, :uid, DATE_ADD(NOW(), INTERVAL :ttl SECOND))'
+        );
+        $stmt->execute(['hash' => hash('sha256', $jti), 'uid' => $userId, 'ttl' => $ttlSeconds]);
+    }
+
+    /**
+     * Gate one answer attempt against the challenge: false when the challenge
+     * is unknown, expired, already consumed, or has burned its attempt budget.
+     * The increment is atomic, so parallel guesses share one honest counter.
+     */
+    public function challengeAttempt(string $jti): bool
+    {
+        $stmt = $this->mysql->prepare(
+            'UPDATE mfa_challenges SET attempts = attempts + 1
+             WHERE jti_hash = :hash AND consumed_at IS NULL AND expires_at > NOW() AND attempts < :max'
+        );
+        $stmt->execute(['hash' => hash('sha256', $jti), 'max' => self::CHALLENGE_MAX_ATTEMPTS]);
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Atomically claim the challenge after a correct code: exactly ONE caller
+     * wins (conditional single-row UPDATE — MySQL serialises the writes), so
+     * two parallel exchanges of the same pending token mint one session.
+     */
+    public function claimChallenge(string $jti): bool
+    {
+        $stmt = $this->mysql->prepare(
+            'UPDATE mfa_challenges SET consumed_at = NOW()
+             WHERE jti_hash = :hash AND consumed_at IS NULL AND expires_at > NOW()'
+        );
+        $stmt->execute(['hash' => hash('sha256', $jti)]);
+        return $stmt->rowCount() > 0;
     }
 
     /**
@@ -129,7 +205,7 @@ class MfaService
      */
     public function verifyChallenge(string $userId, string $code): bool
     {
-        $stmt = $this->mysql->prepare('SELECT mfa_secret, mfa_enabled, mfa_recovery_codes FROM users WHERE id = :id');
+        $stmt = $this->mysql->prepare('SELECT mfa_secret, mfa_enabled FROM users WHERE id = :id');
         $stmt->execute(['id' => $userId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row || !(bool) $row['mfa_enabled'] || empty($row['mfa_secret'])) {
@@ -143,18 +219,49 @@ class MfaService
         if (strlen($normalized) < 8) {
             return false;
         }
-        $hashes = json_decode((string) ($row['mfa_recovery_codes'] ?? '[]'), true);
-        if (!is_array($hashes)) {
-            return false;
-        }
-        $candidate = hash('sha256', $normalized);
-        foreach ($hashes as $i => $h) {
-            if (is_string($h) && hash_equals($h, $candidate)) {
-                unset($hashes[$i]);
-                $this->mysql->prepare('UPDATE users SET mfa_recovery_codes = :codes WHERE id = :id')
-                    ->execute(['codes' => json_encode(array_values($hashes)), 'id' => $userId]);
+        return $this->consumeRecoveryCode($userId, hash('sha256', $normalized));
+    }
+
+    /**
+     * Single-use recovery-code consumption via compare-and-swap (audit
+     * MFA-001): the row is only rewritten when it still holds EXACTLY the
+     * JSON we matched against, so two parallel uses of the same code can
+     * never both succeed. Losing the swap to a DIFFERENT concurrent change
+     * (another code consumed, set regenerated) re-reads and retries within
+     * a small bound; the same code twice always fails the re-read.
+     */
+    private function consumeRecoveryCode(string $userId, string $candidateHash): bool
+    {
+        for ($try = 0; $try < self::RECOVERY_CAS_RETRIES; $try++) {
+            $stmt = $this->mysql->prepare('SELECT mfa_recovery_codes FROM users WHERE id = :id AND mfa_enabled = 1');
+            $stmt->execute(['id' => $userId]);
+            $current = $stmt->fetchColumn();
+            if (!is_string($current) || $current === '') {
+                return false;
+            }
+            $hashes = json_decode($current, true);
+            if (!is_array($hashes)) {
+                return false;
+            }
+            $matched = false;
+            foreach ($hashes as $i => $h) {
+                if (is_string($h) && hash_equals($h, $candidateHash)) {
+                    unset($hashes[$i]);
+                    $matched = true;
+                    break;
+                }
+            }
+            if (!$matched) {
+                return false;
+            }
+            $upd = $this->mysql->prepare(
+                'UPDATE users SET mfa_recovery_codes = :new WHERE id = :id AND mfa_recovery_codes = :old AND mfa_enabled = 1'
+            );
+            $upd->execute(['new' => json_encode(array_values($hashes)), 'id' => $userId, 'old' => $current]);
+            if ($upd->rowCount() > 0) {
                 return true;
             }
+            // Lost the swap — someone rewrote the set between our read and write.
         }
         return false;
     }

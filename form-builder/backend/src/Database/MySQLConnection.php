@@ -1231,6 +1231,25 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // One-time MFA login challenges (audit MFA-001): every pending-MFA token
+        // minted at the password step gets a server-side row keyed by the hash of
+        // its jti claim. The code exchange atomically claims the row (consumed_at),
+        // so one pending token can never mint more than one session, and per-token
+        // attempts are counted independently of the IP rate limit.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mfa_challenges (
+                jti_hash CHAR(64) NOT NULL PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                attempts INT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                consumed_at TIMESTAMP NULL DEFAULT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_mfa_chal_user (user_id),
+                INDEX idx_mfa_chal_expires (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Create rate_limits table for persistent rate limiting / login throttling (R1).
         // Without this on the runtime path, RateLimiter fails open and throttling is a no-op.
         $pdo->exec("

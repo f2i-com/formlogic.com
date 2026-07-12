@@ -4,6 +4,7 @@ import { Archive, ArrowLeft, Boxes, FileJson, FileText, KeyRound, Recycle, Shiel
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Input } from '../../components/ui/Input';
 import { api, type AdminUserDetail as AdminUserDetailData, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
@@ -42,16 +43,20 @@ export function AdminUserDetail() {
   };
 
   // Lockout recovery: reset the user's two-factor auth so they can sign in
-  // with just their password and re-enroll.
+  // with just their password and re-enroll. Step-up (audit MFA-001): the
+  // acting admin confirms with their OWN password.
   const [confirmMfaReset, setConfirmMfaReset] = useState(false);
   const [resettingMfa, setResettingMfa] = useState(false);
+  const [mfaResetPassword, setMfaResetPassword] = useState('');
   const resetMfa = async () => {
     setResettingMfa(true);
-    const r = await api.adminResetMfa(userId);
+    const r = await api.adminResetMfa(userId, mfaResetPassword);
     setResettingMfa(false);
+    if (r.error) { toast.error('Could not reset two-factor auth', r.error); return; }
     setConfirmMfaReset(false);
-    if (r.error) toast.error('Could not reset two-factor auth', r.error);
-    else { toast.success('Two-factor authentication reset', 'The user can sign in with their password and set it up again.'); load(); }
+    setMfaResetPassword('');
+    toast.success('Two-factor authentication reset', 'The user can sign in with their password and set it up again.');
+    load();
   };
 
   // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
@@ -281,14 +286,23 @@ export function AdminUserDetail() {
 
       <ConfirmDialog
         isOpen={confirmMfaReset}
-        onClose={() => setConfirmMfaReset(false)}
+        onClose={() => { setConfirmMfaReset(false); setMfaResetPassword(''); }}
         onConfirm={() => { void resetMfa(); }}
         title="Reset two-factor authentication?"
-        message={`Two-factor auth is switched OFF for ${user?.email ?? 'this user'}: their authenticator secret, recovery codes and remembered browsers are wiped, and their password alone signs them in until they re-enroll. Use this when they're locked out. The reset is audited.`}
+        message={`Two-factor auth is switched OFF for ${user?.email ?? 'this user'}: their authenticator secret, recovery codes and remembered browsers are wiped, their sessions are signed out, and their password alone signs them in until they re-enroll. Use this when they're locked out. The reset is audited and the user is notified. Confirm with YOUR password.`}
         confirmLabel="Reset 2FA"
         variant="danger"
         isLoading={resettingMfa}
-      />
+        confirmDisabled={mfaResetPassword === ''}
+      >
+        <Input
+          label="Your password"
+          type="password"
+          value={mfaResetPassword}
+          onChange={(e) => setMfaResetPassword(e.target.value)}
+          autoComplete="current-password"
+        />
+      </ConfirmDialog>
 
       <ConfirmDialog
         isOpen={confirmAdmin !== null}
