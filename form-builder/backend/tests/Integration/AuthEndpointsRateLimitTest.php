@@ -389,12 +389,14 @@ class AuthEndpointsRateLimitTest extends TestCase
         $this->assertStringNotContainsString('$passwordResetRateLimiter', $loginBlock);
         $this->assertStringContainsString('$passwordResetRateLimiter', $resetBlock);
         $this->assertStringNotContainsString('$authRateLimiter', $resetBlock);
+        // RATE-001: the auth buckets are IP-keyed AND fail CLOSED — a limiter-store
+        // outage must refuse these high-risk actions, not un-throttle them.
         $this->assertMatchesRegularExpression(
-            '/\$authRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_login\'\)/',
+            '/\$authRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_login\',\s*false,\s*true\)/',
             $section
         );
         $this->assertMatchesRegularExpression(
-            '/\$passwordResetRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_password_reset\'\)/',
+            '/\$passwordResetRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_password_reset\',\s*false,\s*true\)/',
             $section
         );
 
@@ -410,11 +412,18 @@ class AuthEndpointsRateLimitTest extends TestCase
             '$authRequired must be added AFTER $accountMutationRateLimiter so it runs first and sets userId'
         );
         $this->assertMatchesRegularExpression(
-            '/\$accountMutationRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_me_mutation\'\s*,\s*true\)/',
+            '/\$accountMutationRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_me_mutation\'\s*,\s*true,\s*true\)/',
             $section
         );
 
         // GET /me stays outside the mutation limiter.
         $this->assertStringNotContainsString('$accountMutationRateLimiter', $getMeOnlyBlock);
+
+        // RATE-001: the MFA code exchange fails closed too (6-digit codes must
+        // never see an un-throttled window).
+        $this->assertMatchesRegularExpression(
+            '/new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_mfa_verify\',\s*false,\s*true\)/',
+            $section
+        );
     }
 }

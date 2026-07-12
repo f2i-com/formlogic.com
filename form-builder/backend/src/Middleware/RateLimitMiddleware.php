@@ -24,6 +24,7 @@ class RateLimitMiddleware implements MiddlewareInterface
     private int $windowSeconds;
     private string $keyPrefix;
     private bool $keyByUser;
+    private bool $failClosed;
     private IpResolver $ipResolver;
     private RateLimiter $limiter;
 
@@ -37,19 +38,27 @@ class RateLimitMiddleware implements MiddlewareInterface
      *                                  authenticated endpoints so IP rotation
      *                                  cannot bypass the limit. Requires an auth
      *                                  middleware to run first so userId is set.
+     * @param bool $failClosed          Risk policy for a FAILING limiter store
+     *                                  (audit RATE-001): high-risk endpoints
+     *                                  (auth, credential management) refuse with
+     *                                  a retryable 503 rather than opening an
+     *                                  unlimited brute-force window; low-risk
+     *                                  endpoints keep the fail-open default.
      */
     public function __construct(
         RateLimiter $limiter,
         int $maxRequests = 60,
         int $windowSeconds = 60,
         string $keyPrefix = 'default',
-        bool $keyByUser = false
+        bool $keyByUser = false,
+        bool $failClosed = false
     ) {
         $this->limiter = $limiter;
         $this->maxRequests = $maxRequests;
         $this->windowSeconds = $windowSeconds;
         $this->keyPrefix = $keyPrefix;
         $this->keyByUser = $keyByUser;
+        $this->failClosed = $failClosed;
         $this->ipResolver = IpResolver::fromEnvironment();
     }
 
@@ -59,10 +68,26 @@ class RateLimitMiddleware implements MiddlewareInterface
 
         // Atomically increment and gate on the post-increment count. Gating on a
         // separate count() before hit() let K concurrent requests all observe
-        // count < max and overshoot the limit. hit() returns 0 on storage error
-        // (fail open). Incrementing a blocked request is harmless: the counter is
-        // keyed to a fixed window bucket, so it never extends the lockout.
+        // count < max and overshoot the limit. Incrementing a blocked request is
+        // harmless: the counter is keyed to a fixed window bucket, so it never
+        // extends the lockout.
         $count = $this->limiter->hit($key, $this->windowSeconds);
+        if ($count === RateLimiter::UNAVAILABLE && $this->failClosed) {
+            // The store failed while gating a high-risk action: refuse rather
+            // than allow unlimited attempts. Loud by design — the deep health
+            // check reports the same outage.
+            error_log("RateLimitMiddleware[{$this->keyPrefix}]: limiter store unavailable — failing CLOSED");
+            $response = new SlimResponse();
+            $response->getBody()->write(json_encode([
+                'error' => true,
+                'message' => 'This action is temporarily unavailable — please try again shortly.',
+                'retryable' => true,
+            ]));
+            return $response
+                ->withStatus(503)
+                ->withHeader('Content-Type', 'application/json')
+                ->withHeader('Retry-After', '30');
+        }
         if ($count > $this->maxRequests) {
             $retryAfter = $this->limiter->secondsUntilReset($this->windowSeconds);
 

@@ -14,14 +14,30 @@ use Throwable;
  * per-process in-memory counters, this survives across requests and worker
  * processes, so throttling actually works under mod_php / php-fpm.
  *
- * Fails OPEN on storage errors (e.g. the table not yet migrated): the request is
- * allowed and the error is logged, so a missing migration degrades to the prior
- * (un-throttled) behaviour rather than bricking login / every rate-limited route.
+ * Storage errors (e.g. the table not yet migrated) surface as hit() returning
+ * UNAVAILABLE (0 — a real increment always returns >= 1). What that means is
+ * the CALLER's risk policy (audit RATE-001): low-risk endpoints degrade open
+ * so a missing migration doesn't brick the site, while high-risk actions
+ * (login, password reset, MFA verify, credential management) fail CLOSED —
+ * an outage must not open an unlimited brute-force window.
  */
 class RateLimiter
 {
+    /** hit()/count() sentinel: the store failed; no counting happened. */
+    public const UNAVAILABLE = 0;
+
     public function __construct(private PDO $pdo)
     {
+    }
+
+    /**
+     * Live health probe exercising the REAL write path (deep-health/Doctor):
+     * a failing limiter means high-risk auth endpoints are refusing (they
+     * fail closed), so operations needs to see it immediately.
+     */
+    public function healthy(): bool
+    {
+        return $this->hit('rate_limiter_health_probe', 60) !== self::UNAVAILABLE;
     }
 
     /** Current hit count for the key within the active window (no increment). */

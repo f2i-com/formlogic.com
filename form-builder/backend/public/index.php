@@ -1117,13 +1117,13 @@ $rateLimiter = new \FormLogic\Services\RateLimiter($container->get(MySQLConnecti
 // used to share one 10/60s IP counter, so a user who fumbled login a few times could find
 // their password-reset attempt already throttled by budget login spent. Two independent
 // buckets (distinct keyPrefixes) fix that while keeping the same IP-keyed 10/60s strictness.
-$authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_login');
+$authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_login', false, true); // fail closed: login is high-risk (RATE-001)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
 })->add($authRateLimiter);
 
-$passwordResetRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_password_reset');
+$passwordResetRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_password_reset', false, true); // fail closed (RATE-001)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/forgot-password', [AuthController::class, 'forgotPassword']);
     $group->post('/reset-password', [AuthController::class, 'resetPassword']);
@@ -1142,7 +1142,7 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
 // password with zero throttling. Deliberately NOT applied to GET /me (hit on every page
 // load), GET /me/export, or POST /logout. Keyed by user (not IP) so an attacker holding one
 // stolen session can't bypass it by rotating IPs.
-$accountMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_me_mutation', true);
+$accountMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_me_mutation', true, true); // fail closed: password-oracle mutations (RATE-001)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->put('/me', [AuthController::class, 'updateProfile']);
     $group->delete('/me', [AuthController::class, 'deleteAccount']);
@@ -1152,7 +1152,7 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
 // pending token proves the password step). Tightly rate-limited per IP: 6-digit
 // codes must never be brute-forceable, and the pending token dies after 5 min.
 // Listed in CsrfMiddleware's cookie-setting routes (JSON content-type guard).
-$mfaVerifyRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 300, 'auth_mfa_verify');
+$mfaVerifyRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 300, 'auth_mfa_verify', false, true); // fail closed: 6-digit codes (RATE-001)
 $app->post('/api/auth/mfa/verify', [AuthController::class, 'mfaVerify'])->add($mfaVerifyRateLimiter);
 
 // MFA management (protected; demo-blocked in the controller). Enrollment,
@@ -1747,7 +1747,7 @@ $app->delete('/api/packs/catalog/{slug}/ratings', function ($request, $response)
 // API Key management routes (cookie auth, protected, rate limited)
 // keyByUser needs $authRequired to run FIRST so userId is set; Slim middleware is LIFO (the last
 // ->add() runs first), so $authRequired must be the LAST one added here (mirrors the AI/flow routes).
-$apiKeyMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'api_key_mgmt', true);
+$apiKeyMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'api_key_mgmt', true, true); // fail closed: credential management (RATE-001)
 $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(ApiKeyController::class)->index($request, $response);
@@ -1769,7 +1769,7 @@ $app->post('/api/mcp', function ($request, $response) use ($container) {
 
 // Own bucket (was sharing api_key_mgmt's — heavy API-key activity could starve MCP token management
 // and vice versa). $authRequired must be added LAST (Slim LIFO) so it runs first and sets userId.
-$mcpTokenMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'mcp_token_mgmt', true);
+$mcpTokenMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'mcp_token_mgmt', true, true); // fail closed: credential management (RATE-001)
 $app->group('/api/mcp/tokens', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\McpController::class)->listTokens($request, $response);
@@ -1797,14 +1797,14 @@ $app->get('/.well-known/oauth-authorization-server', function ($request, $respon
 
 // RFC 7591 dynamic client registration: public by design (no auth), JSON body, tightly rate-limited.
 // CSRF does not apply (external clients send no auth cookie; the middleware skips cookieless POSTs).
-$oauthRegisterRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_register');
+$oauthRegisterRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_register', false, true); // fail closed: credential issuance (RATE-001)
 $app->post('/api/oauth/register', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->register($request, $response);
 })->add($oauthRegisterRateLimiter);
 
 // Token endpoint: application/x-www-form-urlencoded (Slim's addBodyParsingMiddleware() decodes form
 // bodies natively; the controller also parses the raw stream defensively). Public, no CSRF, rate-limited.
-$oauthTokenRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'oauth_token');
+$oauthTokenRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'oauth_token', false, true); // fail closed: credential issuance (RATE-001)
 $app->post('/api/oauth/token', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->token($request, $response);
 })->add($oauthTokenRateLimiter);
@@ -1818,7 +1818,7 @@ $app->get('/api/oauth/authorize-info', function ($request, $response) use ($cont
 })->add($oauthInfoRateLimiter);
 // Own bucket (was sharing api_key_mgmt's). $authRequired must be added LAST (Slim LIFO) so it runs
 // first and sets userId before the rate limiter's keyByUser check.
-$oauthApproveRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_approve', true);
+$oauthApproveRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_approve', true, true); // fail closed: grant approval (RATE-001)
 $app->post('/api/oauth/approve', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->approve($request, $response);
 })->add($oauthApproveRateLimiter)->add($authRequired);

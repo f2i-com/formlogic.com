@@ -71,6 +71,23 @@ class HealthController
             $checks['database'] = ['ok' => false, 'critical' => true, 'detail' => 'connection failed'];
         }
 
+        // Rate-limit store (audit RATE-001): high-risk auth endpoints (login,
+        // password reset, MFA verify, credential management) FAIL CLOSED when
+        // this store is down — operations must see the outage immediately, not
+        // discover it through locked-out users. Probes the real write path.
+        try {
+            $limiterOk = (new \FormLogic\Services\RateLimiter($this->db->getConnection()))->healthy();
+            $checks['rate_limiter'] = [
+                'ok' => $limiterOk,
+                'critical' => true,
+                'detail' => $limiterOk
+                    ? 'store writable'
+                    : 'rate_limits store FAILING — login/reset/MFA/credential endpoints are refusing (fail closed)',
+            ];
+        } catch (\Throwable $e) {
+            $checks['rate_limiter'] = ['ok' => false, 'critical' => true, 'detail' => 'probe failed'];
+        }
+
         // Writable storage/log directories.
         $dirs = [
             'storage/forms' => $this->settings['sqlite']['storage_path'] ?? ($base . '/storage/forms'),

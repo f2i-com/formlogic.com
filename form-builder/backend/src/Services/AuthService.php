@@ -194,10 +194,16 @@ class AuthService
         // from many IPs could all read count < limit and all pass the per-email
         // gate (the documented distributed-attack defense). Every attempt is now
         // counted up front; a successful login clears both keys below, so legitimate
-        // logins aren't penalized. hit() returns 0 on storage error (fail open).
+        // logins aren't penalized.
         $window = $this->decaySeconds();
         $ipCount = $this->rateLimiter->hit($rateLimitKey, $window);
         $emailCount = $this->rateLimiter->hit($emailKey, $window);
+        if ($ipCount === RateLimiter::UNAVAILABLE || $emailCount === RateLimiter::UNAVAILABLE) {
+            // Login is a HIGH-RISK action: a limiter-store outage fails CLOSED
+            // (audit RATE-001) — otherwise the outage window is an unlimited
+            // brute-force window. Mapped to a retryable 503 upstream.
+            throw new RateLimiterUnavailableException();
+        }
         if ($ipCount > $this->rateLimitConfig['maxAttempts']) {
             throw new \RuntimeException(
                 "Too many login attempts. Please try again in " .
@@ -631,6 +637,11 @@ class AuthService
         // it - and reveals nothing about whether an account exists behind it.
         $resetKey = $this->getPasswordResetRateLimitKey($email);
         $resetCount = $this->rateLimiter->hit($resetKey, self::PASSWORD_RESET_DECAY_SECONDS);
+        if ($resetCount === RateLimiter::UNAVAILABLE) {
+            // Password reset is a HIGH-RISK action — fail CLOSED on a limiter
+            // outage (audit RATE-001) rather than allowing unlimited requests.
+            throw new RateLimiterUnavailableException();
+        }
         if ($resetCount > self::PASSWORD_RESET_MAX_ATTEMPTS) {
             throw new \RuntimeException(
                 "Too many password reset requests for this email. Please try again in " .

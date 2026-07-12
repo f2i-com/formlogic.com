@@ -184,6 +184,15 @@ class AuthController
             return $this->jsonResponse($response, [
                 'user' => $result['user'],
             ]);
+        } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
+            // High-risk limiter outage: fail closed with a retryable 503
+            // (audit RATE-001) — the caller did nothing wrong.
+            $this->logger->error('Login refused: rate-limit store unavailable (failing closed)');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $e->getMessage(),
+                'retryable' => true,
+            ], 503);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             // Known validation/auth errors - safe to expose
             $statusCode = str_contains($e->getMessage(), 'Too many login attempts') ? 429 : 401;
@@ -472,6 +481,16 @@ class AuthController
                 // valid reset token at their own domain = account takeover).
                 $base = AppUrl::frontendBase($request) . '/reset-password';
                 $this->authService->requestPasswordReset($email, $base);
+            } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
+                // High-risk limiter outage: fail closed, retryable (audit RATE-001).
+                // Safe to surface distinctly — it reveals an OPERATIONAL state,
+                // nothing about whether an account exists.
+                $this->logger->error('Password reset refused: rate-limit store unavailable (failing closed)');
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'message' => $e->getMessage(),
+                    'retryable' => true,
+                ], 503);
             } catch (\RuntimeException $e) {
                 // The per-email rate limit is the ONE exception safe to surface distinctly:
                 // it only reveals "this email string was submitted too many times", a fact
