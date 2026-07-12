@@ -595,13 +595,36 @@ class ResponseService
      * field can't be reused under a stricter field, and forged/cross-form file ids are rejected.
      * Returns a map of fieldId => error message (empty when all files pass).
      *
+     * FILE-PRIV-001 — attachment ownership. $answers is BY REF because every file item's
+     * transient `claimToken` (echoed back from the upload response) is verified here and then
+     * STRIPPED so it never persists. A referenced file must be attachable by THIS caller:
+     *  - still PENDING: the authenticated submitter must be its uploader, or the caller must
+     *    present the upload claim token, or be the form owner (who can read every file of the
+     *    form anyway). Pre-claim markers ("legacy") stay attachable until the TTL sweeps them.
+     *  - already COMMITTED (attached to some response): only re-attachable when kept on the
+     *    SAME response being updated ($context['existingResponseId']), by the form owner, or
+     *    by the authenticated submitter it already belongs to — so one submitter can never
+     *    graft another submitter's file onto their own response.
+     * Unauthorized ids get the same message as missing files (no existence oracle).
+     *
+     * @param array<string,mixed> $answers
+     * @param array{submitterUserId?: ?string, isOwner?: bool, existingResponseId?: ?string}|null $context
+     *   null = fully anonymous caller (claim tokens only).
      * @return array<string, string>
      */
-    public function validateFileAnswers(array $fields, array $answers, string $formId): array
+    public function validateFileAnswers(array $fields, array &$answers, string $formId, ?array $context = null): array
     {
         $errors = [];
         if ($this->fileStorageService === null) {
             return $errors; // no storage access here; the upload-time check already ran
+        }
+        $submitterUserId = isset($context['submitterUserId']) && is_string($context['submitterUserId']) && $context['submitterUserId'] !== ''
+            ? $context['submitterUserId'] : null;
+        $isOwner = (bool) ($context['isOwner'] ?? false);
+        $existingFileIds = null;
+        if (is_string($context['existingResponseId'] ?? null) && $context['existingResponseId'] !== '') {
+            $existing = $this->getResponse($formId, $context['existingResponseId']);
+            $existingFileIds = is_array($existing['answers'] ?? null) ? $this->fileUploadIds($existing['answers']) : [];
         }
         foreach ($fields as $field) {
             $id = $field['id'] ?? null;
@@ -621,12 +644,20 @@ class ResponseService
                 $maxSize *= 1024 * 1024;
             }
             $label = (string) ($field['label'] ?? 'File');
-            foreach ($value as $item) {
+            foreach ($value as $i => $item) {
                 if (!is_array($item) || empty($item['id'])) {
                     continue; // metadata shape is validated separately
                 }
-                $path = $this->fileStorageService->getFilePath($formId, (string) $item['id']);
+                // Pull + strip the transient claim token before anything can persist it.
+                $claimToken = is_string($item['claimToken'] ?? null) ? $item['claimToken'] : null;
+                unset($answers[$id][$i]['claimToken']);
+                $fileId = (string) $item['id'];
+                $path = $this->fileStorageService->getFilePath($formId, $fileId);
                 if ($path === null) {
+                    $errors[$id] = "$label: uploaded file could not be found";
+                    break;
+                }
+                if (!$this->mayAttachFile($formId, $fileId, $claimToken, $submitterUserId, $isOwner, $existingFileIds)) {
                     $errors[$id] = "$label: uploaded file could not be found";
                     break;
                 }
@@ -646,6 +677,44 @@ class ResponseService
             }
         }
         return $errors;
+    }
+
+    /**
+     * The FILE-PRIV-001 attachment decision for one file id (see validateFileAnswers).
+     *
+     * @param string[]|null $existingFileIds file ids already on the response being updated
+     */
+    private function mayAttachFile(
+        string $formId,
+        string $fileId,
+        ?string $claimToken,
+        ?string $submitterUserId,
+        bool $isOwner,
+        ?array $existingFileIds
+    ): bool {
+        if ($isOwner) {
+            return true;
+        }
+        $info = $this->fileStorageService?->uploadClaimInfo($formId, $fileId);
+        if ($info === null) {
+            return false; // file vanished between checks
+        }
+        if ($info['pending']) {
+            if ($info['legacy']) {
+                return true; // pre-claim upload still in its TTL window (deploy grandfather)
+            }
+            if ($info['uploader'] !== null && $submitterUserId !== null && $info['uploader'] === $submitterUserId) {
+                return true;
+            }
+            return $info['claimHash'] !== null
+                && $claimToken !== null
+                && hash_equals($info['claimHash'], hash('sha256', $claimToken));
+        }
+        // Committed file: keeping it on the same response, or re-attaching one's own.
+        if ($existingFileIds !== null && in_array($fileId, $existingFileIds, true)) {
+            return true;
+        }
+        return $submitterUserId !== null && $this->userOwnsFile($formId, $fileId, $submitterUserId);
     }
 
     /**
@@ -800,6 +869,144 @@ class ResponseService
             }
         }
         return false;
+    }
+
+    /**
+     * True if ANY response of $formId still references $fileId as a real file-upload attachment —
+     * the authoritative check behind the deferred file GC (FILE-PRIV-001): a physical file may
+     * only be deleted once this says no. Same LIKE-prefilter + exact-object-match discipline as
+     * userOwnsFile (a bare id in a text answer is not a reference).
+     */
+    public function fileIsReferenced(string $formId, string $fileId): bool
+    {
+        if ($fileId === '' || !$this->sqlite->formDatabaseExists($formId)) {
+            return false;
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $needle = '%' . strtr($fileId, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
+        $stmt = $db->prepare("SELECT answers FROM responses WHERE answers LIKE :needle ESCAPE '\\'");
+        $stmt->bindValue('needle', $needle);
+        $stmt->execute();
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $answersJson) {
+            $answers = json_decode((string) $answersJson, true);
+            if (is_array($answers) && in_array($fileId, $this->fileUploadIds($answers), true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The answer-field ids under which $fileId is attached across the form's responses —
+     * powers the EXPLICIT public-asset policy (FILE-PRIV-001): a file is only publicly
+     * servable when one of these ids is on the form's customScreen.publicRecordFields
+     * whitelist. Empty when the file is attached nowhere.
+     *
+     * @return string[]
+     */
+    public function fileAttachedFieldIds(string $formId, string $fileId): array
+    {
+        if ($fileId === '' || !$this->sqlite->formDatabaseExists($formId)) {
+            return [];
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $needle = '%' . strtr($fileId, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
+        $stmt = $db->prepare("SELECT answers FROM responses WHERE answers LIKE :needle ESCAPE '\\'");
+        $stmt->bindValue('needle', $needle);
+        $stmt->execute();
+        $fieldIds = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $answersJson) {
+            $answers = json_decode((string) $answersJson, true);
+            if (!is_array($answers)) {
+                continue;
+            }
+            foreach ($answers as $fieldId => $value) {
+                if (!is_array($value)) {
+                    continue;
+                }
+                foreach ($value as $item) {
+                    if (is_array($item) && ($item['id'] ?? null) === $fileId && isset($item['storedFilename'])) {
+                        $fieldIds[(string) $fieldId] = true;
+                    }
+                }
+            }
+        }
+        return array_keys($fieldIds);
+    }
+
+    /**
+     * Run the file garbage collectors for one form (FILE-PRIV-001): reclaim abandoned
+     * pending uploads and orphan-marked files, both guarded by fileIsReferenced() so
+     * neither sweep can ever delete a file a persisted response still points at.
+     * Best-effort and internally hour-throttled (pass $ignoreThrottle from the nightly
+     * job). Returns how many physical files were reclaimed.
+     */
+    public function sweepFileGarbage(string $formId, bool $ignoreThrottle = false): int
+    {
+        if ($this->fileStorageService === null) {
+            return 0;
+        }
+        $reclaimed = 0;
+        try {
+            $isReferenced = fn (string $fileId): bool => $this->fileIsReferenced($formId, $fileId);
+            $reclaimed += $this->fileStorageService->sweepAbandonedUploads(
+                $formId,
+                FileStorageService::PENDING_TTL_SECONDS,
+                $isReferenced,
+                $ignoreThrottle
+            );
+            $reclaimed += $this->fileStorageService->sweepOrphanedFiles(
+                $formId,
+                $isReferenced,
+                FileStorageService::ORPHAN_GRACE_SECONDS,
+                $ignoreThrottle
+            );
+        } catch (\Throwable $e) {
+            $this->logger->error('File garbage sweep failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+        }
+        return $reclaimed;
+    }
+
+    /**
+     * Decorate a webhook payload's file-upload answer urls with short-lived receipt tokens
+     * (FILE-PRIV-001): response uploads are private now, so an integration that downloads
+     * attachments from a webhook needs a bearer credential — the `?rt=` token grants that
+     * one file for RECEIPT_TTL_SECONDS. Standalone forms only: app-scoped files were always
+     * access-controlled and their webhook consumers never could fetch anonymously, so no
+     * new anonymous window is opened there. Best-effort — any failure returns the payload
+     * with clean (auth-required) urls.
+     */
+    private function withFileReceiptUrls(string $formId, array $payload): array
+    {
+        if ($this->fileStorageService === null || !is_array($payload['answers'] ?? null)) {
+            return $payload;
+        }
+        try {
+            $stmt = $this->mysql->prepare('SELECT 1 FROM app_forms WHERE form_id = :id LIMIT 1');
+            $stmt->execute(['id' => $formId]);
+            if ($stmt->fetchColumn() !== false) {
+                return $payload; // app-scoped: keep auth-required urls
+            }
+            foreach ($payload['answers'] as $fieldId => $value) {
+                if (!is_array($value)) {
+                    continue;
+                }
+                foreach ($value as $i => $item) {
+                    if (!is_array($item) || !isset($item['id'], $item['storedFilename']) || !is_string($item['url'] ?? null)) {
+                        continue;
+                    }
+                    $token = $this->fileStorageService->mintReceiptToken($formId, (string) $item['id']);
+                    if ($token !== null && !str_contains($item['url'], '?')) {
+                        $payload['answers'][$fieldId][$i]['url'] = $item['url'] . '?rt=' . $token;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->logger->warning('Failed to mint webhook file receipt urls', [
+                'formId' => $formId, 'error' => $e->getMessage(),
+            ]);
+        }
+        return $payload;
     }
 
     /**
@@ -1231,6 +1438,7 @@ class ResponseService
             if ($this->webhookService !== null && $createdResponse) {
                 $webhookPayload = $createdResponse;
                 unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+                $webhookPayload = $this->withFileReceiptUrls($formId, $webhookPayload);
                 $this->webhookService->dispatch($formId, 'response.created', $webhookPayload);
             }
         } catch (\Throwable $postErr) {
@@ -1429,11 +1637,16 @@ class ResponseService
             ]);
         }
 
-        // Physical files last — the answers no longer reference them.
+        // Physical files last — the purged values no longer reference them. Purge is an
+        // explicit owner erasure action, so unreferenced files go immediately; a file that
+        // is STILL attached elsewhere (another field/response sharing the id) is kept —
+        // deleting it would break that surviving attachment (FILE-PRIV-001).
         if ($this->fileStorageService !== null) {
             foreach (array_keys($fileIds) as $fid) {
                 try {
-                    $this->fileStorageService->deleteFile($formId, (string) $fid);
+                    if (!$this->fileIsReferenced($formId, (string) $fid)) {
+                        $this->fileStorageService->deleteFile($formId, (string) $fid);
+                    }
                 } catch (\Throwable $e) {
                     $this->logger->warning('Failed to delete file during field purge', [
                         'formId' => $formId, 'fileId' => $fid, 'error' => $e->getMessage(),
@@ -1658,22 +1871,25 @@ class ResponseService
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
 
-        // Delete files removed/replaced by this update (best-effort; the authoritative
-        // row is already updated, and files are unrecoverable so we only remove ones
-        // no longer referenced).
+        // Handle files removed/replaced by this update (best-effort; the authoritative
+        // row is already updated). FILE-PRIV-001: dropped files are NOT deleted inline —
+        // they are orphan-MARKED and reclaimed later by the reference-checked GC, so a
+        // concurrent update that raced this one (or a second response sharing the id)
+        // can never lose its attachment to this mutation.
         if ($oldAnswersForFiles !== null && $this->fileStorageService !== null) {
             try {
                 $newAnswers = is_array($data['answers'] ?? null) ? $data['answers'] : [];
                 // Files newly referenced by this update are committed (FL-006)…
                 $this->fileStorageService->commitResponseFiles($formId, $newAnswers);
-                // …and files the update dropped are deleted.
+                // …and files the update dropped are handed to the deferred GC.
                 $orphaned = array_diff(
                     $this->fileStorageService->extractFileIds($oldAnswersForFiles),
                     $this->fileStorageService->extractFileIds($newAnswers)
                 );
                 foreach ($orphaned as $orphanId) {
-                    $this->fileStorageService->deleteFile($formId, $orphanId);
+                    $this->fileStorageService->markOrphaned($formId, $orphanId);
                 }
+                $this->sweepFileGarbage($formId);
             } catch (\Throwable $fileErr) {
                 $this->logger->error('Failed to clean up orphaned files after response update', [
                     'formId' => $formId, 'responseId' => $responseId, 'error' => $fileErr->getMessage(),
@@ -1710,6 +1926,7 @@ class ResponseService
             try {
                 $webhookPayload = $updatedResponse;
                 unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+                $webhookPayload = $this->withFileReceiptUrls($formId, $webhookPayload);
                 $this->webhookService->dispatch($formId, 'response.updated', $webhookPayload);
             } catch (\Throwable $hookErr) {
                 $this->logger->error('Webhook dispatch failed after response update', [
@@ -1838,11 +2055,16 @@ class ResponseService
                 ]);
             }
 
-            // Now remove the (unrecoverable) uploaded files — last, after the record
-            // is gone.
+            // Hand the response's uploaded files to the deferred GC — last, after the
+            // record is gone. FILE-PRIV-001: no inline physical delete; the sweep
+            // re-proves each file unreferenced first, so a second response that shares
+            // a file id (restore/duplicate/legacy data) keeps its attachment.
             if ($this->fileStorageService !== null && is_array($answers)) {
                 try {
-                    $this->fileStorageService->deleteResponseFiles($formId, $answers);
+                    foreach ($this->fileStorageService->extractFileIds($answers) as $fileId) {
+                        $this->fileStorageService->markOrphaned($formId, $fileId);
+                    }
+                    $this->sweepFileGarbage($formId);
                 } catch (\Throwable $fileErr) {
                     $this->logger->error('File cleanup failed after response delete', [
                         'formId' => $formId, 'responseId' => $responseId, 'error' => $fileErr->getMessage(),

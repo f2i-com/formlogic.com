@@ -900,7 +900,9 @@ class McpController
         $answers = $this->responseService->sanitizeSubmittedAnswers($fields, $answers);
         $answers = $this->responseService->normalizeAnswers($fields, $answers, $formId);
         $answers = $this->responseService->applyCalculatedFields($fields, $answers);
-        $fileErrors = $this->responseService->validateFileAnswers($fields, $answers, $formId);
+        // Every MCP write path calls ownForm() first, so this is an owner programmatic
+        // write → owner attachment rules (FILE-PRIV-001).
+        $fileErrors = $this->responseService->validateFileAnswers($fields, $answers, $formId, ['isOwner' => true]);
         if (!empty($fileErrors)) {
             throw new \Exception('Validation failed: ' . json_encode($fileErrors, JSON_UNESCAPED_SLASHES));
         }

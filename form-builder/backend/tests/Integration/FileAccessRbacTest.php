@@ -183,9 +183,10 @@ class FileAccessRbacTest extends TestCase
     {
         $req = $this->createMock(ServerRequestInterface::class);
         $req->method('getAttribute')->willReturnCallback(fn($name) => $name === 'userId' ? $userId : null);
+        $req->method('getQueryParams')->willReturn([]);
         $m = new \ReflectionMethod(FileController::class, 'authorizeFileAccess');
         $m->setAccessible(true);
-        return (bool) $m->invoke($fc, $req, $formId, $fileId);
+        return $m->invoke($fc, $req, $formId, $fileId) !== null;
     }
 
     public function testAppFileRbacMatrix(): void
@@ -229,7 +230,10 @@ class FileAccessRbacTest extends TestCase
         // Anonymous: denied for app-scoped.
         $this->assertFalse($this->can($fc, null, $appForm, $ownFile), 'anonymous is denied app files');
 
-        // Standalone published form: files remain public (unchanged behaviour).
-        $this->assertTrue($this->can($fc, null, $publicForm, 'anything'), 'standalone published form files stay public');
+        // Standalone published form: private by default (FILE-PRIV-001) — publication
+        // alone exposes nothing; only the owner, a receipt token, or the explicit
+        // public-records whitelist (covered in FileServeRouteTest) grant access.
+        $this->assertFalse($this->can($fc, null, $publicForm, 'anything'), 'standalone published form files are NOT public by default');
+        $this->assertTrue($this->can($fc, $owner, $publicForm, 'anything'), 'the owner still reaches standalone files');
     }
 }

@@ -186,7 +186,8 @@ class ExternalApiController
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
         $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-        $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+        // Owner programmatic write (authorizeForm above) → owner attachment rules (FILE-PRIV-001).
+        $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), ['isOwner' => true]);
         if (!empty($__fe)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
         }
@@ -396,7 +397,8 @@ class ExternalApiController
             $item['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $item['answers'] ?? []);
             $item['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
             $item['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $item['answers']);
-            $itemFileErrors = $this->responseService->validateFileAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
+            // Owner programmatic write → owner attachment rules (FILE-PRIV-001).
+            $itemFileErrors = $this->responseService->validateFileAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''), ['isOwner' => true]);
             if (!empty($itemFileErrors)) {
                 $results[] = ['index' => $index, 'success' => false, 'errors' => $itemFileErrors];
                 continue;
@@ -533,7 +535,11 @@ class ExternalApiController
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            // Owner programmatic update → owner attachment rules (FILE-PRIV-001).
+            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
+                'isOwner' => true,
+                'existingResponseId' => (string) ($args['id'] ?? ''),
+            ]);
             if (!empty($__fe)) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
             }

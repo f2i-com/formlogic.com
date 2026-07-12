@@ -619,7 +619,7 @@ final class AccountBackupService
         }
         $out = [];
         foreach (scandir($dir) ?: [] as $name) {
-            if ($name === '.' || $name === '..' || $name === '.pending') {
+            if ($name === '.' || $name === '..' || $name === '.pending' || $name === '.orphaned') {
                 continue;
             }
             $abs = $dir . '/' . $name;
@@ -628,8 +628,10 @@ final class AccountBackupService
             }
             // Uncommitted uploads (still carrying a .pending marker) belong to
             // no persisted response — exporting them would restore permanent,
-            // answer-less orphans the sweeper can never reclaim.
-            if (is_file($dir . '/.pending/' . $name)) {
+            // answer-less orphans the sweeper can never reclaim. Orphan-marked
+            // files (dropped by an update/delete, awaiting the reference-checked
+            // GC) are skipped for the same reason.
+            if (is_file($dir . '/.pending/' . $name) || is_file($dir . '/.orphaned/' . $name)) {
                 continue;
             }
             $out['files/' . $formId . '/' . $name] = $abs;

@@ -3232,6 +3232,12 @@ interface UploadedFileMetadata {
   size: number;
   mimeType: string;
   url: string;
+  /**
+   * One-time upload claim (FILE-PRIV-001): kept inside the answer item so submission
+   * proves this browser performed the upload. The server verifies and STRIPS it before
+   * persisting — it never appears in stored answers.
+   */
+  claimToken?: string;
 }
 
 // Export singleton instance

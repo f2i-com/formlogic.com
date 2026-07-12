@@ -668,7 +668,12 @@ class AppPublicController
             // client-sent values) so app-runtime submissions persist them too —
             // parity with the standalone and External API submission paths.
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            // Attachment ownership (FILE-PRIV-001): a member may only attach files THEY
+            // uploaded (uploader binding / claim token); the form owner may attach any.
+            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
+                'submitterUserId' => $userId,
+                'isOwner' => ($form['userId'] ?? null) === $userId,
+            ]);
             if (!empty($__fe)) {
                 return ['status' => 400, 'payload' => ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe]];
             }
@@ -1150,7 +1155,13 @@ class AppPublicController
                 $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
                 $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
                 $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-                $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+                // Attachment ownership (FILE-PRIV-001): files already on THIS response stay
+                // valid (PATCH merge above); NEW files must be the editor's own uploads.
+                $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
+                    'submitterUserId' => $userId,
+                    'isOwner' => ($form['userId'] ?? null) === $userId,
+                    'existingResponseId' => $responseId,
+                ]);
                 if (!empty($__fe)) {
                     return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
                 }

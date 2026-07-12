@@ -66,7 +66,7 @@ class FileServeRouteTest extends TestCase
         @mkdir(self::$tmp . '/forms', 0777, true);
         @mkdir(self::$tmp . '/uploads', 0777, true);
         self::$sqlite = new SQLiteConnection(self::$tmp . '/forms');
-        self::$files = new FileStorageService(['storagePath' => self::$tmp . '/uploads']);
+        self::$files = new FileStorageService(['storagePath' => self::$tmp . '/uploads', 'receiptSecret' => 'test-receipt-secret']);
         $formService = new FormService($conn, self::$sqlite);
         self::$fc = new FileController(
             self::$files,
@@ -139,10 +139,11 @@ class FileServeRouteTest extends TestCase
             ->execute(['au' . $this->uuid(), $appId, $userId, $roleId]);
     }
 
-    private function makeForm(string $ownerId, string $status = 'draft'): string
+    private function makeForm(string $ownerId, string $status = 'draft', ?array $customScreen = null): string
     {
         $id = 'form' . $this->uuid();
-        self::$pdo->prepare("INSERT INTO forms (id, user_id, title, status) VALUES (?, ?, 'T', ?)")->execute([$id, $ownerId, $status]);
+        self::$pdo->prepare("INSERT INTO forms (id, user_id, title, status, custom_screen) VALUES (?, ?, 'T', ?, ?)")
+            ->execute([$id, $ownerId, $status, $customScreen !== null ? json_encode($customScreen) : null]);
         $this->formIds[] = $id;
         return $id;
     }
@@ -181,10 +182,11 @@ class FileServeRouteTest extends TestCase
     }
 
     /** @return array{status:int, cache:string} */
-    private function serve(?string $userId, string $formId, string $fileId): array
+    private function serve(?string $userId, string $formId, string $fileId, array $query = []): array
     {
         $req = $this->createMock(ServerRequestInterface::class);
         $req->method('getAttribute')->willReturnCallback(fn($n) => $n === 'userId' ? $userId : null);
+        $req->method('getQueryParams')->willReturn($query);
         $out = self::$fc->serve($req, new SlimResponse(), ['formId' => $formId, 'fileId' => $fileId]);
         return ['status' => $out->getStatusCode(), 'cache' => $out->getHeaderLine('Cache-Control')];
     }
@@ -253,16 +255,79 @@ class FileServeRouteTest extends TestCase
         $this->assertSame(200, $this->serve($userAll, $form, $otherFile)['status'], 'view_all still reaches the real file');
     }
 
-    public function testStandalonePublishedFormFileIsPublicAndImmutable(): void
+    public function testStandalonePublishedFormFileIsPrivateByDefault(): void
     {
+        // FILE-PRIV-001: publishing a form no longer makes its uploads public —
+        // knowing the URL must not be enough to fetch a response upload.
         $owner = $this->makeUser();
         $form = $this->makeForm($owner, 'published'); // NOT added to any app
-        $file = 'pub' . substr($this->uuid(), 0, 8);
+        $file = 'prv' . substr($this->uuid(), 0, 8);
         $this->placeFile($form, $file);
 
-        $r = $this->serve(null, $form, $file); // anonymous
+        $this->assertSame(404, $this->serve(null, $form, $file)['status'], 'anonymous URL knowledge is not enough');
+
+        // The form owner still reaches it, privately.
+        $r = $this->serve($owner, $form, $file);
         $this->assertSame(200, $r['status']);
+        $this->assertSame('private, no-store', $r['cache']);
+    }
+
+    public function testReceiptTokenGrantsBoundedAnonymousAccess(): void
+    {
+        $owner = $this->makeUser();
+        $form = $this->makeForm($owner, 'published');
+        $file = 'rcp' . substr($this->uuid(), 0, 8);
+        $otherFile = 'oth' . substr($this->uuid(), 0, 8);
+        $this->placeFile($form, $file);
+        $this->placeFile($form, $otherFile);
+
+        $token = self::$files->mintReceiptToken($form, $file);
+        $this->assertNotNull($token);
+
+        // Valid receipt → 200, but NEVER shared-cacheable.
+        $r = $this->serve(null, $form, $file, ['rt' => $token]);
+        $this->assertSame(200, $r['status']);
+        $this->assertSame('private, no-store', $r['cache']);
+
+        // The token is bound to ONE file — it opens nothing else.
+        $this->assertSame(404, $this->serve(null, $form, $otherFile, ['rt' => $token])['status']);
+        // Tampered token → denied.
+        $this->assertSame(404, $this->serve(null, $form, $file, ['rt' => $token . 'x'])['status']);
+        // Expired token → denied.
+        $expired = self::$files->mintReceiptToken($form, $file, -10);
+        $this->assertSame(404, $this->serve(null, $form, $file, ['rt' => $expired])['status']);
+    }
+
+    public function testExplicitPublicAssetPolicyViaPublicRecordFields(): void
+    {
+        // The ONLY public case: owner enabled customScreen.publicRecords AND whitelisted
+        // the field the file is attached under. Publicity is an explicit opt-in.
+        $owner = $this->makeUser();
+        $form = $this->makeForm($owner, 'published', [
+            'publicRecords' => true,
+            'publicRecordFields' => ['f1'],
+        ]);
+        $publicFile = 'pub' . substr($this->uuid(), 0, 8);
+        $privateFile = 'sec' . substr($this->uuid(), 0, 8);
+        $this->placeFile($form, $publicFile);
+        $this->placeFile($form, $privateFile);
+        // publicFile attached under whitelisted field f1 (insertResponse uses f1).
+        $this->insertResponse($form, $publicFile, $owner, '2024-06-01 00:00:00');
+        // privateFile attached under a NON-whitelisted field.
+        $db = self::$sqlite->getFormDatabase($form);
+        $db->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at) VALUES (?, ?, '{}', 'submitted', ?)")
+            ->execute(['r' . $this->uuid(), json_encode(['hidden_field' => [['id' => $privateFile, 'storedFilename' => $privateFile . '.txt']]]), '2024-06-01 00:00:00']);
+
+        $r = $this->serve(null, $form, $publicFile);
+        $this->assertSame(200, $r['status'], 'whitelisted public-records field asset is public');
         $this->assertStringContainsString('public', $r['cache']);
-        $this->assertStringContainsString('immutable', $r['cache']);
+        $this->assertStringNotContainsString('immutable', $r['cache'], 'bounded cache so revocation converges');
+
+        $this->assertSame(404, $this->serve(null, $form, $privateFile)['status'], 'non-whitelisted field stays private');
+
+        // An unattached file (e.g. still pending) is never public either.
+        $pendingFile = 'pnd' . substr($this->uuid(), 0, 8);
+        $this->placeFile($form, $pendingFile);
+        $this->assertSame(404, $this->serve(null, $form, $pendingFile)['status']);
     }
 }

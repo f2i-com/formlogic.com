@@ -31,6 +31,7 @@ class UploadStagingTest extends TestCase
             'storagePath' => $this->root,
             'maxFileSize' => 1024 * 1024,
             'allowedTypes' => ['text/plain'],
+            'receiptSecret' => 'unit-test-receipt-secret',
         ]);
     }
 
@@ -40,7 +41,7 @@ class UploadStagingTest extends TestCase
         @rmdir($this->root);
     }
 
-    /** Stage a file exactly the way storeFile leaves it on disk. */
+    /** Stage a file the way PRE-CLAIM storeFile left it on disk (empty "legacy" marker). */
     private function stage(string $fileId, ?int $markerAge = null): string
     {
         $formDir = $this->root . '/' . $this->formId;
@@ -50,6 +51,18 @@ class UploadStagingTest extends TestCase
         $marker = $formDir . '/.pending/' . $stored;
         touch($marker, $markerAge !== null ? time() - $markerAge : time());
         return $formDir . '/' . $stored;
+    }
+
+    /** Stage a file exactly the way the CURRENT storeFile leaves it (claim-bearing marker). */
+    private function stageWithClaim(string $fileId, string $claimToken, ?string $uploader = null): string
+    {
+        $path = $this->stage($fileId);
+        file_put_contents(dirname($path) . '/.pending/' . basename($path), json_encode([
+            'claim' => hash('sha256', $claimToken),
+            'uploader' => $uploader,
+            'at' => time(),
+        ]));
+        return $path;
     }
 
     private function answersReferencing(string ...$fileIds): array
@@ -105,5 +118,115 @@ class UploadStagingTest extends TestCase
         $this->assertTrue($this->storage->deleteFile($this->formId, 'ffffffff-6666-4666-8666-666666666666'));
         $this->assertFileDoesNotExist($path);
         $this->assertFileDoesNotExist($marker, 'no orphaned marker after explicit delete');
+    }
+
+    // ── FILE-PRIV-001: upload claims ────────────────────────────────────────────
+
+    public function testUploadClaimInfoReflectsMarkerState(): void
+    {
+        $claimed = 'aaaa1111-0000-4000-8000-00000000c1a1';
+        $this->stageWithClaim($claimed, 'the-claim-token', 'user-42');
+        $info = $this->storage->uploadClaimInfo($this->formId, $claimed);
+        $this->assertNotNull($info);
+        $this->assertTrue($info['pending']);
+        $this->assertFalse($info['legacy']);
+        $this->assertSame('user-42', $info['uploader']);
+        $this->assertSame(hash('sha256', 'the-claim-token'), $info['claimHash']);
+
+        // Pre-claim (empty) marker → legacy, grandfathered.
+        $legacy = 'bbbb2222-0000-4000-8000-00000000c1a2';
+        $this->stage($legacy);
+        $info = $this->storage->uploadClaimInfo($this->formId, $legacy);
+        $this->assertTrue($info['pending']);
+        $this->assertTrue($info['legacy']);
+
+        // Committed file (no marker) → not pending.
+        $committed = 'cccc3333-0000-4000-8000-00000000c1a3';
+        $path = $this->stage($committed);
+        unlink(dirname($path) . '/.pending/' . basename($path));
+        $info = $this->storage->uploadClaimInfo($this->formId, $committed);
+        $this->assertFalse($info['pending']);
+
+        // Missing file → null.
+        $this->assertNull($this->storage->uploadClaimInfo($this->formId, 'dddd4444-0000-4000-8000-00000000c1a4'));
+    }
+
+    // ── FILE-PRIV-001: receipt tokens ───────────────────────────────────────────
+
+    public function testReceiptTokensAreFileBoundAndExpire(): void
+    {
+        $token = $this->storage->mintReceiptToken('form-a', 'file-1');
+        $this->assertNotNull($token);
+        $this->assertTrue($this->storage->verifyReceiptToken('form-a', 'file-1', $token));
+        $this->assertFalse($this->storage->verifyReceiptToken('form-a', 'file-2', $token), 'bound to the file');
+        $this->assertFalse($this->storage->verifyReceiptToken('form-b', 'file-1', $token), 'bound to the form');
+        $this->assertFalse($this->storage->verifyReceiptToken('form-a', 'file-1', $token . 'x'), 'tamper-proof');
+        $this->assertFalse($this->storage->verifyReceiptToken('form-a', 'file-1', 'garbage'));
+
+        $expired = $this->storage->mintReceiptToken('form-a', 'file-1', -5);
+        $this->assertFalse($this->storage->verifyReceiptToken('form-a', 'file-1', $expired), 'expiry enforced');
+
+        // No secret configured → receipts disabled, verification fails CLOSED.
+        $bare = new FileStorageService(['storagePath' => $this->root]);
+        $this->assertNull($bare->mintReceiptToken('form-a', 'file-1'));
+        $this->assertFalse($bare->verifyReceiptToken('form-a', 'file-1', $token));
+    }
+
+    // ── FILE-PRIV-001: reference-checked GC ─────────────────────────────────────
+
+    public function testAbandonedSweepCommitsReferencedFilesInsteadOfDeleting(): void
+    {
+        // A response references this file but the commit step failed (marker survived).
+        $referenced = $this->stage('9999aaaa-7777-4777-8777-777777777771', FileStorageService::PENDING_TTL_SECONDS + 60);
+        $abandoned = $this->stage('9999bbbb-7777-4777-8777-777777777772', FileStorageService::PENDING_TTL_SECONDS + 60);
+
+        $reclaimed = $this->storage->sweepAbandonedUploads(
+            $this->formId,
+            FileStorageService::PENDING_TTL_SECONDS,
+            fn (string $fileId) => $fileId === '9999aaaa-7777-4777-8777-777777777771'
+        );
+
+        $this->assertSame(1, $reclaimed);
+        $this->assertFileExists($referenced, 'a referenced pending file self-heals to committed');
+        $this->assertFileDoesNotExist(dirname($referenced) . '/.pending/' . basename($referenced), 'its marker is consumed');
+        $this->assertFileDoesNotExist($abandoned);
+    }
+
+    public function testOrphanSweepDeletesOnlyUnreferencedFilesAfterGrace(): void
+    {
+        $keep = 'eeee5555-8888-4888-8888-888888888881';   // still referenced elsewhere
+        $doomed = 'ffff6666-8888-4888-8888-888888888882'; // truly orphaned
+        $fresh = 'aabb7777-8888-4888-8888-888888888883';  // orphan-marked but inside grace
+        $formDir = $this->root . '/' . $this->formId;
+        foreach ([$keep, $doomed, $fresh] as $fid) {
+            $path = $this->stage($fid);
+            unlink(dirname($path) . '/.pending/' . basename($path)); // committed
+            $this->storage->markOrphaned($this->formId, $fid);
+        }
+        // Age the keep/doomed markers past the grace window; leave fresh young.
+        foreach ([$keep, $doomed] as $fid) {
+            touch($formDir . '/.orphaned/' . $fid . '.txt', time() - FileStorageService::ORPHAN_GRACE_SECONDS - 60);
+        }
+
+        $deleted = $this->storage->sweepOrphanedFiles(
+            $this->formId,
+            fn (string $fileId) => $fileId === $keep
+        );
+
+        $this->assertSame(1, $deleted);
+        $this->assertFileExists($formDir . '/' . $keep . '.txt', 'a file another response references is spared');
+        $this->assertFileDoesNotExist($formDir . '/.orphaned/' . $keep . '.txt', 'its stale orphan marker is cleared');
+        $this->assertFileDoesNotExist($formDir . '/' . $doomed . '.txt', 'the unreferenced orphan is reclaimed');
+        $this->assertFileExists($formDir . '/' . $fresh . '.txt', 'grace period defers deletion');
+        $this->assertFileExists($formDir . '/.orphaned/' . $fresh . '.txt');
+    }
+
+    public function testDeleteFormFilesClearsOrphanStagingToo(): void
+    {
+        $fid = 'ccdd8888-9999-4999-8999-999999999991';
+        $this->stage($fid);
+        $this->storage->markOrphaned($this->formId, $fid);
+        $this->storage->deleteFormFiles($this->formId);
+        $this->assertTrue($this->storage->formFilesRemoved($this->formId), 'form dir fully removed incl. .orphaned');
     }
 }

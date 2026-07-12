@@ -516,7 +516,13 @@ class ResponseController
         // round-trip into storage/export/analytics and are available to
         // conditional-logic evaluation during validation.
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-        $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+        // Attachment ownership (FILE-PRIV-001): a public submitter may only attach files
+        // they uploaded (claim token / same authenticated user); the owner may attach any.
+        $submitterUserId = $request->getAttribute('userId');
+        $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
+            'submitterUserId' => is_string($submitterUserId) ? $submitterUserId : null,
+            'isOwner' => is_string($submitterUserId) && $submitterUserId !== '' && ($form['userId'] ?? null) === $submitterUserId,
+        ]);
         if (!empty($__fe)) {
             return ['status' => 400, 'payload' => ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe]];
         }
@@ -990,7 +996,13 @@ class ResponseController
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            // Owner-authenticated update (authorizeFormAccess above): existing attachments
+            // on THIS response stay valid; the owner may attach any of the form's files.
+            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
+                'submitterUserId' => $request->getAttribute('userId'),
+                'isOwner' => true,
+                'existingResponseId' => $responseId,
+            ]);
             if (!empty($__fe)) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
             }

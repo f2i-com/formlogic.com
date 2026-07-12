@@ -179,13 +179,29 @@ class FileController
             if ($overQuota = $this->checkStorageQuota($response, $form, $rawFile)) {
                 return $overQuota;
             }
-            $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
-            // Abandoned-upload GC (audit FL-006): the uploader pays for the
+            // Bind the upload to its uploader (FILE-PRIV-001): the authenticated user id
+            // when present, plus the claim token storeFile mints for anonymous fillers.
+            $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints, $request->getAttribute('userId'));
+            // File GC (audit FL-006 + FILE-PRIV-001): the uploader pays for the
             // sweep — internally throttled to once an hour per form.
-            $this->fileStorage->sweepAbandonedUploads($formId);
+            $this->sweepFileGarbage($formId);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * Run the throttled file GC for a form — reference-checked when a ResponseService is
+     * wired (never deletes a file a response still points at), plain abandoned-upload
+     * sweep otherwise (unit-test construction without a response store).
+     */
+    private function sweepFileGarbage(string $formId): void
+    {
+        if ($this->responseService !== null) {
+            $this->responseService->sweepFileGarbage($formId);
+        } else {
+            $this->fileStorage->sweepAbandonedUploads($formId);
         }
     }
 
@@ -285,10 +301,11 @@ class FileController
             if ($overQuota = $this->checkStorageQuota($response, $form, $rawFile)) {
                 return $overQuota;
             }
-            $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
-            // Abandoned-upload GC (audit FL-006): the uploader pays for the
+            // Bind the upload to the authenticated member (FILE-PRIV-001).
+            $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints, $userId);
+            // File GC (audit FL-006 + FILE-PRIV-001): the uploader pays for the
             // sweep — internally throttled to once an hour per form.
-            $this->fileStorage->sweepAbandonedUploads($formId);
+            $this->sweepFileGarbage($formId);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -299,11 +316,18 @@ class FileController
      * Serve a stored file.
      * GET /api/files/{formId}/{fileId}/{filename}
      *
-     * Files for standalone published forms are public (the form itself is public).
-     * Files for app-scoped forms (or unpublished forms) are access-controlled: only the form owner, a
-     * member with VIEW_ALL_RESPONSES on the form (any file), or a member with VIEW_OWN_RESPONSES (only
-     * files on their OWN responses) may fetch them. Mere app membership is NOT enough. UUID secrecy is
-     * not relied upon, and access is revoked when membership/permission is revoked. See
+     * Response uploads are PRIVATE BY DEFAULT (FILE-PRIV-001) — knowing the URL is not enough.
+     * Access requires one of:
+     *  - the form owner (any scope);
+     *  - on app-scoped forms, a member with VIEW_ALL_RESPONSES on the form (any file) or
+     *    VIEW_OWN_RESPONSES (only files on their OWN responses) — mere membership is NOT enough;
+     *  - on standalone forms, a short-lived `?rt=` receipt token bound to this exact file
+     *    (minted for webhook payloads / anonymous-submitter retrieval);
+     *  - the EXPLICIT public-asset policy: the owner enabled customScreen.publicRecords and the
+     *    file is attached under one of the whitelisted publicRecordFields — the only case that
+     *    is publicly cacheable, and publicity is an owner opt-in, never inferred from the form
+     *    being published.
+     * UUID secrecy is not relied upon, and access is revoked with membership/permission. See
      * authorizeFileAccess().
      */
     public function serve(Request $request, Response $response, array $args): Response
@@ -311,7 +335,8 @@ class FileController
         $formId = $args['formId'];
         $fileId = $args['fileId'];
 
-        if (!$this->authorizeFileAccess($request, $formId, $fileId)) {
+        $access = $this->authorizeFileAccess($request, $formId, $fileId);
+        if ($access === null) {
             // Indistinguishable from a missing file so the endpoint does not
             // confirm the existence of a private form's files to outsiders.
             return $this->jsonResponse($response, ['error' => true, 'message' => 'File not found'], 404);
@@ -331,13 +356,10 @@ class FileController
         $stream = fopen($filePath, 'rb');
         $body = new \Slim\Psr7\Stream($stream);
 
-        // Only files of a publicly-fillable standalone form may be cached by shared
-        // caches/CDNs. App-scoped or unpublished forms are access-controlled, so
-        // their files must not be stored by intermediaries (mirrors authorizeFileAccess).
-        $form = $this->formService->getForm($formId);
-        $appScoped = $this->appService ? $this->appService->isFormInAnyApp($formId) : false;
-        $isPublic = $form && !$appScoped && ($form['status'] ?? null) === 'published';
-        $cacheControl = $isPublic ? 'public, max-age=31536000, immutable' : 'private, no-store';
+        // Only explicitly-public assets (owner-whitelisted public-records fields) may be
+        // stored by shared caches — bounded, NOT immutable, so revoking publicity (unshare,
+        // response delete) converges within the hour. Everything else: private, no-store.
+        $cacheControl = $access === 'public' ? 'public, max-age=3600' : 'private, no-store';
 
         // Render images inline (safe, expected), but force download for PDFs/Office/
         // unknown binaries so the browser never executes active document content.
@@ -355,54 +377,78 @@ class FileController
     }
 
     /**
-     * Decide whether the caller may fetch file $fileId of $formId.
-     * - Standalone published form  -> public (anyone).
-     * - App-scoped or unpublished  -> form owner, OR a member with an explicit form permission:
+     * Decide whether the caller may fetch file $fileId of $formId (FILE-PRIV-001:
+     * private by default). Returns the access class — 'private' (per-caller, never
+     * shared-cacheable), 'public' (explicit owner-opt-in public asset) — or null (deny).
+     *
+     * - Form owner → private access, any scope.
+     * - App-scoped form → member with an explicit form permission:
      *     · VIEW_ALL_RESPONSES  → any of the form's files.
      *     · VIEW_OWN_RESPONSES  → only files attached to the caller's OWN submitted responses.
      *   Mere app membership is NOT enough (files are often sensitive: invoices, IDs, signatures).
+     * - Standalone form → a valid short-lived `?rt=` receipt token for this exact file, or the
+     *   explicit public-asset policy (published + customScreen.publicRecords + the file attached
+     *   under a whitelisted publicRecordFields id). Form publication alone exposes NOTHING.
      */
-    private function authorizeFileAccess(Request $request, string $formId, string $fileId): bool
+    private function authorizeFileAccess(Request $request, string $formId, string $fileId): ?string
     {
         $form = $this->formService->getForm($formId);
         if (!$form) {
-            return false;
+            return null;
+        }
+
+        $userId = $request->getAttribute('userId');
+
+        // The form owner can always access.
+        if ($userId !== null && $userId !== '' && ($form['userId'] ?? null) === $userId) {
+            return 'private';
         }
 
         $appScoped = $this->appService ? $this->appService->isFormInAnyApp($formId) : false;
 
-        // Publicly fillable standalone form: its uploaded files are public too.
-        if (!$appScoped && ($form['status'] ?? null) === 'published') {
-            return true;
-        }
-
-        // Otherwise authentication is required.
-        $userId = $request->getAttribute('userId');
-        if (!$userId) {
-            return false;
-        }
-
-        // The form owner can always access.
-        if (($form['userId'] ?? null) === $userId) {
-            return true;
-        }
-
         // App-scoped files: require an explicit response permission on THIS form (checked per app the
         // form belongs to, since permissions are per-app). VIEW_ALL sees every file; VIEW_OWN sees
-        // only files on the caller's own responses.
-        if ($appScoped && $this->appService && $this->appUserService) {
+        // only files on the caller's own responses. Receipt tokens are NOT honored here — a leaked
+        // token must never widen an app's membership boundary.
+        if ($appScoped) {
+            if (!$userId || !$this->appService || !$this->appUserService) {
+                return null;
+            }
             foreach ($this->appService->activeAppIdsContainingForm($formId, $userId) as $appId) {
                 if ($this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId)) {
-                    return true;
+                    return 'private';
                 }
                 if ($this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId)
                     && $this->fileBelongsToOwnResponse($formId, $fileId, $userId)) {
-                    return true;
+                    return 'private';
                 }
+            }
+            return null;
+        }
+
+        // Standalone form, non-owner caller. 1: file-bound receipt token (upload receipt /
+        // webhook attachment fetch) — time-limited capability, private delivery.
+        $receipt = $request->getQueryParams()['rt'] ?? null;
+        if (is_string($receipt) && $receipt !== ''
+            && $this->fileStorage->verifyReceiptToken($formId, $fileId, $receipt)) {
+            return 'private';
+        }
+
+        // 2: explicit public-asset policy — the owner opted this form's records into public
+        // display (customScreen.publicRecords) AND whitelisted the answer field this file is
+        // attached under. The only way a response upload is ever public (FILE-PRIV-001).
+        if (($form['status'] ?? null) === 'published' && !empty($form['customScreen']['publicRecords'])) {
+            $publicFields = array_values(array_filter(
+                is_array($form['customScreen']['publicRecordFields'] ?? null) ? $form['customScreen']['publicRecordFields'] : [],
+                'is_string'
+            ));
+            if ($publicFields !== [] && $this->responseService !== null
+                && array_intersect($publicFields, $this->responseService->fileAttachedFieldIds($formId, $fileId)) !== []) {
+                return 'public';
             }
         }
 
-        return false;
+        return null;
     }
 
     /**

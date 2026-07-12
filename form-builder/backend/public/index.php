@@ -429,6 +429,9 @@ $container->set(PackRatingController::class, function (Container $c) {
 $container->set(FileStorageService::class, function (Container $c) {
     $uploadsConfig = $c->get('settings')['uploads'] ?? [];
     $uploadsConfig['storagePath'] = $uploadsConfig['storagePath'] ?? __DIR__ . '/../storage/uploads';
+    // Purpose-derived HMAC key for short-lived file receipt tokens (FILE-PRIV-001) —
+    // same derivation pattern as the CSRF/audit keys.
+    $uploadsConfig['receiptSecret'] = hash('sha256', 'formlogic-file-receipt:' . ($c->get('settings')['jwt']['secret'] ?? ''));
     return new FileStorageService($uploadsConfig);
 });
 
@@ -1386,9 +1389,11 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
 
 // Public form submission endpoint (rate limited, no auth required). Gated so a form
 // whose owner's cloud has lapsed stops accepting responses until they top up.
+// authOptional identifies a logged-in submitter (owner attachment rules, uploader
+// binding — FILE-PRIV-001) without rejecting anonymous fills.
 $app->post('/api/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->create($request, $response, $getArgs($request));
-})->add($cloudWriteGate)->add($submissionRateLimiter);
+})->add($cloudWriteGate)->add($submissionRateLimiter)->add($authOptional);
 
 // Record a form "start" (first interaction) for the analytics funnel. Best-effort,
 // fire-and-forget; rate-limited like submissions.
@@ -1400,10 +1405,12 @@ $app->post('/api/forms/{formId}/start', function ($request, $response) use ($con
 })->add($submissionRateLimiter);
 
 // File upload for standalone forms (no auth required since forms can be public).
-// Gated on the form owner's cloud access (storage is a hosted cost).
+// Gated on the form owner's cloud access (storage is a hosted cost). authOptional
+// binds the upload to a logged-in uploader (FILE-PRIV-001) and lets the owner
+// upload to their own unpublished form, without rejecting anonymous uploads.
 $app->post('/api/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {
     return $container->get(FileController::class)->upload($request, $response, $getArgs($request));
-})->add($cloudWriteGate)->add($submissionRateLimiter);
+})->add($cloudWriteGate)->add($submissionRateLimiter)->add($authOptional);
 
 // File serving. Public for standalone published forms; app-scoped/unpublished
 // forms are access-controlled inside serve(). authOptional populates userId when

@@ -132,4 +132,24 @@ try {
     fwrite(STDERR, sprintf("[%s] trash purge FAILED: %s\n", date('c'), $e->getMessage()));
 }
 
+// Upload garbage collection (FILE-PRIV-001): reclaim abandoned pending uploads and
+// orphan-marked files across EVERY form — the on-mutation sweeps only fire on forms
+// with traffic, so this pass gives a time-based guarantee on quiet forms. Both
+// sweeps are reference-checked (a file a response still points at is never deleted).
+try {
+    $uploadsConfig = $settings['uploads'] ?? [];
+    $uploadsConfig['storagePath'] = $uploadsConfig['storagePath'] ?? __DIR__ . '/../storage/uploads';
+    $fileStorage = new \FormLogic\Services\FileStorageService($uploadsConfig);
+    $gcResponseService = new ResponseService($mysql, $sqlite, null, new NullLogger(), null, $fileStorage);
+    $gcForms = 0;
+    $gcFiles = 0;
+    foreach ($fileStorage->formIdsWithUploads() as $gcFormId) {
+        $gcFiles += $gcResponseService->sweepFileGarbage($gcFormId, true);
+        $gcForms++;
+    }
+    printf("[%s] upload GC: %d file(s) reclaimed across %d form dir(s)\n", date('c'), $gcFiles, $gcForms);
+} catch (\Throwable $e) {
+    fwrite(STDERR, sprintf("[%s] upload GC FAILED: %s\n", date('c'), $e->getMessage()));
+}
+
 exit($summary['failed'] > 0 ? 1 : 0);
