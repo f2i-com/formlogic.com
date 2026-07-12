@@ -123,7 +123,8 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
         <th
           key={c.id}
           aria-sort={sortable ? (sort === c.id ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
-          className="px-4 py-2 font-semibold whitespace-nowrap"
+          className="px-4 py-2 font-semibold truncate"
+          title={c.label}
         >
           {sortable ? (
             <button
@@ -147,7 +148,7 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
   if (!fetchPage) {
     return (
       <div ref={fitRef} className="flex-1 min-h-0 overflow-auto px-2 pb-3">
-        <table className="w-full text-sm"><thead>{headerRow}</thead>
+        <table className="w-full table-fixed text-sm"><thead>{headerRow}</thead>
           <tbody>
             <tr><td colSpan={Math.max(visibleCols.length, 1)} className="px-4 py-6 text-center text-xs text-gray-400 dark:text-slate-500">
               {formId ? 'Records appear here in the app.' : 'Pick a form in the widget settings.'}
@@ -213,7 +214,9 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
             })}
           </div>
         ) : (
-          <table className={`w-full text-sm ${loading ? 'opacity-50' : ''}`}>
+          /* table-fixed: columns share the tile's exact width (no horizontal
+             scroll possible); long values truncate with the full text in title. */
+          <table className={`w-full table-fixed text-sm ${loading ? 'opacity-50' : ''}`}>
             <thead>{headerRow}</thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
               {rows.map((r) => {
@@ -227,11 +230,14 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
                     tabIndex={clickable ? 0 : undefined}
                     onKeyDown={(e) => { if (clickable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenRecord!(formId, id); } }}
                   >
-                    {visibleCols.length ? visibleCols.map((c, i) => (
-                      <td key={c.id} className={`px-4 py-2.5 text-gray-700 dark:text-slate-300 max-w-[14rem] truncate ${i === 0 ? 'font-medium' : ''}`}>
-                        {cell(answers[c.id], c, tz)}
-                      </td>
-                    )) : <td className="px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{`Record ${id.slice(0, 8)}`}</td>}
+                    {visibleCols.length ? visibleCols.map((c, i) => {
+                      const text = cell(answers[c.id], c, tz);
+                      return (
+                        <td key={c.id} className={`px-4 py-2.5 text-gray-700 dark:text-slate-300 truncate ${i === 0 ? 'font-medium' : ''}`} title={text}>
+                          {text}
+                        </td>
+                      );
+                    }) : <td className="px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{`Record ${id.slice(0, 8)}`}</td>}
                   </tr>
                 );
               })}

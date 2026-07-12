@@ -69,11 +69,15 @@ interface RelatedGroupSectionProps {
  *  allows (no horizontal scroll), and collapses to stacked cards on phone-sized widths. */
 function RelatedGroupSection({ group, tz, mayAdd, mayDelete, isExpanded, onToggleExpanded, onAdd, onOpen, onRequestDelete }: RelatedGroupSectionProps) {
   const cols = group.columns && group.columns.length ? group.columns : null;
-  // Reserve room for the always-present "Added" timestamp + actions columns.
+  // Reserve room for the always-present "Added" timestamp (w-48) + actions (w-12)
+  // columns; itemMinPx includes each field cell's px-5 padding. These estimates only
+  // decide how MANY columns are readable — the table itself is `table-fixed`, so a
+  // misestimate squeezes cells (truncated, with title tooltips) instead of ever
+  // overflowing the container horizontally.
   const { ref: fitRef, count: fitCount, cards } = useFittedColumns<HTMLDivElement>({
     itemCount: cols ? cols.length : 1,
-    itemMinPx: 150,
-    reservedPx: mayDelete ? 240 : 200,
+    itemMinPx: 160,
+    reservedPx: mayDelete ? 250 : 210,
   });
   const visibleCols = cols ? cols.slice(0, Math.max(1, fitCount)) : null;
 
@@ -155,15 +159,19 @@ function RelatedGroupSection({ group, tz, mayAdd, mayDelete, isExpanded, onToggl
             ))}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          /* table-fixed: column widths come from the header row (Added w-48, actions
+           * w-12, field columns share the rest equally) and the table is EXACTLY the
+           * container width — it structurally cannot overflow into a horizontal
+           * scroll. Cell content truncates instead (full value in the title). */
+          <div>
+            <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="text-left text-xs font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-100 dark:border-slate-700/30">
                   {visibleCols
-                    ? visibleCols.map((c) => <th key={c.id} className="px-5 py-2 font-semibold whitespace-nowrap">{c.label}</th>)
+                    ? visibleCols.map((c) => <th key={c.id} className="px-5 py-2 font-semibold truncate" title={c.label}>{c.label}</th>)
                     : <th className="px-5 py-2 font-semibold">Record</th>}
-                  <th className="px-5 py-2 font-semibold whitespace-nowrap">Added</th>
-                  <th className="px-3 py-2 w-10" aria-label="Actions" />
+                  <th className="w-48 px-4 py-2 font-semibold">Added</th>
+                  <th className="w-12 px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-slate-700/30">
@@ -174,16 +182,19 @@ function RelatedGroupSection({ group, tz, mayAdd, mayDelete, isExpanded, onToggl
                     onClick={() => onOpen(group.formId, record.id)}
                   >
                     {visibleCols
-                      ? visibleCols.map((c, i) => (
-                          <td key={c.id} className={`px-5 py-3 text-gray-700 dark:text-slate-300 ${i === 0 ? 'font-medium' : ''} max-w-[16rem] truncate`}>
-                            {formatCell(record.fields?.[c.id], c, tz)}
-                          </td>
-                        ))
-                      : <td className="px-5 py-3 font-medium text-gray-700 dark:text-slate-300 max-w-[20rem] truncate">{record.display}</td>}
-                    <td className="px-5 py-3 text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">
+                      ? visibleCols.map((c, i) => {
+                          const text = formatCell(record.fields?.[c.id], c, tz);
+                          return (
+                            <td key={c.id} className={`px-5 py-3 text-gray-700 dark:text-slate-300 ${i === 0 ? 'font-medium' : ''} truncate`} title={text}>
+                              {text}
+                            </td>
+                          );
+                        })
+                      : <td className="px-5 py-3 font-medium text-gray-700 dark:text-slate-300 truncate" title={record.display}>{record.display}</td>}
+                    <td className="px-4 py-3 text-xs text-gray-400 dark:text-slate-500 truncate" title={record.submittedAt ? formatDateTimeInZone(record.submittedAt, tz) : undefined}>
                       {record.submittedAt ? formatDateTimeInZone(record.submittedAt, tz) : '—'}
                     </td>
-                    <td className="px-3 py-3 w-10">
+                    <td className="px-3 py-3">
                       {mayDelete && (
                         <button
                           type="button"
