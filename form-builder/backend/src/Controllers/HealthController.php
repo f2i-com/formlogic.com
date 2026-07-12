@@ -46,6 +46,23 @@ class HealthController
         $checks = [];
         $base = dirname(__DIR__, 2); // .../backend
 
+        // Production-safe deployment (audit DEPLOY-001): development mode relaxes
+        // REAL security behaviour (non-Secure auth cookies, verbose errors, relaxed
+        // destination validation). Serving it from anything that isn't clearly a
+        // local/dev host is a blocking misconfiguration, not a preference.
+        $isProduction = (bool) ($this->settings['isProduction'] ?? true);
+        $requestHost = strtolower($request->getUri()->getHost());
+        $devHostOk = $isProduction || self::isDevelopmentHost($requestHost);
+        $checks['production_mode'] = [
+            'ok' => $devHostOk,
+            'critical' => true,
+            'detail' => $isProduction
+                ? 'production mode'
+                : ($devHostOk
+                    ? "development mode on local host '{$requestHost}' (fine for a workstation)"
+                    : "DEVELOPMENT mode served from public host '{$requestHost}' — set APP_ENV=production and APP_DEBUG=false in .env"),
+        ];
+
         // Database connectivity (not just DSN).
         try {
             $this->db->getConnection()->query('SELECT 1');
@@ -441,6 +458,30 @@ class HealthController
             ],
             'timestamp' => date('c'),
         ], $ok ? 200 : 503);
+    }
+
+    /**
+     * Is this request host clearly a local/dev host (loopback, private-range IP
+     * literal, or a reserved/dev-only TLD)? Anything else counts as public for
+     * the production_mode check — a real domain must not run development mode.
+     */
+    public static function isDevelopmentHost(string $host): bool
+    {
+        $host = strtolower(trim($host, "[]. \t"));
+        if ($host === '' || in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+            return true;
+        }
+        // IP literal: loopback/private/reserved ranges are dev-appropriate.
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+        }
+        // Reserved / conventional dev-only suffixes (RFC 2606/6762 + common LAN TLDs).
+        foreach (['.localhost', '.local', '.test', '.internal', '.invalid', '.example', '.lan', '.localdomain', '.home.arpa'] as $suffix) {
+            if (str_ends_with($host, $suffix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function json(Response $response, array $data, int $status = 200): Response

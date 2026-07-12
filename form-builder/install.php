@@ -25,6 +25,14 @@
 
 declare(strict_types=1);
 
+// Test harness: define FORMLOGIC_INSTALL_NO_RUN before requiring this file to load
+// the function definitions only — every top-level wizard runtime step (guards,
+// session, POST handling, HTML) is skipped. PHP hoists unconditional top-level
+// function declarations at compile time, so they all remain callable.
+if (defined('FORMLOGIC_INSTALL_NO_RUN')) {
+    return;
+}
+
 // FormLogic installs from either layout:
 //   - source checkout: this file sits beside backend/ and ui/
 //   - deployed bundle:  this file sits beside api/ (the backend); the SPA is already built at the web root
@@ -186,6 +194,41 @@ function envEncode(string $value): string
         return $value;
     }
     return '"' . str_replace(['\\', '"', '$'], ['\\\\', '\\"', '\\$'], $value) . '"';
+}
+
+/**
+ * Render the generated backend .env from the shipped .env.example template.
+ *
+ * Replacements use preg_replace_callback so each value is treated as a LITERAL — a
+ * plain preg_replace interprets '$1'/'\1' in the value as backreferences, which would
+ * corrupt any password containing '$' followed by a digit (e.g. "pa$1ss" -> "pass").
+ * envEncode() then makes each value safe for phpdotenv to read back exactly.
+ *
+ * Production-safe by default (audit DEPLOY-001): APP_ENV/APP_DEBUG are ALWAYS
+ * written — production/false unless the operator explicitly selected the
+ * development install mode — so a deployment can never silently inherit
+ * .env.example's development defaults.
+ *
+ * @param array{devMode:bool,dbHost:string,dbPort:string,dbName:string,dbUser:string,dbPass:string,corsOrigin:string,jwtSecret:string,auditKey:string} $values
+ */
+function flRenderEnvContent(string $template, array $values): string
+{
+    $replacements = [
+        '/^APP_ENV=.*/m' => 'APP_ENV=' . ($values['devMode'] ? 'development' : 'production'),
+        '/^APP_DEBUG=.*/m' => 'APP_DEBUG=' . ($values['devMode'] ? 'true' : 'false'),
+        '/^DB_HOST=.*/m' => 'DB_HOST=' . envEncode($values['dbHost']),
+        '/^DB_PORT=.*/m' => 'DB_PORT=' . $values['dbPort'],             // digit-validated by the caller
+        '/^DB_DATABASE=.*/m' => 'DB_DATABASE=' . envEncode($values['dbName']),
+        '/^DB_USERNAME=.*/m' => 'DB_USERNAME=' . envEncode($values['dbUser']),
+        '/^DB_PASSWORD=.*/m' => 'DB_PASSWORD=' . envEncode($values['dbPass']),
+        '/^JWT_SECRET=.*/m' => 'JWT_SECRET=' . $values['jwtSecret'],    // generated hex
+        '/^CORS_ORIGIN=.*/m' => 'CORS_ORIGIN=' . envEncode($values['corsOrigin']),
+        '/^# AUDIT_HMAC_KEY=.*/m' => 'AUDIT_HMAC_KEY=' . $values['auditKey'], // generated hex
+    ];
+    foreach ($replacements as $pattern => $replacement) {
+        $template = preg_replace_callback($pattern, static fn () => $replacement, $template, 1);
+    }
+    return $template;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +479,12 @@ function runInstall(array $data): array
     $dbUser = sanitizeEnvValue($data['db_user'] ?? 'root');
     $dbPass = sanitizeEnvValue($data['db_pass'] ?? '');
     $corsOrigin = sanitizeEnvValue($data['cors_origin'] ?? 'http://localhost:5173');
+    // Production-safe by default (audit DEPLOY-001): only the explicit, clearly
+    // labelled wizard checkbox keeps development mode. Development mode relaxes
+    // real security behaviour (non-Secure auth cookies, verbose errors, relaxed
+    // destination validation), so a generated deployment must never inherit it
+    // from .env.example silently.
+    $devMode = !empty($data['dev_mode']);
 
     if (!ctype_digit((string) $dbPort) || (int) $dbPort < 1 || (int) $dbPort > 65535) {
         $dbPort = '3306';
@@ -452,23 +501,21 @@ function runInstall(array $data): array
         return ['success' => false, 'steps' => $steps, 'message' => 'Missing .env.example file'];
     }
 
-    // Replace values. Use preg_replace_callback so the replacement is treated as a LITERAL — a
-    // plain preg_replace interprets '$1'/'\1' in the value as backreferences, which would corrupt
-    // any password containing '$' followed by a digit (e.g. "pa$1ss" -> "pass"). envEncode() then
-    // makes each value safe for phpdotenv to read back exactly.
-    $replacements = [
-        '/^DB_HOST=.*/m' => 'DB_HOST=' . envEncode($dbHost),
-        '/^DB_PORT=.*/m' => 'DB_PORT=' . $dbPort,             // digit-validated above
-        '/^DB_DATABASE=.*/m' => 'DB_DATABASE=' . envEncode($dbName),
-        '/^DB_USERNAME=.*/m' => 'DB_USERNAME=' . envEncode($dbUser),
-        '/^DB_PASSWORD=.*/m' => 'DB_PASSWORD=' . envEncode($dbPass),
-        '/^JWT_SECRET=.*/m' => 'JWT_SECRET=' . $jwtSecret,    // generated hex
-        '/^CORS_ORIGIN=.*/m' => 'CORS_ORIGIN=' . envEncode($corsOrigin),
-        '/^# AUDIT_HMAC_KEY=.*/m' => 'AUDIT_HMAC_KEY=' . $auditKey, // generated hex
-    ];
-    foreach ($replacements as $pattern => $replacement) {
-        $envContent = preg_replace_callback($pattern, static fn () => $replacement, $envContent, 1);
-    }
+    $envContent = flRenderEnvContent($envContent, [
+        'devMode' => $devMode,
+        'dbHost' => $dbHost,
+        'dbPort' => $dbPort,
+        'dbName' => $dbName,
+        'dbUser' => $dbUser,
+        'dbPass' => $dbPass,
+        'corsOrigin' => $corsOrigin,
+        'jwtSecret' => $jwtSecret,
+        'auditKey' => $auditKey,
+    ]);
+    $steps[] = $devMode
+        ? ['label' => 'Application mode', 'status' => 'warn',
+            'message' => 'DEVELOPMENT mode selected — verbose errors and relaxed security policy. Never use this for a public site; edit APP_ENV=production in ' . basename($backendDir) . '/.env before going live.']
+        : ['label' => 'Application mode', 'status' => 'ok', 'message' => 'Production (APP_ENV=production, APP_DEBUG=false)'];
 
     $envPath = $backendDir . '/.env';
     $envExists = file_exists($envPath);
@@ -1186,6 +1233,11 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     </div>
     <p class="help-text" style="margin-top:6px;">Recommended. Populates the marketplace with installable apps and a no-signup live demo. Needs Composer dependencies installed first; if it can't run now, you'll get a one-line command to do it later.</p>
     <?php endif; ?>
+    <div class="checkbox-group" style="margin-top:10px;">
+      <input type="checkbox" id="dev_mode" />
+      <label for="dev_mode" style="font-size:13px;">Local <strong>development</strong> install — enables debug mode and relaxed security policy</label>
+    </div>
+    <p class="help-text" style="margin-top:6px;">Leave unchecked for any real deployment. The generated configuration defaults to production mode (<code>APP_ENV=production</code>, <code>APP_DEBUG=false</code>): secure cookies, no verbose errors. Check this only for a developer workstation — a public site running development mode fails its health checks.</p>
     <?php if ($alreadyInstalled): ?>
     <div class="checkbox-group">
       <input type="checkbox" id="overwrite_env" />
@@ -1532,6 +1584,7 @@ function runInstall() {
     cors_origin: document.getElementById('cors_origin').value,
     overwrite_env: overwriteEl && overwriteEl.checked ? '1' : '',
     seed_demo: document.getElementById('seed_demo') && document.getElementById('seed_demo').checked ? '1' : '',
+    dev_mode: document.getElementById('dev_mode') && document.getElementById('dev_mode').checked ? '1' : '',
   }).then(result => {
     btn.disabled = false;
     btn.innerHTML = 'Run Installation';

@@ -760,10 +760,14 @@ class McpOAuthService
             return null;
         }
         // SSRF: resolve NOW (DNS may have changed since any earlier check) and require every IP to be
-        // public. In APP_ENV=development the guard is skipped so http://localhost CIMD docs work.
-        if (!self::isDevelopment()) {
-            $reason = null;
-            if (!IpSafety::resolvesToPublicHost($host, $reason)) {
+        // public. Development narrows the policy to "loopback is also allowed" (so a http://localhost
+        // CIMD doc is testable) rather than disabling the guard — a dev box must still refuse cloud
+        // metadata, link-local and LAN destinations (audit DEPLOY-001: security policy is not a
+        // developer-diagnostics switch).
+        $reason = null;
+        if (!IpSafety::resolvesToPublicHost($host, $reason)) {
+            $devLoopback = self::isDevelopment() && in_array(strtolower($host), self::LOOPBACK_HOSTS, true);
+            if (!$devLoopback) {
                 $this->logger?->info('MCP OAuth: CIMD fetch blocked', ['host' => $host, 'reason' => $reason]);
                 return null;
             }

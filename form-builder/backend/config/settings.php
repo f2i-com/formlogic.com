@@ -119,11 +119,18 @@ return [
             'audience' => $_ENV['JWT_AUDIENCE'] ?? 'formlogic-api',
         ],
 
-        // Cookie settings for secure authentication
+        // Cookie settings for secure authentication.
+        // The Secure flag is deployment policy, not a developer-diagnostics switch
+        // (audit DEPLOY-001): COOKIE_SECURE=true/false pins it explicitly (e.g. an
+        // HTTPS dev vhost sets true; a deliberate plain-HTTP intranet deploy sets
+        // false). When unset it falls back to the safe default — Secure everywhere
+        // except explicit development mode.
         'cookie' => [
             'name' => 'formlogic_auth',
             'httpOnly' => true,
-            'secure' => $isProduction, // HTTPS only in production
+            'secure' => in_array(strtolower((string) ($_ENV['COOKIE_SECURE'] ?? '')), ['true', 'false'], true)
+                ? strtolower((string) $_ENV['COOKIE_SECURE']) === 'true'
+                : $isProduction,
             'sameSite' => 'Lax', // Provides CSRF protection while allowing normal navigation
             'path' => '/',
             'domain' => $_ENV['COOKIE_DOMAIN'] ?? '', // Empty = current domain only
