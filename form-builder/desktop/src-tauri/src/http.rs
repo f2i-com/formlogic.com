@@ -157,8 +157,8 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// `GET /api/desktop/info` — identity + version card for FormLogic Desktop.
-/// Origin-gated like the other sensitive reads (see `is_restricted_read_path`),
-/// no token required.
+/// Behind `management_auth_guard` like every non-health route (LOCAL-SEC-001);
+/// the open discovery probe is `/api/health`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopInfo {
@@ -578,9 +578,10 @@ async fn delete_venv(
 
 // ------- FormLogic Desktop plugin API (plugins / connectors / events / pairing) -------
 //
-// These routes carry their OWN auth (pairing tokens bound to the calling
-// origin — see `crate::pairing` + `plugin_auth_guard` below), so the legacy
-// `origin_guard` passes them through untouched (`is_desktop_api_path`).
+// These routes carry pairing-token auth bound to the calling origin — see
+// `crate::pairing` + `plugin_auth_guard` below. Since LOCAL-SEC-001 the
+// management plane (services/models/python/config) sits behind the same trust
+// anchors via `management_auth_guard`.
 // Error envelope everywhere: `{ok:false, error:{code, message}}` with the
 // typed codes from `connector-response.schema.json`.
 
@@ -626,21 +627,6 @@ fn connector_failure_status(code: &str) -> StatusCode {
 
 fn connector_failure_response(f: &ConnectorFailure) -> axum::response::Response {
     desktop_err(connector_failure_status(f.code), f.code, &f.message)
-}
-
-/// Routes owned by the plugin-API auth model (pairing tokens); the legacy
-/// origin_guard must not double-gate them.
-fn is_desktop_api_path(path: &str) -> bool {
-    path == "/api/plugins"
-        || path.starts_with("/api/plugins/")
-        || path == "/api/connectors"
-        || path.starts_with("/api/connectors/")
-        || path == "/api/events"
-        || path == "/api/origins"
-        || path.starts_with("/api/origins/")
-        || path.starts_with("/api/flows/")
-        || path == "/api/desktop/pairing-requests"
-        || path.starts_with("/api/desktop/pairing-requests/")
 }
 
 // The former `?token=` fallback for `/api/events` is GONE (audit FL-008):
@@ -703,7 +689,7 @@ async fn plugin_auth_guard(
         (Some(want), Some(got)) if token_eq(want, &got)
     );
     let gui_webview_ok = st.auth.gui_mode
-        && matches!(origin.as_deref(), Some(o) if is_allowed_origin_privileged(o));
+        && matches!(origin.as_deref(), Some(o) if is_gui_webview_origin(o));
     let presented = bearer_token(&req);
     let pairing = presented
         .as_deref()
@@ -732,7 +718,7 @@ fn pairing_admin_ok(auth: &AuthConfig, headers: &HeaderMap) -> bool {
     let origin_ok = headers
         .get(ORIGIN)
         .and_then(|o| o.to_str().ok())
-        .is_some_and(is_allowed_origin_privileged);
+        .is_some_and(is_gui_webview_origin);
     token_ok || (auth.gui_mode && origin_ok)
 }
 
@@ -1487,14 +1473,13 @@ fn err500(msg: &str) -> axum::response::Response {
         .into_response()
 }
 
-/// Whether a browser `Origin` is allowed to drive state-changing endpoints.
-/// The localhost bind keeps non-browser callers out; this stops a *web page*
-/// the user happens to have open from issuing drive-by POST/DELETE requests
-/// (which would otherwise be possible since CORS is permissive for reads).
 /// True only when `origin`'s HOST is exactly a loopback name — NOT a prefix.
 /// `origin.starts_with("http://localhost")` would also accept the attacker-owned
 /// `http://localhost.evil.com`, so we parse the host and compare it exactly.
-/// Port-agnostic; handles bracketed IPv6 (`http://[::1]:port`).
+/// Port-agnostic; handles bracketed IPv6 (`http://[::1]:port`). Only consulted
+/// in debug builds (the dev webview is a localhost port); release trusts the
+/// tauri origins alone.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 fn is_loopback_origin(origin: &str) -> bool {
     let rest = match origin
         .strip_prefix("http://")
@@ -1513,37 +1498,11 @@ fn is_loopback_origin(origin: &str) -> bool {
     host == "localhost" || host == "127.0.0.1"
 }
 
-fn is_allowed_origin(origin: &str) -> bool {
-    // Dev + locally-served formlogic-web (any loopback port).
-    if is_loopback_origin(origin) {
-        return true;
-    }
-    // Tauri webview origins (in case the companion's own UI ever calls over HTTP).
-    if origin == "tauri://localhost"
-        || origin == "http://tauri.localhost"
-        || origin == "https://tauri.localhost"
-    {
-        return true;
-    }
-    // Production formlogic-web: https://formlogic.com and any subdomain (port-agnostic).
-    if let Some(rest) = origin.strip_prefix("https://") {
-        let host = rest.split('/').next().unwrap_or(rest);
-        let host = host.split(':').next().unwrap_or(host);
-        if host == "formlogic.com" || host.ends_with(".formlogic.com") {
-            return true;
-        }
-    }
-    false
-}
-
 /// Endpoints that DEFINE/INSTALL arbitrary code or DESTROY user data — i.e. the
-/// real exec surface. A malicious local web page (any `http://localhost:<port>`)
-/// must not be able to reach these: defining a service command and starting it
-/// would be remote code execution. They get the stricter origin check below and
-/// fail CLOSED on a missing `Origin`. Note: starting/stopping/installing an
-/// ALREADY-DEFINED service (and ensure-by-port) stays on the broad allow-list —
-/// those only run commands the user already added + reviewed, and the web app
-/// relies on them.
+/// real exec surface. A native no-Origin caller (curl, scripts) may drive the
+/// rest of the management plane on a GUI/no-token box, but these fail CLOSED
+/// without the server token: defining a service command and starting it would
+/// be remote code execution.
 fn is_privileged_path(method: &Method, path: &str) -> bool {
     match *method {
         Method::POST => {
@@ -1564,43 +1523,21 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
     }
 }
 
-/// GET /api/services/:id/export returns the FULL ServiceTemplate — including `run.env` (which a
-/// user-authored service may hold an API key in) and the verbatim install/helper script bodies.
-/// It's the read-twin of the privileged `add_service` POST, so it's gated like a privileged read
-/// (trusted origin or token) rather than left on the open GET surface.
-fn is_export_path(path: &str) -> bool {
-    path.starts_with("/api/services/") && path.ends_with("/export")
-}
-
-/// GET reads that expose process output / absolute paths (the OS username via the data-dir path)
-/// and so must not be readable by an arbitrary cross-origin page: the logs endpoints + the config
-/// snapshot. Gated on the broad allow-list (blocks only a remote cross-origin page; loopback dev
-/// tools + the native CLI still pass).
-fn is_restricted_read_path(path: &str) -> bool {
-    path == "/api/config"
-        || path == "/api/desktop/info"
-        || path == "/api/desktop/support-bundle"
-        || path == "/api/python/logs"
-        || (path.starts_with("/api/services/") && path.ends_with("/logs"))
-}
-
-/// Stricter allow-list for privileged endpoints: the companion's OWN webview and
-/// formlogic.com only — never an arbitrary localhost page. Loopback origins are
-/// allowed in debug builds (the dev UI is served from a localhost port) but NOT
-/// in a release build, which is what ships.
-fn is_allowed_origin_privileged(origin: &str) -> bool {
+/// The companion's OWN webview — the only browser-ish origin trusted WITHOUT a
+/// pairing token (it's the desktop app's own UI; a web page can never carry a
+/// tauri origin). Loopback origins are allowed in debug builds (the dev UI is
+/// served from a localhost port) but NOT in a release build, which is what ships.
+///
+/// LOCAL-SEC-001: this deliberately does NOT trust `https://*.formlogic.com` (or
+/// any other remote origin). A hosted web page — including formlogic.com itself,
+/// whose subdomains/XSS must not reach the local management plane — earns access
+/// ONLY through an exact-origin pairing token.
+fn is_gui_webview_origin(origin: &str) -> bool {
     if origin == "tauri://localhost"
         || origin == "http://tauri.localhost"
         || origin == "https://tauri.localhost"
     {
         return true;
-    }
-    if let Some(rest) = origin.strip_prefix("https://") {
-        let host = rest.split('/').next().unwrap_or(rest);
-        let host = host.split(':').next().unwrap_or(host);
-        if host == "formlogic.com" || host.ends_with(".formlogic.com") {
-            return true;
-        }
     }
     #[cfg(debug_assertions)]
     if is_loopback_origin(origin) {
@@ -1644,113 +1581,121 @@ struct AuthConfig {
     gui_mode: bool,
 }
 
-/// Decide whether a privileged request is allowed. A matching bearer token
-/// always passes. The trusted-origin allow-list is honored ONLY for the GUI
-/// companion (gui_mode), which has a real, unspoofable webview origin. A headless
-/// server has no webview — any local process can forge the `Origin` header — so it
-/// trusts the token alone: headless WITH a token is token-only, and headless with
-/// NO token has its privileged (command-defining / destructive) routes CLOSED (the
-/// operator must set FORMLOGIC_SERVER_TOKEN to administer it; the CLI sends the bearer).
-fn privileged_allowed(token_ok: bool, gui_mode: bool, _has_token: bool, origin_priv_ok: bool) -> bool {
-    token_ok || (gui_mode && origin_priv_ok)
+/// Pure decision core of [`management_auth_guard`] (LOCAL-SEC-001), split out
+/// for tests.
+///
+/// Browser-facing requests — an `Origin` header is present; browsers always
+/// send one here because `127.0.0.1:17872` is cross-origin to every page —
+/// must carry a pairing token bound to that EXACT origin. There is no origin
+/// allow-list any more: `https://formlogic.com`, its subdomains, `null` and
+/// every other page all take the same pairing path, so a compromised
+/// subdomain / site XSS cannot reach the local management plane. The
+/// companion's own webview (unspoofable by web content) and the headless
+/// server bearer token administer without pairing.
+///
+/// Native callers (no `Origin`: curl, scripts, the CLI) run as the user and
+/// are outside the browser threat model, so they keep their legacy posture —
+/// EXCEPT the exec surface (`is_privileged_path`: defining/installing code,
+/// destroying data), which stays closed without the server token, and a
+/// headless box with a token configured stays token-only for every mutation.
+#[allow(clippy::too_many_arguments)] // deliberately a flat, test-friendly decision table
+fn management_auth_decision(
+    server_token_ok: bool,
+    gui_webview_ok: bool,
+    gui_mode: bool,
+    has_server_token: bool,
+    privileged: bool,
+    mutating: bool,
+    origin_present: bool,
+    pairing: Option<TokenCheck>,
+) -> Result<(), (StatusCode, &'static str, &'static str)> {
+    if server_token_ok || gui_webview_ok {
+        return Ok(());
+    }
+    if origin_present {
+        // Browser-facing: exact-origin pairing token or nothing.
+        return match pairing {
+            Some(TokenCheck::Ok) => Ok(()),
+            Some(TokenCheck::WrongOrigin) => Err((
+                StatusCode::FORBIDDEN,
+                "origin_denied",
+                "token is not valid for this origin",
+            )),
+            Some(TokenCheck::Invalid) => Err((
+                StatusCode::UNAUTHORIZED,
+                "auth_required",
+                "invalid or expired pairing token",
+            )),
+            None => Err((
+                StatusCode::UNAUTHORIZED,
+                "auth_required",
+                "missing bearer token — pair with FormLogic Desktop first",
+            )),
+        };
+    }
+    // Native local caller (no browser Origin).
+    if privileged {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "auth_required",
+            "this operation requires the server token or the Desktop window",
+        ));
+    }
+    if mutating && !gui_mode && has_server_token {
+        // Headless with a token configured: the token gates every mutation.
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "auth_required",
+            "this server requires its bearer token",
+        ));
+    }
+    Ok(())
 }
 
-/// Gate mutating/exec requests (POST/PUT/DELETE/PATCH) on the `Origin` header.
-/// Privileged (command-defining / destructive) paths require the companion's own
-/// origin and fail CLOSED on a missing Origin; other mutations keep the broad
-/// loopback allow-list. GET reads and CORS preflight (OPTIONS) pass through.
-async fn origin_guard(
-    State(auth): State<AuthConfig>,
+/// Auth middleware for the MANAGEMENT plane — services / models / python /
+/// config / desktop-info / support-bundle (everything in the legacy router
+/// except `/api/health`, which stays an open, secret-free probe). Same trust
+/// anchors as [`plugin_auth_guard`] (LOCAL-SEC-001: pairing is no longer
+/// applied "more narrowly" than the service/model/python surface), plus the
+/// native no-Origin posture described on [`management_auth_decision`].
+async fn management_auth_guard(
+    State(st): State<DesktopState>,
     req: Request,
     next: Next,
 ) -> axum::response::Response {
-    // The FormLogic Desktop plugin API carries its own, STRICTER auth
-    // (origin-bound pairing tokens via plugin_auth_guard) — and must accept
-    // paired origins the legacy allow-list doesn't know. Pass through.
-    if is_desktop_api_path(req.uri().path()) {
+    if req.method() == Method::OPTIONS {
         return next.run(req).await;
     }
     let m = req.method().clone();
     let mutating =
         m == Method::POST || m == Method::PUT || m == Method::DELETE || m == Method::PATCH;
-    if mutating {
-        let privileged = is_privileged_path(&m, req.uri().path());
-        let origin = req
-            .headers()
-            .get(ORIGIN)
-            .and_then(|o| o.to_str().ok())
-            .map(str::to_owned);
-        // A configured bearer token lets a headless/non-browser admin client
-        // (the CLI, formlogic-server tooling) perform privileged ops the origin
-        // allow-list would otherwise block — there's no browser origin on a
-        // server. Compared without per-byte short-circuit (token_eq).
-        let token_ok = matches!(
-            (auth.token.as_deref(), bearer_token(&req)),
-            (Some(want), Some(got)) if token_eq(want, &got)
-        );
-        let allowed = if privileged {
-            let origin_priv_ok =
-                matches!(origin.as_deref(), Some(o) if is_allowed_origin_privileged(o));
-            privileged_allowed(token_ok, auth.gui_mode, auth.token.is_some(), origin_priv_ok)
-        } else {
-            // A configured token must gate EVERY mutation on a headless box — a
-            // forged Origin (any non-browser caller can set one) must not substitute
-            // for it. Mirrors privileged_allowed: pass on a matching token, OR when
-            // there's no real lockdown (GUI, or no token configured) AND the origin
-            // is browser-acceptable (loopback/tauri/formlogic.com) or absent (native CLI).
-            // So headless+token now requires the token even with a spoofed Origin,
-            // while GUI mode and the no-token default keep their broad behavior.
-            let origin_ok = match origin.as_deref() {
-                Some(o) => is_allowed_origin(o),
-                None => true, // native/CLI caller: no browser Origin to check
-            };
-            token_ok || ((auth.gui_mode || auth.token.is_none()) && origin_ok)
-        };
-        if !allowed {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(serde_json::json!({ "error": "origin not allowed" })),
-            )
-                .into_response();
-        }
-    } else if m == Method::GET {
-        // The GET surface is otherwise ungated and served with CORS Any, so a page the user
-        // visits could read it cross-origin. Gate the SENSITIVE reads (the rest — health, model /
-        // catalog / service listings — carry no secrets and stay open). A native / no-Origin
-        // caller is allowed: it has direct filesystem access anyway, and this keeps the CLI working.
-        let path = req.uri().path();
-        let export_read = is_export_path(path);
-        let restricted_read = is_restricted_read_path(path);
-        if export_read || restricted_read {
-            let origin = req
-                .headers()
-                .get(ORIGIN)
-                .and_then(|o| o.to_str().ok())
-                .map(str::to_owned);
-            let token_ok = matches!(
-                (auth.token.as_deref(), bearer_token(&req)),
-                (Some(want), Some(got)) if token_eq(want, &got)
-            );
-            let allowed = match origin.as_deref() {
-                None => true,
-                Some(o) => {
-                    if export_read {
-                        token_ok || (auth.gui_mode && is_allowed_origin_privileged(o))
-                    } else {
-                        token_ok || is_allowed_origin(o)
-                    }
-                }
-            };
-            if !allowed {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({ "error": "origin not allowed" })),
-                )
-                    .into_response();
-            }
-        }
+    let origin = req
+        .headers()
+        .get(ORIGIN)
+        .and_then(|o| o.to_str().ok())
+        .map(str::to_owned);
+    let server_token_ok = matches!(
+        (st.auth.token.as_deref(), bearer_token(&req)),
+        (Some(want), Some(got)) if token_eq(want, &got)
+    );
+    let gui_webview_ok = st.auth.gui_mode
+        && matches!(origin.as_deref(), Some(o) if is_gui_webview_origin(o));
+    let pairing = bearer_token(&req)
+        .as_deref()
+        .map(|t| st.pairing.check(t, origin.as_deref()));
+    match management_auth_decision(
+        server_token_ok,
+        gui_webview_ok,
+        st.auth.gui_mode,
+        st.auth.token.is_some(),
+        is_privileged_path(&m, req.uri().path()),
+        mutating,
+        origin.is_some(),
+        pairing,
+    ) {
+        Ok(()) => next.run(req).await,
+        Err((status, code, msg)) => desktop_err(status, code, msg),
     }
-    next.run(req).await
 }
 
 pub async fn serve(
@@ -1772,11 +1717,12 @@ pub async fn serve(
     // `/api/flows/*` routes (they report runner_unavailable).
     flow_runtime: Option<Arc<FlowRuntime>>,
 ) -> Result<(), BoxError> {
-    // CORS stays permissive so a hosted formlogic-web at any domain can READ the
-    // API (the localhost bind keeps non-local processes out). State-changing
-    // and exec endpoints are additionally gated by `origin_guard` below, so a
-    // random web page the user has open can't issue drive-by POST/DELETE
-    // requests against the loopback API.
+    // CORS stays permissive at the HTTP layer (the localhost bind keeps
+    // non-local processes out, and `Authorization` must be readable from any
+    // paired origin). AUTHORIZATION is what actually gates access: every
+    // non-health route requires the GUI webview, the server token, or an
+    // exact-origin pairing token (LOCAL-SEC-001) — so a random web page the
+    // user has open can neither read nor mutate the management plane.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([
@@ -1797,8 +1743,27 @@ pub async fn serve(
         flow_runtime: flow_runtime.clone(),
     };
 
-    let app = Router::new()
+    let desktop_state = DesktopState {
+        host: plugin_host,
+        pairing,
+        auth: AuthConfig {
+            token: auth_token.clone(),
+            gui_mode,
+        },
+        flow_runtime,
+        capability_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        capability_last_known: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+    };
+
+    // The ONLY unauthenticated route: the discovery probe. Its body is
+    // secret-free by contract (`health_reports_new_and_legacy_identity`).
+    let open_api = Router::new()
         .route("/api/health", get(health))
+        .with_state(state.clone());
+
+    // Management plane (services / models / python / config / desktop-info):
+    // every route behind the pairing-token guard (LOCAL-SEC-001).
+    let management_api = Router::new()
         .route("/api/desktop/info", get(desktop_info))
         .route("/api/desktop/support-bundle", get(support_bundle))
         .route("/api/config", get(get_config))
@@ -1831,19 +1796,11 @@ pub async fn serve(
         .route("/api/python/logs", get(python_logs))
         .route("/api/python/venvs", post(create_venv))
         .route("/api/python/venvs/:name", delete(delete_venv))
+        .route_layer(middleware::from_fn_with_state(
+            desktop_state.clone(),
+            management_auth_guard,
+        ))
         .with_state(state);
-
-    let desktop_state = DesktopState {
-        host: plugin_host,
-        pairing,
-        auth: AuthConfig {
-            token: auth_token.clone(),
-            gui_mode,
-        },
-        flow_runtime,
-        capability_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        capability_last_known: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-    };
 
     // Plugin-API routes: everything behind the pairing-token guard.
     let plugin_api = Router::new()
@@ -1894,13 +1851,10 @@ pub async fn serve(
         )
         .with_state(desktop_state);
 
-    let app = app
+    let app = open_api
+        .merge(management_api)
         .merge(plugin_api)
         .merge(pairing_api)
-        .layer(middleware::from_fn_with_state(
-            AuthConfig { token: auth_token, gui_mode },
-            origin_guard,
-        ))
         .layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -1926,11 +1880,11 @@ pub async fn serve(
 mod tests {
     use super::{
         connector_failure_status, desktop_auth_decision, desktop_info_body, grant_covers_capability,
-        health_body, is_desktop_api_path, is_restricted_read_path, offline_grace_grants,
-        privileged_allowed, OFFLINE_GRACE_MAX_AGE,
+        health_body, is_gui_webview_origin, is_privileged_path, management_auth_decision,
+        offline_grace_grants, OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
-    use axum::http::StatusCode;
+    use axum::http::{Method, StatusCode};
 
     #[test]
     fn flow_run_capability_requests_map_onto_grants() {
@@ -2016,57 +1970,102 @@ mod tests {
     }
 
     #[test]
-    fn desktop_info_is_origin_gated_read() {
-        // /api/desktop/info sits behind the same broad origin allow-list as
-        // /api/config (no token needed); /api/health stays fully open.
-        assert!(is_restricted_read_path("/api/desktop/info"));
-        assert!(!is_restricted_read_path("/api/health"));
-    }
-
-    #[test]
-    fn privileged_auth_matrix() {
-        // Headless server (gui_mode=false) WITH a token: token is the only key;
-        // a trusted/ spoofed Origin must NOT substitute.
-        assert!(privileged_allowed(true, false, true, false), "valid token passes");
-        assert!(!privileged_allowed(false, false, true, true), "origin can't bypass a set token");
-        // GUI companion (gui_mode=true) WITH a token: token OR webview origin.
-        assert!(privileged_allowed(true, true, true, false), "companion: token passes");
-        assert!(privileged_allowed(false, true, true, true), "companion: webview origin passes");
-        assert!(!privileged_allowed(false, true, true, false), "companion: neither → denied");
-        // Headless (gui_mode=false) with NO token: privileged routes are CLOSED —
-        // any local process can forge the Origin on a headless server, so a trusted
-        // Origin must NOT substitute for a token. The operator must set a token.
-        assert!(!privileged_allowed(false, false, false, true), "headless no-token: forged Origin does NOT pass");
-        assert!(!privileged_allowed(false, false, false, false), "headless no-token: bad origin denied");
-        // GUI companion with NO token: its real (unspoofable) webview origin admins.
-        assert!(privileged_allowed(false, true, false, true), "GUI no-token: webview origin passes");
-    }
-
-    #[test]
-    fn desktop_api_paths_bypass_the_legacy_origin_guard() {
-        for p in [
-            "/api/plugins",
-            "/api/plugins/mock/start",
-            "/api/connectors",
-            "/api/connectors/mock/request",
-            "/api/events",
-            "/api/origins",
-            "/api/origins/https%3A%2F%2Fformlogic.com",
-            "/api/flows/run",
-            "/api/desktop/pairing-requests",
-            "/api/desktop/pairing-requests/abc/approve",
-        ] {
-            assert!(is_desktop_api_path(p), "{p} must be plugin-API gated");
+    fn gui_webview_origin_trusts_no_web_page() {
+        // LOCAL-SEC-001: only the companion's own webview is trusted without a
+        // pairing token. formlogic.com — and EVERY subdomain — must pair like
+        // any other page, so a compromised subdomain / site XSS can't reach
+        // the local management plane. 'null' and garbage origins never pass.
+        for o in ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"] {
+            assert!(is_gui_webview_origin(o), "{o} is the desktop's own UI");
         }
-        // Legacy surface stays under origin_guard.
-        for p in [
-            "/api/health",
-            "/api/desktop/info",
-            "/api/services",
-            "/api/models",
-            "/api/config",
+        for o in [
+            "https://formlogic.com",
+            "https://app.formlogic.com",
+            "https://evil.formlogic.com",
+            "https://formlogic.com.evil.example",
+            "http://formlogic.local",
+            "null",
+            "",
         ] {
-            assert!(!is_desktop_api_path(p), "{p} must keep the legacy guard");
+            assert!(!is_gui_webview_origin(o), "{o} must NOT bypass pairing");
+        }
+        // Loopback dev servers are webview-equivalent ONLY in debug builds.
+        #[cfg(not(debug_assertions))]
+        assert!(!is_gui_webview_origin("http://localhost:1420"));
+    }
+
+    /// Shorthand: management decision for a browser caller (Origin present).
+    fn browser(pairing: Option<TokenCheck>) -> Result<(), (StatusCode, &'static str, &'static str)> {
+        management_auth_decision(false, false, true, false, false, true, true, pairing)
+    }
+
+    #[test]
+    fn management_auth_matrix_browser_facing() {
+        // LOCAL-SEC-001 acceptance: an unpaired browser origin cannot touch the
+        // management plane at all — reads included — regardless of which origin
+        // it is. Exact-origin pairing is the only browser path in.
+        assert!(browser(Some(TokenCheck::Ok)).is_ok(), "paired origin passes");
+        let (s, c, _) = browser(None).unwrap_err();
+        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "no token → 401");
+        let (s, c, _) = browser(Some(TokenCheck::Invalid)).unwrap_err();
+        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "bogus token → 401");
+        // A REAL token stolen by (or minted for) a different origin — e.g. a
+        // formlogic.com subdomain replaying another page's pairing — dies here.
+        let (s, c, _) = browser(Some(TokenCheck::WrongOrigin)).unwrap_err();
+        assert_eq!((s, c), (StatusCode::FORBIDDEN, "origin_denied"), "cross-origin replay → 403");
+
+        // The desktop's own webview and the server token still administer.
+        assert!(management_auth_decision(true, false, false, true, true, true, true, None).is_ok());
+        assert!(management_auth_decision(false, true, true, false, true, true, true, None).is_ok());
+    }
+
+    #[test]
+    fn management_auth_matrix_native_callers() {
+        // Native callers (no Origin header — curl, scripts, the CLI) keep their
+        // legacy posture on a GUI / no-token box…
+        assert!(
+            management_auth_decision(false, false, true, false, false, false, false, None).is_ok(),
+            "GUI box: native read/mutation passes"
+        );
+        assert!(
+            management_auth_decision(false, false, false, false, false, true, false, None).is_ok(),
+            "headless no-token: native non-privileged mutation passes"
+        );
+        // …but the exec surface (define/install code, destroy data) stays
+        // CLOSED without the server token, exactly as before.
+        let (s, c, _) =
+            management_auth_decision(false, false, true, false, true, true, false, None).unwrap_err();
+        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "privileged native → token only");
+        // Headless WITH a token: every mutation requires the token (a native
+        // caller could otherwise forge/omit Origin to sidestep the lockdown).
+        let (s, c, _) =
+            management_auth_decision(false, false, false, true, false, true, false, None).unwrap_err();
+        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"));
+        // Headless+token GETs stay open to native callers (local diagnosis).
+        assert!(management_auth_decision(false, false, false, true, false, false, false, None).is_ok());
+    }
+
+    #[test]
+    fn privileged_paths_are_the_exec_surface() {
+        for (m, p) in [
+            (Method::POST, "/api/services"),
+            (Method::POST, "/api/models/download"),
+            (Method::POST, "/api/python/install"),
+            (Method::POST, "/api/python/venvs"),
+            (Method::POST, "/api/services/x/uninstall"),
+            (Method::DELETE, "/api/services/x"),
+            (Method::DELETE, "/api/models/some.gguf"),
+            (Method::DELETE, "/api/python/venvs/v"),
+        ] {
+            assert!(is_privileged_path(&m, p), "{m} {p} is privileged");
+        }
+        for (m, p) in [
+            (Method::POST, "/api/services/x/start"),
+            (Method::POST, "/api/services/x/stop"),
+            (Method::POST, "/api/services/x/install"),
+            (Method::GET, "/api/services"),
+        ] {
+            assert!(!is_privileged_path(&m, p), "{m} {p} is not privileged");
         }
     }
 

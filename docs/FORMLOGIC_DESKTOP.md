@@ -26,13 +26,15 @@ FormLogic Desktop is the rebranded/evolved FormLogic desktop companion. It is th
 
 ## 2. API groups
 
-Existing (unchanged): `/api/health`, `/api/config`, `/api/services*`, `/api/models*`, `/api/python*`.
-
-New:
+Management plane — `/api/config`, `/api/services*`, `/api/models*`, `/api/python*`,
+`/api/desktop/info`, `/api/desktop/support-bundle` — sits behind the SAME auth as the
+plugin API (LOCAL-SEC-001): the desktop's own webview, the headless server token, or an
+exact-origin pairing token. `GET /api/health` is the only unauthenticated route (the
+discovery probe; its body is secret-free by contract).
 
 | Route | Auth | Purpose |
 |---|---|---|
-| `GET /api/desktop/info` | origin-gated | name, versions, platform, pluginApiVersion |
+| `GET /api/desktop/info` | token | name, versions, platform, pluginApiVersion |
 | `POST /api/desktop/pairing-requests` | origin-gated | begin pairing: `{origin}` → `{requestId}` |
 | `GET /api/desktop/pairing-requests/{id}` | origin-gated | poll: `{status: "pending"|"approved"|"denied", token?}` |
 | `GET /api/origins` | token | list trusted origins |
@@ -48,7 +50,7 @@ New:
 | `GET /api/connectors` | token | connectors exposed by running plugins |
 | `GET /api/connectors/{connectorId}/status` | token | connector status |
 | `POST /api/connectors/{connectorId}/request` | token | **the gateway FormLogic Web uses** — body/response per `connector-request/response.schema.json` |
-| `GET /api/events?token=...` | token (query param allowed for EventSource) | SSE stream of desktop-event envelopes |
+| `GET /api/events` | token (`Authorization` header via fetch-based SSE; the `?token=` query fallback was removed — audit FL-008) | SSE stream of desktop-event envelopes |
 | `POST /api/flows/run` | token | **LIVE** — run a flow by slug (resolved via the linked account) or an inline `flowJson`; body per `flow-run-request.schema.json`, response `{runId, status, result?, error?}` per `flow-run-result.schema.json`. Reports `runner_unavailable` only when no flow runtime is wired. |
 | `GET /api/flows/runs/{id}` | token | **LIVE** — status/result of a recent run this desktop executed (`flow-run-result.schema.json`); `404 invalid_flow` for an unknown id. |
 
@@ -67,7 +69,15 @@ Loopback is not sufficient for privileged commands. Model:
 5. Browser keeps the token in memory/sessionStorage (never localStorage, never cookies) and sends `Authorization: Bearer <token>` (or `?token=` for EventSource only).
 6. Requests where the `Origin` header does not match the token's bound origin are rejected `origin_denied`.
 
-Dev bypass: `FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN=http://localhost:5173` auto-approves pairing for that origin (debug builds / env only). Legacy FormLogic rules (existing `origin_guard`, `FORMLOGIC_SERVER_TOKEN`) continue to apply to the pre-existing service/model routes.
+Dev bypass: `FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN=http://localhost:5173` auto-approves pairing for that origin (debug builds / env only).
+
+Trust anchors (LOCAL-SEC-001), identical for the plugin API and the management plane:
+
+- **The desktop's own webview** (`tauri://localhost` / `http(s)://tauri.localhost`; loopback ports in debug builds only) — the GUI needs no token. No hosted page can carry these origins.
+- **The headless server token** (`FORMLOGIC_SERVER_TOKEN`) — the CLI/admin path; the only key on a headless server, and the only way for ANY caller to reach the exec surface (define/uninstall/delete services, model download/delete, python install, venv create/delete) without the Desktop window.
+- **An exact-origin pairing token** — every browser origin, INCLUDING `https://formlogic.com` and its subdomains, must pair; there is no origin allow-list, so a compromised subdomain or site XSS cannot reach the local management plane.
+
+Native callers without an `Origin` header (curl, scripts) may use non-exec routes on a GUI or token-less box — they already run as the user — but never the exec surface.
 
 Error envelope everywhere: `{ok:false, error:{code, message}}` with codes from `connector-response.schema.json` (`origin_denied`, `capability_denied`, `connector_missing`, `connector_unavailable`, `command_failed`, `ipc_unavailable`, `auth_required`). These are intentionally the SAME codes FormLogic's `ConnectorError` already parses; only `ipc_unavailable`/`connector_missing` are fallbackable in the browser.
 
