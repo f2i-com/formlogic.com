@@ -62,6 +62,13 @@ export function formatValue(value: unknown, fieldType?: string, options?: Array<
       }
       const d = new Date(value);
       return isNaN(d.getTime()) ? value : d.toLocaleString();
+    } else if (isIsoDateTime(value)) {
+      // ANY other field holding a full ISO instant — e.g. the Aokie Calls pack's
+      // short_text started_at/answered_at/ended_at — also renders in the viewer's
+      // timezone instead of raw "2026-07-09T23:59:32.874Z". Zone-less strings never
+      // match (a wall clock the respondent picked is never shifted). Mirrors
+      // AppResponseDetail, so the builder and app record views agree.
+      return formatDateTimeInZone(value, tz || browserTimezone() || 'UTC');
     }
   }
   if (Array.isArray(value)) return value.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
