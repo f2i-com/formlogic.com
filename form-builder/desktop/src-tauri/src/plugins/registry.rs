@@ -96,6 +96,9 @@ pub(crate) struct PluginSlot {
     pub last_health: Option<HealthReport>,
     pub started_at: Option<DateTime<Utc>>,
     pub pid: Option<u32>,
+    /// TRUST-001: the package-signature assessment from the last scan
+    /// (re-checked again at launch). Tampered ⇒ quarantined (Disabled).
+    pub package_trust: crate::plugins::package_trust::PackageTrust,
 }
 
 impl PluginSlot {
@@ -114,6 +117,7 @@ impl PluginSlot {
             last_health: None,
             started_at: None,
             pid: None,
+            package_trust: crate::plugins::package_trust::PackageTrust::Unsigned,
         }
     }
 }
@@ -142,6 +146,11 @@ pub struct PluginSnapshot {
     pub started_at: Option<DateTime<Utc>>,
     pub last_health: Option<HealthReport>,
     pub restart_attempts: u32,
+    /// TRUST-001: "verified" | "unsigned" | "tampered".
+    pub package: &'static str,
+    /// Publisher key id + bundle version for a verified package.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_detail: Option<String>,
 }
 
 /// Persisted per-plugin entry in `registry.json`.
@@ -402,6 +411,27 @@ impl PluginHost {
                     .get(&id)
                     .map(|p| p.disabled)
                     .unwrap_or(false);
+                // TRUST-001 "verify before staging": assess the package
+                // signature/digests for every inert plugin dir on each scan. A
+                // present-but-invalid package manifest QUARANTINES the plugin;
+                // a missing one is an unsigned sideload (refused only when
+                // FORMLOGIC_REQUIRE_SIGNED_PLUGINS=1). start() re-checks.
+                slot.package_trust = crate::plugins::package_trust::assess(&slot.dir);
+                let trust_block: Option<String> = match &slot.package_trust {
+                    crate::plugins::package_trust::PackageTrust::Tampered(r) => {
+                        Some(format!("package verification failed (quarantined): {r}"))
+                    }
+                    crate::plugins::package_trust::PackageTrust::Unsigned
+                        if crate::plugins::package_trust::require_signed() =>
+                    {
+                        Some(
+                            "unsigned plugin refused: FORMLOGIC_REQUIRE_SIGNED_PLUGINS is on and \
+                             this directory has no valid signed package manifest"
+                                .into(),
+                        )
+                    }
+                    _ => None,
+                };
                 match loaded {
                     Err(e) => {
                         slot.manifest = None;
@@ -412,7 +442,10 @@ impl PluginHost {
                         let compat = compatibility_error(&m);
                         let missing = binary_missing_reason(&slot.dir, &m);
                         slot.manifest = Some(m);
-                        if let Some(e) = compat {
+                        if let Some(e) = trust_block {
+                            slot.state = PluginState::Disabled;
+                            slot.reason = Some(e);
+                        } else if let Some(e) = compat {
                             slot.state = PluginState::Disabled;
                             slot.reason = Some(e);
                         } else if slot.user_disabled {
@@ -563,6 +596,13 @@ fn snapshot_of(id: &str, slot: &PluginSlot) -> PluginSnapshot {
         started_at: slot.started_at,
         last_health: slot.last_health.clone(),
         restart_attempts: slot.restart_attempts,
+        package: slot.package_trust.label(),
+        package_detail: match &slot.package_trust {
+            crate::plugins::package_trust::PackageTrust::Verified { key_id, version, .. } => {
+                Some(format!("v{version} · key {key_id}"))
+            }
+            _ => None,
+        },
     }
 }
 

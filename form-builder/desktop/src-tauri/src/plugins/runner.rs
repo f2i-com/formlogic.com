@@ -82,6 +82,30 @@ impl PluginHost {
                     return Err(reason);
                 }
             }
+            // TRUST-001 "verify again before launch": re-hash the package NOW,
+            // not just at scan time — bytes swapped between the scan and this
+            // start must still never execute. Tampered ⇒ quarantine the slot;
+            // unsigned ⇒ refused only under FORMLOGIC_REQUIRE_SIGNED_PLUGINS.
+            {
+                use crate::plugins::package_trust::{self, PackageTrust};
+                slot.package_trust = package_trust::assess(&slot.dir);
+                let block = match &slot.package_trust {
+                    PackageTrust::Tampered(r) => {
+                        Some(format!("package verification failed (quarantined): {r}"))
+                    }
+                    PackageTrust::Unsigned if package_trust::require_signed() => Some(
+                        "unsigned plugin refused: FORMLOGIC_REQUIRE_SIGNED_PLUGINS is on and \
+                         this directory has no valid signed package manifest"
+                            .into(),
+                    ),
+                    _ => None,
+                };
+                if let Some(reason) = block {
+                    slot.state = PluginState::Disabled;
+                    slot.reason = Some(reason.clone());
+                    return Err(reason);
+                }
+            }
             slot.generation += 1;
             slot.state = PluginState::Starting;
             slot.reason = None;

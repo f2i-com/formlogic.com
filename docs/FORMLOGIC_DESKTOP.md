@@ -103,6 +103,16 @@ Model downloads are verified cryptographically end-to-end:
 
 See `docs/DESKTOP_PLUGIN_SDK.md`. Summary: plugins are directories under `<desktop-data>/plugins/<id>/` with a `manifest.json` (`plugin-manifest.schema.json`), run as supervised child processes speaking JSON-RPC 2.0 over stdio (newline-delimited). Lifecycle states: `installed, stopped, starting, running, unhealthy, crashed, disabled`. Desktop enforces: commands must be covered by manifest `capabilities`; events must be declared in manifest `events`; a crashing plugin never takes Desktop down.
 
+### 4b. Plugin package trust (TRUST-001)
+
+Release bundles ship a **first-party-signed `package-manifest.json`** (written by the aokie repo's `package-signer`): an Ed25519 signature by a publisher key — public half **pinned in the Desktop binary** (`plugins/package_trust.rs`, key id `fl-aokie-2026a`; private half only in the release pipeline's secret store) — over the SHA-256 + size of every bundle file. Desktop verifies **at scan ("before staging") and again at launch** (closing the scan→start TOCTOU window):
+
+- signature by a pinned, non-revoked publisher key;
+- every listed file present with the exact digest + size, `manifest.json` (the entry command) covered;
+- **no unlisted executable/loadable file** (`.exe`/`.dll`/scripts) in the directory — a dropped extra binary beside a signed plugin is hijack surface, so it **quarantines** (Disabled, exact reason surfaced, start refused). Inert extras (deploy `.bak-*`, notes) don't fail a signed package.
+
+Directories **without** a package manifest are "unsigned" sideloads: allowed for development (surfaced as `package: "unsigned"` in `GET /api/plugins`), refused outright under `FORMLOGIC_REQUIRE_SIGNED_PLUGINS=1` (the production posture). Key rotation = additional pinned entries; emergency revocation = `FORMLOGIC_REVOKED_PUBKEY_IDS`; lab/test keys = `FORMLOGIC_EXTRA_TRUSTED_PUBKEYS=id=b64,…`. Dev gotcha: after side-copying a new binary into a SIGNED plugin dir, delete `package-manifest.json` (or re-sign) — otherwise the next scan correctly quarantines the drift.
+
 ## 5. Browser client (FormLogic Web)
 
 `form-builder/ui/src/client-runtime/desktop/`:

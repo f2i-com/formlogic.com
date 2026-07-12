@@ -25,6 +25,7 @@
 pub mod builtin;
 pub mod receipts;
 pub mod manifest;
+pub mod package_trust;
 pub mod registry;
 pub mod rpc;
 pub mod runner;
