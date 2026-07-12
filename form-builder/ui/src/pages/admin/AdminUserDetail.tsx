@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Boxes, FileJson, FileText, ShieldCheck, Workflow } from 'lucide-react';
+import { Archive, ArrowLeft, Boxes, FileJson, FileText, ShieldCheck, Workflow } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { api, type AdminUserDetail as AdminUserDetailData } from '../../lib/api';
+import { api, type AdminUserDetail as AdminUserDetailData, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -57,6 +57,42 @@ export function AdminUserDetail() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  };
+
+  // Scheduled-backup recovery: which retained days hold a zip for THIS account.
+  const [backupDays, setBackupDays] = useState<ScheduledBackupRun[] | null>(null);
+  const [restoreDate, setRestoreDate] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  useEffect(() => {
+    api.adminListScheduledBackups().then((r) => {
+      if (r.data) {
+        setBackupDays(r.data.runs.filter((run) =>
+          run.accounts.some((a) => a.id === userId && !a.error)
+        ));
+      }
+    });
+  }, [userId]);
+
+  const restoreFromBackup = async () => {
+    const date = restoreDate;
+    setRestoreDate(null);
+    if (!date) return;
+    setRestoring(true);
+    try {
+      const r = await api.adminRestoreScheduledBackup(userId, date);
+      if (r.error || !r.data) {
+        toast.error('Restore failed', typeof r.error === 'string' ? r.error : undefined);
+        return;
+      }
+      toast.success(
+        `Restored from ${date}`,
+        `Created ${r.data.apps.length} apps, ${r.data.forms.length} forms and ${r.data.responses.toLocaleString()} records in this account.`
+      );
+      load(); // refresh the counters
+    } finally {
+      setRestoring(false);
+    }
   };
 
   const rowClass = 'w-full text-left rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800 block focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50';
@@ -154,8 +190,51 @@ export function AdminUserDetail() {
               </div>
             )}
           </section>
+          <section>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
+              <Archive className="h-4 w-4" /> Restore from backup
+            </h3>
+            {backupDays === null ? (
+              <p className="text-xs text-gray-400 dark:text-slate-500">Loading backups…</p>
+            ) : backupDays.length === 0 ? (
+              <p className="text-xs text-gray-400 dark:text-slate-500">
+                No scheduled backups contain this account yet — the nightly job (or Platform → Run backup now) creates them.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  Restores the chosen day&apos;s backup INTO this account as new copies — nothing existing is overwritten.
+                </p>
+                {backupDays.map((run) => {
+                  const entry = run.accounts.find((a) => a.id === userId);
+                  return (
+                    <div key={run.date} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2">
+                      <div className="min-w-0 text-sm">
+                        <span className="font-medium text-gray-900 dark:text-white">{run.date}</span>
+                        <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
+                          {((entry?.sizeBytes ?? 0) / (1024 * 1024)).toFixed(1)} MB
+                        </span>
+                      </div>
+                      <Button size="sm" variant="outline" disabled={restoring} onClick={() => setRestoreDate(run.date)}>
+                        Restore
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </>
       )}
+
+      <ConfirmDialog
+        isOpen={restoreDate !== null}
+        onClose={() => setRestoreDate(null)}
+        onConfirm={restoreFromBackup}
+        title={`Restore the ${restoreDate ?? ''} backup?`}
+        message={`This creates NEW copies of the apps, forms and records from that backup inside ${user?.email ?? 'this user'}'s account — nothing existing is overwritten or deleted. The restore is audited.`}
+        confirmLabel="Restore backup"
+      />
 
       <ConfirmDialog
         isOpen={confirmAdmin !== null}

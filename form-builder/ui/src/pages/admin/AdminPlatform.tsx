@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Activity, LogOut, Megaphone, RefreshCw, Wrench } from 'lucide-react';
+import { Activity, Archive, LogOut, Megaphone, RefreshCw, Wrench } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { api, type AdminNotice, type MaintenanceStatus } from '../../lib/api';
+import { api, type AdminNotice, type MaintenanceStatus, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { AdminError, AdminSpinner } from './adminUi';
@@ -24,6 +24,38 @@ export function AdminPlatform() {
   const [noticeText, setNoticeText] = useState('');
   const [noticeLevel, setNoticeLevel] = useState<'info' | 'warning' | 'success'>('info');
   const [noticeAudience, setNoticeAudience] = useState<'online' | 'all'>('online');
+
+  // Scheduled nightly backups (bin/backup-accounts.php) — list + run-now.
+  const [backupRuns, setBackupRuns] = useState<ScheduledBackupRun[] | null>(null);
+  const [backupLastRun, setBackupLastRun] = useState<string | null>(null);
+  const [runningBackup, setRunningBackup] = useState(false);
+
+  const loadBackups = useCallback(() => {
+    api.adminListScheduledBackups().then((r) => {
+      if (r.data) {
+        setBackupRuns(r.data.runs);
+        setBackupLastRun(r.data.lastRun);
+      }
+    });
+  }, []);
+  useEffect(() => { loadBackups(); }, [loadBackups]);
+
+  const runBackupNow = async () => {
+    setRunningBackup(true);
+    try {
+      const r = await api.adminRunScheduledBackup();
+      if (r.error || !r.data) {
+        toast.error('Backup failed', typeof r.error === 'string' ? r.error : undefined);
+        return;
+      }
+      const s = r.data.summary;
+      if (s.failed > 0) toast.warning('Backup finished with failures', `${s.ok}/${s.users} accounts backed up — check the manifest for errors.`);
+      else toast.success('Backup complete', `${s.ok} account${s.ok === 1 ? '' : 's'} backed up for ${s.date}.`);
+      loadBackups();
+    } finally {
+      setRunningBackup(false);
+    }
+  };
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
@@ -165,6 +197,48 @@ export function AdminPlatform() {
                   {n.active && (
                     <Button size="sm" variant="outline" onClick={async () => { await api.adminRevokeNotice(n.id); load(); }}>Retract</Button>
                   )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <Archive className="h-4 w-4" /> Scheduled backups
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+                Nightly site backup: one restorable zip per account + a full database dump, kept for the retention window.
+                Restore an account from its page in <strong>Users</strong>.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={runBackupNow} isLoading={runningBackup} leftIcon={<Archive className="h-4 w-4" />}>
+              {runningBackup ? 'Backing up…' : 'Run backup now'}
+            </Button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            {backupLastRun
+              ? <>Last run {formatDateTimeInZone(backupLastRun, tz)}</>
+              : <>Never run — schedule <code className="fl-mono">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
+          </p>
+          {backupRuns !== null && backupRuns.length > 0 && (
+            <div className="space-y-1.5">
+              {backupRuns.map((run) => (
+                <div key={run.date} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <span className="font-medium text-gray-900 dark:text-white">{run.date}</span>
+                    <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
+                      {run.users} account{run.users === 1 ? '' : 's'} · {(run.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                      {!run.includeFiles && ' · records only'}
+                    </span>
+                  </div>
+                  {run.failed > 0
+                    ? <Badge variant="warning">{run.failed} failed</Badge>
+                    : <Badge variant="success">ok</Badge>}
                 </div>
               ))}
             </div>

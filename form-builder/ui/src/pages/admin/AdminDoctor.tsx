@@ -23,6 +23,7 @@ const LABELS: Record<string, string> = {
   quickjs: 'QuickJS runtime',
   paypal: 'Billing (PayPal)',
   webhook_worker: 'Webhook retry worker',
+  scheduled_backup: 'Nightly backups',
   dual_store: 'Dual-store consistency',
   document_converter: 'Document converters',
   ai: 'AI service',

@@ -658,6 +658,24 @@ class ApiClient {
     return this.request(`/admin/users/${encodeURIComponent(userId)}/backup-manifest`);
   }
 
+  /** Admin: the retained scheduled-backup days + the cron heartbeat. */
+  async adminListScheduledBackups(): Promise<ApiResponse<{ runs: ScheduledBackupRun[]; lastRun: string | null; lastStatus: ScheduledBackupStatus | null }>> {
+    return this.request('/admin/backups');
+  }
+
+  /** Admin: run a scheduled-backup pass now (same as the nightly cron). */
+  async adminRunScheduledBackup(): Promise<ApiResponse<{ summary: ScheduledBackupStatus & { prunedDays?: string[] } }>> {
+    return this.request('/admin/backups/run', { method: 'POST' });
+  }
+
+  /** Admin: restore ONE account from a backup day into that user's account (new copies). */
+  async adminRestoreScheduledBackup(userId: string, date: string): Promise<ApiResponse<AccountBackupImportResult>> {
+    return this.request('/admin/backups/restore', {
+      method: 'POST',
+      body: JSON.stringify({ userId, date }),
+    });
+  }
+
   // Form endpoints
   async getForms(options?: { status?: string; limit?: number; offset?: number }): Promise<ApiResponse<{ forms: Form[]; count: number }>> {
     const params = new URLSearchParams();
@@ -2854,6 +2872,24 @@ export interface AccountBackupImportResult {
   responses: number;
   files: number;
   warnings?: string[];
+}
+
+export interface ScheduledBackupRun {
+  date: string;
+  users: number;
+  failed: number;
+  totalBytes: number;
+  finishedAt: string | null;
+  includeFiles: boolean;
+  accounts: Array<{ id: string | null; email: string | null; sizeBytes: number; error?: string | null }>;
+}
+
+export interface ScheduledBackupStatus {
+  date: string;
+  users: number;
+  ok: number;
+  failed: number;
+  totalBytes: number;
 }
 
 interface PackInstallation {
