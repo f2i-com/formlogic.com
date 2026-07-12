@@ -30,14 +30,6 @@ const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../resources/templates/playwright-browser.json"),
     ),
     (
-        "ltx2-video.json",
-        include_str!("../../resources/templates/ltx2-video.json"),
-    ),
-    (
-        "lance.json",
-        include_str!("../../resources/templates/lance.json"),
-    ),
-    (
         "krea2.json",
         include_str!("../../resources/templates/krea2.json"),
     ),
@@ -69,54 +61,8 @@ const BUILTIN_SCRIPTS: &[(&str, &str)] = &[
         "fetch_zip.py",
         include_str!("../../resources/scripts/fetch_zip.py"),
     ),
-    // LTX-2.3 video service: one-click .bat installer + its HTTP server.
-    (
-        "install-ltx2.bat",
-        include_str!("../../resources/scripts/install-ltx2.bat"),
-    ),
-    (
-        "ltx2_server.py",
-        include_str!("../../resources/scripts/ltx2_server.py"),
-    ),
-    // Lance (image+video) service: one-click .bat installer. It runs the
-    // repo's own lance_gradio.py; lance_server.py (below) wraps run_task() in a
-    // clean JSON API for formlogic-web while still mounting that Gradio UI.
-    (
-        "install-lance.bat",
-        include_str!("../../resources/scripts/install-lance.bat"),
-    ),
-    // Optional multi-GPU sharding / CPU-offload patch for Lance's gradio
-    // server. install-lance.bat applies it after fetch; inert at runtime
-    // unless FORMLOGIC_LANCE_SHARD=1 / FORMLOGIC_LANCE_OFFLOAD=1.
-    (
-        "patch_lance_sharding.py",
-        include_str!("../../resources/scripts/patch_lance_sharding.py"),
-    ),
-    // Patch config_factory.get_model_path to honor LANCE_MODEL_BASE_DIR for the
-    // ViT + Wan VAE (their paths come from a relative "downloads/..." yaml, unlike
-    // the main model). Without it, off-repo weights load the LLM but 404 the ViT.
-    (
-        "patch_lance_paths.py",
-        include_str!("../../resources/scripts/patch_lance_paths.py"),
-    ),
-    // SDPA-backed `flash_attn` shim. Lance hard-imports flash_attn_varlen_func;
-    // there's no matching Windows/Blackwell wheel, so install-lance.bat copies
-    // this into the venv's site-packages as flash_attn.py (unless
-    // FORMLOGIC_LANCE_FLASH=1, which builds the real thing).
-    (
-        "flash_attn_shim.py",
-        include_str!("../../resources/scripts/flash_attn_shim.py"),
-    ),
-    // Thin JSON API (FastAPI) wrapping lance_gradio.run_task so formlogic-web can
-    // drive Lance over HTTP; also mounts the Gradio UI at /ui.
-    (
-        "lance_server.py",
-        include_str!("../../resources/scripts/lance_server.py"),
-    ),
     // --- Linux install scripts (.sh) — seeded alongside the .ps1/.bat so
-    // formlogic-server can install services on a headless Linux host. ollama /
-    // playwright / llama-cpp are real installers; ltx2 / lance print manual
-    // setup guidance (their GPU installs need a real Linux+CUDA box to port).
+    // formlogic-server can install services on a headless Linux host.
     (
         "install-ollama.sh",
         include_str!("../../resources/scripts/install-ollama.sh"),
@@ -125,19 +71,29 @@ const BUILTIN_SCRIPTS: &[(&str, &str)] = &[
         "install-playwright.sh",
         include_str!("../../resources/scripts/install-playwright.sh"),
     ),
-    (
-        "install-ltx2.sh",
-        include_str!("../../resources/scripts/install-ltx2.sh"),
-    ),
-    (
-        "install-lance.sh",
-        include_str!("../../resources/scripts/install-lance.sh"),
-    ),
     // NOTE: Krea-2 Turbo and Llama.cpp Server ship as SELF-CONTAINED packages --
     // their scripts live inline in the `files` map of their own templates
     // (krea2.json: krea2_server.py / krea2_gguf.py / install-krea2.ps1+.sh;
     // llama-cpp.json: install-llama-cpp.ps1+.sh) and are materialized on load,
     // so they are not listed here.
+];
+
+/// Former built-in templates that no longer ship (f2i-era video/image
+/// services). init() deletes a seeded on-disk copy ONLY when it still matches
+/// its `.seed` snapshot — a hand-edited copy is the user's now and stays.
+const RETIRED_TEMPLATES: &[&str] = &["ltx2-video.json", "lance.json"];
+
+/// Scripts that only existed to serve the retired templates above.
+const RETIRED_SCRIPTS: &[&str] = &[
+    "install-ltx2.bat",
+    "install-ltx2.sh",
+    "ltx2_server.py",
+    "install-lance.bat",
+    "install-lance.sh",
+    "lance_server.py",
+    "patch_lance_sharding.py",
+    "patch_lance_paths.py",
+    "flash_attn_shim.py",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -492,6 +448,38 @@ fn seed_builtin_script(target: &Path, snapshot: &Path, body: &str) -> std::io::R
     Ok(())
 }
 
+/// Delete retired built-in files that are still pristine auto-seeds: the
+/// on-disk copy must match its `.seed` snapshot byte-for-byte (modulo
+/// whitespace trim, mirroring seed_builtin_script's comparison). A missing
+/// snapshot means we can't prove the file is ours, so it stays. Orphaned
+/// snapshots are always removed.
+fn remove_retired_seeds(dir: &Path, names: &[&str]) {
+    for name in names {
+        let target = dir.join(name);
+        let snap = dir.join(format!(".{name}.seed"));
+        let target_body = std::fs::read_to_string(&target).ok();
+        let snap_body = std::fs::read_to_string(&snap).ok();
+        match (target_body, snap_body) {
+            (Some(current), Some(seed)) => {
+                if current.trim() == seed.trim() {
+                    if let Err(e) = std::fs::remove_file(&target) {
+                        log::warn!("could not remove retired {name}: {e}");
+                    } else {
+                        log::info!("removed retired built-in {name}");
+                        let _ = std::fs::remove_file(&snap);
+                    }
+                } else {
+                    log::info!("keeping user-edited retired file {name}");
+                }
+            }
+            (None, Some(_)) => {
+                let _ = std::fs::remove_file(&snap);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A package-file name is safe iff it's a bare filename (no path separator / `..` /
 /// drive prefix) and not hidden — package files live directly in `scripts/`.
 fn is_safe_script_name(name: &str) -> bool {
@@ -634,6 +622,12 @@ impl Registry {
         // the trusted compiled-in source, so the reserved-name guard in
         // materialize_package_files refuses any imported package from overwriting them.
         seed_builtin_template_files(&data_dir.join("scripts"));
+
+        // Retired built-ins: sweep seeded copies off existing installs. A copy
+        // that diverged from its snapshot was hand-edited — it's the user's
+        // template/script now and is left alone.
+        remove_retired_seeds(&data_dir.join("templates"), RETIRED_TEMPLATES);
+        remove_retired_seeds(&data_dir.join("scripts"), RETIRED_SCRIPTS);
 
         let mut services = HashMap::new();
         for entry in std::fs::read_dir(data_dir.join("templates"))? {
@@ -2189,6 +2183,37 @@ mod tests {
                 .unwrap_or_else(|e| panic!("builtin template {name} failed to deserialize: {e}"));
             assert!(!t.id.is_empty(), "builtin template {name} has empty id");
         }
+    }
+
+    /// Retired-builtin sweep: pristine seeds (content == snapshot) are removed
+    /// along with their snapshot; a hand-edited copy survives; an orphaned
+    /// snapshot with no template goes away.
+    #[test]
+    fn retired_seed_sweep_removes_pristine_keeps_edited() {
+        let dir = std::env::temp_dir().join(format!(
+            "fl-retired-seeds-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(dir.join("pristine.json"), "{\"id\":\"old\"}").unwrap();
+        std::fs::write(dir.join(".pristine.json.seed"), "{\"id\":\"old\"}").unwrap();
+        std::fs::write(dir.join("edited.json"), "{\"id\":\"mine\"}").unwrap();
+        std::fs::write(dir.join(".edited.json.seed"), "{\"id\":\"old\"}").unwrap();
+        std::fs::write(dir.join(".orphan.json.seed"), "{}").unwrap();
+
+        super::remove_retired_seeds(
+            &dir,
+            &["pristine.json", "edited.json", "orphan.json", "never-existed.json"],
+        );
+
+        assert!(!dir.join("pristine.json").exists(), "pristine copy removed");
+        assert!(!dir.join(".pristine.json.seed").exists(), "its snapshot removed");
+        assert!(dir.join("edited.json").exists(), "edited copy kept");
+        assert!(dir.join(".edited.json.seed").exists(), "edited snapshot kept");
+        assert!(!dir.join(".orphan.json.seed").exists(), "orphan snapshot removed");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

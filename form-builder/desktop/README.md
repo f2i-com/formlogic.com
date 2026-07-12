@@ -39,8 +39,6 @@ config dir on first run; edit there to customise without rebuilding):
 | **llama.cpp** | Pinned llama-server release; CUDA build when an NVIDIA GPU is detected, AVX2 CPU otherwise. Serves OpenAI-compatible API on `:8080`. |
 | **Ollama** | Official Windows installer (system-wide). Serves on `:11434`. |
 | **Playwright Browser** | Headless Chromium backend for the `browser_*` nodes (goto/extract/click/screenshot). Installs Playwright into a venv reusing the companion's Python. Serves on `:17880`. |
-| **LTX-2.3 Video** | Lightricks LTX-2.3 distilled text-to-video (with audio); CUDA venv via uv. Weights are user-supplied (point it at a model folder). Serves on `:17890`. |
-| **Lance (Image+Video)** | ByteDance **Lance** 3B unified image+video model; Python 3.11 CUDA venv, downloads weights, exposes a JSON API plus Lance's Gradio UI at `/ui`. Serves on `:17900`. |
 
 Add more by dropping a `<name>.json` template into the templates folder —
 no rebuild needed.
@@ -154,9 +152,8 @@ services before exit (clean `systemctl stop`).
 
 **Service installs on Linux:** each service template carries a `unix` install
 script (`.sh`) alongside the Windows one, embedded + seeded by the registry.
-`ollama`, `playwright-browser`, and `llama-cpp` have working `.sh` installers;
-the GPU services (`ltx2-video`, `lance`) print manual-setup guidance (their CUDA
-installs need porting + validating on a real Linux GPU box). The portable Python
+`ollama`, `playwright-browser`, and `llama-cpp` have working `.sh` installers.
+The portable Python
 runtime + venvs are already cross-platform, and venv `run.command` paths
 (`…/Scripts/python.exe`) are rewritten to `…/bin/python` on Unix automatically.
 

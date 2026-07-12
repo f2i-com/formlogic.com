@@ -539,8 +539,8 @@ export default function SettingsPanel() {
       <section className="model-section">
         <h3 className="section-title">Models folder</h3>
         <p className="form-hint" style={{ marginBottom: 12 }}>
-          Where downloaded models &amp; weights are saved — the LTX-2.3 / Lance
-          installers' <code className="path-code">FORMLOGIC_MODELS_DIR</code> points
+          Where downloaded models &amp; weights are saved — service installers'{' '}
+          <code className="path-code">FORMLOGIC_MODELS_DIR</code> points
           here too. Defaults to a <code className="path-code">models</code>{' '}
           subfolder of the data folder; point it at a big drive (e.g.{' '}
           <code className="path-code">E:\models</code>) to keep your library
@@ -664,9 +664,9 @@ export default function SettingsPanel() {
           Extra folders to scan for weights, on top of the models folder above.
           Point a service at a library you already have on another drive (e.g.{' '}
           <code className="path-code">E:\ckpts</code>) without moving anything —
-          nothing is downloaded or written here. Services that support it (like
-          LTX-2.3 Video) search all of these for their checkpoints. Applies the
-          next time a service starts; no restart needed.
+          nothing is downloaded or written here. Services that support it search
+          all of these for their checkpoints. Applies the next time a service
+          starts; no restart needed.
         </p>
 
         {extraDirs.length > 0 ? (
