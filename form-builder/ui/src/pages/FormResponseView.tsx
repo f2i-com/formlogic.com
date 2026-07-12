@@ -12,6 +12,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { FileAnswerValue } from '../components/ui/FileAnswerValue';
+import { SignatureValue } from '../components/ui/SignatureValue';
 import { RelatedRecordsPanel } from '../components/app-runtime/RelatedRecordsPanel';
 import { LinkedRecordChips } from '../components/responses/recordDisplay';
 import { renderEditField } from '../components/responses/renderEditField';
@@ -342,6 +343,10 @@ function FormResponseView() {
                               files={record.answers[field.id] as import('../components/ui/FileAnswerValue').FileAnswerItem[]}
                               linkClassName="text-primary-600 dark:text-primary-400 hover:underline"
                             />
+                          ) : field.type === 'signature' ? (
+                            // Drawn signatures render as the actual image (typed ones as the
+                            // name) so the owner can verify the record was signed at a glance.
+                            <SignatureValue value={record.answers[field.id]} />
                           ) : (
                             formatValue(record.answers[field.id], field.type, field.properties?.options, displayTz) === '-' ? (
                               <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>

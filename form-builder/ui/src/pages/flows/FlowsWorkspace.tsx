@@ -455,19 +455,29 @@ export function FlowsWorkspace() {
     // Mobile height mirrors AppShell's real bottom-nav padding — pb-[calc(5rem+safe-area)] —
     // so the workspace fills the viewport exactly (4rem here left a 16px page scroll).
     <div className="flex h-[calc(100dvh-5rem-env(safe-area-inset-bottom)-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
-      <Header
-        title="Flows"
-        actions={
-          <>
-            <DesktopPresenceChip presence={desktopPresence} />
-            <AiServicesChip onClick={() => setShowAiServices(true)} />
-            <Button size="sm" onClick={() => openNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
-              <span className="hidden sm:inline">New flow</span>
-              <span className="sm:hidden">New</span>
-            </Button>
-          </>
-        }
-      />
+      {/* This workspace is a fixed-height box that already sits BELOW the demo/acting
+          banner (the height calc above subtracts it), so the Header's banner offset
+          (sticky top-[var(--fl-demo-banner-h)]) must NOT apply in here: inside this
+          overflow-hidden scrollport the inset takes effect immediately, shifting the
+          header down by the banner height — a gap where the header belongs and the
+          header overlapping the flow toolbar below it. Zeroing the var for this
+          subtree neutralizes the offset; the root's own height calc is unaffected
+          (custom properties only inherit DOWNWARD from this wrapper). */}
+      <div className="[--fl-demo-banner-h:0px]">
+        <Header
+          title="Flows"
+          actions={
+            <>
+              <DesktopPresenceChip presence={desktopPresence} />
+              <AiServicesChip onClick={() => setShowAiServices(true)} />
+              <Button size="sm" onClick={() => openNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
+                <span className="hidden sm:inline">New flow</span>
+                <span className="sm:hidden">New</span>
+              </Button>
+            </>
+          }
+        />
+      </div>
 
       <div ref={workspaceRowRef} className="flex min-h-0 flex-1">
         {/* Library */}
