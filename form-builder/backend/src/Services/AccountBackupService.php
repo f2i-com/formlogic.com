@@ -184,9 +184,16 @@ final class AccountBackupService
     // Export
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Build the full account backup. Returns the path to a temp zip the caller streams then unlinks. */
-    public function exportAccount(string $userId): string
+    /**
+     * Build the full account backup. Returns the path to a temp zip the caller
+     * streams (or moves) then unlinks.
+     *
+     * @param array{includeFiles?: bool} $options includeFiles=false skips the
+     *        uploaded-files tree (the scheduled nightly job's size lever).
+     */
+    public function exportAccount(string $userId, array $options = []): string
     {
+        $includeFiles = (bool) ($options['includeFiles'] ?? true);
         if (!class_exists(\ZipArchive::class)) {
             throw new \RuntimeException('The PHP zip extension is required for backups.');
         }
@@ -239,10 +246,12 @@ final class AccountBackupService
                 $zip->addFile($staged, $name);
 
                 // Uploaded files for this form (immutable once written; .pending is staging).
-                foreach ($this->collectUploadFiles($formId) as $entryName => $absPath) {
-                    $entries[$entryName] = hash_file('sha256', $absPath);
-                    $zip->addFile($absPath, $entryName);
-                    $fileTotal++;
+                if ($includeFiles) {
+                    foreach ($this->collectUploadFiles($formId) as $entryName => $absPath) {
+                        $entries[$entryName] = hash_file('sha256', $absPath);
+                        $zip->addFile($absPath, $entryName);
+                        $fileTotal++;
+                    }
                 }
             }
 

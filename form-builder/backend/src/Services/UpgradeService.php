@@ -549,8 +549,10 @@ class UpgradeService
      * Pure-PHP MySQL export (no mysqldump dependency): DROP+CREATE per table +
      * chunked INSERTs, one statement per line ("\n"/"\r" inside values are
      * \-escaped so restoreDatabase can split on newlines safely), gzip-written.
+     * PUBLIC: shared with ScheduledBackupService (the nightly site dump), which
+     * must not create a Backups-panel entry the way exportDatabaseBackup does.
      */
-    private function dumpDatabase(string $outGzPath): void
+    public function dumpDatabase(string $outGzPath): void
     {
         $gz = gzopen($outGzPath, 'wb6');
         if ($gz === false) {

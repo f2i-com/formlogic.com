@@ -133,6 +133,27 @@ class HealthController
             $checks['webhook_worker'] = ['ok' => true, 'critical' => false, 'detail' => 'heartbeat unavailable'];
         }
 
+        // Scheduled nightly backups — non-critical, but an operator should KNOW when the
+        // safety net isn't running (never scheduled, or the cron went stale).
+        try {
+            $stmt = $this->db->getConnection()->query("SELECT meta_value FROM system_meta WHERE meta_key = 'scheduled_backup_last_run'");
+            $lastRun = $stmt ? $stmt->fetchColumn() : false;
+            if ($lastRun === false || $lastRun === null) {
+                $checks['scheduled_backup'] = [
+                    'ok' => true, 'critical' => false, 'detail' => 'no backup run recorded yet',
+                    'warning' => 'scheduled backups have never run — schedule bin/backup-accounts.php daily (or run one from Admin → Platform)',
+                ];
+            } else {
+                $ageH = (time() - strtotime((string) $lastRun)) / 3600;
+                $checks['scheduled_backup'] = ['ok' => true, 'critical' => false, 'detail' => sprintf('last backup ~%.0fh ago', $ageH)];
+                if ($ageH > 30) {
+                    $checks['scheduled_backup']['warning'] = 'nightly backup looks stale (>30h) — check the bin/backup-accounts.php cron/Task Scheduler job';
+                }
+            }
+        } catch (\Throwable $e) {
+            $checks['scheduled_backup'] = ['ok' => true, 'critical' => false, 'detail' => 'heartbeat unavailable'];
+        }
+
         // Email delivery — non-critical, but launch-important: invitations + password resets depend on
         // it. Surfaces the silent traps (no from-address; SMTP set but symfony/mailer not installed).
         try {

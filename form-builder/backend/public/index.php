@@ -161,7 +161,20 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         $c->get(ResponseService::class),
         $c->get(AuditService::class),
         $c->get(LoggerInterface::class),
-        $c->get(\FormLogic\Services\AccountBackupService::class)
+        $c->get(\FormLogic\Services\AccountBackupService::class),
+        $c->get(\FormLogic\Services\ScheduledBackupService::class)
+    );
+});
+
+// Scheduled nightly site backups (bin/backup-accounts.php + the admin panel's
+// Platform card): dated folders of per-account zips + a whole-site MySQL dump.
+$container->set(\FormLogic\Services\ScheduledBackupService::class, function (Container $c) use ($settings) {
+    return new \FormLogic\Services\ScheduledBackupService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\AccountBackupService::class),
+        $c->get(\FormLogic\Services\UpgradeService::class),
+        $settings['settings']['backups'] ?? [],
+        $c->get(LoggerInterface::class)
     );
 });
 
@@ -873,6 +886,18 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // PATHS and sizes — never record data (the admin panel lists, it never exports).
     $group->get('/users/{id}/backup-manifest', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->backupManifest($request, $response, $adminArgs($request));
+    });
+
+    // Scheduled nightly backups: list the retained days, run a pass on demand,
+    // and restore ONE account from a day's zip (new copies — never overwrites).
+    $group->get('/backups', function ($request, $response) use ($ctrl) {
+        return $ctrl()->listScheduledBackups($request, $response);
+    });
+    $group->post('/backups/run', function ($request, $response) use ($ctrl) {
+        return $ctrl()->runScheduledBackup($request, $response);
+    });
+    $group->post('/backups/restore', function ($request, $response) use ($ctrl) {
+        return $ctrl()->restoreScheduledBackup($request, $response);
     });
 
     // Structure views + on-behalf-of-the-owner structural edits.

@@ -14,6 +14,7 @@ use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\MaintenanceService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\ScheduledBackupService;
 use FormLogic\Services\UpgradeService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -43,6 +44,7 @@ class AdminController
         private ?AuditService $auditService = null,
         private ?LoggerInterface $logger = null,
         private ?AccountBackupService $backup = null,
+        private ?ScheduledBackupService $scheduledBackup = null,
     ) {
     }
 
@@ -108,6 +110,77 @@ class AdminController
         }
         $this->audit($request, 'admin.backup_manifest', (string) $args['id']);
         return $this->jsonResponse($response, ['manifest' => $manifest]);
+    }
+
+    // ── Scheduled backups (nightly cron; structure/summaries only) ──────────
+
+    /** GET /api/admin/backups — the retained day-folders + heartbeat. */
+    public function listScheduledBackups(Request $request, Response $response): Response
+    {
+        if ($this->scheduledBackup === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Scheduled backups are not configured'], 500);
+        }
+        return $this->jsonResponse($response, [
+            'runs' => $this->scheduledBackup->listRuns(),
+        ] + $this->scheduledBackup->lastRun());
+    }
+
+    /** POST /api/admin/backups/run — run a backup pass now (same as the cron). */
+    public function runScheduledBackup(Request $request, Response $response): Response
+    {
+        if ($this->scheduledBackup === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Scheduled backups are not configured'], 500);
+        }
+        @set_time_limit(600);
+        try {
+            $summary = $this->scheduledBackup->run();
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 500);
+        }
+        $this->audit($request, 'admin.scheduled_backup_run', null, [
+            'date' => $summary['date'], 'ok' => $summary['ok'], 'failed' => $summary['failed'],
+        ]);
+        return $this->jsonResponse($response, ['summary' => $summary]);
+    }
+
+    /**
+     * POST /api/admin/backups/restore {userId, date} — restore ONE account from a
+     * scheduled backup INTO that user's account (new copies, never overwrites;
+     * the same import pipeline as Settings → Restore). The admin only receives
+     * the structure summary — never record data.
+     */
+    public function restoreScheduledBackup(Request $request, Response $response): Response
+    {
+        if ($this->scheduledBackup === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Scheduled backups are not configured'], 500);
+        }
+        $body = $request->getParsedBody() ?? [];
+        $userId = (string) ($body['userId'] ?? '');
+        $date = (string) ($body['date'] ?? '');
+        if ($userId === '' || $date === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'userId and date are required'], 400);
+        }
+        $target = $this->auth->getUserById($userId);
+        if ($target === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+        $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+        if (strtolower($target->email) === $demoEmail) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'demo_readonly', 'message' => 'The shared demo account is provisioning-managed.'], 403);
+        }
+        @set_time_limit(600);
+        try {
+            $summary = $this->scheduledBackup->restoreAccount($date, $userId);
+        } catch (\InvalidArgumentException | \RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        $this->audit($request, 'admin.backup_restore', $userId, [
+            'date' => $date,
+            'apps' => count($summary['apps']),
+            'forms' => count($summary['forms']),
+            'responses' => $summary['responses'],
+        ]);
+        return $this->jsonResponse($response, $summary);
     }
 
     // ── Structure views (counts, never records) ─────────────────────────────

@@ -180,6 +180,10 @@ return [
             'maxApps' => 100,
             'maxFlows' => 200,
             'maxBindings' => 400,
+            // Scheduled nightly backups (bin/backup-accounts.php): dated folders of
+            // per-account zips + a whole-site MySQL dump, pruned to retentionDays.
+            'retentionDays' => max(1, (int)($_ENV['BACKUP_RETENTION_DAYS'] ?? 7)),
+            'scheduledIncludeFiles' => strtolower((string)($_ENV['BACKUP_INCLUDE_FILES'] ?? 'true')) !== 'false',
         ],
 
         // Hosted-cloud plan limits. Only enforced when planEnforced is true (hosted SaaS);
