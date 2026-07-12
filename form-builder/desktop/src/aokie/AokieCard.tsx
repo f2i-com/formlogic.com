@@ -113,10 +113,14 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
     numericValue: number;
   } | null>(null);
   const bondedRef = useRef<string[]>([]);
-  // Snapshot when a window opens, so "the phone arrived" is a TRANSITION
-  // (new bond / fresh reconnect), not just "something was already connected".
+  // Snapshot the bonded-device COUNT when a window opens, so a genuinely new
+  // phone shows up as a TRANSITION (the count grew).
   const baselineBonds = useRef(0);
-  const baselineConnected = useRef(false);
+  // PAIR-001: set once the operator accepts THIS window's numeric-comparison
+  // prompt. Re-pairing a phone whose address is already stored doesn't grow the
+  // bond count, so the operator's confirm + a live connection is what marks
+  // that case a success. Reset per window.
+  const confirmedRef = useRef(false);
   const toast = useToast();
   const { confirm } = useConfirm();
 
@@ -163,6 +167,7 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
       setDevice(null);
       setError(null);
       setConfirmPrompt(null);
+      confirmedRef.current = false;
       return;
     }
     Promise.all([pollStatus(), loadBonded()]).catch((e) =>
@@ -185,7 +190,7 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
   const windowOpen = secondsLeft > 0;
   useEffect(() => {
     if (!windowOpen) return;
-    baselineConnected.current = connected;
+    confirmedRef.current = false;
     loadBonded()
       .then((addrs) => {
         baselineBonds.current = addrs.length;
@@ -197,10 +202,13 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
   }, [windowOpen, loadBonded]);
 
   // While the window is open, poll fast: tick the countdown and watch for the
-  // phone actually arriving. A NEW bond (listPaired grew) or a fresh reconnect
-  // (connected flipped on since the window opened) is success — close the
-  // window (the radio auto-closes on a bond; Stop covers the reconnect case)
-  // and say so, instead of letting the timer silently run out.
+  // phone to actually BOND. Success = the bonded list grew, OR the operator
+  // accepted this window's numeric comparison and the phone is now connected
+  // (re-pairing a stored address doesn't grow the count). We must NOT treat a
+  // bare connection as success: the ACL for a fresh pairing comes up a beat
+  // BEFORE the numeric-comparison prompt, so closing the window on "connected"
+  // slammed it shut mid-SSP and every pairing failed with "incorrect PIN or
+  // passkey" (PAIR-001).
   useEffect(() => {
     if (!running || !windowOpen) return;
     const t = window.setInterval(async () => {
@@ -208,7 +216,7 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
         const s = await pollStatus();
         const bondsNow = (await loadBonded()).length;
         const success =
-          bondsNow > baselineBonds.current || (s.connected && !baselineConnected.current);
+          bondsNow > baselineBonds.current || (confirmedRef.current && s.connected);
         if (!success) return;
         try {
           await plugins.command('aokie', 'phone.stopPairing');
@@ -233,10 +241,10 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
     setBusy(true);
     setError(null);
     try {
-      // Pre-window baseline so the poller can spot the new bond / reconnect.
+      // Pre-window baseline so the poller can spot the new bond.
       const before = await loadBonded();
       baselineBonds.current = before.length;
-      baselineConnected.current = connected;
+      confirmedRef.current = false;
       const res = await plugins.command('aokie', 'phone.startPairing', {
         seconds: PAIRING_WINDOW_SECONDS,
       });
@@ -286,6 +294,10 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
         address: confirmPrompt.address,
         accept,
       });
+      // PAIR-001: remember the operator accepted THIS window's comparison, so
+      // the poller counts the phone reconnecting as success even when its
+      // address was already stored (re-pair doesn't grow the bond count).
+      if (accept) confirmedRef.current = true;
       setConfirmPrompt(null);
       if (!accept) {
         toast.push({
