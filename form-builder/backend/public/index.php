@@ -204,6 +204,28 @@ $container->set(\FormLogic\Controllers\AccountBackupController::class, function 
     );
 });
 
+// Recycle bin: deletes snapshot first (AccountBackupService::exportScoped) and
+// restore is a preserve-ids re-import — see TrashService for the full contract.
+$container->set(\FormLogic\Services\TrashService::class, function (Container $c) use ($settings) {
+    return new \FormLogic\Services\TrashService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(\FormLogic\Services\AccountBackupService::class),
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $settings['settings']['trash'] ?? [],
+        $c->get(LoggerInterface::class)
+    );
+});
+$container->set(\FormLogic\Controllers\TrashController::class, function (Container $c) {
+    return new \FormLogic\Controllers\TrashController(
+        $c->get(\FormLogic\Services\TrashService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
 // Register webhook service (early, used by FormService and ResponseService)
 $container->set(WebhookService::class, function (Container $c) {
     return new WebhookService(
@@ -280,7 +302,9 @@ $container->set(AuthController::class, function (Container $c) {
         $c->get(FormService::class),
         $c->get(AppService::class),
         $c->get(ApiKeyService::class),
-        $c->get(MySQLConnection::class)
+        $c->get(MySQLConnection::class),
+        // Erasure wipes the user's recycle bin (fail-closed) — it never trashes.
+        $c->get(\FormLogic\Services\TrashService::class)
     );
 });
 
@@ -291,7 +315,8 @@ $container->set(FormController::class, function (Container $c) {
         $c->get(FormVersionService::class),
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\PlanService::class),
-        $c->get(\FormLogic\Services\AppReportService::class)
+        $c->get(\FormLogic\Services\AppReportService::class),
+        $c->get(\FormLogic\Services\TrashService::class)
     );
 });
 
@@ -348,7 +373,9 @@ $container->set(PackController::class, function (Container $c) {
         $c->get(PackService::class),
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\PlanService::class),
-        $c->get(\FormLogic\Services\SigningService::class)
+        $c->get(\FormLogic\Services\SigningService::class),
+        // Uninstall pre-captures record-bearing pack forms into the recycle bin.
+        $c->get(\FormLogic\Services\TrashService::class)
     );
 });
 
@@ -453,7 +480,9 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\PlanService::class),
         // Flows: the same owner CRUD surface the /flows workspace uses (create_flow,
         // create_flow_binding, … — lets an AI automate the apps it builds).
-        $c->get(\FormLogic\Services\FlowService::class)
+        $c->get(\FormLogic\Services\FlowService::class),
+        // Recycle bin: MCP flow deletes snapshot first, like the web surface.
+        $c->get(\FormLogic\Services\TrashService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -542,7 +571,8 @@ $container->set(AppController::class, function (Container $c) {
         $c->get(AppService::class),
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
-        $c->get(\FormLogic\Services\AppReportService::class)
+        $c->get(\FormLogic\Services\AppReportService::class),
+        $c->get(\FormLogic\Services\TrashService::class)
     );
 });
 
@@ -577,7 +607,9 @@ $container->set(\FormLogic\Controllers\FlowController::class, function (Containe
         $c->get(AppService::class),
         $c->get(AppUserService::class),
         // Deleting an OAuth-linked desktop connection revokes its scoped flk_ key.
-        $c->get(ApiKeyService::class)
+        $c->get(ApiKeyService::class),
+        // Recycle bin: flow deletes snapshot first.
+        $c->get(\FormLogic\Services\TrashService::class)
     );
 });
 // Remote command relay: web member → paired desktop runtime (connector commands).
@@ -1094,6 +1126,22 @@ $app->get('/api/account/backup/export', function ($request, $response) use ($con
 $app->post('/api/account/backup/import', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AccountBackupController::class)->import($request, $response);
 })->add($cloudWriteGate)->add($backupRateLimiter)->add($authRequired);
+
+// ── Recycle bin (owner; also mirrored for acting admins via AdminActingAsRoutes,
+// which returns names/counts only — snapshot CONTENTS are never downloadable).
+// Restore re-imports a snapshot (expensive) → its own tight per-user limit.
+$trashRestoreRateLimiter = new RateLimitMiddleware($rateLimiter, 5, 60, 'trash_restore', true);
+$app->get('/api/trash', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\TrashController::class)->index($request, $response);
+})->add($authRequired);
+$app->post('/api/trash/{id}/restore', function ($request, $response) use ($container) {
+    $args = \Slim\Routing\RouteContext::fromRequest($request)->getRoute()->getArguments();
+    return $container->get(\FormLogic\Controllers\TrashController::class)->restore($request, $response, $args);
+})->add($trashRestoreRateLimiter)->add($authRequired);
+$app->delete('/api/trash/{id}', function ($request, $response) use ($container) {
+    $args = \Slim\Routing\RouteContext::fromRequest($request)->getRoute()->getArguments();
+    return $container->get(\FormLogic\Controllers\TrashController::class)->purge($request, $response, $args);
+})->add($authRequired);
 
 $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $aiFileRateLimiter) {
     // Form generation from text prompt

@@ -276,9 +276,18 @@ class AppService
             }
         }
 
-        $id = $this->generateUuid();
+        // A caller-supplied id/slug serves restores (recycle bin / backup import in
+        // preserve-ids mode): the ORIGINAL id keeps external references coherent, and
+        // the original slug keeps public /app/{slug} URLs working after an undelete.
+        // Both fall back safely — fresh uuid / regenerated unique slug.
+        $id = (isset($data['id']) && is_string($data['id']) && $data['id'] !== '')
+            ? $data['id']
+            : $this->generateUuid();
         $now = date('Y-m-d H:i:s');
-        $slug = $this->generateSlug($data['name'] ?? 'untitled');
+        $preferredSlug = $data['slug'] ?? null;
+        $slug = (is_string($preferredSlug) && $preferredSlug !== '' && !$this->slugExists($preferredSlug))
+            ? $preferredSlug
+            : $this->generateSlug($data['name'] ?? 'untitled');
 
         // settings.appKind: optional audience tag. Accept the API's top-level `appKind`
         // shorthand (it stores at settings.appKind — no dedicated column), then sanitize:

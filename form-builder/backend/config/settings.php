@@ -186,6 +186,12 @@ return [
             'scheduledIncludeFiles' => strtolower((string)($_ENV['BACKUP_INCLUDE_FILES'] ?? 'true')) !== 'false',
         ],
 
+        // Recycle bin: user-facing deletes of forms/apps/flows capture a restorable
+        // snapshot first (hard delete unchanged); snapshots purge after retentionDays.
+        'trash' => [
+            'retentionDays' => max(1, (int)($_ENV['TRASH_RETENTION_DAYS'] ?? 30)),
+        ],
+
         // Hosted-cloud plan limits. Only enforced when planEnforced is true (hosted SaaS);
         // self-hosted installs leave it false and stay unlimited.
         'cloud' => [

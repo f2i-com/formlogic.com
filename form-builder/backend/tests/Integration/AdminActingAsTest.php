@@ -10,6 +10,7 @@ use FormLogic\Controllers\AppDomainController;
 use FormLogic\Controllers\AppUserController;
 use FormLogic\Controllers\FlowController;
 use FormLogic\Controllers\FormController;
+use FormLogic\Controllers\TrashController;
 use FormLogic\Controllers\WebhookController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
@@ -17,6 +18,7 @@ use FormLogic\Http\AdminActingAsRoutes;
 use FormLogic\Middleware\AdminActAsMiddleware;
 use FormLogic\Middleware\AdminGateMiddleware;
 use FormLogic\Middleware\AuthMiddleware;
+use FormLogic\Services\AccountBackupService;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
@@ -26,6 +28,7 @@ use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\TrashService;
 use FormLogic\Services\WebhookService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -130,6 +133,29 @@ class AdminActingAsTest extends TestCase
             FlowController::class => new FlowController(self::$flows, self::$apps, self::$appUsers),
             WebhookController::class => new WebhookController(new WebhookService($conn), self::$forms),
             AppDomainController::class => new AppDomainController(new AppDomainService($conn), self::$apps),
+            TrashController::class => new TrashController(
+                new TrashService(
+                    $conn,
+                    $sqlite,
+                    new AccountBackupService(
+                        $conn,
+                        $sqlite,
+                        self::$forms,
+                        self::$apps,
+                        self::$appUsers,
+                        self::$flows,
+                        self::$responses,
+                        [],
+                        self::$tmpRoot . '/sqlite',
+                        self::$tmpRoot . '/uploads'
+                    ),
+                    self::$forms,
+                    self::$apps,
+                    self::$flows,
+                    ['retentionDays' => 30, 'dir' => self::$tmpRoot . '/trash']
+                ),
+                self::$audit
+            ),
         ];
         $container = new class ($controllers) implements ContainerInterface {
             public function __construct(private array $services)

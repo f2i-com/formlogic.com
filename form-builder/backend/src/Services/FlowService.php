@@ -340,7 +340,8 @@ class FlowService
             throw new \InvalidArgumentException('An app can have at most ' . self::MAX_FLOWS_PER_APP . ' flows');
         }
 
-        $id = $this->uuidV4();
+        // Caller-supplied id = preserve-ids restore (recycle bin / backup import).
+        $id = (isset($data['id']) && is_string($data['id']) && $data['id'] !== '') ? $data['id'] : $this->uuidV4();
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_definitions
@@ -1056,7 +1057,8 @@ class FlowService
 
         $this->assertWorkspaceSlugFree($ownerUserId, $slug);
 
-        $id = $this->uuidV4();
+        // Caller-supplied id = preserve-ids restore (recycle bin / backup import).
+        $id = (isset($data['id']) && is_string($data['id']) && $data['id'] !== '') ? $data['id'] : $this->uuidV4();
         $stmt = $this->mysql->prepare("
             INSERT INTO flow_definitions
                 (id, owner_user_id, app_id, name, slug, description, engine, flow_json, input_schema, output_schema, node_capabilities, version, enabled)

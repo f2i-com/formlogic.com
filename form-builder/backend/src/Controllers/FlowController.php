@@ -36,7 +36,7 @@ class FlowController
     private AppUserService $appUserService;
     private ?ApiKeyService $apiKeys;
 
-    public function __construct(FlowService $flows, AppService $appService, AppUserService $appUserService, ?ApiKeyService $apiKeys = null)
+    public function __construct(FlowService $flows, AppService $appService, AppUserService $appUserService, ?ApiKeyService $apiKeys = null, private ?\FormLogic\Services\TrashService $trashService = null)
     {
         $this->flows = $flows;
         $this->appService = $appService;
@@ -177,11 +177,14 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
-        $ok = $this->flows->deleteFlow($args['id'], $args['flowId']);
+        // Recycle bin: snapshot the flow + its bindings before the hard delete.
+        $ok = $this->trashService !== null
+            ? $this->trashService->trashFlow($args['id'], $args['flowId'], (string) $userId)
+            : $this->flows->deleteFlow($args['id'], $args['flowId']);
         if (!$ok) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
-        return $this->jsonResponse($response, ['success' => true]);
+        return $this->jsonResponse($response, ['success' => true, 'trashed' => $this->trashService !== null]);
     }
 
     /** Records a 'running' run log with trigger_event 'test'; execution happens client-side. */
@@ -336,11 +339,14 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
-        $ok = $this->flows->deleteWorkspaceFlow($userId, (string) ($args['flowId'] ?? ''));
+        // Recycle bin: snapshot the flow + its form bindings before the hard delete.
+        $ok = $this->trashService !== null
+            ? $this->trashService->trashWorkspaceFlow((string) ($args['flowId'] ?? ''), (string) $userId)
+            : $this->flows->deleteWorkspaceFlow($userId, (string) ($args['flowId'] ?? ''));
         if (!$ok) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
-        return $this->jsonResponse($response, ['success' => true]);
+        return $this->jsonResponse($response, ['success' => true, 'trashed' => $this->trashService !== null]);
     }
 
     public function listFlowBindingsForFlow(Request $request, Response $response, array $args): Response

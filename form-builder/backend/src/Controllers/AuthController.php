@@ -34,7 +34,7 @@ class AuthController
     private ?ApiKeyService $apiKeyService;
     private ?\FormLogic\Database\MySQLConnection $db;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null)
     {
         $this->db = $db;
         $this->authService = $authService;
@@ -582,6 +582,15 @@ class AuthController
                 }
             }
 
+            // Recycle bin: the erasure loops above delete via the SERVICES (never
+            // TrashService — erasure must not stash data), but the user's existing
+            // bin snapshots contain record PII and must go too. purgeUser returns
+            // the number of traces REMAINING (fail-closed), joining the guard below.
+            $trashRemaining = 0;
+            if ($this->trashService !== null) {
+                $trashRemaining = $this->trashService->purgeUser($userId);
+            }
+
             // Truthful completion (audit FL-005/FL-01): NEVER drop the user row while
             // owned resources remain — per-form SQLite databases and uploads live on
             // DISK, and deleting the account row first would orphan that PII with no
@@ -591,7 +600,7 @@ class AuthController
             $remainingForms = $this->formService
                 ? count($this->formService->getAllForms($userId, ['limit' => 1, 'offset' => 0]))
                 : 0;
-            if ($failedApps > 0 || $failedForms > 0 || $remainingForms > 0 || $pendingCleanup > 0) {
+            if ($failedApps > 0 || $failedForms > 0 || $remainingForms > 0 || $pendingCleanup > 0 || $trashRemaining > 0) {
                 $this->audit($request, 'auth.account_delete_incomplete', 'user', $userId);
                 return $this->jsonResponse($response, [
                     'error' => true,
@@ -600,6 +609,7 @@ class AuthController
                     'failedApps' => $failedApps,
                     'failedForms' => $failedForms,
                     'pendingCleanup' => $pendingCleanup,
+                    'pendingTrash' => $trashRemaining,
                     'message' => 'Some of your data could not be deleted, so your account was NOT closed. Nothing is lost — please retry; deletion resumes where it left off.',
                 ], 503);
             }

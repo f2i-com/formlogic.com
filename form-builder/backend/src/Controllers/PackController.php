@@ -24,7 +24,7 @@ class PackController
     private ?SigningService $signingService;
     private IpResolver $ipResolver;
 
-    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null)
+    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null, private ?\FormLogic\Services\TrashService $trashService = null)
     {
         $this->packService = $packService;
         $this->auditService = $auditService;
@@ -627,6 +627,13 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation ID is required'], 400);
         }
 
+        // Recycle bin: uninstallPack hard-deletes record-bearing forms, so their
+        // snapshots are captured FIRST; commitCapturedForms (finally) records a
+        // bin entry only for forms the uninstall actually removed and discards
+        // the rest — apps aren't snapshotted (reinstallable from the pack).
+        $pendingTrash = $this->trashService !== null
+            ? $this->trashService->captureRecordBearingForms($installationId, $userId)
+            : [];
         try {
             $result = $this->packService->uninstallPack($installationId, $userId);
 
@@ -660,6 +667,12 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 404);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to uninstall pack'], 500);
+        } finally {
+            // Even on a partial failure: forms that DID get deleted keep their
+            // bin entries; forms still alive get their snapshots discarded.
+            if ($pendingTrash !== []) {
+                $this->trashService?->commitCapturedForms($pendingTrash);
+            }
         }
     }
 }

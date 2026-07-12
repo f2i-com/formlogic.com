@@ -1405,6 +1405,29 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Recycle bin: user-facing deletes of forms/apps/flows snapshot a restorable
+        // zip (storage/trash/<userId>/<id>.zip) BEFORE the hard delete; rows expire
+        // after trash.retentionDays and are purged by the nightly maintenance run.
+        // status='restoring' is the atomic restore claim (double-restore guard).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS trash_items (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                kind ENUM('form','app','flow') NOT NULL,
+                original_id VARCHAR(36) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                zip_path VARCHAR(500) NOT NULL,
+                size_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                meta JSON NULL,
+                status ENUM('trashed','restoring') NOT NULL DEFAULT 'trashed',
+                deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                INDEX idx_trash_user (user_id, deleted_at),
+                INDEX idx_trash_expires (expires_at),
+                CONSTRAINT trash_items_ibfk_1 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // FormLogic Flows tables for existing installs (CREATE TABLE IF NOT EXISTS; shared with
         // initializeSchema so fresh and migrated schemas match byte-for-byte).
         $this->createFlowTables($pdo);

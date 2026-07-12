@@ -23,7 +23,7 @@ class AppController
     private ?AuditService $auditService;
     private ?AppReportService $reportValidator;
 
-    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null)
     {
         $this->appService = $appService;
         $this->logger = $logger ?? new NullLogger();
@@ -256,9 +256,15 @@ class AppController
         }
 
         try {
-            $this->appService->deleteApp($args['id']);
+            // Recycle bin: snapshot (app + its flows/bindings/roles, which all
+            // cascade-die) before the hard delete. Member forms survive as always.
+            if ($this->trashService !== null) {
+                $this->trashService->trashApp($args['id'], (string) $request->getAttribute('userId'));
+            } else {
+                $this->appService->deleteApp($args['id']);
+            }
             $this->audit($request, 'app.delete', 'app', $args['id']);
-            return $this->jsonResponse($response, ['success' => true, 'message' => 'App deleted successfully']);
+            return $this->jsonResponse($response, ['success' => true, 'message' => 'App deleted successfully', 'trashed' => $this->trashService !== null]);
         } catch (\Exception $e) {
             $this->logger->error('App delete error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to delete app'], 500);

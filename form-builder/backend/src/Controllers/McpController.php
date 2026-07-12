@@ -74,6 +74,8 @@ class McpController
         // Flows (automations) — the same owner CRUD surface the /flows workspace uses. Null only in
         // older tests; production always wires it (flow tools error cleanly when absent).
         private ?FlowService $flowService = null,
+        // Recycle bin: external-AI flow deletes snapshot first, like the web surface.
+        private ?\FormLogic\Services\TrashService $trashService = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -568,7 +570,11 @@ class McpController
                     $appId = $this->resolveAppId($args, $session);
                     $this->assertAppScope($session, $appId);
                     $this->ownApp($appId, $userId);
-                    if (!$this->flows()->deleteFlow($appId, (string) ($args['flowId'] ?? ''))) {
+                    // Recycle bin: snapshot before the hard delete (parity with the web surface).
+                    $flowDeleted = $this->trashService !== null
+                        ? $this->trashService->trashFlow($appId, (string) ($args['flowId'] ?? ''), $userId)
+                        : $this->flows()->deleteFlow($appId, (string) ($args['flowId'] ?? ''));
+                    if (!$flowDeleted) {
                         throw new \Exception('Flow not found in this app');
                     }
                     $data = ['deleted' => true, 'flowId' => (string) ($args['flowId'] ?? '')];

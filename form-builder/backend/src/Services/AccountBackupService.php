@@ -193,7 +193,127 @@ final class AccountBackupService
      */
     public function exportAccount(string $userId, array $options = []): string
     {
-        $includeFiles = (bool) ($options['includeFiles'] ?? true);
+        return $this->buildZip($this->buildStructure($userId), (bool) ($options['includeFiles'] ?? true));
+    }
+
+    /**
+     * Scoped snapshot of ONE form/app/flow in the account-backup format — the
+     * recycle bin's capture. Same manifest envelope (kind formlogic.accountBackup),
+     * so readManifest/validateStructure — and even a manual Settings import, which
+     * restores it as a copy — work on it verbatim.
+     *
+     * - form: the form block + its workspace flow bindings + records db + files,
+     *   plus trash.appMemberships — app_forms rows FK-cascade with the form, so a
+     *   true undelete must re-attach the form to its surviving apps.
+     * - app: the app block (incl. slug — public /app/{slug} URLs survive an
+     *   undelete) + its flows + app bindings, all of which cascade-die with the
+     *   app. Member FORMS survive an app delete; the block's memberships
+     *   reference the surviving form ids.
+     * - flow: the flow + its bindings (app or workspace scope).
+     *
+     * Deliberate gaps (mirrors the account backup's honesty list): webhooks,
+     * form version history, and — for a form — role permissions referencing it
+     * inside SURVIVING apps (those grants cascade-deleted and aren't captured).
+     */
+    public function exportScoped(string $userId, string $kind, string $id): string
+    {
+        $structure = [
+            'user' => $this->userBlock($userId),
+            'forms' => [],
+            'apps' => [],
+            'flows' => [],
+            'appBindings' => [],
+            'formBindings' => [],
+            'excluded' => [
+                'webhooks (signing secrets)', 'app members and invitations', 'custom domains',
+                'API keys and MCP tokens', 'form version history', 'script logs', 'pack installation records',
+                'role permissions referencing this resource inside surviving apps',
+            ],
+            'trash' => ['kind' => $kind, 'originalId' => $id],
+        ];
+
+        switch ($kind) {
+            case 'form':
+                $ownerStmt = $this->pdo->prepare('SELECT user_id FROM forms WHERE id = :id');
+                $ownerStmt->execute(['id' => $id]);
+                if ($ownerStmt->fetchColumn() !== $userId) {
+                    throw new \RuntimeException('Form not found');
+                }
+                $form = $this->formService->getForm($id);
+                if (!$form) {
+                    throw new \RuntimeException('Form not found');
+                }
+                $structure['forms'][] = $this->buildFormBlock($form);
+                foreach ($this->flowService->listFormBindings($userId, $id) as $b) {
+                    $structure['formBindings'][] = $this->serializeBinding($b);
+                }
+                $memberships = [];
+                $mStmt = $this->pdo->prepare('SELECT app_id, display_name, sort_order, is_visible, settings FROM app_forms WHERE form_id = :f ORDER BY app_id ASC');
+                $mStmt->execute(['f' => $id]);
+                foreach ($mStmt->fetchAll(PDO::FETCH_ASSOC) as $m) {
+                    $memberships[] = [
+                        'appId' => $m['app_id'],
+                        'displayName' => $m['display_name'],
+                        'sortOrder' => (int) $m['sort_order'],
+                        'isVisible' => (bool) $m['is_visible'],
+                        'settings' => is_array($decoded = json_decode((string) ($m['settings'] ?? '{}'), true)) ? $decoded : [],
+                    ];
+                }
+                $structure['trash']['appMemberships'] = $memberships;
+                break;
+
+            case 'app':
+                $ownerStmt = $this->pdo->prepare('SELECT owner_id FROM apps WHERE id = :id');
+                $ownerStmt->execute(['id' => $id]);
+                if ($ownerStmt->fetchColumn() !== $userId) {
+                    throw new \RuntimeException('App not found');
+                }
+                $app = $this->appService->getApp($id);
+                if (!$app) {
+                    throw new \RuntimeException('App not found');
+                }
+                $structure['apps'][] = $this->buildAppBlock($app);
+                foreach ($this->flowService->listFlows($id) as $flow) {
+                    $structure['flows'][] = $this->serializeFlow($flow);
+                }
+                foreach ($this->flowService->listBindings($id) as $b) {
+                    $structure['appBindings'][] = $this->serializeBinding($b);
+                }
+                break;
+
+            case 'flow':
+                $flowStmt = $this->pdo->prepare('SELECT app_id FROM flow_definitions WHERE id = :id AND owner_user_id = :o');
+                $flowStmt->execute(['id' => $id, 'o' => $userId]);
+                $flowRow = $flowStmt->fetch(PDO::FETCH_ASSOC);
+                if ($flowRow === false) {
+                    throw new \RuntimeException('Flow not found');
+                }
+                $flow = $flowRow['app_id'] !== null
+                    ? $this->flowService->getFlow((string) $flowRow['app_id'], $id)
+                    : $this->flowService->getWorkspaceFlow($userId, $id);
+                if (!$flow) {
+                    throw new \RuntimeException('Flow not found');
+                }
+                $structure['flows'][] = $this->serializeFlow($flow);
+                foreach ($this->flowService->listBindingsForFlow($userId, $id) ?? [] as $b) {
+                    if ($flowRow['app_id'] !== null) {
+                        $structure['appBindings'][] = $this->serializeBinding($b);
+                    } else {
+                        $structure['formBindings'][] = $this->serializeBinding($b);
+                    }
+                }
+                break;
+
+            default:
+                throw new \RuntimeException("Unknown snapshot kind: {$kind}");
+        }
+
+        return $this->buildZip($structure, true);
+    }
+
+    /** Zip a structure document + its record databases/files into a temp archive. */
+    private function buildZip(array $structure, bool $includeFiles): string
+    {
         if (!class_exists(\ZipArchive::class)) {
             throw new \RuntimeException('The PHP zip extension is required for backups.');
         }
@@ -207,8 +327,6 @@ final class AccountBackupService
         $zipPath = $this->tmpDir() . '/backup-' . bin2hex(random_bytes(6)) . '.zip';
 
         try {
-            $structure = $this->buildStructure($userId);
-
             $zip = new \ZipArchive();
             if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
                 throw new \RuntimeException('Could not create the backup archive');
@@ -298,21 +416,7 @@ final class AccountBackupService
         for ($offset = 0; ; $offset += 500) {
             $page = $this->formService->getAllForms($userId, ['limit' => 500, 'offset' => $offset, 'includeFields' => true]);
             foreach ($page as $f) {
-                $forms[] = [
-                    'id' => $f['id'],
-                    'title' => $f['title'],
-                    'description' => $f['description'],
-                    'status' => $f['status'],
-                    'publishedAt' => $f['publishedAt'] ?? null,
-                    'icon' => $f['icon'] ?? null,
-                    'settings' => is_array($f['settings'] ?? null) ? $f['settings'] : [],
-                    'theme' => is_array($f['theme'] ?? null) ? $f['theme'] : [],
-                    'logicScript' => $f['logicScript'] ?? null,
-                    'logicPrompt' => $f['logicPrompt'] ?? null,
-                    'customScreen' => is_array($f['customScreen'] ?? null) ? $f['customScreen'] : null,
-                    'customLogic' => is_array($f['customLogic'] ?? null) ? $f['customLogic'] : null,
-                    'fields' => is_array($f['fields'] ?? null) ? $f['fields'] : [],
-                ];
+                $forms[] = $this->buildFormBlock($f);
             }
             if (count($page) < 500) {
                 break;
@@ -329,54 +433,7 @@ final class AccountBackupService
             if (!$app) {
                 continue;
             }
-            // defaultRoleId is instance-local — carry the role NAME instead (pack precedent).
-            $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
-            $defaultRoleName = null;
-
-            $roles = [];
-            foreach ($this->appUserService->getRoles((string) $appId) as $role) {
-                if (($role['name'] ?? '') === 'Owner') {
-                    continue; // recreated with all permissions on import
-                }
-                if (($settings['defaultRoleId'] ?? null) === ($role['id'] ?? '__none__')) {
-                    $defaultRoleName = $role['name'];
-                }
-                $roles[] = [
-                    'name' => $role['name'],
-                    'description' => $role['description'] ?? null,
-                    'system' => !empty($role['isSystem']),
-                    'permissions' => array_map(static fn (array $p) => [
-                        'formId' => $p['formId'],
-                        'permission' => $p['permission'],
-                    ], $role['permissions'] ?? []),
-                ];
-            }
-            unset($settings['defaultRoleId']);
-            if ($defaultRoleName !== null) {
-                $settings['defaultRoleName'] = $defaultRoleName;
-            }
-
-            $apps[] = [
-                'id' => $app['id'],
-                'name' => $app['name'],
-                'description' => $app['description'],
-                'status' => $app['status'],
-                'logoUrl' => $app['logoUrl'],
-                'settings' => $settings,
-                'theme' => is_array($app['theme'] ?? null) ? $app['theme'] : [],
-                'navConfig' => is_array($app['navConfig'] ?? null) ? $app['navConfig'] : [],
-                'customScreen' => is_array($app['customScreen'] ?? null) ? $app['customScreen'] : null,
-                'customLogic' => is_array($app['customLogic'] ?? null) ? $app['customLogic'] : null,
-                'reports' => is_array($app['reports'] ?? null) ? $app['reports'] : [],
-                'forms' => array_map(static fn (array $af) => [
-                    'formId' => $af['formId'],
-                    'displayName' => $af['displayName'],
-                    'sortOrder' => $af['sortOrder'],
-                    'isVisible' => $af['isVisible'],
-                    'settings' => is_array($af['settings'] ?? null) ? $af['settings'] : [],
-                ], $this->appService->getAppForms((string) $appId)),
-                'roles' => $roles,
-            ];
+            $apps[] = $this->buildAppBlock($app);
 
             foreach ($this->flowService->listFlows((string) $appId) as $flow) {
                 $flows[] = $this->serializeFlow($flow);
@@ -417,12 +474,8 @@ final class AccountBackupService
             ];
         }
 
-        $userStmt = $this->pdo->prepare('SELECT id, email FROM users WHERE id = :id');
-        $userStmt->execute(['id' => $userId]);
-        $u = $userStmt->fetch(PDO::FETCH_ASSOC) ?: ['id' => $userId, 'email' => ''];
-
         return [
-            'user' => ['id' => $u['id'], 'email' => $u['email']], // informational; NEVER trusted on import
+            'user' => $this->userBlock($userId), // informational; NEVER trusted on import
             'forms' => $forms,
             'apps' => $apps,
             'flows' => $flows,
@@ -434,6 +487,91 @@ final class AccountBackupService
                 'API keys and MCP tokens', 'form version history', 'script logs', 'pack installation records',
             ],
         ];
+    }
+
+    /** @param array $f a formatted form (getAllForms includeFields / getForm shape) */
+    private function buildFormBlock(array $f): array
+    {
+        return [
+            'id' => $f['id'],
+            'title' => $f['title'],
+            'description' => $f['description'],
+            'status' => $f['status'],
+            'publishedAt' => $f['publishedAt'] ?? null,
+            'icon' => $f['icon'] ?? null,
+            'settings' => is_array($f['settings'] ?? null) ? $f['settings'] : [],
+            'theme' => is_array($f['theme'] ?? null) ? $f['theme'] : [],
+            'logicScript' => $f['logicScript'] ?? null,
+            'logicPrompt' => $f['logicPrompt'] ?? null,
+            'customScreen' => is_array($f['customScreen'] ?? null) ? $f['customScreen'] : null,
+            'customLogic' => is_array($f['customLogic'] ?? null) ? $f['customLogic'] : null,
+            'fields' => is_array($f['fields'] ?? null) ? $f['fields'] : [],
+        ];
+    }
+
+    /** @param array $app a formatted app (getApp shape) */
+    private function buildAppBlock(array $app): array
+    {
+        $appId = (string) $app['id'];
+        // defaultRoleId is instance-local — carry the role NAME instead (pack precedent).
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $defaultRoleName = null;
+
+        $roles = [];
+        foreach ($this->appUserService->getRoles($appId) as $role) {
+            if (($role['name'] ?? '') === 'Owner') {
+                continue; // recreated with all permissions on import
+            }
+            if (($settings['defaultRoleId'] ?? null) === ($role['id'] ?? '__none__')) {
+                $defaultRoleName = $role['name'];
+            }
+            $roles[] = [
+                'name' => $role['name'],
+                'description' => $role['description'] ?? null,
+                'system' => !empty($role['isSystem']),
+                'permissions' => array_map(static fn (array $p) => [
+                    'formId' => $p['formId'],
+                    'permission' => $p['permission'],
+                ], $role['permissions'] ?? []),
+            ];
+        }
+        unset($settings['defaultRoleId']);
+        if ($defaultRoleName !== null) {
+            $settings['defaultRoleName'] = $defaultRoleName;
+        }
+
+        return [
+            'id' => $app['id'],
+            'name' => $app['name'],
+            // slug: informational for a plain import; a preserve-ids restore re-claims
+            // it when still free, keeping public /app/{slug} URLs alive across undelete.
+            'slug' => $app['slug'] ?? null,
+            'description' => $app['description'],
+            'status' => $app['status'],
+            'logoUrl' => $app['logoUrl'],
+            'settings' => $settings,
+            'theme' => is_array($app['theme'] ?? null) ? $app['theme'] : [],
+            'navConfig' => is_array($app['navConfig'] ?? null) ? $app['navConfig'] : [],
+            'customScreen' => is_array($app['customScreen'] ?? null) ? $app['customScreen'] : null,
+            'customLogic' => is_array($app['customLogic'] ?? null) ? $app['customLogic'] : null,
+            'reports' => is_array($app['reports'] ?? null) ? $app['reports'] : [],
+            'forms' => array_map(static fn (array $af) => [
+                'formId' => $af['formId'],
+                'displayName' => $af['displayName'],
+                'sortOrder' => $af['sortOrder'],
+                'isVisible' => $af['isVisible'],
+                'settings' => is_array($af['settings'] ?? null) ? $af['settings'] : [],
+            ], $this->appService->getAppForms($appId)),
+            'roles' => $roles,
+        ];
+    }
+
+    private function userBlock(string $userId): array
+    {
+        $userStmt = $this->pdo->prepare('SELECT id, email FROM users WHERE id = :id');
+        $userStmt->execute(['id' => $userId]);
+        $u = $userStmt->fetch(PDO::FETCH_ASSOC) ?: ['id' => $userId, 'email' => ''];
+        return ['id' => $u['id'], 'email' => $u['email']];
     }
 
     private function serializeFlow(array $flow): array
@@ -500,10 +638,28 @@ final class AccountBackupService
     /**
      * Restore a backup zip into $userId's account as NEW resources (all-or-nothing).
      *
+     * $options (all default false — the plain Settings import is byte-identical):
+     * the recycle-bin restore passes ALL of them, turning the import into a true
+     * undelete of a scoped snapshot.
+     * - preserveIds: keep ORIGINAL form/app/flow/response ids when still free
+     *   (fresh-id fallback per resource, with a "restored as a copy" warning) and
+     *   re-claim the app's original slug when available.
+     * - attachExistingForms: app memberships / role permissions / binding scopes
+     *   referencing forms NOT in the snapshot re-attach to the caller's surviving
+     *   forms of that id (an app snapshot doesn't carry its member forms).
+     * - attachExistingApps: flows/bindings referencing an app NOT in the snapshot
+     *   restore INTO the caller's surviving app of that id; the app being gone is
+     *   a loud failure ("restore the app first") instead of a silent skip.
+     * - lenientFormBindings: a form binding whose workspace flow no longer exists
+     *   becomes a warning instead of failing the whole restore.
+     * - rebuildInboundLinks: final pass re-syncing response_links for surviving
+     *   forms that point at restored/re-attached forms (deleteForm/deleteApp purge
+     *   links BOTH directions, so inbound links would otherwise stay lost).
+     *
      * @return array{apps: array<int,array{id:string,name:string}>, forms: array<int,array{id:string,title:string}>,
      *               flows:int, bindings:int, responses:int, files:int, warnings:string[]}
      */
-    public function importAccount(string $zipPath, string $userId): array
+    public function importAccount(string $zipPath, string $userId, array $options = []): array
     {
         if (!class_exists(\ZipArchive::class)) {
             throw new \RuntimeException('The PHP zip extension is required for backups.');
@@ -563,10 +719,17 @@ final class AccountBackupService
             }
 
             $warnings = [];
-            $created = ['apps' => [], 'forms' => [], 'workspaceFlows' => []];
+            $created = ['apps' => [], 'forms' => [], 'workspaceFlows' => [], 'appFlows' => []];
+            $opts = [
+                'preserveIds' => (bool) ($options['preserveIds'] ?? false),
+                'attachExistingForms' => (bool) ($options['attachExistingForms'] ?? false),
+                'attachExistingApps' => (bool) ($options['attachExistingApps'] ?? false),
+                'lenientFormBindings' => (bool) ($options['lenientFormBindings'] ?? false),
+                'rebuildInboundLinks' => (bool) ($options['rebuildInboundLinks'] ?? false),
+            ];
 
             // ── Phase 1: structure, in ONE MySQL transaction ──
-            $maps = $this->restoreStructure($structure, $userId, $created, $warnings);
+            $maps = $this->restoreStructure($structure, $userId, $created, $warnings, $opts);
 
             // ── Phase 2: records + files + links (compensate fully on failure) ──
             try {
@@ -574,6 +737,18 @@ final class AccountBackupService
             } catch (\Throwable $e) {
                 $this->compensate($created, $userId);
                 throw new \RuntimeException('Backup import failed and was rolled back: ' . $e->getMessage(), 0, $e);
+            }
+
+            // ── Phase 3 (restore mode): re-sync links from SURVIVING forms into the
+            // restored/re-attached ones. Failures degrade to a warning — the restored
+            // data itself is intact, so tearing it back down would be worse.
+            if ($opts['rebuildInboundLinks']) {
+                try {
+                    $this->rebuildInboundLinks($userId, $maps, $warnings);
+                } catch (\Throwable $e) {
+                    $warnings[] = 'Some record links from other forms could not be rebuilt: ' . $e->getMessage();
+                    $this->logger->warning('Restore: inbound link rebuild failed', ['error' => $e->getMessage()]);
+                }
             }
 
             return [
@@ -714,15 +889,25 @@ final class AccountBackupService
      * Structure phase: forms → apps (memberships/roles/reports) → flows → bindings,
      * inside ONE MySQL transaction (createForm/createApp respect the open tx).
      *
-     * @return array{formIdMap: array<string,string>, flowSlugMap: array<string,string>, flowsCreated:int, bindingsCreated:int}
+     * @param array{preserveIds:bool, attachExistingForms:bool, attachExistingApps:bool, lenientFormBindings:bool, rebuildInboundLinks:bool} $opts
+     * @return array{formIdMap: array<string,string>, flowSlugMap: array<string,string>, flowsCreated:int, bindingsCreated:int, attachedForms: string[]}
      */
-    private function restoreStructure(array $structure, string $userId, array &$created, array &$warnings): array
+    private function restoreStructure(array $structure, string $userId, array &$created, array &$warnings, array $opts): array
     {
+        $attachedForms = [];
         $this->pdo->beginTransaction();
         try {
             $formIdMap = [];
             foreach ($structure['forms'] as $bf) {
-                $formIdMap[(string) $bf['id']] = $this->generateUuid();
+                $oldId = (string) $bf['id'];
+                if ($opts['preserveIds'] && $this->formIdIsFree($oldId)) {
+                    $formIdMap[$oldId] = $oldId;
+                } else {
+                    $formIdMap[$oldId] = $this->generateUuid();
+                    if ($opts['preserveIds']) {
+                        $warnings[] = "Form '" . (string) ($bf['title'] ?? $oldId) . "' could not keep its original id (still in use) — restored as a copy.";
+                    }
+                }
             }
 
             foreach ($structure['forms'] as $bf) {
@@ -741,7 +926,7 @@ final class AccountBackupService
                     'customScreen' => is_array($bf['customScreen'] ?? null) ? $this->deepRemapIds($bf['customScreen'], $formIdMap) : null,
                     'customLogic' => is_array($bf['customLogic'] ?? null) ? $bf['customLogic'] : null,
                     'icon' => is_string($bf['icon'] ?? null) ? $bf['icon'] : null,
-                    'fields' => $this->remapFields(is_array($bf['fields'] ?? null) ? $bf['fields'] : [], $formIdMap, $warnings),
+                    'fields' => $this->remapFields(is_array($bf['fields'] ?? null) ? $bf['fields'] : [], $formIdMap, $warnings, $opts['preserveIds']),
                 ]);
                 $created['forms'][] = ['id' => $newId, 'title' => (string) $bf['title']];
                 // createForm's INSERT has no published_at column — restore it directly.
@@ -757,7 +942,7 @@ final class AccountBackupService
                 unset($settings['defaultRoleName'], $settings['defaultRoleId']);
                 $settings = $this->deepRemapIds($settings, $formIdMap);
 
-                $app = $this->appService->createApp([
+                $appPayload = [
                     'name' => (string) $ba['name'],
                     'description' => is_string($ba['description'] ?? null) ? $ba['description'] : null,
                     'logoUrl' => is_string($ba['logoUrl'] ?? null) ? $ba['logoUrl'] : null,
@@ -766,14 +951,35 @@ final class AccountBackupService
                     'navConfig' => $this->deepRemapIds(is_array($ba['navConfig'] ?? null) ? $ba['navConfig'] : [], $formIdMap),
                     'customScreen' => is_array($ba['customScreen'] ?? null) ? $this->deepRemapIds($ba['customScreen'], $formIdMap) : null,
                     'customLogic' => is_array($ba['customLogic'] ?? null) ? $ba['customLogic'] : null,
-                ], $userId);
+                ];
+                if ($opts['preserveIds']) {
+                    $origAppId = (string) $ba['id'];
+                    $exists = $this->pdo->prepare('SELECT 1 FROM apps WHERE id = :id');
+                    $exists->execute(['id' => $origAppId]);
+                    if ($exists->fetchColumn() === false) {
+                        $appPayload['id'] = $origAppId;
+                    } else {
+                        $warnings[] = "App '{$ba['name']}' could not keep its original id (still in use) — restored as a copy.";
+                    }
+                    if (is_string($ba['slug'] ?? null) && $ba['slug'] !== '') {
+                        $appPayload['slug'] = $ba['slug']; // createApp regenerates when taken
+                    }
+                }
+                $app = $this->appService->createApp($appPayload, $userId);
                 $newAppId = (string) $app['id'];
                 $created['apps'][] = ['id' => $newAppId, 'name' => (string) $ba['name']];
 
                 $memberForms = is_array($ba['forms'] ?? null) ? $ba['forms'] : [];
                 usort($memberForms, static fn ($a, $b) => ($a['sortOrder'] ?? 0) <=> ($b['sortOrder'] ?? 0));
                 foreach ($memberForms as $af) {
-                    $newFormId = $formIdMap[(string) ($af['formId'] ?? '')] ?? null;
+                    $oldFormId = (string) ($af['formId'] ?? '');
+                    $newFormId = $formIdMap[$oldFormId] ?? null;
+                    if ($newFormId === null && $opts['attachExistingForms'] && $this->ownedFormExists($oldFormId, $userId)) {
+                        // App snapshots don't carry member forms (they survive an app
+                        // delete) — re-attach the caller's surviving form directly.
+                        $newFormId = $oldFormId;
+                        $attachedForms[$oldFormId] = true;
+                    }
                     if ($newFormId === null) {
                         $warnings[] = "App '{$ba['name']}' referenced a form that isn't in the backup — membership skipped.";
                         continue;
@@ -795,6 +1001,9 @@ final class AccountBackupService
                         $pf = $perm['formId'] ?? null;
                         if ($pf !== null) {
                             $mapped = $formIdMap[(string) $pf] ?? null;
+                            if ($mapped === null && $opts['attachExistingForms'] && $this->ownedFormExists((string) $pf, $userId)) {
+                                $mapped = (string) $pf; // grant on a surviving re-attached form
+                            }
                             if ($mapped === null) {
                                 continue; // permission on a form outside the backup
                             }
@@ -851,6 +1060,31 @@ final class AccountBackupService
             }
             $appIdMap ??= [];
 
+            // Form-kind trash snapshots carry the form's app memberships
+            // (app_forms rows cascade-died with the form) — re-attach the restored
+            // form to its SURVIVING apps. Cleanup is free: deleting the restored
+            // form cascades these rows, so compensation needs no extra tracking.
+            if ($opts['attachExistingApps'] && is_array($structure['trash']['appMemberships'] ?? null)) {
+                $origFormId = (string) ($structure['trash']['originalId'] ?? '');
+                $restoredFormId = $formIdMap[$origFormId] ?? null;
+                foreach ($restoredFormId === null ? [] : $structure['trash']['appMemberships'] as $m) {
+                    $memberAppId = (string) ($m['appId'] ?? '');
+                    if ($memberAppId === '' || !$this->ownedAppExists($memberAppId, $userId)) {
+                        $warnings[] = 'The form was in an app that no longer exists — that app membership was skipped.';
+                        continue;
+                    }
+                    try {
+                        $this->appService->addFormToApp($memberAppId, $restoredFormId, is_string($m['displayName'] ?? null) ? $m['displayName'] : null);
+                        $this->appService->updateAppForm($memberAppId, $restoredFormId, [
+                            'isVisible' => (bool) ($m['isVisible'] ?? true),
+                            'settings' => is_array($m['settings'] ?? null) ? $m['settings'] : [],
+                        ]);
+                    } catch (\Throwable $e) {
+                        $warnings[] = 'Could not re-attach the form to one of its apps: ' . $e->getMessage();
+                    }
+                }
+            }
+
             // Flows: app flows into their new apps; workspace flows with slug dedupe
             // (assertWorkspaceSlugFree throws on a duplicate — a re-import must not fail).
             $flowsCreated = 0;
@@ -867,14 +1101,39 @@ final class AccountBackupService
                     'nodeCapabilities' => is_array($bfl['nodeCapabilities'] ?? null) ? $bfl['nodeCapabilities'] : null,
                     'enabled' => (bool) ($bfl['enabled'] ?? true),
                 ];
+                if ($opts['preserveIds'] && is_string($bfl['id'] ?? null) && $bfl['id'] !== '' && !$this->flowExists((string) $bfl['id'])) {
+                    $data['id'] = (string) $bfl['id'];
+                }
                 $oldAppId = $bfl['appId'] ?? null;
                 if ($oldAppId !== null) {
+                    $intoExistingApp = false;
                     $newAppId = $appIdMap[(string) $oldAppId] ?? null;
+                    if ($newAppId === null && $opts['attachExistingApps']) {
+                        if (!$this->ownedAppExists((string) $oldAppId, $userId)) {
+                            throw new \RuntimeException("Flow '{$data['name']}' belongs to an app that no longer exists. Restore the app from the recycle bin first, then this flow.");
+                        }
+                        $newAppId = (string) $oldAppId;
+                        $intoExistingApp = true;
+                    }
                     if ($newAppId === null) {
                         $warnings[] = "Flow '{$data['name']}' referenced an app that isn't in the backup — skipped.";
                         continue;
                     }
-                    $this->flowService->createFlow($newAppId, $userId, $data);
+                    try {
+                        $flow = $this->flowService->createFlow($newAppId, $userId, $data);
+                    } catch (\InvalidArgumentException $e) {
+                        if (!str_contains($e->getMessage(), 'already exists')) {
+                            throw $e;
+                        }
+                        // Slug collision inside the surviving app — one retry, suffixed.
+                        $data['slug'] = FlowService::sanitizeSlug(((string) ($data['slug'] ?? $data['name'])) . '-restored');
+                        $flow = $this->flowService->createFlow($newAppId, $userId, $data);
+                    }
+                    if ($intoExistingApp) {
+                        // Created into a PRE-EXISTING app: the created app's cascade
+                        // won't clean it up, so compensation must delete it directly.
+                        $created['appFlows'][] = ['appId' => $newAppId, 'flowId' => (string) $flow['id']];
+                    }
                 } else {
                     $slug = FlowService::sanitizeSlug($data['slug'] ?? $data['name']);
                     $final = $slug;
@@ -892,26 +1151,43 @@ final class AccountBackupService
 
             $bindingsCreated = 0;
             foreach ($structure['appBindings'] as $bb) {
-                $newAppId = $appIdMap[(string) ($bb['appId'] ?? '')] ?? null;
+                $oldBindingAppId = (string) ($bb['appId'] ?? '');
+                $newAppId = $appIdMap[$oldBindingAppId] ?? null;
+                if ($newAppId === null && $opts['attachExistingApps'] && $this->ownedAppExists($oldBindingAppId, $userId)) {
+                    $newAppId = $oldBindingAppId;
+                }
                 if ($newAppId === null) {
                     $warnings[] = 'A flow binding referenced an app that isn\'t in the backup — skipped.';
                     continue;
                 }
-                $data = $this->bindingData($bb, $formIdMap, $warnings);
+                $data = $this->bindingData($bb, $formIdMap, $warnings, $opts['attachExistingForms'] ? $userId : null);
                 $this->flowService->createBinding($newAppId, $data);
                 $bindingsCreated++;
             }
             foreach ($structure['formBindings'] as $bb) {
-                $newFormId = $formIdMap[(string) ($bb['formId'] ?? '')] ?? null;
+                $oldBindingFormId = (string) ($bb['formId'] ?? '');
+                $newFormId = $formIdMap[$oldBindingFormId] ?? null;
+                if ($newFormId === null && $opts['attachExistingForms'] && $this->ownedFormExists($oldBindingFormId, $userId)) {
+                    $newFormId = $oldBindingFormId;
+                }
                 if ($newFormId === null) {
                     $warnings[] = 'A form flow binding referenced a form that isn\'t in the backup — skipped.';
                     continue;
                 }
-                $data = $this->bindingData($bb, $formIdMap, $warnings);
+                $data = $this->bindingData($bb, $formIdMap, $warnings, $opts['attachExistingForms'] ? $userId : null);
                 // The workspace flow may have been renamed by the slug dedupe above.
                 $data['flow'] = $flowSlugMap[(string) ($bb['flow'] ?? '')] ?? $bb['flow'];
-                $this->flowService->createFormBinding($userId, $newFormId, $data);
-                $bindingsCreated++;
+                try {
+                    $this->flowService->createFormBinding($userId, $newFormId, $data);
+                    $bindingsCreated++;
+                } catch (\InvalidArgumentException $e) {
+                    if (!$opts['lenientFormBindings']) {
+                        throw $e;
+                    }
+                    // Form-kind restore: the binding's workspace flow may itself be
+                    // deleted — a warning, not a failed restore.
+                    $warnings[] = "A flow binding could not be restored ({$e->getMessage()}) — if its flow is in the recycle bin, restore the flow first.";
+                }
             }
 
             $this->pdo->commit();
@@ -920,6 +1196,7 @@ final class AccountBackupService
                 'flowSlugMap' => $flowSlugMap,
                 'flowsCreated' => $flowsCreated,
                 'bindingsCreated' => $bindingsCreated,
+                'attachedForms' => array_keys($attachedForms),
             ];
         } catch (\Throwable $e) {
             $this->pdo->rollBack();
@@ -931,20 +1208,27 @@ final class AccountBackupService
                     // best-effort
                 }
             }
-            $created = ['apps' => [], 'forms' => [], 'workspaceFlows' => []];
+            $created = ['apps' => [], 'forms' => [], 'workspaceFlows' => [], 'appFlows' => []];
             throw $e instanceof \RuntimeException || $e instanceof \InvalidArgumentException
                 ? new \RuntimeException('Backup import failed: ' . $e->getMessage(), 0, $e)
                 : $e;
         }
     }
 
-    /** Common binding payload for createBinding/createFormBinding. */
-    private function bindingData(array $bb, array $formIdMap, array &$warnings): array
+    /**
+     * Common binding payload for createBinding/createFormBinding.
+     * $attachOwnerId (restore mode): a binding scope on a form OUTSIDE the snapshot
+     * re-attaches to that owner's surviving form instead of being cleared.
+     */
+    private function bindingData(array $bb, array $formIdMap, array &$warnings, ?string $attachOwnerId = null): array
     {
         $formId = null;
         $oldFormId = $bb['formId'] ?? null;
         if (is_string($oldFormId) && $oldFormId !== '') {
             $formId = $formIdMap[$oldFormId] ?? null;
+            if ($formId === null && $attachOwnerId !== null && $this->ownedFormExists($oldFormId, $attachOwnerId)) {
+                $formId = $oldFormId;
+            }
             if ($formId === null) {
                 $warnings[] = 'A flow binding was scoped to a form outside the backup — the scope was cleared.';
             }
@@ -986,12 +1270,16 @@ final class AccountBackupService
         }
 
         // Pre-generate every response id (ids only — memory is 2 uuids per row).
+        // A form that kept its ORIGINAL id keeps its original response ids too —
+        // the response_metadata PK rows cascade-deleted with the form, so they're
+        // free, and surviving forms' linked_record answers still point at them.
         $responseIdMap = [];
         foreach ($stagedDbs as $oldFormId => $path) {
+            $preserved = ($formIdMap[$oldFormId] ?? null) === $oldFormId;
             $src = $this->openSqliteReadOnly($path);
             $responseIdMap[$oldFormId] = [];
             foreach ($src->query('SELECT id FROM responses')->fetchAll(PDO::FETCH_COLUMN) as $oldId) {
-                $responseIdMap[$oldFormId][(string) $oldId] = $this->generateUuid();
+                $responseIdMap[$oldFormId][(string) $oldId] = $preserved ? (string) $oldId : $this->generateUuid();
             }
             unset($src);
         }
@@ -1174,6 +1462,134 @@ final class AccountBackupService
                 $this->logger->warning('Backup import compensation: could not delete workspace flow', ['flowId' => $flowId, 'error' => $e->getMessage()]);
             }
         }
+        // Flows restored INTO pre-existing apps (attachExistingApps) — the created
+        // apps' cascades can't reach them. Their bindings cascade with the flow.
+        foreach ($created['appFlows'] ?? [] as $af) {
+            try {
+                $this->flowService->deleteFlow($af['appId'], $af['flowId']);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Backup import compensation: could not delete app flow', ['flowId' => $af['flowId'], 'error' => $e->getMessage()]);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Restore-mode helpers (recycle bin)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * An ORIGINAL form id can be re-claimed only when EVERY trace of it is gone:
+     * no forms row, the per-form SQLite fully removed, no uploads directory, and
+     * no pending form_delete store-op (a half-finished delete still owns the id —
+     * its retry would wipe the restored data).
+     */
+    private function formIdIsFree(string $formId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM forms WHERE id = :id');
+        $stmt->execute(['id' => $formId]);
+        if ($stmt->fetchColumn() !== false) {
+            return false;
+        }
+        if (!$this->sqlite->formDatabaseFullyRemoved($formId)) {
+            return false;
+        }
+        // Mirrors FileStorageService::formFilesRemoved (not injected here).
+        $safeId = $this->sanitizeId($formId);
+        clearstatcache();
+        if ($safeId !== '' && is_dir($this->uploadsPath . '/' . $safeId)) {
+            return false;
+        }
+        $op = $this->pdo->prepare("SELECT 1 FROM store_ops WHERE entity_type = 'form' AND entity_id = :id AND op_type = 'form_delete' LIMIT 1");
+        $op->execute(['id' => $formId]);
+        return $op->fetchColumn() === false;
+    }
+
+    private function ownedFormExists(string $formId, string $userId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM forms WHERE id = :id AND user_id = :u');
+        $stmt->execute(['id' => $formId, 'u' => $userId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    private function ownedAppExists(string $appId, string $userId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM apps WHERE id = :id AND owner_id = :u');
+        $stmt->execute(['id' => $appId, 'u' => $userId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    private function flowExists(string $flowId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM flow_definitions WHERE id = :id');
+        $stmt->execute(['id' => $flowId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /**
+     * Restore-mode final pass. deleteForm/deleteApp purge response_links in BOTH
+     * directions, so after an undelete two kinds of links are still missing:
+     * links FROM surviving forms INTO the restored forms (their answers still
+     * hold the preserved response ids), and — after an app restore — the
+     * OUTBOUND links of re-attached exclusive forms (deleteApp purged those
+     * too). Re-run the idempotent syncResponseLinks over exactly those source
+     * forms: any surviving form with a linked_record field targeting a restored/
+     * re-attached form, plus the re-attached forms themselves. Forms created by
+     * THIS import are skipped — restoreRecords already ran their links pass.
+     *
+     * @param array{formIdMap: array<string,string>, attachedForms: string[]} $maps
+     */
+    private function rebuildInboundLinks(string $userId, array $maps, array &$warnings): void
+    {
+        $targets = [];
+        foreach ($maps['formIdMap'] as $newId) {
+            $targets[$newId] = true;
+        }
+        foreach ($maps['attachedForms'] as $fid) {
+            $targets[$fid] = true;
+        }
+        if ($targets === []) {
+            return;
+        }
+        $createdByImport = array_flip(array_values($maps['formIdMap']));
+        $attached = array_flip($maps['attachedForms']);
+
+        for ($offset = 0; ; $offset += 500) {
+            $page = $this->formService->getAllForms($userId, ['limit' => 500, 'offset' => $offset, 'includeFields' => true]);
+            foreach ($page as $f) {
+                $fid = (string) $f['id'];
+                if (isset($createdByImport[$fid])) {
+                    continue;
+                }
+                $fields = is_array($f['fields'] ?? null) ? $f['fields'] : [];
+                $resync = isset($attached[$fid]);
+                if (!$resync) {
+                    foreach ($fields as $field) {
+                        if (($field['type'] ?? '') === 'linked_record'
+                            && isset($targets[(string) ($field['properties']['targetFormId'] ?? '')])) {
+                            $resync = true;
+                            break;
+                        }
+                    }
+                }
+                if (!$resync || !$this->sqlite->formDatabaseExists($fid)) {
+                    continue;
+                }
+                $db = $this->sqlite->getFormDatabase($fid);
+                for ($o = 0; ; $o += 500) {
+                    $rows = $db->query("SELECT id, answers FROM responses ORDER BY rowid LIMIT 500 OFFSET {$o}")->fetchAll(PDO::FETCH_ASSOC);
+                    if ($rows === []) {
+                        break;
+                    }
+                    foreach ($rows as $row) {
+                        $answers = json_decode((string) $row['answers'], true);
+                        $this->responseService->syncResponseLinks($fid, (string) $row['id'], $fields, is_array($answers) ? $answers : []);
+                    }
+                }
+            }
+            if (count($page) < 500) {
+                break;
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1210,8 +1626,13 @@ final class AccountBackupService
         return $value;
     }
 
-    /** linked_record fields: remap targetFormId; a target outside the backup is unset (broken otherwise). */
-    private function remapFields(array $fields, array $formIdMap, array &$warnings): array
+    /**
+     * linked_record fields: remap targetFormId; a target outside the backup is unset
+     * (broken otherwise). In preserve-ids restore mode ($keepUnknownTargets) an
+     * out-of-snapshot target is kept RAW — it reconnects to the SURVIVING form of
+     * that id (the whole point of an undelete).
+     */
+    private function remapFields(array $fields, array $formIdMap, array &$warnings, bool $keepUnknownTargets = false): array
     {
         foreach ($fields as &$field) {
             if (($field['type'] ?? '') === 'linked_record') {
@@ -1219,7 +1640,7 @@ final class AccountBackupService
                 if (is_string($target) && $target !== '') {
                     if (isset($formIdMap[$target])) {
                         $field['properties']['targetFormId'] = $formIdMap[$target];
-                    } else {
+                    } elseif (!$keepUnknownTargets) {
                         unset($field['properties']['targetFormId']);
                         $warnings[] = "Linked-record field '" . ($field['id'] ?? '?') . "' targeted a form outside the backup — the link target was cleared.";
                     }

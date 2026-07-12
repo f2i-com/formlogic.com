@@ -36,6 +36,7 @@ use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ScheduledBackupService;
+use FormLogic\Services\TrashService;
 use FormLogic\Services\UpgradeService;
 use Psr\Log\NullLogger;
 
@@ -66,13 +67,15 @@ if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
 $sqlite = new SQLiteConnection($settings['sqlite']['storage_path']);
 $formService = new FormService($mysql, $sqlite);
 $responseService = new ResponseService($mysql, $sqlite);
+$appService = new AppService($mysql, $formService);
+$flowService = new FlowService($mysql);
 $accountBackup = new AccountBackupService(
     $mysql,
     $sqlite,
     $formService,
-    new AppService($mysql, $formService),
+    $appService,
     new AppUserService($mysql),
-    new FlowService($mysql),
+    $flowService,
     $responseService,
     $settings['backups'] ?? [],
     $settings['sqlite']['storage_path'],
@@ -107,6 +110,26 @@ printf(
 );
 foreach ($summary['errors'] as $err) {
     fwrite(STDERR, sprintf("  FAILED %s (%s): %s\n", $err['email'], $err['userId'], $err['error']));
+}
+
+// Nightly maintenance shares this job: purge recycle-bin items past their
+// 30-day window (trash.retentionDays) + sweep orphaned snapshot zips.
+try {
+    $trash = new TrashService(
+        $mysql,
+        $sqlite,
+        $accountBackup,
+        $formService,
+        $appService,
+        $flowService,
+        $settings['trash'] ?? [],
+        new NullLogger()
+    );
+    $purged = $trash->purgeExpired();
+    printf("[%s] trash purge: %d expired item(s), %d orphan zip(s)\n", date('c'), $purged['items'], $purged['orphans']);
+} catch (\Throwable $e) {
+    // The backup already succeeded — report the purge failure without failing the run.
+    fwrite(STDERR, sprintf("[%s] trash purge FAILED: %s\n", date('c'), $e->getMessage()));
 }
 
 exit($summary['failed'] > 0 ? 1 : 0);

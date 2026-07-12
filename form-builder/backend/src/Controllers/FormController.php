@@ -10,6 +10,7 @@ use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\PlanService;
 use FormLogic\Services\AppReportService;
+use FormLogic\Services\TrashService;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -27,6 +28,7 @@ class FormController
     private ?AuditService $auditService;
     private ?PlanService $planService;
     private ?AppReportService $reportValidator;
+    private ?TrashService $trashService;
 
     public function __construct(
         FormService $formService,
@@ -34,7 +36,8 @@ class FormController
         ?FormVersionService $versionService = null,
         ?AuditService $auditService = null,
         ?PlanService $planService = null,
-        ?AppReportService $reportValidator = null
+        ?AppReportService $reportValidator = null,
+        ?TrashService $trashService = null
     ) {
         $this->formService = $formService;
         $this->logger = $logger ?? new NullLogger();
@@ -42,6 +45,7 @@ class FormController
         $this->auditService = $auditService;
         $this->planService = $planService;
         $this->reportValidator = $reportValidator;
+        $this->trashService = $trashService;
     }
 
     /**
@@ -436,7 +440,17 @@ class FormController
         }
 
         try {
-            $deleted = $this->formService->deleteForm($formId);
+            // Recycle bin: snapshot before the hard delete (30-day restore).
+            // Empty drafts skip the snapshot (trashed=false). The resume path
+            // above never captures — the metadata row is already gone.
+            if ($this->trashService !== null) {
+                $result = $this->trashService->trashForm($formId, (string) $request->getAttribute('userId'));
+                $deleted = $result['deleted'];
+                $trashed = $result['trashed'];
+            } else {
+                $deleted = $this->formService->deleteForm($formId);
+                $trashed = false;
+            }
         } catch (FormDeletionIncompleteException $e) {
             // Metadata removed but the on-disk stores still disagree — truthful,
             // retryable failure instead of fake success (the deletion intent is
@@ -461,6 +475,7 @@ class FormController
         return $this->jsonResponse($response, [
             'success' => true,
             'message' => 'Form deleted successfully',
+            'trashed' => $trashed,
         ]);
     }
 

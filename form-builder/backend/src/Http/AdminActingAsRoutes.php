@@ -9,6 +9,7 @@ use FormLogic\Controllers\AppDomainController;
 use FormLogic\Controllers\AppUserController;
 use FormLogic\Controllers\FlowController;
 use FormLogic\Controllers\FormController;
+use FormLogic\Controllers\TrashController;
 use FormLogic\Controllers\WebhookController;
 use FormLogic\Middleware\AdminRunLogRedactionMiddleware;
 use Psr\Container\ContainerInterface;
@@ -148,6 +149,12 @@ final class AdminActingAsRoutes
         // ── Owner-wide run history + completion (REDACTED; no /queued, no /claim) ──
         ['GET',    '/flow-runs',                               FlowController::class,      'listOwnerRuns', [self::REDACT_RUNS]],
         ['PATCH',  '/flow-runs/{runId}',                       FlowController::class,      'completeOwnerRun', [self::REDACT_RUNS]],
+
+        // ── Recycle bin (names/kinds/counts only — snapshot CONTENTS have no
+        //    mirror and no download endpoint anywhere; restore consumes the item) ──
+        ['GET',    '/trash',                                   TrashController::class,     'index'],
+        ['POST',   '/trash/{id}/restore',                      TrashController::class,     'restore'],
+        ['DELETE', '/trash/{id}',                              TrashController::class,     'purge'],
     ];
 
     public static function register(RouteCollectorProxy $group, ContainerInterface $container): void

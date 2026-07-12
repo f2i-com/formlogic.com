@@ -50,6 +50,8 @@ lerna-debug.log*
 /backend/storage/backups/
 # Account-backup staging (export zips are built + streamed from here)
 /backend/storage/tmp/
+# Recycle-bin snapshots (restorable delete captures, purged after 30 days)
+/backend/storage/trash/
 /backend/logs/*.log
 
 # OS files

@@ -782,6 +782,26 @@ CREATE TABLE `admin_notices` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `trash_items` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` enum('form','app','flow') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `original_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `zip_path` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `size_bytes` bigint unsigned NOT NULL DEFAULT '0',
+  `meta` json DEFAULT NULL,
+  `status` enum('trashed','restoring') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'trashed',
+  `deleted_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_trash_user` (`user_id`,`deleted_at`),
+  KEY `idx_trash_expires` (`expires_at`),
+  CONSTRAINT `trash_items_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `users` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
