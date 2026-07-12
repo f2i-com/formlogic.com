@@ -8,6 +8,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  AOKIE_SETTINGS_DEFAULTS,
+  settingsPatch,
+  withAokieDefaults,
+} from '../../../../desktop/src/aokie/aokieSettings';
 
 const fixture = JSON.parse(
   readFileSync(join(__dirname, '../../../../../docs/contracts/aokie-settings-schema.v1.json'), 'utf8')
@@ -25,9 +30,10 @@ const fixture = JSON.parse(
 };
 
 const panelSource = readFileSync(
-  // The Aokie settings UI moved from PluginsPanel into the shared feature
-  // module during the 2026-07 desktop redesign.
-  join(__dirname, '../../../../desktop/src/aokie/AokieCard.tsx'),
+  // The panel's pure settings logic (defaults, parsing, dirty-field patch)
+  // was extracted from AokieCard.tsx for AOK-SAFE-001 so it is importable
+  // and testable here.
+  join(__dirname, '../../../../desktop/src/aokie/aokieSettings.ts'),
   'utf8'
 );
 
@@ -53,12 +59,46 @@ describe('aokie settings schema conformance', () => {
 
   it('the Desktop panel defaults sit inside the plugin bounds', () => {
     for (const key of ['sttEndpointMs', 'bargeSensitivity'] as const) {
-      const m = panelSource.match(new RegExp(`${key}:\\s*(\\d+)`));
-      expect(m, `AokieCard default for ${key}`).toBeTruthy();
-      const def = Number(m![1]);
+      const def = AOKIE_SETTINGS_DEFAULTS[key];
       const s = spec(key)!;
       expect(def, `${key} default ${def} within [${s.min}, ${s.max}]`).toBeGreaterThanOrEqual(s.min!);
       expect(def).toBeLessThanOrEqual(s.max!);
     }
+  });
+});
+
+// AOK-SAFE-001 regressions: auto-answer can never default on, and an
+// unrelated settings edit can never write it.
+describe('aokie settings safety (AOK-SAFE-001)', () => {
+  it('auto-answer defaults OFF; missing and malformed keys read as off', () => {
+    expect(AOKIE_SETTINGS_DEFAULTS.autoAnswer).toBe(false);
+    expect(withAokieDefaults(undefined).autoAnswer).toBe(false);
+    expect(withAokieDefaults({}).autoAnswer).toBe(false);
+    expect(withAokieDefaults({ autoAnswer: 'yes' }).autoAnswer).toBe(false);
+    expect(withAokieDefaults({ autoAnswer: 1 }).autoAnswer).toBe(false);
+    expect(withAokieDefaults({ autoAnswer: null }).autoAnswer).toBe(false);
+  });
+
+  it('legacy string booleans display the way the plugin treats them', () => {
+    // The plugin arms on "true" (shipped settings.json files hold string
+    // bools) — the panel must not show "off" for an effectively armed key.
+    expect(withAokieDefaults({ autoAnswer: 'true' }).autoAnswer).toBe(true);
+    expect(withAokieDefaults({ autoAnswer: 'false' }).autoAnswer).toBe(false);
+    expect(withAokieDefaults({ autoAnswer: true }).autoAnswer).toBe(true);
+  });
+
+  it('saves patch only dirty fields — an unrelated edit never carries autoAnswer', () => {
+    const baseline = withAokieDefaults({ autoAnswer: true, greeting: 'Hello' });
+    const edited = { ...baseline, persona: 'Friendly booking assistant' };
+    const patch = settingsPatch(baseline, edited);
+    expect(patch).toEqual({ persona: 'Friendly booking assistant' });
+    expect('autoAnswer' in patch).toBe(false);
+  });
+
+  it('an explicit auto-answer change is the only time the key is written', () => {
+    const baseline = withAokieDefaults({});
+    const armed = { ...baseline, autoAnswer: true };
+    expect(settingsPatch(baseline, armed)).toEqual({ autoAnswer: true });
+    expect(settingsPatch(baseline, { ...baseline })).toEqual({});
   });
 });

@@ -4,6 +4,12 @@ import { AlertTriangleIcon, CheckIcon } from '../Icons';
 import { useConfirm } from '../ConfirmDialog';
 import { useToast } from '../Toasts';
 import { DongleSetupWizard } from './DongleSetupWizard';
+import {
+  AOKIE_SETTINGS_DEFAULTS,
+  settingsPatch,
+  withAokieDefaults,
+  type AokieConnectorSettings,
+} from './aokieSettings';
 
 /**
  * The Aokie receptionist feature UI (audit/redesign 2026-07): live phone
@@ -45,48 +51,6 @@ interface AokieSettingsResponse {
   settings?: Record<string, unknown>;
 }
 
-/**
- * Every key the Aokie connector's settings bag understands (persona,
- * greeting, voice, model, barge-in tuning, …) — see aokie.com
- * `crates/aokie-plugin/src/connector.rs`. Kept flat and fully defaulted so
- * every field below is always a controlled input.
- */
-interface AokieConnectorSettings {
-  aiReceptionist: boolean;
-  autoAnswer: boolean;
-  answerTone: boolean;
-  greeting: string;
-  persona: string;
-  ttsVoice: string;
-  aiModel: string;
-  aiEndpoint: string;
-  sttEndpoint: string;
-  ttsEndpoint: string;
-  sttEndpointMs: number;
-  bargeIn: boolean;
-  bargeSensitivity: number;
-  hfpCodec: 'auto' | 'cvsd' | 'wbs';
-  reenumerateHwid: string;
-}
-
-const AOKIE_SETTINGS_DEFAULTS: AokieConnectorSettings = {
-  aiReceptionist: false,
-  autoAnswer: true,
-  answerTone: false,
-  greeting: '',
-  persona: '',
-  ttsVoice: '',
-  aiModel: '',
-  aiEndpoint: '',
-  sttEndpoint: '',
-  ttsEndpoint: '',
-  sttEndpointMs: 450,
-  bargeIn: false,
-  bargeSensitivity: 650,
-  hfpCodec: 'auto',
-  reenumerateHwid: '',
-};
-
 const AOKIE_VOICE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: 'Default' },
   { value: 'alba', label: 'Alba' },
@@ -103,40 +67,6 @@ const AOKIE_CODEC_OPTIONS: Array<{ value: AokieConnectorSettings['hfpCodec']; la
   { value: 'cvsd', label: 'CVSD (8kHz)' },
   { value: 'wbs', label: 'mSBC (16kHz, wideband)' },
 ];
-
-/**
- * Merge a raw `settings.get`/`settings.set` payload over the client-side
- * defaults so every field is always defined (never leave a controlled input
- * `undefined`), tolerating missing/mistyped keys from an older plugin build.
- */
-function withAokieDefaults(raw: unknown): AokieConnectorSettings {
-  const src = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const d = AOKIE_SETTINGS_DEFAULTS;
-  const codec = src.hfpCodec;
-  return {
-    aiReceptionist: typeof src.aiReceptionist === 'boolean' ? src.aiReceptionist : d.aiReceptionist,
-    autoAnswer: typeof src.autoAnswer === 'boolean' ? src.autoAnswer : d.autoAnswer,
-    answerTone: typeof src.answerTone === 'boolean' ? src.answerTone : d.answerTone,
-    greeting: typeof src.greeting === 'string' ? src.greeting : d.greeting,
-    persona: typeof src.persona === 'string' ? src.persona : d.persona,
-    ttsVoice: typeof src.ttsVoice === 'string' ? src.ttsVoice : d.ttsVoice,
-    aiModel: typeof src.aiModel === 'string' ? src.aiModel : d.aiModel,
-    aiEndpoint: typeof src.aiEndpoint === 'string' ? src.aiEndpoint : d.aiEndpoint,
-    sttEndpoint: typeof src.sttEndpoint === 'string' ? src.sttEndpoint : d.sttEndpoint,
-    ttsEndpoint: typeof src.ttsEndpoint === 'string' ? src.ttsEndpoint : d.ttsEndpoint,
-    sttEndpointMs:
-      typeof src.sttEndpointMs === 'number' && Number.isFinite(src.sttEndpointMs)
-        ? src.sttEndpointMs
-        : d.sttEndpointMs,
-    bargeIn: typeof src.bargeIn === 'boolean' ? src.bargeIn : d.bargeIn,
-    bargeSensitivity:
-      typeof src.bargeSensitivity === 'number' && Number.isFinite(src.bargeSensitivity)
-        ? src.bargeSensitivity
-        : d.bargeSensitivity,
-    hfpCodec: codec === 'cvsd' || codec === 'wbs' || codec === 'auto' ? codec : d.hfpCodec,
-    reenumerateHwid: typeof src.reenumerateHwid === 'string' ? src.reenumerateHwid : d.reenumerateHwid,
-  };
-}
 
 /** Poll cadence while a pairing window is open (countdown + bond detection). */
 const PAIRING_POLL_MS = 2000;
@@ -536,11 +466,13 @@ export function AokieCard({ running, devMode }: { running: boolean; devMode: boo
 
 /**
  * Editable form over Aokie's live connector settings (persona, greeting,
- * voice, model, barge-in tuning, …) — reads via `settings.get`, writes the
- * FULL settings bag via `settings.set` (so booleans round-trip correctly
- * even when unchecked), no plugin restart required to take effect.
- * Collapsed by default; only fetches on first expand (or an explicit
- * Reload), never while the plugin isn't running.
+ * voice, model, barge-in tuning, …) — reads via `settings.get`, writes ONLY
+ * the fields the operator changed via `settings.set` (the plugin merges per
+ * key, so untouched safety keys like autoAnswer and unknown/newer plugin
+ * keys are never rewritten by an unrelated edit — audit AOK-SAFE-001).
+ * No plugin restart required to take effect. Collapsed by default; only
+ * fetches on first expand (or an explicit Reload), never while the plugin
+ * isn't running.
  */
 function AokieSettingsForm({ running }: { running: boolean }) {
   const [expanded, setExpanded] = useState(false);
@@ -549,6 +481,8 @@ function AokieSettingsForm({ running }: { running: boolean }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AokieConnectorSettings>(AOKIE_SETTINGS_DEFAULTS);
+  // The bag as last loaded/saved — the diff base for dirty-field saves.
+  const baseline = useRef<AokieConnectorSettings>(AOKIE_SETTINGS_DEFAULTS);
   const toast = useToast();
 
   const load = useCallback(async () => {
@@ -557,7 +491,9 @@ function AokieSettingsForm({ running }: { running: boolean }) {
     try {
       const res = await plugins.command('aokie', 'settings.get');
       const data = (res.data ?? {}) as AokieSettingsResponse;
-      setSettings(withAokieDefaults(data.settings));
+      const merged = withAokieDefaults(data.settings);
+      baseline.current = merged;
+      setSettings(merged);
       setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -573,12 +509,19 @@ function AokieSettingsForm({ running }: { running: boolean }) {
   };
 
   const save = async () => {
+    const patch = settingsPatch(baseline.current, settings);
+    if (Object.keys(patch).length === 0) {
+      toast.push({ kind: 'success', title: 'No changes to save' });
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const res = await plugins.command('aokie', 'settings.set', settings);
+      const res = await plugins.command('aokie', 'settings.set', patch);
       const data = (res.data ?? {}) as AokieSettingsResponse;
-      setSettings(withAokieDefaults(data.settings));
+      const merged = withAokieDefaults(data.settings);
+      baseline.current = merged;
+      setSettings(merged);
       toast.push({
         kind: 'success',
         title: 'Receptionist settings saved',
