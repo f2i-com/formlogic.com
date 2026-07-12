@@ -63,6 +63,7 @@ export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus }: E
   height="${height}px"
   frameborder="0"
   sandbox="allow-forms allow-scripts allow-same-origin"
+  allow="geolocation; camera"
   style="border: none; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);"
   title="${safeTitle}"
 ></iframe>`;
@@ -71,6 +72,7 @@ export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus }: E
         return `<iframe
   src="${safeUrl}"
   sandbox="allow-forms allow-scripts allow-same-origin"
+  allow="geolocation; camera"
   style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; border: none; z-index: 9999;"
   title="${safeTitle}"
 ></iframe>`;
@@ -99,6 +101,7 @@ function openFormPopup() {
 
   const iframe = document.createElement('iframe');
   iframe.src = '${safeUrl}';
+  iframe.setAttribute('allow', 'geolocation; camera');
   iframe.style.cssText = 'width:100%;height:100%;border:none;';
 
   container.appendChild(closeBtn);

@@ -22,6 +22,9 @@ class ScriptResult
         public readonly int $executionTimeMs = 0,
         /** ctx.flows.run() intents ([{slug, input?}]) — enqueued by ResponseService post-persist. */
         public readonly array $flowRuns = [],
+        /** false when the script returned {store:false}: accept the submission but
+         *  persist NOTHING — the script owns the data (custom storage via ctx.http). */
+        public readonly bool $store = true,
     ) {}
 
     /**
@@ -43,6 +46,7 @@ class ScriptResult
         int $instructionCount = 0,
         int $executionTimeMs = 0,
         array $flowRuns = [],
+        bool $store = true,
     ): self {
         return new self(
             success: true,
@@ -53,6 +57,7 @@ class ScriptResult
             instructionCount: $instructionCount,
             executionTimeMs: $executionTimeMs,
             flowRuns: $flowRuns,
+            store: $store,
         );
     }
 
@@ -108,6 +113,7 @@ class ScriptResult
             'instructionCount' => $this->instructionCount,
             'executionTimeMs' => $this->executionTimeMs,
             'flowRuns' => $this->flowRuns,
+            'store' => $this->store,
         ];
     }
 }

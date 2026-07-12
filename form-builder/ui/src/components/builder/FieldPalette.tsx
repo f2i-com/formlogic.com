@@ -12,18 +12,31 @@ const FIELD_CATEGORIES = {
   layout: 'Layout',
 };
 
-export function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => void }) {
+/** Palette-only presets: separate cards that create a PRECONFIGURED base type
+ *  (so the whole storage/export/backup pipeline stays the base type's). */
+const FIELD_PRESETS: Array<{ preset: string; type: FieldType; label: string; icon: string; category: string }> = [
+  { preset: 'camera', type: 'file_upload', label: 'Camera', icon: 'Camera', category: 'advanced' },
+];
+
+export function FieldPalette({ onAddField }: { onAddField: (type: FieldType, preset?: string) => void }) {
   const [query, setQuery] = useState('');
 
   const fieldsByCategory = useMemo(
-    () => Object.entries(FIELD_TYPE_INFO).reduce(
-      (acc, [type, info]) => {
-        if (!acc[info.category]) acc[info.category] = [];
-        acc[info.category].push({ type: type as FieldType, ...info });
-        return acc;
-      },
-      {} as Record<string, Array<{ type: FieldType; label: string; icon: string }>>
-    ),
+    () => {
+      const acc = Object.entries(FIELD_TYPE_INFO).reduce(
+        (map, [type, info]) => {
+          if (!map[info.category]) map[info.category] = [];
+          map[info.category].push({ type: type as FieldType, ...info });
+          return map;
+        },
+        {} as Record<string, Array<{ type: FieldType; label: string; icon: string; preset?: string }>>
+      );
+      for (const p of FIELD_PRESETS) {
+        if (!acc[p.category]) acc[p.category] = [];
+        acc[p.category].push({ type: p.type, label: p.label, icon: p.icon, preset: p.preset });
+      }
+      return acc;
+    },
     [],
   );
 
@@ -65,8 +78,8 @@ export function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => 
               const IconComponent = ICON_MAP[field.icon] || HelpCircle;
               return (
                 <button
-                  key={field.type}
-                  onClick={() => onAddField(field.type)}
+                  key={field.preset ?? field.type}
+                  onClick={() => onAddField(field.type, field.preset)}
                   title={field.label}
                   className="flex min-w-0 items-center gap-2 p-2.5 sm:p-1.5 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 active:scale-[0.98] motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                 >

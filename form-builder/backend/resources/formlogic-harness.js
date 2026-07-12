@@ -242,6 +242,12 @@
       write({ type: "done", reject: true, message: msg });
       return;
     }
+    // {store:false} = accept the submission but skip FormLogic's own storage —
+    // the script owns the data (e.g. forwarded it via ctx.http).
+    if (ret && typeof ret === "object" && ret.store === false) {
+      write({ type: "done", result: sanitize(ret, 0), store: false });
+      return;
+    }
     write({ type: "done", result: sanitize(ret, 0) });
     return;
   }

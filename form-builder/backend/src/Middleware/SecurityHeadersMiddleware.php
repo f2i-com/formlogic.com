@@ -42,10 +42,12 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // Referrer Policy - don't leak referrer to other origins
         $response = $response->withHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
-        // Permissions Policy - disable potentially dangerous browser features
+        // Permissions Policy - disable potentially dangerous browser features.
+        // geolocation/camera stay SELF-only (not denied) to match the SPA
+        // .htaccess: the form runtime's Location + Camera fields need them.
         $response = $response->withHeader(
             'Permissions-Policy',
-            'geolocation=(), microphone=(), camera=(), payment=()'
+            'geolocation=(self), microphone=(), camera=(self), payment=()'
         );
 
         // HSTS - only in production and over HTTPS

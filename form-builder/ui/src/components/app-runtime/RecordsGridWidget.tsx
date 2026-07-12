@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Inbox } fro
 import type { DashboardWidget } from '../../types/app';
 import type { WidgetDataForm } from './widgetData';
 import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { useFittedColumns } from '../../hooks/useFittedColumns';
 
 type FieldOption = { value: string; label?: string };
 interface Col { id: string; label: string; type: string; options?: FieldOption[] }
@@ -103,12 +104,22 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
     return () => { cancelled = true; };
   }, [fetchPage, formId, pageSize, page, sort, sortDir]);
 
+  // Show as many columns as the widget's ACTUAL width fits (no horizontal
+  // scroll); collapse to stacked cards once the tile is phone-narrow.
+  const { ref: fitRef, count: fitCount, cards } = useFittedColumns<HTMLDivElement>({
+    itemCount: Math.max(1, cols.length),
+    itemMinPx: 140,
+    reservedPx: 32,
+    cardBelowPx: 420,
+  });
+  const visibleCols = cols.slice(0, Math.max(1, fitCount));
+
   // Sortable when live (fetchPage present): the header click pushes the sort
   // to the server so ordering spans every row, not just the visible page.
   const sortable = !!fetchPage;
   const headerRow = (
     <tr className="text-left text-xs font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-100 dark:border-slate-700/40">
-      {cols.length ? cols.map((c) => (
+      {visibleCols.length ? visibleCols.map((c) => (
         <th
           key={c.id}
           aria-sort={sortable ? (sort === c.id ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
@@ -135,10 +146,10 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
   // Builder canvas: no runtime fetch — show the column shape so the author sees the layout.
   if (!fetchPage) {
     return (
-      <div className="flex-1 min-h-0 overflow-auto px-2 pb-3">
+      <div ref={fitRef} className="flex-1 min-h-0 overflow-auto px-2 pb-3">
         <table className="w-full text-sm"><thead>{headerRow}</thead>
           <tbody>
-            <tr><td colSpan={Math.max(cols.length, 1)} className="px-4 py-6 text-center text-xs text-gray-400 dark:text-slate-500">
+            <tr><td colSpan={Math.max(visibleCols.length, 1)} className="px-4 py-6 text-center text-xs text-gray-400 dark:text-slate-500">
               {formId ? 'Records appear here in the app.' : 'Pick a form in the widget settings.'}
             </td></tr>
           </tbody>
@@ -155,7 +166,7 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 overflow-auto px-2">
+      <div ref={fitRef} className="flex-1 min-h-0 overflow-auto px-2">
         {loading && rows.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-gray-400" role="status" aria-label="Loading records">
             <Loader2 className="h-5 w-5 motion-safe:animate-spin" />
@@ -174,6 +185,33 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
               <span className="mt-1 text-xs">No records yet</span>
             )}
           </div>
+        ) : cards ? (
+          /* Stacked cards — tile too narrow for a table. Every column shows as label/value. */
+          <div className={`py-2 space-y-2 ${loading ? 'opacity-50' : ''}`}>
+            {rows.map((r) => {
+              const id = String(r.id ?? '');
+              const answers = r.answers ?? {};
+              return (
+                <div
+                  key={id}
+                  onClick={() => clickable && onOpenRecord!(formId, id)}
+                  tabIndex={clickable ? 0 : undefined}
+                  role={clickable ? 'button' : undefined}
+                  onKeyDown={(e) => { if (clickable && e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenRecord!(formId, id); } }}
+                  className={`rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3 space-y-1 ${clickable ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset app-ring-primary' : ''}`}
+                >
+                  {cols.length ? cols.map((c, i) => (
+                    <div key={c.id} className="flex gap-2 text-sm">
+                      <span className="text-gray-400 dark:text-slate-500 shrink-0">{c.label}:</span>
+                      <span className={`text-gray-900 dark:text-slate-200 min-w-0 truncate ${i === 0 ? 'font-medium' : ''}`}>
+                        {cell(answers[c.id], c, tz)}
+                      </span>
+                    </div>
+                  )) : <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{`Record ${id.slice(0, 8)}`}</p>}
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <table className={`w-full text-sm ${loading ? 'opacity-50' : ''}`}>
             <thead>{headerRow}</thead>
@@ -189,7 +227,7 @@ export function RecordsGridWidget({ widget, form, fetchPage, onOpenRecord }: Rec
                     tabIndex={clickable ? 0 : undefined}
                     onKeyDown={(e) => { if (clickable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpenRecord!(formId, id); } }}
                   >
-                    {cols.length ? cols.map((c, i) => (
+                    {visibleCols.length ? visibleCols.map((c, i) => (
                       <td key={c.id} className={`px-4 py-2.5 text-gray-700 dark:text-slate-300 max-w-[14rem] truncate ${i === 0 ? 'font-medium' : ''}`}>
                         {cell(answers[c.id], c, tz)}
                       </td>

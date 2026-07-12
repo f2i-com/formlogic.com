@@ -8,6 +8,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { parseServerDate } from '../../lib/utils';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { useFittedColumns } from '../../hooks/useFittedColumns';
 
 type RelatedColumn = NonNullable<RelatedRecordGroup['columns']>[number];
 
@@ -48,6 +49,172 @@ function formatCell(value: unknown, col: RelatedColumn, tz: string): string {
     return formatDateTimeInZone(value, tz);
   }
   return labelFor(value);
+}
+
+type RelatedRecord = RelatedRecordGroup['records'][number];
+
+interface RelatedGroupSectionProps {
+  group: RelatedRecordGroup;
+  tz: string;
+  mayAdd: boolean;
+  mayDelete: boolean;
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
+  onAdd: (group: RelatedRecordGroup) => void;
+  onOpen: (formId: string, recordId: string) => void;
+  onRequestDelete: (record: RelatedRecord) => void;
+}
+
+/** One relationship group: fits as many field columns as the container's ACTUAL width
+ *  allows (no horizontal scroll), and collapses to stacked cards on phone-sized widths. */
+function RelatedGroupSection({ group, tz, mayAdd, mayDelete, isExpanded, onToggleExpanded, onAdd, onOpen, onRequestDelete }: RelatedGroupSectionProps) {
+  const cols = group.columns && group.columns.length ? group.columns : null;
+  // Reserve room for the always-present "Added" timestamp + actions columns.
+  const { ref: fitRef, count: fitCount, cards } = useFittedColumns<HTMLDivElement>({
+    itemCount: cols ? cols.length : 1,
+    itemMinPx: 150,
+    reservedPx: mayDelete ? 240 : 200,
+  });
+  const visibleCols = cols ? cols.slice(0, Math.max(1, fitCount)) : null;
+
+  // Newest first (link-table order is effectively random), capped at the
+  // relationship's configured page size behind a per-group "Show all".
+  const sorted = [...group.records].sort((a, b) => {
+    const ta = a.submittedAt ? parseServerDate(a.submittedAt).getTime() : 0;
+    const tb = b.submittedAt ? parseServerDate(b.submittedAt).getTime() : 0;
+    return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+  });
+  const cap = Math.max(1, group.pageSize ?? 8);
+  const visible = isExpanded ? sorted : sorted.slice(0, cap);
+  const hiddenCount = sorted.length - visible.length;
+
+  return (
+    <div className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
+      <div className="px-5 py-2.5 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider truncate">
+            {group.displayName}
+          </span>
+          <span className="text-xs font-medium text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-full flex-shrink-0">
+            {group.count}
+          </span>
+        </div>
+        {mayAdd && (
+          <button
+            type="button"
+            onClick={() => onAdd(group)}
+            className="inline-flex items-center gap-1 text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded px-1.5 py-0.5"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add
+          </button>
+        )}
+      </div>
+
+      <div ref={fitRef}>
+        {cards ? (
+          /* Stacked cards — too narrow for a table. Every column shows as label/value;
+           * delete is always visible (no hover on touch). */
+          <div className="px-4 py-3 space-y-2">
+            {visible.map((record) => (
+              <div
+                key={record.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(group.formId, record.id)}
+                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(group.formId, record.id); } }}
+                className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3 flex items-start justify-between gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset app-ring-primary"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  {cols ? (
+                    cols.map((c, i) => (
+                      <div key={c.id} className="flex gap-2 text-sm">
+                        <span className="text-gray-400 dark:text-slate-500 shrink-0">{c.label}:</span>
+                        <span className={`text-gray-900 dark:text-slate-200 min-w-0 truncate ${i === 0 ? 'font-medium' : ''}`}>
+                          {formatCell(record.fields?.[c.id], c, tz)}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{record.display}</p>
+                  )}
+                  <p className="text-xs text-gray-400 dark:text-slate-500">
+                    {record.submittedAt ? formatDateTimeInZone(record.submittedAt, tz) : '—'}
+                  </p>
+                </div>
+                {mayDelete && (
+                  <button
+                    type="button"
+                    aria-label="Delete related record"
+                    onClick={(e) => { e.stopPropagation(); onRequestDelete(record); }}
+                    className="shrink-0 p-1.5 rounded-lg text-gray-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-100 dark:border-slate-700/30">
+                  {visibleCols
+                    ? visibleCols.map((c) => <th key={c.id} className="px-5 py-2 font-semibold whitespace-nowrap">{c.label}</th>)
+                    : <th className="px-5 py-2 font-semibold">Record</th>}
+                  <th className="px-5 py-2 font-semibold whitespace-nowrap">Added</th>
+                  <th className="px-3 py-2 w-10" aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-700/30">
+                {visible.map((record) => (
+                  <tr
+                    key={record.id}
+                    className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group/row"
+                    onClick={() => onOpen(group.formId, record.id)}
+                  >
+                    {visibleCols
+                      ? visibleCols.map((c, i) => (
+                          <td key={c.id} className={`px-5 py-3 text-gray-700 dark:text-slate-300 ${i === 0 ? 'font-medium' : ''} max-w-[16rem] truncate`}>
+                            {formatCell(record.fields?.[c.id], c, tz)}
+                          </td>
+                        ))
+                      : <td className="px-5 py-3 font-medium text-gray-700 dark:text-slate-300 max-w-[20rem] truncate">{record.display}</td>}
+                    <td className="px-5 py-3 text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">
+                      {record.submittedAt ? formatDateTimeInZone(record.submittedAt, tz) : '—'}
+                    </td>
+                    <td className="px-3 py-3 w-10">
+                      {mayDelete && (
+                        <button
+                          type="button"
+                          aria-label="Delete related record"
+                          onClick={(e) => { e.stopPropagation(); onRequestDelete(record); }}
+                          className="p-1.5 rounded-lg text-gray-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer opacity-0 group-hover/row:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {(hiddenCount > 0 || (isExpanded && sorted.length > cap)) && (
+        <div className="px-5 py-2 border-t border-gray-100 dark:border-slate-700/30">
+          <button
+            type="button"
+            onClick={onToggleExpanded}
+            className="text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded px-1 py-0.5"
+          >
+            {isExpanded ? 'Show fewer' : `Show all ${sorted.length}`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
@@ -152,100 +319,20 @@ export function RelatedRecordsPanel(props: RelatedRecordsPanelProps) {
       </div>
 
       {groups.map((group) => {
-        const cols = group.columns && group.columns.length ? group.columns : null;
-        const mayAdd = !!group.fieldId && group.allowAdd !== false && canAdd(group.formId);
-        const mayDelete = group.allowDelete !== false && canDel(group.formId);
-        // Newest first (link-table order is effectively random), capped at the
-        // relationship's configured page size behind a per-group "Show all".
-        const sorted = [...group.records].sort((a, b) => {
-          const ta = a.submittedAt ? parseServerDate(a.submittedAt).getTime() : 0;
-          const tb = b.submittedAt ? parseServerDate(b.submittedAt).getTime() : 0;
-          return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
-        });
-        const cap = Math.max(1, group.pageSize ?? 8);
         const gkey = group.key ?? group.formId;
-        const isExpanded = !!expanded[gkey];
-        const visible = isExpanded ? sorted : sorted.slice(0, cap);
-        const hiddenCount = sorted.length - visible.length;
         return (
-          <div key={gkey} className="border-b last:border-b-0 border-gray-100 dark:border-slate-700/30">
-            <div className="px-5 py-2.5 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider truncate">
-                  {group.displayName}
-                </span>
-                <span className="text-xs font-medium text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-full flex-shrink-0">
-                  {group.count}
-                </span>
-              </div>
-              {mayAdd && (
-                <button
-                  type="button"
-                  onClick={() => addRelated(group)}
-                  className="inline-flex items-center gap-1 text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded px-1.5 py-0.5"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add
-                </button>
-              )}
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs font-semibold text-gray-400 dark:text-slate-500 border-b border-gray-100 dark:border-slate-700/30">
-                    {cols
-                      ? cols.map((c) => <th key={c.id} className="px-5 py-2 font-semibold whitespace-nowrap">{c.label}</th>)
-                      : <th className="px-5 py-2 font-semibold">Record</th>}
-                    <th className="px-5 py-2 font-semibold whitespace-nowrap">Added</th>
-                    <th className="px-3 py-2 w-10" aria-label="Actions" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-slate-700/30">
-                  {visible.map((record) => (
-                    <tr
-                      key={record.id}
-                      className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group/row"
-                      onClick={() => openRecord(group.formId, record.id)}
-                    >
-                      {cols
-                        ? cols.map((c, i) => (
-                            <td key={c.id} className={`px-5 py-3 text-gray-700 dark:text-slate-300 ${i === 0 ? 'font-medium' : ''} max-w-[16rem] truncate`}>
-                              {formatCell(record.fields?.[c.id], c, tz)}
-                            </td>
-                          ))
-                        : <td className="px-5 py-3 font-medium text-gray-700 dark:text-slate-300 max-w-[20rem] truncate">{record.display}</td>}
-                      <td className="px-5 py-3 text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">
-                        {record.submittedAt ? formatDateTimeInZone(record.submittedAt, tz) : '—'}
-                      </td>
-                      <td className="px-3 py-3 w-10">
-                        {mayDelete && (
-                          <button
-                            type="button"
-                            aria-label="Delete related record"
-                            onClick={(e) => { e.stopPropagation(); setDeleteTarget({ formId: group.formId, id: record.id, label: record.display }); }}
-                            className="p-1.5 rounded-lg text-gray-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer opacity-0 group-hover/row:opacity-100 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {(hiddenCount > 0 || (isExpanded && sorted.length > cap)) && (
-              <div className="px-5 py-2 border-t border-gray-100 dark:border-slate-700/30">
-                <button
-                  type="button"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [gkey]: !isExpanded }))}
-                  className="text-xs font-semibold app-text-primary hover:opacity-80 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary rounded px-1 py-0.5"
-                >
-                  {isExpanded ? 'Show fewer' : `Show all ${sorted.length}`}
-                </button>
-              </div>
-            )}
-          </div>
+          <RelatedGroupSection
+            key={gkey}
+            group={group}
+            tz={tz}
+            mayAdd={!!group.fieldId && group.allowAdd !== false && canAdd(group.formId)}
+            mayDelete={group.allowDelete !== false && canDel(group.formId)}
+            isExpanded={!!expanded[gkey]}
+            onToggleExpanded={() => setExpanded((prev) => ({ ...prev, [gkey]: !prev[gkey] }))}
+            onAdd={addRelated}
+            onOpen={openRecord}
+            onRequestDelete={(record) => setDeleteTarget({ formId: group.formId, id: record.id, label: record.display })}
+          />
         );
       })}
 

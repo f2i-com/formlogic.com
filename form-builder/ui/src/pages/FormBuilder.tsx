@@ -46,6 +46,7 @@ import { cn } from '../lib/utils';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { DeleteFieldDialog } from '../components/builder/DeleteFieldDialog';
 import { IconPicker } from '../components/ui/IconPicker';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, FormFlowsPanel, useFormPreview } from '../components/builder';
@@ -323,6 +324,10 @@ export default function FormBuilder() {
   const authorName = useAuthStore((s) => s.user?.name) || 'Unknown';
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  // Response-data count for the field pending deletion (null while loading):
+  // >0 swaps the plain confirm for the keep-data / delete-data choice.
+  const [pendingDeleteUsage, setPendingDeleteUsage] = useState<number | null>(null);
+  const [purgingField, setPurgingField] = useState(false);
   const headerRef = useRef<HTMLElement | null>(null);
   const headerWidthRef = useRef<number | null>(null);
   const [builderChrome, setBuilderChrome] = useState<BuilderChromeTier>(() => resolveBuilderChrome(null));
@@ -643,8 +648,10 @@ export default function FormBuilder() {
     }
   }, [builderLayout.palette, paletteOpenPref, setPaletteOpenPref, setSettingsCollapsed, settingsCollapsed]);
 
-  // Add field handler (defined first for use in shortcuts)
-  const handleAddField = useCallback((type: FieldType) => {
+  // Add field handler (defined first for use in shortcuts). `preset` is a
+  // palette variant of a base type (e.g. 'camera' = file_upload preconfigured
+  // for in-form photo capture).
+  const handleAddField = useCallback((type: FieldType, preset?: string) => {
     if (!form) return;
 
     const defaultLabels: Partial<Record<FieldType, string>> = {
@@ -685,7 +692,7 @@ export default function FormBuilder() {
 
     const field = addField(form.id, {
       type,
-      label: defaultLabels[type] || 'New Field',
+      label: preset === 'camera' ? 'Take a photo' : (defaultLabels[type] || 'New Field'),
       required: false,
       properties: {
         options: defaultOptions,
@@ -695,6 +702,8 @@ export default function FormBuilder() {
         // File upload defaults (maxFileSize is in BYTES; acceptedFileTypes is the
         // key the runtime reads — 'allowedTypes' was a dead key and `10` was 10 bytes)
         ...(type === 'file_upload' ? { maxFileSize: 10 * 1024 * 1024, acceptedFileTypes: [], allowMultiple: false } : {}),
+        // Camera preset: same pipeline as file uploads, image-only + capture UI.
+        ...(preset === 'camera' ? { captureMode: 'camera' as const, acceptedFileTypes: ['image/*'] } : {}),
         // Linked record defaults
         ...(type === 'linked_record' ? { targetFormId: '', displayFieldIds: [], searchFieldIds: [], allowMultiple: false } : {}),
       },
@@ -890,6 +899,64 @@ export default function FormBuilder() {
     deleteField(form.id, pendingDeleteId);
     setPendingDeleteId(null);
     toast.success('Deleted', 'Field deleted');
+  }, [form, pendingDeleteId, deleteField]);
+
+  // How many responses hold a value in the doomed field — decides which delete
+  // dialog shows. A failed lookup (offline, admin acting mode) falls back to 0,
+  // i.e. the plain confirm and today's delete behavior.
+  const formIdForUsage = form?.id;
+  useEffect(() => {
+    if (!pendingDeleteId || !formIdForUsage) {
+      setPendingDeleteUsage(null);
+      return;
+    }
+    let cancelled = false;
+    setPendingDeleteUsage(null);
+    api.getFieldUsage(formIdForUsage, pendingDeleteId)
+      .then((res) => { if (!cancelled) setPendingDeleteUsage(res.data?.responsesWithValue ?? 0); })
+      .catch(() => { if (!cancelled) setPendingDeleteUsage(0); });
+    return () => { cancelled = true; };
+  }, [pendingDeleteId, formIdForUsage]);
+
+  // "Keep the data": the field leaves the form but survives as a HIDDEN field —
+  // same id, so every stored answer stays visible in records and exports.
+  const keepDataHideField = useCallback(() => {
+    if (!form || !pendingDeleteId) return;
+    const target = form.fields.find((f) => f.id === pendingDeleteId);
+    if (!target) { setPendingDeleteId(null); return; }
+    const props = { ...(target.properties ?? {}) };
+    // A default/calculation would seed NEW values into an archived field.
+    delete (props as Record<string, unknown>).defaultValue;
+    delete (props as Record<string, unknown>).calculationExpression;
+    updateField(form.id, pendingDeleteId, { type: 'hidden', required: false, properties: props });
+    setPendingDeleteId(null);
+    toast.success('Field hidden', 'It no longer appears on the form; existing data stays in your records and exports.');
+  }, [form, pendingDeleteId, updateField]);
+
+  // "Delete field & data": remove the definition, make sure that save actually
+  // landed, THEN purge the stored values server-side (order matters — purging
+  // first and failing the save would leave a live field with wiped data).
+  const confirmDeleteFieldAndData = useCallback(async () => {
+    if (!form || !pendingDeleteId) return;
+    const fieldId = pendingDeleteId;
+    setPurgingField(true);
+    deleteField(form.id, fieldId);
+    const { ok } = await flushFormSaves(form.id);
+    if (!ok) {
+      setPurgingField(false);
+      setPendingDeleteId(null);
+      toast.error('Delete not saved', 'The structure change could not be saved, so no data was deleted. Resolve the save error and try again.');
+      return;
+    }
+    const res = await api.purgeFieldData(form.id, fieldId);
+    setPurgingField(false);
+    setPendingDeleteId(null);
+    if (res.error) {
+      toast.error('Data not fully removed', 'The field was deleted, but purging its stored data failed. The data is no longer visible; contact support if it must be erased.');
+    } else {
+      const n = res.data?.purged ?? 0;
+      toast.success('Deleted', `Field and its data removed from ${n} record${n === 1 ? '' : 's'}.`);
+    }
   }, [form, pendingDeleteId, deleteField]);
 
   const handlePublishPack = useCallback(() => {
@@ -1529,13 +1596,24 @@ export default function FormBuilder() {
       />
 
       <ConfirmDialog
-        isOpen={pendingDeleteId !== null}
+        isOpen={pendingDeleteId !== null && !((pendingDeleteUsage ?? 0) > 0)}
         onClose={() => setPendingDeleteId(null)}
         onConfirm={confirmDeleteField}
         title="Delete this field?"
         message={`Delete "${form.fields.find((f) => f.id === pendingDeleteId)?.label || 'this field'}"? Any conditional logic or calculations on other fields that reference it are removed too. This can't be undone.`}
         confirmLabel="Delete field"
         variant="danger"
+      />
+
+      {/* The doomed field has response data — offer keep-as-hidden vs purge. */}
+      <DeleteFieldDialog
+        isOpen={pendingDeleteId !== null && (pendingDeleteUsage ?? 0) > 0}
+        onClose={() => setPendingDeleteId(null)}
+        fieldLabel={form.fields.find((f) => f.id === pendingDeleteId)?.label || 'this field'}
+        usageCount={pendingDeleteUsage ?? 0}
+        onKeepData={keepDataHideField}
+        onDeleteData={() => { void confirmDeleteFieldAndData(); }}
+        isDeleting={purgingField}
       />
 
       {/* Preview chooser — shown when this form is published in 2+ apps */}

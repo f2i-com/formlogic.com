@@ -36,6 +36,7 @@ import {
   Smartphone, Laptop, CircuitBoard, BatteryCharging,
   Dumbbell, Tractor, Wheat, Sprout, Fuel, Construction, Route,
   Timer, ListChecks, CalendarClock, CalendarCheck, NotebookPen, ClipboardPen,
+  Camera,
 } from 'lucide-react';
 
 // Explicit icon map. Importing lucide's `{ icons }` barrel and looking up by
@@ -78,6 +79,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Smartphone, Laptop, CircuitBoard, BatteryCharging,
   Dumbbell, Tractor, Wheat, Sprout, Fuel, Construction, Route,
   Timer, ListChecks, CalendarClock, CalendarCheck, NotebookPen, ClipboardPen,
+  Camera,
 };
 
 export function getLucideIcon(name: string): LucideIcon | null {

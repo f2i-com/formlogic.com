@@ -286,11 +286,14 @@ class ExternalApiController
                 ], 422);
             }
 
-            // Write inverse linked_record links (External API submissions skipped this).
-            $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
+            // {store:false} scripts persist nothing — skip link indexing + notify.
+            if (($result['stored'] ?? true) !== false) {
+                // Write inverse linked_record links (External API submissions skipped this).
+                $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
 
-            // Parity with the public submit path: notify the owner + audit the create.
-            $this->maybeNotifyNewResponse($form);
+                // Parity with the public submit path: notify the owner + audit the create.
+                $this->maybeNotifyNewResponse($form);
+            }
             $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId']]);
 
             $createdId = is_string($result['id'] ?? null) ? $result['id'] : null;
@@ -418,10 +421,13 @@ class ExternalApiController
                 if ($result instanceof ScriptRejection) {
                     $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => true];
                 } else {
-                    $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $item['answers'] ?? []);
-                    $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null];
-                    $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId'], 'batch' => true]);
-                    $createdCount++;
+                    $stored = ($result['stored'] ?? true) !== false;
+                    if ($stored) {
+                        $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $item['answers'] ?? []);
+                        $createdCount++;
+                    }
+                    $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null, 'stored' => $stored];
+                    $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId'], 'batch' => true, 'stored' => $stored]);
                 }
             } catch (\RuntimeException | \InvalidArgumentException $e) {
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage()];

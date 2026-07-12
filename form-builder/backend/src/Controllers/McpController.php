@@ -681,7 +681,10 @@ class McpController
                     if ($result instanceof ScriptRejection) {
                         throw new \Exception("Submission rejected by the form's onSubmit script: " . $result->message);
                     }
-                    $this->responseService->syncResponseLinks($formId, (string) ($result['id'] ?? ''), $form['fields'] ?? [], $answers);
+                    // {store:false} scripts persist nothing — no source row to link from.
+                    if (($result['stored'] ?? true) !== false) {
+                        $this->responseService->syncResponseLinks($formId, (string) ($result['id'] ?? ''), $form['fields'] ?? [], $answers);
+                    }
                     $data = $result;
                     $this->audit($request, 'mcp.add_response', $userId, ['formId' => $formId, 'responseId' => $result['id'] ?? null]);
                     break;

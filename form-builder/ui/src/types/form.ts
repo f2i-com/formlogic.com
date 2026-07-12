@@ -58,6 +58,9 @@ export interface FieldProperties {
   maxFileSize?: number;
   maxFiles?: number;
   acceptedFileTypes?: string[];
+  /** file_upload variant: 'camera' renders the in-form camera capture UI (photos
+   *  are resized client-side before upload). Same answer shape as file_upload. */
+  captureMode?: 'camera';
   calculationExpression?: string;
   // Static value seeded into a hidden field (used when there's no calculationExpression).
   defaultValue?: string;

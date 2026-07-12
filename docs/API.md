@@ -155,8 +155,13 @@ What happens server-side, in order — identical to a browser submission:
 1. **Sanitize** — non-input and unknown fields are dropped; client-supplied `status` is ignored.
 2. **Calculated / hidden fields** are computed on the server (you can't set them from the client).
 3. **Validation** — required fields, types, and your validation rules run. Failures → `400`.
-4. **`onSubmit(ctx)` script** runs — it can `reject` the submission, `setField`, `setStatus`,
-   `addTag`, call `ctx.http`, etc.
+4. **`onSubmit(ctx)` script** runs — BEFORE anything is stored. It can `reject` the submission,
+   `setField`, `setStatus`, `addTag`, call `ctx.http`, etc. It can also take over storage
+   entirely by returning `{ store: false }`: the submission is accepted (`201`, with
+   `"stored": false` on the response object) but FormLogic persists nothing — no response row,
+   webhooks, flows, links or notifications — leaving the script in charge of the data
+   (typically forwarded via `ctx.http`). Only an explicit `reject`/`store:false` changes
+   storage; a script that merely throws does NOT block the save.
 
 **Success** → `201`:
 

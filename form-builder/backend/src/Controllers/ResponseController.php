@@ -533,14 +533,19 @@ class ResponseController
                 ]];
             }
 
-            // Write inverse linked_record links so "related records" lookups work
-            // for standalone public submissions (the app path syncs separately).
-            $this->responseService->syncResponseLinks($formId, $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
+            // {store:false} scripts persist nothing — no links to index, no record
+            // to notify about (the audit trail still records the submission event).
+            $stored = ($result['stored'] ?? true) !== false;
+            if ($stored) {
+                // Write inverse linked_record links so "related records" lookups work
+                // for standalone public submissions (the app path syncs separately).
+                $this->responseService->syncResponseLinks($formId, $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
 
-            // Best-effort new-response notification email (form Notifications tab).
-            $this->maybeNotifyNewResponse($form);
+                // Best-effort new-response notification email (form Notifications tab).
+                $this->maybeNotifyNewResponse($form);
+            }
 
-            $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId]);
+            $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId, 'stored' => $stored]);
             return ['status' => 201, 'payload' => ['response' => $result]];
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return ['status' => 400, 'payload' => [
@@ -1261,6 +1266,54 @@ class ResponseController
         $analytics = $this->responseService->getFormAnalytics($formId, $options);
 
         return $this->jsonResponse($response, ['analytics' => $analytics]);
+    }
+
+    /**
+     * How many responses hold a value for one field — powers the builder's
+     * delete-field warning. GET /api/forms/{formId}/fields/{fieldId}/usage
+     */
+    public function fieldUsage(Request $request, Response $response, array $args): Response
+    {
+        $form = $this->authorizeFormAccess($request, (string) $args['formId']);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+        $fieldId = (string) ($args['fieldId'] ?? '');
+        if (preg_match('/^[A-Za-z0-9_\-]{1,100}$/', $fieldId) !== 1) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid field id'], 400);
+        }
+        return $this->jsonResponse($response, [
+            'fieldId' => $fieldId,
+            'responsesWithValue' => $this->responseService->countResponsesWithFieldValue((string) $args['formId'], $fieldId),
+        ]);
+    }
+
+    /**
+     * Permanently remove one field's data from every response (the builder's
+     * "delete field AND its data" choice, invoked AFTER the structure save
+     * removed the definition). POST /api/forms/{formId}/fields/{fieldId}/purge-data
+     */
+    public function purgeFieldData(Request $request, Response $response, array $args): Response
+    {
+        $form = $this->authorizeFormAccess($request, (string) $args['formId']);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+        $fieldId = (string) ($args['fieldId'] ?? '');
+        if (preg_match('/^[A-Za-z0-9_\-]{1,100}$/', $fieldId) !== 1) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid field id'], 400);
+        }
+        // Refuse while the field still exists — the purge is the follow-up to a
+        // structure save that deleted it; purging a live field would silently
+        // wipe data the form still collects.
+        foreach ($form['fields'] ?? [] as $f) {
+            if (($f['id'] ?? '') === $fieldId) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Field still exists on the form — remove it first'], 409);
+            }
+        }
+        $purged = $this->responseService->purgeFieldData((string) $args['formId'], $fieldId);
+        $this->audit($request, 'response.field_data_purge', 'form', (string) $args['formId'], ['fieldId' => $fieldId, 'purged' => $purged]);
+        return $this->jsonResponse($response, ['purged' => $purged]);
     }
 
     /**

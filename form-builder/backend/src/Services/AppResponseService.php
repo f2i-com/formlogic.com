@@ -41,8 +41,9 @@ class AppResponseService
 
         $result = $this->responseService->createResponse($formId, $data, $script);
 
-        // Write response links for linked_record fields
-        if (is_array($result) && isset($result['id'])) {
+        // Write response links for linked_record fields ({store:false} script
+        // submissions persist nothing, so there is no source row to link from)
+        if (is_array($result) && isset($result['id']) && ($result['stored'] ?? true) !== false) {
             $this->syncResponseLinks($formId, $result['id'], $data['answers'] ?? []);
         }
 

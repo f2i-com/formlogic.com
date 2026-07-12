@@ -326,6 +326,45 @@ class AuthController
     }
 
     /**
+     * Public list of demoable STANDALONE forms (published, owned by the Demo
+     * account, not attached to any app — the public /form/{id} runtime only
+     * serves those), so the landing page can render try-it-now form examples
+     * with QR codes. GET /api/demo/forms
+     */
+    public function demoForms(Request $request, Response $response): Response
+    {
+        if (!$this->demoEnabled() || $this->db === null) {
+            return $this->jsonResponse($response, ['forms' => []]);
+        }
+
+        $user = $this->authService->ensureDemoUser($this->demoEmail());
+        try {
+            $stmt = $this->db->getConnection()->prepare(
+                "SELECT f.id, f.title, f.description, f.icon,
+                        (f.logic_script IS NOT NULL AND f.logic_script != '') AS has_logic
+                 FROM forms f
+                 WHERE f.user_id = :uid AND f.status = 'published'
+                   AND NOT EXISTS (SELECT 1 FROM app_forms af WHERE af.form_id = f.id)
+                 ORDER BY f.created_at ASC"
+            );
+            $stmt->execute(['uid' => $user->id]);
+            $out = [];
+            foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                $out[] = [
+                    'id' => $row['id'],
+                    'title' => $row['title'],
+                    'description' => $row['description'] ?? '',
+                    'icon' => $row['icon'] ?? null,
+                    'hasLogic' => (bool) $row['has_logic'],
+                ];
+            }
+            return $this->jsonResponse($response, ['forms' => $out]);
+        } catch (\Throwable $e) {
+            return $this->jsonResponse($response, ['forms' => []]);
+        }
+    }
+
+    /**
      * Update user profile
      * PUT /api/auth/me
      */

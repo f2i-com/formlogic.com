@@ -8,6 +8,7 @@ import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
+import { ShareQrCode } from '../../components/ui/ShareQrCode';
 import { AppLogicPanel } from '../../components/apps/AppLogicPanel';
 import { FlowsPanel } from '../../components/apps/FlowsPanel';
 import { DesktopStatusPanel } from '../../components/desktop/DesktopStatusPanel';
@@ -208,6 +209,13 @@ export function AppDeploySettings() {
             <Button variant="outline" size="sm" disabled={!!acting} title={acting ? 'The live app shows record data, which is not visible to platform admins' : undefined} onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
               Open
             </Button>
+          </div>
+          <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-4">
+            <ShareQrCode url={appUrl} downloadName={`${app.slug}-qr`} size={144} />
+            <div className="text-sm text-gray-600 dark:text-slate-400 max-w-xs">
+              <p className="font-medium text-gray-900 dark:text-white mb-1">Share by QR code</p>
+              <p>Anyone who scans this opens your app straight away — print it, put it on a poster, or drop it in a slide deck.</p>
+            </div>
           </div>
         </div>
 

@@ -499,6 +499,11 @@ class ApiClient {
     return this.request('/demo/apps');
   }
 
+  /** Public list of standalone example forms (published, Demo-owned, not in any app) for the landing showcase. */
+  async getDemoForms(): Promise<ApiResponse<{ forms: Array<{ id: string; title: string; description: string; icon?: string | null; hasLogic: boolean }> }>> {
+    return this.request('/demo/forms');
+  }
+
   async requestPasswordReset(email: string): Promise<ApiResponse<{ message: string }>> {
     // The reset-link host is resolved server-side from trusted config — we do
     // NOT send it from the client (that would be a reset-poisoning vector).
@@ -1031,6 +1036,16 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ script, answers }),
     });
+  }
+
+  /** How many responses hold a value for a field — powers the builder's delete-field warning. */
+  async getFieldUsage(formId: string, fieldId: string): Promise<ApiResponse<{ fieldId: string; responsesWithValue: number }>> {
+    return this.request(`/forms/${formId}/fields/${encodeURIComponent(fieldId)}/usage`);
+  }
+
+  /** Permanently remove a DELETED field's data from every response (post-structure-save step). */
+  async purgeFieldData(formId: string, fieldId: string): Promise<ApiResponse<{ purged: number }>> {
+    return this.request(`/forms/${formId}/fields/${encodeURIComponent(fieldId)}/purge-data`, { method: 'POST' });
   }
 
   // App Admin endpoints

@@ -123,6 +123,7 @@ class FormLogicRuntime
             instructionCount: 0,
             executionTimeMs: $executionTimeMs,
             flowRuns: $capture->getFlowRuns(),
+            store: ($done['store'] ?? true) !== false,
         );
     }
 

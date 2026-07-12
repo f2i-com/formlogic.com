@@ -626,6 +626,12 @@ final class AccountBackupService
             if (!is_file($abs) || preg_match(self::SAFE_UPLOAD_NAME, $name) !== 1) {
                 continue;
             }
+            // Uncommitted uploads (still carrying a .pending marker) belong to
+            // no persisted response — exporting them would restore permanent,
+            // answer-less orphans the sweeper can never reclaim.
+            if (is_file($dir . '/.pending/' . $name)) {
+                continue;
+            }
             $out['files/' . $formId . '/' . $name] = $abs;
         }
         return $out;

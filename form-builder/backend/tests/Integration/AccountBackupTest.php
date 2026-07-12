@@ -202,6 +202,11 @@ class AccountBackupTest extends TestCase
         $uploadDir = self::$uploadsPath . '/' . preg_replace('/[^a-zA-Z0-9\-]/', '', $this->f2);
         mkdir($uploadDir, 0777, true);
         file_put_contents($uploadDir . '/' . $this->fileId . '.pdf', 'PDF-BYTES');
+        // An UNCOMMITTED upload (pending marker still present): uploaded but never
+        // referenced by a persisted response — exports must skip it.
+        mkdir($uploadDir . '/.pending', 0777, true);
+        file_put_contents($uploadDir . '/pending0000-0000-0000-0000-000000000000.pdf', 'ORPHAN');
+        file_put_contents($uploadDir . '/.pending/pending0000-0000-0000-0000-000000000000.pdf', '');
         self::$responses->createResponse($this->f2, ['answers' => [
             'client' => $this->f1ResponseIds[0],
             'attachment' => [[
@@ -281,6 +286,8 @@ class AccountBackupTest extends TestCase
             $this->assertArrayHasKey("data/forms/{$this->f1}.sqlite", $manifest['entries']);
             $this->assertArrayHasKey("data/forms/{$this->f2}.sqlite", $manifest['entries']);
             $this->assertArrayHasKey("files/{$this->f2}/{$this->fileId}.pdf", $manifest['entries']);
+            // The uncommitted (.pending-marked) upload is NOT exported.
+            $this->assertArrayNotHasKey("files/{$this->f2}/pending0000-0000-0000-0000-000000000000.pdf", $manifest['entries']);
 
             $structure = json_decode((string) $zip->getFromName('backup.json'), true);
             // The SHARED form appears exactly once; both apps reference it.

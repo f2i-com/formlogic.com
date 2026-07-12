@@ -374,6 +374,127 @@ foreach ($sources as $s) {
 }
 out("seeded reports: $seededReports across demo apps");
 
+// ── Standalone example forms (landing-page "try a form" showcase) ────────────
+// Published, owned by Demo, NOT attached to any app — the public /form/{id}
+// runtime only serves those. GET /api/demo/forms lists them for the landing
+// page (title + description + QR). Idempotent upsert BY TITLE so the ids (and
+// any QR codes in the wild) stay stable across re-provisions.
+$exampleForms = [
+    [
+        'title' => 'Event RSVP',
+        'description' => 'RSVP form with instant guest-list logic — over-sized groups are rejected server-side, big parties get tagged.',
+        'icon' => 'PartyPopper',
+        'fields' => [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Your name', 'required' => true],
+            ['id' => 'email', 'type' => 'email', 'label' => 'Email address', 'required' => true],
+            ['id' => 'attending', 'type' => 'multiple_choice', 'label' => 'Will you attend?', 'required' => true,
+             'properties' => ['options' => [
+                 ['id' => 'o1', 'label' => 'Yes, count me in', 'value' => 'yes'],
+                 ['id' => 'o2', 'label' => "Sorry, can't make it", 'value' => 'no'],
+             ]]],
+            ['id' => 'guests', 'type' => 'number', 'label' => 'How many guests are you bringing?', 'required' => false,
+             'properties' => ['min' => 0, 'max' => 10]],
+        ],
+        'logicScript' => <<<'JS'
+// Runs on the server BEFORE the response is stored.
+function onSubmit(ctx) {
+  const guests = Number(ctx.answers.guests || 0);
+  if (guests > 5) {
+    return { reject: true, message: "We can seat groups of 5 or fewer — email us for larger parties." };
+  }
+  if (guests >= 3) ctx.db.addTag("large-group");
+  ctx.db.setField("party_size", guests + 1);
+  return { processedAt: ctx.utils.now() };
+}
+JS,
+    ],
+    [
+        'title' => 'Work with us',
+        'description' => 'Lead-qualifier form with server-side scoring — free-mail addresses are rejected, enterprise leads auto-approve.',
+        'icon' => 'Briefcase',
+        'fields' => [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Your name', 'required' => true],
+            ['id' => 'email', 'type' => 'email', 'label' => 'Work email', 'required' => true],
+            ['id' => 'company_size', 'type' => 'dropdown', 'label' => 'Company size', 'required' => true,
+             'properties' => ['options' => [
+                 ['id' => 'o1', 'label' => '1–10 people', 'value' => 'xs'],
+                 ['id' => 'o2', 'label' => '11–50 people', 'value' => 's'],
+                 ['id' => 'o3', 'label' => '51–200 people', 'value' => 'm'],
+                 ['id' => 'o4', 'label' => '200+ people', 'value' => 'l'],
+             ]]],
+            ['id' => 'message', 'type' => 'long_text', 'label' => 'What are you looking to build?', 'required' => false],
+        ],
+        'logicScript' => <<<'JS'
+// Runs on the server BEFORE the response is stored.
+function onSubmit(ctx) {
+  const email = String(ctx.answers.email || "").toLowerCase();
+  if (email.endsWith("@gmail.com") || email.endsWith("@outlook.com") || email.endsWith("@yahoo.com")) {
+    return { reject: true, message: "Please use your work email address." };
+  }
+  const score = { xs: 1, s: 2, m: 3, l: 5 }[ctx.answers.company_size] || 0;
+  ctx.db.setField("lead_score", score);
+  if (score >= 5) {
+    ctx.db.setStatus("approved");
+    ctx.db.addTag("enterprise");
+  }
+  return { scoredAt: ctx.utils.now() };
+}
+JS,
+    ],
+    [
+        'title' => 'Site photo report',
+        'description' => 'Field-report form with camera capture and GPS location — take a photo, pin where it happened, triage by urgency.',
+        'icon' => 'Camera',
+        'fields' => [
+            ['id' => 'what_happened', 'type' => 'long_text', 'label' => 'What happened?', 'required' => true],
+            ['id' => 'photo', 'type' => 'file_upload', 'label' => 'Take a photo', 'required' => false,
+             'properties' => ['captureMode' => 'camera', 'acceptedFileTypes' => ['image/*'], 'maxFileSize' => 10 * 1024 * 1024, 'allowMultiple' => false]],
+            ['id' => 'location', 'type' => 'location', 'label' => 'Where are you?', 'required' => false],
+            ['id' => 'urgency', 'type' => 'dropdown', 'label' => 'Urgency', 'required' => true,
+             'properties' => ['options' => [
+                 ['id' => 'o1', 'label' => 'Low — when convenient', 'value' => 'low'],
+                 ['id' => 'o2', 'label' => 'Medium — this week', 'value' => 'medium'],
+                 ['id' => 'o3', 'label' => 'High — right now', 'value' => 'high'],
+             ]]],
+        ],
+        'logicScript' => <<<'JS'
+// Runs on the server BEFORE the response is stored.
+function onSubmit(ctx) {
+  ctx.db.addTag(String(ctx.answers.urgency || "low"));
+  if (ctx.answers.urgency === "high") ctx.db.setStatus("reviewed");
+  return { reportedAt: ctx.utils.now() };
+}
+JS,
+    ],
+];
+$exampleCount = 0;
+foreach ($exampleForms as $ex) {
+    $stmt = $pdo->prepare(
+        "SELECT f.id FROM forms f
+         WHERE f.user_id = ? AND f.title = ?
+           AND NOT EXISTS (SELECT 1 FROM app_forms af WHERE af.form_id = f.id)
+         LIMIT 1"
+    );
+    $stmt->execute([$demoId, $ex['title']]);
+    $existingId = $stmt->fetchColumn();
+    $payload = [
+        'title' => $ex['title'],
+        'description' => $ex['description'],
+        'icon' => $ex['icon'],
+        'status' => 'published',
+        'fields' => $ex['fields'],
+        'logicScript' => $ex['logicScript'],
+        'userId' => $demoId,
+    ];
+    if ($existingId) {
+        $forms->updateForm((string) $existingId, $payload);
+    } else {
+        $forms->createForm($payload);
+        $exampleCount++;
+    }
+}
+out('example forms: ' . count($exampleForms) . ' ensured (' . $exampleCount . ' new)');
+
 // Bump the demo seed epoch whenever response data was (re)generated — clients purge their
 // browser-local overlay on mismatch so stale records never dangle against a replaced dataset.
 if (!empty($GLOBALS['demoDataChanged'])) {

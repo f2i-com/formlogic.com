@@ -343,7 +343,27 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
           {/* File upload settings */}
           {field.type === 'file_upload' && (
             <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">File Upload Settings</h4>
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">
+                {field.properties.captureMode === 'camera' ? 'Camera Settings' : 'File Upload Settings'}
+              </h4>
+              <Switch
+                label="Capture from camera"
+                checked={field.properties.captureMode === 'camera'}
+                onChange={(checked) => onUpdate({
+                  properties: {
+                    ...field.properties,
+                    captureMode: checked ? 'camera' : undefined,
+                    // Camera mode is image-only; leaving it restores "any type".
+                    acceptedFileTypes: checked ? ['image/*'] : (field.properties.acceptedFileTypes?.length === 1 && field.properties.acceptedFileTypes[0] === 'image/*' ? [] : field.properties.acceptedFileTypes),
+                  },
+                })}
+              />
+              {field.properties.captureMode === 'camera' && (
+                <p className="text-xs text-gray-500 dark:text-slate-400 -mt-1">
+                  Respondents take a photo with their device camera (or pick one from their
+                  gallery). Photos are resized on the device before upload.
+                </p>
+              )}
               <Input
                 label="Max File Size (MB)"
                 type="number"

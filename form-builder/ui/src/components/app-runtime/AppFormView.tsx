@@ -21,6 +21,7 @@ import { PhoneInput } from '../ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { FileUploadField } from '../ui/FileUploadField';
+import { CameraField } from '../ui/CameraField';
 import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
@@ -227,7 +228,7 @@ function FieldInput({
   // uses early returns, so render first then clone the top element (input, or the
   // role="radiogroup" wrapper for rating/scale/choice).
   const renderInput = () => {
-  const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
+  const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 px-3 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
   if (field.type === 'phone') {
@@ -542,9 +543,22 @@ function FieldInput({
   }
 
   if (field.type === 'file_upload') {
+    const asFormField = field as unknown as import('../../types/form').FormField;
+    if (asFormField.properties?.captureMode === 'camera') {
+      return (
+        <CameraField
+          field={asFormField}
+          value={value}
+          onChange={onChange}
+          primaryColor={primaryColor}
+          formId={formId}
+          appSlug={appSlug}
+        />
+      );
+    }
     return (
       <FileUploadField
-        field={field as unknown as import('../../types/form').FormField}
+        field={asFormField}
         value={value}
         onChange={onChange}
         primaryColor={primaryColor}
@@ -960,8 +974,10 @@ export function AppFormView() {
         answers: submissionData,
       });
       // Singleton forms: the first fill created THE record — land on it, where all future
-      // visits (and edits) happen, instead of the generic thank-you screen.
-      if (singleRecord && typeof createdId === 'string' && (canViewOwn(formId) || canViewAll(formId))) {
+      // visits (and edits) happen, instead of the generic thank-you screen. ({store:false}
+      // scripts persist nothing, so there is no record page to land on.)
+      const wasStored = (created as { stored?: unknown } | null | undefined)?.stored !== false;
+      if (singleRecord && wasStored && typeof createdId === 'string' && (canViewOwn(formId) || canViewAll(formId))) {
         navigate(`/app/${appSlug}/form/${formId}/responses/${createdId}`, { replace: true });
       }
     } catch (err) {

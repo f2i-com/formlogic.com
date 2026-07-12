@@ -1,5 +1,6 @@
 import '../styles/landing-v2.css';
 import { LiveDemoSection } from '../components/landing/LiveDemoSection';
+import { FormExamplesSection } from '../components/landing/FormExamplesSection';
 import { AiMcpSpotlight } from '../components/landing-v2/AiMcpSpotlight';
 import { AokieSpotlight } from '../components/landing-v2/AokieSpotlight';
 import { CapabilityBento } from '../components/landing-v2/CapabilityBento';
@@ -40,6 +41,12 @@ export function Landing() {
       <PlatformStory />
       <div id="live-demo" className="lv2-band--alt lv2-demo-band">
         <LiveDemoSection />
+      </div>
+      {/* Standalone form examples with live QR codes — forms are shareable without an app.
+          Wrapped in a theme-following band: the bare .lv2 backdrop is fixed navy in BOTH
+          themes, which would put the section's light-mode text on a dark background. */}
+      <div className="lv2-band lv2-demo-band">
+        <FormExamplesSection />
       </div>
       <AokieSpotlight />
       <CapabilityBento />

@@ -24,6 +24,12 @@ export function LocationField({ value, onChange, primaryColor }: LocationFieldPr
       setError('Geolocation is not supported by your browser');
       return;
     }
+    // Browsers only expose geolocation on secure contexts (https or localhost) —
+    // surface that instead of a misleading "permission denied".
+    if (window.isSecureContext === false) {
+      setError('Location needs a secure (HTTPS) connection — this page was loaded over HTTP.');
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -41,7 +47,7 @@ export function LocationField({ value, onChange, primaryColor }: LocationFieldPr
         setLoading(false);
         switch (err.code) {
           case err.PERMISSION_DENIED:
-            setError('Location permission denied. Please allow location access and try again.');
+            setError('Location permission denied. Allow location access in your browser (check the address-bar icon), then try again. If this form is embedded, the host page must also permit location.');
             break;
           case err.POSITION_UNAVAILABLE:
             setError('Location information is unavailable.');

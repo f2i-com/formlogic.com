@@ -1094,6 +1094,7 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
 $demoRateLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'demo');
 $app->post('/api/demo/start', [AuthController::class, 'demoStart'])->add($demoRateLimiter);
 $app->get('/api/demo/apps', [AuthController::class, 'demoApps']);
+$app->get('/api/demo/forms', [AuthController::class, 'demoForms']);
 
 // AI routes - status is public, everything else requires auth
 $app->get('/api/ai/status', function ($request, $response) use ($container) {
@@ -1365,6 +1366,15 @@ $app->post('/api/forms/{id}/reports/run-batch', function ($request, $response) u
 $app->post('/api/forms/{formId}/script/test', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->testScript($request, $response, $getArgs($request));
 })->add($scriptTestRateLimiter)->add($authRequired);
+
+// Field data lifecycle (protected, owner): how many responses hold a value for a
+// field (the builder's delete warning), and the post-delete "purge its data" step.
+$app->get('/api/forms/{formId}/fields/{fieldId}/usage', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->fieldUsage($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->post('/api/forms/{formId}/fields/{fieldId}/purge-data', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->purgeFieldData($request, $response, $getArgs($request));
+})->add($authRequired);
 
 // Export routes (protected)
 $app->get('/api/forms/{formId}/export/sqlite', function ($request, $response) use ($container, $getArgs) {

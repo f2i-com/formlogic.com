@@ -180,7 +180,7 @@ export function AdminUserDetail() {
             {user.flows.length === 0 ? <p className="text-xs text-gray-400 dark:text-slate-500">None</p> : (
               <div className="space-y-1.5">
                 {user.flows.map((f) => (
-                  <Link key={f.id} to={`/admin/users/${userId}/flows`} className={rowClass}>
+                  <Link key={f.id} to={`/admin/users/${userId}/flows?flow=${encodeURIComponent(f.id)}`} className={rowClass}>
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{f.name}</span>
                     <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
                       {f.appName ? `app: ${f.appName}` : 'workspace'} · v{f.version} · {f.enabled ? 'enabled' : 'disabled'}

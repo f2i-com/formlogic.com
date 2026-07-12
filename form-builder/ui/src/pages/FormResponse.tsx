@@ -20,6 +20,7 @@ import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { FileUploadField } from '../components/ui/FileUploadField';
+import { CameraField } from '../components/ui/CameraField';
 import { LocationField } from '../components/ui/LocationField';
 import type { FormField } from '../types/form';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -117,7 +118,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
             style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
             autoFocus={autoFocus}
           />
@@ -132,7 +133,7 @@ export function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
             rows={4}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl resize-none transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl resize-none transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -153,7 +154,7 @@ export function FieldResponse({
               onChange(isNaN(val) ? undefined : val);
             }}
             placeholder={field.placeholder || '0'}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -167,7 +168,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors cursor-pointer"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors cursor-pointer"
             autoFocus={autoFocus}
           />
         );
@@ -180,7 +181,7 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -193,7 +194,7 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -415,13 +416,23 @@ export function FieldResponse({
         // anything — AND makes failClassic's `[role="group"]` focus query actually match it.
         return (
           <div tabIndex={-1} role="group" aria-label={field.label} aria-required={required || undefined}>
-            <FileUploadField
-              field={field}
-              value={value}
-              onChange={onChange}
-              primaryColor={primaryColor}
-              formId={formId}
-            />
+            {field.properties?.captureMode === 'camera' ? (
+              <CameraField
+                field={field}
+                value={value}
+                onChange={onChange}
+                primaryColor={primaryColor}
+                formId={formId}
+              />
+            ) : (
+              <FileUploadField
+                field={field}
+                value={value}
+                onChange={onChange}
+                primaryColor={primaryColor}
+                formId={formId}
+              />
+            )}
           </div>
         );
 

@@ -302,7 +302,7 @@ export function PhoneInput({
         onPaste={handlePaste}
         placeholder={getPlaceholder(selectedCountry.iso)}
         autoFocus={autoFocus}
-        className={`flex-1 bg-transparent border-b-2 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors min-w-0 ${
+        className={`flex-1 bg-transparent border-b-2 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors min-w-0 ${
           !hasPrimaryColor ? (nationalNumber ? 'border-current/60' : 'border-current/30') : ''
         }`}
         style={{

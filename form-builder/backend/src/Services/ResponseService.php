@@ -1076,6 +1076,32 @@ class ResponseService
             if ($scriptResult->isRejected()) {
                 return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected');
             }
+
+            // Script opted out of storage ({store:false}): the submission is
+            // ACCEPTED — the respondent sees the normal thank-you — but nothing
+            // persists anywhere: no SQLite row, no MySQL mirror, no links,
+            // webhooks or flow runs, and uploaded files stay uncommitted (the
+            // abandoned-upload sweeper reclaims them). The script owns the data
+            // (typically forwarded via ctx.http). Completion analytics still
+            // count, so the owner sees the form being used.
+            if ($scriptResult->success && !$scriptResult->store) {
+                try {
+                    $this->updateAnalytics($formId, 'completion');
+                } catch (\Throwable $analyticsErr) {
+                    $this->logger->error('Failed to update analytics after store:false submission', [
+                        'formId' => $formId,
+                        'error' => $analyticsErr->getMessage(),
+                    ]);
+                }
+                return [
+                    'id' => $id,
+                    'status' => 'submitted',
+                    'submittedAt' => $now,
+                    'updatedAt' => $now,
+                    'answers' => $data['answers'] ?? [],
+                    'stored' => false,
+                ];
+            }
         }
 
         // 2. Determine initial status (may be overridden by script)
@@ -1317,6 +1343,106 @@ class ResponseService
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * How many responses hold a non-empty value for a field. Powers the builder's
+     * delete-field warning ("N records have data in this field"). Counts 0/false
+     * as data (they ARE values); empty string / empty array / missing key are not.
+     */
+    public function countResponsesWithFieldValue(string $formId, string $fieldId): int
+    {
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            return 0;
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $stmt = $db->prepare(
+            "SELECT COUNT(*) FROM responses
+             WHERE json_extract(answers, :path) IS NOT NULL
+               AND json_extract(answers, :path2) NOT IN ('', '[]')"
+        );
+        $path = '$."' . str_replace('"', '', $fieldId) . '"';
+        $stmt->execute(['path' => $path, 'path2' => $path]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Permanently remove one field's data from every response of a form (the
+     * builder's "delete field AND its data" option — the structure save alone
+     * only orphans the values inside the answers JSON). Also removes
+     * script-computed values stored under the same name, deletes uploaded files
+     * the values reference (file-upload/photo answers), and drops the field's
+     * response_links rows. The field definition itself is the caller's concern
+     * (already deleted via the normal structure save). Returns how many
+     * responses were touched.
+     */
+    public function purgeFieldData(string $formId, string $fieldId): int
+    {
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            return 0;
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $path = '$."' . str_replace('"', '', $fieldId) . '"';
+
+        // Collect uploaded-file ids the doomed values reference BEFORE removing
+        // them (shape-sniffed via extractFileIds — the field definition is gone
+        // by now, so the value shape is the only signal it was a file field).
+        $fileIds = [];
+        if ($this->fileStorageService !== null) {
+            $sel = $db->prepare("SELECT answers FROM responses WHERE json_extract(answers, :path) IS NOT NULL");
+            $sel->execute(['path' => $path]);
+            while (($raw = $sel->fetchColumn()) !== false) {
+                $answers = json_decode((string) $raw, true);
+                $value = is_array($answers) ? ($answers[$fieldId] ?? null) : null;
+                if ($value !== null) {
+                    foreach ($this->fileStorageService->extractFileIds([$fieldId => $value]) as $fid) {
+                        $fileIds[$fid] = true;
+                    }
+                }
+            }
+        }
+
+        $db->beginTransaction();
+        try {
+            $upd = $db->prepare(
+                "UPDATE responses SET answers = json_remove(answers, :path)
+                 WHERE json_extract(answers, :path2) IS NOT NULL"
+            );
+            $upd->execute(['path' => $path, 'path2' => $path]);
+            $purged = $upd->rowCount();
+            $db->prepare('DELETE FROM computed WHERE field_name = :f')->execute(['f' => $fieldId]);
+            $db->commit();
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
+
+        // Inverse-link index rows for this field (no-op unless it was a linked_record).
+        try {
+            $this->mysql->prepare('DELETE FROM response_links WHERE source_form_id = :form AND field_id = :field')
+                ->execute(['form' => $formId, 'field' => $fieldId]);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to remove response_links during field purge', [
+                'formId' => $formId, 'fieldId' => $fieldId, 'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Physical files last — the answers no longer reference them.
+        if ($this->fileStorageService !== null) {
+            foreach (array_keys($fileIds) as $fid) {
+                try {
+                    $this->fileStorageService->deleteFile($formId, (string) $fid);
+                } catch (\Throwable $e) {
+                    $this->logger->warning('Failed to delete file during field purge', [
+                        'formId' => $formId, 'fileId' => $fid, 'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        return $purged;
     }
 
     /**

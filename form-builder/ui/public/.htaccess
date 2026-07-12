@@ -26,7 +26,9 @@ Options -Indexes
   # SecurityHeadersMiddleware; this covers the React document served by Apache).
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
-  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+  # geolocation/camera stay SELF-only: the form runtime has a Location (GPS)
+  # field and a Camera field; () would deny them even to our own pages.
+  Header always set Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()"
   # Deny framing of the app shell (clickjacking / UI-redress). No script-src/style-src
   # so the SPA + QuickJS WASM worker are unaffected — only framing is restricted.
   Header always set X-Frame-Options "DENY"

@@ -52,7 +52,9 @@ function buildSampleAnswers(fields: Array<{ id: string; type: string }>): Record
   return out;
 }
 
-const EXAMPLE_SCRIPT = `// This script runs when a form is submitted
+const EXAMPLE_SCRIPT = `// This script runs on the server BEFORE the response is stored.
+// It can reject the submission, reshape what gets saved, or take over
+// storage entirely (return { store: false } and ship the data via ctx.http).
 // Access form answers with ctx.answers
 
 function onSubmit(ctx) {
@@ -187,8 +189,15 @@ const DOCS = [
       { name: 'function onSubmit(ctx)', desc: 'Required. Called when form is submitted. Receives context object with answers and utilities.' },
       { name: 'return { key: value }', desc: 'Return an object with computed values to store with the response' },
       { name: 'return { reject: true, message: "..." }', desc: 'Reject the submission and show error to user' },
+      { name: 'return { store: false }', desc: 'Accept the submission but store NOTHING in FormLogic — your script owns the data (send it wherever you like with ctx.http)' },
       { name: 'return undefined', desc: 'Accept submission without additional computed values' },
     ],
+  },
+  {
+    title: 'How storage works',
+    description:
+      'Without a script, every submission is stored as a response automatically. Your script runs BEFORE anything is stored, so it fully controls what happens: reject it (nothing is saved, the respondent sees your message), reshape what gets saved (ctx.db.setField / setStatus / addTag), or take over storage entirely with { store: false } — the respondent still sees the normal thank-you screen, but FormLogic keeps nothing and your script is in charge of the data (typically forwarded via ctx.http). With store:false there is no stored record, so no webhooks, flows, related-record links or notification emails fire, and uploaded files are not kept. Note: a script that throws an error does NOT block storage — only an explicit reject/store:false does.',
+    items: [],
   },
   {
     title: 'Context Object (ctx)',
