@@ -126,7 +126,9 @@ class CsrfMiddleware implements MiddlewareInterface
     private function isAuthCookieSettingRoute(string $path): bool
     {
         // Note: /api/auth/me and /api/auth/logout are NOT here — they require CSRF.
-        return in_array($path, ['/api/auth/login', '/api/auth/register'], true);
+        // /api/auth/mfa/verify completes a two-step login (it mints the auth cookie
+        // pre-session), so it gets the same JSON-content-type guard.
+        return in_array($path, ['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify'], true);
     }
 
     /**

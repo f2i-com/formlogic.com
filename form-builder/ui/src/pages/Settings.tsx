@@ -43,6 +43,7 @@ import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
 import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AccountBackupImportResult } from '../lib/api';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
+import { MfaPanel } from '../components/settings/MfaPanel';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
 // Local preferences stored in localStorage
@@ -769,6 +770,12 @@ export function Settings() {
                 >
                   Change Password
                 </Button>
+              </div>
+
+              {/* Two-factor authentication (TOTP): enrollment, recovery codes,
+                  remembered browsers. Optional; hidden for the shared demo. */}
+              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
+                <MfaPanel />
               </div>
             </div>
           </CardContent>

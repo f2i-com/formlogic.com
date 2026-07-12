@@ -468,8 +468,10 @@ class ApiClient {
     return result;
   }
 
-  async login(email: string, password: string): Promise<ApiResponse<{ user: User }>> {
-    const result = await this.request<{ user: User }>('/auth/login', {
+  async login(email: string, password: string): Promise<ApiResponse<{ user?: User; mfaRequired?: boolean; mfaToken?: string }>> {
+    // With MFA enabled on an unknown browser, the server answers
+    // { mfaRequired, mfaToken } instead of { user } — no session yet.
+    const result = await this.request<{ user?: User; mfaRequired?: boolean; mfaToken?: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
@@ -479,6 +481,51 @@ class ApiClient {
     }
 
     return result;
+  }
+
+  /** Finish a two-step login: the pending token from login() + an authenticator (or recovery) code. */
+  async verifyMfa(mfaToken: string, code: string, rememberBrowser: boolean): Promise<ApiResponse<{ user: User }>> {
+    const result = await this.request<{ user: User }>('/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ mfaToken, code, rememberBrowser }),
+    });
+    if (result.data?.user) {
+      this.setAuthenticated(true);
+    }
+    return result;
+  }
+
+  // ── MFA management (Settings → Security) ─────────────────────────────────
+
+  async getMfaStatus(): Promise<ApiResponse<{
+    enabled: boolean;
+    pendingSetup: boolean;
+    recoveryCodesRemaining: number;
+    trustedBrowsers: Array<{ id: string; label: string; createdAt: string; lastUsedAt: string; expiresAt: string; current: boolean }>;
+  }>> {
+    return this.request('/auth/mfa');
+  }
+
+  /** Start enrollment: a fresh secret + otpauth:// URI to render as a QR. */
+  async startMfaSetup(): Promise<ApiResponse<{ secret: string; uri: string }>> {
+    return this.request('/auth/mfa/setup', { method: 'POST' });
+  }
+
+  /** Prove the authenticator works and switch MFA on. Returns the one-time recovery codes. */
+  async enableMfa(code: string): Promise<ApiResponse<{ enabled: boolean; recoveryCodes: string[] }>> {
+    return this.request('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
+  async disableMfa(password: string): Promise<ApiResponse<{ enabled: boolean }>> {
+    return this.request('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) });
+  }
+
+  async regenerateMfaRecoveryCodes(code: string): Promise<ApiResponse<{ recoveryCodes: string[] }>> {
+    return this.request('/auth/mfa/recovery-codes', { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
+  async revokeMfaTrustedBrowser(id: string): Promise<ApiResponse<{ revoked: boolean }>> {
+    return this.request(`/auth/mfa/trusted-browsers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   /** Start (or resume) the public no-signup demo — mints a session for the shared "Demo" account. */
@@ -2662,6 +2709,8 @@ interface User {
   isDemo?: boolean;
   /** Platform administrator (unlocks the /admin panel). */
   isAdmin?: boolean;
+  /** Two-factor authentication switched on (drives the Settings card + signup nudge). */
+  mfaEnabled?: boolean;
 }
 
 // ── Admin panel types ─────────────────────────────────────────────────────────

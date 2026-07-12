@@ -21,6 +21,8 @@ interface User {
   isDemo?: boolean;
   /** Platform administrator (unlocks the /admin panel). */
   isAdmin?: boolean;
+  /** Two-factor authentication switched on (drives the Settings card + signup nudge). */
+  mfaEnabled?: boolean;
 }
 
 interface AuthState {
@@ -31,7 +33,9 @@ interface AuthState {
 
   // Actions
   initialize: () => Promise<void>;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string; mfaRequired?: boolean; mfaToken?: string }>;
+  /** Step 2 of an MFA login: exchange the pending token + authenticator code for the session. */
+  verifyMfa: (mfaToken: string, code: string, rememberBrowser: boolean) => Promise<{ success: boolean; error?: string }>;
   startDemo: () => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -144,6 +148,18 @@ export const useAuthStore = create<AuthState>()(
             return { success: false, error: result.error || 'Login failed' };
           }
 
+          // Two-factor challenge: the password checked out but this browser is
+          // unknown — no session yet, the Login page collects a code. `user`
+          // must stay null here (setting it would auto-navigate away).
+          if (result.data.mfaRequired && result.data.mfaToken) {
+            set({ isLoading: false, error: null });
+            return { success: false, mfaRequired: true, mfaToken: result.data.mfaToken };
+          }
+          if (!result.data.user) {
+            set({ isLoading: false, error: 'Login failed' });
+            return { success: false, error: 'Login failed' };
+          }
+
           set({
             user: result.data.user,
             isLoading: false,
@@ -153,6 +169,24 @@ export const useAuthStore = create<AuthState>()(
           return { success: true };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Login failed';
+          set({ isLoading: false, error: errorMessage });
+          return { success: false, error: errorMessage };
+        }
+      },
+
+      verifyMfa: async (mfaToken: string, code: string, rememberBrowser: boolean) => {
+        set({ isLoading: true, error: null });
+        try {
+          const result = await api.verifyMfa(mfaToken, code, rememberBrowser);
+          if (result.error || !result.data?.user) {
+            const message = result.error || 'Verification failed';
+            set({ isLoading: false, error: message });
+            return { success: false, error: message };
+          }
+          set({ user: result.data.user, isLoading: false, error: null });
+          return { success: true };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Verification failed';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
         }

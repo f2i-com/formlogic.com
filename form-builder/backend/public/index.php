@@ -304,7 +304,15 @@ $container->set(AuthController::class, function (Container $c) {
         $c->get(ApiKeyService::class),
         $c->get(MySQLConnection::class),
         // Erasure wipes the user's recycle bin (fail-closed) — it never trashes.
-        $c->get(\FormLogic\Services\TrashService::class)
+        $c->get(\FormLogic\Services\TrashService::class),
+        $c->get(\FormLogic\Services\MfaService::class)
+    );
+});
+
+$container->set(\FormLogic\Services\MfaService::class, function (Container $c) {
+    return new \FormLogic\Services\MfaService(
+        $c->get(MySQLConnection::class),
+        new \FormLogic\Services\TotpService()
     );
 });
 
@@ -1106,6 +1114,25 @@ $accountMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'aut
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->put('/me', [AuthController::class, 'updateProfile']);
     $group->delete('/me', [AuthController::class, 'deleteAccount']);
+})->add($accountMutationRateLimiter)->add($authRequired);
+
+// MFA challenge completion (public — it FINISHES a login, so no session yet; the
+// pending token proves the password step). Tightly rate-limited per IP: 6-digit
+// codes must never be brute-forceable, and the pending token dies after 5 min.
+// Listed in CsrfMiddleware's cookie-setting routes (JSON content-type guard).
+$mfaVerifyRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 300, 'auth_mfa_verify');
+$app->post('/api/auth/mfa/verify', [AuthController::class, 'mfaVerify'])->add($mfaVerifyRateLimiter);
+
+// MFA management (protected; demo-blocked in the controller). Enrollment,
+// recovery codes and trusted-browser revocation are sensitive-account
+// mutations — same user-keyed throttle as PUT/DELETE /me.
+$app->group('/api/auth/mfa', function (RouteCollectorProxy $group) {
+    $group->get('', [AuthController::class, 'mfaStatus']);
+    $group->post('/setup', [AuthController::class, 'mfaSetup']);
+    $group->post('/enable', [AuthController::class, 'mfaEnable']);
+    $group->post('/disable', [AuthController::class, 'mfaDisable']);
+    $group->post('/recovery-codes', [AuthController::class, 'mfaRegenerateRecoveryCodes']);
+    $group->delete('/trusted-browsers/{id}', [AuthController::class, 'mfaRevokeTrustedBrowser']);
 })->add($accountMutationRateLimiter)->add($authRequired);
 
 // Public no-signup demo: start a shared "Demo" session (mints a cookie, no password)

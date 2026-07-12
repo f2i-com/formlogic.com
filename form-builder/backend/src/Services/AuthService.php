@@ -158,7 +158,20 @@ class AuthService
         return $user->toArray() + [
             'isDemo' => strtolower($user->email) === $demoEmail,
             'isAdmin' => $this->isPlatformAdmin($user),
+            'mfaEnabled' => $this->isMfaEnabled($user->id),
         ];
+    }
+
+    /** Whether TOTP MFA is switched on (drives the Settings card + signup nudge). */
+    private function isMfaEnabled(string $userId): bool
+    {
+        try {
+            $stmt = $this->mysql->prepare("SELECT mfa_enabled FROM users WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+            return (bool) $stmt->fetchColumn();
+        } catch (\Exception $e) {
+            return false; // column not migrated yet
+        }
     }
 
     /**
@@ -741,6 +754,50 @@ class AuthService
     public function issueToken(User $user): string
     {
         return $this->generateToken($user);
+    }
+
+    /**
+     * Short-lived single-purpose token bridging the password step and the MFA
+     * code step: it proves "password already verified for this user" for five
+     * minutes and is useless as a session (distinct audience + purpose claim —
+     * validateToken() rejects it).
+     */
+    public function issueMfaPendingToken(User $user): string
+    {
+        $now = time();
+        return JWT::encode([
+            'iss' => $this->jwtConfig['issuer'] ?? 'formlogic',
+            'aud' => 'formlogic-mfa',
+            'purpose' => 'mfa_pending',
+            'sub' => $user->id,
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $now + 300,
+            'tv' => $this->getTokenVersion($user->id),
+        ], $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);
+    }
+
+    /** Validate an MFA-pending token and return its user, or null. */
+    public function consumeMfaPendingToken(string $token): ?User
+    {
+        try {
+            $decoded = JWT::decode($token, new Key($this->jwtConfig['secret'], $this->jwtConfig['algorithm']));
+            $expectedIssuer = $this->jwtConfig['issuer'] ?? 'formlogic';
+            if (!isset($decoded->sub, $decoded->iss, $decoded->aud, $decoded->purpose)
+                || $decoded->iss !== $expectedIssuer
+                || $decoded->aud !== 'formlogic-mfa'
+                || $decoded->purpose !== 'mfa_pending'
+            ) {
+                return null;
+            }
+            $tokenTv = isset($decoded->tv) ? (int) $decoded->tv : 0;
+            if ($tokenTv !== $this->getTokenVersion($decoded->sub)) {
+                return null;
+            }
+            return $this->getUserById($decoded->sub);
+        } catch (\Exception $e) {
+            return null;
+        }
     }
 
     /**

@@ -5,16 +5,21 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
-import { Mail, Lock, AlertCircle } from 'lucide-react';
+import { Mail, Lock, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
 
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  // Two-factor step: set when the password checked out but this browser is
+  // unknown — the pending token bridges to POST /auth/mfa/verify.
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [rememberBrowser, setRememberBrowser] = useState(true);
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, isLoading, error, clearError, user, logout } = useAuthStore();
+  const { login, verifyMfa, isLoading, error, clearError, user, logout } = useAuthStore();
 
   // Honor a same-origin redirect target (e.g. accepting an app invitation).
   // Reject protocol-relative (//host) and backslash (/\host) forms, which would
@@ -47,9 +52,40 @@ export function Login() {
     }
 
     const result = await login(email, password);
+    if (result.mfaRequired && result.mfaToken) {
+      setMfaToken(result.mfaToken);
+      setMfaCode('');
+      return;
+    }
     if (result.success) {
       navigate(dest);
     }
+  };
+
+  const handleMfaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError(null);
+    clearError();
+    if (!mfaToken) return;
+    if (!mfaCode.trim()) {
+      setLocalError('Enter the code from your authenticator app');
+      return;
+    }
+    const result = await verifyMfa(mfaToken, mfaCode.trim(), rememberBrowser);
+    if (result.success) {
+      navigate(dest);
+    } else if ((result.error || '').includes('expired')) {
+      // The 5-minute pending token lapsed — back to the password step.
+      setMfaToken(null);
+      setMfaCode('');
+    }
+  };
+
+  const backToPassword = () => {
+    setMfaToken(null);
+    setMfaCode('');
+    setLocalError(null);
+    clearError();
   };
 
   const displayError = localError || error;
@@ -92,57 +128,117 @@ export function Login() {
             </Link>
           </div>
 
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Sign in</h2>
-          <p className="text-gray-500 dark:text-slate-400 mb-8">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
-              Create one
-            </Link>
-          </p>
+          {mfaToken ? (
+            <>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Two-factor code</h2>
+              <p className="text-gray-500 dark:text-slate-400 mb-8">
+                This browser isn't remembered — enter the 6-digit code from your
+                authenticator app, or one of your recovery codes.
+              </p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {displayError && (
-              <div role="alert" aria-live="assertive" className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20 animate-shake">
-                <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                <span>{displayError}</span>
-              </div>
-            )}
+              <form onSubmit={handleMfaSubmit} className="space-y-4">
+                {displayError && (
+                  <div role="alert" aria-live="assertive" className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20 animate-shake">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    <span>{displayError}</span>
+                  </div>
+                )}
 
-            <Input
-              label="Email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@company.com"
-              leftIcon={<Mail className="h-4 w-4" />}
-              disabled={isLoading}
-              autoComplete="username"
-              required
-            />
+                <Input
+                  label="Verification code"
+                  type="text"
+                  inputMode="numeric"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="123 456"
+                  leftIcon={<ShieldCheck className="h-4 w-4" />}
+                  disabled={isLoading}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                />
 
-            <PasswordInput
-              label="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Your password"
-              leftIcon={<Lock className="h-4 w-4" />}
-              disabled={isLoading}
-              autoComplete="current-password"
-              required
-            />
+                <label className="flex items-center gap-2.5 text-sm text-gray-600 dark:text-slate-400 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={rememberBrowser}
+                    onChange={(e) => setRememberBrowser(e.target.checked)}
+                    disabled={isLoading}
+                    className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                  />
+                  Remember this browser for 60 days
+                </label>
 
-            <div className="flex justify-end -mt-1">
-              <Link to="/forgot-password" className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
-                Forgot password?
-              </Link>
-            </div>
+                <div className="pt-1">
+                  <Button type="submit" className="w-full" size="lg" isLoading={isLoading}>
+                    Verify
+                  </Button>
+                </div>
 
-            <div className="pt-1">
-              <Button type="submit" className="w-full" size="lg" isLoading={isLoading}>
-                Sign In
-              </Button>
-            </div>
-          </form>
+                <button
+                  type="button"
+                  onClick={backToPassword}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer py-1"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Use a different account
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Sign in</h2>
+              <p className="text-gray-500 dark:text-slate-400 mb-8">
+                Don't have an account?{' '}
+                <Link to="/signup" className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+                  Create one
+                </Link>
+              </p>
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {displayError && (
+                  <div role="alert" aria-live="assertive" className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20 animate-shake">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    <span>{displayError}</span>
+                  </div>
+                )}
+
+                <Input
+                  label="Email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  leftIcon={<Mail className="h-4 w-4" />}
+                  disabled={isLoading}
+                  autoComplete="username"
+                  required
+                />
+
+                <PasswordInput
+                  label="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Your password"
+                  leftIcon={<Lock className="h-4 w-4" />}
+                  disabled={isLoading}
+                  autoComplete="current-password"
+                  required
+                />
+
+                <div className="flex justify-end -mt-1">
+                  <Link to="/forgot-password" className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+                    Forgot password?
+                  </Link>
+                </div>
+
+                <div className="pt-1">
+                  <Button type="submit" className="w-full" size="lg" isLoading={isLoading}>
+                    Sign In
+                  </Button>
+                </div>
+              </form>
+            </>
+          )}
 
           <p className="mt-8 text-center text-sm text-gray-500 dark:text-slate-500">
             <Link to="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">

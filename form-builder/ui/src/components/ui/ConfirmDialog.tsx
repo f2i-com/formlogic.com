@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { AlertTriangle, HelpCircle } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './Button';
@@ -12,6 +13,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   variant?: 'danger' | 'default';
   isLoading?: boolean;
+  /** Optional extra content between the message and the buttons (e.g. a confirmation input). */
+  children?: ReactNode;
 }
 
 export function ConfirmDialog({
@@ -24,6 +27,7 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   variant = 'default',
   isLoading = false,
+  children,
 }: ConfirmDialogProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="sm" showCloseButton={false} ariaLabel={title}>
@@ -41,6 +45,7 @@ export function ConfirmDialog({
           <div className="flex-1 min-w-0">
             <h3 className="text-base font-semibold text-gray-900 dark:text-white tracking-tight">{title}</h3>
             <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400 whitespace-pre-line">{message}</p>
+            {children && <div className="mt-4">{children}</div>}
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-6">

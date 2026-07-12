@@ -34,7 +34,7 @@ class AuthController
     private ?ApiKeyService $apiKeyService;
     private ?\FormLogic\Database\MySQLConnection $db;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null)
     {
         $this->db = $db;
         $this->authService = $authService;
@@ -146,6 +146,24 @@ class AuthController
 
         try {
             $result = $this->authService->login($email, $data['password'], $ipAddress);
+
+            // MFA gate: with two-factor ON and no valid remembered-browser token,
+            // the password alone must not mint a session — hand back a short-lived
+            // pending token and let POST /auth/mfa/verify finish the login. A
+            // browser the user chose to remember (cookie token hashed + tracked in
+            // mfa_trusted_browsers) skips the code and updates its last_used_at.
+            $userId = (string) ($result['user']['id'] ?? '');
+            if ($this->mfaService !== null && $userId !== '' && $this->mfaService->isEnabled($userId)) {
+                $trust = $request->getCookieParams()[\FormLogic\Services\MfaService::TRUST_COOKIE] ?? null;
+                if (!$this->mfaService->checkTrust($userId, is_string($trust) ? $trust : null)) {
+                    $user = $this->authService->getUserById($userId);
+                    $this->audit($request, 'auth.login.mfa_challenge', 'user', $userId);
+                    return $this->jsonResponse($response, [
+                        'mfaRequired' => true,
+                        'mfaToken' => $user !== null ? $this->authService->issueMfaPendingToken($user) : '',
+                    ]);
+                }
+            }
 
             // Set HttpOnly cookie with the token
             $response = $this->setAuthCookie($response, $result['token']);
@@ -809,6 +827,165 @@ class AuthController
         if ($this->auditService === null) return;
         $ip = $this->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $request->getAttribute('userId'), $ip, $details);
+    }
+
+    // ── Multi-factor authentication (TOTP) ──────────────────────────────────
+
+    /**
+     * Finish a two-step login: exchange the pending token from login() plus a
+     * TOTP (or recovery) code for the real session cookie. Public + rate
+     * limited; listed in CsrfMiddleware's cookie-setting routes (JSON guard).
+     * POST /api/auth/mfa/verify { mfaToken, code, rememberBrowser? }
+     */
+    public function mfaVerify(Request $request, Response $response): Response
+    {
+        if ($this->mfaService === null) {
+            return $this->jsonError($response, 'Two-factor authentication is not available', 503);
+        }
+        $data = $request->getParsedBody();
+        $mfaToken = (string) ($data['mfaToken'] ?? '');
+        $code = (string) ($data['code'] ?? '');
+        if ($mfaToken === '' || $code === '') {
+            return $this->jsonError($response, 'A verification code is required', 400);
+        }
+        $user = $this->authService->consumeMfaPendingToken($mfaToken);
+        if ($user === null) {
+            return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
+        }
+        if (!$this->mfaService->verifyChallenge($user->id, $code)) {
+            $this->audit($request, 'auth.mfa.failed', 'user', $user->id);
+            return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 401);
+        }
+
+        $response = $this->setAuthCookie($response, $this->authService->issueToken($user));
+        if (!empty($data['rememberBrowser'])) {
+            $trustToken = $this->mfaService->mintTrust($user->id, $request->getHeaderLine('User-Agent'));
+            $response = $this->setMfaTrustCookie($response, $trustToken);
+        }
+        $this->audit($request, 'auth.login', 'user', $user->id, ['mfa' => true, 'rememberedBrowser' => !empty($data['rememberBrowser'])]);
+        return $this->jsonResponse($response, ['user' => $this->authService->userPayload($user)]);
+    }
+
+    /** Settings payload: enabled/pending state, recovery-code count, trusted browsers. GET /api/auth/mfa */
+    public function mfaStatus(Request $request, Response $response): Response
+    {
+        $user = $request->getAttribute('user');
+        if (!$user || $this->mfaService === null) {
+            return $this->jsonError($response, 'Not authenticated', 401);
+        }
+        $trust = $request->getCookieParams()[\FormLogic\Services\MfaService::TRUST_COOKIE] ?? null;
+        return $this->jsonResponse($response, $this->mfaService->status($user->id, is_string($trust) ? $trust : null));
+    }
+
+    /** Start enrollment: fresh secret + otpauth URI (QR rendered client-side). POST /api/auth/mfa/setup */
+    public function mfaSetup(Request $request, Response $response): Response
+    {
+        $user = $request->getAttribute('user');
+        if (!$user || $this->mfaService === null) {
+            return $this->jsonError($response, 'Not authenticated', 401);
+        }
+        if ($blocked = $this->blockIfDemo($request, $response)) {
+            return $blocked;
+        }
+        try {
+            return $this->jsonResponse($response, $this->mfaService->beginSetup($user->id, $user->email));
+        } catch (\RuntimeException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        }
+    }
+
+    /** Prove the authenticator + switch MFA on. Returns the one-time recovery codes. POST /api/auth/mfa/enable { code } */
+    public function mfaEnable(Request $request, Response $response): Response
+    {
+        $user = $request->getAttribute('user');
+        if (!$user || $this->mfaService === null) {
+            return $this->jsonError($response, 'Not authenticated', 401);
+        }
+        if ($blocked = $this->blockIfDemo($request, $response)) {
+            return $blocked;
+        }
+        $data = $request->getParsedBody();
+        try {
+            $codes = $this->mfaService->enable($user->id, (string) ($data['code'] ?? ''));
+            $this->audit($request, 'auth.mfa.enabled', 'user', $user->id);
+            return $this->jsonResponse($response, ['enabled' => true, 'recoveryCodes' => $codes]);
+        } catch (\RuntimeException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        }
+    }
+
+    /** Switch MFA off (password re-entry required). POST /api/auth/mfa/disable { password } */
+    public function mfaDisable(Request $request, Response $response): Response
+    {
+        $user = $request->getAttribute('user');
+        if (!$user || $this->mfaService === null) {
+            return $this->jsonError($response, 'Not authenticated', 401);
+        }
+        if ($blocked = $this->blockIfDemo($request, $response)) {
+            return $blocked;
+        }
+        $data = $request->getParsedBody();
+        if (!$this->authService->verifyPassword($user->id, (string) ($data['password'] ?? ''))) {
+            return $this->jsonError($response, 'Incorrect password', 401);
+        }
+        $this->mfaService->disable($user->id);
+        $this->audit($request, 'auth.mfa.disabled', 'user', $user->id);
+        return $this->jsonResponse($response, ['enabled' => false]);
+    }
+
+    /** Fresh recovery codes (current TOTP code required; old set invalidated). POST /api/auth/mfa/recovery-codes { code } */
+    public function mfaRegenerateRecoveryCodes(Request $request, Response $response): Response
+    {
+        $user = $request->getAttribute('user');
+        if (!$user || $this->mfaService === null) {
+            return $this->jsonError($response, 'Not authenticated', 401);
+        }
+        if ($blocked = $this->blockIfDemo($request, $response)) {
+            return $blocked;
+        }
+        $data = $request->getParsedBody();
+        if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
+            return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 401);
+        }
+        $codes = $this->mfaService->regenerateRecoveryCodes($user->id);
+        $this->audit($request, 'auth.mfa.recovery_codes_regenerated', 'user', $user->id);
+        return $this->jsonResponse($response, ['recoveryCodes' => $codes]);
+    }
+
+    /** Forget a remembered browser (it re-prompts for a code next login). DELETE /api/auth/mfa/trusted-browsers/{id} */
+    public function mfaRevokeTrustedBrowser(Request $request, Response $response, array $args): Response
+    {
+        $user = $request->getAttribute('user');
+        if (!$user || $this->mfaService === null) {
+            return $this->jsonError($response, 'Not authenticated', 401);
+        }
+        if ($blocked = $this->blockIfDemo($request, $response)) {
+            return $blocked;
+        }
+        $ok = $this->mfaService->revokeTrust($user->id, (string) ($args['id'] ?? ''));
+        if ($ok) {
+            $this->audit($request, 'auth.mfa.trusted_browser_revoked', 'user', $user->id, ['trustId' => $args['id'] ?? '']);
+        }
+        return $this->jsonResponse($response, ['revoked' => $ok], $ok ? 200 : 404);
+    }
+
+    /** The long-lived remembered-browser cookie (same attributes as the auth cookie). */
+    private function setMfaTrustCookie(Response $response, string $token): Response
+    {
+        $cookieParts = [
+            \FormLogic\Services\MfaService::TRUST_COOKIE . '=' . urlencode($token),
+            'Path=' . $this->cookieConfig['path'],
+            'HttpOnly',
+            'SameSite=' . $this->cookieConfig['sameSite'],
+            'Max-Age=' . (\FormLogic\Services\MfaService::TRUST_DAYS * 86400),
+        ];
+        if ($this->cookieConfig['secure']) {
+            $cookieParts[] = 'Secure';
+        }
+        if (!empty($this->cookieConfig['domain'])) {
+            $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
+        }
+        return $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
     }
 
 }

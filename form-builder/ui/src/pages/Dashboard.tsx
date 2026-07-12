@@ -27,6 +27,8 @@ import {
   ChevronRight,
   Plug,
   Search,
+  ShieldCheck,
+  X,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -762,6 +764,23 @@ export function Dashboard() {
   }, [onboardingKey]);
   const onWelcomeBlank = () => { dismissWelcome(); handleSelectTemplate(null); };
   const onWelcomeTemplate = () => { dismissWelcome(); setShowTemplateSelector(true); };
+
+  // Gentle post-signup security nudge: suggest two-factor auth to NEW accounts
+  // (first 14 days) that haven't enabled it. Optional by design — dismissal
+  // persists per user, and the banner disappears for good once MFA is on.
+  const mfaNudgeKey = user?.id ? `formlogic_mfa_nudge_dismissed:${user.id}` : null;
+  const [, bumpMfaNudge] = useState(0);
+  const mfaNudgeDismissed = !mfaNudgeKey || (() => {
+    try { return localStorage.getItem(mfaNudgeKey) === '1'; } catch { return false; }
+  })();
+  const accountAgeDays = user?.createdAt
+    ? (Date.now() - parseServerDate(user.createdAt).getTime()) / 86400000
+    : Infinity;
+  const showMfaNudge = !!user && !user.isDemo && !user.mfaEnabled && !mfaNudgeDismissed && accountAgeDays < 14;
+  const dismissMfaNudge = useCallback(() => {
+    if (mfaNudgeKey) { try { localStorage.setItem(mfaNudgeKey, '1'); } catch { /* ignore */ } }
+    bumpMfaNudge((n) => n + 1);
+  }, [mfaNudgeKey]);
   const onWelcomeAI = async () => {
     dismissWelcome();
     const form = await createForm('Untitled Form');
@@ -1076,6 +1095,32 @@ export function Dashboard() {
       <Header title="Dashboard" />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+        {/* Post-signup security nudge: suggest (optional) two-factor auth to new accounts. */}
+        {showMfaNudge && (
+          <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 p-4">
+            <ShieldCheck className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-none" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900 dark:text-white">Secure your account with two-factor authentication</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                Optional, takes a minute: one-time codes from Google Authenticator on unknown browsers.
+              </p>
+            </div>
+            <div className="flex flex-none items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => { dismissMfaNudge(); navigate('/settings#security'); }}>
+                Set up
+              </Button>
+              <button
+                type="button"
+                onClick={dismissMfaNudge}
+                aria-label="Dismiss two-factor suggestion"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-primary-100/60 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Headline band — the intake ledger reads as one live sentence, not four stat cards. */}
         <div className="mb-8">
           <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">

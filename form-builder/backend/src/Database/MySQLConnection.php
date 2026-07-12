@@ -1199,6 +1199,38 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE users ADD COLUMN timezone VARCHAR(64) DEFAULT NULL AFTER name");
         }
 
+        // Optional TOTP multi-factor auth: the base32 secret (pending until a
+        // code proves the authenticator), the enabled flag, and the hashed
+        // single-use recovery codes (JSON array of sha256 hex).
+        foreach ([
+            'mfa_secret' => "ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(64) DEFAULT NULL",
+            'mfa_enabled' => "ALTER TABLE users ADD COLUMN mfa_enabled TINYINT(1) NOT NULL DEFAULT 0",
+            'mfa_recovery_codes' => "ALTER TABLE users ADD COLUMN mfa_recovery_codes TEXT DEFAULT NULL",
+        ] as $col => $ddl) {
+            $result = $pdo->query("SHOW COLUMNS FROM users LIKE '{$col}'");
+            if ($result->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
+        }
+
+        // Remembered browsers for MFA ("don't ask again on this device"): the
+        // cookie holds a random token, only its sha256 lives here. last_used_at
+        // tracks each password login that skipped the code on this browser.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mfa_trusted_browsers (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                token_hash CHAR(64) NOT NULL,
+                label VARCHAR(255) NOT NULL DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_mfa_trust_user (user_id),
+                INDEX idx_mfa_trust_hash (token_hash)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Create rate_limits table for persistent rate limiting / login throttling (R1).
         // Without this on the runtime path, RateLimiter fails open and throttling is a no-op.
         $pdo->exec("
