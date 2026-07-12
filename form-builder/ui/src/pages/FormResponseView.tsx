@@ -11,6 +11,7 @@ import { Badge } from '../components/ui/Badge';
 import { Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { FileAnswerValue } from '../components/ui/FileAnswerValue';
 import { RelatedRecordsPanel } from '../components/app-runtime/RelatedRecordsPanel';
 import { LinkedRecordChips } from '../components/responses/recordDisplay';
 import { renderEditField } from '../components/responses/renderEditField';
@@ -21,7 +22,7 @@ import {
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
-import { api, resolveFileUrl } from '../lib/api';
+import { api } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
@@ -337,13 +338,10 @@ function FormResponseView() {
                               onOpen={(it) => it.targetFormId && navigate(`/responses/${it.targetFormId}/${it.id}`)}
                             />
                           ) : field.type === 'file_upload' && Array.isArray(record.answers[field.id]) && (record.answers[field.id] as unknown[]).length > 0 ? (
-                            <div className="flex flex-col gap-1">
-                              {(record.answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
-                                f && f.url
-                                  ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
-                                  : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
-                              ))}
-                            </div>
+                            <FileAnswerValue
+                              files={record.answers[field.id] as import('../components/ui/FileAnswerValue').FileAnswerItem[]}
+                              linkClassName="text-primary-600 dark:text-primary-400 hover:underline"
+                            />
                           ) : (
                             formatValue(record.answers[field.id], field.type, field.properties?.options, displayTz) === '-' ? (
                               <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>

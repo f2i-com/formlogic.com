@@ -7,10 +7,11 @@ import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { RecordScreenPanel } from './RecordScreenPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { FileAnswerValue, type FileAnswerItem } from '../ui/FileAnswerValue';
 import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
-import { api, resolveFileUrl } from '../../lib/api';
+import { api } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { cn, statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
 import { useDisplayTimezone, formatDateTimeInZone, formatDateInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
@@ -655,16 +656,13 @@ export function AppResponseDetail() {
                             if (field.type === 'long_text' && typeof val === 'string') {
                               return <span className="whitespace-pre-wrap">{val}</span>;
                             }
-                            // File uploads: render as links (was "[object Object]")
+                            // File uploads: image thumbnails (cookie-authed) + links for the rest
                             if (field.type === 'file_upload' && Array.isArray(val)) {
                               return (
-                                <div className="flex flex-col gap-1">
-                                  {(val as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
-                                    f && f.url
-                                      ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="app-text-primary hover:underline">{f.originalFilename || 'File'}</a>
-                                      : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
-                                  ))}
-                                </div>
+                                <FileAnswerValue
+                                  files={val as FileAnswerItem[]}
+                                  linkClassName="app-text-primary hover:underline"
+                                />
                               );
                             }
                             // Location: lat, lng (was "[object Object]")
