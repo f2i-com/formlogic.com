@@ -10,6 +10,8 @@ import { Input } from '../../components/ui/Input';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
+import { ExportDataMenu } from '../../components/apps/ExportDataMenu';
+import { useAdminActing } from '../../components/admin/AdminActingContext';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
@@ -18,6 +20,8 @@ import type { AppForm } from '../../types/app';
 export function AppRecords() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  // Acting admins see record COUNTS only — no data export.
+  const acting = useAdminActing();
   const { getApp, fetchApps, fetchAppForms } = useAppStore();
   const ownerForms = useFormStore((s) => s.forms);
   const [appForms, setAppForms] = useState<AppForm[]>([]);
@@ -81,16 +85,21 @@ export function AppRecords() {
               {loading ? 'Loading…' : `${rows.length} form${rows.length === 1 ? '' : 's'} · ${totalRecords} record${totalRecords === 1 ? '' : 's'} total`}
             </p>
           </div>
-          {app?.slug && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener')}
-              leftIcon={<ExternalLink className="h-4 w-4" />}
-            >
-              Open app
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {!acting && appId && (
+              <ExportDataMenu appId={appId} appSlug={app?.slug ?? 'app'} />
+            )}
+            {app?.slug && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener')}
+                leftIcon={<ExternalLink className="h-4 w-4" />}
+              >
+                Open app
+              </Button>
+            )}
+          </div>
         </div>
 
         <Input

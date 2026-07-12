@@ -614,10 +614,11 @@ export function AppSettings() {
             </button>}
           </div>
           <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
-            <strong className="font-medium text-gray-700 dark:text-slate-300">Export is a structure bundle, not a data backup.</strong>{' '}
+            <strong className="font-medium text-gray-700 dark:text-slate-300">Export app is a structure bundle, not a data backup.</strong>{' '}
             It re-creates the app's forms, dashboards, scripts and roles in another account, but does
-            <em> not</em> include your collected responses or uploaded files. For a full backup of your
-            data, back up the database + <code>backend/storage</code> (see DEPLOYMENT.md).
+            <em> not</em> include your collected responses or uploaded files. For the data itself, use{' '}
+            <strong className="font-medium text-gray-700 dark:text-slate-300">Records → Export data</strong> (SQLite bundle, or a
+            MySQL / SQL Server dump with one table per form); for a restorable full-workspace backup, use Settings → Backup &amp; restore.
           </p>
           </TabsContent>
         </div>
