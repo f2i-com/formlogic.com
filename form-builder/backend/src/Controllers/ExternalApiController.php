@@ -205,6 +205,7 @@ class ExternalApiController
 
         $data['ipAddress'] = $this->ipResolver->getClientIp($request);
         $data['userAgent'] = htmlspecialchars(substr($request->getHeaderLine('User-Agent'), 0, 500), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $data['language'] = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
         // Strip client-supplied fields that must be server-controlled
         unset($data['submittedByUserId'], $data['status']);
         $script = $form['logicScript'] ?? null;
@@ -359,6 +360,7 @@ class ExternalApiController
 
         $ip = $this->ipResolver->getClientIp($request);
         $userAgent = substr($request->getHeaderLine('User-Agent'), 0, 500);
+        $language = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
         $script = $form['logicScript'] ?? null;
         $results = [];
         $createdCount = 0;
@@ -415,6 +417,7 @@ class ExternalApiController
 
             $item['ipAddress'] = $ip;
             $item['userAgent'] = $userAgent;
+            $item['language'] = $language;
             // Strip client-supplied fields that must be server-controlled
             unset($item['submittedByUserId'], $item['status']);
 

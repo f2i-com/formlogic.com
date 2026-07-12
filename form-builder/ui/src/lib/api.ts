@@ -2855,6 +2855,10 @@ interface FormResponse {
     referrer?: string;
     completionTime?: number;
     ipAddress?: string;
+    /** Accept-Language of the submitting browser (e.g. "en-AU,en;q=0.9"). */
+    language?: string;
+    /** Account id of a signed-in submitter (server-derived, never client-supplied). */
+    submittedByUserId?: string;
   };
 }
 

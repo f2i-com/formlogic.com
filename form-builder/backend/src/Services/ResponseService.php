@@ -1339,6 +1339,7 @@ class ResponseService
                     'referrer' => $data['referrer'] ?? null,
                     'completionTime' => $data['completionTime'] ?? null,
                     'ipAddress' => $data['ipAddress'] ?? null,
+                    'language' => $data['language'] ?? null,
                     'submittedByUserId' => $data['submittedByUserId'] ?? null,
                 ]),
                 'status' => $status,

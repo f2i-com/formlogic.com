@@ -543,6 +543,7 @@ class AppPublicController
         $data = $request->getParsedBody() ?? [];
         $data['ipAddress'] = IpResolver::fromEnvironment()->getClientIp($request);
         $data['userAgent'] = $request->getHeaderLine('User-Agent');
+        $data['language'] = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
 
         $result = $this->processSubmission($app, $formId, $data, $userId);
         return $this->jsonResponse($response, $result['payload'], $result['status']);
@@ -769,6 +770,7 @@ class AppPublicController
 
         $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $ua = $request->getHeaderLine('User-Agent');
+        $lang = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
         $results = [];
         foreach ($items as $item) {
             $key = is_array($item) ? ($item['idempotencyKey'] ?? null) : null;
@@ -794,6 +796,7 @@ class AppPublicController
                 'idempotencyKey' => is_string($key) ? $key : null,
                 'ipAddress' => $ip,
                 'userAgent' => $ua,
+                'language' => $lang,
             ];
             $r = $this->processSubmission($app, $formId, $data, $userId);
             $status = (int) $r['status'];
@@ -956,7 +959,8 @@ class AppPublicController
             }
         }
 
-        $responses = array_map([$this, 'stripSensitiveMetadata'], $responses);
+        $isAppOwner = ($app['ownerId'] ?? null) === $userId;
+        $responses = array_map(fn (array $r) => $this->stripSensitiveMetadata($r, $isAppOwner), $responses);
         return $this->jsonResponse($response, ['responses' => $responses, 'count' => count($responses), 'total' => $total, 'scope' => $scope]);
     }
 
@@ -1082,7 +1086,7 @@ class AppPublicController
             }
         }
 
-        $resp = $this->stripSensitiveMetadata($resp);
+        $resp = $this->stripSensitiveMetadata($resp, ($app['ownerId'] ?? null) === $userId);
         return $this->jsonResponse($response, ['response' => $resp]);
     }
 
@@ -1185,7 +1189,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
-        $updated = $this->stripSensitiveMetadata($updated);
+        $updated = $this->stripSensitiveMetadata($updated, ($app['ownerId'] ?? null) === $userId);
         return $this->jsonResponse($response, ['response' => $updated]);
     }
 
@@ -2279,12 +2283,23 @@ class AppPublicController
     }
 
     /**
-     * Strip sensitive metadata (IP, user agent, referrer) from response data.
+     * Strip sensitive metadata (IP, user agent, referrer, browser language) from response
+     * data. App MEMBERS never see another submitter's network/browser trail; the APP OWNER
+     * (the data controller — same person who sees it in the builder's response views) keeps
+     * it, so pass $isOwner from the app row when the caller is the owner.
      */
-    private function stripSensitiveMetadata(array $resp): array
+    private function stripSensitiveMetadata(array $resp, bool $isOwner = false): array
     {
+        if ($isOwner) {
+            return $resp;
+        }
         if (isset($resp['metadata']) && is_array($resp['metadata'])) {
-            unset($resp['metadata']['ipAddress'], $resp['metadata']['userAgent'], $resp['metadata']['referrer']);
+            unset(
+                $resp['metadata']['ipAddress'],
+                $resp['metadata']['userAgent'],
+                $resp['metadata']['referrer'],
+                $resp['metadata']['language']
+            );
         }
         return $resp;
     }

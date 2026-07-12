@@ -5,6 +5,7 @@ import { startFlowDispatcher } from '../../client-runtime/flows/flowDispatcher';
 import { AppRuntimeThemeProvider } from './AppRuntimeThemeProvider';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { AppRuntimeShell } from './AppRuntimeShell';
+import { DemoDataTag } from './DemoDataTag';
 import { AppHomeScreen } from './AppHomeScreen';
 import { AppFormView } from './AppFormView';
 import { AppDataTable } from './AppDataTable';
@@ -111,6 +112,9 @@ export function AppRuntimeRoot() {
             <Route path="*" element={<Navigate to="." replace />} />
           </Routes>
         </AppRuntimeShell>
+        {/* Demo-account sessions get a persistent corner tag + fictional-data
+            disclaimer on every app screen (renders nothing for real accounts). */}
+        <DemoDataTag />
       </AppRuntimeAuthGuard>
     </AppRuntimeThemeProvider>
   );

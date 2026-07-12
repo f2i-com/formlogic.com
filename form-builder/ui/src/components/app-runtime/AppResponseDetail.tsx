@@ -14,6 +14,7 @@ import { api, resolveFileUrl } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { cn, statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
 import { useDisplayTimezone, formatDateTimeInZone, formatDateInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { describeUserAgent, primaryLanguage } from '../../lib/userAgent';
 import { Badge } from '../ui/Badge';
 
 // Long/wide answer types span both columns of the detail grid.
@@ -289,6 +290,11 @@ export function AppResponseDetail() {
         ? (authUser?.name || authUser?.email || 'You')
         : `User ${submittedByUserId.slice(0, 8)}`)
     : null;
+  // Submission trail (IP/browser/language): the server includes these ONLY for the
+  // app owner — members always receive stripped metadata, so presence = permission.
+  const metaIp = typeof meta.ipAddress === 'string' && meta.ipAddress ? meta.ipAddress : null;
+  const metaUa = typeof meta.userAgent === 'string' && meta.userAgent ? meta.userAgent : null;
+  const metaLanguage = primaryLanguage(typeof meta.language === 'string' ? meta.language : null);
   const tags = Array.isArray(response.tags) ? (response.tags as string[]) : [];
 
   const microLabel = 'block text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500';
@@ -389,6 +395,26 @@ export function AppResponseDetail() {
               <div>
                 <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Submitted by</dt>
                 <dd className="text-sm text-gray-700 dark:text-slate-300 break-words">{submittedByLabel}</dd>
+              </div>
+            )}
+            {metaIp && (
+              <div>
+                <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">IP address</dt>
+                <dd className="text-sm text-gray-700 dark:text-slate-300 font-mono text-xs break-all">{metaIp}</dd>
+              </div>
+            )}
+            {metaUa && (
+              <div>
+                <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Browser</dt>
+                <dd className="text-sm text-gray-700 dark:text-slate-300 break-words" title={metaUa}>
+                  {describeUserAgent(metaUa) ?? metaUa}
+                </dd>
+              </div>
+            )}
+            {metaLanguage && (
+              <div>
+                <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Language</dt>
+                <dd className="text-sm text-gray-700 dark:text-slate-300">{metaLanguage}</dd>
               </div>
             )}
             {tags.length > 0 && (

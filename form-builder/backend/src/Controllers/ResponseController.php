@@ -546,13 +546,23 @@ class ResponseController
             ]];
         }
 
-        // Add request metadata
+        // Add request metadata — the submission's identifying trail (IP, browser,
+        // referrer, browser language) shown to the form owner on the record's
+        // Details panel and carried by the JSON/SQLite exports.
         $serverParams = $request->getServerParams();
         $data['ipAddress'] = $this->getClientIp($request);
         $data['userAgent'] = htmlspecialchars(substr($request->getHeaderLine('User-Agent'), 0, 500), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $data['referrer'] = substr($request->getHeaderLine('Referer'), 0, 2000); // Limit length
-        // Strip client-supplied fields that must be server-controlled
+        $data['language'] = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
+        // Strip client-supplied fields that must be server-controlled…
         unset($data['submittedByUserId'], $data['status']);
+        // …then re-derive the submitter identity SERVER-SIDE: when the filler is a
+        // signed-in user (authOptional on this route), their account id is recorded
+        // exactly like app-runtime submissions — never trusted from the body.
+        $authUserId = $request->getAttribute('userId');
+        if (is_string($authUserId) && $authUserId !== '') {
+            $data['submittedByUserId'] = $authUserId;
+        }
 
         // Get the script from the form (if any)
         $script = $form['logicScript'] ?? null;

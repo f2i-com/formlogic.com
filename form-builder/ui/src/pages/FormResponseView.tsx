@@ -20,10 +20,12 @@ import {
 } from '../components/responses/recordFormat';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
+import { useAuthStore } from '../stores/authStore';
 import { api, resolveFileUrl } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
+import { describeUserAgent, primaryLanguage } from '../lib/userAgent';
 import type { Form } from '../types/form';
 
 interface RecordData {
@@ -33,7 +35,14 @@ interface RecordData {
   status?: string;
   tags?: string[];
   computed?: Record<string, unknown>;
-  metadata?: { completionTime?: number; userAgent?: string };
+  metadata?: {
+    completionTime?: number;
+    userAgent?: string;
+    ipAddress?: string;
+    referrer?: string;
+    language?: string;
+    submittedByUserId?: string;
+  };
   _resolved?: Record<string, ResolvedLink | ResolvedLink[]>;
 }
 
@@ -62,6 +71,7 @@ function FormResponseView() {
   const location = useLocation();
   // Platform-chrome page: the signed-in user's account timezone, else their browser's.
   const displayTz = useAccountTimezone();
+  const authUser = useAuthStore((s) => s.user);
   const storageMode = useFormStore((s) => s.storageMode);
   const getStoredForm = useFormStore((s) => s.getForm);
   const getLocalResponses = useResponseStore((s) => s.getResponsesByFormId);
@@ -387,10 +397,41 @@ function FormResponseView() {
                         </dd>
                       </div>
                     )}
+                    {/* Submission trail — who/where/what the submission came from (owner-only view). */}
+                    {record.metadata?.submittedByUserId && (
+                      <div>
+                        <dt className="text-gray-500 dark:text-slate-400">Submitted by</dt>
+                        <dd className="text-gray-700 dark:text-slate-300 mt-0.5 break-all">
+                          {authUser?.id === record.metadata.submittedByUserId
+                            ? (authUser?.name || authUser?.email || 'You')
+                            : `User ${record.metadata.submittedByUserId.slice(0, 8)}`}
+                        </dd>
+                      </div>
+                    )}
+                    {record.metadata?.ipAddress && (
+                      <div>
+                        <dt className="text-gray-500 dark:text-slate-400">IP address</dt>
+                        <dd className="text-gray-700 dark:text-slate-300 font-mono text-xs mt-0.5 break-all">{record.metadata.ipAddress}</dd>
+                      </div>
+                    )}
                     {record.metadata?.userAgent && (
                       <div>
-                        <dt className="text-gray-500 dark:text-slate-400">User agent</dt>
-                        <dd className="text-gray-700 dark:text-slate-300 text-xs truncate mt-0.5" title={record.metadata.userAgent}>{record.metadata.userAgent}</dd>
+                        <dt className="text-gray-500 dark:text-slate-400">Browser</dt>
+                        <dd className="text-gray-700 dark:text-slate-300 text-xs truncate mt-0.5" title={record.metadata.userAgent}>
+                          {describeUserAgent(record.metadata.userAgent) ?? record.metadata.userAgent}
+                        </dd>
+                      </div>
+                    )}
+                    {primaryLanguage(record.metadata?.language) && (
+                      <div>
+                        <dt className="text-gray-500 dark:text-slate-400">Language</dt>
+                        <dd className="text-gray-700 dark:text-slate-300 mt-0.5" title={record.metadata?.language}>{primaryLanguage(record.metadata?.language)}</dd>
+                      </div>
+                    )}
+                    {record.metadata?.referrer && (
+                      <div>
+                        <dt className="text-gray-500 dark:text-slate-400">Referrer</dt>
+                        <dd className="text-gray-700 dark:text-slate-300 text-xs truncate mt-0.5" title={record.metadata.referrer}>{record.metadata.referrer}</dd>
                       </div>
                     )}
                   </dl>
