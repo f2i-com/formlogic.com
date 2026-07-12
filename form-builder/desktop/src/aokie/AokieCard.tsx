@@ -3,6 +3,7 @@ import { plugins } from '../api';
 import { AlertTriangleIcon, CheckIcon } from '../Icons';
 import { useConfirm } from '../ConfirmDialog';
 import { useToast } from '../Toasts';
+import { ConsentSection } from './ConsentWizard';
 import { DongleSetupWizard } from './DongleSetupWizard';
 import {
   AOKIE_SETTINGS_DEFAULTS,
@@ -449,6 +450,9 @@ export function AokieCard({ running, devMode }: { running: boolean; devMode: boo
               {simResult && <span className="service-meta">{simResult}</span>}
             </div>
           )}
+          {/* CONSENT-001: the operator's scoped, signed, ENFORCED grant is
+              the gate on every sensitive surface below — surface it first. */}
+          <AokieConsentRow onChanged={refresh} />
           <DongleSetupWizard running={running} />
           <PhonePairingControls running={running} onPaired={refresh} />
           <AokieSettingsForm running={running} />
@@ -462,6 +466,21 @@ export function AokieCard({ running, devMode }: { running: boolean; devMode: boo
       )}
     </div>
   );
+}
+
+/** CONSENT-001: consent status + wizard, fed the live settings bag so the
+ *  wizard can show exactly which endpoints call data goes to. */
+function AokieConsentRow({ onChanged }: { onChanged: () => void }) {
+  const [settings, setSettings] = useState<Record<string, unknown>>({});
+  useEffect(() => {
+    plugins
+      .command('aokie', 'settings.get')
+      .then((r) => setSettings(((r.data as AokieSettingsResponse)?.settings) ?? {}))
+      .catch(() => {
+        /* plugin not reachable — ConsentSection hides itself too */
+      });
+  }, []);
+  return <ConsentSection settings={settings} onChanged={onChanged} />;
 }
 
 /**

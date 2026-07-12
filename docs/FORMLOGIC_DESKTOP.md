@@ -113,6 +113,12 @@ Release bundles ship a **first-party-signed `package-manifest.json`** (written b
 
 Directories **without** a package manifest are "unsigned" sideloads: allowed for development (surfaced as `package: "unsigned"` in `GET /api/plugins`), refused outright under `FORMLOGIC_REQUIRE_SIGNED_PLUGINS=1` (the production posture). Key rotation = additional pinned entries; emergency revocation = `FORMLOGIC_REVOKED_PUBKEY_IDS`; lab/test keys = `FORMLOGIC_EXTRA_TRUSTED_PUBKEYS=id=b64,…`. Dev gotcha: after side-copying a new binary into a SIGNED plugin dir, delete `package-manifest.json` (or re-sign) — otherwise the next scan correctly quarantines the drift.
 
+### 4c. Operator consent (CONSENT-001)
+
+Desktop owns the **consent wizard** for sensitive plugin surfaces (the Aokie card → "Set up consent"): a versioned, scoped grant covering the Bluetooth link, contacts, SMS, live transcription, recording, record retention and every configured remote destination. Accepting issues a grant **signed by this install's per-install Ed25519 key** (`consent-signing.rs`; key in the credential store / key-file fallback; public half passed to every plugin via `FORMLOGIC_CONSENT_VERIFY_KEY`) via `POST /api/plugins/:id/consent` — GUI webview or server token only, **never a pairing token** — and flips `consentMode=enforce`.
+
+Plugin-side (aokie `consent.rs`): production **default is enforce**; `warn` is the explicit developer/beta override. Grants are verified from disk on every gate check (signature, version, expiry — 12 months by default — and scope); a grant signed on another machine never verifies (the per-install key IS the device binding). Enforcement sits at the capture points: the radio won't start without `bluetooth`; denied `transcription` sets `AOKIE_STT_DISABLED` so no audio reaches any STT engine; `sms.*`/pairing commands check their scopes; under enforce, a non-loopback AI/speech endpoint must be in the grant's consented `destinations` or `settings.set` refuses it. `consent.revoke` stops the radio and disables auto-answer immediately, no restart. The wizard links the applicable privacy disclosure (formlogic.com/privacy) and reminds operators that caller disclosure (AI/recording/transcription notices) is their jurisdiction-specific responsibility.
+
 ## 5. Browser client (FormLogic Web)
 
 `form-builder/ui/src/client-runtime/desktop/`:

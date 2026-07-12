@@ -212,6 +212,9 @@ impl PluginHost {
         let plugin_data_root = data_dir.join("plugin-data");
         let _ = std::fs::create_dir_all(&plugins_root);
         let _ = std::fs::create_dir_all(&plugin_data_root);
+        // CONSENT-001: the consent-signing key must exist BEFORE any plugin
+        // spawns so the verify key rides in every child's environment.
+        crate::consent_signing::init(&plugin_data_root);
         let registry_path = plugins_root.join("registry.json");
         let host = Arc::new(Self {
             plugins_root,

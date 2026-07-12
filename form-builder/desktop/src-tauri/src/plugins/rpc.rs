@@ -296,6 +296,12 @@ pub fn spawn_plugin(spec: &SpawnSpec<'_>, logs: LogRing) -> std::io::Result<Plug
         "FORMLOGIC_PLUGIN_API_VERSION",
         crate::PLUGIN_API_VERSION.to_string(),
     );
+    // CONSENT-001: the PUBLIC half of this install's consent-signing key.
+    // Plugins that gate on operator consent (Aokie) then accept ONLY grants
+    // signed by THIS Desktop — the per-install key is the device binding.
+    if let Some(key) = crate::consent_signing::verify_key_b64() {
+        cmd.env("FORMLOGIC_CONSENT_VERIFY_KEY", key);
+    }
     if spec.dev_mode {
         cmd.env("FORMLOGIC_DEV_MODE", "1");
     }

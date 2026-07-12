@@ -1252,6 +1252,69 @@ async fn connector_request(
     }
 }
 
+/// CONSENT-001 `POST /api/plugins/:id/consent`: issue a Desktop-SIGNED
+/// consent grant and record it in the plugin. The Desktop wizard posts the
+/// operator's choices; this handler stamps acceptedAt/expiresAt, signs the
+/// grant with the per-install key (the plugin only accepts grants signed by
+/// THIS install), and relays `consent.set {envelope}`. Auth: the GUI's own
+/// webview or the server token — NEVER a pairing token (a paired web page
+/// must not grant consent on the operator's behalf).
+async fn issue_plugin_consent(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "auth_required",
+            "consent issuance requires the Desktop window (or the server token) — a paired page cannot grant consent",
+        );
+    }
+    let scopes = body.get("scopes").cloned().unwrap_or_else(|| serde_json::json!({}));
+    if !scopes.is_object() {
+        return desktop_err(StatusCode::BAD_REQUEST, "command_failed", "scopes must be an object");
+    }
+    let version = body.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
+    let accepted_by = body
+        .get("acceptedBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("desktop-operator")
+        .to_string();
+    // Grants EXPIRE (default 12 months, capped at 10 years) so consent is
+    // re-affirmed on a human timescale, not granted once forever.
+    let expires_days = body
+        .get("expiresDays")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(365)
+        .clamp(1, 3650);
+    let now = chrono::Utc::now();
+    let grant = serde_json::json!({
+        "version": version,
+        "scopes": scopes,
+        "acceptedAt": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "acceptedBy": accepted_by,
+        "expiresAt": (now + chrono::Duration::days(expires_days as i64))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    });
+    let envelope = match crate::consent_signing::sign_grant(&grant) {
+        Ok(e) => e,
+        Err(e) => return desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "command_failed", &e),
+    };
+    let req = ConnectorRequestBody {
+        connector_id: Some(id.clone()),
+        command: "consent.set".into(),
+        payload: Some(serde_json::json!({ "envelope": envelope })),
+        timeout_ms: None,
+        request_id: None,
+    };
+    match connectors::dispatch(&st.host, &id, &req).await {
+        Ok(success) => (StatusCode::OK, Json(success)).into_response(),
+        Err(f) => connector_failure_response(&f),
+    }
+}
+
 // ---- events (SSE) ----
 
 /// `GET /api/events` — Server-Sent Events stream of desktop-event envelopes:
@@ -1923,6 +1986,7 @@ pub async fn serve(
         .route("/api/plugins/:id/health", get(plugin_health))
         .route("/api/plugins/:id/logs", get(plugin_logs))
         .route("/api/plugins/:id/commands/:command", post(plugin_command))
+        .route("/api/plugins/:id/consent", post(issue_plugin_consent))
         .route("/api/connectors", get(list_connectors))
         .route("/api/connectors/:id/status", get(connector_status))
         .route("/api/connectors/:id/request", post(connector_request))

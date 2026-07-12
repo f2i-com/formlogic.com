@@ -6,6 +6,7 @@
 //! /api/services/* and stop everything cleanly on exit.
 
 pub mod connectors;
+pub mod consent_signing;
 pub mod events;
 pub mod flows;
 pub mod formlogic_client;

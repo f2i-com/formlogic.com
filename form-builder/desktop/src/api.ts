@@ -470,6 +470,24 @@ export const plugins = {
       `/api/plugins/${encodeURIComponent(id)}/commands/${encodeURIComponent(command)}`,
       { method: 'POST', body: JSON.stringify({ payload }) },
     ),
+  /**
+   * CONSENT-001: issue a Desktop-SIGNED consent grant (the operator accepted
+   * the wizard) and record it in the plugin. Only the Desktop window (or the
+   * server token) may call this — never a paired web page.
+   */
+  issueConsent: (
+    id: string,
+    body: {
+      scopes: Record<string, unknown>;
+      version?: number;
+      acceptedBy?: string;
+      expiresDays?: number;
+    },
+  ) =>
+    request<{ ok: true; data?: unknown }>(
+      `/api/plugins/${encodeURIComponent(id)}/consent`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 };
 
 // ----- connectors (exposed by running plugins) -----
