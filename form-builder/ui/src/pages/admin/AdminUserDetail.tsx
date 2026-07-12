@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, Boxes, FileJson, FileText, ShieldCheck, Workflow } from 'lucide-react';
+import { Archive, ArrowLeft, Boxes, FileJson, FileText, Recycle, ShieldCheck, Workflow } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -189,6 +189,19 @@ export function AdminUserDetail() {
                 ))}
               </div>
             )}
+          </section>
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
+                <Recycle className="h-4 w-4" /> Recycle bin
+              </h3>
+              <Button size="sm" variant="outline" onClick={() => navigate(`/admin/users/${userId}/trash`)}>
+                Open recycle bin
+              </Button>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-slate-500">
+              Things this user deleted in the last 30 days — restorable on their behalf (names and counts only; snapshot contents stay private).
+            </p>
           </section>
           <section>
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">

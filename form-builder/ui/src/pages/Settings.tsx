@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
@@ -36,6 +37,7 @@ import {
   Download,
   Archive,
   UploadCloud,
+  Recycle,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
@@ -83,6 +85,7 @@ const SECTIONS = [
   { id: 'audit', label: 'Audit' },
   { id: 'your-data', label: 'Your data' },
   { id: 'backup', label: 'Backup & restore' },
+  { id: 'trash', label: 'Recycle bin' },
   { id: 'danger', label: 'Danger zone' },
 ] as const;
 
@@ -125,6 +128,7 @@ function SectionHeader({
 
 export function Settings() {
   useDocumentTitle('Settings');
+  const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
 
@@ -281,6 +285,16 @@ export function Settings() {
   const [isImportingBackup, setIsImportingBackup] = useState(false);
   const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null);
   const [backupResult, setBackupResult] = useState<AccountBackupImportResult | null>(null);
+
+  // ── Recycle bin (count for the card; the /trash page is the real surface) ──
+  const [trashCount, setTrashCount] = useState<number | null>(null);
+  useEffect(() => {
+    let active = true;
+    api.listTrash().then((r) => {
+      if (active && r.data) setTrashCount(r.data.items.length);
+    });
+    return () => { active = false; };
+  }, []);
 
   const handleExportBackup = async () => {
     setIsExportingBackup(true);
@@ -1174,6 +1188,34 @@ export function Settings() {
                   ))}
                 </div>
               )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Recycle bin */}
+        <Card id="trash" className="overflow-hidden scroll-mt-24">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Recycle}
+              title="Recycle bin"
+              description="Deleted forms, apps and flows stay restorable for 30 days"
+              iconBg="bg-emerald-50 dark:bg-emerald-500/10"
+              iconColor="text-emerald-600 dark:text-emerald-400"
+            />
+            <div className="ml-0 sm:ml-14">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {trashCount === null ? 'Recycle bin' : trashCount === 0 ? 'The recycle bin is empty' : `${trashCount} item${trashCount === 1 ? '' : 's'} in the recycle bin`}
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    Deleting a form, app or flow keeps a snapshot (records and files included) for 30 days — restore it anytime before then.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => navigate('/trash')} leftIcon={<Recycle className="h-4 w-4" />}>
+                  Open recycle bin
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

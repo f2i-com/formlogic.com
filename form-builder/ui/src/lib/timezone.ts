@@ -114,14 +114,19 @@ export function formatDateTimeInZone(value: string | Date, tz: string): string {
 }
 
 /**
- * The timezone the ADMIN PANEL renders every timestamp in: the signed-in
- * admin's own account timezone, else their browser's zone, else UTC. (The
- * app-runtime precedence chain doesn't apply — the admin panel is platform
- * chrome, not a member view of someone's app.)
+ * The timezone for PLATFORM CHROME pages (Settings, the recycle bin, the
+ * admin panel): the signed-in user's own account timezone, else their
+ * browser's zone, else UTC. The app-runtime member→app chain doesn't apply —
+ * these pages aren't a member view of someone's app.
  */
-export function useAdminTimezone(): string {
+export function useAccountTimezone(): string {
   const tz = useAuthStore((s) => s.user?.timezone);
   return resolveDisplayTimezone(tz, browserTimezone());
+}
+
+/** The admin panel's display zone — same account→browser→UTC chain. */
+export function useAdminTimezone(): string {
+  return useAccountTimezone();
 }
 
 /**

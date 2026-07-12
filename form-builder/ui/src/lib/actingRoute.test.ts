@@ -36,6 +36,9 @@ describe('actingRoute', () => {
       ['/flows/fl1/bindings', `/admin/users/${OWNER}/flows/fl1/bindings`],
       ['/flow-runs', `/admin/users/${OWNER}/flow-runs`],
       ['/flow-runs/r1', `/admin/users/${OWNER}/flow-runs/r1`],
+      ['/trash', `/admin/users/${OWNER}/trash`],
+      ['/trash/t1/restore', `/admin/users/${OWNER}/trash/t1/restore`],
+      ['/trash/t1', `/admin/users/${OWNER}/trash/t1`],
     ] as const) {
       expect(route(from)).toEqual({ endpoint: to, blocked: false });
     }

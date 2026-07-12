@@ -670,6 +670,9 @@ export const useFormStore = create<FormState>()(
               // Rollback: restore the form
               set((s) => ({ forms: [...s.forms, formToDelete] }));
               toast.error('Failed to delete form', typeof result.error === 'string' ? result.error : 'Please try again');
+            } else if (result.data?.trashed) {
+              // trashed=false means an empty draft was purged — no restore to promise.
+              toast.success('Moved to the recycle bin', 'You can restore it from Settings → Recycle bin for 30 days.');
             }
           } catch (error) {
             // Rollback: restore the form

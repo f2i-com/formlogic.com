@@ -431,6 +431,7 @@ export function FlowsWorkspace() {
     const flow = pendingDelete;
     setPendingDelete(null);
     if (!flow) return;
+    let trashed = false;
     if (api.isDemoMode()) {
       await demoDeleteFlow(flow);
     } else {
@@ -439,10 +440,15 @@ export function FlowsWorkspace() {
         toast.error('Failed to delete flow', typeof res.error === 'string' ? res.error : undefined);
         return;
       }
+      trashed = res.data?.trashed === true;
     }
     setGroups((gs) => gs.map((g) => ({ ...g, flows: g.flows.filter((f) => f.id !== flow.id) })));
     if (selectedId === flow.id) selectFlow(null);
-    toast.success('Flow deleted', flow.name);
+    if (trashed) {
+      toast.success('Moved to the recycle bin', `"${flow.name}" can be restored from Settings → Recycle bin for 30 days.`);
+    } else {
+      toast.success('Flow deleted', flow.name);
+    }
   };
 
   return (
@@ -642,7 +648,9 @@ export function FlowsWorkspace() {
         onClose={() => setPendingDelete(null)}
         onConfirm={confirmDelete}
         title="Delete flow"
-        message={pendingDelete ? `Delete the flow "${pendingDelete.name}"? Its bindings and run history are kept but it will stop running.` : ''}
+        message={pendingDelete ? (api.isDemoMode()
+          ? `Delete the flow "${pendingDelete.name}"? Its bindings and run history are kept but it will stop running.`
+          : `Delete the flow "${pendingDelete.name}"? It moves to the recycle bin (bindings included), restorable for 30 days.`) : ''}
         confirmLabel="Delete"
         variant="danger"
       />

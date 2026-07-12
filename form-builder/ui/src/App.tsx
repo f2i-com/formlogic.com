@@ -58,6 +58,7 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const FormsList = lazyWithRetry(() => import('./pages/FormsList').then(m => ({ default: m.FormsList })));
 const Settings = lazyWithRetry(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const TrashPage = lazyWithRetry(() => import('./pages/TrashPage').then(m => ({ default: m.TrashPage })));
 // Platform admin panel — routed pages under /admin/* (AdminLayout guards non-admins)
 const AdminLayout = lazyWithRetry(() => import('./pages/admin/AdminLayout').then(m => ({ default: m.AdminLayout })));
 const AdminOverview = lazyWithRetry(() => import('./pages/admin/AdminOverview').then(m => ({ default: m.AdminOverview })));
@@ -382,6 +383,7 @@ function AppRoutes() {
         <Route path="/forms" element={<FormsList />} />
         <Route path="/flows" element={<FlowsWorkspace />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/trash" element={<TrashPage />} />
         {/* Doctor now lives inside the admin panel (server-side admin-gated too) */}
         <Route path="/doctor" element={<Navigate to="/admin/doctor" replace />} />
         {/* Platform admin panel (AdminLayout redirects non-admins; the API enforces it) */}
@@ -444,6 +446,7 @@ function AppRoutes() {
       <Route path="/admin/preview/:formId" element={<AdminActingBoundary kind="form"><FormPreview /></AdminActingBoundary>} />
       <Route path="/admin/forms/:formId/screen/edit" element={<AdminActingBoundary kind="form"><CustomScreenStudio /></AdminActingBoundary>} />
       <Route path="/admin/users/:userId/flows" element={<AdminActingBoundary kind="user"><FlowsWorkspace /></AdminActingBoundary>} />
+      <Route path="/admin/users/:userId/trash" element={<AdminActingBoundary kind="user"><TrashPage /></AdminActingBoundary>} />
 
       {/* Custom-screen play + editors — full screen (own header/back), so they fit the viewport
           and scroll internally instead of overflowing under AppShell's chrome on small screens */}

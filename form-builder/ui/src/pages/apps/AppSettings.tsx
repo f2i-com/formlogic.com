@@ -638,7 +638,7 @@ export function AppSettings() {
         onClose={() => { if (!deleting) setShowDelete(false); }}
         onConfirm={handleDeleteConfirmed}
         title="Delete app"
-        message={`Are you sure you want to delete "${app.name}"? This will permanently remove all forms, users, roles, and data associated with this app. This action cannot be undone.`}
+        message={`Delete "${app.name}"? The app (with its flows, roles and members) moves to the recycle bin, restorable for 30 days. Its forms and their records stay in your workspace.`}
         confirmLabel="Delete app"
         variant="danger"
         isLoading={deleting}

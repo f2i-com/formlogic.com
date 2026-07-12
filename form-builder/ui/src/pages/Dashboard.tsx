@@ -1539,7 +1539,9 @@ export function Dashboard() {
           }
         }}
         title="Delete form"
-        message={`Are you sure you want to delete "${deleteTarget?.title || 'this form'}"? This action cannot be undone and all responses will be lost.`}
+        message={storageMode === 'api' && !api.isDemoMode()
+          ? `Delete "${deleteTarget?.title || 'this form'}"? It will move to the recycle bin, where you can restore it (responses included) for 30 days.`
+          : `Are you sure you want to delete "${deleteTarget?.title || 'this form'}"? This action cannot be undone and all responses will be lost.`}
         confirmLabel="Delete"
         variant="danger"
       />

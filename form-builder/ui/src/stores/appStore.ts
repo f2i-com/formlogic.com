@@ -130,6 +130,9 @@ export const useAppStore = create<AppState>()(
             apps: s.apps.filter((a) => a.id !== id),
             activeAppId: s.activeAppId === id ? null : s.activeAppId,
           }));
+          if (result.data?.trashed) {
+            toast.success('Moved to the recycle bin', 'You can restore the app from Settings → Recycle bin for 30 days. Its forms stay in your workspace.');
+          }
         } catch {
           toast.error('Delete failed', 'Could not delete the app. Please try again.');
         } finally {

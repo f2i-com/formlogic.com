@@ -238,7 +238,7 @@ export function actingRoute(endpoint: string, ownerId: string): { endpoint: stri
   for (const re of ACTING_BLOCKED) {
     if (re.test(endpoint)) return { endpoint, blocked: true };
   }
-  if (/^\/(forms|apps|flows|flow-runs)(\/|\?|$)/.test(endpoint)) {
+  if (/^\/(forms|apps|flows|flow-runs|trash)(\/|\?|$)/.test(endpoint)) {
     return { endpoint: `/admin/users/${encodeURIComponent(ownerId)}${endpoint}`, blocked: false };
   }
   return { endpoint, blocked: true };
@@ -676,6 +676,24 @@ class ApiClient {
     });
   }
 
+  // ── Recycle bin ────────────────────────────────────────────────────────────
+  // Owner-scoped, so acting mode rewrites these onto the admin mirror
+  // (names/kinds/counts only — snapshot contents are never downloadable).
+
+  async listTrash(): Promise<ApiResponse<{ items: TrashItem[] }>> {
+    return this.request('/trash');
+  }
+
+  /** Restore an item (consumes it). Original ids are kept when still free. */
+  async restoreTrashItem(id: string): Promise<ApiResponse<{ success: boolean; item: TrashItem; restored: AccountBackupImportResult }>> {
+    return this.request(`/trash/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  }
+
+  /** Delete forever. */
+  async purgeTrashItem(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/trash/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   // Form endpoints
   async getForms(options?: { status?: string; limit?: number; offset?: number }): Promise<ApiResponse<{ forms: Form[]; count: number }>> {
     const params = new URLSearchParams();
@@ -705,7 +723,7 @@ class ApiClient {
     });
   }
 
-  async deleteForm(id: string): Promise<ApiResponse<{ success: boolean }>> {
+  async deleteForm(id: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
     return this.request(`/forms/${id}`, {
       method: 'DELETE',
     });
@@ -1070,7 +1088,7 @@ class ApiClient {
     });
   }
 
-  async deleteApp(id: string): Promise<ApiResponse<{ success: boolean }>> {
+  async deleteApp(id: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
     return this.request(`/apps/${id}`, {
       method: 'DELETE',
     });
@@ -1715,7 +1733,7 @@ class ApiClient {
     return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
-  async deleteFlow(appId: string, flowId: string): Promise<ApiResponse<{ success: boolean }>> {
+  async deleteFlow(appId: string, flowId: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
     return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'DELETE' });
   }
 
@@ -1871,7 +1889,7 @@ class ApiClient {
     return this.request(`/flows/${encodeURIComponent(flowId)}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
-  async deleteWorkspaceFlow(flowId: string): Promise<ApiResponse<{ success: boolean }>> {
+  async deleteWorkspaceFlow(flowId: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
     return this.request(`/flows/${encodeURIComponent(flowId)}`, { method: 'DELETE' });
   }
 
@@ -2872,6 +2890,23 @@ export interface AccountBackupImportResult {
   responses: number;
   files: number;
   warnings?: string[];
+}
+
+export interface TrashItem {
+  id: string;
+  kind: 'form' | 'app' | 'flow';
+  originalId: string;
+  name: string;
+  sizeBytes: number;
+  meta: {
+    slug?: string | null;
+    appId?: string | null;
+    counts?: { forms?: number; apps?: number; flows?: number; bindings?: number; responses?: number; files?: number };
+  };
+  status: 'trashed' | 'restoring';
+  deletedAt: string;
+  expiresAt: string;
+  daysRemaining: number;
 }
 
 export interface ScheduledBackupRun {
