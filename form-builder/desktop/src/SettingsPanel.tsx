@@ -3,8 +3,10 @@ import {
   appConfig,
   formatBytes,
   isTauri,
+  journals,
   openInExplorer,
   type CompanionConfig,
+  type JournalsSnapshot,
   type MigratePlan,
   type MigrationProgress,
 } from './api';
@@ -50,8 +52,59 @@ export default function SettingsPanel() {
   const [hfTokenSet, setHfTokenSet] = useState<boolean | null>(null);
   const [hfInput, setHfInput] = useState('');
   const [hfBusy, setHfBusy] = useState(false);
+  // Local operational journals (DATA-PRIV-001): the Clear-history preview.
+  const [journalsInfo, setJournalsInfo] = useState<JournalsSnapshot | null>(null);
+  const [journalsBusy, setJournalsBusy] = useState(false);
   const toast = useToast();
   const { confirm: requestConfirm } = useConfirm();
+
+  const refreshJournals = useCallback(async () => {
+    try {
+      setJournalsInfo(await journals.get());
+    } catch {
+      setJournalsInfo(null); // runtime not up yet — the card shows a dash
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshJournals();
+  }, [refreshJournals]);
+
+  const clearHistory = useCallback(async () => {
+    const receiptTotal = Object.values(journalsInfo?.receipts ?? {}).reduce((a, b) => a + b, 0);
+    const done = journalsInfo?.eventWork.completed ?? 0;
+    const dead = journalsInfo?.eventWork.dead ?? 0;
+    const ok = await requestConfirm({
+      title: 'Clear local call & SMS history?',
+      body:
+        `This removes Desktop's LOCAL operational journals: ${done} completed and ${dead} dead-lettered ` +
+        `event record(s), plus ${receiptTotal} delivery receipt(s) older than one hour. ` +
+        `Unfinished (pending) work is kept so no business event is lost. ` +
+        `Records already filed in FormLogic are NOT affected — those follow each form's ` +
+        `retention settings in the web app.`,
+      confirmLabel: 'Clear history',
+      danger: true,
+    });
+    if (!ok) return;
+    setJournalsBusy(true);
+    try {
+      const res = await journals.clear();
+      toast.push({
+        kind: 'success',
+        title: 'Local history cleared',
+        body: `${res.cleared.completed + res.cleared.dead} event record(s) and ${res.cleared.receipts} receipt(s) removed.`,
+      });
+    } catch (e) {
+      toast.push({
+        kind: 'error',
+        title: 'Could not clear history',
+        body: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setJournalsBusy(false);
+      refreshJournals();
+    }
+  }, [journalsInfo, requestConfirm, toast, refreshJournals]);
 
   const refresh = useCallback(async () => {
     try {
@@ -801,6 +854,55 @@ export default function SettingsPanel() {
             )}
           </div>
         </form>
+      </section>
+
+      <section className="model-section">
+        <h3 className="section-title">Privacy — local call &amp; SMS history</h3>
+        <p className="form-hint" style={{ marginBottom: 12 }}>
+          Desktop keeps small local journals so call and SMS events survive
+          crashes: delivery receipts and an event work ledger. Their payloads
+          are encrypted at rest and age out automatically
+          {journalsInfo?.retention
+            ? ` (receipts after ${journalsInfo.retention.receiptsDays} days; completed work after ${journalsInfo.retention.completedHours} h; dead letters after ${journalsInfo.retention.deadDays} days)`
+            : ''}
+          . Records already filed in FormLogic are governed by each form's
+          retention settings in the web app, not by this.
+        </p>
+        <div className="settings-row" style={{ marginBottom: 6 }}>
+          <span className="settings-label">Payload encryption</span>
+          {journalsInfo == null ? (
+            <span className="badge badge-neutral">…</span>
+          ) : journalsInfo.encrypted ? (
+            <span className="badge badge-ok">sealed at rest</span>
+          ) : (
+            <span className="badge badge-err">plaintext (no key store)</span>
+          )}
+        </div>
+        <div className="settings-row" style={{ marginBottom: 6 }}>
+          <span className="settings-label">Delivery receipts</span>
+          <span>
+            {journalsInfo
+              ? Object.values(journalsInfo.receipts).reduce((a, b) => a + b, 0)
+              : '—'}
+          </span>
+        </div>
+        <div className="settings-row" style={{ marginBottom: 10 }}>
+          <span className="settings-label">Event work</span>
+          <span>
+            {journalsInfo
+              ? `${journalsInfo.eventWork.pending} pending · ${journalsInfo.eventWork.completed} completed · ${journalsInfo.eventWork.dead} dead-lettered`
+              : '—'}
+          </span>
+        </div>
+        <div className="form-actions">
+          <button
+            className="btn btn-danger"
+            onClick={clearHistory}
+            disabled={journalsBusy || journalsInfo == null}
+          >
+            {journalsBusy ? 'Clearing…' : 'Clear local history…'}
+          </button>
+        </div>
       </section>
       {/* The Cloud account link + browser pairing moved to the Connections
           workspace (redesign 2026-07) — see ConnectionsPanel.tsx. */}

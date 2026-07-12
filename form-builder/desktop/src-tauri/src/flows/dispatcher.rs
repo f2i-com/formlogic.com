@@ -229,6 +229,9 @@ pub struct FlowRuntime {
     /// When THIS dispatcher came up — the legacy-receipt import only considers
     /// receipts from earlier sessions (live envelopes enter the ledger directly).
     session_start: chrono::DateTime<chrono::Utc>,
+    /// At-rest sealer for the journals' PII payloads (DATA-PRIV-001); `None`
+    /// only when every key store failed (loudly logged, plaintext fallback).
+    journal_crypto: Option<Arc<crate::journal_crypto::JournalCrypto>>,
 }
 
 /// True iff a redirect hop from `origin` (the first URL in the chain — i.e. the URL that was
@@ -376,7 +379,13 @@ impl FlowRuntime {
         // The durable work ledger (audit CROSS-EVENT-001). If it can't open,
         // live processing continues with the legacy best-effort semantics
         // (in-session dedupe only) — loudly, because durability is off.
-        let work = match WorkLedger::open(host.plugin_data_root.join("host-event-work.jsonl")) {
+        // Payloads sealed at rest + env-tunable terminal retention (DATA-PRIV-001).
+        let journal_crypto = crate::journal_crypto::shared(&host.plugin_data_root);
+        let work = match WorkLedger::open_with(
+            host.plugin_data_root.join("host-event-work.jsonl"),
+            journal_crypto.clone(),
+            crate::flows::work_ledger::Retention::from_env(),
+        ) {
             Ok(w) => Some(Arc::new(w)),
             Err(e) => {
                 eprintln!("[flows] event work ledger unavailable ({e}) — durable event recovery disabled");
@@ -399,6 +408,7 @@ impl FlowRuntime {
             work,
             event_queues: Mutex::new(None),
             session_start: chrono::Utc::now(),
+            journal_crypto,
         })
     }
 
@@ -487,18 +497,37 @@ impl FlowRuntime {
         }
         // Retry pump (audit CROSS-EVENT-001): re-drives events whose retry
         // backoff has elapsed (transient API/snapshot/link failures), and
-        // compacts the ledger's journal when it grows past its threshold.
+        // compacts the ledger's journal when it grows past its threshold OR
+        // when terminal records age past retention. Hourly, the receipt +
+        // processed-marker journals are retention-swept too, so a low-volume
+        // install purges PII on the clock (DATA-PRIV-001 item 4).
         {
             let rt = self.clone();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(30));
+                let mut last_receipt_sweep = std::time::Instant::now();
                 loop {
                     tick.tick().await;
-                    let Some(work) = rt.work.clone() else { break };
-                    for (_key, envelope) in work.due_retries(chrono::Utc::now()) {
-                        rt.enqueue_envelope(envelope);
+                    let now = chrono::Utc::now();
+                    if let Some(work) = rt.work.clone() {
+                        for (_key, envelope) in work.due_retries(now) {
+                            rt.enqueue_envelope(envelope);
+                        }
+                        work.maybe_compact(now);
                     }
-                    work.maybe_compact(chrono::Utc::now());
+                    if last_receipt_sweep.elapsed() >= Duration::from_secs(3600) {
+                        last_receipt_sweep = std::time::Instant::now();
+                        let cutoff = now - crate::plugins::receipts::default_retention();
+                        let removed = rt.host.sweep_receipts(cutoff);
+                        if let Some(p) = &rt.processed {
+                            if let Err(e) = p.retain_since(cutoff) {
+                                eprintln!("[flows] processed-marker sweep failed: {e}");
+                            }
+                        }
+                        if removed > 0 {
+                            eprintln!("[flows] retention sweep aged out {removed} receipt(s)");
+                        }
+                    }
                 }
             });
         }
@@ -545,12 +574,22 @@ impl FlowRuntime {
     async fn recovery_sweep(self: Arc<Self>) {
         let Some(work) = self.work.clone() else { return };
         if let Some(processed) = self.processed.clone() {
+            // Normalise each receipt line to {key, receivedAt, event}: sealed
+            // payloads (`envEnc`, DATA-PRIV-001) are opened here — recovery is
+            // exactly the read path the sealed copy exists for.
+            let crypto = self.journal_crypto.as_deref();
             let mut lines: Vec<Value> = Vec::new();
             if let Ok(dirs) = std::fs::read_dir(&self.host.plugin_data_root) {
                 for entry in dirs.flatten() {
                     let path = entry.path().join("host-event-receipts.jsonl");
                     let Ok(text) = std::fs::read_to_string(&path) else { continue };
-                    lines.extend(text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()));
+                    lines.extend(text.lines().filter_map(|l| {
+                        let mut v = serde_json::from_str::<Value>(l).ok()?;
+                        if let Some(env) = crate::plugins::receipts::line_envelope(&v, crypto) {
+                            v["event"] = env;
+                        }
+                        Some(v)
+                    }));
                 }
             }
             let mut imported = 0usize;
@@ -809,6 +848,64 @@ impl FlowRuntime {
         }
 
         json!({ "plugins": plugins, "journals": journals })
+    }
+
+    /// Preview of the local operational journals (DATA-PRIV-001 item 6):
+    /// counts + retention windows, so "Clear history" can say exactly what it
+    /// would remove. Never includes payload content.
+    pub fn journals_snapshot(&self) -> Value {
+        let receipts: serde_json::Map<String, Value> = self
+            .host
+            .receipt_counts()
+            .into_iter()
+            .map(|(id, n)| (id, json!(n)))
+            .collect();
+        let (pending, completed, dead) = self
+            .work
+            .as_ref()
+            .map(|w| w.counts_full())
+            .unwrap_or_default();
+        let retention = crate::flows::work_ledger::Retention::from_env();
+        json!({
+            "receipts": receipts,
+            "eventWork": { "pending": pending, "completed": completed, "dead": dead },
+            "retention": {
+                "receiptsDays": crate::plugins::receipts::default_retention().num_days(),
+                "completedHours": retention.completed.num_hours(),
+                "deadDays": retention.dead.num_days(),
+            },
+            "encrypted": self.journal_crypto.is_some(),
+        })
+    }
+
+    /// "Clear call/SMS history" for the LOCAL operational journals
+    /// (DATA-PRIV-001 item 6): drops every terminal work record and every
+    /// receipt/marker older than one hour. The last hour of receipts is kept
+    /// as the replay-dedupe guard (an in-flight plugin redelivery must still
+    /// be recognised); pending work is never touched — clearing history must
+    /// not lose unfinished business events. Cloud records are deliberately
+    /// NOT in scope: they belong to FormLogic's per-form retention settings.
+    pub fn clear_history(&self) -> Value {
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
+        let (completed, dead) = self
+            .work
+            .as_ref()
+            .map(|w| w.clear_terminal())
+            .unwrap_or_default();
+        let receipts = self.host.sweep_receipts(cutoff);
+        let markers = self
+            .processed
+            .as_ref()
+            .and_then(|p| p.retain_since(cutoff).ok())
+            .unwrap_or(0);
+        json!({
+            "cleared": {
+                "completed": completed,
+                "dead": dead,
+                "receipts": receipts,
+                "processedMarkers": markers,
+            }
+        })
     }
 
     /// Route a connector's events to ONE app (audit INT-004/C-13): the

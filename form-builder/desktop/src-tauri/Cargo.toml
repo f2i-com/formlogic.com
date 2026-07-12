@@ -109,6 +109,11 @@ fs2 = "0.4"
 sha2 = "0.10"
 getrandom = "0.2"
 
+# DATA-PRIV-001: at-rest encryption for the operational journals (event
+# receipts + work ledger), which carry transcript/SMS/caller payloads. AEAD
+# with a per-install data key held in the OS credential store.
+chacha20poly1305 = "0.10"
+
 # DESK-SECRET-001: the OS credential store (Windows Credential Manager) for the
 # long-lived FormLogic API key + HuggingFace token, so they never sit in a
 # plaintext config file. Windows-only backend — the audited/shipped platform;

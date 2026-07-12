@@ -222,6 +222,34 @@ async fn support_bundle(State(state): State<AppState>) -> impl IntoResponse {
     Json(v)
 }
 
+/// `GET /api/desktop/journals` — counts + retention of the local operational
+/// journals (DATA-PRIV-001): the "Clear history" preview. No payload content.
+async fn desktop_journals(State(state): State<AppState>) -> impl IntoResponse {
+    match &state.flow_runtime {
+        Some(rt) => Json(rt.journals_snapshot()).into_response(),
+        None => Json(serde_json::json!({
+            "receipts": {},
+            "eventWork": { "pending": 0, "completed": 0, "dead": 0 },
+        }))
+        .into_response(),
+    }
+}
+
+/// `POST /api/desktop/journals/clear` — clear LOCAL call/SMS operational
+/// history (terminal work records + receipts older than the dedupe guard).
+/// Pending work is never touched; cloud records are governed by FormLogic's
+/// per-form retention settings, not this endpoint.
+async fn desktop_journals_clear(State(state): State<AppState>) -> impl IntoResponse {
+    match &state.flow_runtime {
+        Some(rt) => Json(rt.clear_history()).into_response(),
+        None => desktop_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runner_unavailable",
+            "no flow runtime is wired",
+        ),
+    }
+}
+
 // ------- services -------
 
 async fn list_services(State(state): State<AppState>) -> impl IntoResponse {
@@ -1766,6 +1794,8 @@ pub async fn serve(
     let management_api = Router::new()
         .route("/api/desktop/info", get(desktop_info))
         .route("/api/desktop/support-bundle", get(support_bundle))
+        .route("/api/desktop/journals", get(desktop_journals))
+        .route("/api/desktop/journals/clear", post(desktop_journals_clear))
         .route("/api/config", get(get_config))
         // services
         .route("/api/services", get(list_services).post(add_service))

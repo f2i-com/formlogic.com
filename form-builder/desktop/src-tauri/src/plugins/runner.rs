@@ -389,8 +389,11 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
     // BEFORE acknowledging it, so the plugin's outbox can stop re-delivering.
     // If the journal can't open, the desktop must NOT advertise `eventAck` —
     // promising acks it can never send would dead-letter every event.
-    let receipts = match crate::plugins::receipts::EventReceipts::open(
+    // Payloads are sealed at rest (DATA-PRIV-001); a missing crypto key store
+    // falls back to plaintext LOUDLY inside journal_crypto::shared.
+    let receipts = match crate::plugins::receipts::EventReceipts::open_encrypted(
         data_dir.join("host-event-receipts.jsonl"),
+        crate::journal_crypto::shared(&host.plugin_data_root),
     ) {
         Ok(r) => Some(Arc::new(r)),
         Err(e) => {
@@ -429,6 +432,9 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         match map.get_mut(id) {
             Some(slot) if slot.generation == gen => {
                 slot.running = Some(running.clone());
+                // Retention sweeps must go through the OWNING journal instance
+                // (DATA-PRIV-001) — hand the host this run's handle.
+                slot.receipts = receipts.clone();
                 slot.pid = child.id();
                 true
             }

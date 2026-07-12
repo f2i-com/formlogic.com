@@ -83,6 +83,10 @@ pub(crate) struct PluginSlot {
     pub logs: LogRing,
     /// The live process handle set while a supervisor runs it.
     pub running: Option<Arc<RunningPlugin>>,
+    /// The plugin's event-receipt journal handle, set when a run opens it —
+    /// retained after stop so retention sweeps go through the OWNING instance
+    /// (never a second writer on the same file). DATA-PRIV-001.
+    pub receipts: Option<Arc<crate::plugins::receipts::EventReceipts>>,
     /// Bumped on every (re)start/stop; a supervisor whose generation no longer
     /// matches must not touch the slot (stale crash reports can't clobber a
     /// newer run).
@@ -104,6 +108,7 @@ impl PluginSlot {
             user_disabled: false,
             logs: LogRing::new(),
             running: None,
+            receipts: None,
             generation: 0,
             restart_attempts: 0,
             last_health: None,
@@ -244,6 +249,68 @@ impl PluginHost {
         let mut ids: Vec<String> = self.lock_plugins().keys().cloned().collect();
         ids.sort();
         ids
+    }
+
+    /// Drop receipt-journal entries older than `cutoff` across every plugin
+    /// (DATA-PRIV-001 retention sweep / "clear history"). Journals with a
+    /// LIVE handle are swept through the owning instance; a plugin that never
+    /// ran this session gets its journal opened plaintext-read/rewrite (safe:
+    /// sweeping keeps raw lines verbatim, so sealed payloads stay sealed).
+    /// Returns how many entries were removed.
+    pub fn sweep_receipts(&self, cutoff: chrono::DateTime<chrono::Utc>) -> usize {
+        let handles: Vec<(String, Option<Arc<crate::plugins::receipts::EventReceipts>>)> = self
+            .lock_plugins()
+            .iter()
+            .map(|(id, slot)| (id.clone(), slot.receipts.clone()))
+            .collect();
+        let mut removed = 0usize;
+        for (id, receipts) in handles {
+            match receipts {
+                Some(r) => match r.retain_since(cutoff) {
+                    Ok(n) => removed += n,
+                    Err(e) => log::warn!("receipt sweep failed for {id}: {e}"),
+                },
+                None => {
+                    let path = self.plugin_data_root.join(&id).join("host-event-receipts.jsonl");
+                    if !path.is_file() {
+                        continue;
+                    }
+                    match crate::plugins::receipts::EventReceipts::open(path) {
+                        Ok(r) => match r.retain_since(cutoff) {
+                            Ok(n) => removed += n,
+                            Err(e) => log::warn!("receipt sweep failed for {id}: {e}"),
+                        },
+                        Err(e) => log::warn!("receipt sweep open failed for {id}: {e}"),
+                    }
+                }
+            }
+        }
+        removed
+    }
+
+    /// Per-plugin receipt counts (journals preview). Live instances answer
+    /// from memory; others from a line count.
+    pub fn receipt_counts(&self) -> Vec<(String, usize)> {
+        let handles: Vec<(String, Option<Arc<crate::plugins::receipts::EventReceipts>>)> = self
+            .lock_plugins()
+            .iter()
+            .map(|(id, slot)| (id.clone(), slot.receipts.clone()))
+            .collect();
+        let mut out = Vec::new();
+        for (id, receipts) in handles {
+            let count = match receipts {
+                Some(r) => r.len(),
+                None => {
+                    let path = self.plugin_data_root.join(&id).join("host-event-receipts.jsonl");
+                    std::fs::read_to_string(&path)
+                        .map(|t| t.lines().count())
+                        .unwrap_or(0)
+                }
+            };
+            out.push((id, count));
+        }
+        out.sort();
+        out
     }
 
     /// Discover plugins under the root. Running plugins are left untouched

@@ -81,6 +81,15 @@ Native callers without an `Origin` header (curl, scripts) may use non-exec route
 
 Error envelope everywhere: `{ok:false, error:{code, message}}` with codes from `connector-response.schema.json` (`origin_denied`, `capability_denied`, `connector_missing`, `connector_unavailable`, `command_failed`, `ipc_unavailable`, `auth_required`). These are intentionally the SAME codes FormLogic's `ConnectorError` already parses; only `ipc_unavailable`/`connector_missing` are fallbackable in the browser.
 
+## 3b. Local operational data (DATA-PRIV-001)
+
+Desktop keeps two small journals under `plugin-data/` so accepted events survive crashes. **The work ledger (`host-event-work.jsonl`) is the single source of durability truth for an accepted event**; per-plugin receipt journals (`host-event-receipts.jsonl`) exist only for ack-replay dedupe and to bridge the crash window between the plugin ack and the ledger's `recv` row (plus `host-event-processed.jsonl` markers for the pre-ledger import).
+
+- **Encryption at rest:** envelope payloads (transcripts, caller numbers, SMS bodies) are sealed with XChaCha20-Poly1305 under a per-install data key held in the Windows Credential Manager (`journal-data-key`; key-file fallback beside the journals on other platforms). Legacy plaintext journals are re-sealed at first boot. A plaintext scan of the data dir yields keys, states and timestamps — never conversation content.
+- **Minimisation:** a COMPLETED event's payload is dropped the moment it completes; the terminal record keeps only key, state, timestamps and a SHA-256 payload fingerprint. Dead-letter records keep their sealed payload so the operator redrive works.
+- **Retention (time-based, volume-independent):** swept at open and by a periodic tick. Defaults / env overrides (clamped): receipts 14 d (`FORMLOGIC_JOURNAL_RECEIPTS_RETENTION_DAYS`, 1–90), completed work 24 h (`FORMLOGIC_JOURNAL_COMPLETED_RETENTION_HOURS`, 1–168), dead letters 14 d (`FORMLOGIC_JOURNAL_DEAD_RETENTION_DAYS`, 1–90). Pending (unfinished) work is NEVER age-discarded.
+- **Clear history:** `GET /api/desktop/journals` previews counts; `POST /api/desktop/journals/clear` (Settings → Privacy in the Desktop window) removes terminal work records and receipts older than a one-hour dedupe guard. Pending work is kept; cloud records are governed by each form's retention settings in FormLogic, not by this.
+
 ## 4. Plugin host
 
 See `docs/DESKTOP_PLUGIN_SDK.md`. Summary: plugins are directories under `<desktop-data>/plugins/<id>/` with a `manifest.json` (`plugin-manifest.schema.json`), run as supervised child processes speaking JSON-RPC 2.0 over stdio (newline-delimited). Lifecycle states: `installed, stopped, starting, running, unhealthy, crashed, disabled`. Desktop enforces: commands must be covered by manifest `capabilities`; events must be declared in manifest `events`; a crashing plugin never takes Desktop down.

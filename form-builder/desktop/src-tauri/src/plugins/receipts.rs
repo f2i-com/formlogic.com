@@ -7,23 +7,64 @@
 //! index, so a replayed envelope (plugin crash recovery, a lost ack) is
 //! acknowledged again but never re-published to the event bus.
 //!
-//! The journal is a bounded window, not an archive: past
-//! [`ROTATE_AT_LINES`] it is rewritten keeping the newest
-//! [`ROTATE_KEEP_LINES`] entries. That bounds both disk use and PII
-//! retention (transcript/SMS payloads — audit C-06); the plugin's own
-//! outbox stops re-delivering an event after its retry budget anyway, so a
-//! bounded dedupe window is safe.
+//! Privacy (audit DATA-PRIV-001): envelopes carry transcripts, caller numbers
+//! and SMS bodies, so with a [`JournalCrypto`] wired the payload is sealed
+//! (`envEnc`) — a plaintext scan of the data dir recovers keys and
+//! timestamps, never conversation content. Legacy plaintext lines are
+//! re-sealed in place at open. Retention is TIME-based on top of the line
+//! bound: entries older than [`default_retention`] (env-tunable, clamped) are
+//! swept at open and by the dispatcher's periodic sweep — a low-volume
+//! install ages out PII on the clock, not on line count. The rotation window
+//! still caps disk use; the plugin's own outbox stops re-delivering an event
+//! after its retry budget anyway, so a bounded dedupe window is safe.
 
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
+
+use crate::journal_crypto::JournalCrypto;
 
 pub const ROTATE_AT_LINES: usize = 20_000;
 pub const ROTATE_KEEP_LINES: usize = 10_000;
+
+/// Days a receipt stays journaled (dedupe + crash-recovery window). Must
+/// exceed the plugin outbox's re-delivery horizon (7 days) so an unacked
+/// replay is still recognised. Env `FORMLOGIC_JOURNAL_RECEIPTS_RETENTION_DAYS`
+/// (clamped 1..=90).
+pub const RECEIPTS_RETENTION_DAYS: i64 = 14;
+
+/// The configured receipts retention as a duration.
+pub fn default_retention() -> chrono::Duration {
+    let days = std::env::var("FORMLOGIC_JOURNAL_RECEIPTS_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(RECEIPTS_RETENTION_DAYS)
+        .clamp(1, 90);
+    chrono::Duration::days(days)
+}
+
+/// The (possibly sealed) envelope carried by one journal line: plaintext
+/// `event` (legacy / no-crypto) or sealed `envEnc`. `None` when the line has
+/// no recoverable payload (markers, decryption failure, stripped records).
+pub fn line_envelope(v: &Value, crypto: Option<&JournalCrypto>) -> Option<Value> {
+    if let Some(e) = v.get("event").filter(|e| e.is_object()) {
+        return Some(e.clone());
+    }
+    let sealed = v.get("envEnc").and_then(Value::as_str)?;
+    crypto?.decrypt(sealed).filter(Value::is_object)
+}
+
+fn line_received_at(v: &Value) -> Option<DateTime<Utc>> {
+    v.get("receivedAt")
+        .and_then(Value::as_str)
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptOutcome {
@@ -43,14 +84,25 @@ pub struct EventReceipts {
     path: PathBuf,
     rotate_at: usize,
     rotate_keep: usize,
+    retention: chrono::Duration,
+    crypto: Option<Arc<JournalCrypto>>,
     inner: Mutex<Inner>,
 }
 
 impl EventReceipts {
-    /// Open (creating if needed) the receipts journal, loading the seen-key
-    /// set. A corrupt tail line (crash mid-append) is skipped, not fatal.
+    /// Open (creating if needed) a PLAINTEXT journal — used for the
+    /// processed-marker journal (keys only, no payloads) and legacy tests.
     pub fn open(path: PathBuf) -> std::io::Result<Self> {
-        Self::open_with_limits(path, ROTATE_AT_LINES, ROTATE_KEEP_LINES)
+        Self::open_full(path, ROTATE_AT_LINES, ROTATE_KEEP_LINES, None)
+    }
+
+    /// Open a journal whose envelope payloads are sealed with `crypto`
+    /// (`None` = the key stores failed; plaintext with a loud caller log).
+    pub fn open_encrypted(
+        path: PathBuf,
+        crypto: Option<Arc<JournalCrypto>>,
+    ) -> std::io::Result<Self> {
+        Self::open_full(path, ROTATE_AT_LINES, ROTATE_KEEP_LINES, crypto)
     }
 
     /// [`open`](Self::open) with explicit rotation thresholds (tests).
@@ -59,11 +111,21 @@ impl EventReceipts {
         rotate_at: usize,
         rotate_keep: usize,
     ) -> std::io::Result<Self> {
+        Self::open_full(path, rotate_at, rotate_keep, None)
+    }
+
+    pub fn open_full(
+        path: PathBuf,
+        rotate_at: usize,
+        rotate_keep: usize,
+        crypto: Option<Arc<JournalCrypto>>,
+    ) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let mut seen = HashSet::new();
         let mut lines = 0usize;
+        let mut plaintext_payloads = false;
         if path.is_file() {
             let reader = BufReader::new(File::open(&path)?);
             for line in reader.lines() {
@@ -73,6 +135,9 @@ impl EventReceipts {
                     if let Some(k) = v.get("key").and_then(Value::as_str) {
                         seen.insert(k.to_string());
                     }
+                    if v.get("event").is_some_and(Value::is_object) {
+                        plaintext_payloads = true;
+                    }
                 }
             }
         }
@@ -81,12 +146,22 @@ impl EventReceipts {
             path,
             rotate_at,
             rotate_keep,
+            retention: default_retention(),
+            crypto,
             inner: Mutex::new(Inner { file, seen, lines }),
         };
         {
             let mut inner = receipts.inner.lock().expect("receipts lock");
             if inner.lines >= receipts.rotate_at {
                 receipts.rotate(&mut inner)?;
+            }
+            // DATA-PRIV-001: age out expired entries at every open (time-based,
+            // volume-independent) and re-seal any legacy plaintext payloads.
+            let cutoff = Utc::now() - receipts.retention;
+            if plaintext_payloads && receipts.crypto.is_some() {
+                receipts.rewrite_retained(&mut inner, cutoff)?;
+            } else {
+                receipts.retain_since_locked(&mut inner, cutoff)?;
             }
         }
         Ok(receipts)
@@ -101,13 +176,22 @@ impl EventReceipts {
         if inner.seen.contains(key) {
             return Ok(ReceiptOutcome::Duplicate);
         }
-        let line = serde_json::json!({
+        let mut line = serde_json::json!({
             "key": key,
             "receivedAt": chrono::Utc::now().to_rfc3339(),
-            "event": envelope,
-        })
-        .to_string();
-        inner.file.write_all(line.as_bytes())?;
+        });
+        if envelope.is_object() {
+            match self.crypto.as_ref().and_then(|c| c.encrypt(envelope)) {
+                Some(sealed) => line["envEnc"] = Value::String(sealed),
+                None if self.crypto.is_none() => line["event"] = envelope.clone(),
+                // Crypto wired but sealing failed (exhausted entropy — never in
+                // practice): journal the receipt WITHOUT the payload rather than
+                // writing plaintext PII. Dedupe/ack still work; only the
+                // crash-window recovery of this one envelope is lost.
+                None => {}
+            }
+        }
+        inner.file.write_all(line.to_string().as_bytes())?;
         inner.file.write_all(b"\n")?;
         inner.file.flush()?;
         inner.file.sync_data()?;
@@ -136,16 +220,82 @@ impl EventReceipts {
         self.len() == 0
     }
 
-    /// Rewrite the journal keeping the newest `rotate_keep` lines
-    /// (atomic tmp+rename), rebuilding the seen set from what remains.
-    fn rotate(&self, inner: &mut Inner) -> std::io::Result<()> {
+    /// Drop every entry older than `cutoff` (DATA-PRIV-001 retention sweep /
+    /// "clear history"). Returns how many lines were removed.
+    pub fn retain_since(&self, cutoff: DateTime<Utc>) -> std::io::Result<usize> {
+        let mut inner = self.inner.lock().expect("receipts lock");
+        self.retain_since_locked(&mut inner, cutoff)
+    }
+
+    fn retain_since_locked(
+        &self,
+        inner: &mut Inner,
+        cutoff: DateTime<Utc>,
+    ) -> std::io::Result<usize> {
+        let all = self.read_lines()?;
+        let kept: Vec<String> = all
+            .iter()
+            .filter(|l| {
+                serde_json::from_str::<Value>(l)
+                    .ok()
+                    .and_then(|v| line_received_at(&v))
+                    // Unparsable/undated lines are dropped — they can't be aged.
+                    .is_some_and(|at| at >= cutoff)
+            })
+            .cloned()
+            .collect();
+        let removed = all.len().saturating_sub(kept.len());
+        if removed > 0 {
+            self.replace_journal(inner, &kept)?;
+        }
+        Ok(removed)
+    }
+
+    /// Full rewrite applying retention AND re-sealing legacy plaintext
+    /// payloads under the wired crypto (one-time upgrade of pre-encryption
+    /// journals — the live install's existing PII gets sealed at first boot).
+    fn rewrite_retained(&self, inner: &mut Inner, cutoff: DateTime<Utc>) -> std::io::Result<()> {
+        let all = self.read_lines()?;
+        let mut kept: Vec<String> = Vec::with_capacity(all.len());
+        for l in &all {
+            let Ok(mut v) = serde_json::from_str::<Value>(l) else { continue };
+            let Some(at) = line_received_at(&v) else { continue };
+            if at < cutoff {
+                continue;
+            }
+            if let (Some(crypto), Some(event)) = (
+                self.crypto.as_deref(),
+                v.get("event").filter(|e| e.is_object()).cloned(),
+            ) {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.remove("event");
+                    match crypto.encrypt(&event) {
+                        Some(sealed) => {
+                            obj.insert("envEnc".into(), Value::String(sealed));
+                        }
+                        None => { /* payload dropped rather than kept plaintext */ }
+                    }
+                }
+                kept.push(v.to_string());
+            } else {
+                kept.push(l.clone());
+            }
+        }
+        self.replace_journal(inner, &kept)
+    }
+
+    fn read_lines(&self) -> std::io::Result<Vec<String>> {
+        match File::open(&self.path) {
+            Ok(f) => Ok(BufReader::new(f).lines().map_while(Result::ok).collect()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Atomically replace the journal with `kept` lines (tmp+rename),
+    /// rebuilding the seen set and reopening the append handle.
+    fn replace_journal(&self, inner: &mut Inner, kept: &[String]) -> std::io::Result<()> {
         inner.file.flush()?;
-        let all: Vec<String> = match File::open(&self.path) {
-            Ok(f) => BufReader::new(f).lines().map_while(Result::ok).collect(),
-            Err(e) => return Err(e),
-        };
-        let keep_from = all.len().saturating_sub(self.rotate_keep);
-        let kept = &all[keep_from..];
         let tmp = self.path.with_extension("jsonl.tmp");
         {
             let mut out = File::create(&tmp)?;
@@ -168,6 +318,15 @@ impl EventReceipts {
         inner.lines = kept.len();
         inner.file = OpenOptions::new().append(true).open(&self.path)?;
         Ok(())
+    }
+
+    /// Rewrite the journal keeping the newest `rotate_keep` lines.
+    fn rotate(&self, inner: &mut Inner) -> std::io::Result<()> {
+        inner.file.flush()?;
+        let all = self.read_lines()?;
+        let keep_from = all.len().saturating_sub(self.rotate_keep);
+        let kept: Vec<String> = all[keep_from..].to_vec();
+        self.replace_journal(inner, &kept)
     }
 }
 
@@ -250,6 +409,98 @@ mod tests {
             r.record("k9", &json!({})).unwrap(),
             ReceiptOutcome::Duplicate
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── DATA-PRIV-001 ───────────────────────────────────────────────────────
+
+    fn crypto() -> Arc<JournalCrypto> {
+        Arc::new(JournalCrypto::from_key([9u8; 32]))
+    }
+
+    #[test]
+    fn encrypted_journal_never_stores_plaintext_payloads() {
+        let path = temp_path("sealed");
+        let c = crypto();
+        let r = EventReceipts::open_encrypted(path.clone(), Some(c.clone())).unwrap();
+        let env = json!({
+            "name": "aokie.sms.received",
+            "payload": {"from": "+61400111222", "body": "the plumber said DISTINCTIVE-SECRET"}
+        });
+        r.record("k1", &env).unwrap();
+        drop(r);
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("61400111222"), "phone number not on disk");
+        assert!(!raw.contains("DISTINCTIVE-SECRET"), "SMS body not on disk");
+        assert!(raw.contains("envEnc"), "payload is sealed");
+        assert!(raw.contains("\"key\":\"k1\""), "dedupe key stays queryable");
+
+        // The sealed payload reads back for crash recovery.
+        let v: Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(line_envelope(&v, Some(&c)).unwrap(), env);
+        // Without the key there is no payload (and no crash).
+        assert!(line_envelope(&v, None).is_none());
+
+        // Dedupe survives a reopen of the encrypted journal.
+        let r = EventReceipts::open_encrypted(path.clone(), Some(c)).unwrap();
+        assert_eq!(r.record("k1", &env).unwrap(), ReceiptOutcome::Duplicate);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_plaintext_journal_is_resealed_at_open() {
+        let path = temp_path("upgrade");
+        {
+            // A pre-encryption journal (the live install's shape).
+            let r = EventReceipts::open(path.clone()).unwrap();
+            r.record("old", &json!({"name": "aokie.call.ended", "payload": {"from": "+61400999888"}}))
+                .unwrap();
+        }
+        assert!(std::fs::read_to_string(&path).unwrap().contains("61400999888"));
+
+        let c = crypto();
+        let r = EventReceipts::open_encrypted(path.clone(), Some(c.clone())).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("61400999888"), "legacy PII sealed at first boot");
+        assert!(raw.contains("envEnc"));
+        // Key survives the upgrade (dedupe intact), payload still recoverable.
+        assert_eq!(r.record("old", &json!({})).unwrap(), ReceiptOutcome::Duplicate);
+        let v: Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            line_envelope(&v, Some(&c)).unwrap()["payload"]["from"],
+            json!("+61400999888")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn retention_sweep_ages_out_old_entries_on_the_clock() {
+        let path = temp_path("ttl");
+        let r = EventReceipts::open(path.clone()).unwrap();
+        r.record("old", &json!({"n": 1})).unwrap();
+        r.record("fresh", &json!({"n": 2})).unwrap();
+
+        // Nothing expires "now"…
+        assert_eq!(r.retain_since(Utc::now() - chrono::Duration::days(1)).unwrap(), 0);
+        assert_eq!(r.len(), 2);
+        // …but a cutoff in the future ages both out (time-based, no volume needed).
+        assert_eq!(r.retain_since(Utc::now() + chrono::Duration::seconds(1)).unwrap(), 2);
+        assert_eq!(r.len(), 0);
+        assert_eq!(r.record("old", &json!({})).unwrap(), ReceiptOutcome::New, "aged key reusable");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn markers_journal_keeps_null_envelopes_lean() {
+        // The processed-marker journal records (key, Null) — no payload field
+        // at all, whatever the crypto wiring.
+        let path = temp_path("markers");
+        let r = EventReceipts::open_encrypted(path.clone(), Some(crypto())).unwrap();
+        r.record("m1", &Value::Null).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("envEnc") && !raw.contains("\"event\""));
+        assert!(raw.contains("\"key\":\"m1\""));
         let _ = std::fs::remove_file(&path);
     }
 }

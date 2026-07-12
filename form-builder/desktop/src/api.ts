@@ -622,6 +622,27 @@ export interface MigratePlan {
   canMigrate: boolean;
 }
 
+// ----- local operational journals (DATA-PRIV-001) -----
+
+/** Counts + retention of the local event journals — the Clear-history preview. */
+export interface JournalsSnapshot {
+  /** Per-plugin receipt-journal entry counts. */
+  receipts: Record<string, number>;
+  eventWork: { pending: number; completed: number; dead: number };
+  retention?: { receiptsDays: number; completedHours: number; deadDays: number };
+  /** True when payloads are sealed at rest (credential-store data key). */
+  encrypted?: boolean;
+}
+
+export interface JournalsCleared {
+  cleared: { completed: number; dead: number; receipts: number; processedMarkers: number };
+}
+
+export const journals = {
+  get: () => request<JournalsSnapshot>('/api/desktop/journals'),
+  clear: () => request<JournalsCleared>('/api/desktop/journals/clear', { method: 'POST' }),
+};
+
 /** Live migration progress (polled while a copy/move runs). */
 export interface MigrationProgress {
   running: boolean;
