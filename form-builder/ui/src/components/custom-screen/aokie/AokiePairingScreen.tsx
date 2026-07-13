@@ -68,13 +68,17 @@ function formatEventTime(answers: Record<string, unknown>, submittedAt: string):
   };
 }
 
-/** Typed connector failure for display: "capability_denied — …" beats a bare message. */
+/** Typed connector failure for display: friendly copy for the codes a user can act on. */
 function describeError(err: unknown): string {
   if (err instanceof ConnectorError) {
-    // Friendlier copy for the one code a user can actually act on — the
-    // access token refreshes with the page (and we auto-retry once first).
+    // The access token refreshes with the page (and we auto-retry once first).
     if (err.code === 'capability_denied') {
       return 'Your device access needed a refresh and could not be renewed automatically — reload this page to continue.';
+    }
+    // Desktop not running/paired — the raw code + "was not performed" internals
+    // read like a crash; say what it means and what to do instead.
+    if (err.code === 'connector_unavailable') {
+      return 'FormLogic Desktop isn’t running on this computer, so the dongle and phone can’t be reached right now. Start FormLogic Desktop (and pair it via “Connect FormLogic Desktop” above if asked), then press Refresh.';
     }
     return `${err.code} — ${err.message}`;
   }
