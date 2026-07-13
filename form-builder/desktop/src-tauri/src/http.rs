@@ -1687,6 +1687,48 @@ async fn flows_event_work_redrive(
     (StatusCode::OK, Json(serde_json::json!({ "revived": revived }))).into_response()
 }
 
+/// `GET /api/flows/runtime-errors` — the inspectable history behind the bare
+/// `errors` counter: bounded ring, consecutive repeats collapsed with counts.
+async fn flows_runtime_errors(State(st): State<DesktopState>) -> impl IntoResponse {
+    let rt = match &st.flow_runtime {
+        Some(r) => r.clone(),
+        None => {
+            return desktop_err(
+                StatusCode::NOT_IMPLEMENTED,
+                "runner_unavailable",
+                "the desktop flow runtime is not available",
+            )
+        }
+    };
+    let status = rt.status();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "count": status.errors,
+            "lastError": status.last_error,
+            "errors": rt.recent_errors(),
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /api/flows/runtime-errors/clear` — operator reset of the diagnostic
+/// error counter + history (nothing operational changes).
+async fn flows_runtime_errors_clear(State(st): State<DesktopState>) -> impl IntoResponse {
+    let rt = match &st.flow_runtime {
+        Some(r) => r.clone(),
+        None => {
+            return desktop_err(
+                StatusCode::NOT_IMPLEMENTED,
+                "runner_unavailable",
+                "the desktop flow runtime is not available",
+            )
+        }
+    };
+    rt.clear_errors();
+    StatusCode::NO_CONTENT.into_response()
+}
+
 // ------- helpers -------
 
 fn err400(msg: &str) -> axum::response::Response {
@@ -2080,6 +2122,8 @@ pub async fn serve(
         // plugin events with reason/age + the operator redrive.
         .route("/api/flows/event-work", get(flows_event_work))
         .route("/api/flows/event-work/redrive", post(flows_event_work_redrive))
+        .route("/api/flows/runtime-errors", get(flows_runtime_errors))
+        .route("/api/flows/runtime-errors/clear", post(flows_runtime_errors_clear))
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
             plugin_auth_guard,

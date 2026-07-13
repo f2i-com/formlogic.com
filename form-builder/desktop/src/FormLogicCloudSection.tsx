@@ -5,6 +5,7 @@ import {
   type FlowRuntimeStatus,
   type FormLogicConfigView,
   type OAuthLinkStatus,
+  type RuntimeErrorEntry,
 } from './api';
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon } from './Icons';
@@ -31,6 +32,9 @@ export default function FormLogicCloudSection() {
   const [oauth, setOauth] = useState<OAuthLinkStatus | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Runtime error log: null = collapsed; [] = expanded but empty.
+  const [errorLog, setErrorLog] = useState<RuntimeErrorEntry[] | null>(null);
+  const [clearingErrors, setClearingErrors] = useState(false);
   const toast = useToast();
   const { confirm: requestConfirm } = useConfirm();
   const seqRef = useRef(0);
@@ -74,6 +78,34 @@ export default function FormLogicCloudSection() {
   );
 
   const linking = oauth?.inProgress ?? false;
+
+  // Expand/collapse the inspectable error history behind the errors counter.
+  const toggleErrorLog = useCallback(async () => {
+    if (errorLog !== null) {
+      setErrorLog(null);
+      return;
+    }
+    try {
+      const r = await formlogic.runtimeErrors();
+      setErrorLog(r.errors);
+    } catch (e) {
+      toast.push({ kind: 'error', title: 'Could not load the error log', body: e instanceof Error ? e.message : String(e) });
+    }
+  }, [errorLog, toast]);
+
+  const clearErrors = useCallback(async () => {
+    setClearingErrors(true);
+    try {
+      await formlogic.clearRuntimeErrors();
+      setErrorLog(null);
+      toast.push({ kind: 'success', title: 'Runtime errors cleared', body: 'The counter and history are reset; new errors keep recording.' });
+      await refresh();
+    } catch (e) {
+      toast.push({ kind: 'error', title: 'Clear failed', body: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setClearingErrors(false);
+    }
+  }, [toast, refresh]);
 
   const link = useCallback(async () => {
     const base = baseUrl.trim();
@@ -310,6 +342,45 @@ export default function FormLogicCloudSection() {
               </div>
             </div>
           )}
+          {(status.errors > 0 || status.lastError) && (
+            <div className="settings-row">
+              <span className="settings-label">Error log</span>
+              <div className="settings-value">
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn btn-tiny" onClick={() => void toggleErrorLog()}>
+                    {errorLog !== null ? 'Hide details' : 'View details'}
+                  </button>
+                  <button
+                    className="btn btn-tiny"
+                    onClick={() => void clearErrors()}
+                    disabled={clearingErrors}
+                    title="Reset the error counter and history — purely diagnostic; nothing operational changes."
+                  >
+                    {clearingErrors ? 'Clearing…' : 'Clear errors'}
+                  </button>
+                </div>
+                {errorLog !== null && (
+                  <div className="section-spacer-top" style={{ maxHeight: 220, overflowY: 'auto' }}>
+                    {errorLog.length === 0 ? (
+                      <span className="form-hint">No recorded history (the counter predates this session).</span>
+                    ) : (
+                      // Newest last from the API — show newest FIRST for reading.
+                      [...errorLog].reverse().map((e, i) => (
+                        <div key={i} className="form-hint" style={{ padding: '3px 0' }}>
+                          <span style={{ opacity: 0.7 }}>
+                            {fmtAt(e.lastAt)}
+                            {e.count > 1 ? ` ·  ×${e.count} since ${fmtAt(e.firstAt)}` : ''}
+                          </span>
+                          {' — '}
+                          {e.message}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -391,4 +462,11 @@ function fmt(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return 'never';
   return d.toLocaleTimeString();
+}
+
+/** Date + time for error-log entries (errors can span days, unlike the poll rows). */
+function fmtAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 }

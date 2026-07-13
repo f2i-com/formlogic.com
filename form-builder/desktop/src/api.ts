@@ -810,6 +810,14 @@ export interface FlowRuntimeStatus {
   lastCommandAt: string | null;
 }
 
+/** One collapsed entry from GET /api/flows/runtime-errors (mirrors RuntimeErrorEntry). */
+export interface RuntimeErrorEntry {
+  firstAt: string;
+  lastAt: string;
+  message: string;
+  count: number;
+}
+
 /** Phase of the OAuth "Link account" flow (mirrors oauth::LinkPhase). */
 export type OAuthLinkPhase =
   | 'idle'
@@ -840,6 +848,14 @@ export const formlogic = {
   testConnection: () => tauriInvoke<void>('test_formlogic_connection'),
   /** Live flow-runtime status (linked, last poll, run/record/command counts). */
   status: () => tauriInvoke<FlowRuntimeStatus>('formlogic_status'),
+  /** Inspectable error history behind the bare `errors` counter (repeats collapsed). */
+  runtimeErrors: () =>
+    request<{ count: number; lastError: string | null; errors: RuntimeErrorEntry[] }>(
+      '/api/flows/runtime-errors',
+    ),
+  /** Operator reset of the diagnostic error counter + history. */
+  clearRuntimeErrors: () =>
+    request<void>('/api/flows/runtime-errors/clear', { method: 'POST' }),
 
   // ----- OAuth "Link FormLogic account" (device-link) -----
   /** Begin the OAuth link: opens the system browser; poll oauthStatus for progress. */

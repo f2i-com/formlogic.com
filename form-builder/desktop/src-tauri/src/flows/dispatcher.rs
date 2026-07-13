@@ -93,6 +93,25 @@ pub struct FlowRuntimeStatus {
     pub event_work_blocked: Option<String>,
 }
 
+/// One entry in the bounded recent-error ring (`GET /api/flows/runtime-errors`).
+/// Consecutive repeats of the SAME message collapse into one entry with a
+/// bumped `count` + refreshed timestamps — a flaky relay poll then reads as
+/// one line ×N instead of drowning the ring.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeErrorEntry {
+    /// RFC3339 instant of the FIRST occurrence in this streak.
+    pub first_at: String,
+    /// RFC3339 instant of the LATEST occurrence.
+    pub last_at: String,
+    pub message: String,
+    pub count: u64,
+}
+
+/// Ring capacity — enough history to diagnose "what were those 380 errors"
+/// without growing unbounded (repeats collapse, so this covers a lot).
+const RECENT_ERRORS_CAP: usize = 50;
+
 struct Inner {
     config: FormLogicConfig,
     client: Option<Arc<FormLogicClient>>,
@@ -206,6 +225,10 @@ pub struct FlowRuntime {
     device_name: String,
     inner: RwLock<Inner>,
     status: Mutex<FlowRuntimeStatus>,
+    /// Bounded, repeat-collapsing history behind the bare `errors` counter,
+    /// so the operator can INSPECT what went wrong (and clear it) instead of
+    /// staring at "380 errors" + one last-error string.
+    recent_errors: Mutex<VecDeque<RuntimeErrorEntry>>,
     snapshot: Mutex<Option<CachedSnapshot>>,
     /// Per-app in-process logic storage (dedupe markers for onConnectorEvent).
     applogic_storage: Mutex<HashMap<String, Map<String, Value>>>,
@@ -452,6 +475,7 @@ impl FlowRuntime {
             device_name,
             inner: RwLock::new(Inner { config, client }),
             status: Mutex::new(FlowRuntimeStatus { linked, base_url, ..Default::default() }),
+            recent_errors: Mutex::new(VecDeque::new()),
             snapshot: Mutex::new(None),
             applogic_storage: Mutex::new(HashMap::new()),
             seen: Mutex::new((VecDeque::new(), HashSet::new())),
@@ -765,6 +789,9 @@ impl FlowRuntime {
                         s.last_error = Some(e.clone());
                     }
                 }
+                if let Err(e) = &r {
+                    self.record_recent_error(e.clone());
+                }
                 r
             }
             None => Err("FormLogic Cloud is not configured (set the base URL + API key)".into()),
@@ -822,10 +849,56 @@ impl FlowRuntime {
         }
     }
     fn note_error(&self, msg: impl Into<String>) {
+        let msg = msg.into();
         if let Ok(mut s) = self.status.lock() {
             s.errors += 1;
-            s.last_error = Some(msg.into());
+            s.last_error = Some(msg.clone());
             s.last_ok = Some(false);
+        }
+        self.record_recent_error(msg);
+    }
+
+    /// Append to the bounded inspect ring, collapsing consecutive repeats of
+    /// the same message into one entry with a bumped count.
+    fn record_recent_error(&self, msg: String) {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        if let Ok(mut ring) = self.recent_errors.lock() {
+            if let Some(last) = ring.back_mut() {
+                if last.message == msg {
+                    last.count += 1;
+                    last.last_at = now;
+                    return;
+                }
+            }
+            ring.push_back(RuntimeErrorEntry {
+                first_at: now.clone(),
+                last_at: now,
+                message: msg,
+                count: 1,
+            });
+            while ring.len() > RECENT_ERRORS_CAP {
+                ring.pop_front();
+            }
+        }
+    }
+
+    /// The inspectable error history (newest last), for the desktop UI.
+    pub fn recent_errors(&self) -> Vec<RuntimeErrorEntry> {
+        self.recent_errors
+            .lock()
+            .map(|r| r.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Operator "Clear errors": zero the counter, drop last_error and the
+    /// history ring. Purely diagnostic state — nothing operational resets.
+    pub fn clear_errors(&self) {
+        if let Ok(mut s) = self.status.lock() {
+            s.errors = 0;
+            s.last_error = None;
+        }
+        if let Ok(mut ring) = self.recent_errors.lock() {
+            ring.clear();
         }
     }
     fn note_records(&self, n: u64) {
