@@ -20,7 +20,7 @@ dongle.installDriver   dongle.diagnostics
 phone.status           phone.startPairing     phone.stopPairing     phone.listPaired
 phone.removePaired     phone.confirmPairing   phone.disconnect      phone.connect
 call.current           call.answer            call.reject           call.hangup
-call.operatorSpeak
+call.operatorSpeak     call.configureAgent
 sms.threads            sms.thread             sms.send
 settings.get           settings.set
 ```
@@ -40,6 +40,7 @@ Payload/response shapes follow the legacy Tauri commands they wrap (e.g. `sms.se
 **Canonical call-control shapes** (single source: `crates/aokie-plugin/src/contract.rs` in the aokie repo; test-locked against the manifest and both mocks):
 
 - `call.answer` / `call.reject` / `call.hangup` accept `{callId?}`; `call.operatorSpeak` accepts `{text, callId?}`. When `callId` is present it MUST equal the plugin's current call id, else the typed **`stale_call`** error is returned and the phone is NOT touched (a stale browser tab can never control a newer call). An omitted `callId` acts on the current call (compatibility for flow/desktop callers).
+- `call.configureAgent {callId, persona?, greeting?}` (§9.3 call-scoped agent config): a caller-specific persona/greeting overlay bound to ONE call. `callId` is **REQUIRED** — no legacy-compat window on this newer surface (missing ⇒ `command_failed`, mismatched ⇒ `stale_call`); at least one of `persona`/`greeting` must be non-empty. The plugin wipes the overlay at the call boundary, so a failed or raced next-call setup can never leak the previous caller's personalization; `settings.set` remains the path for durable, caller-independent config.
 - `call.current` → `{call: null | {callId, from?, callerName?, state, startedAt?, …}}` with `state ∈ ringing|active|ended`. The real radio, the plugin's dev mock and the browser mock all return exactly this shape.
 - `phone.status` → `{paired, connected, device: null | {address, name, …}, …}` — the paired device is always NESTED under `device`; there is no root-level `deviceName`.
 
