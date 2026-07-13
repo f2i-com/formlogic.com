@@ -17,8 +17,10 @@
 //  - Flow graphs reference forms as '@pack:<packFormId>' inside node data (form/formId);
 //    PackService remaps them to real ids at import time, like binding formIds.
 //  - Single-writer rule: app logic is the ONLY writer of raw Calls/Turns/Messages/Hardware
-//    Events rows. Flows only ANNOTATE (call summary) or CREATE derived records (follow-up
-//    tasks, SMS drafts) — never the raw event mirror, so nothing is double-written.
+//    Events rows — where "raw" means INBOUND event mirrors. Flows only ANNOTATE (call
+//    summary) or CREATE derived records (follow-up tasks, SMS drafts, and the outbound
+//    Messages rows for texts the SMS follow-up loop itself sends), so nothing is
+//    double-written.
 import type { PackData } from './financeOsPack';
 
 // ── Shared defaults ─────────────────────────────────────────────────────────
@@ -396,6 +398,10 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   // written to the required phone-format field and silently reject the whole
   // Customers row on the async binding - same guard LOGIC_CALL_INCOMING uses.
   var custPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone) ? phone : '';
+  // SMS-loop correlation handles: the conversation flow finds this appointment
+  // by the texter's number (phone_eq) and ties it to its task via call_id.
+  appointment.phone = custPhone;
+  appointment.call_id = callId;
   var hasCustomerCreate = !knownId && !!name && !!custPhone && ctx.hasTranscript === true;
   // Audit AK-009/C-16: the receptionist tells callers 'someone will confirm
   // with you' - so EVERY booking intent leaves a human a confirmation task,
@@ -426,8 +432,49 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   if (['positive', 'neutral', 'negative'].indexOf(sentiment) === -1) sentiment = 'neutral';
   var callRows = (nodes.calls && nodes.calls.responses) || [];
   var callResponseId = callRows.length ? callRows[0].id : null;
+  // SMS follow-up kickoff (feature 2026-07-13): a booking-intent task whose caller
+  // number is real gets an automated confirmation text; the sms-followup-conversation
+  // flow then drives the reply loop (confirm / reschedule / cancel) and closes the
+  // task. sms_state 'active' is the switch that flow — and the draft flow's
+  // deference gate — looks for; non-booking tasks stay human-only.
+  var wantsSms = wantsBooking && custPhone !== '';
+  var task = { summary: taskSummary.slice(0, 500), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium', phone: custPhone, call_id: callId };
+  if (knownId) task.customer_link = knownId;
+  if (callResponseId) task.call_link = callResponseId;
+  if (wantsSms) { task.sms_state = 'active'; task.sms_exchanges = 1; }
+  // Business name for the kickoff text (same active-first read as the other flows;
+  // tolerant of both list-node shapes).
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfgRow = {};
+  for (var sI = 0; sI < sRows.length; sI++) {
+    var sA = (sRows[sI] && sRows[sI].answers) || {};
+    if (String(sA.active || 'yes') !== 'no') { cfgRow = sA; break; }
+  }
+  var business = String(cfgRow.business_name || '').trim();
+  function humanWhen(dStr, tStr) {
+    var label = dStr;
+    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(dStr)) {
+      var hp = dStr.split('-');
+      label = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2])).toDateString();
+    }
+    if (/^\\d{2}:\\d{2}$/.test(tStr)) {
+      var hh = Number(tStr.slice(0, 2));
+      var h12 = hh % 12 === 0 ? 12 : hh % 12;
+      label += ' at ' + h12 + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (hh >= 12 ? 'PM' : 'AM');
+    }
+    return label;
+  }
+  var first = (name || String(ctx.customerName || '')).split(/\\s+/)[0] || '';
+  var intro = 'Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the team') + ' - following up on your call.';
+  var kickBody = hasAppointment
+    ? intro + ' We have your booking request: ' + (service || 'an appointment') + ' on ' + humanWhen(dateStr, validTime ? timeStr : '') + '. Reply YES to confirm, or text a better day and time. Reply STOP to opt out.'
+    : intro + ' We could not pin down a day and time' + (service ? ' for your ' + service : '') + '. What suits you best? Text back a day and time and we will pencil you in. Reply STOP to opt out.';
+  // Plain ASCII only: keeps the SMS in the single-charset GSM envelope and clear
+  // of bMessage encoding surprises. 440 chars ≈ 3 segments.
+  kickBody = kickBody.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
   return {
-    summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + summary,
+    summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (wantsSms ? 'Confirmation SMS sent. ' : '') + summary,
     hasCall: !!callResponseId,
     callResponseId: callResponseId,
     callUpdate: { intent: displayIntent, sentiment: sentiment, follow_up_required: needTask ? ['yes'] : [] },
@@ -444,7 +491,19 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     hasOrder: hasOrder,
     order: order,
     hasTask: needTask,
-    task: { summary: taskSummary.slice(0, 500), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium' }
+    task: task,
+    hasKickoffSms: wantsSms,
+    kickoffSms: { to: custPhone, body: kickBody },
+    kickoffMessage: {
+      message_id: 'smskick_' + callId,
+      phone: custPhone,
+      direction: 'outbound',
+      body: kickBody,
+      timestamp: new Date().toISOString(),
+      status: 'queued',
+      is_ai_reply: ['yes'],
+      approval_status: 'not_required'
+    }
   };
 })()`;
 
@@ -603,6 +662,260 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
             : 'Hi ' + first + '! How can I help you today?'))
     : greeting;
   return { found: true, name: name, persona: persona + known, greeting: g };
+})()`;
+
+// SMS follow-up conversation context (feature 2026-07-13): an inbound text is
+// matched to its open SMS-managed follow-up task by the sender's number
+// (phone_eq, DB-pushed), the appointment that task is about is found via the
+// shared call_id, and the thread history is assembled for the LLM. Deterministic
+// verdicts happen HERE, before any model runs: STOP always wins (opt-out), a
+// plain YES with an existing appointment confirms without an LLM call, and the
+// hard exchange cap (6 outbound texts per task) hands off to a human — so the
+// loop can never run away. verdict 'llm' is the only path that reaches the model
+// (the flow's condition node gates it), and 'none' means this sender has no
+// active SMS follow-up at all — the approval-draft flow owns the reply instead.
+const FLOW_SMS_CONVO_CTX = `(function () {
+  var from = String(inputs.from || '');
+  var body = String(inputs.body || '').trim();
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var i = 0; i < sRows.length; i++) {
+    var sa = (sRows[i] && sRows[i].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var business = String(cfg.business_name || '').trim();
+  var model = String(cfg.model || '').trim();
+  // Newest open task in the SMS loop for this sender (rows arrive newest-first).
+  var tRows = (nodes.tasks && nodes.tasks.responses) || [];
+  var task = null;
+  for (var t = 0; t < tRows.length; t++) {
+    var ta = (tRows[t] && tRows[t].answers) || {};
+    var st = String(ta.status || '');
+    if ((st === 'open' || st === 'in_progress') && String(ta.sms_state || '') === 'active') { task = tRows[t]; break; }
+  }
+  if (!task) return { verdict: 'none', hasTask: false };
+  var ta2 = task.answers || {};
+  var callId = String(ta2.call_id || '');
+  var exchanges = Number(ta2.sms_exchanges || 0);
+  // The appointment this task is about: same call first, else the newest live one.
+  var aRows = (nodes.appointments && nodes.appointments.responses) || [];
+  var appt = null;
+  for (var a = 0; a < aRows.length; a++) {
+    var aa = (aRows[a] && aRows[a].answers) || {};
+    if (callId && String(aa.call_id || '') === callId) { appt = aRows[a]; break; }
+  }
+  if (!appt) {
+    for (var a2 = 0; a2 < aRows.length; a2++) {
+      var ab = (aRows[a2] && aRows[a2].answers) || {};
+      var stt = String(ab.status || '');
+      if (stt === 'requested' || stt === 'confirmed') { appt = aRows[a2]; break; }
+    }
+  }
+  var apptA = appt ? (appt.answers || {}) : null;
+  // Deterministic verdicts — STOP always wins, even past the cap.
+  var lower = body.toLowerCase().replace(/[\\s.!,]+$/, '');
+  var stop = lower === 'stop' || lower === 'unsubscribe' || lower === 'opt out' || lower === 'optout';
+  var yes = /^(yes|yep|yeah|y|confirm|confirmed|ok|okay|sounds good|perfect|great)$/.test(lower);
+  var verdict = stop ? 'stop' : (exchanges >= 6 ? 'cap' : ((yes && appt) ? 'yes' : 'llm'));
+  // Thread history, oldest → newest, capped at the last 12 messages. The inbound
+  // row for THIS text is already stored (app logic runs before bindings), so the
+  // prompt marks the newest message explicitly instead of appending it again.
+  var mRows = (nodes.messages && nodes.messages.responses) || [];
+  var hist = [];
+  for (var m = 0; m < mRows.length; m++) {
+    var ma = (mRows[m] && mRows[m].answers) || {};
+    hist.push({
+      at: String(ma.timestamp || (mRows[m] && mRows[m].submittedAt) || ''),
+      who: String(ma.direction || '') === 'outbound' ? 'Business' : 'Customer',
+      text: String(ma.body || '')
+    });
+  }
+  hist.sort(function (x, y) { return x.at < y.at ? -1 : x.at > y.at ? 1 : 0; });
+  var lines = [];
+  for (var h = (hist.length > 12 ? hist.length - 12 : 0); h < hist.length; h++) {
+    lines.push(hist[h].who + ': ' + hist[h].text);
+  }
+  var now = new Date();
+  var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+  var llmContext = (business ? 'Business: ' + business + '\\n' : '')
+    + 'Open follow-up task: ' + String(ta2.summary || '') + '\\n'
+    + (apptA
+      ? 'Current appointment request: ' + String(apptA.service || 'Appointment') + ' on ' + String(apptA.date || '?') + (String(apptA.time || '') ? ' at ' + String(apptA.time) : '') + ' (status: ' + String(apptA.status || 'requested') + ')\\n'
+      : 'No appointment exists yet - the customer still needs to pick a day and time.\\n')
+    + '\\nSMS conversation so far (oldest first):\\n' + lines.join('\\n')
+    + '\\n\\nThe customer\\'s NEW message (respond to this): "' + body + '"';
+  return {
+    verdict: verdict,
+    hasTask: true,
+    taskId: task.id,
+    taskCallId: callId,
+    taskCustomer: String(ta2.customer_link || ''),
+    exchanges: exchanges,
+    apptId: appt ? appt.id : null,
+    apptDate: apptA ? String(apptA.date || '') : '',
+    apptTime: apptA ? String(apptA.time || '') : '',
+    apptService: apptA ? String(apptA.service || 'Appointment') : '',
+    business: business,
+    model: model,
+    today: now.toDateString() + ' (' + isoLocal + ')',
+    llmContext: llmContext,
+    phone: from
+  };
+})()`;
+
+// Turn the conversation LLM's JSON (or a deterministic ctx verdict) into concrete
+// writes + one reply. Same defensive posture as FLOW_AFTER_CALL_PLAN: every model
+// field is whitelisted/validated, an unknown action degrades to a human handoff,
+// and a malformed date can never move a booking. Confirm/reschedule/cancel replies
+// are COMPOSED here (never model text) so the SMS can't promise something the
+// records don't say; the model's own words are used only for clarifying questions.
+const FLOW_SMS_CONVO_PLAN = `(function () {
+  var c = nodes.ctx || {};
+  var verdict = String(c.verdict || 'none');
+  var out = { hasReply: false, hasTaskUpdate: false, hasApptUpdate: false, hasApptCreate: false, summaryLine: '' };
+  if (verdict === 'none' || c.hasTask !== true) {
+    out.summaryLine = 'No active SMS follow-up for this sender - left to the approval-draft path.';
+    return out;
+  }
+  var phone = String(c.phone || '');
+  var taskId = c.taskId;
+  var exchanges = Number(c.exchanges || 0);
+  if (verdict === 'stop') {
+    out.hasTaskUpdate = true;
+    out.taskId = taskId;
+    out.taskUpdate = { sms_state: 'opted_out', priority: 'high' };
+    out.summaryLine = 'Customer texted STOP - opted out, task flagged for a human.';
+    return out;
+  }
+  if (verdict === 'cap') {
+    out.hasTaskUpdate = true;
+    out.taskId = taskId;
+    out.taskUpdate = { sms_state: 'handoff', priority: 'high' };
+    out.summaryLine = 'SMS exchange limit reached - task handed to a human.';
+    return out;
+  }
+  function humanWhen(dStr, tStr) {
+    var label = dStr;
+    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(dStr)) {
+      var hp = dStr.split('-');
+      label = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2])).toDateString();
+    }
+    if (/^\\d{2}:\\d{2}$/.test(tStr)) {
+      var hh = Number(tStr.slice(0, 2));
+      var h12 = hh % 12 === 0 ? 12 : hh % 12;
+      label += ' at ' + h12 + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (hh >= 12 ? 'PM' : 'AM');
+    }
+    return label;
+  }
+  var action = 'confirm';
+  var dateStr = '';
+  var timeStr = '';
+  var service = '';
+  var reply = '';
+  if (verdict !== 'yes') {
+    var raw = String(((nodes.decide || {}).content) || '').trim();
+    var m = raw.match(/\\{[\\s\\S]*\\}/);
+    var data = {};
+    try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
+    action = String(data.action || 'handoff').toLowerCase();
+    if (['confirm', 'reschedule', 'cancel', 'ask', 'handoff'].indexOf(action) === -1) action = 'handoff';
+    dateStr = String(data.date || '').trim().slice(0, 10);
+    timeStr = String(data.time || '').trim().slice(0, 5);
+    service = String(data.service || '').trim().slice(0, 200);
+    reply = String(data.reply || '').trim();
+  }
+  // Date/time guards (same rules as the after-call extractor): a usable date is
+  // real-calendar and not in the past; a usable time is a real clock time.
+  var validTime = /^\\d{2}:\\d{2}$/.test(timeStr)
+    && Number(timeStr.slice(0, 2)) <= 23 && Number(timeStr.slice(3, 5)) <= 59;
+  var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
+  var nowP = new Date();
+  var todayIso = nowP.getFullYear() + '-' + ('0' + (nowP.getMonth() + 1)).slice(-2) + '-' + ('0' + nowP.getDate()).slice(-2);
+  var realDate = false;
+  if (validDate) {
+    var dp = dateStr.split('-');
+    var dObj = new Date(Number(dp[0]), Number(dp[1]) - 1, Number(dp[2]));
+    realDate = dObj.getFullYear() === Number(dp[0]) && (dObj.getMonth() + 1) === Number(dp[1]) && dObj.getDate() === Number(dp[2]);
+  }
+  var usableDate = validDate && realDate && dateStr >= todayIso;
+  // Degrade impossible actions instead of guessing.
+  if (action === 'confirm' && !c.apptId) action = 'ask';
+  if (action === 'reschedule' && !usableDate) action = 'ask';
+  if (action === 'cancel' && !c.apptId) action = 'handoff';
+  var newExchanges = exchanges + 1;
+  var taskUpdate = { sms_exchanges: newExchanges };
+  if (action === 'confirm') {
+    out.hasApptUpdate = true;
+    out.apptResponseId = c.apptId;
+    out.apptUpdate = { status: 'confirmed' };
+    if (usableDate) out.apptUpdate.date = dateStr;
+    if (validTime) out.apptUpdate.time = timeStr;
+    var whenC = humanWhen(usableDate ? dateStr : String(c.apptDate || ''), validTime ? timeStr : String(c.apptTime || ''));
+    reply = 'Perfect - you are confirmed: ' + String(c.apptService || 'your appointment') + ' on ' + whenC + '. See you then!';
+    taskUpdate.status = 'done';
+    taskUpdate.sms_state = 'done';
+    out.summaryLine = 'Appointment confirmed by SMS - task closed.';
+  } else if (action === 'reschedule') {
+    var whenR = humanWhen(dateStr, validTime ? timeStr : '');
+    if (c.apptId) {
+      out.hasApptUpdate = true;
+      out.apptResponseId = c.apptId;
+      out.apptUpdate = { date: dateStr, status: 'requested' };
+      if (validTime) out.apptUpdate.time = timeStr;
+    } else {
+      out.hasApptCreate = true;
+      var newAppt = {
+        service: service || String(c.apptService || '') || 'Appointment',
+        date: dateStr,
+        status: 'requested',
+        source: 'sms',
+        phone: phone,
+        call_id: String(c.taskCallId || ''),
+        notes: 'Scheduled over SMS follow-up (task ' + String(taskId || '') + ').'
+      };
+      if (validTime) newAppt.time = timeStr;
+      if (String(c.taskCustomer || '')) newAppt.customer_link = String(c.taskCustomer);
+      out.newAppointment = newAppt;
+    }
+    reply = 'Got it - I have you down for ' + whenR + '. Reply YES to confirm and we will lock it in.';
+    out.summaryLine = 'Appointment moved to ' + dateStr + (validTime ? ' ' + timeStr : '') + ' by SMS - awaiting a YES.';
+  } else if (action === 'cancel') {
+    out.hasApptUpdate = true;
+    out.apptResponseId = c.apptId;
+    out.apptUpdate = { status: 'cancelled' };
+    reply = 'No problem - that booking request is cancelled. Text us any time if you would like to rebook.';
+    taskUpdate.status = 'done';
+    taskUpdate.sms_state = 'done';
+    out.summaryLine = 'Booking cancelled by SMS - task closed.';
+  } else if (action === 'ask') {
+    reply = reply || 'Sorry - what day and time suit you best?';
+    out.summaryLine = 'Asked the customer a clarifying question by SMS.';
+  } else {
+    reply = 'Thanks - someone from the team will be in touch shortly to sort this out.';
+    taskUpdate.sms_state = 'handoff';
+    taskUpdate.priority = 'high';
+    out.summaryLine = 'SMS conversation handed to a human.';
+  }
+  // Plain ASCII only (GSM-charset envelope), capped well inside the server's limits.
+  reply = reply.replace(/[\\u2018\\u2019]/g, "'").replace(/[\\u201C\\u201D]/g, '"').replace(/[\\u2013\\u2014]/g, '-').replace(/[^\\x20-\\x7E\\n]/g, '').slice(0, 440).trim();
+  if (!reply) reply = 'Thanks for your message - someone from the team will be in touch shortly.';
+  out.hasTaskUpdate = true;
+  out.taskId = taskId;
+  out.taskUpdate = taskUpdate;
+  out.hasReply = true;
+  out.reply = { to: phone, body: reply };
+  out.outboundMessage = {
+    message_id: 'smsflow_' + String(taskId || phone.replace(/[^0-9]/g, '')) + '_' + newExchanges,
+    phone: phone,
+    direction: 'outbound',
+    body: reply,
+    timestamp: new Date().toISOString(),
+    status: 'queued',
+    is_ai_reply: ['yes'],
+    approval_status: 'not_required'
+  };
+  return out;
 })()`;
 
 // ── Pack data ───────────────────────────────────────────────────────────────
@@ -879,7 +1192,7 @@ export const aokieReceptionistPack: PackData = {
       packFormId: 'sms-messages',
       title: 'SMS Messages',
       icon: 'MessageSquare',
-      description: 'Every inbound and outbound SMS. Inbound rows land automatically; AI reply drafts wait for approval before sending.',
+      description: 'Every inbound and outbound SMS. Inbound rows land automatically; AI reply drafts wait for approval before sending, while booking-confirmation texts from the SMS follow-up loop send automatically and are logged here.',
       settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
@@ -969,6 +1282,11 @@ export const aokieReceptionistPack: PackData = {
       theme: { ...defaultTheme },
       fields: [
         { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers' } },
+        // phone + call_id: correlation handles for the SMS follow-up loop — the
+        // sms-followup-conversation flow finds this appointment by the texter's
+        // number (phone_eq) and matches it to its task via the shared call_id.
+        { id: 'phone', type: 'phone', label: 'Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
+        { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
         { id: 'service', type: 'short_text', label: 'Service', required: true, properties: { placeholder: 'What is being booked' } },
         { id: 'date', type: 'date', label: 'Date', required: true, properties: {} },
         { id: 'time', type: 'time', label: 'Time', required: false, properties: {} },
@@ -1089,12 +1407,17 @@ export const aokieReceptionistPack: PackData = {
       packFormId: 'follow-up-tasks',
       title: 'Follow-up Tasks',
       icon: 'ClipboardCheck',
-      description: 'Callbacks and follow-ups — created by the receptionist or automatically by the missed-call and call-summary flows.',
+      description: 'Callbacks and follow-ups — created by the receptionist or automatically by the after-call flows. Booking-confirmation tasks are worked by the SMS follow-up loop (see the SMS follow-up field): the bot texts the customer, updates the booking from their replies, and closes the task — or hands it back to a human.',
       settings: { ...defaultSettings },
       theme: { ...defaultTheme },
       fields: [
         { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers' } },
         { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls' } },
+        // phone + call_id: how the SMS follow-up loop finds this task — an inbound
+        // text is matched by phone_eq on the sender's number, and the task's
+        // call_id ties it to the appointment the same call created.
+        { id: 'phone', type: 'phone', label: 'Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
+        { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
         { id: 'summary', type: 'short_text', label: 'Task', required: true, properties: { placeholder: 'What needs to happen' } },
         { id: 'due_at', type: 'date', label: 'Due', required: false, properties: {} },
         {
@@ -1126,6 +1449,24 @@ export const aokieReceptionistPack: PackData = {
             ],
           },
         },
+        // SMS follow-up loop state (blank = not SMS-managed). 'active' is the switch
+        // the sms-followup-conversation flow acts on — and the sms-auto-reply-draft
+        // flow defers to — so exactly one path ever answers a given inbound text.
+        {
+          id: 'sms_state',
+          type: 'dropdown',
+          label: 'SMS follow-up',
+          required: false,
+          properties: {
+            options: [
+              { id: 'active', label: 'Texting — awaiting customer reply', value: 'active' },
+              { id: 'done', label: 'Resolved by SMS', value: 'done' },
+              { id: 'handoff', label: 'Needs a human', value: 'handoff' },
+              { id: 'opted_out', label: 'Customer opted out (STOP)', value: 'opted_out' },
+            ],
+          },
+        },
+        { id: 'sms_exchanges', type: 'number', label: 'SMS messages sent', required: false, properties: { min: 0, step: 1 } },
       ],
       customScreen: {
         enabled: true,
@@ -1732,11 +2073,26 @@ export const aokieReceptionistPack: PackData = {
       name: 'SMS Auto Reply Draft',
       slug: 'sms-auto-reply-draft',
       description:
-        'Async after aokie.sms.received: draft a reply with the local LLM and store it as an outbound Messages row with approval_status pending_approval — a human approves before anything is sent.',
-      nodeCapabilities: ['model.llm.local', 'formlogic.responses.write'],
+        'Async after aokie.sms.received: draft a reply with the local LLM and store it as an outbound Messages row with approval_status pending_approval — a human approves before anything is sent. Defers to the SMS Follow-up Conversation flow: while the sender has an open SMS-managed follow-up task (sms_state active), that loop answers autonomously and no draft is produced; a STOP opt-out suppresses drafting too.',
+      nodeCapabilities: ['model.llm.local', 'formlogic.responses.read', 'formlogic.responses.write'],
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'from', example: '+61400000000' }, { name: 'body', example: 'Are you open Sunday?' }] } },
+          // Deference gate: is this sender mid-conversation with the automated
+          // SMS follow-up loop (or opted out of texts entirely)? phone_eq pushes
+          // the lookup into the database, so this works at any task count.
+          {
+            id: 'tasks',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
+          {
+            id: 'gate',
+            type: 'condition',
+            data: {
+              expr: "(function () { var rows = (nodes.tasks && nodes.tasks.responses) || []; for (var i = 0; i < rows.length; i++) { var a = (rows[i] && rows[i].answers) || {}; var st = String(a.status || ''); var ss = String(a.sms_state || ''); if ((st === 'open' || st === 'in_progress') && (ss === 'active' || ss === 'opted_out')) return false; } return true; })()",
+            },
+          },
           {
             id: 'draft',
             type: 'llm_chat',
@@ -1748,13 +2104,105 @@ export const aokieReceptionistPack: PackData = {
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
             },
           },
+          // Converges from both gate branches: when the gate skipped the draft
+          // node, nodes.draft is absent → content '' → hasDraft false.
           { id: 'build', type: 'logic_block', data: { expr: FLOW_SMS_DRAFT_BUILD } },
           { id: 'out', type: 'output', data: { value: { hasDraft: '$nodes.build.hasDraft', draftMessage: '$nodes.build.draftMessage' } } },
         ],
         edges: [
-          { source: 'in', target: 'draft' },
+          { source: 'in', target: 'tasks' },
+          { source: 'tasks', target: 'gate' },
+          { source: 'gate', target: 'draft', sourceHandle: 'true' },
+          { source: 'gate', target: 'build', sourceHandle: 'false' },
           { source: 'draft', target: 'build' },
           { source: 'build', target: 'out' },
+        ],
+      },
+    },
+    {
+      name: 'SMS Follow-up Conversation',
+      slug: 'sms-followup-conversation',
+      description:
+        "The autonomous half of the SMS follow-up loop: async on aokie.sms.received, match the sender to their open SMS-managed follow-up task (phone_eq, sms_state 'active') and to the appointment that task is about (shared call_id). STOP always opts the customer out, a plain YES confirms without a model call, and a hard cap of 6 outbound texts per task hands off to a human. Everything else goes to the local LLM, which decides confirm / reschedule / cancel / ask / handoff — the binding's guarded output actions then update the Appointment, update + close the task ('done'), send the reply (sms.send) and log it in Messages. Confirm/reschedule/cancel replies are composed from the records, never model prose. Senders with no active task are untouched — the SMS Auto Reply Draft flow keeps its human-approval path for them.",
+      nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: { inputs: [{ name: 'from', example: '+61400000000' }, { name: 'body', example: 'YES' }, { name: 'messageId', example: 'sms_123' }] },
+          },
+          // All three lookups are phone_eq on the sender's number, pushed down to
+          // the database — the loop works at any table size.
+          {
+            id: 'tasks',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
+          {
+            id: 'appointments',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:appointments', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
+          {
+            id: 'messages',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:sms-messages', return: 'all', limit: 30, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'ctx', type: 'logic_block', data: { expr: FLOW_SMS_CONVO_CTX } },
+          // Only the 'llm' verdict pays for a model call: no matching task, STOP,
+          // a plain YES, and the exchange cap are all decided deterministically.
+          { id: 'gate', type: 'condition', data: { expr: "String((nodes.ctx || {}).verdict || '') === 'llm'" } },
+          {
+            id: 'decide',
+            type: 'llm_chat',
+            data: {
+              system:
+                'You manage SMS follow-ups for a small-business receptionist: confirming, moving or cancelling booking requests. Reply with ONLY one JSON object — no prose, no markdown fences.',
+              prompt:
+                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "reschedule" | "cancel" | "ask" | "handoff", "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "service": string or null, "reply": "one short friendly SMS (under 300 characters, plain text, no emoji)"}\n\nRules: "confirm" only when the customer clearly agrees to the CURRENT slot; "reschedule" when they propose a different day/time — resolve relative dates ("next Tuesday", "tomorrow") from today\'s date and use 24-hour time; "cancel" only when they clearly no longer want the booking; "ask" when you need one clarifying detail (your reply is the question); "handoff" for anything else — complaints, other requests, or anything unclear. Never invent prices, opening hours or services; never promise anything except booking changes; use null when unsure — never guess.',
+              model: '{{nodes.ctx.model}}',
+              maxTokens: 350,
+              temperature: 0,
+              extraBody: { chat_template_kwargs: { enable_thinking: false } },
+            },
+          },
+          // Converges from both gate branches (nodes.decide is absent on the
+          // deterministic path — the plan block only reads it for verdict 'llm').
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_SMS_CONVO_PLAN } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                summaryLine: '$nodes.plan.summaryLine',
+                hasApptUpdate: '$nodes.plan.hasApptUpdate',
+                apptResponseId: '$nodes.plan.apptResponseId',
+                apptUpdate: '$nodes.plan.apptUpdate',
+                hasApptCreate: '$nodes.plan.hasApptCreate',
+                newAppointment: '$nodes.plan.newAppointment',
+                hasTaskUpdate: '$nodes.plan.hasTaskUpdate',
+                taskId: '$nodes.plan.taskId',
+                taskUpdate: '$nodes.plan.taskUpdate',
+                hasReply: '$nodes.plan.hasReply',
+                reply: '$nodes.plan.reply',
+                outboundMessage: '$nodes.plan.outboundMessage',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'tasks' },
+          { source: 'tasks', target: 'appointments' },
+          { source: 'appointments', target: 'messages' },
+          { source: 'messages', target: 'settings' },
+          { source: 'settings', target: 'ctx' },
+          { source: 'ctx', target: 'gate' },
+          { source: 'gate', target: 'decide', sourceHandle: 'true' },
+          { source: 'gate', target: 'plan', sourceHandle: 'false' },
+          { source: 'decide', target: 'plan' },
+          { source: 'plan', target: 'out' },
         ],
       },
     },
@@ -1809,7 +2257,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'After-Call Actions (Auto-Book)',
       slug: 'after-call-actions',
       description:
-        'The automation that makes it a real receptionist: async after aokie.call.ended, read this call\'s transcript turns, have the local LLM extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Malformed model output degrades to a follow-up task, never a bad record.',
+        'The automation that makes it a real receptionist: async after aokie.call.ended, read this call\'s transcript turns, have the local LLM extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Booking-intent tasks with a real caller number also kick off the SMS follow-up loop: a confirmation text goes out immediately (sms.send) and the SMS Follow-up Conversation flow drives the replies until the task closes. Malformed model output degrades to a follow-up task, never a bad record.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -1828,6 +2276,8 @@ export const aokieReceptionistPack: PackData = {
           },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 1, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          // Business name for the kickoff SMS the plan block composes.
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },
           {
             id: 'extract',
@@ -1860,6 +2310,9 @@ export const aokieReceptionistPack: PackData = {
                 order: '$nodes.plan.order',
                 hasTask: '$nodes.plan.hasTask',
                 task: '$nodes.plan.task',
+                hasKickoffSms: '$nodes.plan.hasKickoffSms',
+                kickoffSms: '$nodes.plan.kickoffSms',
+                kickoffMessage: '$nodes.plan.kickoffMessage',
               },
             },
           },
@@ -1868,7 +2321,8 @@ export const aokieReceptionistPack: PackData = {
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'turns' },
           { source: 'turns', target: 'calls' },
-          { source: 'calls', target: 'ctx' },
+          { source: 'calls', target: 'settings' },
+          { source: 'settings', target: 'ctx' },
           { source: 'ctx', target: 'extract' },
           { source: 'extract', target: 'plan' },
           { source: 'plan', target: 'out' },
@@ -2024,11 +2478,41 @@ export const aokieReceptionistPack: PackData = {
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
         { type: 'formlogic.submitResponse', form: '@pack:orders', when: '$result.hasOrder', answers: '$result.order' },
         { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
+        // SMS follow-up kickoff: text the caller their booking confirmation request
+        // the moment the task exists (actions run in order, so the task row above is
+        // already written). A failed send surfaces in outputActionErrors + the
+        // desktop error log; the task stays open either way, so nothing is lost.
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasKickoffSms', payload: { to: '$result.kickoffSms.to', body: '$result.kickoffSms.body' } },
+        { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasKickoffSms', answers: '$result.kickoffMessage' },
         { type: 'formlogic.toast', message: 'After-call: {{result.summaryLine}}' },
       ],
       retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 7,
+    },
+    {
+      flow: 'sms-followup-conversation',
+      event: 'aokie.sms.received',
+      connectorId: 'aokie',
+      mode: 'async',
+      // Reads four forms + (usually) one local-LLM decision; async, so it never
+      // blocks the event queue. The inbound Messages row is already stored by the
+      // app logic before bindings run, so the flow sees the full thread history.
+      timeoutMs: 60000,
+      inputMap: { from: '$event.data.from', body: '$event.data.body', messageId: '$event.data.messageId' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:appointments', when: '$result.hasApptUpdate', responseId: '$result.apptResponseId', answers: '$result.apptUpdate' },
+        { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasApptCreate', answers: '$result.newAppointment' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
+        // Record updates land BEFORE the reply is sent, so the customer is never
+        // told something the records don't yet say.
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasReply', payload: { to: '$result.reply.to', body: '$result.reply.body' } },
+        { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasReply', answers: '$result.outboundMessage' },
+        { type: 'formlogic.toast', message: 'SMS follow-up: {{result.summaryLine}}' },
+      ],
+      retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 9,
     },
     {
       flow: 'missed-call-follow-up',

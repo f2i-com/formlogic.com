@@ -220,6 +220,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'missed-call-follow-up',
       'personalize-caller',
       'sms-auto-reply-draft',
+      'sms-followup-conversation',
     ]);
     for (const flow of pack.flows ?? []) {
       expect(flow.slug).toMatch(/^[a-z][a-z0-9-]{1,127}$/);
@@ -246,7 +247,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(9);
+    expect(pack.flowBindings?.length).toBe(10);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -338,6 +339,250 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(runAgentConfig({}).aiReceptionist).toBe(true);
     expect(runAgentConfig({ reply_mode: '' }).aiReceptionist).toBe(true);
     expect(runAgentConfig(null).aiReceptionist).toBe(true); // no settings record at all yet
+  });
+});
+
+describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
+  // The loop's behaviour lives in logic-block STRINGS; evaluate the shipped source
+  // exactly as the executor does (plain JS with `nodes`/`inputs` in scope) so these
+  // tests exercise the real pack data, not a re-derivation.
+  const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
+  const nodeExpr = (slug: string, nodeId: string): string => {
+    const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
+    return String((node.data as { expr: string }).expr);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const evalExpr = (expr: string, scope: { nodes?: unknown; inputs?: unknown }): any =>
+    new Function('nodes', 'inputs', `return ${expr};`)(scope.nodes ?? {}, scope.inputs ?? {});
+
+  const future = new Date(Date.now() + 7 * 86400000);
+  const futureIso = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`;
+
+  describe('after-call-actions plan: SMS kickoff', () => {
+    const planExpr = nodeExpr('after-call-actions', 'plan');
+    const scopeFor = (extract: Record<string, unknown>, ctxOver: Record<string, unknown> = {}) => ({
+      inputs: { callId: 'call_1' },
+      nodes: {
+        ctx: { hasTranscript: true, phone: '+61400000000', customerId: null, customerName: '', today: 'today', ...ctxOver },
+        extract: { content: JSON.stringify(extract) },
+        calls: { responses: [{ id: 'resp-call-1', answers: {} }] },
+        settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+      },
+    });
+    const booking = {
+      intent: 'appointment', sentiment: 'positive', caller_name: 'Lance Baker', service: 'Haircut',
+      date: futureIso, time: '14:00', summary: 'Booked a haircut.', callback_requested: false,
+    };
+
+    it('booking intent + real caller number → kickoff SMS + SMS-managed task + correlated appointment', () => {
+      const r = evalExpr(planExpr, scopeFor(booking));
+      expect(r.hasKickoffSms).toBe(true);
+      expect(r.task.sms_state).toBe('active');
+      expect(r.task.sms_exchanges).toBe(1);
+      expect(r.task.phone).toBe('+61400000000');
+      expect(r.task.call_id).toBe('call_1');
+      expect(r.task.call_link).toBe('resp-call-1');
+      expect(r.appointment.phone).toBe('+61400000000');
+      expect(r.appointment.call_id).toBe('call_1');
+      expect(r.kickoffSms.to).toBe('+61400000000');
+      expect(r.kickoffSms.body).toContain('Pirate Cuts');
+      expect(r.kickoffSms.body).toContain('Hi Lance!');
+      expect(r.kickoffSms.body).toContain('Reply YES to confirm');
+      expect(r.kickoffSms.body).toContain('Reply STOP to opt out');
+      // eslint-disable-next-line no-control-regex
+      expect(r.kickoffSms.body).toMatch(/^[\x20-\x7E]+$/); // plain ASCII (GSM envelope)
+      expect(r.kickoffMessage.direction).toBe('outbound');
+      expect(r.kickoffMessage.status).toBe('queued');
+      expect(r.kickoffMessage.message_id).toBe('smskick_call_1');
+      expect(r.summaryLine).toContain('Confirmation SMS sent.');
+    });
+
+    it('unclear-date booking still kicks off (asks for a day/time instead of confirming one)', () => {
+      const r = evalExpr(planExpr, scopeFor({ ...booking, date: null, time: null }));
+      expect(r.hasAppointment).toBe(false);
+      expect(r.hasKickoffSms).toBe(true);
+      expect(r.kickoffSms.body).toContain('could not pin down a day and time');
+      expect(r.task.sms_state).toBe('active');
+    });
+
+    it('withheld caller number → no kickoff, task stays human-only', () => {
+      const r = evalExpr(planExpr, scopeFor(booking, { phone: 'unknown' }));
+      expect(r.hasKickoffSms).toBe(false);
+      expect(r.task.sms_state).toBeUndefined();
+      expect(r.task.sms_exchanges).toBeUndefined();
+    });
+
+    it('non-booking intents never text the caller', () => {
+      const r = evalExpr(planExpr, scopeFor({ ...booking, intent: 'message' }));
+      expect(r.hasTask).toBe(true);
+      expect(r.hasKickoffSms).toBe(false);
+      expect(r.task.sms_state).toBeUndefined();
+    });
+  });
+
+  describe('sms-auto-reply-draft gate: defers to the automated loop', () => {
+    const gateExpr = nodeExpr('sms-auto-reply-draft', 'gate');
+    const withTask = (answers: Record<string, unknown>) => ({
+      nodes: { tasks: { responses: [{ id: 't1', answers }] } },
+    });
+
+    it('active SMS-managed task → gate false (no draft; the loop answers)', () => {
+      expect(evalExpr(gateExpr, withTask({ status: 'open', sms_state: 'active' }))).toBe(false);
+    });
+    it('opted-out sender → gate false (no draft at all after STOP)', () => {
+      expect(evalExpr(gateExpr, withTask({ status: 'open', sms_state: 'opted_out' }))).toBe(false);
+    });
+    it('no SMS state / closed task / handoff → gate true (human-approval draft path)', () => {
+      expect(evalExpr(gateExpr, withTask({ status: 'open' }))).toBe(true);
+      expect(evalExpr(gateExpr, withTask({ status: 'done', sms_state: 'active' }))).toBe(true);
+      expect(evalExpr(gateExpr, withTask({ status: 'open', sms_state: 'handoff' }))).toBe(true);
+      expect(evalExpr(gateExpr, { nodes: { tasks: { responses: [] } } })).toBe(true);
+    });
+  });
+
+  describe('sms-followup-conversation ctx: deterministic verdicts', () => {
+    const ctxExpr = nodeExpr('sms-followup-conversation', 'ctx');
+    const nodesFor = (over: Record<string, unknown> = {}) => ({
+      settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+      tasks: { responses: [{ id: 'task-1', answers: { status: 'open', sms_state: 'active', phone: '+61400000000', call_id: 'call_1', sms_exchanges: 1, summary: 'Confirm appointment with Lance' } }] },
+      appointments: { responses: [{ id: 'appt-1', answers: { call_id: 'call_1', service: 'Haircut', date: futureIso, time: '14:00', status: 'requested' } }] },
+      messages: { responses: [] },
+      ...over,
+    });
+    const run = (body: string, over: Record<string, unknown> = {}) =>
+      evalExpr(ctxExpr, { inputs: { from: '+61400000000', body }, nodes: nodesFor(over) });
+
+    it('STOP always opts out — even punctuated, even past the cap', () => {
+      expect(run('STOP').verdict).toBe('stop');
+      expect(run('stop!').verdict).toBe('stop');
+      const capped = { tasks: { responses: [{ id: 'task-1', answers: { status: 'open', sms_state: 'active', sms_exchanges: 6 } }] } };
+      expect(run('STOP', capped).verdict).toBe('stop');
+    });
+    it('a plain YES with an appointment confirms without an LLM call', () => {
+      expect(run('YES').verdict).toBe('yes');
+      expect(run('yes!').verdict).toBe('yes');
+      expect(run('Sounds good.').verdict).toBe('yes');
+    });
+    it('the exchange cap hands off before any model runs', () => {
+      const capped = { tasks: { responses: [{ id: 'task-1', answers: { status: 'open', sms_state: 'active', sms_exchanges: 6 } }] } };
+      expect(run('how about friday', capped).verdict).toBe('cap');
+    });
+    it('anything else goes to the LLM with the appointment + task in context', () => {
+      const r = run('Can we do Friday at 9 instead?');
+      expect(r.verdict).toBe('llm');
+      expect(r.taskId).toBe('task-1');
+      expect(r.apptId).toBe('appt-1');
+      expect(r.llmContext).toContain('Haircut');
+      expect(r.llmContext).toContain('Can we do Friday at 9 instead?');
+    });
+    it('no active SMS-managed task → verdict none (draft flow owns the reply)', () => {
+      expect(run('hello', { tasks: { responses: [] } }).verdict).toBe('none');
+      const humanOnly = { tasks: { responses: [{ id: 't', answers: { status: 'open', sms_state: '' } }] } };
+      expect(run('hello', humanOnly).verdict).toBe('none');
+    });
+    it('a YES without any appointment goes to the LLM instead of blind-confirming', () => {
+      expect(run('YES', { appointments: { responses: [] } }).verdict).toBe('llm');
+    });
+  });
+
+  describe('sms-followup-conversation plan: actions → writes + composed reply', () => {
+    const planExpr = nodeExpr('sms-followup-conversation', 'plan');
+    const ctxVal = {
+      verdict: 'llm', hasTask: true, taskId: 'task-1', taskCallId: 'call_1', taskCustomer: '',
+      exchanges: 1, apptId: 'appt-1', apptDate: futureIso, apptTime: '14:00', apptService: 'Haircut',
+      business: 'Pirate Cuts', model: '', today: 'today', llmContext: '', phone: '+61400000000',
+    };
+    const run = (ctxOver: Record<string, unknown>, decideContent?: unknown) =>
+      evalExpr(planExpr, {
+        nodes: {
+          ctx: { ...ctxVal, ...ctxOver },
+          ...(decideContent === undefined ? {} : { decide: { content: typeof decideContent === 'string' ? decideContent : JSON.stringify(decideContent) } }),
+        },
+      });
+
+    it('YES verdict: appointment confirmed, task closed, composed (non-model) reply sent', () => {
+      const r = run({ verdict: 'yes' });
+      expect(r.hasApptUpdate).toBe(true);
+      expect(r.apptResponseId).toBe('appt-1');
+      expect(r.apptUpdate).toEqual({ status: 'confirmed' });
+      expect(r.hasTaskUpdate).toBe(true);
+      expect(r.taskUpdate.status).toBe('done');
+      expect(r.taskUpdate.sms_state).toBe('done');
+      expect(r.taskUpdate.sms_exchanges).toBe(2);
+      expect(r.hasReply).toBe(true);
+      expect(r.reply.to).toBe('+61400000000');
+      expect(r.reply.body).toContain('confirmed');
+      expect(r.reply.body).toContain('Haircut');
+      expect(r.outboundMessage.status).toBe('queued');
+      expect(r.outboundMessage.is_ai_reply).toEqual(['yes']);
+    });
+
+    it('LLM reschedule with an existing appointment: date/time move, still requested, reply asks for YES', () => {
+      const r = run({}, { action: 'reschedule', date: futureIso, time: '09:30', reply: 'model prose ignored' });
+      expect(r.hasApptUpdate).toBe(true);
+      expect(r.apptUpdate).toEqual({ date: futureIso, status: 'requested', time: '09:30' });
+      expect(r.taskUpdate.status).toBeUndefined(); // stays open
+      expect(r.reply.body).toContain('Reply YES to confirm');
+      expect(r.reply.body).not.toContain('model prose');
+    });
+
+    it('LLM reschedule with NO appointment yet: creates one from the SMS', () => {
+      const r = run({ apptId: null, apptService: '', taskCustomer: 'cust-9' }, { action: 'reschedule', date: futureIso, time: '11:00', service: 'Beard trim' });
+      expect(r.hasApptCreate).toBe(true);
+      expect(r.hasApptUpdate).toBe(false);
+      expect(r.newAppointment.service).toBe('Beard trim');
+      expect(r.newAppointment.date).toBe(futureIso);
+      expect(r.newAppointment.time).toBe('11:00');
+      expect(r.newAppointment.status).toBe('requested');
+      expect(r.newAppointment.source).toBe('sms');
+      expect(r.newAppointment.phone).toBe('+61400000000');
+      expect(r.newAppointment.call_id).toBe('call_1');
+      expect(r.newAppointment.customer_link).toBe('cust-9');
+    });
+
+    it('cancel: appointment cancelled, task closed', () => {
+      const r = run({}, { action: 'cancel', reply: '' });
+      expect(r.apptUpdate).toEqual({ status: 'cancelled' });
+      expect(r.taskUpdate.status).toBe('done');
+      expect(r.taskUpdate.sms_state).toBe('done');
+      expect(r.reply.body).toContain('cancelled');
+    });
+
+    it('a past/garbage reschedule date degrades to a clarifying question — never a write', () => {
+      const r = run({}, { action: 'reschedule', date: '2020-01-01', time: '09:00', reply: '' });
+      expect(r.hasApptUpdate).toBe(false);
+      expect(r.hasApptCreate).toBe(false);
+      expect(r.hasReply).toBe(true);
+      expect(r.taskUpdate.sms_exchanges).toBe(2);
+    });
+
+    it('unparseable model output → human handoff with an honest reply', () => {
+      const r = run({}, 'total garbage, not json');
+      expect(r.taskUpdate.sms_state).toBe('handoff');
+      expect(r.taskUpdate.priority).toBe('high');
+      expect(r.hasReply).toBe(true);
+      expect(r.reply.body).toContain('team');
+      expect(r.hasApptUpdate).toBe(false);
+    });
+
+    it('STOP verdict: no reply is ever sent; task flagged opted-out for a human', () => {
+      const r = run({ verdict: 'stop' });
+      expect(r.hasReply).toBe(false);
+      expect(r.taskUpdate).toEqual({ sms_state: 'opted_out', priority: 'high' });
+    });
+
+    it('cap verdict: silent handoff, no reply', () => {
+      const r = run({ verdict: 'cap', exchanges: 6 });
+      expect(r.hasReply).toBe(false);
+      expect(r.taskUpdate).toEqual({ sms_state: 'handoff', priority: 'high' });
+    });
+
+    it('no-task verdict: nothing happens (draft path owns it)', () => {
+      const r = run({ verdict: 'none', hasTask: false });
+      expect(r.hasReply).toBe(false);
+      expect(r.hasTaskUpdate).toBe(false);
+      expect(r.hasApptUpdate).toBe(false);
+    });
   });
 });
 
