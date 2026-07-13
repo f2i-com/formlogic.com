@@ -6,8 +6,9 @@
 // phone's status (`phone.status`), and the recent Hardware Events records the app
 // logic writes from `aokie.hardware.error` envelopes.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bluetooth, Cast, Download, Link2, Link2Off, RefreshCw, Smartphone, TriangleAlert, Usb } from 'lucide-react';
+import { Bluetooth, Cast, Download, Link2, Link2Off, RefreshCw, Smartphone, Trash2, TriangleAlert, Usb } from 'lucide-react';
 import { EmptyState, useConnector, useConnectorPermission, useResponses } from '../../../sdk';
+import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { toast } from '../../../stores/toastStore';
 import { api } from '../../../lib/api';
 import { useAppRuntimeStore } from '../../../stores/appRuntimeStore';
@@ -48,6 +49,25 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+/**
+ * When a hardware event happened, for the list. `occurred_at` is the plugin's
+ * ISO-Z instant (authoritative); the row's zone-less sqlite `submittedAt`
+ * (stored UTC) is the fallback and gets an explicit Z so it never shifts.
+ */
+function formatEventTime(answers: Record<string, unknown>, submittedAt: string): { short: string; full: string } | null {
+  const occurred = typeof answers.occurred_at === 'string' && answers.occurred_at !== '' ? answers.occurred_at : null;
+  const fallback = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(submittedAt)
+    ? submittedAt.replace(' ', 'T') + 'Z'
+    : submittedAt;
+  const ms = Date.parse(occurred ?? fallback);
+  if (Number.isNaN(ms)) return null;
+  const d = new Date(ms);
+  return {
+    short: d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }),
+    full: d.toLocaleString(),
+  };
+}
+
 /** Typed connector failure for display: "capability_denied — …" beats a bare message. */
 function describeError(err: unknown): string {
   if (err instanceof ConnectorError) {
@@ -80,6 +100,13 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // clears capability_denied without bothering the user. Reset on success.
   const capabilityRetryUsed = useRef(false);
   const events = useResponses(eventsFormId ?? '', { limit: 8 });
+  // Clear-history controls for the hardware-event log (delete-gated like any
+  // record delete; the log is diagnostic, so wiping it is routine hygiene).
+  const deleteEventResponse = useAppRuntimeStore((s) => s.deleteResponse);
+  const fetchRecentRows = useAppRuntimeStore((s) => s.fetchRecentRows);
+  const canDeleteEvents = useAppRuntimeStore((s) => s.canDelete);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [clearingEvents, setClearingEvents] = useState(false);
 
   // Runtime presence: when the receptionist runs on ANOTHER machine's Desktop, the device
   // status card below names that device instead of pushing a local install (§14).
@@ -87,6 +114,31 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   const appSlug = useAppRuntimeStore((s) => s.appSlug);
   const remoteMode = presence.kind === 'remote';
   const [enumerationNote, setEnumerationNote] = useState<string | null>(null);
+
+  // Clear the hardware-event log: delete EVERY row, not just the 8 shown.
+  // New events may land mid-clear, so loop until the form reads empty
+  // (bounded — this is hygiene, not a guarantee against a live event storm).
+  const handleClearEvents = useCallback(async () => {
+    if (!eventsFormId) return;
+    setClearingEvents(true);
+    try {
+      let deleted = 0;
+      for (let pass = 0; pass < 5; pass++) {
+        const rows = await fetchRecentRows(eventsFormId, 200);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          if (await deleteEventResponse(eventsFormId, row.id)) deleted++;
+        }
+      }
+      toast.success('Hardware events cleared', `${deleted} ${deleted === 1 ? 'entry' : 'entries'} removed`);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setClearingEvents(false);
+      setConfirmClearOpen(false);
+      events.reload();
+    }
+  }, [eventsFormId, fetchRecentRows, deleteEventResponse, events]);
 
   // Route a connector command to the RIGHT transport: local desktop bridge
   // (connector.request) when the receptionist runs on THIS machine, or the
@@ -539,6 +591,18 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         <div className="mb-3 flex items-center gap-2">
           <TriangleAlert className="h-4 w-4 text-gray-400 dark:text-slate-500" />
           <h2 className="text-sm font-medium text-gray-900 dark:text-white">Recent hardware events</h2>
+          {eventsFormId && events.rows.length > 0 && canDeleteEvents(eventsFormId) && (
+            <button
+              type="button"
+              onClick={() => setConfirmClearOpen(true)}
+              disabled={clearingEvents}
+              title="Delete every recorded hardware event — new events keep landing here afterwards."
+              className="ml-auto inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {clearingEvents ? 'Clearing…' : 'Clear'}
+            </button>
+          )}
         </div>
         {!eventsFormId ? (
           <EmptyState title="No Hardware Events form" message="This screen expects to be attached to the Hardware Events form." />
@@ -548,27 +612,50 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
           </p>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-slate-800">
-            {events.rows.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <div className="min-w-0">
-                  <span className="font-medium text-gray-900 dark:text-white">{String(r.answers.event_name || 'event')}</span>
-                  <span className="ml-2 truncate text-xs text-gray-500 dark:text-slate-400">{String(r.answers.message || '')}</span>
-                </div>
-                <span
-                  className={`text-xs font-medium capitalize ${
-                    r.answers.severity === 'error'
-                      ? 'text-red-600 dark:text-red-400'
-                      : r.answers.severity === 'warning'
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-gray-500 dark:text-slate-400'
-                  }`}
-                >
-                  {String(r.answers.severity || 'info')}
-                </span>
-              </li>
-            ))}
+            {events.rows.map((r) => {
+              const when = formatEventTime(r.answers, r.submittedAt);
+              return (
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <div className="min-w-0">
+                    <span className="font-medium text-gray-900 dark:text-white">{String(r.answers.event_name || 'event')}</span>
+                    <span className="ml-2 truncate text-xs text-gray-500 dark:text-slate-400">{String(r.answers.message || '')}</span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    {when && (
+                      <span
+                        title={when.full}
+                        className="text-xs tabular-nums text-gray-400 dark:text-slate-500"
+                      >
+                        {when.short}
+                      </span>
+                    )}
+                    <span
+                      className={`text-xs font-medium capitalize ${
+                        r.answers.severity === 'error'
+                          ? 'text-red-600 dark:text-red-400'
+                          : r.answers.severity === 'warning'
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-gray-500 dark:text-slate-400'
+                      }`}
+                    >
+                      {String(r.answers.severity || 'info')}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
+        <ConfirmDialog
+          isOpen={confirmClearOpen}
+          onClose={() => { if (!clearingEvents) setConfirmClearOpen(false); }}
+          onConfirm={() => void handleClearEvents()}
+          title="Clear hardware events?"
+          message="This deletes every recorded hardware event for this app. New events will keep landing here automatically."
+          confirmLabel="Clear events"
+          variant="danger"
+          isLoading={clearingEvents}
+        />
       </div>
     </div>
   );
