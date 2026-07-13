@@ -496,7 +496,18 @@ export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
   let fresh = false;
   try {
     const res = await api.getDesktopConnections();
-    const rows = Array.isArray(res.data) ? res.data : [];
+    // ROUTE-001 wrapped the payload as {connections:[...]} — the old
+    // bare-array read silently saw ZERO rows, the probe reported "no
+    // desktop", and the browser stopped deferring: every aokie.* record
+    // got written TWICE (desktop runtime + browser app-logic — live
+    // report 2026-07-13, duplicated transcript turns). Accept both
+    // shapes.
+    const data = res.data as unknown;
+    const rows = Array.isArray(data)
+      ? data
+      : data && Array.isArray((data as { connections?: unknown }).connections)
+        ? (data as { connections: unknown[] }).connections
+        : [];
     fresh = rows.some((c) => {
       const raw = (c as { lastSeenAt?: unknown }).lastSeenAt;
       if (typeof raw !== 'string' || raw === '') return false;

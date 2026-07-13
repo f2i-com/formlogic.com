@@ -3,11 +3,13 @@ import {
   __resetFlowDispatcherForTests,
   __setFlowDispatcherDepsForTests,
   __setRuntimeFlowsForTests,
+  defaultDesktopRuntimeFresh,
   dispatchFormEvent,
   runFlowBySlug,
   shouldDeferEventToDesktop,
   type FlowDispatcherDeps,
 } from './flowDispatcher';
+import { api } from '../../lib/api';
 import type { FlowExecutorDeps } from './nodes';
 import type { RuntimeFlows } from '../../types/flows';
 
@@ -220,6 +222,34 @@ describe('desktop-first routing for connector events', () => {
     // Fails open: an unreachable probe must never strand an event unwritten.
     installDeps({ desktopRuntimeFresh: async () => { throw new Error('offline'); } });
     expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(false);
+  });
+
+  // Regression (live report 2026-07-13, duplicated transcript turns): ROUTE-001
+  // wrapped GET /desktop-connections as {connections:[...]} and the DEFAULT
+  // freshness probe still read res.data as a bare array — it saw zero rows,
+  // reported "no desktop", and the browser wrote every aokie.* record a second
+  // time next to the desktop runtime's row. The default probe must understand
+  // the wrapped shape (and still treat a stale heartbeat as not-fresh).
+  it('defaultDesktopRuntimeFresh reads the {connections:[...]} wrapper', async () => {
+    const spy = vi.spyOn(api, 'getDesktopConnections');
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-13T04:00:00Z'));
+      spy.mockResolvedValue({
+        data: { connections: [{ lastSeenAt: '2026-07-13T03:59:30Z' }] },
+      } as never);
+      expect(await defaultDesktopRuntimeFresh()).toBe(true);
+
+      // Past the 30s probe cache; a heartbeat older than 90s is not fresh.
+      vi.setSystemTime(new Date('2026-07-13T04:00:31Z'));
+      spy.mockResolvedValue({
+        data: { connections: [{ lastSeenAt: '2026-07-13T03:00:00Z' }] },
+      } as never);
+      expect(await defaultDesktopRuntimeFresh()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      spy.mockRestore();
+    }
   });
 });
 
