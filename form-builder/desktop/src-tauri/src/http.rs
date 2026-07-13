@@ -1393,12 +1393,20 @@ async fn events_sse(State(st): State<DesktopState>) -> impl IntoResponse {
 #[derive(Deserialize)]
 struct PairingBeginBody {
     origin: String,
+    /// A page probing on load (not an explicit "Connect" click). When true,
+    /// an UNTRUSTED origin is answered `{autoApproved:false}` WITHOUT creating
+    /// a pending request, so a background reconnect attempt can't spam the
+    /// Desktop's approval list. An already-trusted origin auto-approves either
+    /// way — the browser re-pairs silently after losing its session token.
+    #[serde(default)]
+    silent: bool,
 }
 
-/// `POST /api/desktop/pairing-requests {origin}` → `{requestId}`. Open to any
-/// http(s) origin BY DESIGN — pairing is how a new origin earns trust; the
-/// user approves in the Desktop window (spam is bounded by the pending cap).
-/// A browser caller's Origin header must match the origin it asks to pair.
+/// `POST /api/desktop/pairing-requests {origin, silent?}` →
+/// `{requestId?, autoApproved}`. Open to any http(s) origin BY DESIGN —
+/// pairing is how a new origin earns trust; the user approves in the Desktop
+/// window (spam is bounded by the pending cap + the silent flag). A browser
+/// caller's Origin header must match the origin it asks to pair.
 async fn create_pairing_request(
     State(st): State<DesktopState>,
     headers: HeaderMap,
@@ -1415,8 +1423,23 @@ async fn create_pairing_request(
             );
         }
     }
-    match st.pairing.begin(&body.origin) {
-        Ok(id) => (StatusCode::OK, Json(serde_json::json!({ "requestId": id }))).into_response(),
+    match st.pairing.begin(&body.origin, body.silent) {
+        Ok(outcome) => {
+            if outcome.auto_approved {
+                eprintln!(
+                    "[desktop] pairing auto-approved for already-trusted origin {}",
+                    body.origin
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "requestId": outcome.request_id,
+                    "autoApproved": outcome.auto_approved,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => desktop_err(StatusCode::BAD_REQUEST, "origin_denied", &e),
     }
 }
@@ -1944,7 +1967,20 @@ pub async fn serve(
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers(Any);
+        .allow_headers(Any)
+        // Private Network Access (2026-07-13): a browser reaching this
+        // loopback bridge from a hostname/HTTPS origin (e.g. https://
+        // formlogic.local) sends `Access-Control-Request-Private-Network: true`
+        // on its preflight and BLOCKS the request unless the response echoes
+        // `Access-Control-Allow-Private-Network: true`. Without this, detection
+        // + every connector call silently failed from such origins and Device
+        // Setup showed "FormLogic Desktop is not connected" though it was.
+        // tower-http only adds the header when the browser asks (see
+        // AllowPrivateNetwork), so plain same-address-space requests are
+        // unaffected. The bind stays 127.0.0.1 and every non-health route is
+        // still pairing-token gated (LOCAL-SEC-001) — this only unblocks the
+        // CORS preflight, it does not grant access.
+        .allow_private_network(true);
 
     let state = AppState {
         config,

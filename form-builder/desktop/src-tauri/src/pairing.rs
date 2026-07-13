@@ -71,6 +71,18 @@ pub struct PairingRequest {
     pub created_at: DateTime<Utc>,
 }
 
+/// Result of [`PairingStore::begin`]. `auto_approved` is true when the origin
+/// was ALREADY trusted (a live token exists) or the dev bypass matched — the
+/// caller can poll for its token immediately, no native approval needed.
+/// `request_id` is `None` only for a SILENT request on an untrusted origin:
+/// nothing is created (so a page probing on load can't spam the Desktop's
+/// approval list), and the caller falls back to an explicit Connect click.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeginOutcome {
+    pub request_id: Option<String>,
+    pub auto_approved: bool,
+}
+
 /// Wire view of one pending request (Desktop window UI).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,9 +141,16 @@ impl PairingStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Begin pairing for `origin`. Returns the request id to poll. With the
-    /// dev bypass set to this exact origin, the request is born approved.
-    pub fn begin(&self, origin: &str) -> Result<String, String> {
+    /// Begin pairing for `origin`. With the dev bypass OR an already-trusted
+    /// origin (one that still holds a live token), the request is born
+    /// APPROVED — a browser that lost its session token re-pairs with no
+    /// native prompt, because the user already vouched for this exact origin
+    /// and a same-origin page could use the existing token anyway (so a fresh
+    /// one grants nothing new). A brand-new origin still needs explicit
+    /// approval. `silent` (a page probing on load) suppresses creating a
+    /// PENDING request for an untrusted origin, so it can't clutter the
+    /// Desktop's approval list — the caller then shows an explicit button.
+    pub fn begin(&self, origin: &str, silent: bool) -> Result<BeginOutcome, String> {
         let origin = normalize_origin(origin)?;
         let id = uuid::Uuid::new_v4().to_string();
         let dev_approved = self.dev_allow_origin.as_deref() == Some(origin.as_str());
@@ -139,21 +158,36 @@ impl PairingStore {
         {
             let mut inner = self.lock();
             purge_expired_inner(&mut inner);
+            let already_trusted = inner
+                .tokens
+                .iter()
+                .any(|t| t.origin == origin && !token_expired(t));
+            let auto = dev_approved || already_trusted;
+            // A silent probe on an untrusted origin creates NOTHING — no
+            // pending request, no Desktop-window nag. The caller falls back to
+            // an explicit Connect click, which is a non-silent begin().
+            if !auto && silent {
+                return Ok(BeginOutcome {
+                    request_id: None,
+                    auto_approved: false,
+                });
+            }
             // One pending request per origin: re-POSTing replaces it, so the
             // pending list in the Desktop window never shows duplicates.
             inner
                 .requests
                 .retain(|_, r| !(r.origin == origin && r.status == RequestStatus::Pending));
-            if inner
-                .requests
-                .values()
-                .filter(|r| r.status == RequestStatus::Pending)
-                .count()
-                >= MAX_PENDING_REQUESTS
+            if !auto
+                && inner
+                    .requests
+                    .values()
+                    .filter(|r| r.status == RequestStatus::Pending)
+                    .count()
+                    >= MAX_PENDING_REQUESTS
             {
                 return Err("too many pending pairing requests".into());
             }
-            let status = if dev_approved {
+            let status = if auto {
                 let token = generate_token()?;
                 token_to_store = Some(token.clone());
                 RequestStatus::Approved { token }
@@ -180,7 +214,10 @@ impl PairingStore {
         if token_to_store.is_some() {
             self.persist();
         }
-        Ok(id)
+        Ok(BeginOutcome {
+            request_id: Some(id),
+            auto_approved: token_to_store.is_some(),
+        })
     }
 
     /// Poll a request. `origin_hint` (the caller's Origin header, when it
@@ -455,7 +492,7 @@ mod tests {
     }
 
     fn approve_and_take_token(store: &PairingStore, origin: &str) -> String {
-        let id = store.begin(origin).expect("begin");
+        let id = store.begin(origin, false).expect("begin").request_id.expect("id");
         store.approve(&id).expect("approve");
         match store.poll(&id, Some(origin)).expect("poll").status {
             RequestStatus::Approved { token } => token,
@@ -476,7 +513,9 @@ mod tests {
     fn pairing_flow_binds_token_to_origin() {
         let (store, path) = temp_store(None);
         let origin = "https://formlogic.com";
-        let id = store.begin(origin).unwrap();
+        let outcome = store.begin(origin, false).unwrap();
+        assert!(!outcome.auto_approved, "a brand-new origin is not auto-approved");
+        let id = outcome.request_id.unwrap();
         // Pending until approved.
         assert!(matches!(
             store.poll(&id, Some(origin)).unwrap().status,
@@ -507,7 +546,7 @@ mod tests {
     #[test]
     fn poll_from_the_wrong_origin_is_rejected() {
         let (store, path) = temp_store(None);
-        let id = store.begin("https://formlogic.com").unwrap();
+        let id = store.begin("https://formlogic.com", false).unwrap().request_id.unwrap();
         store.approve(&id).unwrap();
         assert!(store.poll(&id, Some("https://evil.example")).is_err());
         // No hint (native caller) is fine — the request id is the capability.
@@ -547,17 +586,53 @@ mod tests {
     fn dev_bypass_auto_approves_only_the_exact_origin() {
         let (store, path) = temp_store(Some("http://localhost:5173"));
         // Exact match: born approved.
-        let id = store.begin("http://localhost:5173").unwrap();
+        let out = store.begin("http://localhost:5173", false).unwrap();
+        assert!(out.auto_approved);
         assert!(matches!(
-            store.poll(&id, None).unwrap().status,
+            store.poll(&out.request_id.unwrap(), None).unwrap().status,
             RequestStatus::Approved { .. }
         ));
         // Different port: normal pending flow.
-        let id2 = store.begin("http://localhost:1420").unwrap();
+        let id2 = store.begin("http://localhost:1420", false).unwrap().request_id.unwrap();
         assert!(matches!(
             store.poll(&id2, None).unwrap().status,
             RequestStatus::Pending
         ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The re-pair path (2026-07-13): once an origin holds a live token, a
+    /// fresh `begin` for it is AUTO-approved — a browser that lost its session
+    /// token reconnects with no native prompt. A SILENT probe on an UNTRUSTED
+    /// origin creates nothing (no Desktop-window nag); the same probe on a
+    /// trusted origin is auto-approved.
+    #[test]
+    fn trusted_origin_re_pairs_without_a_prompt() {
+        let (store, path) = temp_store(None);
+        let origin = "http://formlogic.local";
+
+        // Silent probe before any trust: nothing created, not approved.
+        let probe = store.begin(origin, true).unwrap();
+        assert_eq!(probe, BeginOutcome { request_id: None, auto_approved: false });
+        assert_eq!(store.pending().len(), 0, "a silent untrusted probe leaves no pending request");
+
+        // Establish trust the normal way (native approval).
+        let token = approve_and_take_token(&store, origin);
+        assert_eq!(store.check(&token, Some(origin)), TokenCheck::Ok);
+
+        // Now a SILENT re-pair is auto-approved with a fresh token — no prompt.
+        let re = store.begin(origin, true).unwrap();
+        assert!(re.auto_approved, "an already-trusted origin re-pairs silently");
+        let fresh = match store.poll(&re.request_id.unwrap(), Some(origin)).unwrap().status {
+            RequestStatus::Approved { token } => token,
+            other => panic!("expected approved, got {other:?}"),
+        };
+        assert_ne!(fresh, token, "a distinct token is minted");
+        assert_eq!(store.check(&fresh, Some(origin)), TokenCheck::Ok);
+        assert_eq!(store.pending().len(), 0, "auto-approved re-pairs never sit pending");
+
+        // A DIFFERENT untrusted origin still needs explicit approval, silent or not.
+        assert!(!store.begin("http://evil.local", true).unwrap().auto_approved);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -582,12 +657,12 @@ mod tests {
     fn pending_request_cap_and_dedupe() {
         let (store, path) = temp_store(None);
         for i in 0..MAX_PENDING_REQUESTS {
-            store.begin(&format!("https://site{i}.example")).unwrap();
+            store.begin(&format!("https://site{i}.example"), false).unwrap();
         }
-        assert!(store.begin("https://one-more.example").is_err());
+        assert!(store.begin("https://one-more.example", false).is_err());
         // Re-requesting an EXISTING origin replaces its pending entry
         // (dedupe), so it stays under the cap.
-        assert!(store.begin("https://site0.example").is_ok());
+        assert!(store.begin("https://site0.example", false).is_ok());
         assert_eq!(store.pending().len(), MAX_PENDING_REQUESTS);
         let _ = std::fs::remove_file(&path);
     }

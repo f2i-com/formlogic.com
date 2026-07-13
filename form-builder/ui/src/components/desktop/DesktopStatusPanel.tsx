@@ -20,10 +20,13 @@ import {
   type DesktopInfo,
 } from '../../client-runtime/desktop/desktopDetection';
 import {
-  clearDesktopToken,
+  allowAutoReconnect,
+  attemptSilentReconnect,
+  disconnectDesktop,
   isDesktopPaired,
   pollPairing,
   requestPairing,
+  subscribeDesktopPaired,
 } from '../../client-runtime/desktop/desktopPairing';
 import { desktopClient } from '../../client-runtime/desktop/desktopClient';
 import type { ConnectorStatusInfo } from '../../client-runtime/connectors/connectorTypes';
@@ -61,6 +64,17 @@ export function DesktopStatusPanel() {
   // Detection runs only while this panel (or the app runtime) is mounted/subscribed.
   useEffect(() => subscribeDesktopStatus(setInfo), []);
 
+  // Reflect token changes (incl. a silent reconnect completing) without a reload.
+  useEffect(() => subscribeDesktopPaired(setPaired), []);
+
+  // Auto-reconnect: when the desktop is detected but this browser session has no
+  // token (the session-scoped token dies on browser restart), silently re-pair
+  // IF the desktop already trusts this origin — no native prompt, no click. A
+  // never-trusted origin no-ops here and the explicit "Connect" button shows.
+  useEffect(() => {
+    if (info.available && !paired) void attemptSilentReconnect();
+  }, [info.available, paired]);
+
   const loadDesktopDetails = useCallback(async () => {
     if (!getDesktopInfo().available || !isDesktopPaired()) {
       setPlugins(null);
@@ -83,14 +97,15 @@ export function DesktopStatusPanel() {
   }, [info.available, paired, loadDesktopDetails]);
 
   const handleConnect = async () => {
+    allowAutoReconnect(); // the user chose to connect — undo any prior explicit disconnect
     setPairing('pending');
-    const requestId = await requestPairing(window.location.origin);
-    if (!requestId) {
+    const begun = await requestPairing(window.location.origin);
+    if (!begun || !begun.requestId) {
       setPairing('failed');
       toast.error('Could not reach FormLogic Desktop', 'Make sure it is running, then try again.');
       return;
     }
-    const result = await pollPairing(requestId);
+    const result = await pollPairing(begun.requestId);
     if (result.status !== 'approved') {
       setPairing(result.status === 'denied' ? 'denied' : 'failed');
       if (result.status === 'denied') {
@@ -123,7 +138,7 @@ export function DesktopStatusPanel() {
   };
 
   const handleDisconnect = () => {
-    clearDesktopToken();
+    disconnectDesktop(); // drops the token AND suppresses auto-reconnect until an explicit Connect
     setPaired(false);
     setPairing('idle');
     setPlugins(null);

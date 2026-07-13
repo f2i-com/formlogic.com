@@ -11,6 +11,8 @@ import { EmptyState, useConnector, useConnectorPermission, useResponses } from '
 import { toast } from '../../../stores/toastStore';
 import { DesktopStatusPanel } from '../../desktop/DesktopStatusPanel';
 import { ConnectorError } from '../../../client-runtime/connectors/connectorTypes';
+import { getDesktopInfo, subscribeDesktopStatus } from '../../../client-runtime/desktop/desktopDetection';
+import { isDesktopPaired, subscribeDesktopPaired } from '../../../client-runtime/desktop/desktopPairing';
 import { describeLastSeen } from './aokiePresence';
 import { useAokiePresence } from './useAokiePresence';
 
@@ -124,6 +126,25 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Re-fetch the hardware sections the moment the desktop becomes reachable —
+  // detection recovering, or a silent reconnect landing a token — so a page
+  // opened before the desktop was paired fills in without a manual Refresh
+  // (the connector calls above just fail with connector_unavailable until then).
+  useEffect(() => {
+    let reachable = getDesktopInfo().available && isDesktopPaired();
+    const reload = () => {
+      const now = getDesktopInfo().available && isDesktopPaired();
+      if (now && !reachable) void load();
+      reachable = now;
+    };
+    const offStatus = subscribeDesktopStatus(reload);
+    const offPaired = subscribeDesktopPaired(reload);
+    return () => {
+      offStatus();
+      offPaired();
+    };
   }, [load]);
 
   const handleInstallDriver = useCallback(
