@@ -385,74 +385,88 @@ function FiltersField({
   // to free text (an empty "Select a field…" dropdown reads as broken).
   const pickerFields = formFields && formFields.length > 0 ? formFields : null;
 
+  const tinyLabel = 'mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-gray-400 dark:text-slate-500';
+
   return (
     <div className="block">
       <span className={LABEL_CLS}>{spec.label}</span>
       {rows.length === 0 && (
         <p className="mb-1.5 text-[11px] text-gray-400 dark:text-slate-500">
           No rules yet — every record comes back. Add one to find a specific
-          record, e.g. <span className="font-mono">phone</span> · phone number
-          matches · <span className="font-mono">$inputs.callerPhone</span>.
+          record, e.g. field <span className="font-mono">phone</span>, condition{' '}
+          <span className="italic">phone number matches</span>, value{' '}
+          <span className="font-mono">$inputs.callerPhone</span>.
         </p>
       )}
       <div className="space-y-2">
         {rows.map((row, i) => (
-          <div key={i} className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 p-2 space-y-1.5">
-            {pickerFields ? (
-              <select
-                value={row.field}
-                onChange={(e) => setRow(i, { field: e.target.value })}
-                className={INPUT_CLS + ' cursor-pointer'}
-                aria-label="Filter field"
-              >
-                <option value="">Select a field…</option>
-                {/* A saved field id the picker doesn't know (form fields still
-                    loading, imported flow) must stay VISIBLE — collapsing it to
-                    "Select a field…" made a configured filter look broken. */}
-                {row.field !== '' && !pickerFields.some((f) => f.id === row.field) && (
-                  <option value={row.field}>{row.field}</option>
+          <div key={i} className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 p-2.5 space-y-2">
+            <div className="flex items-start gap-1.5">
+              <div className="min-w-0 flex-1">
+                <span className={tinyLabel}>Field</span>
+                {pickerFields ? (
+                  <select
+                    value={row.field}
+                    onChange={(e) => setRow(i, { field: e.target.value })}
+                    className={INPUT_CLS + ' cursor-pointer'}
+                    aria-label="Filter field"
+                  >
+                    <option value="">Select a field…</option>
+                    {/* A saved field id the picker doesn't know (form fields
+                        still loading, imported flow) must stay VISIBLE —
+                        collapsing it to "Select a field…" made a configured
+                        filter look broken. */}
+                    {row.field !== '' && !pickerFields.some((f) => f.id === row.field) && (
+                      <option value={row.field}>{row.field}</option>
+                    )}
+                    {pickerFields.map((f) => (
+                      <option key={f.id} value={f.id}>{f.label || f.id}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={row.field}
+                    placeholder="field id (e.g. phone)"
+                    onChange={(e) => setRow(i, { field: e.target.value })}
+                    className={INPUT_CLS + ' font-mono text-xs'}
+                    aria-label="Filter field id"
+                  />
                 )}
-                {pickerFields.map((f) => (
-                  <option key={f.id} value={f.id}>{f.label || f.id}</option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type="text"
-                value={row.field}
-                placeholder="field id (e.g. phone)"
-                onChange={(e) => setRow(i, { field: e.target.value })}
-                className={INPUT_CLS + ' font-mono text-xs'}
-                aria-label="Filter field id"
-              />
-            )}
-            <div className="flex items-center gap-1.5">
+              </div>
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label="Remove filter"
+                title="Remove this rule"
+                className="mt-4 flex-none rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 dark:hover:bg-slate-700"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div>
+              <span className={tinyLabel}>Condition</span>
               <select
                 value={row.op}
                 onChange={(e) => setRow(i, { op: e.target.value as FlowFilterOp })}
-                className={INPUT_CLS + ' w-36 flex-none cursor-pointer'}
+                className={INPUT_CLS + ' w-full cursor-pointer'}
                 aria-label="Filter operator"
               >
                 {FILTER_OP_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <span className={tinyLabel}>Value</span>
               <input
                 type="text"
                 value={row.value}
-                placeholder="value or $inputs.…"
+                placeholder="a value, or $inputs.callerPhone"
                 onChange={(e) => setRow(i, { value: e.target.value })}
-                className={INPUT_CLS + ' min-w-0 flex-1'}
+                className={INPUT_CLS + ' w-full'}
                 aria-label="Filter value"
               />
-              <button
-                type="button"
-                onClick={() => removeRow(i)}
-                aria-label="Remove filter"
-                className="flex-none rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 dark:hover:bg-slate-700"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
             </div>
           </div>
         ))}
@@ -462,7 +476,7 @@ function FiltersField({
         onClick={addRow}
         className="mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed border-gray-300 dark:border-slate-600 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:border-primary-300 hover:text-primary-600 dark:hover:border-primary-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
       >
-        <Plus className="h-3.5 w-3.5" /> Add filter
+        <Plus className="h-3.5 w-3.5" /> Add rule
       </button>
       {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
     </div>
