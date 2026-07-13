@@ -1279,18 +1279,16 @@ export const aokieReceptionistPack: PackData = {
         },
         { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
       ],
+      // The section IS the settings console (SDK screen): grouped cards, a
+      // live "what the receptionist is running now" readout (settings.get)
+      // and Save & apply now (settings.set, same payload as the Configure
+      // Receptionist flow). The screen manages the singleton record itself,
+      // so the generic New-record chrome stays off.
       customScreen: {
         enabled: true,
-        allowNewResponses: true,
-        kind: 'dashboard',
-        dashboard: {
-          version: 1,
-          cols: 12,
-          widgets: [
-            { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Fill this in once to change how your AI receptionist talks and which model it uses — after that, opening this section edits the same record in place. The live call flow reads it on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call.' } },
-            { id: 'l1', title: 'Current settings', layout: { x: 0, y: 1, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:receptionist-settings', titleField: 'business_name', subtitleField: 'model', metaField: 'active', limit: 5 } },
-          ],
-        },
+        allowNewResponses: false,
+        kind: 'sdk',
+        sdkScreen: { screenId: 'aokie-receptionist-settings', title: 'Receptionist Settings' },
       },
     },
   ],

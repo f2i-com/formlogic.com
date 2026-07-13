@@ -201,7 +201,7 @@ describe('aokieReceptionistPack — app', () => {
       const cs = form.customScreen;
       if (cs?.kind === 'sdk' && cs.sdkScreen?.screenId) used.push(cs.sdkScreen.screenId);
     }
-    expect(used.sort()).toEqual(['aokie-live-call', 'aokie-pairing']);
+    expect(used.sort()).toEqual(['aokie-live-call', 'aokie-pairing', 'aokie-receptionist-settings']);
     for (const id of used) {
       expect(registered.has(id), `SDK screen '${id}' is not registered`).toBe(true);
     }
