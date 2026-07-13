@@ -5,6 +5,7 @@ import { useConfirm } from '../ConfirmDialog';
 import { useToast } from '../Toasts';
 import { ConsentSection } from './ConsentWizard';
 import { DongleSetupWizard } from './DongleSetupWizard';
+import { AOKIE_LINK_EVENTS, useAokieEvents } from './useAokieEvents';
 import {
   AOKIE_SETTINGS_DEFAULTS,
   settingsPatch,
@@ -184,6 +185,17 @@ function PhonePairingControls({ running, onPaired }: { running: boolean; onPaire
     }, IDLE_POLL_MS);
     return () => window.clearInterval(t);
   }, [running, pollStatus]);
+
+  // Event-driven refresh: a phone connecting/dropping/pairing updates the
+  // readout IMMEDIATELY instead of waiting out the idle poll.
+  useAokieEvents(
+    running,
+    AOKIE_LINK_EVENTS,
+    useCallback(() => {
+      pollStatus().catch(() => {});
+      loadBonded().catch(() => {});
+    }, [pollStatus, loadBonded]),
+  );
 
   // Baseline at window-open — also covers windows opened OUTSIDE this UI
   // (flows, the command relay), which this card still renders a countdown for.
@@ -469,6 +481,11 @@ export function AokieCard({ running, devMode }: { running: boolean; devMode: boo
       setError(null);
     }
   }, [running, refresh]);
+
+  // Event-driven refresh: the "phone: paired/connected" line updates the
+  // moment the Bluetooth link actually changes (this card otherwise only
+  // fetched once at plugin start — live report 2026-07-13).
+  useAokieEvents(running, AOKIE_LINK_EVENTS, refresh);
 
   const simulate = async () => {
     setBusy(true);
