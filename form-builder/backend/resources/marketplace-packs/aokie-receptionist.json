@@ -3419,6 +3419,105 @@
         }
       },
       {
+        "name": "Personalize Caller",
+        "slug": "personalize-caller",
+        "description": "Sync on aokie.call.caller_id (the caller's number becomes known ~1s after an instant auto-answer — usually before the greeting plays): match the number against Customers (digits-only, last-9 suffix so +61… and 04… formats agree) and push a by-name greeting plus a KNOWN-CALLER persona block via settings.set, so the AI opens with 'Hi <name>!' and never re-asks for a name or number it already has. Unknown numbers push the same base config the Configure Receptionist flow already sent (idempotent no-op). If this loses the race with the greeting, the persona context still personalizes every AI reply on the call.",
+        "nodeCapabilities": [
+          "formlogic.responses.read",
+          "connector.aokie.settings.set"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "customers",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:customers",
+                "return": "all",
+                "limit": 200
+              }
+            },
+            {
+              "id": "settings",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:receptionist-settings",
+                "return": "all",
+                "limit": 5
+              }
+            },
+            {
+              "id": "make",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var phone = String(inputs.from || '');\n  var tail = phone.replace(/[^0-9]/g, '').slice(-9);\n  var custNode = nodes.customers;\n  var custRows = custNode && custNode.responses ? custNode.responses : (Array.isArray(custNode) ? custNode : []);\n  var hit = null;\n  for (var i = 0; i < custRows.length; i++) {\n    var a = (custRows[i] && custRows[i].answers) || {};\n    var d = String(a.phone || '').replace(/[^0-9]/g, '');\n    if (tail && d && d.slice(-9) === tail) { hit = custRows[i]; break; }\n  }\n  // Base config: SAME composition as the Configure Receptionist flow.\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var j = 0; j < sRows.length; j++) {\n    var sa = (sRows[j] && sRows[j].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n  var greeting = String(cfg.greeting || '').trim();\n  if (!greeting) {\n    greeting = business\n      ? 'Thank you for calling ' + business + '! How can I help you today?'\n      : 'Thanks for calling! How can I help you today?';\n  }\n  if (!hit) return { found: false, name: '', persona: persona, greeting: greeting };\n  var ca = (hit.answers || {});\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || name;\n  var details = [];\n  if (String(ca.preferred_service || '').trim()) details.push('Usually books: ' + String(ca.preferred_service).trim());\n  if (String(ca.status || '').trim()) details.push('Customer status: ' + String(ca.status).trim());\n  var notes = String(ca.notes || '').trim().slice(0, 400);\n  if (notes) details.push('Notes: ' + notes);\n  var known = '\\n\\nKNOWN CALLER (matched by caller ID): ' + (name || 'a saved customer') + ', calling from ' + phone + '.'\n    + (details.length ? '\\n' + details.join('\\n') : '')\n    + '\\nGreet them by their first name and use this context naturally.'\n    + '\\nDo NOT ask for their name or phone number - you already have both from caller ID. Only note a DIFFERENT callback number if they offer one.'\n    + '\\nIf they say they are someone else calling from this phone, treat them as a new caller and ask for their details as usual.';\n  var g = first\n    ? (business\n        ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'\n        : 'Hi ' + first + '! How can I help you today?')\n    : greeting;\n  return { found: true, name: name, persona: persona + known, greeting: g };\n})()"
+              }
+            },
+            {
+              "id": "push",
+              "type": "connector_request",
+              "data": {
+                "connectorId": "aokie",
+                "command": "settings.set",
+                "payload": {
+                  "persona": "$nodes.make.persona",
+                  "greeting": "$nodes.make.greeting"
+                }
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "found": "$nodes.make.found",
+                  "name": "$nodes.make.name",
+                  "greeting": "$nodes.make.greeting"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "customers"
+            },
+            {
+              "source": "customers",
+              "target": "settings"
+            },
+            {
+              "source": "settings",
+              "target": "make"
+            },
+            {
+              "source": "make",
+              "target": "push"
+            },
+            {
+              "source": "push",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
         "name": "Call Summary + Follow-up",
         "slug": "call-summary-follow-up",
         "description": "Async after aokie.call.ended: summarise the transcript turns with the local LLM, write the summary onto the Calls row, and raise a Follow-up Task when the model asks for one. Raw status/duration updates are done by the app logic, not this flow.",
@@ -4035,6 +4134,22 @@
           "fallbackReply": "Thanks for calling! One moment while I pull up your details."
         },
         "sortOrder": 1
+      },
+      {
+        "flow": "personalize-caller",
+        "event": "aokie.call.caller_id",
+        "connectorId": "aokie",
+        "mode": "sync",
+        "timeoutMs": 3000,
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "from": "$event.data.from"
+        },
+        "fallbackPolicy": {
+          "onError": "log_and_continue",
+          "fallbackReply": "Thanks for calling! How can I help you today?"
+        },
+        "sortOrder": 8
       },
       {
         "flow": "call-summary-follow-up",

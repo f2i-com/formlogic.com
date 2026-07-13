@@ -555,6 +555,64 @@ const FLOW_AGENT_CONFIG = `(function () {
   };
 })()`;
 
+// Personalize the LIVE call the moment the caller's number is known
+// (aokie.call.caller_id — with instant auto-answer, caller ID lands ~1s after
+// pickup, usually BEFORE the greeting plays). Match the number against
+// Customers (same digits-only last-9 rule as the after-call context) and push
+// a by-name greeting plus a KNOWN-CALLER persona block, so the AI greets
+// "Hi Lance!" and never re-asks for a name/number it already has. A no-match
+// returns the SAME base config the Configure Receptionist flow pushed —
+// re-sending it is an idempotent no-op, never a downgrade.
+const FLOW_PERSONALIZE_CALLER = `(function () {
+  var phone = String(inputs.from || '');
+  var tail = phone.replace(/[^0-9]/g, '').slice(-9);
+  var custNode = nodes.customers;
+  var custRows = custNode && custNode.responses ? custNode.responses : (Array.isArray(custNode) ? custNode : []);
+  var hit = null;
+  for (var i = 0; i < custRows.length; i++) {
+    var a = (custRows[i] && custRows[i].answers) || {};
+    var d = String(a.phone || '').replace(/[^0-9]/g, '');
+    if (tail && d && d.slice(-9) === tail) { hit = custRows[i]; break; }
+  }
+  // Base config: SAME composition as the Configure Receptionist flow.
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var j = 0; j < sRows.length; j++) {
+    var sa = (sRows[j] && sRows[j].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
+  var business = String(cfg.business_name || '').trim();
+  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+  var greeting = String(cfg.greeting || '').trim();
+  if (!greeting) {
+    greeting = business
+      ? 'Thank you for calling ' + business + '! How can I help you today?'
+      : 'Thanks for calling! How can I help you today?';
+  }
+  if (!hit) return { found: false, name: '', persona: persona, greeting: greeting };
+  var ca = (hit.answers || {});
+  var name = String(ca.name || '').trim();
+  var first = name.split(/\\s+/)[0] || name;
+  var details = [];
+  if (String(ca.preferred_service || '').trim()) details.push('Usually books: ' + String(ca.preferred_service).trim());
+  if (String(ca.status || '').trim()) details.push('Customer status: ' + String(ca.status).trim());
+  var notes = String(ca.notes || '').trim().slice(0, 400);
+  if (notes) details.push('Notes: ' + notes);
+  var known = '\\n\\nKNOWN CALLER (matched by caller ID): ' + (name || 'a saved customer') + ', calling from ' + phone + '.'
+    + (details.length ? '\\n' + details.join('\\n') : '')
+    + '\\nGreet them by their first name and use this context naturally.'
+    + '\\nDo NOT ask for their name or phone number - you already have both from caller ID. Only note a DIFFERENT callback number if they offer one.'
+    + '\\nIf they say they are someone else calling from this phone, treat them as a new caller and ask for their details as usual.';
+  var g = first
+    ? (business
+        ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
+        : 'Hi ' + first + '! How can I help you today?')
+    : greeting;
+  return { found: true, name: name, persona: persona + known, greeting: g };
+})()`;
+
 // ── Pack data ───────────────────────────────────────────────────────────────
 
 export const aokieReceptionistPack: PackData = {
@@ -1573,6 +1631,40 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Personalize Caller',
+      slug: 'personalize-caller',
+      description:
+        "Sync on aokie.call.caller_id (the caller's number becomes known ~1s after an instant auto-answer — usually before the greeting plays): match the number against Customers (digits-only, last-9 suffix so +61… and 04… formats agree) and push a by-name greeting plus a KNOWN-CALLER persona block via settings.set, so the AI opens with 'Hi <name>!' and never re-asks for a name or number it already has. Unknown numbers push the same base config the Configure Receptionist flow already sent (idempotent no-op). If this loses the race with the greeting, the persona context still personalizes every AI reply on the call.",
+      nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.settings.set'],
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'make', type: 'logic_block', data: { expr: FLOW_PERSONALIZE_CALLER } },
+          {
+            id: 'push',
+            type: 'connector_request',
+            data: {
+              connectorId: 'aokie',
+              command: 'settings.set',
+              // persona takes effect on the NEXT caller turn; greeting applies
+              // if it lands before the greeting plays (it usually does).
+              payload: { persona: '$nodes.make.persona', greeting: '$nodes.make.greeting' },
+            },
+          },
+          { id: 'out', type: 'output', data: { value: { found: '$nodes.make.found', name: '$nodes.make.name', greeting: '$nodes.make.greeting' } } },
+        ],
+        edges: [
+          { source: 'in', target: 'customers' },
+          { source: 'customers', target: 'settings' },
+          { source: 'settings', target: 'make' },
+          { source: 'make', target: 'push' },
+          { source: 'push', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Call Summary + Follow-up',
       slug: 'call-summary-follow-up',
       description:
@@ -1844,6 +1936,24 @@ export const aokieReceptionistPack: PackData = {
         fallbackReply: 'Thanks for calling! One moment while I pull up your details.',
       },
       sortOrder: 1,
+    },
+    {
+      flow: 'personalize-caller',
+      event: 'aokie.call.caller_id',
+      connectorId: 'aokie',
+      // Sync so the personalized greeting/persona push completes before later
+      // events on this call are processed (per-call serial queues keep this
+      // AFTER the incoming-bound Configure Receptionist push). The greeting
+      // race is graceful: if the call's greeting already played, the persona
+      // still personalizes every reply.
+      mode: 'sync',
+      timeoutMs: 3000,
+      inputMap: { callId: '$event.data.callId', from: '$event.data.from' },
+      // §9.7: sync live-call bindings carry a spoken fallback. If the
+      // personalization stalls, the caller hears the generic greeting the
+      // Configure Receptionist flow already set — never silence.
+      fallbackPolicy: { onError: 'log_and_continue', fallbackReply: 'Thanks for calling! How can I help you today?' },
+      sortOrder: 8,
     },
     {
       flow: 'call-summary-follow-up',

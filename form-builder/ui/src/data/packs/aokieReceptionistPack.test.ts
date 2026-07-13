@@ -62,7 +62,7 @@ const V0_NODE_TYPES = new Set([
 const AOKIE_EVENTS = new Set([
   'aokie.dongle.detected', 'aokie.dongle.driver_required', 'aokie.dongle.ready', 'aokie.dongle.error',
   'aokie.phone.pairing_started', 'aokie.phone.paired', 'aokie.phone.disconnected',
-  'aokie.call.incoming', 'aokie.call.answered', 'aokie.call.rejected',
+  'aokie.call.incoming', 'aokie.call.answered', 'aokie.call.caller_id', 'aokie.call.rejected',
   'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.ended',
   'aokie.sms.received', 'aokie.sms.sent', 'aokie.sms.failed',
   'aokie.hardware.error',
@@ -218,6 +218,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'incoming-caller-lookup',
       'live-reply',
       'missed-call-follow-up',
+      'personalize-caller',
       'sms-auto-reply-draft',
     ]);
     for (const flow of pack.flows ?? []) {
@@ -245,7 +246,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(8);
+    expect(pack.flowBindings?.length).toBe(9);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);

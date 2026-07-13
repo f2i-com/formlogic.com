@@ -64,6 +64,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.incoming',
   'aokie.call.ringing',
   'aokie.call.answered',
+  'aokie.call.caller_id',
   'aokie.call.rejected',
   'aokie.call.audio.connected',
   'aokie.call.audio.disconnected',
@@ -136,6 +137,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Call answered',
     description: 'A ringing call was answered by Aokie or an operator.',
     payloadHints: [...CALL_ID_HINTS, '$event.data.answeredBy'],
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.caller_id',
+    group: 'aokie.calls',
+    event: 'aokie.call.caller_id',
+    label: 'Caller identified',
+    description:
+      "The caller's number became known (caller ID often lands a beat after an instant auto-answer). Fires once per call — bind here to personalize the live call, e.g. match a customer record and greet them by name.",
+    payloadHints: [...CALL_ID_HINTS, '$event.data.from'],
   },
   {
     kind: 'event',
