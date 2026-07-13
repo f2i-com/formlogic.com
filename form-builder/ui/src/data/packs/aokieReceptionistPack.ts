@@ -756,6 +756,10 @@ const FLOW_SMS_CONVO_CTX = `(function () {
     apptDate: apptA ? String(apptA.date || '') : '',
     apptTime: apptA ? String(apptA.time || '') : '',
     apptService: apptA ? String(apptA.service || 'Appointment') : '',
+    // Existing notes ride along so the plan can APPEND the interaction
+    // log line (updateResponse patch-merges whole answers - writing
+    // notes without the old content would erase the booking history).
+    apptNotes: apptA ? String(apptA.notes || '') : '',
     business: business,
     model: model,
     today: now.toDateString() + ' (' + isoLocal + ')',
@@ -808,6 +812,22 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     }
     return label;
   }
+  // Interaction log line for the appointment's notes: the customer's own
+  // words + what was done, timestamped - appended to the EXISTING notes
+  // (updates patch-merge whole answers, so the old content must ride
+  // along). Growth is bounded by the 6-exchange cap; the 8000-char guard
+  // keeps a pathological thread from ever failing the write.
+  function apptNoteWith(outcome) {
+    var nowN = new Date();
+    var hh12 = nowN.getHours() % 12 === 0 ? 12 : nowN.getHours() % 12;
+    var mm = ('0' + nowN.getMinutes()).slice(-2);
+    var stamp = nowN.toDateString() + ' ' + hh12 + ':' + mm + ' ' + (nowN.getHours() >= 12 ? 'PM' : 'AM');
+    var said = String(inputs.body || '').replace(/[^\\x20-\\x7E]/g, '').slice(0, 160).trim();
+    var line = 'SMS follow-up (' + stamp + '): customer texted "' + said + '" - ' + outcome;
+    var existing = String(c.apptNotes || '');
+    if (existing.length > 7600) existing = existing.slice(0, 7600);
+    return (existing ? existing + '\\n' : '') + line;
+  }
   var action = 'confirm';
   var dateStr = '';
   var timeStr = '';
@@ -848,10 +868,10 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   if (action === 'confirm') {
     out.hasApptUpdate = true;
     out.apptResponseId = c.apptId;
-    out.apptUpdate = { status: 'confirmed' };
+    var whenC = humanWhen(usableDate ? dateStr : String(c.apptDate || ''), validTime ? timeStr : String(c.apptTime || ''));
+    out.apptUpdate = { status: 'confirmed', notes: apptNoteWith('appointment CONFIRMED for ' + whenC + '.') };
     if (usableDate) out.apptUpdate.date = dateStr;
     if (validTime) out.apptUpdate.time = timeStr;
-    var whenC = humanWhen(usableDate ? dateStr : String(c.apptDate || ''), validTime ? timeStr : String(c.apptTime || ''));
     reply = 'Perfect - you are confirmed: ' + String(c.apptService || 'your appointment') + ' on ' + whenC + '. See you then!';
     taskUpdate.status = 'done';
     taskUpdate.sms_state = 'done';
@@ -861,7 +881,7 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     if (c.apptId) {
       out.hasApptUpdate = true;
       out.apptResponseId = c.apptId;
-      out.apptUpdate = { date: dateStr, status: 'requested' };
+      out.apptUpdate = { date: dateStr, status: 'requested', notes: apptNoteWith('moved to ' + whenR + ', awaiting their YES.') };
       if (validTime) out.apptUpdate.time = timeStr;
     } else {
       out.hasApptCreate = true;
@@ -872,7 +892,7 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
         source: 'sms',
         phone: phone,
         call_id: String(c.taskCallId || ''),
-        notes: 'Scheduled over SMS follow-up (task ' + String(taskId || '') + ').'
+        notes: 'Scheduled over SMS follow-up (task ' + String(taskId || '') + ').\\n' + apptNoteWith('booked for ' + whenR + ', awaiting their YES.')
       };
       if (validTime) newAppt.time = timeStr;
       if (String(c.taskCustomer || '')) newAppt.customer_link = String(c.taskCustomer);
@@ -883,18 +903,31 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   } else if (action === 'cancel') {
     out.hasApptUpdate = true;
     out.apptResponseId = c.apptId;
-    out.apptUpdate = { status: 'cancelled' };
+    out.apptUpdate = { status: 'cancelled', notes: apptNoteWith('appointment CANCELLED at their request.') };
     reply = 'No problem - that booking request is cancelled. Text us any time if you would like to rebook.';
     taskUpdate.status = 'done';
     taskUpdate.sms_state = 'done';
     out.summaryLine = 'Booking cancelled by SMS - task closed.';
   } else if (action === 'ask') {
     reply = reply || 'Sorry - what day and time suit you best?';
+    // Log the clarifying exchange on the appointment too (notes-only
+    // update - no status/date change), so the record tells the whole
+    // conversation story, not just its final state.
+    if (c.apptId) {
+      out.hasApptUpdate = true;
+      out.apptResponseId = c.apptId;
+      out.apptUpdate = { notes: apptNoteWith('asked them: "' + reply.slice(0, 120) + '"') };
+    }
     out.summaryLine = 'Asked the customer a clarifying question by SMS.';
   } else {
     reply = 'Thanks - someone from the team will be in touch shortly to sort this out.';
     taskUpdate.sms_state = 'handoff';
     taskUpdate.priority = 'high';
+    if (c.apptId) {
+      out.hasApptUpdate = true;
+      out.apptResponseId = c.apptId;
+      out.apptUpdate = { notes: apptNoteWith('handed to a human to sort out.') };
+    }
     out.summaryLine = 'SMS conversation handed to a human.';
   }
   // Plain ASCII only (GSM-charset envelope), capped well inside the server's limits.
@@ -916,6 +949,31 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     approval_status: 'not_required'
   };
   return out;
+})()`;
+
+// Delivery-status annotation (feature 2026-07-13): the phone acks every
+// outbound SMS asynchronously (aokie.sms.sent when the PUT is accepted,
+// aokie.sms.failed when the radio abandons a send). The ack payload's
+// messageId is minted by the plugin and never matches our Messages rows,
+// so the newest QUEUED outbound row for the recipient is the correlation
+// — sends to one number are serialized through the per-task conversation
+// loop, so newest-queued-first is reliable in practice.
+const FLOW_SMS_DELIVERY = `(function () {
+  var outcome = String(inputs.outcome || 'sent');
+  if (outcome !== 'sent' && outcome !== 'failed') outcome = 'sent';
+  var rows = (nodes.messages && nodes.messages.responses) || [];
+  for (var i = 0; i < rows.length; i++) {
+    var a = (rows[i] && rows[i].answers) || {};
+    if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued') {
+      return {
+        hasUpdate: true,
+        responseId: rows[i].id,
+        update: { status: outcome },
+        summaryLine: 'Outbound SMS to ' + String(a.phone || '') + ' marked ' + outcome + '.'
+      };
+    }
+  }
+  return { hasUpdate: false, summaryLine: 'No queued outbound SMS row matched the ' + outcome + ' ack.' };
 })()`;
 
 // ── Pack data ───────────────────────────────────────────────────────────────
@@ -2207,6 +2265,45 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'SMS Delivery Status',
+      slug: 'sms-delivery-status',
+      description:
+        "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text): find the newest QUEUED outbound Messages row for the recipient and flip its status to sent or failed — so the Messages screen tells the truth about delivery instead of showing 'Queued' forever. The ack's messageId is plugin-minted and never matches our rows, so recipient + newest-queued is the correlation.",
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: { inputs: [{ name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'sent' }, { name: 'reason', example: '' }] },
+          },
+          {
+            id: 'messages',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:sms-messages', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.to' }] },
+          },
+          { id: 'mark', type: 'logic_block', data: { expr: FLOW_SMS_DELIVERY } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                hasUpdate: '$nodes.mark.hasUpdate',
+                responseId: '$nodes.mark.responseId',
+                update: '$nodes.mark.update',
+                summaryLine: '$nodes.mark.summaryLine',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'messages' },
+          { source: 'messages', target: 'mark' },
+          { source: 'mark', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Live Reply',
       slug: 'live-reply',
       description:
@@ -2513,6 +2610,35 @@ export const aokieReceptionistPack: PackData = {
       retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 9,
+    },
+    {
+      flow: 'sms-delivery-status',
+      event: 'aokie.sms.sent',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      // The literal 'sent' rides the inputMap so ONE flow serves both acks.
+      inputMap: { to: '$event.data.to', outcome: 'sent' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 10,
+    },
+    {
+      flow: 'sms-delivery-status',
+      event: 'aokie.sms.failed',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      inputMap: { to: '$event.data.to', outcome: 'failed', reason: '$event.data.reason' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
+        // A failed send is a customer who was promised a text — shout about it.
+        { type: 'formlogic.toast', message: 'SMS to {{event.data.to}} FAILED: {{event.data.reason}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 11,
     },
     {
       flow: 'missed-call-follow-up',

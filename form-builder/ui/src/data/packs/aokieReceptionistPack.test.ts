@@ -220,6 +220,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'missed-call-follow-up',
       'personalize-caller',
       'sms-auto-reply-draft',
+      'sms-delivery-status',
       'sms-followup-conversation',
     ]);
     for (const flow of pack.flows ?? []) {
@@ -247,7 +248,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(10);
+    expect(pack.flowBindings?.length).toBe(12);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -490,10 +491,12 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
     const ctxVal = {
       verdict: 'llm', hasTask: true, taskId: 'task-1', taskCallId: 'call_1', taskCustomer: '',
       exchanges: 1, apptId: 'appt-1', apptDate: futureIso, apptTime: '14:00', apptService: 'Haircut',
-      business: 'Pirate Cuts', model: '', today: 'today', llmContext: '', phone: '+61400000000',
+      apptNotes: 'Booked automatically from call call_1', business: 'Pirate Cuts', model: '',
+      today: 'today', llmContext: '', phone: '+61400000000',
     };
-    const run = (ctxOver: Record<string, unknown>, decideContent?: unknown) =>
+    const run = (ctxOver: Record<string, unknown>, decideContent?: unknown, body = 'YES') =>
       evalExpr(planExpr, {
+        inputs: { body },
         nodes: {
           ctx: { ...ctxVal, ...ctxOver },
           ...(decideContent === undefined ? {} : { decide: { content: typeof decideContent === 'string' ? decideContent : JSON.stringify(decideContent) } }),
@@ -504,7 +507,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       const r = run({ verdict: 'yes' });
       expect(r.hasApptUpdate).toBe(true);
       expect(r.apptResponseId).toBe('appt-1');
-      expect(r.apptUpdate).toEqual({ status: 'confirmed' });
+      expect(r.apptUpdate.status).toBe('confirmed');
       expect(r.hasTaskUpdate).toBe(true);
       expect(r.taskUpdate.status).toBe('done');
       expect(r.taskUpdate.sms_state).toBe('done');
@@ -517,10 +520,25 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.outboundMessage.is_ai_reply).toEqual(['yes']);
     });
 
+    it('every appointment write APPENDS an interaction line to the existing notes', () => {
+      const r = run({ verdict: 'yes' });
+      // Old content preserved (updates patch-merge whole answers) …
+      expect(r.apptUpdate.notes).toContain('Booked automatically from call call_1');
+      // … and the new line quotes the customer + records the outcome.
+      expect(r.apptUpdate.notes).toContain('customer texted "YES"');
+      expect(r.apptUpdate.notes).toContain('CONFIRMED');
+      // Appended, not replaced: original first, log line after.
+      expect(r.apptUpdate.notes.indexOf('Booked automatically')).toBeLessThan(r.apptUpdate.notes.indexOf('customer texted'));
+    });
+
     it('LLM reschedule with an existing appointment: date/time move, still requested, reply asks for YES', () => {
-      const r = run({}, { action: 'reschedule', date: futureIso, time: '09:30', reply: 'model prose ignored' });
+      const r = run({}, { action: 'reschedule', date: futureIso, time: '09:30', reply: 'model prose ignored' }, 'can we do later that week?');
       expect(r.hasApptUpdate).toBe(true);
-      expect(r.apptUpdate).toEqual({ date: futureIso, status: 'requested', time: '09:30' });
+      expect(r.apptUpdate.date).toBe(futureIso);
+      expect(r.apptUpdate.status).toBe('requested');
+      expect(r.apptUpdate.time).toBe('09:30');
+      expect(r.apptUpdate.notes).toContain('customer texted "can we do later that week?"');
+      expect(r.apptUpdate.notes).toContain('moved to');
       expect(r.taskUpdate.status).toBeUndefined(); // stays open
       expect(r.reply.body).toContain('Reply YES to confirm');
       expect(r.reply.body).not.toContain('model prose');
@@ -541,28 +559,34 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
     });
 
     it('cancel: appointment cancelled, task closed', () => {
-      const r = run({}, { action: 'cancel', reply: '' });
-      expect(r.apptUpdate).toEqual({ status: 'cancelled' });
+      const r = run({}, { action: 'cancel', reply: '' }, 'actually cancel it please');
+      expect(r.apptUpdate.status).toBe('cancelled');
+      expect(r.apptUpdate.notes).toContain('CANCELLED');
+      expect(r.apptUpdate.notes).toContain('customer texted "actually cancel it please"');
       expect(r.taskUpdate.status).toBe('done');
       expect(r.taskUpdate.sms_state).toBe('done');
       expect(r.reply.body).toContain('cancelled');
     });
 
-    it('a past/garbage reschedule date degrades to a clarifying question — never a write', () => {
+    it('a past/garbage reschedule date degrades to a clarifying question — the booking never moves', () => {
       const r = run({}, { action: 'reschedule', date: '2020-01-01', time: '09:00', reply: '' });
-      expect(r.hasApptUpdate).toBe(false);
+      // The only appointment write is the notes-only interaction log —
+      // date/time/status are untouched by a bad model date.
       expect(r.hasApptCreate).toBe(false);
+      expect(r.hasApptUpdate).toBe(true);
+      expect(Object.keys(r.apptUpdate)).toEqual(['notes']);
       expect(r.hasReply).toBe(true);
       expect(r.taskUpdate.sms_exchanges).toBe(2);
     });
 
-    it('unparseable model output → human handoff with an honest reply', () => {
+    it('unparseable model output → human handoff with an honest reply (notes-only appointment log)', () => {
       const r = run({}, 'total garbage, not json');
       expect(r.taskUpdate.sms_state).toBe('handoff');
       expect(r.taskUpdate.priority).toBe('high');
       expect(r.hasReply).toBe(true);
       expect(r.reply.body).toContain('team');
-      expect(r.hasApptUpdate).toBe(false);
+      expect(Object.keys(r.apptUpdate)).toEqual(['notes']);
+      expect(r.apptUpdate.notes).toContain('handed to a human');
     });
 
     it('STOP verdict: no reply is ever sent; task flagged opted-out for a human', () => {
@@ -582,6 +606,58 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.hasReply).toBe(false);
       expect(r.hasTaskUpdate).toBe(false);
       expect(r.hasApptUpdate).toBe(false);
+    });
+  });
+
+  describe('sms-delivery-status: queued → sent/failed on the phone\'s ack', () => {
+    const markExpr = nodeExpr('sms-delivery-status', 'mark');
+    const rows = (list: Array<Record<string, unknown>>) => ({
+      nodes: { messages: { responses: list.map((answers, i) => ({ id: `msg-${i}`, answers })) } },
+    });
+
+    it('flips the newest QUEUED outbound row to sent', () => {
+      const r = evalExpr(markExpr, {
+        inputs: { to: '+61400000000', outcome: 'sent' },
+        // Newest-first, as the list node returns them.
+        nodes: rows([
+          { direction: 'inbound', status: 'received', phone: '+61400000000' },
+          { direction: 'outbound', status: 'queued', phone: '+61400000000' },
+          { direction: 'outbound', status: 'sent', phone: '+61400000000' },
+        ]).nodes,
+      });
+      expect(r.hasUpdate).toBe(true);
+      expect(r.responseId).toBe('msg-1');
+      expect(r.update).toEqual({ status: 'sent' });
+    });
+
+    it('marks failed on the failure ack — inbound and already-sent rows are never touched', () => {
+      const r = evalExpr(markExpr, {
+        inputs: { to: '+61400000000', outcome: 'failed' },
+        nodes: rows([
+          { direction: 'inbound', status: 'received' },
+          { direction: 'outbound', status: 'queued' },
+        ]).nodes,
+      });
+      expect(r.update).toEqual({ status: 'failed' });
+    });
+
+    it('no queued outbound row → no write (a stray ack never corrupts history)', () => {
+      const r = evalExpr(markExpr, {
+        inputs: { to: '+61400000000', outcome: 'sent' },
+        nodes: rows([
+          { direction: 'outbound', status: 'sent' },
+          { direction: 'inbound', status: 'received' },
+        ]).nodes,
+      });
+      expect(r.hasUpdate).toBe(false);
+    });
+
+    it('an unknown outcome coerces to sent — never an invalid dropdown value', () => {
+      const r = evalExpr(markExpr, {
+        inputs: { to: '+61400000000', outcome: 'exploded' },
+        nodes: rows([{ direction: 'outbound', status: 'queued' }]).nodes,
+      });
+      expect(r.update).toEqual({ status: 'sent' });
     });
   });
 });
