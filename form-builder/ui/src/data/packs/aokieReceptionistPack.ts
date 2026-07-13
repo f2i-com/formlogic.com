@@ -346,69 +346,132 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   if (['appointment', 'order', 'message', 'other'].indexOf(intent) === -1) intent = 'other';
   var name = String(data.caller_name || '').trim().slice(0, 200);
   var service = String(data.service || '').trim().slice(0, 200);
-  var dateStr = String(data.date || '').trim().slice(0, 10);
-  var timeStr = String(data.time || '').trim().slice(0, 5);
   var summary = (String(data.summary || '').trim() || 'Call ended - no summary available.').slice(0, 800);
   var callback = data.callback_requested === true;
-  var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
-  // Time must be a REAL clock time, not just HH:MM-shaped (audit sweep): the
-  // date got a real-calendar guard but the sibling time field didn't, so
-  // '29:70' would auto-book. Bound hours <= 23 and minutes <= 59; an
-  // out-of-range time is simply dropped (the appointment books date-only).
-  var validTime = /^\\d{2}:\\d{2}$/.test(timeStr)
-    && Number(timeStr.slice(0, 2)) <= 23 && Number(timeStr.slice(3, 5)) <= 59;
+  var nowP = new Date();
+  var todayIso = nowP.getFullYear() + '-' + ('0' + (nowP.getMonth() + 1)).slice(-2) + '-' + ('0' + nowP.getDate()).slice(-2);
+  // Time must be a REAL clock time, not just HH:MM-shaped (audit sweep):
+  // bound hours <= 23 and minutes <= 59; an out-of-range time is simply
+  // dropped (the appointment books date-only).
+  function timeOk(t) {
+    return /^\\d{2}:\\d{2}$/.test(t) && Number(t.slice(0, 2)) <= 23 && Number(t.slice(3, 5)) <= 59;
+  }
   // PACK-002: an impossible or past date must never auto-book. Rebuild the
   // date from its parts (2026-02-31 rolls over and stops matching = not a
   // real calendar date) and compare LOCAL ISO strings for the past check
   // (same local-date recipe as the ctx node - toISOString would be UTC).
-  var nowP = new Date();
-  var todayIso = nowP.getFullYear() + '-' + ('0' + (nowP.getMonth() + 1)).slice(-2) + '-' + ('0' + nowP.getDate()).slice(-2);
-  var realDate = false;
-  if (validDate) {
-    var dp = dateStr.split('-');
+  function dateProblemOf(d) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d)) return 'the date was unclear on the call';
+    var dp = d.split('-');
     var dObj = new Date(Number(dp[0]), Number(dp[1]) - 1, Number(dp[2]));
-    realDate = dObj.getFullYear() === Number(dp[0]) && (dObj.getMonth() + 1) === Number(dp[1]) && dObj.getDate() === Number(dp[2]);
+    var real = dObj.getFullYear() === Number(dp[0]) && (dObj.getMonth() + 1) === Number(dp[1]) && dObj.getDate() === Number(dp[2]);
+    if (!real) return 'the extracted date (' + d + ') is not a real calendar date';
+    if (d < todayIso) return 'the extracted date (' + d + ') is in the past';
+    return '';
   }
-  var pastDate = validDate && realDate && dateStr < todayIso;
-  var dateProblem = !validDate ? 'the date was unclear on the call'
-    : !realDate ? 'the extracted date (' + dateStr + ') is not a real calendar date'
-    : pastDate ? 'the extracted date (' + dateStr + ') is in the past'
-    : '';
+  // MULTI-BOOKING (live report 2026-07-13): one call can agree on SEVERAL
+  // appointments - the extractor returns an appointments ARRAY (each entry
+  // validated independently, capped at 3); the legacy singular date/time
+  // fields remain the fallback for older model output shapes.
+  var rawList = Array.isArray(data.appointments) ? data.appointments : [];
+  if (!rawList.length && (data.date || data.time)) {
+    rawList = [{ service: data.service, date: data.date, time: data.time }];
+  }
+  var entries = [];
+  var dateProblem = rawList.length ? '' : 'the date was unclear on the call';
+  for (var e0 = 0; e0 < rawList.length && entries.length < 3; e0++) {
+    var it = rawList[e0] || {};
+    var eService = String(it.service || '').trim().slice(0, 200);
+    var eDate = String(it.date || '').trim().slice(0, 10);
+    var eTime = String(it.time || '').trim().slice(0, 5);
+    var dv = dateProblemOf(eDate);
+    if (dv) { if (!dateProblem) dateProblem = dv; continue; }
+    if (!timeOk(eTime)) eTime = '';
+    var dup = false;
+    for (var d0 = 0; d0 < entries.length; d0++) {
+      if (entries[d0].date === eDate && entries[d0].time === eTime) dup = true;
+    }
+    if (!dup) entries.push({ service: eService, date: eDate, time: eTime });
+  }
+  entries.sort(function (x, y) { var xa = x.date + ' ' + x.time, yb = y.date + ' ' + y.time; return xa < yb ? -1 : xa > yb ? 1 : 0; });
   var ctx = nodes.ctx || {};
   var phone = String(ctx.phone || '');
   var knownId = ctx.customerId || null;
   var caller = name || String(ctx.customerName || '') || (phone ? 'Caller ' + phone : 'Unknown caller');
   var callId = String(inputs.callId || '');
   var wantsBooking = intent === 'appointment';
+  // Existing appointments for this phone (appts node, phone_eq): (a) a
+  // caller RE-CONFIRMING a booking already on record must not duplicate it;
+  // (b) still-pending ('requested') bookings from earlier calls FOLD into
+  // this loop's confirmation text, so the caller gets ONE thread covering
+  // everything instead of parallel competing loops.
+  var exRows = ((nodes.appts && nodes.appts.responses) || []);
+  var existingUpcoming = [];
+  for (var x0 = 0; x0 < exRows.length; x0++) {
+    var xa = (exRows[x0] && exRows[x0].answers) || {};
+    var xst = String(xa.status || '');
+    var xd = String(xa.date || '');
+    if ((xst === 'requested' || xst === 'confirmed') && /^\\d{4}-\\d{2}-\\d{2}$/.test(xd) && xd >= todayIso) {
+      existingUpcoming.push({ date: xd, time: String(xa.time || ''), service: String(xa.service || 'Appointment'), status: xst });
+    }
+  }
+  var created = [];
+  var skippedExisting = 0;
+  for (var c0 = 0; c0 < entries.length; c0++) {
+    var en = entries[c0];
+    var dupEx = false;
+    for (var c1 = 0; c1 < existingUpcoming.length; c1++) {
+      var ex0 = existingUpcoming[c1];
+      if (ex0.date === en.date && (ex0.time === en.time || ex0.time === '' || en.time === '')) dupEx = true;
+    }
+    if (dupEx) { skippedExisting++; } else { created.push(en); }
+  }
   // A named service is NOT required - 'an appointment tomorrow at 10' books
   // as service 'Appointment' (verified live: extractor gives service null).
-  var hasAppointment = wantsBooking && dateProblem === '';
+  var hasAppointment = wantsBooking && created.length > 0;
   var hasOrder = intent === 'order';
-  var appointment = {
-    service: service || 'Appointment',
-    date: dateStr,
-    status: 'requested',
-    source: 'call',
-    notes: 'Booked automatically from call ' + callId + '\\nCaller: ' + caller + (phone ? ' (' + phone + ')' : '') + '\\nSummary: ' + summary
-  };
-  if (validTime) appointment.time = timeStr;
-  if (knownId) appointment.customer_link = knownId;
+  var appointments = [];
+  for (var a0 = 0; a0 < created.length; a0++) {
+    var ap = {
+      service: created[a0].service || service || 'Appointment',
+      date: created[a0].date,
+      status: 'requested',
+      source: 'call',
+      notes: 'Booked automatically from call ' + callId + '\\nCaller: ' + caller + (phone ? ' (' + phone + ')' : '') + '\\nSummary: ' + summary
+    };
+    if (created[a0].time) ap.time = created[a0].time;
+    if (knownId) ap.customer_link = knownId;
+    appointments.push(ap);
+  }
+  // Back-compat locals for the single-booking composition below.
+  var dateStr = created.length ? created[0].date : '';
+  var timeStr = created.length ? created[0].time : '';
+  var validTime = timeStr !== '';
+  var appointment = appointments[0] || {};
   // Only auto-create a Customer with a PHONE-FORMAT number (audit sweep): a
   // withheld/sentinel caller id ('unknown', 'Private') would otherwise be
   // written to the required phone-format field and silently reject the whole
   // Customers row on the async binding - same guard LOGIC_CALL_INCOMING uses.
   var custPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone) ? phone : '';
-  // SMS-loop correlation handles: the conversation flow finds this appointment
-  // by the texter's number (phone_eq) and ties it to its task via call_id.
-  appointment.phone = custPhone;
-  appointment.call_id = callId;
+  // SMS-loop correlation handles: the conversation flow finds these appointments
+  // by the texter's number (phone_eq) and ties them to its task via call_id.
+  for (var p0 = 0; p0 < appointments.length; p0++) {
+    appointments[p0].phone = custPhone;
+    appointments[p0].call_id = callId;
+  }
   var hasCustomerCreate = !knownId && !!name && !!custPhone && ctx.hasTranscript === true;
   // Audit AK-009/C-16: the receptionist tells callers 'someone will confirm
   // with you' - so EVERY booking intent leaves a human a confirmation task,
   // including the ones that DID create an appointment (status 'requested').
   var needTask = callback || intent === 'message' || wantsBooking;
+  var createdLabels = [];
+  for (var l0 = 0; l0 < created.length; l0++) {
+    createdLabels.push((created[l0].service || service || 'Appointment') + ' on ' + created[l0].date + (created[l0].time ? ' at ' + created[l0].time : ''));
+  }
   var taskSummary = hasAppointment
-    ? 'Confirm appointment with ' + caller + (phone ? ' (' + phone + ')' : '') + ' - ' + (service || 'Appointment') + ' on ' + dateStr + (validTime ? ' at ' + timeStr : '') + ' (requested on the call, NOT yet confirmed to the caller)'
+    ? 'Confirm appointment' + (created.length > 1 ? 's' : '') + ' with ' + caller + (phone ? ' (' + phone + ')' : '') + ' - ' + createdLabels.join(' and ') + ' (requested on the call, NOT yet confirmed to the caller)'
+    : wantsBooking && skippedExisting > 0
+    ? 'Confirm booking with ' + caller + (phone ? ' (' + phone + ')' : '') + ' - the caller re-confirmed existing booking(s) already on record (' + summary + ')'
     : wantsBooking && !hasAppointment
     ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - ' + (dateProblem || 'the date was unclear on the call') + ' (' + summary + ')'
     : intent === 'message'
@@ -437,11 +500,41 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   // flow then drives the reply loop (confirm / reschedule / cancel) and closes the
   // task. sms_state 'active' is the switch that flow — and the draft flow's
   // deference gate — looks for; non-booking tasks stay human-only.
-  var wantsSms = wantsBooking && custPhone !== '';
+  var pendingRequested = 0;
+  for (var pr = 0; pr < existingUpcoming.length; pr++) {
+    if (existingUpcoming[pr].status === 'requested') pendingRequested++;
+  }
+  // No SMS when the call only RE-confirmed bookings that are already
+  // confirmed on record - there is nothing left to ask the caller.
+  var wantsSms = wantsBooking && custPhone !== ''
+    && !(created.length === 0 && skippedExisting > 0 && pendingRequested === 0);
   var task = { summary: taskSummary.slice(0, 500), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium', phone: custPhone, call_id: callId };
   if (knownId) task.customer_link = knownId;
   if (callResponseId) task.call_link = callResponseId;
   if (wantsSms) { task.sms_state = 'active'; task.sms_exchanges = 1; }
+  // ONE SMS loop per phone (live report 2026-07-13): a second call while an
+  // earlier confirmation loop was still active used to leave TWO competing
+  // active tasks for the same number - a YES was ambiguous. The new loop
+  // ABSORBS the old one: the prior active task closes as superseded (its
+  // pending appointments fold into this kickoff's listing below), so the
+  // customer always has exactly one confirmation thread.
+  var tRows = ((nodes.tasks && nodes.tasks.responses) || []);
+  var prior = null;
+  for (var pt = 0; pt < tRows.length; pt++) {
+    var pa = (tRows[pt] && tRows[pt].answers) || {};
+    var pst = String(pa.status || '');
+    if ((pst === 'open' || pst === 'in_progress') && String(pa.sms_state || '') === 'active') { prior = tRows[pt]; break; }
+  }
+  var hasPriorTaskClose = wantsSms && !!prior;
+  var priorTaskUpdate = null;
+  if (hasPriorTaskClose) {
+    var priorSummary = String(((prior.answers || {}).summary) || '').slice(0, 420);
+    priorTaskUpdate = {
+      status: 'done',
+      sms_state: 'done',
+      summary: priorSummary + ' [superseded by the follow-up from call ' + callId + ']'
+    };
+  }
   // Business name for the kickoff text (same active-first read as the other flows;
   // tolerant of both list-node shapes).
   var sNode = nodes.settings;
@@ -467,14 +560,35 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   }
   var first = (name || String(ctx.customerName || '')).split(/\\s+/)[0] || '';
   var intro = 'Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the team') + ' - following up on your call.';
-  var kickBody = hasAppointment
-    ? intro + ' We have your booking request: ' + (service || 'an appointment') + ' on ' + humanWhen(dateStr, validTime ? timeStr : '') + '. Reply YES to confirm, or text a better day and time. Reply STOP to opt out.'
+  // The kickoff lists EVERY booking this loop now covers: the ones created
+  // from this call PLUS any still-unconfirmed ('requested') bookings already
+  // on record for this number - one thread, one YES, everything confirmed.
+  var loopBookings = [];
+  for (var lb = 0; lb < created.length; lb++) loopBookings.push({ service: created[lb].service || service || 'an appointment', date: created[lb].date, time: created[lb].time });
+  for (var le = 0; le < existingUpcoming.length; le++) {
+    var exl = existingUpcoming[le];
+    if (exl.status !== 'requested') continue;
+    var dupL = false;
+    for (var lc = 0; lc < loopBookings.length; lc++) {
+      if (loopBookings[lc].date === exl.date && (loopBookings[lc].time === exl.time || loopBookings[lc].time === '' || exl.time === '')) dupL = true;
+    }
+    if (!dupL) loopBookings.push({ service: exl.service || 'an appointment', date: exl.date, time: exl.time });
+  }
+  loopBookings.sort(function (x, y) { var xa = x.date + ' ' + x.time, yb = y.date + ' ' + y.time; return xa < yb ? -1 : xa > yb ? 1 : 0; });
+  if (loopBookings.length > 4) loopBookings = loopBookings.slice(0, 4);
+  var bookingLabels = [];
+  for (var bl = 0; bl < loopBookings.length; bl++) {
+    bookingLabels.push(loopBookings[bl].service + ' on ' + humanWhen(loopBookings[bl].date, loopBookings[bl].time));
+  }
+  var confirmWord = loopBookings.length === 2 ? ' both' : loopBookings.length > 2 ? ' them all' : '';
+  var kickBody = bookingLabels.length
+    ? intro + ' We have your booking request' + (bookingLabels.length > 1 ? 's' : '') + ': ' + bookingLabels.join(' and ') + '. Reply YES to confirm' + confirmWord + ', or text a better day and time. Reply STOP to opt out.'
     : intro + ' We could not pin down a day and time' + (service ? ' for your ' + service : '') + '. What suits you best? Text back a day and time and we will pencil you in. Reply STOP to opt out.';
   // Plain ASCII only: keeps the SMS in the single-charset GSM envelope and clear
   // of bMessage encoding surprises. 440 chars ≈ 3 segments.
   kickBody = kickBody.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
   return {
-    summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (wantsSms ? 'Confirmation SMS sent. ' : '') + summary,
+    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS sent. ' : '') + summary,
     hasCall: !!callResponseId,
     callResponseId: callResponseId,
     callUpdate: { intent: displayIntent, sentiment: sentiment, follow_up_required: needTask ? ['yes'] : [] },
@@ -488,10 +602,17 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     },
     hasAppointment: hasAppointment,
     appointment: appointment,
+    hasAppointment2: appointments.length > 1,
+    appointment2: appointments[1] || {},
+    hasAppointment3: appointments.length > 2,
+    appointment3: appointments[2] || {},
     hasOrder: hasOrder,
     order: order,
     hasTask: needTask,
     task: task,
+    hasPriorTaskClose: hasPriorTaskClose,
+    priorTaskId: prior ? prior.id : null,
+    priorTaskUpdate: priorTaskUpdate,
     hasKickoffSms: wantsSms,
     kickoffSms: { to: custPhone, body: kickBody },
     kickoffMessage: {
@@ -635,7 +756,46 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
       ? 'Thank you for calling ' + business + '! How can I help you today?'
       : 'Thanks for calling! How can I help you today?';
   }
-  if (!hit) return { found: false, name: '', persona: persona, greeting: greeting };
+  // BOOKINGS ON RECORD (live report 2026-07-13): the agent used to answer
+  // calendar questions from thin air - a caller asking 'is my appointment
+  // Thursday at 10?' was told about an invented 'Sunday July 12th'. Ground
+  // the model in the caller's ACTUAL upcoming appointments (phone_eq node,
+  // DB-pushed) so it answers from records and never confabulates a diary.
+  var nowD = new Date();
+  var todayIso = nowD.getFullYear() + '-' + ('0' + (nowD.getMonth() + 1)).slice(-2) + '-' + ('0' + nowD.getDate()).slice(-2);
+  var aRows = (nodes.appointments && nodes.appointments.responses) || [];
+  var upcoming = [];
+  for (var u = 0; u < aRows.length; u++) {
+    var ua = (aRows[u] && aRows[u].answers) || {};
+    var ust = String(ua.status || '');
+    var ud = String(ua.date || '');
+    if ((ust === 'requested' || ust === 'confirmed') && /^\\d{4}-\\d{2}-\\d{2}$/.test(ud) && ud >= todayIso) {
+      upcoming.push({ date: ud, time: String(ua.time || ''), service: String(ua.service || 'Appointment'), status: ust });
+    }
+  }
+  upcoming.sort(function (x, y) { var a = x.date + ' ' + x.time, b = y.date + ' ' + y.time; return a < b ? -1 : a > b ? 1 : 0; });
+  if (upcoming.length > 5) upcoming = upcoming.slice(0, 5);
+  function humanWhenP(dStr, tStr) {
+    var hp = dStr.split('-');
+    var label = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2])).toDateString();
+    if (/^\\d{2}:\\d{2}$/.test(tStr)) {
+      var hh = Number(tStr.slice(0, 2));
+      var h12 = hh % 12 === 0 ? 12 : hh % 12;
+      label += ' at ' + h12 + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (hh >= 12 ? 'PM' : 'AM');
+    }
+    return label;
+  }
+  var calBlock = '';
+  if (upcoming.length) {
+    var calLines = [];
+    for (var c = 0; c < upcoming.length; c++) {
+      calLines.push('- ' + humanWhenP(upcoming[c].date, upcoming[c].time) + ': ' + upcoming[c].service + ' (' + upcoming[c].status + ')');
+    }
+    calBlock = '\\n\\nBOOKINGS ON RECORD for this caller (today is ' + todayIso + '):\\n' + calLines.join('\\n')
+      + '\\nAnswer questions about their bookings ONLY from this list - never invent or guess dates. requested = awaiting confirmation, confirmed = locked in.'
+      + '\\nIf they want to change or cancel one, or book another, note the details clearly; the booking is updated after the call and confirmed by text.';
+  }
+  if (!hit) return { found: false, name: '', persona: persona + calBlock, greeting: greeting };
   var ca = (hit.answers || {});
   var name = String(ca.name || '').trim();
   var first = name.split(/\\s+/)[0] || name;
@@ -661,7 +821,7 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
             ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
             : 'Hi ' + first + '! How can I help you today?'))
     : greeting;
-  return { found: true, name: name, persona: persona + known, greeting: g };
+  return { found: true, name: name, persona: persona + known + calBlock, greeting: g };
 })()`;
 
 // SMS follow-up conversation context (feature 2026-07-13): an inbound text is
@@ -698,21 +858,46 @@ const FLOW_SMS_CONVO_CTX = `(function () {
   var ta2 = task.answers || {};
   var callId = String(ta2.call_id || '');
   var exchanges = Number(ta2.sms_exchanges || 0);
-  // The appointment this task is about: same call first, else the newest live one.
+  // The appointments this LOOP covers (multi-booking, 2026-07-13; cap 3): the
+  // task's own call first, then any other still-pending ('requested')
+  // upcoming booking for this number - the kickoff listed them together, so
+  // a YES must confirm them ALL, and a change must say WHICH one.
   var aRows = (nodes.appointments && nodes.appointments.responses) || [];
-  var appt = null;
+  var nowT = new Date();
+  var todayIso0 = nowT.getFullYear() + '-' + ('0' + (nowT.getMonth() + 1)).slice(-2) + '-' + ('0' + nowT.getDate()).slice(-2);
+  var loopAppts = [];
+  function pushAppt(row) {
+    if (!row || loopAppts.length >= 3) return;
+    for (var q = 0; q < loopAppts.length; q++) { if (loopAppts[q].id === row.id) return; }
+    var ax = (row.answers || {});
+    loopAppts.push({
+      id: row.id,
+      date: String(ax.date || ''),
+      time: String(ax.time || ''),
+      service: String(ax.service || 'Appointment'),
+      status: String(ax.status || 'requested'),
+      notes: String(ax.notes || '')
+    });
+  }
   for (var a = 0; a < aRows.length; a++) {
     var aa = (aRows[a] && aRows[a].answers) || {};
-    if (callId && String(aa.call_id || '') === callId) { appt = aRows[a]; break; }
+    if (callId && String(aa.call_id || '') === callId && String(aa.status || '') !== 'cancelled') pushAppt(aRows[a]);
   }
-  if (!appt) {
+  for (var a1 = 0; a1 < aRows.length; a1++) {
+    var ap1 = (aRows[a1] && aRows[a1].answers) || {};
+    var d1 = String(ap1.date || '');
+    if (String(ap1.status || '') === 'requested' && /^\\d{4}-\\d{2}-\\d{2}$/.test(d1) && d1 >= todayIso0) pushAppt(aRows[a1]);
+  }
+  if (!loopAppts.length) {
     for (var a2 = 0; a2 < aRows.length; a2++) {
       var ab = (aRows[a2] && aRows[a2].answers) || {};
       var stt = String(ab.status || '');
-      if (stt === 'requested' || stt === 'confirmed') { appt = aRows[a2]; break; }
+      if (stt === 'requested' || stt === 'confirmed') { pushAppt(aRows[a2]); break; }
     }
   }
-  var apptA = appt ? (appt.answers || {}) : null;
+  loopAppts.sort(function (x, y) { var xa = x.date + ' ' + x.time, yb = y.date + ' ' + y.time; return xa < yb ? -1 : xa > yb ? 1 : 0; });
+  var appt = loopAppts.length ? loopAppts[0] : null;
+  var apptA = appt;
   // Deterministic verdicts — STOP always wins, even past the cap.
   var lower = body.toLowerCase().replace(/[\\s.!,]+$/, '');
   var stop = lower === 'stop' || lower === 'unsubscribe' || lower === 'opt out' || lower === 'optout';
@@ -738,10 +923,15 @@ const FLOW_SMS_CONVO_CTX = `(function () {
   }
   var now = new Date();
   var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+  var apptLines = [];
+  for (var al = 0; al < loopAppts.length; al++) {
+    var la = loopAppts[al];
+    apptLines.push((al + 1) + '. ' + la.service + ' on ' + (la.date || '?') + (la.time ? ' at ' + la.time : '') + ' (status: ' + (la.status || 'requested') + ')');
+  }
   var llmContext = (business ? 'Business: ' + business + '\\n' : '')
     + 'Open follow-up task: ' + String(ta2.summary || '') + '\\n'
-    + (apptA
-      ? 'Current appointment request: ' + String(apptA.service || 'Appointment') + ' on ' + String(apptA.date || '?') + (String(apptA.time || '') ? ' at ' + String(apptA.time) : '') + ' (status: ' + String(apptA.status || 'requested') + ')\\n'
+    + (apptLines.length
+      ? 'Current booking request' + (apptLines.length > 1 ? 's' : '') + ':\\n' + apptLines.join('\\n') + '\\n'
       : 'No appointment exists yet - the customer still needs to pick a day and time.\\n')
     + '\\nSMS conversation so far (oldest first):\\n' + lines.join('\\n')
     + '\\n\\nThe customer\\'s NEW message (respond to this): "' + body + '"';
@@ -760,6 +950,9 @@ const FLOW_SMS_CONVO_CTX = `(function () {
     // log line (updateResponse patch-merges whole answers - writing
     // notes without the old content would erase the booking history).
     apptNotes: apptA ? String(apptA.notes || '') : '',
+    // EVERY appointment this loop covers (cap 3) - the plan confirms them
+    // all on YES and targets one by date for a change/cancel.
+    appts: loopAppts,
     business: business,
     model: model,
     today: now.toDateString() + ' (' + isoLocal + ')',
@@ -777,7 +970,7 @@ const FLOW_SMS_CONVO_CTX = `(function () {
 const FLOW_SMS_CONVO_PLAN = `(function () {
   var c = nodes.ctx || {};
   var verdict = String(c.verdict || 'none');
-  var out = { hasReply: false, hasTaskUpdate: false, hasApptUpdate: false, hasApptCreate: false, summaryLine: '' };
+  var out = { hasReply: false, hasTaskUpdate: false, hasApptUpdate: false, hasApptUpdate2: false, hasApptUpdate3: false, hasApptCreate: false, summaryLine: '' };
   if (verdict === 'none' || c.hasTask !== true) {
     out.summaryLine = 'No active SMS follow-up for this sender - left to the approval-draft path.';
     return out;
@@ -817,21 +1010,29 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   // (updates patch-merge whole answers, so the old content must ride
   // along). Growth is bounded by the 6-exchange cap; the 8000-char guard
   // keeps a pathological thread from ever failing the write.
-  function apptNoteWith(outcome) {
+  function apptNoteWith(outcome, existingNotes) {
     var nowN = new Date();
     var hh12 = nowN.getHours() % 12 === 0 ? 12 : nowN.getHours() % 12;
     var mm = ('0' + nowN.getMinutes()).slice(-2);
     var stamp = nowN.toDateString() + ' ' + hh12 + ':' + mm + ' ' + (nowN.getHours() >= 12 ? 'PM' : 'AM');
     var said = String(inputs.body || '').replace(/[^\\x20-\\x7E]/g, '').slice(0, 160).trim();
     var line = 'SMS follow-up (' + stamp + '): customer texted "' + said + '" - ' + outcome;
-    var existing = String(c.apptNotes || '');
+    var existing = String(existingNotes === undefined ? (c.apptNotes || '') : existingNotes);
     if (existing.length > 7600) existing = existing.slice(0, 7600);
     return (existing ? existing + '\\n' : '') + line;
   }
+  // Every appointment this loop covers (multi-booking; c.appts is the new
+  // shape, the singular c.appt* fields remain as the first entry).
+  var appts = Array.isArray(c.appts) ? c.appts.slice(0, 3) : [];
+  if (!appts.length && c.apptId) {
+    appts = [{ id: c.apptId, date: String(c.apptDate || ''), time: String(c.apptTime || ''), service: String(c.apptService || 'Appointment'), status: 'requested', notes: String(c.apptNotes || '') }];
+  }
+  function apptLabel(a) { return String(a.service || 'Appointment') + ' on ' + humanWhen(String(a.date || ''), String(a.time || '')); }
   var action = 'confirm';
   var dateStr = '';
   var timeStr = '';
   var service = '';
+  var targetDate = '';
   var reply = '';
   if (verdict !== 'yes') {
     var raw = String(((nodes.decide || {}).content) || '').trim();
@@ -843,7 +1044,23 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     dateStr = String(data.date || '').trim().slice(0, 10);
     timeStr = String(data.time || '').trim().slice(0, 5);
     service = String(data.service || '').trim().slice(0, 200);
+    targetDate = String(data.target_date || '').trim().slice(0, 10);
     reply = String(data.reply || '').trim();
+  }
+  // Which existing booking is the customer talking about? Unambiguous with
+  // one; with several, the model must name it by date (target_date). No
+  // match = null - the caller is ASKED instead of a record being guessed at.
+  function targetAppt() {
+    if (appts.length <= 1) return appts[0] || null;
+    for (var tq = 0; tq < appts.length; tq++) {
+      if (targetDate && String(appts[tq].date || '') === targetDate) return appts[tq];
+    }
+    return null;
+  }
+  function apptChoices() {
+    var labels = [];
+    for (var ch = 0; ch < appts.length; ch++) labels.push(apptLabel(appts[ch]));
+    return labels.join(' or ');
   }
   // Date/time guards (same rules as the after-call extractor): a usable date is
   // real-calendar and not in the past; a usable time is a real clock time.
@@ -860,29 +1077,48 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   }
   var usableDate = validDate && realDate && dateStr >= todayIso;
   // Degrade impossible actions instead of guessing.
-  if (action === 'confirm' && !c.apptId) action = 'ask';
+  if (action === 'confirm' && !appts.length) action = 'ask';
   if (action === 'reschedule' && !usableDate) action = 'ask';
-  if (action === 'cancel' && !c.apptId) action = 'handoff';
+  if (action === 'cancel' && !appts.length) action = 'handoff';
   var newExchanges = exchanges + 1;
   var taskUpdate = { sms_exchanges: newExchanges };
+  // Appointment writes, in order (up to three gated update actions).
+  var apptWrites = [];
   if (action === 'confirm') {
-    out.hasApptUpdate = true;
-    out.apptResponseId = c.apptId;
-    var whenC = humanWhen(usableDate ? dateStr : String(c.apptDate || ''), validTime ? timeStr : String(c.apptTime || ''));
-    out.apptUpdate = { status: 'confirmed', notes: apptNoteWith('appointment CONFIRMED for ' + whenC + '.') };
-    if (usableDate) out.apptUpdate.date = dateStr;
-    if (validTime) out.apptUpdate.time = timeStr;
-    reply = 'Perfect - you are confirmed: ' + String(c.apptService || 'your appointment') + ' on ' + whenC + '. See you then!';
+    // A YES confirms EVERY booking in the loop - the kickoff listed them all.
+    var confirmedLabels = [];
+    for (var cf = 0; cf < appts.length; cf++) {
+      var ca = appts[cf];
+      var upd = { status: 'confirmed', notes: apptNoteWith('appointment CONFIRMED for ' + humanWhen(String(ca.date || ''), String(ca.time || '')) + '.', ca.notes) };
+      if (appts.length === 1) {
+        // A new date/time on a confirm applies only when it is unambiguous.
+        if (usableDate) upd.date = dateStr;
+        if (validTime) upd.time = timeStr;
+        confirmedLabels.push(String(ca.service || 'Appointment') + ' on ' + humanWhen(usableDate ? dateStr : String(ca.date || ''), validTime ? timeStr : String(ca.time || '')));
+      } else {
+        confirmedLabels.push(apptLabel(ca));
+      }
+      apptWrites.push({ id: ca.id, update: upd });
+    }
+    reply = 'Perfect - you are confirmed: ' + confirmedLabels.join(' and ') + '. See you then!';
     taskUpdate.status = 'done';
     taskUpdate.sms_state = 'done';
-    out.summaryLine = 'Appointment confirmed by SMS - task closed.';
+    out.summaryLine = (appts.length > 1 ? appts.length + ' appointments' : 'Appointment') + ' confirmed by SMS - task closed.';
   } else if (action === 'reschedule') {
     var whenR = humanWhen(dateStr, validTime ? timeStr : '');
-    if (c.apptId) {
-      out.hasApptUpdate = true;
-      out.apptResponseId = c.apptId;
-      out.apptUpdate = { date: dateStr, status: 'requested', notes: apptNoteWith('moved to ' + whenR + ', awaiting their YES.') };
-      if (validTime) out.apptUpdate.time = timeStr;
+    var tgtR = targetAppt();
+    if (appts.length > 1 && !tgtR) {
+      // Several bookings and the model did not say WHICH - never guess a
+      // record; ask, with the choices composed from the records.
+      action = 'ask';
+      reply = 'Which booking would you like to change - ' + apptChoices() + '? Text the one you mean and the new day and time.';
+      out.summaryLine = 'Asked which of the ' + appts.length + ' bookings to change.';
+    } else if (tgtR) {
+      var updR = { date: dateStr, status: 'requested', notes: apptNoteWith('moved to ' + whenR + ', awaiting their YES.', tgtR.notes) };
+      if (validTime) updR.time = timeStr;
+      apptWrites.push({ id: tgtR.id, update: updR });
+      reply = 'Got it - I have you down for ' + whenR + '. Reply YES to confirm and we will lock it in.';
+      out.summaryLine = 'Appointment moved to ' + dateStr + (validTime ? ' ' + timeStr : '') + ' by SMS - awaiting a YES.';
     } else {
       out.hasApptCreate = true;
       var newAppt = {
@@ -892,43 +1128,70 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
         source: 'sms',
         phone: phone,
         call_id: String(c.taskCallId || ''),
-        notes: 'Scheduled over SMS follow-up (task ' + String(taskId || '') + ').\\n' + apptNoteWith('booked for ' + whenR + ', awaiting their YES.')
+        notes: 'Scheduled over SMS follow-up (task ' + String(taskId || '') + ').\\n' + apptNoteWith('booked for ' + whenR + ', awaiting their YES.', '')
       };
       if (validTime) newAppt.time = timeStr;
       if (String(c.taskCustomer || '')) newAppt.customer_link = String(c.taskCustomer);
       out.newAppointment = newAppt;
+      reply = 'Got it - I have you down for ' + whenR + '. Reply YES to confirm and we will lock it in.';
+      out.summaryLine = 'Appointment booked for ' + dateStr + (validTime ? ' ' + timeStr : '') + ' by SMS - awaiting a YES.';
     }
-    reply = 'Got it - I have you down for ' + whenR + '. Reply YES to confirm and we will lock it in.';
-    out.summaryLine = 'Appointment moved to ' + dateStr + (validTime ? ' ' + timeStr : '') + ' by SMS - awaiting a YES.';
   } else if (action === 'cancel') {
-    out.hasApptUpdate = true;
-    out.apptResponseId = c.apptId;
-    out.apptUpdate = { status: 'cancelled', notes: apptNoteWith('appointment CANCELLED at their request.') };
-    reply = 'No problem - that booking request is cancelled. Text us any time if you would like to rebook.';
-    taskUpdate.status = 'done';
-    taskUpdate.sms_state = 'done';
-    out.summaryLine = 'Booking cancelled by SMS - task closed.';
-  } else if (action === 'ask') {
+    var tgtC = targetAppt();
+    if (appts.length > 1 && !tgtC) {
+      action = 'ask';
+      reply = 'Which booking would you like to cancel - ' + apptChoices() + '?';
+      out.summaryLine = 'Asked which of the ' + appts.length + ' bookings to cancel.';
+    } else if (tgtC) {
+      apptWrites.push({ id: tgtC.id, update: { status: 'cancelled', notes: apptNoteWith('appointment CANCELLED at their request.', tgtC.notes) } });
+      var remaining = [];
+      for (var rm = 0; rm < appts.length; rm++) { if (appts[rm].id !== tgtC.id) remaining.push(appts[rm]); }
+      if (remaining.length) {
+        var remLabels = [];
+        for (var rl = 0; rl < remaining.length; rl++) remLabels.push(apptLabel(remaining[rl]));
+        reply = 'No problem - ' + apptLabel(tgtC) + ' is cancelled. You still have: ' + remLabels.join(' and ') + '. Reply YES to confirm.';
+        out.summaryLine = 'One booking cancelled by SMS - ' + remaining.length + ' still awaiting confirmation.';
+        // The loop stays open for the remaining bookings.
+      } else {
+        reply = 'No problem - that booking request is cancelled. Text us any time if you would like to rebook.';
+        taskUpdate.status = 'done';
+        taskUpdate.sms_state = 'done';
+        out.summaryLine = 'Booking cancelled by SMS - task closed.';
+      }
+    }
+  }
+  if (action === 'ask') {
     reply = reply || 'Sorry - what day and time suit you best?';
     // Log the clarifying exchange on the appointment too (notes-only
     // update - no status/date change), so the record tells the whole
     // conversation story, not just its final state.
-    if (c.apptId) {
-      out.hasApptUpdate = true;
-      out.apptResponseId = c.apptId;
-      out.apptUpdate = { notes: apptNoteWith('asked them: "' + reply.slice(0, 120) + '"') };
+    if (appts.length && !apptWrites.length) {
+      apptWrites.push({ id: appts[0].id, update: { notes: apptNoteWith('asked them: "' + reply.slice(0, 120) + '"', appts[0].notes) } });
     }
-    out.summaryLine = 'Asked the customer a clarifying question by SMS.';
-  } else {
+    if (!out.summaryLine) out.summaryLine = 'Asked the customer a clarifying question by SMS.';
+  } else if (action === 'handoff') {
     reply = 'Thanks - someone from the team will be in touch shortly to sort this out.';
     taskUpdate.sms_state = 'handoff';
     taskUpdate.priority = 'high';
-    if (c.apptId) {
-      out.hasApptUpdate = true;
-      out.apptResponseId = c.apptId;
-      out.apptUpdate = { notes: apptNoteWith('handed to a human to sort out.') };
+    if (appts.length) {
+      apptWrites.push({ id: appts[0].id, update: { notes: apptNoteWith('handed to a human to sort out.', appts[0].notes) } });
     }
     out.summaryLine = 'SMS conversation handed to a human.';
+  }
+  if (apptWrites.length) {
+    out.hasApptUpdate = true;
+    out.apptResponseId = apptWrites[0].id;
+    out.apptUpdate = apptWrites[0].update;
+  }
+  if (apptWrites.length > 1) {
+    out.hasApptUpdate2 = true;
+    out.apptResponseId2 = apptWrites[1].id;
+    out.apptUpdate2 = apptWrites[1].update;
+  }
+  if (apptWrites.length > 2) {
+    out.hasApptUpdate3 = true;
+    out.apptResponseId3 = apptWrites[2].id;
+    out.apptUpdate3 = apptWrites[2].update;
   }
   // Plain ASCII only (GSM-charset envelope), capped well inside the server's limits.
   reply = reply.replace(/[\\u2018\\u2019]/g, "'").replace(/[\\u201C\\u201D]/g, '"').replace(/[\\u2013\\u2014]/g, '-').replace(/[^\\x20-\\x7E\\n]/g, '').slice(0, 440).trim();
@@ -2048,6 +2311,14 @@ export const aokieReceptionistPack: PackData = {
             // database, so the caller is recognised at ANY customer count.
             data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
           },
+          {
+            id: 'appointments',
+            type: 'formlogic_list_responses',
+            // The caller's bookings on record (phone_eq, DB-pushed): the make
+            // block filters to upcoming requested/confirmed and grounds the
+            // persona so the agent answers calendar questions from RECORDS.
+            data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_PERSONALIZE_CALLER } },
           {
@@ -2065,7 +2336,8 @@ export const aokieReceptionistPack: PackData = {
         ],
         edges: [
           { source: 'in', target: 'customers' },
-          { source: 'customers', target: 'settings' },
+          { source: 'customers', target: 'appointments' },
+          { source: 'appointments', target: 'settings' },
           { source: 'settings', target: 'make' },
           { source: 'make', target: 'push' },
           { source: 'push', target: 'out' },
@@ -2219,7 +2491,7 @@ export const aokieReceptionistPack: PackData = {
               system:
                 'You manage SMS follow-ups for a small-business receptionist: confirming, moving or cancelling booking requests. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
-                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "reschedule" | "cancel" | "ask" | "handoff", "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "service": string or null, "reply": "one short friendly SMS (under 300 characters, plain text, no emoji)"}\n\nRules: "confirm" only when the customer clearly agrees to the CURRENT slot; "reschedule" when they propose a different day/time — resolve relative dates ("next Tuesday", "tomorrow") from today\'s date and use 24-hour time; "cancel" only when they clearly no longer want the booking; "ask" when you need one clarifying detail (your reply is the question); "handoff" for anything else — complaints, other requests, or anything unclear. Never invent prices, opening hours or services; never promise anything except booking changes; use null when unsure — never guess.',
+                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "reschedule" | "cancel" | "ask" | "handoff", "target_date": "YYYY-MM-DD" or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "service": string or null, "reply": "one short friendly SMS (under 300 characters, plain text, no emoji)"}\n\nRules: "confirm" only when the customer clearly agrees to the listed booking(s) — a confirm covers ALL of them; when MORE THAN ONE booking is listed and they want to change or cancel one, set "target_date" to the EXISTING date of the booking they mean (from the list) — if you cannot tell which one, use "ask"; "reschedule" when they propose a different day/time — "date"/"time" are the NEW slot; resolve relative dates ("next Tuesday", "tomorrow") from today\'s date and use 24-hour time; "cancel" only when they clearly no longer want a booking; "ask" when you need one clarifying detail (your reply is the question); "handoff" for anything else — complaints, other requests, or anything unclear. Never invent prices, opening hours or services; never promise anything except booking changes; use null when unsure — never guess.',
               model: '{{nodes.ctx.model}}',
               maxTokens: 350,
               temperature: 0,
@@ -2238,6 +2510,12 @@ export const aokieReceptionistPack: PackData = {
                 hasApptUpdate: '$nodes.plan.hasApptUpdate',
                 apptResponseId: '$nodes.plan.apptResponseId',
                 apptUpdate: '$nodes.plan.apptUpdate',
+                hasApptUpdate2: '$nodes.plan.hasApptUpdate2',
+                apptResponseId2: '$nodes.plan.apptResponseId2',
+                apptUpdate2: '$nodes.plan.apptUpdate2',
+                hasApptUpdate3: '$nodes.plan.hasApptUpdate3',
+                apptResponseId3: '$nodes.plan.apptResponseId3',
+                apptUpdate3: '$nodes.plan.apptUpdate3',
                 hasApptCreate: '$nodes.plan.hasApptCreate',
                 newAppointment: '$nodes.plan.newAppointment',
                 hasTaskUpdate: '$nodes.plan.hasTaskUpdate',
@@ -2373,6 +2651,21 @@ export const aokieReceptionistPack: PackData = {
           },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 1, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          // The caller's existing appointments (phone_eq): dedupe guard (a
+          // re-confirmed booking must not duplicate) + still-pending ones fold
+          // into the new SMS loop's confirmation text.
+          {
+            id: 'appts',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
+          // Any still-active SMS loop for this number (phone_eq): the new loop
+          // supersedes it, so a YES is never ambiguous between two threads.
+          {
+            id: 'tasks',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
           // Business name for the kickoff SMS the plan block composes.
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },
@@ -2383,7 +2676,7 @@ export const aokieReceptionistPack: PackData = {
               system:
                 'You extract structured booking data from phone-call transcripts for a small business. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
-                'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "sentiment": "positive" | "neutral" | "negative", "caller_name": string or null, "service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: set date/time ONLY if the caller agreed to a specific slot; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; judge sentiment from the caller\'s tone; use null when unsure — never guess.',
+                'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "sentiment": "positive" | "neutral" | "negative", "caller_name": string or null, "service": string or null, "appointments": [{"service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null}], "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: "appointments" lists EVERY separate booking the caller agreed to on THIS call (most calls have one; use [] when none was agreed); do NOT list a booking the caller merely mentioned already having; each entry\'s time must be one the caller explicitly said FOR THAT booking — never copy a time from one booking to another, use null when no time was stated; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; judge sentiment from the caller\'s tone; use null when unsure — never guess.',
               maxTokens: 700,
               temperature: 0,
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
@@ -2403,10 +2696,17 @@ export const aokieReceptionistPack: PackData = {
                 customer: '$nodes.plan.customer',
                 hasAppointment: '$nodes.plan.hasAppointment',
                 appointment: '$nodes.plan.appointment',
+                hasAppointment2: '$nodes.plan.hasAppointment2',
+                appointment2: '$nodes.plan.appointment2',
+                hasAppointment3: '$nodes.plan.hasAppointment3',
+                appointment3: '$nodes.plan.appointment3',
                 hasOrder: '$nodes.plan.hasOrder',
                 order: '$nodes.plan.order',
                 hasTask: '$nodes.plan.hasTask',
                 task: '$nodes.plan.task',
+                hasPriorTaskClose: '$nodes.plan.hasPriorTaskClose',
+                priorTaskId: '$nodes.plan.priorTaskId',
+                priorTaskUpdate: '$nodes.plan.priorTaskUpdate',
                 hasKickoffSms: '$nodes.plan.hasKickoffSms',
                 kickoffSms: '$nodes.plan.kickoffSms',
                 kickoffMessage: '$nodes.plan.kickoffMessage',
@@ -2418,7 +2718,9 @@ export const aokieReceptionistPack: PackData = {
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'turns' },
           { source: 'turns', target: 'calls' },
-          { source: 'calls', target: 'settings' },
+          { source: 'calls', target: 'appts' },
+          { source: 'appts', target: 'tasks' },
+          { source: 'tasks', target: 'settings' },
           { source: 'settings', target: 'ctx' },
           { source: 'ctx', target: 'extract' },
           { source: 'extract', target: 'plan' },
@@ -2572,8 +2874,16 @@ export const aokieReceptionistPack: PackData = {
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCall', responseId: '$result.callResponseId', answers: '$result.callUpdate' },
         { type: 'formlogic.submitResponse', form: '@pack:customers', when: '$result.hasCustomerCreate', answers: '$result.customer' },
+        // A call can book up to THREE appointments (multi-booking, 2026-07-13);
+        // each is its own gated create so a single booking stays a single write.
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
+        { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment2', answers: '$result.appointment2' },
+        { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment3', answers: '$result.appointment3' },
         { type: 'formlogic.submitResponse', form: '@pack:orders', when: '$result.hasOrder', answers: '$result.order' },
+        // One SMS loop per phone: an earlier still-active loop closes as
+        // superseded BEFORE the new task exists, so the conversation flow can
+        // never match two active threads for one number.
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasPriorTaskClose', responseId: '$result.priorTaskId', answers: '$result.priorTaskUpdate' },
         { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
         // SMS follow-up kickoff: text the caller their booking confirmation request
         // the moment the task exists (actions run in order, so the task row above is
@@ -2598,7 +2908,11 @@ export const aokieReceptionistPack: PackData = {
       timeoutMs: 60000,
       inputMap: { from: '$event.data.from', body: '$event.data.body', messageId: '$event.data.messageId' },
       outputActions: [
+        // Up to three appointment writes: a YES confirms EVERY booking the
+        // loop covers (multi-booking, 2026-07-13).
         { type: 'formlogic.updateResponse', form: '@pack:appointments', when: '$result.hasApptUpdate', responseId: '$result.apptResponseId', answers: '$result.apptUpdate' },
+        { type: 'formlogic.updateResponse', form: '@pack:appointments', when: '$result.hasApptUpdate2', responseId: '$result.apptResponseId2', answers: '$result.apptUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:appointments', when: '$result.hasApptUpdate3', responseId: '$result.apptResponseId3', answers: '$result.apptUpdate3' },
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasApptCreate', answers: '$result.newAppointment' },
         { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
         // Record updates land BEFORE the reply is sent, so the customer is never

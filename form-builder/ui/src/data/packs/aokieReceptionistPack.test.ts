@@ -660,6 +660,275 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.update).toEqual({ status: 'sent' });
     });
   });
+
+  // Multi-booking (live report 2026-07-13): two appointments booked on one
+  // call got squeezed into one record, only one confirmation SMS went out,
+  // and a time was carried across bookings. One call may now create up to
+  // three appointments; the kickoff + YES cover EVERY pending booking for
+  // the number; changes/cancels target one by date or ASK.
+  describe('multi-booking (2026-07-13)', () => {
+    const future2 = new Date(Date.now() + 10 * 86400000);
+    const futureIso2 = `${future2.getFullYear()}-${String(future2.getMonth() + 1).padStart(2, '0')}-${String(future2.getDate()).padStart(2, '0')}`;
+
+    describe('after-call-actions plan', () => {
+      const planExpr = nodeExpr('after-call-actions', 'plan');
+      const scopeFor = (extract: Record<string, unknown>, nodesOver: Record<string, unknown> = {}) => ({
+        inputs: { callId: 'call_2' },
+        nodes: {
+          ctx: { hasTranscript: true, phone: '+61400000000', customerId: null, customerName: '', today: 'today' },
+          extract: { content: JSON.stringify(extract) },
+          calls: { responses: [{ id: 'resp-call-2', answers: {} }] },
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+          ...nodesOver,
+        },
+      });
+      const twoBookings = {
+        intent: 'appointment', sentiment: 'positive', caller_name: 'Lance Baker', service: null,
+        appointments: [
+          { service: 'Diner', date: futureIso, time: '10:00' },
+          { service: 'Dinner', date: futureIso2, time: null },
+        ],
+        summary: 'Booked two visits.', callback_requested: false,
+      };
+
+      it('two agreed bookings → two appointment creates, one task + one kickoff listing both', () => {
+        const r = evalExpr(planExpr, scopeFor(twoBookings));
+        expect(r.hasAppointment).toBe(true);
+        expect(r.hasAppointment2).toBe(true);
+        expect(r.hasAppointment3).toBe(false);
+        expect(r.appointment.date).toBe(futureIso);
+        expect(r.appointment.time).toBe('10:00');
+        expect(r.appointment2.date).toBe(futureIso2);
+        // Time is PER BOOKING — never carried from the first to the second.
+        expect(r.appointment2.time).toBeUndefined();
+        expect(r.appointment.call_id).toBe('call_2');
+        expect(r.appointment2.call_id).toBe('call_2');
+        expect(r.appointment2.phone).toBe('+61400000000');
+        expect(r.task.summary).toContain('Diner');
+        expect(r.task.summary).toContain('Dinner');
+        expect(r.kickoffSms.body).toContain('booking requests');
+        expect(r.kickoffSms.body).toContain('Diner');
+        expect(r.kickoffSms.body).toContain('Dinner');
+        expect(r.kickoffSms.body).toContain('Reply YES to confirm both');
+      });
+
+      it('a booking already on record is not duplicated, but a pending one still rides the kickoff', () => {
+        const existing = {
+          appts: {
+            responses: [
+              { id: 'appt-old', answers: { status: 'requested', date: futureIso, time: '10:00', service: 'Diner', phone: '+61400000000' } },
+            ],
+          },
+        };
+        const r = evalExpr(planExpr, scopeFor(twoBookings, existing));
+        // The Diner booking already exists → only Dinner is created…
+        expect(r.hasAppointment).toBe(true);
+        expect(r.appointment.date).toBe(futureIso2);
+        expect(r.hasAppointment2).toBe(false);
+        expect(r.summaryLine).toContain('already on record');
+        // …but the kickoff still lists BOTH (the pending one folds in).
+        expect(r.kickoffSms.body).toContain('Diner');
+        expect(r.kickoffSms.body).toContain('Dinner');
+        expect(r.kickoffSms.body).toContain('Reply YES to confirm both');
+      });
+
+      it('an earlier still-active SMS loop closes as superseded when the new kickoff starts', () => {
+        const prior = {
+          tasks: {
+            responses: [
+              { id: 'task-old', answers: { status: 'open', sms_state: 'active', summary: 'Confirm appointment with Lance - Diner', phone: '+61400000000' } },
+            ],
+          },
+        };
+        const r = evalExpr(planExpr, scopeFor(twoBookings, prior));
+        expect(r.hasPriorTaskClose).toBe(true);
+        expect(r.priorTaskId).toBe('task-old');
+        expect(r.priorTaskUpdate.status).toBe('done');
+        expect(r.priorTaskUpdate.sms_state).toBe('done');
+        expect(r.priorTaskUpdate.summary).toContain('superseded');
+        expect(r.task.sms_state).toBe('active');
+      });
+
+      it('re-confirming only already-CONFIRMED bookings sends no SMS at all', () => {
+        const confirmed = {
+          appts: {
+            responses: [
+              { id: 'appt-c', answers: { status: 'confirmed', date: futureIso, time: '10:00', service: 'Diner', phone: '+61400000000' } },
+            ],
+          },
+        };
+        const oneRebooking = { ...twoBookings, appointments: [{ service: 'Diner', date: futureIso, time: '10:00' }] };
+        const r = evalExpr(planExpr, scopeFor(oneRebooking, confirmed));
+        expect(r.hasAppointment).toBe(false);
+        expect(r.hasKickoffSms).toBe(false);
+        expect(r.task.sms_state).toBeUndefined();
+        expect(r.task.summary).toContain('re-confirmed existing');
+      });
+
+      it('legacy singular date/time extraction still books (fallback shape)', () => {
+        const legacy = {
+          intent: 'appointment', sentiment: 'positive', caller_name: 'Lance Baker',
+          service: 'Haircut', date: futureIso, time: '14:00', summary: 'Booked.', callback_requested: false,
+        };
+        const r = evalExpr(planExpr, scopeFor(legacy));
+        expect(r.hasAppointment).toBe(true);
+        expect(r.appointment.date).toBe(futureIso);
+        expect(r.appointment.time).toBe('14:00');
+        expect(r.hasAppointment2).toBe(false);
+      });
+    });
+
+    describe('sms-followup-conversation ctx: the loop covers every pending booking', () => {
+      const ctxExpr = nodeExpr('sms-followup-conversation', 'ctx');
+      const r = evalExpr(ctxExpr, {
+        inputs: { from: '+61400000000', body: 'YES' },
+        nodes: {
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+          tasks: { responses: [{ id: 'task-2', answers: { status: 'open', sms_state: 'active', call_id: 'call_2', sms_exchanges: 1 } }] },
+          appointments: {
+            responses: [
+              // Newest-first, as the list node returns them.
+              { id: 'appt-new', answers: { call_id: 'call_2', service: 'Dinner', date: futureIso2, status: 'requested' } },
+              { id: 'appt-old', answers: { call_id: 'call_1', service: 'Diner', date: futureIso, time: '10:00', status: 'requested' } },
+            ],
+          },
+          messages: { responses: [] },
+        },
+      });
+
+      it('collects the task-call booking AND the earlier pending one, sorted by date', () => {
+        expect(r.verdict).toBe('yes');
+        expect(r.appts.map((a: { id: string }) => a.id)).toEqual(['appt-old', 'appt-new']);
+        expect(r.llmContext).toContain('1. Diner');
+        expect(r.llmContext).toContain('2. Dinner');
+      });
+    });
+
+    describe('sms-followup-conversation plan: multi-booking actions', () => {
+      const planExpr = nodeExpr('sms-followup-conversation', 'plan');
+      const twoAppts = [
+        { id: 'appt-old', date: futureIso, time: '10:00', service: 'Diner', status: 'requested', notes: 'from call 1' },
+        { id: 'appt-new', date: futureIso2, time: '', service: 'Dinner', status: 'requested', notes: 'from call 2' },
+      ];
+      const ctxVal2 = {
+        verdict: 'llm', hasTask: true, taskId: 'task-2', taskCallId: 'call_2', taskCustomer: '',
+        exchanges: 1, apptId: 'appt-old', apptDate: futureIso, apptTime: '10:00', apptService: 'Diner',
+        apptNotes: 'from call 1', appts: twoAppts, business: 'Pirate Cuts', model: '',
+        today: 'today', llmContext: '', phone: '+61400000000',
+      };
+      const run = (ctxOver: Record<string, unknown>, decideContent?: unknown, body = 'YES') =>
+        evalExpr(planExpr, {
+          inputs: { body },
+          nodes: {
+            ctx: { ...ctxVal2, ...ctxOver },
+            ...(decideContent === undefined ? {} : { decide: { content: JSON.stringify(decideContent) } }),
+          },
+        });
+
+      it('YES confirms EVERY booking in the loop and the reply lists them all', () => {
+        const r = run({ verdict: 'yes' });
+        expect(r.hasApptUpdate).toBe(true);
+        expect(r.apptResponseId).toBe('appt-old');
+        expect(r.apptUpdate.status).toBe('confirmed');
+        expect(r.apptUpdate.notes).toContain('from call 1');
+        expect(r.hasApptUpdate2).toBe(true);
+        expect(r.apptResponseId2).toBe('appt-new');
+        expect(r.apptUpdate2.status).toBe('confirmed');
+        expect(r.apptUpdate2.notes).toContain('from call 2');
+        expect(r.reply.body).toContain('Diner');
+        expect(r.reply.body).toContain('Dinner');
+        expect(r.taskUpdate.status).toBe('done');
+        expect(r.taskUpdate.sms_state).toBe('done');
+      });
+
+      it('cancel without naming WHICH booking asks instead of guessing', () => {
+        const r = run({}, { action: 'cancel', target_date: null, reply: '' }, 'cancel my booking');
+        // Notes-only log on the first appointment; no status changes anywhere.
+        expect(Object.keys(r.apptUpdate)).toEqual(['notes']);
+        expect(r.hasApptUpdate2).toBe(false);
+        expect(r.reply.body).toContain('Which booking');
+        expect(r.reply.body).toContain('Diner');
+        expect(r.reply.body).toContain('Dinner');
+        expect(r.taskUpdate.status).toBeUndefined();
+      });
+
+      it('cancel targeted by date cancels that one and keeps the loop open for the rest', () => {
+        const r = run({}, { action: 'cancel', target_date: futureIso2, reply: '' }, 'cancel the dinner one');
+        expect(r.hasApptUpdate).toBe(true);
+        expect(r.apptResponseId).toBe('appt-new');
+        expect(r.apptUpdate.status).toBe('cancelled');
+        expect(r.hasApptUpdate2).toBe(false);
+        expect(r.reply.body).toContain('cancelled');
+        expect(r.reply.body).toContain('Diner');
+        expect(r.reply.body).toContain('Reply YES to confirm');
+        // The other booking is still pending — the loop must stay open.
+        expect(r.taskUpdate.status).toBeUndefined();
+        expect(r.taskUpdate.sms_state).toBeUndefined();
+      });
+
+      it('reschedule targeted by date moves only that booking', () => {
+        const r = run({}, { action: 'reschedule', target_date: futureIso, date: futureIso2, time: '18:00', reply: '' }, 'move the diner one');
+        expect(r.hasApptUpdate).toBe(true);
+        expect(r.apptResponseId).toBe('appt-old');
+        expect(r.apptUpdate.date).toBe(futureIso2);
+        expect(r.apptUpdate.time).toBe('18:00');
+        expect(r.apptUpdate.status).toBe('requested');
+        expect(r.hasApptUpdate2).toBe(false);
+        expect(r.taskUpdate.status).toBeUndefined();
+      });
+
+      it('reschedule without a target among several bookings asks which one', () => {
+        const r = run({}, { action: 'reschedule', target_date: null, date: futureIso2, time: '18:00', reply: '' }, 'can we move it');
+        expect(Object.keys(r.apptUpdate)).toEqual(['notes']);
+        expect(r.reply.body).toContain('Which booking');
+        expect(r.taskUpdate.status).toBeUndefined();
+      });
+    });
+
+    describe('personalize-caller: bookings-on-record grounding', () => {
+      const makeExpr = nodeExpr('personalize-caller', 'make');
+      const run = (appointments: Array<Record<string, unknown>>, customers: Array<Record<string, unknown>> = []) =>
+        evalExpr(makeExpr, {
+          inputs: { from: '+61400000000' },
+          nodes: {
+            customers: { responses: customers },
+            appointments: { responses: appointments.map((answers, i) => ({ id: `a-${i}`, answers })) },
+            settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+          },
+        });
+
+      it('upcoming bookings land in the persona so the agent answers from records', () => {
+        const r = run(
+          [
+            { status: 'requested', date: futureIso, time: '10:00', service: 'Diner' },
+            { status: 'confirmed', date: futureIso2, service: 'Dinner' },
+            { status: 'cancelled', date: futureIso, service: 'Ghost' },
+            { status: 'requested', date: '2020-01-01', service: 'Ancient' },
+          ],
+          [{ id: 'cust-1', answers: { name: 'Lance Baker', phone: '+61400000000' } }]
+        );
+        expect(r.persona).toContain('BOOKINGS ON RECORD');
+        expect(r.persona).toContain('Diner');
+        expect(r.persona).toContain('Dinner');
+        expect(r.persona).toContain('never invent or guess dates');
+        // Cancelled + past bookings never reach the persona.
+        expect(r.persona).not.toContain('Ghost');
+        expect(r.persona).not.toContain('Ancient');
+      });
+
+      it('an unknown caller with bookings on record still gets the calendar block', () => {
+        const r = run([{ status: 'requested', date: futureIso, time: '10:00', service: 'Diner' }]);
+        expect(r.found).toBe(false);
+        expect(r.persona).toContain('BOOKINGS ON RECORD');
+        expect(r.persona).toContain('Diner');
+      });
+
+      it('no upcoming bookings → persona untouched (no empty calendar block)', () => {
+        const r = run([]);
+        expect(r.persona).not.toContain('BOOKINGS ON RECORD');
+      });
+    });
+  });
 });
 
 describe('aokieReceptionistPack — catalog', () => {
