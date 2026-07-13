@@ -2189,7 +2189,7 @@
         ],
         "customScreen": {
           "enabled": true,
-          "allowNewResponses": true,
+          "allowNewResponses": false,
           "kind": "sdk",
           "sdkScreen": {
             "screenId": "aokie-pairing",

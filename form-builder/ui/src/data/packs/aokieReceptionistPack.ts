@@ -1183,10 +1183,12 @@ export const aokieReceptionistPack: PackData = {
         { id: 'payload_json', type: 'long_text', label: 'Raw Payload', required: false, properties: {} },
       ],
       // The Hardware Events section IS the Device Setup console (desktop pairing, dongle
-      // table + driver install, phone status, recent hardware events).
+      // table + driver install, phone status, recent hardware events). Rows are written
+      // AUTOMATICALLY from aokie.hardware.error events — a manual "New device setup"
+      // button is meaningless here, so new responses stay off (feature request 2026-07-13).
       customScreen: {
         enabled: true,
-        allowNewResponses: true,
+        allowNewResponses: false,
         kind: 'sdk',
         sdkScreen: { screenId: 'aokie-pairing', title: 'Device Setup' },
       },
