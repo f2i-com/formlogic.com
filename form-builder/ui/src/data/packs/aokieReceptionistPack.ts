@@ -62,7 +62,11 @@ const LOGIC_CALL_INCOMING = `function run(ctx) {
       { type: 'formlogic.submitResponse', formKey: 'calls', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         caller_phone: phone,
-        caller_name: String(d.callerName || (phone ? '' : 'Unknown caller')),
+        // Never store a placeholder name: with instant auto-answer the
+        // caller id (+CLIP) usually lands AFTER this event, and a literal
+        // 'Unknown caller' string would shadow the phone number in every
+        // display fallback once call.ended backfills it below.
+        caller_name: String(d.callerName || ''),
         status: 'incoming',
         started_at: String(ev.occurredAt || '')
       } },
@@ -129,16 +133,24 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
   var callId = String(d.callId || ev.correlationId || '');
   // Lifecycle upsert (audit §8): a call whose incoming write failed or
   // arrived out of order still deserves a final record.
+  var answers = {
+    call_id: callId,
+    status: status,
+    ended_at: String(ev.occurredAt || ''),
+    duration_seconds: Number(d.durationSeconds || 0)
+  };
+  // Caller-id backfill: with instant auto-answer the +CLIP number usually
+  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),
+  // but call.ended carries it — write it now so the record and the
+  // customer_link match stop reading as an unknown caller. Same phone-format
+  // guard as the incoming script (a non-number must not fail the row).
+  var phone = String(d.callerPhone || d.from || '');
+  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;
   return {
     effects: [
       { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,
         match: { field: 'call_id', value: callId },
-        answers: {
-          call_id: callId,
-          status: status,
-          ended_at: String(ev.occurredAt || ''),
-          duration_seconds: Number(d.durationSeconds || 0)
-        } }
+        answers: answers }
     ]
   };
 }`;
