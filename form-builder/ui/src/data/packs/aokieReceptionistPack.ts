@@ -212,18 +212,12 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
 
 const FLOW_MATCH_CUSTOMER = `(function () {
   var phone = String(inputs.callerPhone || inputs.from || '');
-  // Match on the last 9 digits, the SAME normalization the after-call context and
-  // the live-call UI use — an exact string compare missed a known customer stored
-  // as '+61 400 000 000' when the caller id arrived as '+61400000000', so a
-  // returning customer got the generic greeting.
-  var tail = phone.replace(/[^0-9]/g, '').slice(-9);
-  var rows = (nodes.customers && nodes.customers.responses) || [];
-  var hit = null;
-  for (var i = 0; i < rows.length; i++) {
-    var a = (rows[i] && rows[i].answers) || {};
-    var d = String(a.phone || '').replace(/[^0-9]/g, '');
-    if (tail && d.slice(-9) === tail) { hit = rows[i]; break; }
-  }
+  // The customers node pre-filters with the phone_eq op (digits-only last-9
+  // suffix, matched in the DATABASE - so '+61 400 000 000' matches
+  // '+61400000000' and the lookup works at any customer count, no 200-row
+  // scan). Whatever came back IS the match set; take the first.
+  var custNode = nodes.customers || {};
+  var hit = custNode.first || ((custNode.responses || [])[0] || null);
   var name = hit ? String((hit.answers || {}).name || '') : '';
   return {
     found: !!hit,
@@ -565,15 +559,10 @@ const FLOW_AGENT_CONFIG = `(function () {
 // re-sending it is an idempotent no-op, never a downgrade.
 const FLOW_PERSONALIZE_CALLER = `(function () {
   var phone = String(inputs.from || '');
-  var tail = phone.replace(/[^0-9]/g, '').slice(-9);
-  var custNode = nodes.customers;
-  var custRows = custNode && custNode.responses ? custNode.responses : (Array.isArray(custNode) ? custNode : []);
-  var hit = null;
-  for (var i = 0; i < custRows.length; i++) {
-    var a = (custRows[i] && custRows[i].answers) || {};
-    var d = String(a.phone || '').replace(/[^0-9]/g, '');
-    if (tail && d && d.slice(-9) === tail) { hit = custRows[i]; break; }
-  }
+  // The customers node pre-filters with the phone_eq op (digits-only last-9
+  // suffix, matched in the DATABASE) - no client-side scan, no 200-row cap.
+  var custNode = nodes.customers || {};
+  var hit = custNode.first || ((custNode.responses || [])[0] || null);
   // Base config: SAME composition as the Configure Receptionist flow.
   var sNode = nodes.settings;
   var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
@@ -1574,7 +1563,14 @@ export const aokieReceptionistPack: PackData = {
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
-          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            // phone_eq: digits-only last-9-suffix match pushed down to the
+            // database (answersPhone.<field>), so the lookup finds the
+            // customer at ANY table size instead of scanning the newest 200.
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
           { id: 'match', type: 'logic_block', data: { expr: FLOW_MATCH_CUSTOMER } },
           {
             id: 'out',
@@ -1645,7 +1641,13 @@ export const aokieReceptionistPack: PackData = {
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
-          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            // phone_eq: digits-only last-9-suffix match pushed down to the
+            // database, so the caller is recognised at ANY customer count.
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_PERSONALIZE_CALLER } },
           {

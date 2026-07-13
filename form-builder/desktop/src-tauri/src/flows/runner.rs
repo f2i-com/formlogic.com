@@ -466,6 +466,9 @@ enum FilterOp {
     Gt,
     Lt,
     In,
+    /// Phone-normalized equality: digits-only last-9-suffix match (see
+    /// `phone_digits_match`). Pushed down as `answersPhone.<field>`.
+    PhoneEq,
 }
 
 /// Parse an op token; unknown/absent tokens default to `eq` (mirrors the TS).
@@ -476,6 +479,7 @@ fn parse_filter_op(raw: &str) -> FilterOp {
         "gt" => FilterOp::Gt,
         "lt" => FilterOp::Lt,
         "in" => FilterOp::In,
+        "phone_eq" => FilterOp::PhoneEq,
         _ => FilterOp::Eq,
     }
 }
@@ -508,16 +512,24 @@ struct ResponseFilter {
 fn pushdown_eq_filters(filters_raw: Option<&Value>, scope: &SelectorScope) -> Vec<(String, String)> {
     parse_response_filters(filters_raw)
         .iter()
-        .filter(|f| f.op == FilterOp::Eq)
+        .filter(|f| matches!(f.op, FilterOp::Eq | FilterOp::PhoneEq))
         .filter_map(|f| {
             let scalar = match resolve_selector(&f.value, scope) {
                 Value::String(v) => v,
                 _ => return None,
             };
+            let prefix = match f.op {
+                // phone_eq pushes down too: the server runs the SAME
+                // digits-suffix rule (coarse LIKE + exact check), so a
+                // customer match beyond the fetch limit is found by the
+                // database, not scanned for client-side.
+                FilterOp::PhoneEq => "answersPhone",
+                _ => "answers",
+            };
             (!f.field.is_empty()
                 && f.field.len() <= 64
                 && f.field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-            .then(|| (format!("answers.{}", f.field), scalar))
+            .then(|| (format!("{}.{}", prefix, f.field), scalar))
         })
         .collect()
 }
@@ -713,7 +725,25 @@ fn matches_filter_op(field_value: &Value, op: FilterOp, filter_value: &Value) ->
         FilterOp::Gt => numeric_compare(field_value, filter_value) > 0.0,
         FilterOp::Lt => numeric_compare(field_value, filter_value) < 0.0,
         FilterOp::In => in_list(field_value, filter_value),
+        FilterOp::PhoneEq => {
+            phone_digits_match(&js_string_nullish(field_value), &js_string_nullish(filter_value))
+        }
     }
+}
+
+/// Phone-normalized equality (filter op `phone_eq`): both sides reduced to
+/// digits, compared on the last-9-digit suffix — the rule the Aokie caller
+/// lookups have always used, so '+61 491 570 156' matches '0491570156'.
+/// Fewer than 6 digits on either side never matches. Mirrors
+/// `phoneDigitsMatch` in nodes.ts and `ResponseService::phoneDigitsMatch`.
+fn phone_digits_match(stored: &str, wanted: &str) -> bool {
+    let a: String = stored.chars().filter(|c| c.is_ascii_digit()).collect();
+    let b: String = wanted.chars().filter(|c| c.is_ascii_digit()).collect();
+    if a.len() < 6 || b.len() < 6 {
+        return false;
+    }
+    let suf = |s: &str| s.chars().rev().take(9).collect::<Vec<_>>();
+    suf(&a) == suf(&b)
 }
 
 /// Normalize + filter fetched rows into the frozen structured result
@@ -1984,6 +2014,35 @@ mod tests {
         assert_eq!(out["count"], json!(2));
         assert_eq!(out["found"], json!(true));
         assert_eq!(out["first"]["id"], json!("r1"));
+    }
+
+    #[test]
+    fn list_responses_phone_eq_matches_across_formats() {
+        // Digits-only last-9 suffix: '0400 111-222' matches '+61400111222'.
+        let filters = json!([{ "field": "phone", "op": "phone_eq", "value": "0400 111-222" }]);
+        let out = apply_list_responses(&customers(), Some(&filters), &SelectorScope::default());
+        assert_eq!(out["count"], json!(2)); // r1 + r3 share the number
+        assert_eq!(out["first"]["id"], json!("r1"));
+        // Short fragments never match (would otherwise match everything).
+        assert!(!phone_digits_match("222", "0400111222"));
+        assert!(phone_digits_match("+61 491 570 156", "0491570156"));
+    }
+
+    #[test]
+    fn pushdown_covers_eq_and_phone_eq_with_distinct_prefixes() {
+        let filters = json!([
+            { "field": "tag", "op": "eq", "value": "vip" },
+            { "field": "phone", "op": "phone_eq", "value": "+61400111222" },
+            { "field": "age", "op": "gt", "value": 40 }
+        ]);
+        let pairs = pushdown_eq_filters(Some(&filters), &SelectorScope::default());
+        assert_eq!(
+            pairs,
+            vec![
+                ("answers.tag".to_string(), "vip".to_string()),
+                ("answersPhone.phone".to_string(), "+61400111222".to_string()),
+            ]
+        );
     }
 
     #[test]

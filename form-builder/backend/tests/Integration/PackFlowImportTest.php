@@ -265,12 +265,13 @@ class PackFlowImportTest extends TestCase
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 
-        // 8 flows/bindings since the 2026-07-09 sessions (configure-receptionist,
-        // after-call booking, caller lookup joined the original six).
+        // 9 flows/bindings since personalize-caller (2026-07-13) joined the
+        // 2026-07-09 set of eight. The live-reply binding ships DISABLED (the
+        // in-plugin receptionist owns replies) but still imports as a row.
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(8, $flows);
+        $this->assertCount(9, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(8, $bindings);
+        $this->assertCount(9, $bindings);
         $this->assertStringNotContainsString('@pack:', json_encode($flows));
         $this->assertStringNotContainsString('@pack:', json_encode($bindings));
 

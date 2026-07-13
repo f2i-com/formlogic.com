@@ -474,8 +474,16 @@ class ExternalApiController
         // the newest N rows. NOTE: PHP parses '.' in query keys to '_', so
         // accept both spellings ('answers.call_id' arrives as 'answers_call_id').
         $answersEq = [];
+        $answersPhoneEq = [];
         foreach ($params as $k => $v) {
-            if (is_string($v) && (str_starts_with((string) $k, 'answers.') || str_starts_with((string) $k, 'answers_'))) {
+            if (!is_string($v)) {
+                continue;
+            }
+            // ?answersPhone.<fieldId>=<number> — phone-normalized lookup (flow
+            // filter op phone_eq): digits-only last-9 suffix match server-side.
+            if (str_starts_with((string) $k, 'answersPhone.') || str_starts_with((string) $k, 'answersPhone_')) {
+                $answersPhoneEq[substr((string) $k, 13)] = $v;
+            } elseif (str_starts_with((string) $k, 'answers.') || str_starts_with((string) $k, 'answers_')) {
                 $answersEq[substr((string) $k, 8)] = $v;
             }
         }
@@ -484,6 +492,7 @@ class ExternalApiController
             'from' => $params['from'] ?? null,
             'to' => $params['to'] ?? null,
             'answersEq' => $answersEq,
+            'answersPhoneEq' => $answersPhoneEq,
             'limit' => max(1, min((int)($params['limit'] ?? 50), 1000)),
             'offset' => max(0, (int)($params['offset'] ?? 0)),
         ];

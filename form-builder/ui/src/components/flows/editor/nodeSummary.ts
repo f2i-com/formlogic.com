@@ -17,6 +17,7 @@ const OP_WORDS: Record<FlowFilterOp, string> = {
   gt: '>',
   lt: '<',
   in: 'is one of',
+  phone_eq: 'phone matches',
 };
 
 /** Trim a value/selector to something short and readable for a one-line summary. */

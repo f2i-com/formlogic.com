@@ -438,6 +438,41 @@ describe('formlogic_list_responses', () => {
     expect(listResponses).toHaveBeenLastCalledWith('form-1', { limit: 200 });
   });
 
+  it('phone_eq matches digits-normalized last-9 suffixes across formats', async () => {
+    const rows = [
+      { id: 'p1', answers: { name: 'Lance', phone: '0491 570 156' } },
+      { id: 'p2', answers: { name: 'Robin', phone: '+61 400 999 888' } },
+      { id: 'p3', answers: { name: 'Shorty', phone: '243' } },
+    ];
+    const deps = fakeDeps({ listResponses: vi.fn(async () => rows) });
+    const out = (await executeNode(
+      ctxFor(listNode({ filters: [{ field: 'phone', op: 'phone_eq', value: '+61491570156' }] }), deps)
+    )) as { count: number; first: { answers: { name: string } } | null };
+    expect(out.count).toBe(1);
+    expect(out.first?.answers.name).toBe('Lance');
+  });
+
+  it('pushes eq AND phone_eq string filters down to the fetch (server-side lookup)', async () => {
+    const listResponses = vi.fn(async () => CUSTOMERS);
+    await executeNode(
+      ctxFor(
+        listNode({
+          filters: [
+            { field: 'tag', op: 'eq', value: 'vip' },
+            { field: 'phone', op: 'phone_eq', value: '+61400111222' },
+            { field: 'age', op: 'gt', value: 40 }, // not pushable — stays client-side only
+          ],
+        }),
+        fakeDeps({ listResponses })
+      )
+    );
+    expect(listResponses).toHaveBeenCalledWith('form-1', {
+      limit: 200,
+      answersEq: { tag: 'vip' },
+      answersPhoneEq: { phone: '+61400111222' },
+    });
+  });
+
   it('fails invalid_flow when the form reference is missing', async () => {
     const node: WorkflowGraphNode = { id: 'lookup', type: 'formlogic_list_responses', data: {} };
     await expect(executeNode(ctxFor(node, fakeDeps()))).rejects.toMatchObject({ code: 'invalid_flow' });

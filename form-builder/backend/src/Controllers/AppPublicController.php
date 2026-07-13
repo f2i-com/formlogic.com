@@ -876,13 +876,22 @@ class AppPublicController
         // ?answers.<fieldId>=<value>, ANDed. PHP parses '.' in query keys
         // to '_', so both spellings arrive here.
         $answersEq = [];
+        $answersPhoneEq = [];
         foreach ($queryParams as $qk => $qv) {
-            if (is_string($qv) && (str_starts_with((string) $qk, 'answers.') || str_starts_with((string) $qk, 'answers_'))) {
+            if (!is_string($qv)) {
+                continue;
+            }
+            // ?answersPhone.<fieldId>=<number> — phone-normalized lookup (flow
+            // filter op phone_eq): digits-only last-9 suffix match server-side.
+            if (str_starts_with((string) $qk, 'answersPhone.') || str_starts_with((string) $qk, 'answersPhone_')) {
+                $answersPhoneEq[substr((string) $qk, 13)] = $qv;
+            } elseif (str_starts_with((string) $qk, 'answers.') || str_starts_with((string) $qk, 'answers_')) {
                 $answersEq[substr((string) $qk, 8)] = $qv;
             }
         }
         $options = [
             'answersEq' => $answersEq,
+            'answersPhoneEq' => $answersPhoneEq,
             'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 200)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];

@@ -813,6 +813,9 @@ class ResponseService
 
         // Indexed answer-equality lookups (audit AOK-FLOW-001).
         $this->applyAnswersEq($options, $conditions, $params);
+        // Phone-normalized lookups (flow filter op `phone_eq`): a coarse
+        // ordered-digit LIKE narrows in SQL, the exact digits check runs below.
+        $this->applyAnswersPhoneEq($options, $conditions, $params);
 
         if (!empty($conditions)) {
             $sql .= " WHERE " . implode(' AND ', $conditions);
@@ -834,7 +837,71 @@ class ResponseService
         $stmt->execute();
 
         $rows = $stmt->fetchAll();
+        // Exact phone check over the coarse SQL candidates (see applyAnswersPhoneEq).
+        if (!empty($options['answersPhoneEq']) && is_array($options['answersPhoneEq'])) {
+            $rows = array_values(array_filter($rows, function (array $row) use ($options): bool {
+                $answers = json_decode((string) ($row['answers'] ?? ''), true);
+                if (!is_array($answers)) {
+                    return false;
+                }
+                foreach ($options['answersPhoneEq'] as $field => $wanted) {
+                    if (!self::phoneDigitsMatch((string) ($answers[$field] ?? ''), (string) $wanted)) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+        }
         return $this->formatResponses($db, $rows);
+    }
+
+    /**
+     * Phone-normalized equality (flow filter op `phone_eq`): both sides reduced
+     * to digits, compared on their last-9-digit suffix — the SAME rule the
+     * Aokie caller-lookup logic has always used, so '+61 491 570 156' matches
+     * '0491570156'. Short numbers (fewer than 6 digits either side) never
+     * match: a 3-digit fragment matching everything would be worse than no
+     * filter at all.
+     */
+    public static function phoneDigitsMatch(string $stored, string $wanted): bool
+    {
+        $a = preg_replace('/\D+/', '', $stored) ?? '';
+        $b = preg_replace('/\D+/', '', $wanted) ?? '';
+        if (strlen($a) < 6 || strlen($b) < 6) {
+            return false;
+        }
+        return substr($a, -9) === substr($b, -9);
+    }
+
+    /**
+     * Coarse SQL narrowing for `answersPhoneEq`: the stored value may be
+     * formatted arbitrarily ('0491 570 156', '(04) 9157-0156'), so equality
+     * can't push down directly. Instead the last four digits of the wanted
+     * number, in order with anything between ('%2%4%3%…'), prefilter the rows
+     * cheaply; the exact digits comparison runs in PHP over the survivors.
+     * False positives just cost a decode — false NEGATIVES are impossible
+     * (the true match always contains its own last four digits in order).
+     */
+    private function applyAnswersPhoneEq(array $options, array &$conditions, array &$params): void
+    {
+        if (empty($options['answersPhoneEq']) || !is_array($options['answersPhoneEq'])) {
+            return;
+        }
+        $i = 0;
+        foreach ($options['answersPhoneEq'] as $field => $value) {
+            if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', (string) $field)) {
+                continue;
+            }
+            $digits = preg_replace('/\D+/', '', (string) $value) ?? '';
+            if (strlen($digits) < 6) {
+                continue; // too short to filter meaningfully; exact check rejects anyway
+            }
+            $i++;
+            $last4 = substr($digits, -4);
+            $pattern = '%' . implode('%', str_split($last4)) . '%';
+            $conditions[] = "CAST(json_extract(answers, '$.\"" . $field . "\"') AS TEXT) LIKE :ans_ph_{$i}";
+            $params["ans_ph_{$i}"] = $pattern;
+        }
     }
 
     /**
@@ -1124,6 +1191,9 @@ class ResponseService
         // semantics as getFormResponses, so the app-scoped browser runner
         // gets identical pushdown behaviour.
         $this->applyAnswersEq($options, $conditions, $params);
+        // Phone-normalized lookups (flow filter op `phone_eq`) — coarse SQL
+        // narrowing; the exact digits check runs over the fetched page below.
+        $this->applyAnswersPhoneEq($options, $conditions, $params);
 
         // Build search conditions using json_extract
         if ($searchQuery !== '') {
@@ -1200,6 +1270,24 @@ class ResponseService
         $stmt->execute();
 
         $rows = $stmt->fetchAll();
+        // Exact phone check over the coarse SQL candidates (mirrors
+        // getFormResponses; the total stays the coarse count — the flow
+        // runners only consume `responses`, and a rare LIKE false positive
+        // over-counting is harmless there).
+        if (!empty($options['answersPhoneEq']) && is_array($options['answersPhoneEq'])) {
+            $rows = array_values(array_filter($rows, function (array $row) use ($options): bool {
+                $answers = json_decode((string) ($row['answers'] ?? ''), true);
+                if (!is_array($answers)) {
+                    return false;
+                }
+                foreach ($options['answersPhoneEq'] as $field => $wanted) {
+                    if (!self::phoneDigitsMatch((string) ($answers[$field] ?? ''), (string) $wanted)) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+        }
         return ['responses' => $this->formatResponses($db, $rows), 'total' => $total];
     }
 

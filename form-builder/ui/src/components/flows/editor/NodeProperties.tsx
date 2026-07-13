@@ -73,6 +73,9 @@ const FILTER_OP_OPTIONS: { value: FlowFilterOp; label: string }[] = [
   { value: 'gt', label: 'greater than' },
   { value: 'lt', label: 'less than' },
   { value: 'in', label: 'one of' },
+  // Digits-only last-9-suffix match, pushed down to the database — the
+  // caller-ID lookup op ('+61 491 570 156' matches '0491570156').
+  { value: 'phone_eq', label: 'phone number matches' },
 ];
 
 /** Is this a structured (JSON/selector) code field vs. a QuickJS code field? */
@@ -378,21 +381,38 @@ function FiltersField({
   const addRow = () => commit([...rows, { field: '', op: 'eq' as FlowFilterOp, value: '' }]);
   const removeRow = (i: number) => commit(rows.filter((_, j) => j !== i));
 
+  // A usable field picker needs actual fields; an empty list must fall back
+  // to free text (an empty "Select a field…" dropdown reads as broken).
+  const pickerFields = formFields && formFields.length > 0 ? formFields : null;
+
   return (
     <div className="block">
       <span className={LABEL_CLS}>{spec.label}</span>
+      {rows.length === 0 && (
+        <p className="mb-1.5 text-[11px] text-gray-400 dark:text-slate-500">
+          No rules yet — every record comes back. Add one to find a specific
+          record, e.g. <span className="font-mono">phone</span> · phone number
+          matches · <span className="font-mono">$inputs.callerPhone</span>.
+        </p>
+      )}
       <div className="space-y-2">
         {rows.map((row, i) => (
           <div key={i} className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 p-2 space-y-1.5">
-            {formFields ? (
+            {pickerFields ? (
               <select
-                value={formFields.some((f) => f.id === row.field) ? row.field : ''}
+                value={row.field}
                 onChange={(e) => setRow(i, { field: e.target.value })}
                 className={INPUT_CLS + ' cursor-pointer'}
                 aria-label="Filter field"
               >
                 <option value="">Select a field…</option>
-                {formFields.map((f) => (
+                {/* A saved field id the picker doesn't know (form fields still
+                    loading, imported flow) must stay VISIBLE — collapsing it to
+                    "Select a field…" made a configured filter look broken. */}
+                {row.field !== '' && !pickerFields.some((f) => f.id === row.field) && (
+                  <option value={row.field}>{row.field}</option>
+                )}
+                {pickerFields.map((f) => (
                   <option key={f.id} value={f.id}>{f.label || f.id}</option>
                 ))}
               </select>
@@ -400,7 +420,7 @@ function FiltersField({
               <input
                 type="text"
                 value={row.field}
-                placeholder="field id"
+                placeholder="field id (e.g. phone)"
                 onChange={(e) => setRow(i, { field: e.target.value })}
                 className={INPUT_CLS + ' font-mono text-xs'}
                 aria-label="Filter field id"
@@ -410,7 +430,7 @@ function FiltersField({
               <select
                 value={row.op}
                 onChange={(e) => setRow(i, { op: e.target.value as FlowFilterOp })}
-                className={INPUT_CLS + ' w-28 flex-none cursor-pointer'}
+                className={INPUT_CLS + ' w-36 flex-none cursor-pointer'}
                 aria-label="Filter operator"
               >
                 {FILTER_OP_OPTIONS.map((o) => (
@@ -420,7 +440,7 @@ function FiltersField({
               <input
                 type="text"
                 value={row.value}
-                placeholder="value or $selector"
+                placeholder="value or $inputs.…"
                 onChange={(e) => setRow(i, { value: e.target.value })}
                 className={INPUT_CLS + ' min-w-0 flex-1'}
                 aria-label="Filter value"

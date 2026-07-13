@@ -207,6 +207,10 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
           query?.answersEq && typeof query.answersEq === 'object'
             ? (query.answersEq as Record<string, string>)
             : undefined,
+        answersPhoneEq:
+          query?.answersPhoneEq && typeof query.answersPhoneEq === 'object'
+            ? (query.answersPhoneEq as Record<string, string>)
+            : undefined,
       });
     },
     submitResponse: async (formId, answers) => {
@@ -254,6 +258,10 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
         answersEq:
           query?.answersEq && typeof query.answersEq === 'object'
             ? (query.answersEq as Record<string, string>)
+            : undefined,
+        answersPhoneEq:
+          query?.answersPhoneEq && typeof query.answersPhoneEq === 'object'
+            ? (query.answersPhoneEq as Record<string, string>)
             : undefined,
       });
       if (res.error) throw new Error(res.error);

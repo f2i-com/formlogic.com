@@ -55,7 +55,7 @@ interface AppRuntimeState {
   reset: () => void;
 
   // Response CRUD
-  fetchResponses: (formId: string, options?: { limit?: number; offset?: number; resolve?: boolean; answersEq?: Record<string, string> }) => Promise<unknown[]>;
+  fetchResponses: (formId: string, options?: { limit?: number; offset?: number; resolve?: boolean; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string> }) => Promise<unknown[]>;
   fetchResponsePage: (formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean; sort?: string; sortDir?: 'asc' | 'desc' }) => Promise<{ rows: unknown[]; total: number }>;
   /** Newest rows of a form as {id, answers, submittedAt} — demo-aware; powers dashboard list/activity widgets. */
   fetchRecentRows: (formId: string, limit: number) => Promise<Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>>;

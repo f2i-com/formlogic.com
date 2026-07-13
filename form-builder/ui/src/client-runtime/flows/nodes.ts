@@ -76,7 +76,7 @@ export const LIST_RESPONSES_DEFAULT_LIMIT = 200;
 export const LIST_RESPONSES_MAX_LIMIT = 500;
 
 /** A comparison operator for a formlogic_list_responses filter row. */
-export type FlowFilterOp = 'eq' | 'neq' | 'contains' | 'gt' | 'lt' | 'in';
+export type FlowFilterOp = 'eq' | 'neq' | 'contains' | 'gt' | 'lt' | 'in' | 'phone_eq';
 
 /** One AND-ed filter over a form field: `answers[field] <op> value`. */
 export interface FlowResponseFilter {
@@ -102,7 +102,7 @@ export interface FlowListResponsesResult {
   found: boolean;
 }
 
-const FILTER_OPS = new Set<FlowFilterOp>(['eq', 'neq', 'contains', 'gt', 'lt', 'in']);
+const FILTER_OPS = new Set<FlowFilterOp>(['eq', 'neq', 'contains', 'gt', 'lt', 'in', 'phone_eq']);
 
 /** Typed executor failure carrying the flow-run-result error code + offending node. */
 export class FlowExecError extends Error {
@@ -394,6 +394,21 @@ function inList(fieldValue: unknown, filterValue: unknown): boolean {
 }
 
 /** Evaluate one filter op against a field value (see docs §4 for op semantics). */
+/**
+ * Phone-normalized equality (`phone_eq`): both sides reduced to digits and
+ * compared on the last-9-digit suffix — the rule the Aokie caller lookups
+ * have always used, so '+61 491 570 156' matches '0491570156'. Fewer than
+ * 6 digits on either side never matches (a short fragment would match
+ * everything). Mirrored by the Rust runner and by the server's
+ * `answersPhoneEq` pushdown (ResponseService::phoneDigitsMatch).
+ */
+export function phoneDigitsMatch(stored: unknown, wanted: unknown): boolean {
+  const a = String(stored ?? '').replace(/\D+/g, '');
+  const b = String(wanted ?? '').replace(/\D+/g, '');
+  if (a.length < 6 || b.length < 6) return false;
+  return a.slice(-9) === b.slice(-9);
+}
+
 function matchesFilterOp(fieldValue: unknown, op: FlowFilterOp, filterValue: unknown): boolean {
   switch (op) {
     case 'eq':
@@ -408,6 +423,8 @@ function matchesFilterOp(fieldValue: unknown, op: FlowFilterOp, filterValue: unk
       return numericCompare(fieldValue, filterValue) < 0;
     case 'in':
       return inList(fieldValue, filterValue);
+    case 'phone_eq':
+      return phoneDigitsMatch(fieldValue, filterValue);
     default:
       return false;
   }
@@ -1175,12 +1192,21 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // lookup in practice (call_id, phone) is a string; number/bool eq stays
       // fully client-side, identically to the Rust runner.
       const answersEq: Record<string, string> = {};
+      const answersPhoneEq: Record<string, string> = {};
       for (const f of parseResponseFilters(data.filters)) {
-        if (f.op !== 'eq' || !/^[A-Za-z0-9_]{1,64}$/.test(f.field)) continue;
+        if (!/^[A-Za-z0-9_]{1,64}$/.test(f.field)) continue;
         const resolved = resolveSelector(f.value, ctx.scope);
-        if (typeof resolved === 'string') answersEq[f.field] = resolved;
+        if (typeof resolved !== 'string') continue;
+        if (f.op === 'eq') answersEq[f.field] = resolved;
+        // phone_eq pushes down too: the server runs the SAME digits-suffix
+        // rule (coarse LIKE + exact check), so a customer match beyond the
+        // fetch limit is found by the database, not scanned for client-side.
+        else if (f.op === 'phone_eq') answersPhoneEq[f.field] = resolved;
       }
-      const raw = await deps.listResponses(formId, Object.keys(answersEq).length > 0 ? { limit, answersEq } : { limit });
+      const query: Record<string, unknown> = { limit };
+      if (Object.keys(answersEq).length > 0) query.answersEq = answersEq;
+      if (Object.keys(answersPhoneEq).length > 0) query.answersPhoneEq = answersPhoneEq;
+      const raw = await deps.listResponses(formId, query);
       const rows: FlowResponseRow[] = [];
       for (const item of Array.isArray(raw) ? raw : []) {
         const row = normalizeResponseRow(item);
