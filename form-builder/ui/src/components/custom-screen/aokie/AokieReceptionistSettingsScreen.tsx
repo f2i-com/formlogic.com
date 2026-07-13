@@ -30,6 +30,7 @@ const VOICES = ['', 'alba', 'cosette', 'eponine', 'fantine', 'javert', 'jean', '
 interface Draft {
   business_name: string;
   instructions: string;
+  business_info: string;
   greeting: string;
   model: string;
   llm_endpoint: string;
@@ -43,6 +44,7 @@ interface Draft {
 const EMPTY_DRAFT: Draft = {
   business_name: '',
   instructions: '',
+  business_info: '',
   greeting: '',
   model: '',
   llm_endpoint: '',
@@ -58,6 +60,7 @@ function draftFromAnswers(a: Record<string, unknown>): Draft {
   return {
     business_name: s('business_name'),
     instructions: s('instructions'),
+    business_info: s('business_info'),
     greeting: s('greeting'),
     model: s('model'),
     llm_endpoint: s('llm_endpoint'),
@@ -78,6 +81,14 @@ export function buildAgentPayload(d: Draft): Record<string, unknown> {
   let persona = d.instructions.trim() || DEFAULT_PERSONA;
   const business = d.business_name.trim();
   if (business) persona = `You are the phone receptionist for ${business}.\n` + persona;
+  // BUSINESS INFO grounding — SAME composition as the pack flows
+  // (BUSINESS_INFO_BLOCK_JS in aokieReceptionistPack.ts); keep in lock-step.
+  const info = d.business_info.trim().slice(0, 4000);
+  if (info) {
+    persona +=
+      '\n\nBUSINESS INFO - the ONLY facts about the business you may share:\n' + info +
+      '\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';
+  }
   let greeting = d.greeting.trim();
   if (!greeting) {
     greeting = business
@@ -350,6 +361,19 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           className={inputCls + ' resize-y'}
         />
         <p className={hintCls}>Blank uses Aokie's built-in receptionist persona. Plain English works — treat it like briefing a new hire.</p>
+        <div className="mt-4">
+          <h3 className="mb-1.5 text-sm font-medium text-gray-900 dark:text-white">Business info the AI may share</h3>
+          <textarea
+            value={draft.business_info}
+            onChange={(e) => set({ business_info: e.target.value })}
+            rows={6}
+            placeholder="Menu, services, prices, opening hours, parking, policies, FAQ… The AI answers business questions ONLY from this text and never invents details."
+            className={inputCls + ' resize-y'}
+          />
+          <p className={hintCls}>
+            The only facts it will state about the business. Anything not covered here, it offers to have the team confirm — so an empty box means no invented menus or prices.
+          </p>
+        </div>
       </div>
 
       {/* ── Voice & replies ── */}

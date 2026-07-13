@@ -645,6 +645,18 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
 export const DEFAULT_PERSONA =
   'You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.';
 
+// BUSINESS INFO grounding (live report 2026-07-13: the agent invented an
+// entire menu — "shark steaks, barnacle burgers, spicy krill sauce").
+// Identical JS appended to the persona in EVERY flow that composes it
+// (live-reply context, configure-receptionist, personalize-caller) — and
+// mirrored in the console's buildAgentPayload. They must never disagree.
+const BUSINESS_INFO_BLOCK_JS = `
+  var info = String(cfg.business_info || '').trim().slice(0, 4000);
+  if (info) {
+    persona += '\\n\\nBUSINESS INFO - the ONLY facts about the business you may share:\\n' + info
+      + '\\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';
+  }`;
+
 const FLOW_LIVE_CONTEXT = `(function () {
   var callId = String(inputs.callId || '');
   var latest = String(inputs.text || '').trim();
@@ -661,6 +673,7 @@ const FLOW_LIVE_CONTEXT = `(function () {
   var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
   var business = String(cfg.business_name || '').trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+${BUSINESS_INFO_BLOCK_JS}
   var model = String(cfg.model || '').trim();
 
   var turnRows = (nodes.turns && nodes.turns.responses) || [];
@@ -708,6 +721,7 @@ const FLOW_AGENT_CONFIG = `(function () {
   var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
   var business = String(cfg.business_name || '').trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+${BUSINESS_INFO_BLOCK_JS}
   var greeting = String(cfg.greeting || '').trim();
   if (!greeting) {
     greeting = business
@@ -754,6 +768,7 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
   var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
   var business = String(cfg.business_name || '').trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+${BUSINESS_INFO_BLOCK_JS}
   var greeting = String(cfg.greeting || '').trim();
   if (!greeting) {
     greeting = business
@@ -1979,6 +1994,19 @@ export const aokieReceptionistPack: PackData = {
           properties: {
             placeholder:
               'e.g. Be warm and concise. Offer to book appointments Mon–Fri 9–5. If asked about prices, give the standard checkup price of $90 and offer to book.',
+          },
+        },
+        {
+          // BUSINESS INFO grounding (2026-07-13: the agent invented a menu on
+          // a live call). The ONLY facts the AI may share about the business —
+          // anything not covered here it must offer to have the team confirm.
+          id: 'business_info',
+          type: 'long_text',
+          label: 'Business info the AI may share',
+          required: false,
+          properties: {
+            placeholder:
+              'Menu, services, prices, opening hours, parking, policies, FAQ… The AI answers business questions ONLY from this text and never invents details. Leave it blank and the AI offers to have the team confirm instead.',
           },
         },
         {
