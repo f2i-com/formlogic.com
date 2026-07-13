@@ -242,6 +242,35 @@ const COMMAND_SUCCESS_LABEL: Record<string, string> = {
   'call.operatorSpeak': 'Sent to the caller',
 };
 
+/** AOK-CTRL-001: the radio-backed plugin returns `{accepted, queued, operationId}` for call
+ *  controls — the phone hasn't acted yet, so the toast must not claim the final verb. The
+ *  authoritative state arrives via the call events (the record reload). Mock/dev results keep
+ *  their synchronous final verbs (`answered`/`ended`/…) and take the confirmed copy above. */
+const COMMAND_ACCEPTED_LABEL: Record<string, { title: string; message: string }> = {
+  'call.answer': {
+    title: 'Answer sent to the phone',
+    message: 'The call view updates when the phone confirms it picked up.',
+  },
+  'call.reject': {
+    title: 'Reject sent to the phone',
+    message: 'The call record confirms once the phone declines the call.',
+  },
+  'call.hangup': {
+    title: 'Hang-up sent to the phone',
+    message: 'The call record confirms once the call actually ends.',
+  },
+  'call.operatorSpeak': {
+    title: 'Speech queued to the caller',
+    message: 'The transcript records it once it actually plays.',
+  },
+};
+
+/** True when the result reports ACCEPTANCE only — no synchronous final verb to stand on. */
+function isAcceptedOnly(result?: Record<string, unknown> | null): boolean {
+  if (!result || result.accepted !== true) return false;
+  return !('answered' in result || 'rejected' in result || 'ended' in result || 'spoken' in result);
+}
+
 export interface OutcomeToast {
   kind: 'success' | 'error';
   title: string;
@@ -257,6 +286,19 @@ export function describeRelayOutcome(command: string, outcome: RelayOutcome, pre
   // presence-derived guess (the freshest sibling isn't necessarily the claimant).
   const deviceName = outcome.handledBy ?? presenceDeviceName;
   if (outcome.status === 'done') {
+    // AOK-CTRL-001: an accepted-only result means the desktop QUEUED the action —
+    // never toast "answered/ended/sent" before the phone confirms it.
+    if (isAcceptedOnly(outcome.result)) {
+      const accepted = COMMAND_ACCEPTED_LABEL[command];
+      const parts = [accepted?.message, deviceName ? `Handled by ${deviceName}.` : undefined].filter(
+        (p): p is string => Boolean(p)
+      );
+      return {
+        kind: 'success',
+        title: accepted?.title ?? 'Command accepted by the desktop',
+        message: parts.length ? parts.join(' ') : undefined,
+      };
+    }
     return {
       kind: 'success',
       title: COMMAND_SUCCESS_LABEL[command] ?? 'Command sent',

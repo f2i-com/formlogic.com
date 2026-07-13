@@ -255,6 +255,37 @@ describe('describeRelayOutcome — operator copy', () => {
   it('done → success toast with the command label', () => {
     expect(describeRelayOutcome('call.answer', { status: 'done' })).toEqual({ kind: 'success', title: 'Call answered' });
   });
+  // AOK-CTRL-001: a radio-backed plugin result is ACCEPTANCE only ({accepted, queued,
+  // operationId}) — the toast must never claim the final verb before the phone confirms
+  // (the authoritative state lands via the call events / record reload).
+  it('done with an accepted-only result → "sent to the phone" copy, never the final verb', () => {
+    const outcome: RelayOutcome = {
+      status: 'done',
+      result: { accepted: true, queued: true, operationId: 'op_1', via: 'radio' },
+      handledBy: 'Office PC',
+    };
+    const t = describeRelayOutcome('call.answer', outcome);
+    expect(t.kind).toBe('success');
+    expect(t.title).toBe('Answer sent to the phone');
+    expect(t.message).toContain('Handled by Office PC.');
+
+    expect(
+      describeRelayOutcome('call.hangup', { status: 'done', result: { accepted: true, queued: true } }).title
+    ).toBe('Hang-up sent to the phone');
+    expect(
+      describeRelayOutcome('call.reject', { status: 'done', result: { accepted: true, queued: true } }).title
+    ).toBe('Reject sent to the phone');
+    expect(
+      describeRelayOutcome('call.operatorSpeak', { status: 'done', result: { accepted: true, queued: true } }).title
+    ).toBe('Speech queued to the caller');
+  });
+  it('done with a synchronous mock result (final verb present) keeps the confirmed copy', () => {
+    const t = describeRelayOutcome('call.answer', {
+      status: 'done',
+      result: { accepted: true, answered: true, call: { state: 'active' } },
+    });
+    expect(t.title).toBe('Call answered');
+  });
   it('expired → the "no desktop online" error', () => {
     const t = describeRelayOutcome('call.hangup', { status: 'expired' }, 'Home Office PC');
     expect(t.kind).toBe('error');
