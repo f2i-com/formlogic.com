@@ -1699,6 +1699,23 @@ impl FlowRuntime {
                         {
                             payload["callId"] = json!(cid);
                         }
+                        // §9.2: name the caller turn too — a fallback that lost
+                        // the race to a newer caller turn is refused typed
+                        // (stale_turn) instead of speaking a stale apology.
+                        if event
+                            .get("data")
+                            .and_then(|d| d.get("speaker"))
+                            .and_then(Value::as_str)
+                            == Some("caller")
+                        {
+                            if let Some(turn) = event
+                                .get("data")
+                                .and_then(|d| d.get("turn"))
+                                .and_then(Value::as_u64)
+                            {
+                                payload["inResponseTo"] = json!(turn);
+                            }
+                        }
                         if let Err(e) = self.connector(&connector_id, "call.operatorSpeak", Some(payload)).await {
                             self.note_error(format!("binding {binding_id} fallback speak via {connector_id}: {e}"));
                         }
@@ -2057,6 +2074,13 @@ impl FlowRuntime {
                 let cid = resolve_deep(&json!("$event.data.callId"), scope);
                 if let Some(c) = cid.as_str().filter(|s| !s.is_empty()) {
                     payload["callId"] = json!(c);
+                }
+                // §9.2: when the triggering event IS a caller turn, name it —
+                // a newer caller turn makes this action stale (typed refusal).
+                if resolve_deep(&json!("$event.data.speaker"), scope).as_str() == Some("caller") {
+                    if let Some(turn) = resolve_deep(&json!("$event.data.turn"), scope).as_u64() {
+                        payload["inResponseTo"] = json!(turn);
+                    }
                 }
                 self.connector("aokie", "call.operatorSpeak", Some(payload)).await
             }

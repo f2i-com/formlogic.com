@@ -974,10 +974,37 @@ async fn execute_node(
             if let Some(cid) = call_id.as_str().filter(|s| !s.is_empty()) {
                 payload["callId"] = json!(cid);
             }
-            // Routed through the same connector_request() helper as the
-            // "connector_request" node above, so the capability gate below covers
-            // both node types from one call site.
-            connector_request(node, deps, &opts.capabilities, "aokie", "call.operatorSpeak", Some(payload)).await
+            // §9.2 within-call staleness: carry the caller turn NUMBER this
+            // reply answers — explicit inResponseToFrom/inResponseTo, else the
+            // flow's own `turn` input (live-reply's binding seeds it).
+            let in_response_to = if let Some(from) = data.get("inResponseToFrom").and_then(Value::as_str) {
+                resolve_selector(&json!(from), scope)
+            } else if let Some(n) = data.get("inResponseTo").and_then(Value::as_u64) {
+                json!(n)
+            } else {
+                resolve_selector(&json!("$inputs.turn"), scope)
+            };
+            let turn_no = in_response_to
+                .as_u64()
+                .or_else(|| in_response_to.as_str().and_then(|s| s.parse::<u64>().ok()));
+            if let Some(n) = turn_no {
+                payload["inResponseTo"] = json!(n);
+            }
+            // Routed through the connector_request_allowing() helper: the same
+            // capability gate as the "connector_request" node, plus typed
+            // stale refusals (stale_call/stale_turn) resolve as a BENIGN SKIP —
+            // the conversation moved on, and erroring would trip the binding's
+            // fallback reply (another stale answer) (§9.1/§9.2).
+            connector_request_allowing(
+                node,
+                deps,
+                &opts.capabilities,
+                "aokie",
+                "call.operatorSpeak",
+                Some(payload),
+                &["stale_call", "stale_turn"],
+            )
+            .await
         }
 
         "storage_get" => {
@@ -1048,6 +1075,24 @@ async fn connector_request(
     command: &str,
     payload: Option<Value>,
 ) -> Result<Value, FlowError> {
+    connector_request_allowing(node, deps, capabilities, connector_id, command, payload, &[]).await
+}
+
+/// Like [`connector_request`], but the listed typed connector error codes
+/// resolve as a BENIGN SKIP (`{skipped: true, reason}`) instead of a node
+/// failure. Used by speech nodes for stale refusals (§9.1/§9.2): a
+/// stale_call/stale_turn means the conversation moved on — silence is the
+/// correct outcome, and a node error would trip the binding's fallback
+/// reply, speaking ANOTHER stale answer.
+async fn connector_request_allowing(
+    node: &GraphNode,
+    deps: &RunDeps,
+    capabilities: &[String],
+    connector_id: &str,
+    command: &str,
+    payload: Option<Value>,
+    benign_codes: &[&str],
+) -> Result<Value, FlowError> {
     let exact = format!("connector.{connector_id}.{command}");
     let wildcard = format!("connector.{connector_id}.*");
     if !capabilities.iter().any(|c| c == &exact || c == &wildcard) {
@@ -1069,6 +1114,9 @@ async fn connector_request(
     };
     match connectors::dispatch(host, connector_id, &body).await {
         Ok(v) => Ok(v),
+        Err(f) if benign_codes.iter().any(|b| f.code == *b) => {
+            Ok(json!({ "skipped": true, "reason": f.code }))
+        }
         Err(f) => {
             let code = if f.code == "capability_denied" {
                 FlowErrorCode::CapabilityDenied

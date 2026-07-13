@@ -4148,6 +4148,10 @@
                   {
                     "name": "text",
                     "example": "Are you open on Sunday?"
+                  },
+                  {
+                    "name": "turn",
+                    "example": 4
                   }
                 ]
               }
@@ -4970,7 +4974,8 @@
         },
         "inputMap": {
           "callId": "$event.data.callId",
-          "text": "$event.data.text"
+          "text": "$event.data.text",
+          "turn": "$event.data.turn"
         },
         "fallbackPolicy": {
           "onError": "log_and_continue",

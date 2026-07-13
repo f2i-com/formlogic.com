@@ -265,9 +265,22 @@ export const mockAokieConnector: BrowserConnector = {
         return { ended: true };
       }
       case 'call.operatorSpeak': {
-        const p = (payload ?? {}) as { text?: unknown };
+        // §9.2 parity: inResponseTo (the caller turn number the speech
+        // answers) is type-checked like the plugin does; the mock never
+        // simulates caller turns, so staleness itself isn't simulated.
+        const p = (payload ?? {}) as { text?: unknown; inResponseTo?: unknown };
         if (typeof p.text !== 'string' || !p.text.trim()) {
           throw new ConnectorError('command_failed', 'call.operatorSpeak requires {text}.');
+        }
+        if (
+          p.inResponseTo !== undefined &&
+          p.inResponseTo !== null &&
+          typeof p.inResponseTo !== 'number'
+        ) {
+          throw new ConnectorError(
+            'command_failed',
+            'call.operatorSpeak inResponseTo must be the caller turn NUMBER the speech answers.'
+          );
         }
         const call = requireMockCall('call.operatorSpeak', payload, ['active']);
         mockTurnCounter += 1;

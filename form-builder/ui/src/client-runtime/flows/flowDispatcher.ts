@@ -922,6 +922,13 @@ async function applyOutputAction(
       };
       const speakCallId = resolveDeep('$event.data.callId', scope);
       if (typeof speakCallId === 'string' && speakCallId !== '') speakPayload.callId = speakCallId;
+      // §9.2: when the triggering event IS a caller turn, name it — a newer
+      // caller turn makes this action stale (typed stale_turn, benign here).
+      const speakTurn = resolveDeep('$event.data.turn', scope);
+      const speakSpeaker = resolveDeep('$event.data.speaker', scope);
+      if (typeof speakTurn === 'number' && speakSpeaker === 'caller') {
+        speakPayload.inResponseTo = speakTurn;
+      }
       await d.connectorRequest('aokie', 'call.operatorSpeak', speakPayload);
       return;
     }

@@ -1316,9 +1316,40 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       } else {
         callId = resolveSelector('$inputs.callId', ctx.scope);
       }
+      // §9.2 within-call staleness: carry the caller turn NUMBER this reply
+      // answers — explicit inResponseToFrom/inResponseTo, else the flow's own
+      // `turn` input (live-reply's binding seeds it from the turn event).
+      let inResponseTo: unknown;
+      if (typeof data.inResponseToFrom === 'string') {
+        inResponseTo = resolveSelector(data.inResponseToFrom, ctx.scope);
+      } else if (typeof data.inResponseTo === 'number') {
+        inResponseTo = data.inResponseTo;
+      } else {
+        inResponseTo = resolveSelector('$inputs.turn', ctx.scope);
+      }
       const payload: Record<string, unknown> = { text };
       if (typeof callId === 'string' && callId !== '') payload.callId = callId;
-      return await deps.connectorRequest('aokie', 'call.operatorSpeak', payload);
+      const turnNo =
+        typeof inResponseTo === 'string' && /^\d+$/.test(inResponseTo)
+          ? Number(inResponseTo)
+          : inResponseTo;
+      if (typeof turnNo === 'number' && Number.isFinite(turnNo) && turnNo >= 0) {
+        payload.inResponseTo = turnNo;
+      }
+      try {
+        return await deps.connectorRequest('aokie', 'call.operatorSpeak', payload);
+      } catch (e) {
+        // A typed stale refusal is SUCCESS-shaped (§9.1/§9.2): the
+        // conversation moved on (newer call or newer caller turn) and the
+        // right outcome is SILENCE. Erroring here would trip the binding's
+        // fallback reply — which would speak ANOTHER stale answer.
+        const code = (e as { code?: unknown }).code;
+        const msg = e instanceof Error ? e.message : String(e);
+        if (code === 'stale_call' || code === 'stale_turn' || /\bstale_(?:call|turn)\b/.test(msg)) {
+          return { skipped: true, reason: typeof code === 'string' ? code : 'stale' };
+        }
+        throw e;
+      }
     }
 
     // ── Desktop-service-backed nodes (docs §4) ──────────────────────────────────────────────

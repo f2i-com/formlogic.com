@@ -2728,7 +2728,7 @@ export const aokieReceptionistPack: PackData = {
           {
             id: 'in',
             type: 'input',
-            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'text', example: 'Are you open on Sunday?' }] },
+            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'text', example: 'Are you open on Sunday?' }, { name: 'turn', example: 4 }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
@@ -3142,7 +3142,10 @@ export const aokieReceptionistPack: PackData = {
         type: 'expression',
         expr: "event && event.data ? String(event.data.speaker || 'caller') === 'caller' : false",
       },
-      inputMap: { callId: '$event.data.callId', text: '$event.data.text' },
+      // `turn` rides along so aokie_speak's inResponseTo default (§9.2) can
+      // name the caller turn this reply answers — a reply that loses the race
+      // to a NEWER caller turn is refused typed (stale_turn) and skipped.
+      inputMap: { callId: '$event.data.callId', text: '$event.data.text', turn: '$event.data.turn' },
       fallbackPolicy: {
         onError: 'log_and_continue',
         fallbackReply: "Sorry, I didn't catch that — could you say it again?",
