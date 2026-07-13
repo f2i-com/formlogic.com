@@ -2189,6 +2189,7 @@ export const aokieReceptionistPack: PackData = {
           'connector.aokie.call.reject',
           'connector.aokie.call.hangup',
           'connector.aokie.call.operatorSpeak',
+          'connector.aokie.call.configureAgent',
           'connector.aokie.sms.threads',
           'connector.aokie.sms.thread',
           'connector.aokie.sms.send',
@@ -2433,8 +2434,8 @@ export const aokieReceptionistPack: PackData = {
       name: 'Personalize Caller',
       slug: 'personalize-caller',
       description:
-        "Sync on aokie.call.caller_id (the caller's number becomes known ~1s after an instant auto-answer — usually before the greeting plays): match the number against Customers (digits-only, last-9 suffix so +61… and 04… formats agree) and push a by-name greeting plus a KNOWN-CALLER persona block via settings.set, so the AI opens with 'Hi <name>!' and never re-asks for a name or number it already has. Unknown numbers push the same base config the Configure Receptionist flow already sent (idempotent no-op). If this loses the race with the greeting, the persona context still personalizes every AI reply on the call.",
-      nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.settings.set'],
+        "Sync on aokie.call.caller_id (the caller's number becomes known ~1s after an instant auto-answer — usually before the greeting plays): match the number against Customers (digits-only, last-9 suffix so +61… and 04… formats agree) and push a by-name greeting plus a KNOWN-CALLER persona block via call.configureAgent — a CALL-SCOPED overlay the plugin wipes at the call boundary, so a failed or raced setup on the NEXT call can never leak this caller's personalization to a different caller (settings.set remains for durable, caller-independent config). Unknown numbers push the same base config as a call-scoped overlay (identical to the global config — a no-op in effect). If this loses the race with the greeting, the persona context still personalizes every AI reply on the call.",
+      nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.call.configureAgent'],
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
@@ -2460,10 +2461,11 @@ export const aokieReceptionistPack: PackData = {
             type: 'connector_request',
             data: {
               connectorId: 'aokie',
-              command: 'settings.set',
-              // persona takes effect on the NEXT caller turn; greeting applies
-              // if it lands before the greeting plays (it usually does).
-              payload: { persona: '$nodes.make.persona', greeting: '$nodes.make.greeting' },
+              command: 'call.configureAgent',
+              // Call-scoped: the overlay names ITS call and dies with it. The
+              // persona takes effect on the NEXT caller turn; the greeting
+              // applies if it lands before the greeting plays (it usually does).
+              payload: { callId: '$inputs.callId', persona: '$nodes.make.persona', greeting: '$nodes.make.greeting' },
             },
           },
           { id: 'out', type: 'output', data: { value: { found: '$nodes.make.found', name: '$nodes.make.name', greeting: '$nodes.make.greeting' } } },

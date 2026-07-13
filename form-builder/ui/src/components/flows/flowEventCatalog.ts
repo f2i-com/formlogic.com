@@ -98,6 +98,7 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'call.reject',
   'call.hangup',
   'call.operatorSpeak',
+  'call.configureAgent',
   'sms.threads',
   'sms.thread',
   'sms.send',

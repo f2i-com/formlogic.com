@@ -49,6 +49,7 @@ const AOKIE_COMMANDS = [
   'call.reject',
   'call.hangup',
   'call.operatorSpeak',
+  'call.configureAgent',
   'sms.threads',
   'sms.thread',
   'sms.send',
@@ -279,6 +280,25 @@ export const mockAokieConnector: BrowserConnector = {
           )
         );
         return { spoken: true, mock: true };
+      }
+      case 'call.configureAgent': {
+        // Phase 0 / §9.3 parity with the plugin: call-scoped persona/greeting.
+        // callId is REQUIRED (no legacy window on a new surface) and must be
+        // the current call; empty config is refused, not silently accepted.
+        const p = (payload ?? {}) as { callId?: unknown; persona?: unknown; greeting?: unknown };
+        if (typeof p.callId !== 'string' || !p.callId) {
+          throw new ConnectorError('command_failed', 'call.configureAgent requires {callId}.');
+        }
+        const persona = typeof p.persona === 'string' ? p.persona.trim() : '';
+        const greeting = typeof p.greeting === 'string' ? p.greeting.trim() : '';
+        if (!persona && !greeting) {
+          throw new ConnectorError(
+            'command_failed',
+            'call.configureAgent needs a persona and/or greeting to apply.'
+          );
+        }
+        const call = requireMockCall('call.configureAgent', payload, ['ringing', 'active']);
+        return { accepted: true, mock: true, callId: call.callId };
       }
       case 'sms.threads':
         return { threads: MOCK_THREADS };
