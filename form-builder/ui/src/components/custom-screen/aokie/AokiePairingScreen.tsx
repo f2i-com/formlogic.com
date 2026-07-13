@@ -6,13 +6,16 @@
 // phone's status (`phone.status`), and the recent Hardware Events records the app
 // logic writes from `aokie.hardware.error` envelopes.
 import { useCallback, useEffect, useState } from 'react';
-import { Bluetooth, Cast, Download, RefreshCw, Smartphone, TriangleAlert, Usb } from 'lucide-react';
+import { Bluetooth, Cast, Download, Link2Off, RefreshCw, Smartphone, TriangleAlert, Usb } from 'lucide-react';
 import { EmptyState, useConnector, useConnectorPermission, useResponses } from '../../../sdk';
 import { toast } from '../../../stores/toastStore';
+import { api } from '../../../lib/api';
+import { useAppRuntimeStore } from '../../../stores/appRuntimeStore';
 import { DesktopStatusPanel } from '../../desktop/DesktopStatusPanel';
 import { ConnectorError } from '../../../client-runtime/connectors/connectorTypes';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../../client-runtime/desktop/desktopDetection';
 import { isDesktopPaired, subscribeDesktopPaired } from '../../../client-runtime/desktop/desktopPairing';
+import { performRelayCommand } from './aokieRelay';
 import { describeLastSeen } from './aokiePresence';
 import { useAokiePresence } from './useAokiePresence';
 
@@ -34,6 +37,13 @@ interface PhoneStatus {
   signal?: number;
 }
 
+/** One bonded phone (phone.listPaired row): address, captured model name, live-connected flag. */
+interface BondedPhone {
+  address: string;
+  name?: string;
+  connected: boolean;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -53,15 +63,40 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
 
   const [dongles, setDongles] = useState<DongleRow[] | null>(null);
   const [phone, setPhone] = useState<PhoneStatus | null>(null);
+  const [bonded, setBonded] = useState<BondedPhone[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [phoneBusy, setPhoneBusy] = useState<string | null>(null);
   const events = useResponses(eventsFormId ?? '', { limit: 8 });
 
   // Runtime presence: when the receptionist runs on ANOTHER machine's Desktop, the device
   // status card below names that device instead of pushing a local install (§14).
   const presence = useAokiePresence();
+  const appSlug = useAppRuntimeStore((s) => s.appSlug);
+  const remoteMode = presence.kind === 'remote';
   const [enumerationNote, setEnumerationNote] = useState<string | null>(null);
+
+  // Route a connector command to the RIGHT transport: local desktop bridge
+  // (connector.request) when the receptionist runs on THIS machine, or the
+  // command relay (performRelayCommand) when it runs on another machine — so
+  // the operator can disconnect/reconnect a phone remotely too. Returns the
+  // command result object (or throws with a readable message).
+  const runPhoneCommand = useCallback(
+    async (command: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      if (remoteMode) {
+        if (!appSlug) throw new Error('No app context for the remote command');
+        const outcome = await performRelayCommand(api, appSlug, command, undefined, payload);
+        if (outcome.status !== 'done') {
+          const msg = typeof outcome.error?.message === 'string' ? outcome.error.message : outcome.status;
+          throw new Error(`The desktop did not complete the command (${msg})`);
+        }
+        return asRecord(outcome.result);
+      }
+      return asRecord(await connector.request(command, payload));
+    },
+    [remoteMode, appSlug, connector]
+  );
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -100,7 +135,10 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         );
       }
       if (can('phone.status')) {
-        const res = asRecord(await connector.request('phone.status'));
+        // Phone bits route local-or-remote so the "Paired phone" section
+        // reflects the REAL receptionist machine, and disconnect/reconnect
+        // work remotely too.
+        const res = await runPhoneCommand('phone.status');
         // Canonical shape (audit C-02): the paired device is nested under
         // `device` ({address, name}); a root deviceName only ever existed in
         // the old mock — kept as a legacy fallback for older plugin builds.
@@ -117,12 +155,48 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
           signal: typeof res.signal === 'number' ? res.signal : undefined,
         });
       }
+      if (can('phone.listPaired')) {
+        // The bonded phones (revocable identities) with their captured model
+        // names + a live-connected flag — the disambiguation list.
+        const res = await runPhoneCommand('phone.listPaired');
+        const rows = Array.isArray(res.devices) ? res.devices : [];
+        setBonded(
+          rows
+            .map((d) => asRecord(d))
+            .filter((d) => typeof d.address === 'string' && d.address !== '')
+            .map((d) => ({
+              address: d.address as string,
+              name: typeof d.name === 'string' && d.name !== '' ? d.name : undefined,
+              connected: d.connected === true,
+            }))
+        );
+      }
     } catch (err) {
       setError(describeError(err));
     } finally {
       setRefreshing(false);
     }
-  }, [connector, can]);
+  }, [connector, can, runPhoneCommand]);
+
+  // Disconnect a bonded phone but KEEP the pairing — clears a wedged link; the
+  // phone reconnects on its own (the working inbound direction). Doubles as the
+  // remote "reconnect if audio is stuck". Routes local or via the relay.
+  const handleDisconnectPhone = useCallback(
+    async (row: BondedPhone) => {
+      setPhoneBusy(row.address);
+      setError(null);
+      try {
+        await runPhoneCommand('phone.disconnect', { address: row.address });
+        toast.success('Phone disconnected', `${row.name ?? row.address} will usually reconnect on its own.`);
+        await load();
+      } catch (err) {
+        setError(describeError(err));
+      } finally {
+        setPhoneBusy(null);
+      }
+    },
+    [runPhoneCommand, load]
+  );
 
   useEffect(() => {
     void load();
@@ -317,28 +391,65 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         )}
       </div>
 
-      {/* Phone status */}
+      {/* Paired phones */}
       <div className={`${card} p-5`}>
         <div className="mb-3 flex items-center gap-2">
           <Smartphone className="h-4 w-4 text-gray-400 dark:text-slate-500" />
           <h2 className="text-sm font-medium text-gray-900 dark:text-white">Paired phone</h2>
         </div>
-        {!can('phone.status') ? (
+        {!can('phone.listPaired') && !can('phone.status') ? (
           <p className="text-sm text-gray-400 dark:text-slate-500">This app has not been granted phone status access.</p>
-        ) : phone === null ? (
+        ) : bonded === null && phone === null ? (
           <p className="text-sm text-gray-400 dark:text-slate-500">Loading…</p>
+        ) : (bonded?.length ?? 0) === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-slate-500">
+            No phones paired yet. On your phone, open Bluetooth settings and pair with{' '}
+            <span className="font-medium">“Aokie AI Assistant”</span> once the dongle driver is installed.
+          </p>
         ) : (
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            <span className={`font-medium ${phone.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-slate-400'}`}>
-              {phone.connected ? 'Connected' : 'Not connected'}
-            </span>
-            <span className="text-gray-700 dark:text-slate-300">{phone.deviceName ?? 'No device'}</span>
-            {typeof phone.battery === 'number' && <span className="text-gray-500 dark:text-slate-400">Battery {phone.battery}%</span>}
-            {typeof phone.signal === 'number' && <span className="text-gray-500 dark:text-slate-400">Signal {phone.signal}/5</span>}
-          </div>
+          <ul className="divide-y divide-gray-100 dark:divide-slate-800">
+            {(bonded ?? []).map((row) => {
+              const busy = phoneBusy === row.address;
+              return (
+                <li key={row.address} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-gray-900 dark:text-white">
+                        {row.name ?? 'Paired phone'}
+                      </span>
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                          row.connected
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400'
+                            : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                        }`}
+                      >
+                        {row.connected ? 'Connected' : 'Not connected'}
+                      </span>
+                    </div>
+                    <span className="font-mono text-xs text-gray-400 dark:text-slate-500">{row.address}</span>
+                  </div>
+                  {row.connected && can('phone.disconnect') && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnectPhone(row)}
+                      disabled={busy}
+                      title="Disconnect this phone. It usually reconnects on its own — use this to clear a stuck connection."
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <Link2Off className="h-3.5 w-3.5" />
+                      {busy ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
         <p className="mt-2 text-[11px] text-gray-400 dark:text-slate-500">
-          Pair your phone to “Aokie AI Assistant” from your phone's Bluetooth settings once the dongle driver is installed.
+          Disconnecting keeps the pairing — the phone normally reconnects on its own within a few seconds. If it doesn't,
+          open Bluetooth on the phone and tap <span className="font-medium">“Aokie AI Assistant”</span>. To add a new phone,
+          pair it from the phone's Bluetooth settings.
         </p>
       </div>
 

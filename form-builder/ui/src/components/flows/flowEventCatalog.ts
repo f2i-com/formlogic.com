@@ -91,6 +91,7 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'phone.confirmPairing',
   'phone.listPaired',
   'phone.removePaired',
+  'phone.disconnect',
   'call.current',
   'call.answer',
   'call.reject',

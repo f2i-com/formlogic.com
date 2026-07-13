@@ -42,6 +42,7 @@ const AOKIE_COMMANDS = [
   'phone.stopPairing',
   'phone.listPaired',
   'phone.removePaired',
+  'phone.disconnect',
   'call.current',
   'call.answer',
   'call.reject',
