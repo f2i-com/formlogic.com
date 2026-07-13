@@ -299,14 +299,10 @@ const FLOW_MISSED_TASK = `(function () {
 const FLOW_AFTER_CALL_CTX = `(function () {
   var callId = String(inputs.callId || '');
   var phone = String(inputs.callerPhone || inputs.from || '');
-  var tail = phone.replace(/[^0-9]/g, '').slice(-9);
-  var custRows = (nodes.customers && nodes.customers.responses) || [];
-  var hit = null;
-  for (var i = 0; i < custRows.length; i++) {
-    var a = (custRows[i] && custRows[i].answers) || {};
-    var d = String(a.phone || '').replace(/[^0-9]/g, '');
-    if (tail && d.slice(-9) === tail) { hit = custRows[i]; break; }
-  }
+  // The customers node pre-filters with the phone_eq op (digits-only last-9
+  // suffix, matched in the DATABASE) - no client-side scan, no 200-row cap.
+  var custNode = nodes.customers || {};
+  var hit = custNode.first || ((custNode.responses || [])[0] || null);
   var turnRows = (nodes.turns && nodes.turns.responses) || [];
   var turns = [];
   for (var j = 0; j < turnRows.length; j++) {
@@ -1815,9 +1811,14 @@ export const aokieReceptionistPack: PackData = {
             type: 'input',
             data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'callerPhone', example: '+61400000000' }] },
           },
-          // customers stays a client-side scan: its match is a fuzzy
-          // digits-tail comparison no equality filter can express.
-          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            // phone_eq: the digits-tail match IS expressible now — pushed
+            // down to the database, so the lookup works at any customer
+            // count instead of scanning the newest 200.
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 1, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },

@@ -3862,7 +3862,14 @@
               "data": {
                 "form": "@pack:customers",
                 "return": "all",
-                "limit": 200
+                "limit": 5,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.callerPhone"
+                  }
+                ]
               }
             },
             {
@@ -3901,7 +3908,7 @@
               "id": "ctx",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var tail = phone.replace(/[^0-9]/g, '').slice(-9);\n  var custRows = (nodes.customers && nodes.customers.responses) || [];\n  var hit = null;\n  for (var i = 0; i < custRows.length; i++) {\n    var a = (custRows[i] && custRows[i].answers) || {};\n    var d = String(a.phone || '').replace(/[^0-9]/g, '');\n    if (tail && d.slice(-9) === tail) { hit = custRows[i]; break; }\n  }\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var turns = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      turns.push({ i: Number(t.turn_index || j), line: String(t.speaker || 'caller') + ': ' + String(t.text || '') });\n    }\n  }\n  turns.sort(function (x, y) { return x.i - y.i; });\n  var lines = [];\n  for (var k = 0; k < turns.length; k++) lines.push(turns[k].line);\n  var now = new Date();\n  // LOCAL date for the ISO hint - toISOString() is UTC and reports yesterday\n  // during the morning in UTC+ timezones, making 'tomorrow' resolve off by one.\n  var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);\n  return {\n    hasTranscript: lines.length > 0,\n    transcript: lines.join('\\n'),\n    phone: phone,\n    customerId: hit ? hit.id : null,\n    customerName: hit ? String((hit.answers || {}).name || '') : '',\n    today: now.toDateString() + ' (' + isoLocal + ')'\n  };\n})()"
+                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  // The customers node pre-filters with the phone_eq op (digits-only last-9\n  // suffix, matched in the DATABASE) - no client-side scan, no 200-row cap.\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var turns = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      turns.push({ i: Number(t.turn_index || j), line: String(t.speaker || 'caller') + ': ' + String(t.text || '') });\n    }\n  }\n  turns.sort(function (x, y) { return x.i - y.i; });\n  var lines = [];\n  for (var k = 0; k < turns.length; k++) lines.push(turns[k].line);\n  var now = new Date();\n  // LOCAL date for the ISO hint - toISOString() is UTC and reports yesterday\n  // during the morning in UTC+ timezones, making 'tomorrow' resolve off by one.\n  var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);\n  return {\n    hasTranscript: lines.length > 0,\n    transcript: lines.join('\\n'),\n    phone: phone,\n    customerId: hit ? hit.id : null,\n    customerName: hit ? String((hit.answers || {}).name || '') : '',\n    today: now.toDateString() + ' (' + isoLocal + ')'\n  };\n})()"
               }
             },
             {
