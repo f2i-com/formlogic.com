@@ -590,10 +590,17 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
     + '\\nGreet them by their first name and use this context naturally.'
     + '\\nDo NOT ask for their name or phone number - you already have both from caller ID. Only note a DIFFERENT callback number if they offer one.'
     + '\\nIf they say they are someone else calling from this phone, treat them as a new caller and ask for their details as usual.';
+  // A CUSTOM greeting is the owner's crafted voice - keep it for known
+  // callers too (prefixed with their name) instead of replacing it with a
+  // generic line. Only fall back to the generic personalised greeting when
+  // no custom greeting is configured.
+  var custom = String(cfg.greeting || '').trim();
   var g = first
-    ? (business
-        ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
-        : 'Hi ' + first + '! How can I help you today?')
+    ? (custom
+        ? 'Hi ' + first + '! ' + custom
+        : (business
+            ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
+            : 'Hi ' + first + '! How can I help you today?'))
     : greeting;
   return { found: true, name: name, persona: persona + known, greeting: g };
 })()`;
