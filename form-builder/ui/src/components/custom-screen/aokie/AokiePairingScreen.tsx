@@ -5,8 +5,8 @@
 // permission-gated WinUSB driver install action and typed error display, the paired
 // phone's status (`phone.status`), and the recent Hardware Events records the app
 // logic writes from `aokie.hardware.error` envelopes.
-import { useCallback, useEffect, useState } from 'react';
-import { Bluetooth, Cast, Download, Link2Off, RefreshCw, Smartphone, TriangleAlert, Usb } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Bluetooth, Cast, Download, Link2, Link2Off, RefreshCw, Smartphone, TriangleAlert, Usb } from 'lucide-react';
 import { EmptyState, useConnector, useConnectorPermission, useResponses } from '../../../sdk';
 import { toast } from '../../../stores/toastStore';
 import { api } from '../../../lib/api';
@@ -50,7 +50,14 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 /** Typed connector failure for display: "capability_denied — …" beats a bare message. */
 function describeError(err: unknown): string {
-  if (err instanceof ConnectorError) return `${err.code} — ${err.message}`;
+  if (err instanceof ConnectorError) {
+    // Friendlier copy for the one code a user can actually act on — the
+    // access token refreshes with the page (and we auto-retry once first).
+    if (err.code === 'capability_denied') {
+      return 'Your device access needed a refresh and could not be renewed automatically — reload this page to continue.';
+    }
+    return `${err.code} — ${err.message}`;
+  }
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -68,6 +75,10 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   const [installing, setInstalling] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [phoneBusy, setPhoneBusy] = useState<string | null>(null);
+  // One automatic recovery from an expired/stale access token: the client
+  // re-mints capabilities per request, so a short wait + reload usually
+  // clears capability_denied without bothering the user. Reset on success.
+  const capabilityRetryUsed = useRef(false);
   const events = useResponses(eventsFormId ?? '', { limit: 8 });
 
   // Runtime presence: when the receptionist runs on ANOTHER machine's Desktop, the device
@@ -171,12 +182,69 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
             }))
         );
       }
+      capabilityRetryUsed.current = false;
     } catch (err) {
+      if (
+        err instanceof ConnectorError &&
+        err.code === 'capability_denied' &&
+        !capabilityRetryUsed.current
+      ) {
+        // Stale access token (e.g. permissions just changed) — refresh it
+        // quietly once before asking the user to do anything.
+        capabilityRetryUsed.current = true;
+        setError('Refreshing your device access…');
+        setTimeout(() => void load(), 2000);
+        return;
+      }
       setError(describeError(err));
     } finally {
       setRefreshing(false);
     }
   }, [connector, can, runPhoneCommand]);
+
+  // Reconnect a bonded phone: the dongle pages the phone and re-establishes the
+  // HFP link (outbound SLC). The command returns accepted/queued — the CONNECTED
+  // event is the authoritative outcome — so we poll the bonded list briefly and
+  // report what actually happened. Routes local or via the relay like disconnect.
+  const handleConnectPhone = useCallback(
+    async (row: BondedPhone) => {
+      setPhoneBusy(row.address);
+      setError(null);
+      try {
+        await runPhoneCommand('phone.connect', { address: row.address });
+        // Paging + the service-level handshake take a few seconds; watch for the
+        // link to come up rather than pretending the accepted result is final.
+        let connected = false;
+        for (let i = 0; i < 8 && !connected; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          try {
+            const res = await runPhoneCommand('phone.listPaired');
+            const rows = Array.isArray(res.devices) ? res.devices : [];
+            connected = rows.some((d) => {
+              const rec = asRecord(d);
+              return rec.address === row.address && rec.connected === true;
+            });
+          } catch {
+            // transient — keep waiting
+          }
+        }
+        if (connected) {
+          toast.success('Phone connected', row.name ?? row.address);
+        } else {
+          toast.info(
+            'Still trying to reconnect',
+            'If it does not connect, make sure the phone is nearby with Bluetooth on, or tap “Aokie AI Assistant” in its Bluetooth settings.'
+          );
+        }
+        await load();
+      } catch (err) {
+        setError(describeError(err));
+      } finally {
+        setPhoneBusy(null);
+      }
+    },
+    [runPhoneCommand, load]
+  );
 
   // Disconnect a bonded phone but KEEP the pairing — clears a wedged link; the
   // phone reconnects on its own (the working inbound direction). Doubles as the
@@ -441,6 +509,18 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
                       {busy ? 'Disconnecting…' : 'Disconnect'}
                     </button>
                   )}
+                  {!row.connected && can('phone.connect') && (
+                    <button
+                      type="button"
+                      onClick={() => void handleConnectPhone(row)}
+                      disabled={busy}
+                      title="Reconnect this phone — the dongle pages it and re-establishes the hands-free link. The phone must be nearby with Bluetooth on."
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                      {busy ? 'Reconnecting…' : 'Reconnect'}
+                    </button>
+                  )}
                 </li>
               );
             })}
@@ -448,7 +528,8 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         )}
         <p className="mt-2 text-[11px] text-gray-400 dark:text-slate-500">
           Disconnecting keeps the pairing — the phone normally reconnects on its own within a few seconds. If it doesn't,
-          open Bluetooth on the phone and tap <span className="font-medium">“Aokie AI Assistant”</span>. To add a new phone,
+          press <span className="font-medium">Reconnect</span> (the phone must be nearby with Bluetooth on) or tap{' '}
+          <span className="font-medium">“Aokie AI Assistant”</span> in the phone's Bluetooth settings. To add a new phone,
           pair it from the phone's Bluetooth settings.
         </p>
       </div>

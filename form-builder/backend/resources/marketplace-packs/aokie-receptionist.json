@@ -2835,6 +2835,7 @@
             "connector.aokie.phone.stopPairing",
             "connector.aokie.phone.listPaired",
             "connector.aokie.phone.disconnect",
+            "connector.aokie.phone.connect",
             "connector.aokie.call.current",
             "connector.aokie.call.answer",
             "connector.aokie.call.reject",
@@ -3099,6 +3100,10 @@
               {
                 "packFormId": null,
                 "permission": "connector.aokie.phone.disconnect"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.phone.connect"
               },
               {
                 "packFormId": null,

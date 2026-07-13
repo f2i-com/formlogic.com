@@ -18,6 +18,7 @@ MVP set (must exist; hardware-dependent ones may return `command_failed` with a 
 dongle.list            dongle.getPreferred    dongle.setPreferred
 dongle.installDriver   dongle.diagnostics
 phone.status           phone.startPairing     phone.stopPairing     phone.listPaired
+phone.removePaired     phone.confirmPairing   phone.disconnect      phone.connect
 call.current           call.answer            call.reject           call.hangup
 call.operatorSpeak
 sms.threads            sms.thread             sms.send
