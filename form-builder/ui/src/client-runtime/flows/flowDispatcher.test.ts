@@ -230,20 +230,24 @@ describe('desktop-first routing for connector events', () => {
   // reported "no desktop", and the browser wrote every aokie.* record a second
   // time next to the desktop runtime's row. The default probe must understand
   // the wrapped shape (and still treat a stale heartbeat as not-fresh).
-  it('defaultDesktopRuntimeFresh reads the {connections:[...]} wrapper', async () => {
+  it('defaultDesktopRuntimeFresh reads the {connections:[...]} wrapper as UTC', async () => {
     const spy = vi.spyOn(api, 'getDesktopConnections');
     try {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-07-13T04:00:00Z'));
+      // The REAL wire format: zone-less "YYYY-MM-DD HH:MM:SS", which the
+      // backend serves in UTC (MySQL session pinned to +00:00). Parsing it
+      // as local time made every heartbeat look hours stale on a non-UTC
+      // browser — the 2026-07-13 double-write root cause.
       spy.mockResolvedValue({
-        data: { connections: [{ lastSeenAt: '2026-07-13T03:59:30Z' }] },
+        data: { connections: [{ lastSeenAt: '2026-07-13 03:59:30' }] },
       } as never);
       expect(await defaultDesktopRuntimeFresh()).toBe(true);
 
       // Past the 30s probe cache; a heartbeat older than 90s is not fresh.
       vi.setSystemTime(new Date('2026-07-13T04:00:31Z'));
       spy.mockResolvedValue({
-        data: { connections: [{ lastSeenAt: '2026-07-13T03:00:00Z' }] },
+        data: { connections: [{ lastSeenAt: '2026-07-13 03:00:00' }] },
       } as never);
       expect(await defaultDesktopRuntimeFresh()).toBe(false);
     } finally {

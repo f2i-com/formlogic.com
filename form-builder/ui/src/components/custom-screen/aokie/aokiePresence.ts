@@ -53,13 +53,18 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Parse a server timestamp. MySQL 'YYYY-MM-DD HH:MM:SS' carries no timezone — normalise it
- * to the ISO 'T' form so it parses as LOCAL time, the same convention the Flows panel uses
- * for run timestamps. ISO strings (event occurredAt) parse as-is. Unparseable → null.
+ * Parse a server timestamp. Zone-less MySQL 'YYYY-MM-DD HH:MM:SS' strings from the API
+ * are UTC — the backend pins its MySQL session to +00:00 (MySQLConnection) and PHP runs
+ * with a UTC default timezone — so they get an explicit Z. Parsing them as LOCAL (the
+ * old behaviour) shifted every instant by the viewer's UTC offset, which silently broke
+ * the 90s remote-presence freshness window (10h skew in Brisbane) exactly like the flow
+ * dispatcher's heartbeat probe (2026-07-13). ISO strings (event occurredAt) parse as-is.
  */
 export function parseDbTimestamp(value: unknown): number | null {
   if (typeof value !== 'string' || value === '') return null;
-  const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value.replace(' ', 'T') : value;
+  const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? value.replace(' ', 'T') + 'Z'
+    : value;
   const ms = Date.parse(normalised);
   return Number.isNaN(ms) ? null : ms;
 }

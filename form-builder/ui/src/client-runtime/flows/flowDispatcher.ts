@@ -511,7 +511,17 @@ export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
     fresh = rows.some((c) => {
       const raw = (c as { lastSeenAt?: unknown }).lastSeenAt;
       if (typeof raw !== 'string' || raw === '') return false;
-      const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') : raw;
+      // The API serves MySQL TIMESTAMPs through a session pinned to UTC
+      // (MySQLConnection SET time_zone '+00:00'), so the zone-less
+      // "YYYY-MM-DD HH:MM:SS" wire format IS UTC — parse it that way.
+      // Parsing it as LOCAL made every heartbeat look hours stale on any
+      // non-UTC browser (Brisbane: 10h), the probe answered "no desktop"
+      // forever, and the browser double-wrote every aokie.* record — the
+      // REAL root cause behind the duplicated transcripts (2026-07-13;
+      // the earlier {connections} shape fix was necessary but not enough).
+      const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)
+        ? raw.replace(' ', 'T') + 'Z'
+        : raw;
       const ms = Date.parse(normalised);
       return !Number.isNaN(ms) && now - ms < 90_000;
     });

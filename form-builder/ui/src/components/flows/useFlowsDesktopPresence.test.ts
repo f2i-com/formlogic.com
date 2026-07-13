@@ -15,11 +15,12 @@ import {
 
 const NOW = Date.parse('2026-07-07T12:00:00');
 
-/** Local-time MySQL 'YYYY-MM-DD HH:MM:SS' for an epoch-ms instant (round-trips via parse). */
+/** UTC MySQL 'YYYY-MM-DD HH:MM:SS' for an epoch-ms instant — the real wire format
+ *  (backend MySQL session pinned to +00:00; parseDbTimestamp reads it as UTC). */
 function mysqlTs(ms: number): string {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
 function connection(overrides: Partial<DesktopConnection> = {}): DesktopConnection {

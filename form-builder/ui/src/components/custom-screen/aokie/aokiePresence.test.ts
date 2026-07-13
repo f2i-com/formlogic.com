@@ -26,14 +26,19 @@ import {
   showSimulateSetup,
 } from './aokiePresence';
 
-// Fixed "now" (parsed as local time, matching how MySQL timestamps are interpreted).
+// Fixed "now" (an opaque instant; the zone-less parse below is local, which is fine here).
 const NOW = Date.parse('2026-07-07T12:00:00');
 
-/** Local-time MySQL 'YYYY-MM-DD HH:MM:SS' for an epoch-ms instant (round-trips via parse). */
+/**
+ * UTC MySQL 'YYYY-MM-DD HH:MM:SS' for an epoch-ms instant — the REAL wire format:
+ * the backend serves TIMESTAMPs through a session pinned to +00:00, and
+ * parseDbTimestamp now reads the zone-less form as UTC (2026-07-13: the old
+ * local-time reading made every heartbeat look hours stale off-UTC).
+ */
 function mysqlTs(ms: number): string {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
 function connection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -71,8 +76,11 @@ afterEach(() => {
 });
 
 describe('parseDbTimestamp', () => {
-  it('parses MySQL DATETIME strings as local time', () => {
+  it('parses zone-less MySQL DATETIME strings as UTC (the API wire format)', () => {
     expect(parseDbTimestamp(mysqlTs(NOW))).toBe(NOW);
+    // The regression that hid a live desktop from every non-UTC browser:
+    // a concrete UTC string must round-trip to its UTC instant, not local.
+    expect(parseDbTimestamp('2026-07-13 05:45:50')).toBe(Date.parse('2026-07-13T05:45:50Z'));
   });
   it('parses ISO strings and rejects garbage/non-strings', () => {
     expect(parseDbTimestamp('2026-07-07T12:00:00')).toBe(NOW);
