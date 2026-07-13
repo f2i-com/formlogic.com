@@ -883,6 +883,100 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.reply.body).toContain('Which booking');
         expect(r.taskUpdate.status).toBeUndefined();
       });
+
+      // The live failure (2026-07-13): "Yes to Thursday 10am and 6pm for
+      // Sunday" — one message, DIFFERENT things for different bookings.
+      it('compound: confirm one booking AND move the other in one message', () => {
+        const r = run(
+          {},
+          {
+            action: 'confirm', // top-level single action would drop the change
+            actions: [
+              { action: 'confirm', target_date: futureIso },
+              { action: 'reschedule', target_date: futureIso2, date: futureIso2, time: '18:00' },
+            ],
+            reply: 'model prose ignored',
+          },
+          'Yes to Thursday 10am and 6pm for Sunday. Thanks'
+        );
+        // Thursday confirmed…
+        expect(r.hasApptUpdate).toBe(true);
+        expect(r.apptResponseId).toBe('appt-old');
+        expect(r.apptUpdate.status).toBe('confirmed');
+        // …Sunday MOVED to 18:00 (requested, awaiting its YES) — not confirmed at 10.
+        expect(r.hasApptUpdate2).toBe(true);
+        expect(r.apptResponseId2).toBe('appt-new');
+        expect(r.apptUpdate2.status).toBe('requested');
+        expect(r.apptUpdate2.time).toBe('18:00');
+        // The reply reports both outcomes and asks for the locking YES.
+        expect(r.reply.body).toContain('confirmed');
+        expect(r.reply.body).toContain('6 PM');
+        expect(r.reply.body.toLowerCase()).toContain('reply yes');
+        // A moved booking still needs its YES — the loop stays open.
+        expect(r.taskUpdate.status).toBeUndefined();
+        expect(r.taskUpdate.sms_state).toBeUndefined();
+      });
+
+      it('compound: a time-only change matches its booking by date even without target_date', () => {
+        const r = run(
+          {},
+          {
+            action: 'confirm',
+            actions: [
+              { action: 'reschedule', target_date: null, date: futureIso2, time: '18:00' },
+              { action: 'confirm', target_date: null },
+            ],
+          },
+          'yes but make sunday 6pm'
+        );
+        // The reschedule claims the Sunday booking by its (unchanged) date;
+        // the target-less confirm covers the remaining Thursday booking.
+        const updates = [
+          { id: r.apptResponseId, upd: r.apptUpdate },
+          { id: r.apptResponseId2, upd: r.apptUpdate2 },
+        ];
+        const moved = updates.find((u) => u.id === 'appt-new')!;
+        const confirmed = updates.find((u) => u.id === 'appt-old')!;
+        expect(moved.upd.time).toBe('18:00');
+        expect(moved.upd.status).toBe('requested');
+        expect(confirmed.upd.status).toBe('confirmed');
+      });
+
+      it('compound: confirm one + cancel the other settles everything and closes the loop', () => {
+        const r = run(
+          {},
+          {
+            action: 'confirm',
+            actions: [
+              { action: 'cancel', target_date: futureIso2 },
+              { action: 'confirm', target_date: null },
+            ],
+          },
+          'keep thursday, drop the dinner one'
+        );
+        const updates = [
+          { id: r.apptResponseId, upd: r.apptUpdate },
+          { id: r.apptResponseId2, upd: r.apptUpdate2 },
+        ];
+        expect(updates.find((u) => u.id === 'appt-new')!.upd.status).toBe('cancelled');
+        expect(updates.find((u) => u.id === 'appt-old')!.upd.status).toBe('confirmed');
+        expect(r.reply.body).toContain('Cancelled');
+        // Nothing left pending — the loop closes.
+        expect(r.taskUpdate.status).toBe('done');
+        expect(r.taskUpdate.sms_state).toBe('done');
+      });
+
+      it('compound: a malformed actions array falls back to the single-action path', () => {
+        const r = run(
+          {},
+          { action: 'confirm', actions: [{ action: 'explode' }, { action: 'also-bad' }] },
+          'YES please'
+        );
+        // Legacy confirm-all behaviour (both confirmed, task closed).
+        expect(r.apptUpdate.status).toBe('confirmed');
+        expect(r.apptUpdate2.status).toBe('confirmed');
+        expect(r.taskUpdate.status).toBe('done');
+      });
     });
 
     describe('personalize-caller: bookings-on-record grounding', () => {

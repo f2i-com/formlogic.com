@@ -1077,13 +1077,114 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   }
   var usableDate = validDate && realDate && dateStr >= todayIso;
   // Degrade impossible actions instead of guessing.
-  if (action === 'confirm' && !appts.length) action = 'ask';
-  if (action === 'reschedule' && !usableDate) action = 'ask';
-  if (action === 'cancel' && !appts.length) action = 'handoff';
   var newExchanges = exchanges + 1;
   var taskUpdate = { sms_exchanges: newExchanges };
   // Appointment writes, in order (up to three gated update actions).
   var apptWrites = [];
+  // COMPOUND decisions (live report 2026-07-13: "Yes to Thursday 10am and
+  // 6pm for Sunday" confirmed BOTH at 10 - the single-action decision
+  // dropped the time change). The model may return an "actions" ARRAY, one
+  // entry per booking; validated per item, one write per booking (first
+  // claim wins), a target-less confirm covers every unclaimed booking, and
+  // an item that cannot be matched to a booking is DROPPED, never guessed.
+  function usableDateOf(d) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d)) return false;
+    var dp2 = d.split('-');
+    var o2 = new Date(Number(dp2[0]), Number(dp2[1]) - 1, Number(dp2[2]));
+    var real2 = o2.getFullYear() === Number(dp2[0]) && (o2.getMonth() + 1) === Number(dp2[1]) && o2.getDate() === Number(dp2[2]);
+    return real2 && d >= todayIso;
+  }
+  function timeOkOf(t) {
+    return /^\\d{2}:\\d{2}$/.test(t) && Number(t.slice(0, 2)) <= 23 && Number(t.slice(3, 5)) <= 59;
+  }
+  var compoundApplied = false;
+  var acts = (verdict !== 'yes' && typeof data === 'object' && data && Array.isArray(data.actions)) ? data.actions.slice(0, 3) : [];
+  if (acts.length >= 2 && appts.length) {
+    var claimed = {};
+    var pending = [];
+    for (var ci = 0; ci < acts.length; ci++) {
+      var itA = acts[ci] || {};
+      var actA = String(itA.action || '').toLowerCase();
+      if (['confirm', 'reschedule', 'cancel'].indexOf(actA) === -1) continue;
+      pending.push({
+        act: actA,
+        td: String(itA.target_date || '').trim().slice(0, 10),
+        d: String(itA.date || '').trim().slice(0, 10),
+        t: String(itA.time || '').trim().slice(0, 5)
+      });
+    }
+    var plan = [];
+    var deferredConfirm = false;
+    for (var pi = 0; pi < pending.length; pi++) {
+      var itm = pending[pi];
+      var tgt = null;
+      for (var ai = 0; ai < appts.length; ai++) {
+        var cand = appts[ai];
+        if (claimed[cand.id]) continue;
+        if (itm.td && String(cand.date || '') === itm.td) { tgt = cand; break; }
+        // A reschedule naming no target but keeping the same date is a
+        // time change on that date's booking ("6pm for Sunday").
+        if (!itm.td && itm.act === 'reschedule' && itm.d && String(cand.date || '') === itm.d) { tgt = cand; break; }
+      }
+      if (!tgt) {
+        if (itm.act === 'confirm') deferredConfirm = true;
+        continue;
+      }
+      claimed[tgt.id] = true;
+      plan.push({ appt: tgt, act: itm.act, d: itm.d, t: itm.t });
+    }
+    if (deferredConfirm) {
+      for (var ui = 0; ui < appts.length; ui++) {
+        if (claimed[appts[ui].id]) continue;
+        claimed[appts[ui].id] = true;
+        plan.push({ appt: appts[ui], act: 'confirm', d: '', t: '' });
+      }
+    }
+    if (plan.length >= 2) {
+      compoundApplied = true;
+      var segsC = [];
+      var segsR = [];
+      var segsX = [];
+      var anyRequested = false;
+      for (var cw = 0; cw < plan.length && apptWrites.length < 3; cw++) {
+        var w = plan[cw];
+        if (w.act === 'confirm') {
+          apptWrites.push({ id: w.appt.id, update: { status: 'confirmed', notes: apptNoteWith('appointment CONFIRMED for ' + humanWhen(String(w.appt.date || ''), String(w.appt.time || '')) + '.', w.appt.notes) } });
+          segsC.push(apptLabel(w.appt));
+        } else if (w.act === 'reschedule') {
+          var okD = usableDateOf(w.d);
+          var okT = timeOkOf(w.t);
+          if (!okD && !okT) continue; // nothing usable changed - drop the item
+          var newD = okD ? w.d : String(w.appt.date || '');
+          var whenN = humanWhen(newD, okT ? w.t : String(w.appt.time || ''));
+          var uR = { date: newD, status: 'requested', notes: apptNoteWith('moved to ' + whenN + ', awaiting their YES.', w.appt.notes) };
+          if (okT) uR.time = w.t;
+          apptWrites.push({ id: w.appt.id, update: uR });
+          segsR.push(whenN);
+          anyRequested = true;
+        } else {
+          apptWrites.push({ id: w.appt.id, update: { status: 'cancelled', notes: apptNoteWith('appointment CANCELLED at their request.', w.appt.notes) } });
+          segsX.push(apptLabel(w.appt));
+        }
+      }
+      var parts = [];
+      if (segsC.length) parts.push('Perfect - you are confirmed: ' + segsC.join(' and ') + '.');
+      if (segsR.length) parts.push('I have you down for ' + segsR.join(' and ') + ' - reply YES to lock that in.');
+      if (segsX.length) parts.push('Cancelled: ' + segsX.join(' and ') + '.');
+      reply = parts.join(' ');
+      if (!anyRequested) {
+        // Everything settled (confirmed/cancelled) - the loop closes.
+        taskUpdate.status = 'done';
+        taskUpdate.sms_state = 'done';
+      }
+      out.summaryLine = 'Compound SMS decision: ' + segsC.length + ' confirmed, ' + segsR.length + ' moved, ' + segsX.length + ' cancelled' + (anyRequested ? ' - awaiting a YES.' : ' - task closed.');
+    }
+  }
+  if (!compoundApplied) {
+  // Degrade impossible actions instead of guessing.
+  if (action === 'confirm' && !appts.length) action = 'ask';
+  if (action === 'reschedule' && !usableDate) action = 'ask';
+  if (action === 'cancel' && !appts.length) action = 'handoff';
   if (action === 'confirm') {
     // A YES confirms EVERY booking in the loop - the kickoff listed them all.
     var confirmedLabels = [];
@@ -1178,6 +1279,7 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     }
     out.summaryLine = 'SMS conversation handed to a human.';
   }
+  } // end !compoundApplied (legacy single-action path)
   if (apptWrites.length) {
     out.hasApptUpdate = true;
     out.apptResponseId = apptWrites[0].id;
@@ -2491,7 +2593,7 @@ export const aokieReceptionistPack: PackData = {
               system:
                 'You manage SMS follow-ups for a small-business receptionist: confirming, moving or cancelling booking requests. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
-                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "reschedule" | "cancel" | "ask" | "handoff", "target_date": "YYYY-MM-DD" or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "service": string or null, "reply": "one short friendly SMS (under 300 characters, plain text, no emoji)"}\n\nRules: "confirm" only when the customer clearly agrees to the listed booking(s) — a confirm covers ALL of them; when MORE THAN ONE booking is listed and they want to change or cancel one, set "target_date" to the EXISTING date of the booking they mean (from the list) — if you cannot tell which one, use "ask"; "reschedule" when they propose a different day/time — "date"/"time" are the NEW slot; resolve relative dates ("next Tuesday", "tomorrow") from today\'s date and use 24-hour time; "cancel" only when they clearly no longer want a booking; "ask" when you need one clarifying detail (your reply is the question); "handoff" for anything else — complaints, other requests, or anything unclear. Never invent prices, opening hours or services; never promise anything except booking changes; use null when unsure — never guess.',
+                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "reschedule" | "cancel" | "ask" | "handoff", "target_date": "YYYY-MM-DD" or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "service": string or null, "actions": null or [{"action": "confirm" | "reschedule" | "cancel", "target_date": "YYYY-MM-DD", "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null}], "reply": "one short friendly SMS (under 300 characters, plain text, no emoji)"}\n\nRules: "confirm" only when the customer clearly agrees to the listed booking(s) — a confirm covers ALL of them; when MORE THAN ONE booking is listed and they want to change or cancel one, set "target_date" to the EXISTING date of the booking they mean (from the list) — if you cannot tell which one, use "ask"; when ONE message asks DIFFERENT things for different bookings (example: "yes to Thursday and 6pm for Sunday" = confirm Thursday\'s booking AND move Sunday\'s to 18:00), fill the "actions" array with one entry per booking — each entry\'s "target_date" is that booking\'s EXISTING date from the list, and "date"/"time" are its NEW slot for a reschedule; otherwise set "actions" to null; "reschedule" when they propose a different day/time — "date"/"time" are the NEW slot; resolve relative dates ("next Tuesday", "tomorrow") from today\'s date and use 24-hour time; "cancel" only when they clearly no longer want a booking; "ask" when you need one clarifying detail (your reply is the question); "handoff" for anything else — complaints, other requests, or anything unclear. Never invent prices, opening hours or services; never promise anything except booking changes; use null when unsure — never guess.',
               model: '{{nodes.ctx.model}}',
               maxTokens: 350,
               temperature: 0,
