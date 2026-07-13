@@ -2056,6 +2056,13 @@ export const aokieReceptionistPack: PackData = {
       flow: 'live-reply',
       event: 'aokie.call.turn.final',
       connectorId: 'aokie',
+      // DISABLED by default: the shipped install uses the IN-PLUGIN AI
+      // receptionist, which owns replies — the plugin refuses operatorSpeak
+      // while it does (double-responder guard), so this binding firing on
+      // every caller turn just produced a guaranteed error run per turn
+      // (live report 2026-07-13). Enable it ONLY when running flow-driven
+      // replies (aiReceptionist off in the plugin settings).
+      enabled: false,
       // async, not sync: an LLM reply can exceed the 2–4s live-call sync budget,
       // and the half-duplex plugin already mutes its mic while Aokie speaks the
       // reply, so turns stay ordered without blocking the event loop.

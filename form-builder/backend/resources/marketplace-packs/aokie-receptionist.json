@@ -4328,6 +4328,7 @@
         "flow": "live-reply",
         "event": "aokie.call.turn.final",
         "connectorId": "aokie",
+        "enabled": false,
         "mode": "async",
         "timeoutMs": 15000,
         "condition": {
