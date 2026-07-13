@@ -447,10 +447,17 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
     if (!text) return;
     setSpeakText('');
     setPendingSpeak(text);
-    const ok = await runCommand('call.operatorSpeak', { text }, 'Sent to the caller');
+    // Phase 0: name the call this speech is for — a stale command after the
+    // call ends gets a typed refusal instead of speaking into the next call.
+    const localCallId = call?.callId;
+    const ok = await runCommand(
+      'call.operatorSpeak',
+      localCallId ? { text, callId: localCallId } : { text },
+      'Sent to the caller'
+    );
     setPendingSpeak(null);
     if (!ok) setSpeakText(text); // don't discard the operator's words on failure
-  }, [runCommand, speakText]);
+  }, [runCommand, speakText, call]);
 
   const handleRelaySpeak = useCallback(
     async (callId: string | undefined) => {
@@ -458,7 +465,11 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
       if (!text) return;
       setSpeakText('');
       setPendingSpeak(text);
-      const ok = await runRelay('call.operatorSpeak', callId, { text });
+      const ok = await runRelay(
+        'call.operatorSpeak',
+        callId,
+        callId ? { text, callId } : { text }
+      );
       setPendingSpeak(null);
       if (!ok) setSpeakText(text); // don't discard the operator's words on failure
     },

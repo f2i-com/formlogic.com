@@ -257,6 +257,22 @@ describe('aokie_speak', () => {
     expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { text: 'Hello Sam' });
   });
 
+  it('carries the flow input callId so the plugin can refuse stale speech (phase 0)', async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { text: 'Hi' } };
+    await executeNode(
+      ctxFor(node, deps, {
+        scope: { inputs: { callId: 'call_9' } },
+        capabilities: ['connector.aokie.call.operatorSpeak'],
+      })
+    );
+    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', {
+      text: 'Hi',
+      callId: 'call_9',
+    });
+  });
+
   it('supports textFrom selectors', async () => {
     const connectorRequest = vi.fn(async () => ({ ok: true }));
     const deps = fakeDeps({ connectorRequest });

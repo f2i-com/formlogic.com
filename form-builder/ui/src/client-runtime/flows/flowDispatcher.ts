@@ -912,14 +912,19 @@ async function applyOutputAction(
       await d.connectorRequest(action.connectorId, action.command, resolveDeep(action.payload, scope));
       return;
     }
-    case 'call.speak':
+    case 'call.speak': {
       // Speak into the live call via the aokie connector's operatorSpeak command; the
-      // standard connector permission gate applies at the connector layer. The plugin
-      // requires the `text` field (and rejects unknown fields).
-      await d.connectorRequest('aokie', 'call.operatorSpeak', {
+      // standard connector permission gate applies at the connector layer. Phase 0:
+      // the triggering event's callId rides along so the plugin can refuse a stale
+      // action (typed stale_call) instead of speaking it into the NEXT call.
+      const speakPayload: Record<string, unknown> = {
         text: interpolateTemplate(action.message ?? '', templateCtx),
-      });
+      };
+      const speakCallId = resolveDeep('$event.data.callId', scope);
+      if (typeof speakCallId === 'string' && speakCallId !== '') speakPayload.callId = speakCallId;
+      await d.connectorRequest('aokie', 'call.operatorSpeak', speakPayload);
       return;
+    }
   }
 }
 

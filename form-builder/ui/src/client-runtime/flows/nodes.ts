@@ -1304,9 +1304,21 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       if (typeof text !== 'string' || text === '') {
         throw new FlowExecError('node_failed', `Node '${node.id}' aokie_speak text did not resolve to a string`, node.id);
       }
-      // The aokie plugin's call.operatorSpeak requires the `text` field (and
-      // rejects unknown fields), so send `text`, not `message`.
-      return await deps.connectorRequest('aokie', 'call.operatorSpeak', { text });
+      // Phase 0 (cross-call safety): carry the call identity — the node's
+      // explicit callIdFrom/callId, else the flow's own `callId` input — so
+      // the plugin can refuse speech aimed at a call that already ended
+      // (typed stale_call) instead of speaking it into the NEXT call.
+      let callId: unknown;
+      if (typeof data.callIdFrom === 'string') {
+        callId = resolveSelector(data.callIdFrom, ctx.scope);
+      } else if (typeof data.callId === 'string' && data.callId !== '') {
+        callId = interpolateTemplate(data.callId, scopeToContext(ctx.scope));
+      } else {
+        callId = resolveSelector('$inputs.callId', ctx.scope);
+      }
+      const payload: Record<string, unknown> = { text };
+      if (typeof callId === 'string' && callId !== '') payload.callId = callId;
+      return await deps.connectorRequest('aokie', 'call.operatorSpeak', payload);
     }
 
     // ── Desktop-service-backed nodes (docs §4) ──────────────────────────────────────────────

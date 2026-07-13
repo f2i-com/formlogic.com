@@ -959,11 +959,25 @@ async fn execute_node(
             let text = text.as_str().filter(|s| !s.is_empty()).ok_or_else(|| {
                 FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' aokie_speak text did not resolve to a string", node.id), Some(node.id.clone()))
             })?;
-            // The aokie plugin's call.operatorSpeak requires `text` (and rejects
-            // unknown fields), so send `text`, not `message`. Routed through the same
-            // connector_request() helper as the "connector_request" node above, so the
-            // capability gate below covers both node types from one call site.
-            connector_request(node, deps, &opts.capabilities, "aokie", "call.operatorSpeak", Some(json!({ "text": text }))).await
+            // Phase 0 (cross-call safety): carry the call identity — the node's
+            // explicit callIdFrom/callId, else the flow's own `callId` input — so
+            // the plugin can refuse speech aimed at a call that already ended
+            // (typed stale_call) instead of speaking it into the NEXT call.
+            let call_id = if let Some(from) = data.get("callIdFrom").and_then(Value::as_str) {
+                resolve_selector(&json!(from), scope)
+            } else if let Some(lit) = data.get("callId").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                json!(interpolate_template(lit, &scope_to_context(scope)))
+            } else {
+                resolve_selector(&json!("$inputs.callId"), scope)
+            };
+            let mut payload = json!({ "text": text });
+            if let Some(cid) = call_id.as_str().filter(|s| !s.is_empty()) {
+                payload["callId"] = json!(cid);
+            }
+            // Routed through the same connector_request() helper as the
+            // "connector_request" node above, so the capability gate below covers
+            // both node types from one call site.
+            connector_request(node, deps, &opts.capabilities, "aokie", "call.operatorSpeak", Some(payload)).await
         }
 
         "storage_get" => {

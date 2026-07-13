@@ -1688,7 +1688,18 @@ impl FlowRuntime {
             if let Some(reply) = fallback_reply {
                 match Self::fallback_connector_id(binding, event) {
                     Some(connector_id) => {
-                        if let Err(e) = self.connector(&connector_id, "call.operatorSpeak", Some(json!({ "text": reply }))).await {
+                        // Phase 0: the fallback reply names the call it answers —
+                        // a stale event's fallback can't speak into the next call.
+                        let mut payload = json!({ "text": reply });
+                        if let Some(cid) = event
+                            .get("data")
+                            .and_then(|d| d.get("callId"))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                        {
+                            payload["callId"] = json!(cid);
+                        }
+                        if let Err(e) = self.connector(&connector_id, "call.operatorSpeak", Some(payload)).await {
                             self.note_error(format!("binding {binding_id} fallback speak via {connector_id}: {e}"));
                         }
                     }
@@ -2039,8 +2050,15 @@ impl FlowRuntime {
             }
             "call.speak" => {
                 let msg = interpolate_template(action.get("message").and_then(Value::as_str).unwrap_or(""), &tctx);
-                // The aokie plugin requires the `text` field (and rejects unknown fields).
-                self.connector("aokie", "call.operatorSpeak", Some(json!({ "text": msg }))).await
+                // Phase 0: the triggering event's callId rides along so the plugin
+                // can refuse a stale action (typed stale_call) instead of speaking
+                // it into the NEXT call.
+                let mut payload = json!({ "text": msg });
+                let cid = resolve_deep(&json!("$event.data.callId"), scope);
+                if let Some(c) = cid.as_str().filter(|s| !s.is_empty()) {
+                    payload["callId"] = json!(c);
+                }
+                self.connector("aokie", "call.operatorSpeak", Some(payload)).await
             }
             _ => Ok(()),
         }
