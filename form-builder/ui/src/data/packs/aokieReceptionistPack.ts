@@ -260,7 +260,7 @@ const FLOW_SUMMARY_DECIDE = `(function () {
     callUpdate: { summary: summary },
     followUpRequired: /FOLLOW-UP:\\s*yes/i.test(content),
     followUpTask: {
-      summary: 'Follow up after call: ' + summary.slice(0, 140),
+      summary: 'Follow up after call: ' + summary.slice(0, 450),
       status: 'open',
       priority: 'medium'
     }
@@ -346,7 +346,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var service = String(data.service || '').trim().slice(0, 200);
   var dateStr = String(data.date || '').trim().slice(0, 10);
   var timeStr = String(data.time || '').trim().slice(0, 5);
-  var summary = (String(data.summary || '').trim() || 'Call ended - no summary available.').slice(0, 600);
+  var summary = (String(data.summary || '').trim() || 'Call ended - no summary available.').slice(0, 800);
   var callback = data.callback_requested === true;
   var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
   // Time must be a REAL clock time, not just HH:MM-shaped (audit sweep): the
@@ -444,7 +444,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     hasOrder: hasOrder,
     order: order,
     hasTask: needTask,
-    task: { summary: taskSummary.slice(0, 180), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium' }
+    task: { summary: taskSummary.slice(0, 500), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium' }
   };
 })()`;
 
@@ -1695,7 +1695,7 @@ export const aokieReceptionistPack: PackData = {
               system: 'You are the note-taker for a small-business phone receptionist. Be brief and factual.',
               prompt:
                 'Summarise this phone call in at most two sentences. Then on a new line write "FOLLOW-UP: yes" if the business must contact the caller again, otherwise "FOLLOW-UP: no".\n\nTranscript:\n{{nodes.context.transcript}}',
-              maxTokens: 220,
+              maxTokens: 400,
               // Qwen3-class models otherwise burn the WHOLE budget in a hidden
               // <think> block and return empty content — seen as 'no transcript
               // summary available' on every live call while the extractor
@@ -1837,7 +1837,7 @@ export const aokieReceptionistPack: PackData = {
                 'You extract structured booking data from phone-call transcripts for a small business. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
                 'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "sentiment": "positive" | "neutral" | "negative", "caller_name": string or null, "service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: set date/time ONLY if the caller agreed to a specific slot; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; judge sentiment from the caller\'s tone; use null when unsure — never guess.',
-              maxTokens: 300,
+              maxTokens: 700,
               temperature: 0,
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
             },
