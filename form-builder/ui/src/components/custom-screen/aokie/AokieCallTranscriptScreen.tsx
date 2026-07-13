@@ -21,6 +21,11 @@ interface Turn {
   speaker: string;
   text: string;
   turnIndex: number | null;
+  /// Speech-start stamp from the plugin (ISO-8601): bot turns are stamped at
+  /// when they BEGAN speaking, overlap caller turns are back-dated — sorting
+  /// by it reads in true conversation order even when turns were committed
+  /// out of speech order (a turn spoken OVER a bot line commits after it).
+  spokenAt: string | null;
   submittedAt?: string;
 }
 
@@ -29,11 +34,13 @@ function toTurn(r: RelatedRecordGroup['records'][number]): Turn {
   const speaker = typeof f.speaker === 'string' && f.speaker ? f.speaker : 'system';
   const text = typeof f.text === 'string' ? f.text : String(f.text ?? '');
   const idx = f.turn_index;
+  const ts = f.timestamp;
   return {
     id: r.id,
     speaker,
     text,
     turnIndex: typeof idx === 'number' ? idx : (typeof idx === 'string' && idx !== '' && !Number.isNaN(Number(idx)) ? Number(idx) : null),
+    spokenAt: typeof ts === 'string' && ts !== '' ? ts : null,
     submittedAt: r.submittedAt,
   };
 }
@@ -80,8 +87,12 @@ export function AokieCallTranscriptScreen({ params, recordContext }: { params?: 
       };
       const group = groups.find((g) => g.fieldId === relatedFieldId && looksLikeTurns(g));
       const rows = (group?.records ?? []).map(toTurn);
-      // Chronological: the plugin numbers turns; timestamps break ties for flow-written rows.
+      // TRUE conversation order: the speech-start stamp wins (both ISO-8601
+      // UTC, so string compare is chronological) — a caller line spoken OVER
+      // a bot reply sorts where it was SAID, not where it was committed.
+      // Turn numbers order rows from older plugins; submittedAt breaks ties.
       rows.sort((a, b) => {
+        if (a.spokenAt && b.spokenAt && a.spokenAt !== b.spokenAt) return a.spokenAt.localeCompare(b.spokenAt);
         if (a.turnIndex !== null && b.turnIndex !== null && a.turnIndex !== b.turnIndex) return a.turnIndex - b.turnIndex;
         return String(a.submittedAt ?? '').localeCompare(String(b.submittedAt ?? ''));
       });

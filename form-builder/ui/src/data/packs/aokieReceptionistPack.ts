@@ -117,7 +117,11 @@ const LOGIC_CALL_TURN = `function run(ctx) {
         turn_index: Number(d.turn || 0),
         speaker: speaker,
         text: text,
-        timestamp: String(ev.occurredAt || ''),
+        // The payload's at is the SPEECH-START stamp (bot turns are emitted
+        // when the reply finishes; overlap caller turns are back-dated) —
+        // sorting by it reads in true conversation order. Envelope time is
+        // the fallback for older plugins.
+        timestamp: String(d.at || ev.occurredAt || ''),
         source: 'stt'
       } },
       { type: 'storage.set', key: key, value: 1 }
