@@ -305,13 +305,34 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // Disconnect a bonded phone but KEEP the pairing — clears a wedged link; the
   // phone reconnects on its own (the working inbound direction). Doubles as the
   // remote "reconnect if audio is stuck". Routes local or via the relay.
+  // The command is accepted-only (the ACL teardown lands a moment later), so
+  // poll the bonded list until the link actually reads down before repainting —
+  // an immediate reload still showed "Connected" and looked like a no-op.
   const handleDisconnectPhone = useCallback(
     async (row: BondedPhone) => {
       setPhoneBusy(row.address);
       setError(null);
       try {
         await runPhoneCommand('phone.disconnect', { address: row.address });
-        toast.success('Phone disconnected', `${row.name ?? row.address} will usually reconnect on its own.`);
+        let disconnected = false;
+        for (let i = 0; i < 5 && !disconnected; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try {
+            const res = await runPhoneCommand('phone.listPaired');
+            const rows = Array.isArray(res.devices) ? res.devices : [];
+            disconnected = rows.some((d) => {
+              const rec = asRecord(d);
+              return rec.address === row.address && rec.connected !== true;
+            });
+          } catch {
+            // transient — keep waiting
+          }
+        }
+        if (disconnected) {
+          toast.success('Phone disconnected', `${row.name ?? row.address} will usually reconnect on its own.`);
+        } else {
+          toast.info('Disconnect sent', 'The link is taking a moment to drop — press Refresh if the list looks stale.');
+        }
         await load();
       } catch (err) {
         setError(describeError(err));
