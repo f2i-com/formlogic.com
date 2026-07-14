@@ -190,6 +190,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               acceptPattern: typeof settings.acceptPattern === 'string' ? settings.acceptPattern : '',
               rejectPrivate: settings.rejectPrivate === true || settings.rejectPrivate === 'true',
               screenMessage: typeof settings.screenMessage === 'string' ? settings.screenMessage : '',
+              blockedMessage: typeof settings.blockedMessage === 'string' ? settings.blockedMessage : '',
             }
       );
       setRunning({
@@ -235,6 +236,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     acceptPattern: '',
     rejectPrivate: false,
     screenMessage: '',
+    blockedMessage: '',
   });
   const [screeningSaving, setScreeningSaving] = useState(false);
   const handleSaveScreening = useCallback(async () => {
@@ -246,8 +248,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         acceptPattern: screening.acceptPattern.trim(),
         rejectPrivate: screening.rejectPrivate,
         screenMessage: screening.screenMessage.trim(),
+        blockedMessage: screening.blockedMessage.trim(),
       });
-      toast.success('Call screening saved', 'Applies when the receptionist next reconnects (restart the Aokie plugin or the phone link).');
+      toast.success('Call screening saved', 'Applies on the next incoming call.');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -457,8 +460,8 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         <div className={`${card} p-4 sm:p-5`}>
           <h2 className="text-sm font-medium text-gray-900 dark:text-white">Call screening</h2>
           <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
-            Who gets through to the receptionist. Screened callers hear the message below (or silence) and the call
-            ends — no greeting, no AI. Changes apply when the receptionist next reconnects.
+            Who gets through to the receptionist. Screened callers hear a short message (or nothing) and the call
+            ends — no greeting, no AI. Changes apply on the next incoming call.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3">
             <div>
@@ -473,6 +476,20 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               />
               <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
                 Any format — numbers match on their digits, so +61 and 0-prefixed forms are the same number.
+              </p>
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="rs-blockedmsg">Message for blocked numbers</label>
+              <input
+                id="rs-blockedmsg"
+                type="text"
+                value={screening.blockedMessage}
+                onChange={(e) => setScreening((sc) => ({ ...sc, blockedMessage: e.target.value }))}
+                placeholder="Blank = reject silently (just hang up). Or e.g. This number has been blocked."
+                className={inputCls}
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Only for the blocked list above — kept separate from the filtered/private message below.
               </p>
             </div>
             <div>
@@ -499,7 +516,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               Screen private / withheld numbers
             </label>
             <div>
-              <label className={labelCls} htmlFor="rs-screenmsg">Message for screened callers</label>
+              <label className={labelCls} htmlFor="rs-screenmsg">Message for filtered / private callers</label>
               <input
                 id="rs-screenmsg"
                 type="text"
@@ -508,6 +525,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
                 placeholder="e.g. Please call back with caller ID enabled. (blank = hang up silently)"
                 className={inputCls}
               />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                For callers screened by the accept filter or the private-number setting — not the block list.
+              </p>
             </div>
             <div>
               <button
