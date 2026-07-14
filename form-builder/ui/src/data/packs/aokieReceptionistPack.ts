@@ -783,6 +783,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   var occT = {};
   var occU = {};
   var mineBy = {};
+  var mineSay = {};
   var mineU = {};
   var mine = [];
   for (var i = 0; i < rows.length; i++) {
@@ -798,8 +799,9 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     var rowDigits = String(a.phone || '').replace(/\\D+/g, '').slice(-9);
     if (digitsIn.length >= 6 && rowDigits === digitsIn) {
       var desc = String(a.service || 'appointment') + ' (' + st + (tv ? ', ' + tv : ', time not yet set') + ')';
-      if (!mineBy[d]) mineBy[d] = [];
+      if (!mineBy[d]) { mineBy[d] = []; mineSay[d] = []; }
       mineBy[d].push(desc);
+      mineSay[d].push('a ' + st + ' ' + String(a.service || 'appointment') + (tv ? ' at ' + tv : ' with no time set yet'));
       if (!tv) mineU[d] = (mineU[d] || 0) + 1;
       mine.push(dayLabel(d) + ': ' + desc);
     }
@@ -853,20 +855,46 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   while ((mm = reDM.exec(q))) proseDate(Number(mm[1]), mm[2]);
   while ((mm = reMD.exec(q))) proseDate(Number(mm[2]), mm[1]);
   var direct = [];
+  var say = [];
+  var offer = false;
   for (var w = 0; w < want.length; w++) {
     var wd = want[w];
-    if (wd > horizonIso) { direct.push('DIRECT ANSWER for ' + dayLabel(wd) + ': beyond the calendar view (which ends ' + dayLabel(horizonIso) + ') - say the team will confirm availability for that date.'); continue; }
-    if (wd < todayIso) { direct.push('DIRECT ANSWER for ' + dayLabel(wd) + ': that date has already passed.'); continue; }
+    var wl = dayLabel(wd);
+    if (wd > horizonIso) {
+      direct.push('DIRECT ANSWER for ' + wl + ': beyond the calendar view (which ends ' + dayLabel(horizonIso) + ') - say the team will confirm availability for that date.');
+      say.push('For ' + wl + ', our calendar view does not reach that far yet, so I will have the team confirm that one.');
+      continue;
+    }
+    if (wd < todayIso) {
+      direct.push('DIRECT ANSWER for ' + wl + ': that date has already passed.');
+      say.push(wl + ' has already passed.');
+      continue;
+    }
     var bits = [];
-    if (mineBy[wd]) bits.push('this caller ALREADY has: ' + mineBy[wd].join('; ') + ' - mention it');
+    var segs = [];
+    if (mineBy[wd]) {
+      bits.push('this caller ALREADY has: ' + mineBy[wd].join('; ') + ' - mention it');
+      say.push('For ' + wl + ', you already have ' + mineSay[wd].join(' and ') + ' on record.');
+    }
     var takenLab = [];
     if (occT[wd]) { var srt = occT[wd].slice().sort(); for (var ot = 0; ot < srt.length; ot++) takenLab.push(t12(srt[ot])); }
     var othersU = (occU[wd] || 0) - (mineU[wd] || 0);
-    if (takenLab.length) bits.push('times already booked that day: ' + takenLab.join(', '));
-    if (othersU > 0) bits.push(othersU + ' other booking' + (othersU > 1 ? 's' : '') + ' with no set time that day');
-    if (!takenLab.length && !othersU && !mineBy[wd]) bits.push('NO bookings that day at all - it looks OPEN; offer to put a booking request in');
-    else bits.push('other times look open - offer to put a booking request in');
-    direct.push('DIRECT ANSWER for ' + dayLabel(wd) + ': ' + bits.join('. ') + '.');
+    if (takenLab.length) { bits.push('times already booked that day: ' + takenLab.join(', ')); segs.push('times already taken are ' + takenLab.join(', ')); }
+    if (othersU > 0) { bits.push(othersU + ' other booking' + (othersU > 1 ? 's' : '') + ' with no set time that day'); }
+    if (!takenLab.length && !othersU && !mineBy[wd]) {
+      bits.push('NO bookings that day at all - it looks OPEN; offer to put a booking request in');
+      say.push(wl + ' looks open.');
+      offer = true;
+    } else {
+      bits.push('other times look open - offer to put a booking request in');
+      if (segs.length) say.push('For ' + wl + ', ' + segs.join('; ') + ' - other times look open.');
+      else if (!mineBy[wd]) say.push(wl + ' looks mostly open.');
+      offer = true;
+    }
+    direct.push('DIRECT ANSWER for ' + wl + ': ' + bits.join('. ') + '.');
+  }
+  if (say.length) {
+    out.spoken = say.join(' ') + (offer ? ' Would you like me to put a booking request in?' : '');
   }
   out.digest = 'DATA as of ' + todayIso + ' (question: "' + q.slice(0, 200) + '")'
     + (direct.length ? '\\n' + direct.join('\\n') : '')

@@ -1087,6 +1087,26 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.digest).not.toContain('at ?');
         expect(r.digest).toContain('with no set time');
         expect(r.digest).toContain('AUTHORITATIVE');
+        // The flow COMPOSES the spoken answer (live calls 1defd805 + b58274ed:
+        // the model overrode a correct DIRECT ANSWER with its own
+        // persona-window reasoning; the plugin now speaks this verbatim).
+        expect(typeof r.spoken).toBe('string');
+        expect(r.spoken).toContain('you already have a requested Appointment with no time set yet');
+        expect(r.spoken).toContain('looks open');
+        expect(r.spoken).toContain('calendar view does not reach that far');
+        expect(r.spoken).toContain('Would you like me to put a booking request in?');
+        // ASCII-only: the spoken line goes straight to TTS.
+        expect(/^[\x20-\x7E]+$/.test(r.spoken)).toBe(true);
+      });
+
+      it('business-lookup spoken: absent when the question names no date (the LLM path still owns free-form questions)', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const r = evalExpr(lookupExpr, {
+          inputs: { question: 'do you have any vegan options?', from: '', callId: 'c1' },
+          nodes: { appts: { responses: [] } },
+        });
+        expect(r.spoken).toBeUndefined();
+        expect(r.digest).not.toContain('DIRECT ANSWER');
       });
 
       it('business-lookup DIRECT ANSWER: prose dates like "August 1" resolve to the next occurrence', () => {
