@@ -134,7 +134,7 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
   if (ev.name !== 'aokie.call.ended') return {};
   var d = ev.data || {};
   var outcome = String(d.outcome || d.status || '');
-  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected')
+  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse')
     ? outcome : 'completed';
   var callId = String(d.callId || ev.correlationId || '');
   // Lifecycle upsert (audit §8): a call whose incoming write failed or
@@ -1817,6 +1817,10 @@ export const aokieReceptionistPack: PackData = {
               { id: 'rejected', label: 'Rejected', value: 'rejected' },
               { id: 'missed', label: 'Missed', value: 'missed' },
               { id: 'failed', label: 'Failed', value: 'failed' },
+              // Phase 1 abuse handling: the agent flagged the caller and the
+              // plugin ended the call by policy — its own status so the audit
+              // trail never reads as an ordinary completion.
+              { id: 'terminated_abuse', label: 'Ended (abusive caller)', value: 'terminated_abuse' },
             ],
           },
         },
@@ -3465,10 +3469,14 @@ export const aokieReceptionistPack: PackData = {
       // never delays the caller — it runs after hang-up.
       timeoutMs: 90000,
       // Only real conversations: skip missed calls and sub-5s pocket dials (the
-      // missed-call binding below owns the missed path).
+      // missed-call binding below owns the missed path). Abuse-terminated calls
+      // are skipped too (Phase 1): no records, tasks or SMS may be minted off
+      // an abusive transcript — texting a just-blocked caller would be worse
+      // than doing nothing. The call-summary binding still records what
+      // happened on the Calls row.
       condition: {
         type: 'expression',
-        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed') : false",
+        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse') : false",
       },
       inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
       outputActions: [

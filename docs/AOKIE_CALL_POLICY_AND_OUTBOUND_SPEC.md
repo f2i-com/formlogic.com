@@ -73,17 +73,32 @@ As built (deltas from the draft in brackets):
   blocked numbers render as chips with one-click remove + post-save
   read-back.
 
-## Phase 1 — Abuse handling
+## Phase 1 — Abuse handling  ← SHIPPED 2026-07-14
 
-- Standing prompt rule: if the caller is abusive, reply exactly `[[ABUSE]]`.
-- Deterministic handler (never the LLM): speak "We do not tolerate abusive
-  calls. Goodbye.", hang up (reuse the agent-hangup path incl. the
-  ghost-turn latch), append the number to `blockedNumbers` via the
-  settings store, write the Calls row with status `terminated_abuse`.
-- Optional `autoBlockAbuse` (Bool, default ON when abuse handling enabled).
-- Web app: blocked-number management UI on the Receptionist console
-  (list + unblock button → settings.set). The block list is plain settings,
-  so unblock is instant next radio start / next call via flows.
+As built:
+- Standing prompt rule (`ABUSE_INSTRUCTION`): reply exactly `[[ABUSE]]` for
+  slurs/threats/harassment; explicitly NOT for frustration/venting/swearing
+  about their own situation (small-model overfire guard).
+- Deterministic handler in the reply pump: the marker is held back from
+  speech per-sentence (like `[[LOOKUP`), the generation abandoned, then
+  fixed code flushes TX, speaks "We do not tolerate abusive calls, so this
+  call will now end. Goodbye.", drains playout, hangs up with the
+  ghost-turn latch, and suppresses the dead-air fail-safe for that reply.
+- Auto-block lands in THREE layers: the running ScreenPolicy immediately
+  (the number's next attempt is already screened), process env (policy
+  rebuilds keep it), and the persisted `blockedNumbers` setting via a
+  RadioStatus queue the connector drains on every command dispatch (the
+  desktop health poll bounds the lag — the radio never touches the store).
+- `autoBlockAbuse` (Bool, default ON, applies_live; fixture synced both
+  repos): opting out disables ONLY the blocking — notice + hangup always
+  happen. Console checkbox in the Call screening card.
+- Calls row: new `terminated_abuse` status (TerminationIntent::
+  AgentTerminateAbuse → outcome `terminated_abuse`, reason `agent_abuse`);
+  LOGIC_CALL_ENDED passes it through; after-call-actions SKIPS abuse calls
+  (no records/tasks/SMS off an abusive transcript — texting a just-blocked
+  caller would be worse than nothing); call-summary still records the row.
+- Unblock = one click on the console's blocked-number chips (shipped with
+  Phase 0.5).
 
 ## Phase 2 — Outbound calling
 
@@ -136,7 +151,7 @@ As built (deltas from the draft in brackets):
 
 0. Phase 0 (plugin screening) — SHIPPED 2026-07-14.
 0.5 Phase 0.5 (blocked/sms_capable/whitelist/country code) — SHIPPED 2026-07-14.
-1. Phase 1 (abuse) — small, NEXT.
+1. Phase 1 (abuse) — SHIPPED 2026-07-14.
 2. Phase 2 (outbound + missed-call queue) — the big one, own session(s).
 3. Phase 3 (manager line) — after outbound proves the dial path.
 4. Phase 4 (hold/waiting) — last, behind flags.

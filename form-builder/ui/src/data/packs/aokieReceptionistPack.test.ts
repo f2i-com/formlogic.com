@@ -1440,6 +1440,46 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
     });
   });
 
+  describe('Phase 1 abuse handling (audit trail + no-SMS guard)', () => {
+    it("Calls status offers terminated_abuse and LOGIC_CALL_ENDED passes the plugin's outcome through", () => {
+      const calls = pack.forms.find((f) => f.packFormId === 'calls')!;
+      const status = calls.fields.find((f) => f.id === 'status')!;
+      const values = (status.properties as { options: Array<{ value: string }> }).options.map((o) => o.value);
+      expect(values).toContain('terminated_abuse');
+      // The app-logic whitelist must let the new outcome through — anything
+      // unknown collapses to 'completed', which would hide the abuse trail.
+      const app = pack.apps![0];
+      const script = (app.customLogic!.scripts as Array<{ id: string; source: string }>).find(
+        (s) => s.id === 'aokie-call-ended'
+      )!;
+      expect(script.source).toContain("outcome === 'terminated_abuse'");
+    });
+
+    it('after-call-actions never runs on an abuse-terminated call (no records/tasks/SMS off an abusive transcript)', () => {
+      const binding = (pack.flowBindings ?? []).find(
+        (b) => b.flow === 'after-call-actions' && b.event === 'aokie.call.ended'
+      )!;
+      const expr = String((binding.condition as { expr: string }).expr);
+      expect(expr).toContain("!== 'terminated_abuse'");
+      // Evaluate the REAL expression the runners run.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const evalCond = (data: Record<string, unknown>): any =>
+        new Function('event', `return ${expr};`)({ data });
+      expect(evalCond({ durationSeconds: 30, outcome: 'completed' })).toBe(true);
+      expect(evalCond({ durationSeconds: 30, outcome: 'terminated_abuse' })).toBe(false);
+      expect(evalCond({ durationSeconds: 2, outcome: 'completed' })).toBe(false);
+      // The summary binding still covers the Calls row for abuse calls.
+      const summary = (pack.flowBindings ?? []).find(
+        (b) => b.flow === 'call-summary-follow-up' && b.event === 'aokie.call.ended'
+      )!;
+      const sExpr = String((summary.condition as { expr: string }).expr);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const evalSummary = (data: Record<string, unknown>): any =>
+        new Function('event', `return ${sExpr};`)({ data });
+      expect(evalSummary({ durationSeconds: 30, outcome: 'terminated_abuse' })).toBe(true);
+    });
+  });
+
   describe('form fields', () => {
     it("Customers has sms_capable (yes/no, blank = yes semantics documented) and the existing status dropdown offers 'blocked'", () => {
       const customers = pack.forms.find((f) => f.packFormId === 'customers')!;

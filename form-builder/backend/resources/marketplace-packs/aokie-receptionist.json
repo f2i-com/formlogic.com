@@ -371,6 +371,11 @@
                   "id": "failed",
                   "label": "Failed",
                   "value": "failed"
+                },
+                {
+                  "id": "terminated_abuse",
+                  "label": "Ended (abusive caller)",
+                  "value": "terminated_abuse"
                 }
               ]
             }
@@ -2974,7 +2979,7 @@
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Finalise the Calls row (status / ended_at / duration).",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  var answers = {\n    call_id: callId,\n    status: status,\n    ended_at: String(ev.occurredAt || ''),\n    duration_seconds: Number(d.durationSeconds || 0)\n  };\n  // Caller-id backfill: with instant auto-answer the +CLIP number usually\n  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),\n  // but call.ended carries it — write it now so the record and the\n  // customer_link match stop reading as an unknown caller. Same phone-format\n  // guard as the incoming script (a non-number must not fail the row).\n  var phone = String(d.callerPhone || d.from || '');\n  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: answers }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  var answers = {\n    call_id: callId,\n    status: status,\n    ended_at: String(ev.occurredAt || ''),\n    duration_seconds: Number(d.durationSeconds || 0)\n  };\n  // Caller-id backfill: with instant auto-answer the +CLIP number usually\n  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),\n  // but call.ended carries it — write it now so the record and the\n  // customer_link match stop reading as an unknown caller. Same phone-format\n  // guard as the incoming script (a non-number must not fail the row).\n  var phone = String(d.callerPhone || d.from || '');\n  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: answers }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-sms-received",
@@ -4913,7 +4918,7 @@
         "timeoutMs": 90000,
         "condition": {
           "type": "expression",
-          "expr": "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed') : false"
+          "expr": "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse') : false"
         },
         "inputMap": {
           "callId": "$event.data.callId",

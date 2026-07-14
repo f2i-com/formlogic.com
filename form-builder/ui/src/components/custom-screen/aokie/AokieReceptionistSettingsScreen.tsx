@@ -192,6 +192,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               rejectPrivate: settings.rejectPrivate === true || settings.rejectPrivate === 'true',
               screenMessage: typeof settings.screenMessage === 'string' ? settings.screenMessage : '',
               blockedMessage: typeof settings.blockedMessage === 'string' ? settings.blockedMessage : '',
+              autoBlockAbuse: !(settings.autoBlockAbuse === false || settings.autoBlockAbuse === 'false'),
             }
       );
       setRunning({
@@ -243,6 +244,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     rejectPrivate: false,
     screenMessage: '',
     blockedMessage: '',
+    // Phase 1: default ON — the plugin auto-blocks a caller the AI flags as
+    // abusive; unblocking is one click on the chips above.
+    autoBlockAbuse: true,
     whitelistOnly: false,
     defaultCountryCode: '',
   });
@@ -287,6 +291,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         rejectPrivate: screening.rejectPrivate,
         screenMessage: screening.screenMessage.trim(),
         blockedMessage: screening.blockedMessage.trim(),
+        autoBlockAbuse: screening.autoBlockAbuse,
       });
       // Whitelist mode + country code live on the settings RECORD (the flows
       // read them per call). Patch just these two keys — the API merges, so
@@ -316,6 +321,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           rejectPrivate: s.rejectPrivate === true || s.rejectPrivate === 'true',
           screenMessage: typeof s.screenMessage === 'string' ? s.screenMessage : prev.screenMessage,
           blockedMessage: typeof s.blockedMessage === 'string' ? s.blockedMessage : prev.blockedMessage,
+          autoBlockAbuse: !(s.autoBlockAbuse === false || s.autoBlockAbuse === 'false'),
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -620,6 +626,22 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
                 For callers screened by the accept filter or the private-number setting — not the block list.
               </p>
             </div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={screening.autoBlockAbuse}
+                onChange={(e) => setScreening((sc) => ({ ...sc, autoBlockAbuse: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
+              />
+              <span>
+                Auto-block abusive callers
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  When the AI flags genuine abuse (slurs, threats, harassment) it speaks a short notice, ends
+                  the call, and adds the number to the blocked list above — remove it there to unblock. The
+                  notice and hangup happen even with this off; only the blocking is optional.
+                </span>
+              </span>
+            </label>
             <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-slate-200">
               <input
                 type="checkbox"
