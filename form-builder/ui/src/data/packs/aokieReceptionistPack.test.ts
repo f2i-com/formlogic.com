@@ -1125,6 +1125,37 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(edges).toContainEqual({ source: 'win', target: 'appts' });
       });
 
+      it('business-lookup RANGE questions answer the WHOLE span, not just endpoints (call 372836dc)', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const d = (offset: number) => {
+          const t = new Date(Date.now() + offset * 86400_000);
+          return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+        };
+        const start = d(20);
+        const mid = d(23);
+        const end = d(26);
+        const r = evalExpr(lookupExpr, {
+          inputs: { question: `availability ${start} to ${end}`, from: '+61400000000', callId: 'c1' },
+          nodes: { appts: { responses: [
+            { id: 'b1', answers: { status: 'confirmed', date: mid, time: '18:00', service: 'x', phone: '+61499999999' } },
+          ] } },
+        });
+        const direct = (r.digest.split(String.fromCharCode(10)) as string[]).filter((l) => l.startsWith('DIRECT ANSWER'));
+        expect(direct).toHaveLength(1);
+        expect(direct[0]).toContain('through');
+        expect(direct[0]).toContain('6 days fully open');
+        expect(direct[0]).toContain('booked at 6 PM');
+        expect(r.spoken).toContain('In that span');
+        expect(r.spoken).toContain('6 PM');
+        expect(r.spoken).toContain('The other 6 days look open');
+        const r2 = evalExpr(lookupExpr, {
+          inputs: { question: `availability ${start} to ${end}`, from: '', callId: 'c1' },
+          nodes: { appts: { responses: [] } },
+        });
+        expect(r2.spoken).toContain('Everything from');
+        expect(r2.spoken).toContain('looks open');
+      });
+
       it('business-lookup spoken: absent when the question names no date (the LLM path still owns free-form questions)', () => {
         const lookupExpr = nodeExpr('business-lookup', 'make');
         const r = evalExpr(lookupExpr, {

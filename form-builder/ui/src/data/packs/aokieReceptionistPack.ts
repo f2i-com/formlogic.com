@@ -861,6 +861,17 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     while ((mm = reDM.exec(s))) proseDate(Number(mm[1]), mm[2]);
     while ((mm = reMD.exec(s))) proseDate(Number(mm[2]), mm[1]);
   }
+  // Ranges FIRST ('2026-08-11 to 2026-08-17', live call 372836dc: the model
+  // asked a week range for 'the second week of August' and the old
+  // single-date path answered only the ENDPOINTS - Tuesday and Monday -
+  // never the Wednesday the caller asked about). Endpoints are consumed so
+  // the single-date path does not double-answer them.
+  var ranges = [];
+  var reRange = /(\\d{4}-\\d{2}-\\d{2})\\s*(?:to|through|until|-)\\s*(\\d{4}-\\d{2}-\\d{2})/gi;
+  var rm;
+  while ((rm = reRange.exec(q))) {
+    if (rm[1] <= rm[2]) { ranges.push([rm[1], rm[2]]); seenW[rm[1]] = 1; seenW[rm[2]] = 1; }
+  }
   parseDates(q);
   // STT writes spoken ordinals as WORDS ('twenty first of August', call
   // c01b7dcf) - normalize them to digits and parse again. Compound forms
@@ -877,6 +888,54 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   var direct = [];
   var say = [];
   var offer = false;
+  for (var rg = 0; rg < ranges.length && rg < 2; rg++) {
+    var rs = ranges[rg][0];
+    var re = ranges[rg][1];
+    var hp0 = rs.split('-');
+    var cur = new Date(Number(hp0[0]), Number(hp0[1]) - 1, Number(hp0[2]));
+    var takenR = [];
+    var ownIn = [];
+    var openCount = 0;
+    var total = 0;
+    var clipped = false;
+    var pastAny = false;
+    while (total < 14) {
+      var di = iso(cur);
+      if (di > re) break;
+      if (di > horizonIso) { clipped = true; break; }
+      if (di < todayIso) { pastAny = true; }
+      else {
+        total++;
+        var parts2 = [];
+        if (occT[di]) { var st2 = occT[di].slice().sort(); var lb = []; for (var k2 = 0; k2 < st2.length; k2++) lb.push(t12(st2[k2])); parts2.push('booked at ' + lb.join(', ')); }
+        var oU = (occU[di] || 0) - (mineU[di] || 0);
+        if (oU > 0) parts2.push(oU + ' booking' + (oU > 1 ? 's' : '') + ' with no set time');
+        if (mineBy[di]) ownIn.push('on ' + dayLabel(di) + ' you already have ' + mineSay[di].join(' and '));
+        if (parts2.length) takenR.push(dayLabel(di) + ': ' + parts2.join(' + '));
+        else openCount++;
+      }
+      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+    }
+    if (total === 0 && !clipped) continue;
+    var bits2 = [];
+    if (takenR.length) bits2.push('days with bookings - ' + takenR.join('; '));
+    if (ownIn.length) bits2.push('this caller ALREADY has bookings in this span (' + ownIn.join('; ') + ') - mention it');
+    bits2.push(openCount > 0 ? openCount + ' day' + (openCount > 1 ? 's' : '') + ' fully open - offer to put a booking request in' : 'no fully open days in this span');
+    if (clipped) bits2.push('dates past ' + dayLabel(horizonIso) + ' are beyond the calendar view - the team will confirm those');
+    direct.push('DIRECT ANSWER for ' + dayLabel(rs) + ' through ' + dayLabel(re) + ': ' + bits2.join('. ') + '.');
+    var sBits = [];
+    if (ownIn.length) sBits.push('Just so you know, ' + ownIn.join(' and ') + '.');
+    if (takenR.length === 0 && openCount > 0) {
+      sBits.push('Everything from ' + dayLabel(rs) + ' through ' + dayLabel(re) + ' looks open.');
+    } else {
+      if (takenR.length) sBits.push('In that span - ' + takenR.join('; ') + '.');
+      if (openCount > 0) sBits.push('The other ' + (openCount > 1 ? openCount + ' days look' : 'day looks') + ' open.');
+    }
+    if (pastAny && openCount === 0 && takenR.length === 0 && !clipped) sBits.push('Those dates have already passed.');
+    if (clipped) sBits.push('Some of those dates are past our calendar view - the team will confirm those.');
+    if (sBits.length) say.push(sBits.join(' '));
+    if (openCount > 0) offer = true;
+  }
   for (var w = 0; w < want.length; w++) {
     var wd = want[w];
     var wl = dayLabel(wd);
