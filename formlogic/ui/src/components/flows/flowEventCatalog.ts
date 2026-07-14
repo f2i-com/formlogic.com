@@ -70,6 +70,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.audio.disconnected',
   'aokie.call.turn.partial',
   'aokie.call.turn.final',
+  'aokie.call.turn.corrected',
   'aokie.call.ended',
   'aokie.call.outbound.dialing',
   'aokie.sms.received',
@@ -198,6 +199,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Transcript turn final',
     description: 'A final transcript turn arrived during a live call.',
     payloadHints: CALL_TURN_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.turn.corrected',
+    group: 'aokie.calls',
+    event: 'aokie.call.turn.corrected',
+    label: 'Transcript turn corrected',
+    description:
+      'The audio-capable model corrected an already-stored caller turn from its audio (optional audioTranscript feature). Updates that turn — never treat it as a fresh caller turn.',
+    payloadHints: ['$event.data.callId', '$event.data.turn', '$event.data.text', '$event.data.sttText'],
   },
   {
     kind: 'event',

@@ -97,8 +97,27 @@ const LOGIC_CALL_ANSWERED = `function run(ctx) {
 
 const LOGIC_CALL_TURN = `function run(ctx) {
   var ev = ctx.event || {};
-  if (ev.name !== 'aokie.call.turn.final') return {};
   var d = ev.data || {};
+  // audioTranscript (optional feature): the audio-capable model's correction
+  // for an ALREADY-STORED caller turn. UPDATE that row in place - never mint
+  // a new turn - keeping the raw recognizer text in stt_text. No upsert: a
+  // correction whose row is missing (pre-feature rows, or a doomed-blank
+  // final that was never stored) is a clean no-op.
+  if (ev.name === 'aokie.call.turn.corrected') {
+    var ckey = 'seen-' + String(ev.idempotencyKey || ('turnfix:' + ev.correlationId + ':' + d.turn));
+    if (ctx.storage && ctx.storage[ckey]) return {};
+    var fixed = String(d.text || '').trim();
+    if (fixed === '') return {};
+    return {
+      effects: [
+        { type: 'formlogic.updateResponse', formKey: 'transcript-turns',
+          match: { field: 'turn_key', value: String(d.callId || ev.correlationId || '') + ':' + Number(d.turn || 0) },
+          answers: { text: fixed, stt_text: String(d.sttText || ''), source: 'audio_model' } },
+        { type: 'storage.set', key: ckey, value: 1 }
+      ]
+    };
+  }
+  if (ev.name !== 'aokie.call.turn.final') return {};
   var key = 'seen-' + String(ev.idempotencyKey || ('turn:' + ev.correlationId + ':' + d.turn));
   if (ctx.storage && ctx.storage[key]) return {};
   // transcript-turns.text is required: a blank/whitespace final turn (a silence or
@@ -115,6 +134,8 @@ const LOGIC_CALL_TURN = `function run(ctx) {
       { type: 'formlogic.submitResponse', formKey: 'transcript-turns', answers: {
         call_id: String(d.callId || ev.correlationId || ''),
         turn_index: Number(d.turn || 0),
+        // The correction event finds this row by turn_key (single-field match).
+        turn_key: String(d.callId || ev.correlationId || '') + ':' + Number(d.turn || 0),
         speaker: speaker,
         text: text,
         // The payload's at is the SPEECH-START stamp (bot turns are emitted
@@ -2310,6 +2331,11 @@ export const aokieReceptionistPack: PackData = {
         // relationship joins on the shared call_id key (read-side; see RelatedRecords helper).
         { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, relatedColumnFieldIds: ['speaker', 'text', 'turn_index'] } },
         { id: 'turn_index', type: 'number', label: 'Turn', required: false, properties: { min: 0, step: 1 } },
+        // audioTranscript: the correction event finds its row by this key
+        // (updateResponse match is single-field, so call_id + turn ride one
+        // value). Written by the app logic; pre-feature rows without it
+        // simply never match a correction.
+        { id: 'turn_key', type: 'short_text', label: 'Turn key', required: false, properties: {} },
         {
           id: 'speaker',
           type: 'dropdown',
@@ -2325,6 +2351,10 @@ export const aokieReceptionistPack: PackData = {
           },
         },
         { id: 'text', type: 'long_text', label: 'Text', required: true, properties: {} },
+        // audioTranscript: when the audio model corrected the line, the raw
+        // recognizer text is kept here — the transcript stays honest about
+        // what each layer actually heard.
+        { id: 'stt_text', type: 'long_text', label: 'Raw speech-to-text', required: false, properties: {} },
         { id: 'timestamp', type: 'short_text', label: 'Timestamp', required: false, properties: {} },
         { id: 'confidence', type: 'number', label: 'Confidence', required: false, properties: { min: 0, max: 1, step: 0.01 } },
         {
@@ -2335,6 +2365,7 @@ export const aokieReceptionistPack: PackData = {
           properties: {
             options: [
               { id: 'stt', label: 'Speech-to-text', value: 'stt' },
+              { id: 'audio_model', label: 'Audio model (corrected)', value: 'audio_model' },
               { id: 'operator', label: 'Operator', value: 'operator' },
               { id: 'flow', label: 'Flow', value: 'flow' },
             ],

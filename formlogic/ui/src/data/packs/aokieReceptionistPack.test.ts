@@ -63,7 +63,7 @@ const AOKIE_EVENTS = new Set([
   'aokie.dongle.detected', 'aokie.dongle.driver_required', 'aokie.dongle.ready', 'aokie.dongle.error',
   'aokie.phone.pairing_started', 'aokie.phone.paired', 'aokie.phone.disconnected',
   'aokie.call.incoming', 'aokie.call.answered', 'aokie.call.caller_id', 'aokie.call.rejected',
-  'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.ended',
+  'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.turn.corrected', 'aokie.call.ended',
   'aokie.sms.received', 'aokie.sms.sent', 'aokie.sms.failed',
   'aokie.manager.action',
   'aokie.hardware.error',
@@ -179,6 +179,50 @@ describe('aokieReceptionistPack — app', () => {
         expect(AOKIE_EVENTS.has(ev), `${script.id} handles unknown event '${ev}'`).toBe(true);
       }
     }
+  });
+
+  it('aokie-call-turn: stores turn_key and applies audio-model corrections IN PLACE (audioTranscript)', () => {
+    const script = (app.customLogic?.scripts ?? []).find((s) => s.id === 'aokie-call-turn')!;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const run = (ctx: any): any => new Function('ctx', `${script.source}; return run(ctx);`)(ctx);
+    const stored = run({
+      event: {
+        name: 'aokie.call.turn.final',
+        correlationId: 'call_x',
+        idempotencyKey: 'aokie:call_x:turn.3.final:v1',
+        data: { callId: 'call_x', turn: 3, speaker: 'caller', text: 'I would like to look a table', at: '2026-07-14T00:00:00Z' },
+      },
+      storage: {},
+    });
+    expect(stored.effects[0].type).toBe('formlogic.submitResponse');
+    expect(stored.effects[0].answers.turn_key).toBe('call_x:3');
+    expect(stored.effects[0].answers.source).toBe('stt');
+    const fix = run({
+      event: {
+        name: 'aokie.call.turn.corrected',
+        correlationId: 'call_x',
+        idempotencyKey: 'aokie:call_x:turn.3.corrected:v1',
+        data: { callId: 'call_x', turn: 3, text: 'I would like to book a table', sttText: 'I would like to look a table' },
+      },
+      storage: {},
+    });
+    const upd = fix.effects[0];
+    expect(upd.type).toBe('formlogic.updateResponse');
+    // Update-only: a correction whose row is missing must stay a no-op,
+    // never mint a fresh (partial) turn.
+    expect(upd.upsert).toBeUndefined();
+    expect(upd.match).toEqual({ field: 'turn_key', value: 'call_x:3' });
+    expect(upd.answers.text).toBe('I would like to book a table');
+    expect(upd.answers.stt_text).toBe('I would like to look a table');
+    expect(upd.answers.source).toBe('audio_model');
+    // Blank correction and redelivery are both clean no-ops.
+    expect(run({ event: { name: 'aokie.call.turn.corrected', correlationId: 'c', data: { text: '  ' } }, storage: {} })).toEqual({});
+    expect(
+      run({
+        event: { name: 'aokie.call.turn.corrected', idempotencyKey: 'k1', correlationId: 'c', data: { turn: 1, text: 'hello' } },
+        storage: { 'seen-k1': 1 },
+      })
+    ).toEqual({});
   });
 
   it('SDK screens referenced by the pack are registered in sdkScreenRegistry', () => {

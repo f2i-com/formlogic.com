@@ -181,6 +181,15 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       const settings = (res.settings && typeof res.settings === 'object' ? res.settings : {}) as Record<string, unknown>;
       // Seed the call-screening card once from the live plugin settings
       // (these are PLUGIN settings, not part of the persona record).
+      setAudioCfg((prev) =>
+        prev.loaded
+          ? prev
+          : {
+              loaded: true,
+              sendAudio: settings.sendAudio === true || settings.sendAudio === 'true',
+              audioTranscript: settings.audioTranscript === true || settings.audioTranscript === 'true',
+            }
+      );
       setScreening((prev) =>
         prev.loaded
           ? prev
@@ -232,6 +241,40 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       return false;
     }
   }, [formId, draft, recordId, updateResponse, createResponse, records]);
+
+  // ── Audio understanding (plugin settings — audio-capable models only) ──
+  // sendAudio ships the caller-turn audio to the LLM alongside the STT text;
+  // audioTranscript additionally has the model CORRECT each turn's transcript
+  // from that audio (a small detached request — replies never wait on it).
+  // Both read once at radio start, so saves apply at the next reconnect.
+  const [audioCfg, setAudioCfg] = useState({ loaded: false, sendAudio: false, audioTranscript: false });
+  const [audioSaving, setAudioSaving] = useState(false);
+  const handleSaveAudio = useCallback(async () => {
+    setAudioSaving(true);
+    setError(null);
+    try {
+      await runCommand('settings.set', {
+        sendAudio: audioCfg.sendAudio,
+        audioTranscript: audioCfg.audioTranscript,
+      });
+      try {
+        const res = await runCommand('settings.get');
+        const s = (res.settings && typeof res.settings === 'object' ? res.settings : {}) as Record<string, unknown>;
+        setAudioCfg((prev) => ({
+          ...prev,
+          sendAudio: s.sendAudio === true || s.sendAudio === 'true',
+          audioTranscript: s.audioTranscript === true || s.audioTranscript === 'true',
+        }));
+      } catch {
+        // Read-back is confirmation only — the save above already succeeded.
+      }
+      toast.success('Audio settings saved', 'Applies when the receptionist next reconnects.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAudioSaving(false);
+    }
+  }, [runCommand, audioCfg]);
 
   // ── Call screening (plugin settings — block list / filters / private) ──
   // whitelistOnly + defaultCountryCode are RECORD fields (Phase 0.5: the
@@ -541,6 +584,64 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           </div>
         </div>
       </div>
+
+      {/* ── Audio understanding (plugin-level; needs an audio-capable model) ── */}
+      {can('settings.set') && (
+        <div className={`${card} p-4 sm:p-5`}>
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Audio understanding</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+            For audio-capable AI models (like Gemma with audio input). Both apply the next time the
+            receptionist reconnects.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={audioCfg.sendAudio}
+                onChange={(e) => setAudioCfg((a) => ({ ...a, sendAudio: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
+              />
+              <span>
+                Send caller audio to the AI model
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  Each caller turn's audio rides along with the transcript, so the model hears tone and
+                  wording directly. Text-only models ignore it — leave off unless your model supports audio.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={audioCfg.audioTranscript}
+                disabled={!audioCfg.sendAudio}
+                onChange={(e) => setAudioCfg((a) => ({ ...a, audioTranscript: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600"
+              />
+              <span className={audioCfg.sendAudio ? '' : 'opacity-50'}>
+                Audio-corrected transcripts
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  After each caller turn, the audio model quietly corrects the speech-to-text transcript from
+                  the actual audio — replies never wait on it, and the raw recognizer text is kept alongside.
+                  Needs "Send caller audio" on.
+                </span>
+              </span>
+            </label>
+            <div>
+              <button
+                type="button"
+                onClick={() => void handleSaveAudio()}
+                disabled={audioSaving || !audioCfg.loaded}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-gray-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+              >
+                {audioSaving ? 'Saving…' : 'Save audio settings'}
+              </button>
+              {!audioCfg.loaded && (
+                <span className="ml-2 text-[11px] text-gray-400 dark:text-slate-500">Loading current values…</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Call screening (plugin-level: block list, filters, private numbers) ── */}
       {can('settings.set') && (

@@ -56,8 +56,8 @@ aokie.dongle.detected        aokie.dongle.driver_required   aokie.dongle.ready  
 aokie.phone.pairing_started  aokie.phone.paired             aokie.phone.connected aokie.phone.disconnected
 aokie.call.incoming          aokie.call.ringing             aokie.call.answered   aokie.call.rejected
 aokie.call.audio.connected   aokie.call.audio.disconnected
-aokie.call.turn.partial      aokie.call.turn.final          aokie.call.ended
-aokie.call.outbound.dialing
+aokie.call.turn.partial      aokie.call.turn.final          aokie.call.turn.corrected
+aokie.call.ended             aokie.call.outbound.dialing
 aokie.sms.received           aokie.sms.sent                 aokie.sms.failed
 aokie.manager.action
 aokie.hardware.error
@@ -70,6 +70,13 @@ Conventions:
   NEVER reused; internally each call also has a monotonic generation stamped through the
   async STT/LLM/TTS pipeline so a slow result from call A is dropped, never attributed to
   call B (audit AK-002/C-05; drops are visible as `staleSttResults` in `dongle.diagnostics`).
+- `aokie.call.turn.corrected` data: `{callId, turn, text, sttText, at}` — the OPTIONAL
+  audio-transcript feature (`sendAudio` + `audioTranscript` settings both on): a small detached
+  request asks the audio-capable model to correct the on-device STT from the turn's actual audio.
+  `turn` names the `turn.final` it corrects. Consumers UPDATE that stored turn in place (the pack's
+  app logic matches on the row's `turn_key` and keeps the raw recognizer text in `stt_text`) and
+  must NEVER treat it as a fresh caller turn — no replies, no new rows. Best-effort by design: an
+  unchanged/empty correction is not emitted, and a correction may land moments after `call.ended`.
 - `aokie.call.ended` data: `{callId, from, callerPhone, durationSeconds, durationMs, outcome,
   reason, direction, manager, at}`. `manager: true` marks an inbound call whose caller id
   digit-matched the `managerNumbers` setting — the after-call booking extractor skips those

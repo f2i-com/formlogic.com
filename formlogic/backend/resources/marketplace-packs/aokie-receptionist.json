@@ -599,6 +599,13 @@
             }
           },
           {
+            "id": "turn_key",
+            "type": "short_text",
+            "label": "Turn key",
+            "required": false,
+            "properties": {}
+          },
+          {
             "id": "speaker",
             "type": "dropdown",
             "label": "Speaker",
@@ -636,6 +643,13 @@
             "properties": {}
           },
           {
+            "id": "stt_text",
+            "type": "long_text",
+            "label": "Raw speech-to-text",
+            "required": false,
+            "properties": {}
+          },
+          {
             "id": "timestamp",
             "type": "short_text",
             "label": "Timestamp",
@@ -664,6 +678,11 @@
                   "id": "stt",
                   "label": "Speech-to-text",
                   "value": "stt"
+                },
+                {
+                  "id": "audio_model",
+                  "label": "Audio model (corrected)",
+                  "value": "audio_model"
                 },
                 {
                   "id": "operator",
@@ -3028,7 +3047,7 @@
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Store each final transcript turn.",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.turn.final') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('turn:' + ev.correlationId + ':' + d.turn));\n  if (ctx.storage && ctx.storage[key]) return {};\n  // transcript-turns.text is required: a blank/whitespace final turn (a silence or\n  // noise STT finalization, or an empty bot turn) would be REJECTED by the validator\n  // and lost. Such a turn carries no content, so skip the write entirely (a no-op is\n  // idempotent — a redelivery re-skips) rather than emitting a doomed submission.\n  var text = String(d.text || '').trim();\n  if (text === '') return {};\n  var speaker = String(d.speaker || 'caller');\n  if (speaker === 'bot') speaker = 'aokie';\n  if (['caller', 'aokie', 'operator', 'system'].indexOf(speaker) < 0) speaker = 'system';\n  return {\n    effects: [\n      { type: 'formlogic.submitResponse', formKey: 'transcript-turns', answers: {\n        call_id: String(d.callId || ev.correlationId || ''),\n        turn_index: Number(d.turn || 0),\n        speaker: speaker,\n        text: text,\n        // The payload's at is the SPEECH-START stamp (bot turns are emitted\n        // when the reply finishes; overlap caller turns are back-dated) —\n        // sorting by it reads in true conversation order. Envelope time is\n        // the fallback for older plugins.\n        timestamp: String(d.at || ev.occurredAt || ''),\n        source: 'stt'\n      } },\n      { type: 'storage.set', key: key, value: 1 }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  var d = ev.data || {};\n  // audioTranscript (optional feature): the audio-capable model's correction\n  // for an ALREADY-STORED caller turn. UPDATE that row in place - never mint\n  // a new turn - keeping the raw recognizer text in stt_text. No upsert: a\n  // correction whose row is missing (pre-feature rows, or a doomed-blank\n  // final that was never stored) is a clean no-op.\n  if (ev.name === 'aokie.call.turn.corrected') {\n    var ckey = 'seen-' + String(ev.idempotencyKey || ('turnfix:' + ev.correlationId + ':' + d.turn));\n    if (ctx.storage && ctx.storage[ckey]) return {};\n    var fixed = String(d.text || '').trim();\n    if (fixed === '') return {};\n    return {\n      effects: [\n        { type: 'formlogic.updateResponse', formKey: 'transcript-turns',\n          match: { field: 'turn_key', value: String(d.callId || ev.correlationId || '') + ':' + Number(d.turn || 0) },\n          answers: { text: fixed, stt_text: String(d.sttText || ''), source: 'audio_model' } },\n        { type: 'storage.set', key: ckey, value: 1 }\n      ]\n    };\n  }\n  if (ev.name !== 'aokie.call.turn.final') return {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('turn:' + ev.correlationId + ':' + d.turn));\n  if (ctx.storage && ctx.storage[key]) return {};\n  // transcript-turns.text is required: a blank/whitespace final turn (a silence or\n  // noise STT finalization, or an empty bot turn) would be REJECTED by the validator\n  // and lost. Such a turn carries no content, so skip the write entirely (a no-op is\n  // idempotent — a redelivery re-skips) rather than emitting a doomed submission.\n  var text = String(d.text || '').trim();\n  if (text === '') return {};\n  var speaker = String(d.speaker || 'caller');\n  if (speaker === 'bot') speaker = 'aokie';\n  if (['caller', 'aokie', 'operator', 'system'].indexOf(speaker) < 0) speaker = 'system';\n  return {\n    effects: [\n      { type: 'formlogic.submitResponse', formKey: 'transcript-turns', answers: {\n        call_id: String(d.callId || ev.correlationId || ''),\n        turn_index: Number(d.turn || 0),\n        // The correction event finds this row by turn_key (single-field match).\n        turn_key: String(d.callId || ev.correlationId || '') + ':' + Number(d.turn || 0),\n        speaker: speaker,\n        text: text,\n        // The payload's at is the SPEECH-START stamp (bot turns are emitted\n        // when the reply finishes; overlap caller turns are back-dated) —\n        // sorting by it reads in true conversation order. Envelope time is\n        // the fallback for older plugins.\n        timestamp: String(d.at || ev.occurredAt || ''),\n        source: 'stt'\n      } },\n      { type: 'storage.set', key: key, value: 1 }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-call-ended",
