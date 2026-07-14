@@ -1099,6 +1099,13 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(/^[\x20-\x7E]+$/.test(r.spoken)).toBe(true);
       });
 
+      it('business-lookup flow output maps BOTH digest and spoken (live call 61d4545b: the output node mapped only digest, so the plugin never received the composed answer)', () => {
+        const out = flowBySlug('business-lookup').flowJson.nodes.find((n) => n.type === 'output')!;
+        const value = (out.data as { value: Record<string, string> }).value;
+        expect(value.digest).toBe('$nodes.make.digest');
+        expect(value.spoken).toBe('$nodes.make.spoken');
+      });
+
       it('business-lookup spoken: absent when the question names no date (the LLM path still owns free-form questions)', () => {
         const lookupExpr = nodeExpr('business-lookup', 'make');
         const r = evalExpr(lookupExpr, {

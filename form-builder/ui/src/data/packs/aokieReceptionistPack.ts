@@ -2702,7 +2702,7 @@ export const aokieReceptionistPack: PackData = {
           { id: 'in', type: 'input', data: { inputs: [{ name: 'question', example: 'Any tables free Friday night?' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
           { id: 'appts', type: 'formlogic_list_responses', data: { form: '@pack:appointments', return: 'all', limit: 200 } },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_BUSINESS_LOOKUP } },
-          { id: 'out', type: 'output', data: { value: { digest: '$nodes.make.digest' } } },
+          { id: 'out', type: 'output', data: { value: { digest: '$nodes.make.digest', spoken: '$nodes.make.spoken' } } },
         ],
         edges: [
           { source: 'in', target: 'appts' },

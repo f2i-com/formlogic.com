@@ -3673,7 +3673,8 @@
               "type": "output",
               "data": {
                 "value": {
-                  "digest": "$nodes.make.digest"
+                  "digest": "$nodes.make.digest",
+                  "spoken": "$nodes.make.spoken"
                 }
               }
             }
