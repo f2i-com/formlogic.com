@@ -4105,11 +4105,15 @@ export const aokieReceptionistPack: PackData = {
       // test call 2821e7e2: the INBOUND booking extractor ran on the very
       // first outbound test call and minted a junk appointment + an active
       // SMS confirmation loop at the callee) — outbound-aware post-call
-      // processing arrives with the callback-queue slice. The call-summary
-      // binding still records what happened on the Calls row.
+      // processing arrives with the callback-queue slice. MANAGER calls are
+      // skipped too (Phase 3, live call a5c3f900: a manager-line move was
+      // ALSO read as a new booking — duplicate appointment + kickoff SMS at
+      // the manager; manager changes write deterministically through
+      // aokie.manager.action instead). The call-summary binding still
+      // records what happened on the Calls row.
       condition: {
         type: 'expression',
-        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound') : false",
+        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false",
       },
       inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
       outputActions: [

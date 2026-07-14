@@ -5408,7 +5408,7 @@
         "timeoutMs": 90000,
         "condition": {
           "type": "expression",
-          "expr": "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound') : false"
+          "expr": "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false"
         },
         "inputMap": {
           "callId": "$event.data.callId",

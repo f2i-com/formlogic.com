@@ -71,7 +71,10 @@ Conventions:
   async STT/LLM/TTS pipeline so a slow result from call A is dropped, never attributed to
   call B (audit AK-002/C-05; drops are visible as `staleSttResults` in `dongle.diagnostics`).
 - `aokie.call.ended` data: `{callId, from, callerPhone, durationSeconds, durationMs, outcome,
-  reason, direction, at}`. `outcome ∈ completed|rejected|missed|terminated_abuse` (inbound) comes
+  reason, direction, manager, at}`. `manager: true` marks an inbound call whose caller id
+  digit-matched the `managerNumbers` setting — the after-call booking extractor skips those
+  (manager changes write deterministically through `aokie.manager.action`; absent/false =
+  ordinary caller, so older plugins keep working). `outcome ∈ completed|rejected|missed|terminated_abuse` (inbound) comes
   from the call-session state machine (audit AK-001): answered → `completed` (even a sub-second
   call), operator-rejected → `rejected`, never answered → `missed`, abuse-terminated (Phase 1) →
   `terminated_abuse`. OUTBOUND calls (`direction: "outbound"`, Phase 2) add `no_answer` (remote

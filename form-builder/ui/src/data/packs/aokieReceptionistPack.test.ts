@@ -1650,6 +1650,13 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       // active SMS loop at the callee on the very first outbound test.
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'outbound' })).toBe(false);
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound' })).toBe(true);
+      // Phase 3 (live call a5c3f900): nor on a MANAGER call — a manager-line
+      // move was ALSO read as a new booking (duplicate appointment + kickoff
+      // SMS at the manager). Manager writes ride aokie.manager.action.
+      expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: true })).toBe(false);
+      expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: false })).toBe(true);
+      // Older plugins that don't send the flag keep working (absent ≠ true).
+      expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: undefined })).toBe(true);
       // The summary binding still covers the Calls row for abuse calls.
       const summary = (pack.flowBindings ?? []).find(
         (b) => b.flow === 'call-summary-follow-up' && b.event === 'aokie.call.ended'
