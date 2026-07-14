@@ -2191,7 +2191,13 @@ impl FlowRuntime {
         let idem = params.get("idempotencyKey").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("flowrun:{correlation}"));
         let timeout = params.get("timeoutMs").and_then(Value::as_u64);
         match self.run_flow_direct(flow_json, flow_slug, app_slug, input, correlation, idem, timeout, Vec::new()).await {
-            Ok(body) => Ok(json!({ "runId": body.get("runId").cloned().unwrap_or(Value::Null), "status": body.get("status").cloned().unwrap_or(json!("error")) })),
+            // The whole outcome body ({runId, status, result?, error?}) goes
+            // back to the plugin. The previous shape re-built {runId, status}
+            // only — DROPPING the flow's result — so every mid-call business
+            // lookup the aokie plugin ever ran came back result-less and the
+            // agent answered "the team will confirm" from its notes while the
+            // digest sat unread in flow_run_logs.
+            Ok(body) => Ok(body),
             Err(e) => Err(RpcErrorObj { code: -32000, message: e, data: Some(json!({ "code": "node_failed" })) }),
         }
     }
