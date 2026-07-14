@@ -843,8 +843,6 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     seenW[dIso] = 1;
     if (want.length < 3) want.push(dIso);
   }
-  var isoHits = q.match(/\\d{4}-\\d{2}-\\d{2}/g) || [];
-  for (var qi = 0; qi < isoHits.length; qi++) addDate(isoHits[qi]);
   function proseDate(dayNum, monName) {
     var mi = -1;
     for (var pm = 0; pm < 12; pm++) { if (MONFULL[pm].toLowerCase() === String(monName).toLowerCase()) { mi = pm; break; } }
@@ -854,11 +852,28 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     if (cand.getDate() !== dayNum) return;
     addDate(iso(cand));
   }
-  var reDM = /(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(January|February|March|April|May|June|July|August|September|October|November|December)/gi;
-  var reMD = /(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?/gi;
-  var mm;
-  while ((mm = reDM.exec(q))) proseDate(Number(mm[1]), mm[2]);
-  while ((mm = reMD.exec(q))) proseDate(Number(mm[2]), mm[1]);
+  function parseDates(s) {
+    var isoHits = s.match(/\\d{4}-\\d{2}-\\d{2}/g) || [];
+    for (var qi = 0; qi < isoHits.length; qi++) addDate(isoHits[qi]);
+    var reDM = /(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(January|February|March|April|May|June|July|August|September|October|November|December)/gi;
+    var reMD = /(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?/gi;
+    var mm;
+    while ((mm = reDM.exec(s))) proseDate(Number(mm[1]), mm[2]);
+    while ((mm = reMD.exec(s))) proseDate(Number(mm[2]), mm[1]);
+  }
+  parseDates(q);
+  // STT writes spoken ordinals as WORDS ('twenty first of August', call
+  // c01b7dcf) - normalize them to digits and parse again. Compound forms
+  // sort longest-first so 'twenty first' never collapses to 'first'.
+  var ORD = { 'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5, 'sixth': 6, 'seventh': 7, 'eighth': 8, 'ninth': 9, 'tenth': 10, 'eleventh': 11, 'twelfth': 12, 'thirteenth': 13, 'fourteenth': 14, 'fifteenth': 15, 'sixteenth': 16, 'seventeenth': 17, 'eighteenth': 18, 'nineteenth': 19, 'twentieth': 20, 'twenty first': 21, 'twenty-first': 21, 'twenty second': 22, 'twenty-second': 22, 'twenty third': 23, 'twenty-third': 23, 'twenty fourth': 24, 'twenty-fourth': 24, 'twenty fifth': 25, 'twenty-fifth': 25, 'twenty sixth': 26, 'twenty-sixth': 26, 'twenty seventh': 27, 'twenty-seventh': 27, 'twenty eighth': 28, 'twenty-eighth': 28, 'twenty ninth': 29, 'twenty-ninth': 29, 'thirtieth': 30, 'thirty first': 31, 'thirty-first': 31 };
+  var ordKeys = [];
+  for (var okk in ORD) ordKeys.push(okk);
+  ordKeys.sort(function (a, b) { return b.length - a.length; });
+  var qNorm = ' ' + q.toLowerCase() + ' ';
+  for (var oi = 0; oi < ordKeys.length; oi++) {
+    qNorm = qNorm.split(ordKeys[oi]).join(String(ORD[ordKeys[oi]]));
+  }
+  parseDates(qNorm);
   var direct = [];
   var say = [];
   var offer = false;

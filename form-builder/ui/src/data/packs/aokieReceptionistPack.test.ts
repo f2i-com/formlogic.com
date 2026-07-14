@@ -1145,6 +1145,27 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.digest).toContain('1 August');
       });
 
+      it('business-lookup DIRECT ANSWER: WORD ordinals parse (call c01b7dcf: STT writes "twenty first of August")', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const r = evalExpr(lookupExpr, {
+          inputs: { question: 'Um what about twenty first of August?', from: '', callId: 'c1' },
+          nodes: { appts: { responses: [] } },
+        });
+        expect(r.digest).toContain('DIRECT ANSWER for');
+        expect(r.digest).toContain('21 August');
+        expect(r.spoken).toContain('21 August');
+        // Compound never collapses to its tail: 21, not 1.
+        expect(r.digest).not.toContain('DIRECT ANSWER for Saturday 1 August');
+        // "first Saturday of August" is NOT a parseable ordinal-of-month (the
+        // weekday sits between) - stays with the model, never minted as Aug 1.
+        const r2 = evalExpr(lookupExpr, {
+          inputs: { question: 'availability the first Saturday of August', from: '', callId: 'c1' },
+          nodes: { appts: { responses: [] } },
+        });
+        expect(r2.digest).not.toContain('DIRECT ANSWER');
+        expect(r2.spoken).toBeUndefined();
+      });
+
       it('calendar occupancy digest: whole-calendar times, NEVER other customers names (2026-07-14 live business data)', () => {
         const futureIsoLocal = futureIso;
         const r = evalExpr(makeExpr, {
