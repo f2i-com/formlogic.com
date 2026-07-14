@@ -829,7 +829,40 @@ ${BUSINESS_INFO_BLOCK_JS}
     calBlock = '\\n\\nBOOKINGS ON RECORD for this caller (today is ' + todayIso + '): none upcoming.'
       + '\\nIf they ask about a booking, say you do not see one coming up and offer to take a new request. Never treat dates from the customer notes as bookings.';
   }
-  if (!hit) return { found: false, name: '', persona: persona + calBlock, greeting: greeting };
+  // CALENDAR OCCUPANCY (2026-07-14 live business data): the WHOLE calendar's
+  // next 7 days, times only - the agent can say whether a slot is taken
+  // without ever seeing (or leaking) another customer's name or number.
+  var horizon = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 7);
+  var horizonIso = horizon.getFullYear() + '-' + ('0' + (horizon.getMonth() + 1)).slice(-2) + '-' + ('0' + horizon.getDate()).slice(-2);
+  function t12(tStr) {
+    if (!/^\\d{2}:\\d{2}$/.test(tStr)) return tStr || '?';
+    var th = Number(tStr.slice(0, 2));
+    var t12h = th % 12 === 0 ? 12 : th % 12;
+    return t12h + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (th >= 12 ? 'PM' : 'AM');
+  }
+  var occRows = (nodes.allappts && nodes.allappts.responses) || [];
+  var occ = {};
+  for (var q2 = 0; q2 < occRows.length; q2++) {
+    var oa = (occRows[q2] && occRows[q2].answers) || {};
+    var ost = String(oa.status || '');
+    var od = String(oa.date || '');
+    if ((ost === 'requested' || ost === 'confirmed') && /^\\d{4}-\\d{2}-\\d{2}$/.test(od) && od >= todayIso && od <= horizonIso) {
+      if (!occ[od]) occ[od] = [];
+      occ[od].push(String(oa.time || ''));
+    }
+  }
+  var occDates = Object.keys(occ).sort();
+  var occLines = [];
+  for (var q3 = 0; q3 < occDates.length; q3++) {
+    var times = occ[occDates[q3]].sort();
+    var labels = [];
+    for (var q4 = 0; q4 < times.length; q4++) labels.push(t12(times[q4]));
+    occLines.push('- ' + humanWhenP(occDates[q3], '') + ': booked at ' + labels.join(', '));
+  }
+  var occBlock = '\\n\\nCALENDAR OCCUPANCY (next 7 days, ALL customers; these times are already TAKEN):\\n'
+    + (occLines.length ? occLines.join('\\n') : '- no bookings in the next 7 days')
+    + '\\nDays not listed are fully open. Use this ONLY to say whether a time is taken or looks free - NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
+  if (!hit) return { found: false, name: '', persona: persona + calBlock + occBlock, greeting: greeting };
   var ca = (hit.answers || {});
   var name = String(ca.name || '').trim();
   var first = name.split(/\\s+/)[0] || name;
@@ -855,7 +888,7 @@ ${BUSINESS_INFO_BLOCK_JS}
             ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
             : 'Hi ' + first + '! How can I help you today?'))
     : greeting;
-  return { found: true, name: name, persona: persona + known + calBlock, greeting: g };
+  return { found: true, name: name, persona: persona + known + calBlock + occBlock, greeting: g };
 })()`;
 
 // SMS follow-up conversation context (feature 2026-07-13): an inbound text is
@@ -2469,6 +2502,14 @@ export const aokieReceptionistPack: PackData = {
             // persona so the agent answers calendar questions from RECORDS.
             data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
           },
+          {
+            id: 'allappts',
+            type: 'formlogic_list_responses',
+            // The WHOLE calendar (bounded): the persona gets a privacy-safe
+            // occupancy digest (times only, never other callers' names) so
+            // the agent answers "are you free on Friday?" from records.
+            data: { form: '@pack:appointments', return: 'all', limit: 200 },
+          },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_PERSONALIZE_CALLER } },
           {
@@ -2488,7 +2529,8 @@ export const aokieReceptionistPack: PackData = {
         edges: [
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'appointments' },
-          { source: 'appointments', target: 'settings' },
+          { source: 'appointments', target: 'allappts' },
+          { source: 'allappts', target: 'settings' },
           { source: 'settings', target: 'make' },
           { source: 'make', target: 'push' },
           { source: 'push', target: 'out' },

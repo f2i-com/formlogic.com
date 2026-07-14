@@ -1017,6 +1017,34 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.persona).toContain('Diner');
       });
 
+      it('calendar occupancy digest: whole-calendar times, NEVER other customers names (2026-07-14 live business data)', () => {
+        const futureIsoLocal = futureIso;
+        const r = evalExpr(makeExpr, {
+          inputs: { from: '+61400000000' },
+          nodes: {
+            customers: { responses: [] },
+            appointments: { responses: [] },
+            allappts: {
+              responses: [
+                { id: 'x1', answers: { status: 'confirmed', date: futureIsoLocal, time: '10:00', service: 'Cut', name: 'Somebody Else', phone: '+61499999999' } },
+                { id: 'x2', answers: { status: 'requested', date: futureIsoLocal, time: '18:00', service: 'Dinner' } },
+                { id: 'x3', answers: { status: 'cancelled', date: futureIsoLocal, time: '12:00' } },
+                { id: 'x4', answers: { status: 'confirmed', date: '2020-01-01', time: '09:00' } },
+              ],
+            },
+            settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+          },
+        });
+        expect(r.persona).toContain('CALENDAR OCCUPANCY');
+        expect(r.persona).toContain('10 AM');
+        expect(r.persona).toContain('6 PM');
+        expect(r.persona).toContain('NEVER mention or hint at other customers');
+        // Privacy: no other customer's name/phone; no cancelled/ancient slots.
+        expect(r.persona).not.toContain('Somebody Else');
+        expect(r.persona).not.toContain('+61499999999');
+        expect(r.persona).not.toContain('12 PM');
+      });
+
       it('no upcoming bookings → an EXPLICIT none-upcoming block (2026-07-14: an absent block let the model dredge old dates out of customer notes)', () => {
         const r = run([]);
         expect(r.persona).toContain('BOOKINGS ON RECORD');
