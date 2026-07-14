@@ -514,7 +514,7 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
       )}
 
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
+        <div className="break-words rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
           {error}
         </div>
       )}
@@ -713,9 +713,9 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
               const when = formatEventTime(r.answers, r.submittedAt);
               return (
                 <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                  <div className="min-w-0">
+                  <div className="min-w-0 break-words">
                     <span className="font-medium text-gray-900 dark:text-white">{String(r.answers.event_name || 'event')}</span>
-                    <span className="ml-2 truncate text-xs text-gray-500 dark:text-slate-400">{String(r.answers.message || '')}</span>
+                    <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">{String(r.answers.message || '')}</span>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     {when && (
