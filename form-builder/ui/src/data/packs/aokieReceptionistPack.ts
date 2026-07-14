@@ -510,8 +510,21 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   }
   // No SMS when the call only RE-confirmed bookings that are already
   // confirmed on record - there is nothing left to ask the caller.
-  var wantsSms = wantsBooking && custPhone !== ''
+  var wantsSmsBase = wantsBooking && custPhone !== ''
     && !(created.length === 0 && skippedExisting > 0 && pendingRequested === 0);
+  // PHASE 0.5 sms_capable gate (call-policy spec): a customer marked 'No'
+  // for SMS (landline) - or blocked - never gets an automated text; the
+  // follow-up task tells a human to CALL instead. Unknown numbers (no
+  // Customer record) default to texting, exactly as before.
+  var custRow0 = ((nodes.customers || {}).first) || (((nodes.customers || {}).responses || [])[0] || null);
+  var custA0 = (custRow0 && custRow0.answers) || {};
+  var smsCapable = String(custA0.sms_capable || 'yes') !== 'no';
+  var custBlocked = String(custA0.status || '').toLowerCase() === 'blocked';
+  var wantsSms = wantsSmsBase && smsCapable && !custBlocked;
+  var smsSuppressed = wantsSmsBase && !wantsSms;
+  if (smsSuppressed && !custBlocked) {
+    taskSummary = taskSummary + ' [customer cannot receive SMS - call them to confirm]';
+  }
   var task = { summary: taskSummary.slice(0, 500), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium', phone: custPhone, call_id: callId };
   if (knownId) task.customer_link = knownId;
   if (callResponseId) task.call_link = callResponseId;
@@ -549,6 +562,17 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     if (String(sA.active || 'yes') !== 'no') { cfgRow = sA; break; }
   }
   var business = String(cfgRow.business_name || '').trim();
+  // PHASE 0.5 defaultCountryCode: texts to a locally-typed number (leading
+  // 0) go out as +CC…; a bare '61' is tolerated as '+61'; anything else
+  // disables normalization. RECOGNITION stays digits-only last-9-suffix
+  // everywhere, so records never need re-keying.
+  var cc = String(cfgRow.default_country_code || '').replace(/\\s+/g, '');
+  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;
+  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';
+  function normOutbound(p) {
+    var t = String(p || '').replace(/[\\s()-]/g, '');
+    return (cc && /^0\\d{5,14}$/.test(t)) ? cc + t.slice(1) : String(p || '');
+  }
   function humanWhen(dStr, tStr) {
     var label = dStr;
     if (/^\\d{4}-\\d{2}-\\d{2}$/.test(dStr)) {
@@ -592,7 +616,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   // of bMessage encoding surprises. 440 chars ≈ 3 segments.
   kickBody = kickBody.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
   return {
-    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS sent. ' : '') + summary,
+    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS sent. ' : '') + (smsSuppressed ? (custBlocked ? 'SMS skipped (customer is blocked). ' : 'SMS skipped (customer cannot receive SMS) - call to confirm. ') : '') + summary,
     hasCall: !!callResponseId,
     callResponseId: callResponseId,
     callUpdate: { intent: displayIntent, sentiment: sentiment, follow_up_required: needTask ? ['yes'] : [] },
@@ -618,7 +642,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     priorTaskId: prior ? prior.id : null,
     priorTaskUpdate: priorTaskUpdate,
     hasKickoffSms: wantsSms,
-    kickoffSms: { to: custPhone, body: kickBody },
+    kickoffSms: { to: normOutbound(custPhone), body: kickBody },
     kickoffMessage: {
       message_id: 'smskick_' + callId,
       phone: custPhone,
@@ -998,6 +1022,19 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
     var sa = (sRows[j] && sRows[j].answers) || {};
     if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
   }
+  // PHASE 0.5 record-driven screening (call-policy spec): a customer whose
+  // profile Status is 'blocked' is rejected outright, and whitelist mode
+  // rejects any caller with NO Customer record. The flow's gate node routes
+  // reject -> connector call.reject (an immediate hangup on post-answer-id
+  // phones - acceptable per spec) and SKIPS the configureAgent push. Note
+  // callers who WITHHOLD their id never mint an aokie.call.caller_id event,
+  // so this flow cannot see them - the plugin-level rejectPrivate setting is
+  // the tool for those.
+  var custStatus = hit ? String(((hit.answers || {}).status || '')).trim().toLowerCase() : '';
+  var blockedCustomer = custStatus === 'blocked';
+  var whitelistOnly = String(cfg.whitelist_only || '') === 'yes';
+  var reject = blockedCustomer || (whitelistOnly && !hit);
+  var rejectReason = blockedCustomer ? 'blocked_customer' : (reject ? 'not_whitelisted' : '');
   var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
   var business = String(cfg.business_name || '').trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
@@ -1095,7 +1132,7 @@ ${BUSINESS_INFO_BLOCK_JS}
   var occBlock = '\\n\\nCALENDAR OCCUPANCY (next 7 days, ALL customers; these times are already TAKEN):\\n'
     + (occLines.length ? occLines.join('\\n') : '- no bookings in the next 7 days')
     + '\\nDays not listed IN THIS 7-DAY WINDOW have no bookings yet. This list covers ONLY the next 7 days: for ANY date beyond it, run a live lookup ([[LOOKUP: ...]]) instead of guessing or deferring to the team. NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
-  if (!hit) return { found: false, name: '', persona: persona + calBlock + occBlock, greeting: greeting };
+  if (!hit) return { found: false, name: '', reject: reject, rejectReason: rejectReason, persona: persona + calBlock + occBlock, greeting: greeting };
   var ca = (hit.answers || {});
   var name = String(ca.name || '').trim();
   var first = name.split(/\\s+/)[0] || name;
@@ -1121,7 +1158,7 @@ ${BUSINESS_INFO_BLOCK_JS}
             ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
             : 'Hi ' + first + '! How can I help you today?'))
     : greeting;
-  return { found: true, name: name, persona: persona + known + calBlock + occBlock, greeting: g };
+  return { found: true, name: name, reject: reject, rejectReason: rejectReason, persona: persona + known + calBlock + occBlock, greeting: g };
 })()`;
 
 // SMS follow-up conversation context (feature 2026-07-13): an inbound text is
@@ -1199,10 +1236,16 @@ const FLOW_SMS_CONVO_CTX = `(function () {
   var appt = loopAppts.length ? loopAppts[0] : null;
   var apptA = appt;
   // Deterministic verdicts — STOP always wins, even past the cap.
+  // PHASE 0.5: a sender whose Customer record says sms_capable 'no' (or
+  // Status 'blocked') stops the loop — verdict 'no_sms' skips the LLM and
+  // the plan hands the task to a human instead of texting.
+  var cRow = ((nodes.customers || {}).first) || (((nodes.customers || {}).responses || [])[0] || null);
+  var cAns = (cRow && cRow.answers) || {};
+  var noSms = String(cAns.sms_capable || 'yes') === 'no' || String(cAns.status || '').toLowerCase() === 'blocked';
   var lower = body.toLowerCase().replace(/[\\s.!,]+$/, '');
   var stop = lower === 'stop' || lower === 'unsubscribe' || lower === 'opt out' || lower === 'optout';
   var yes = /^(yes|yep|yeah|y|confirm|confirmed|ok|okay|sounds good|perfect|great)$/.test(lower);
-  var verdict = stop ? 'stop' : (exchanges >= 6 ? 'cap' : ((yes && appt) ? 'yes' : 'llm'));
+  var verdict = stop ? 'stop' : (noSms ? 'no_sms' : (exchanges >= 6 ? 'cap' : ((yes && appt) ? 'yes' : 'llm')));
   // Thread history, oldest → newest, capped at the last 12 messages. The inbound
   // row for THIS text is already stored (app logic runs before bindings), so the
   // prompt marks the newest message explicitly instead of appending it again.
@@ -1257,7 +1300,14 @@ const FLOW_SMS_CONVO_CTX = `(function () {
     model: model,
     today: now.toDateString() + ' (' + isoLocal + ')',
     llmContext: llmContext,
-    phone: from
+    phone: from,
+    // PHASE 0.5 defaultCountryCode, validated here once (same rule as the
+    // after-call plan): the plan block normalizes the reply's 'to' with it.
+    cc: (function () {
+      var c0 = String(cfg.default_country_code || '').replace(/\\s+/g, '');
+      if (/^\\d{1,3}$/.test(c0)) c0 = '+' + c0;
+      return /^\\+\\d{1,3}$/.test(c0) ? c0 : '';
+    })()
   };
 })()`;
 
@@ -1290,6 +1340,15 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     out.taskId = taskId;
     out.taskUpdate = { sms_state: 'handoff', priority: 'high' };
     out.summaryLine = 'SMS exchange limit reached - task handed to a human.';
+    return out;
+  }
+  if (verdict === 'no_sms') {
+    // PHASE 0.5: the customer's profile says they cannot receive SMS (or is
+    // blocked) - never text them; the task goes to a human, who calls back.
+    out.hasTaskUpdate = true;
+    out.taskId = taskId;
+    out.taskUpdate = { sms_state: 'handoff', priority: 'high' };
+    out.summaryLine = 'Customer is marked not SMS-capable or blocked - loop stopped, task handed to a human.';
     return out;
   }
   function humanWhen(dStr, tStr) {
@@ -1602,7 +1661,11 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   out.taskId = taskId;
   out.taskUpdate = taskUpdate;
   out.hasReply = true;
-  out.reply = { to: phone, body: reply };
+  // PHASE 0.5 defaultCountryCode (validated in ctx): a locally-typed 0-prefix
+  // number goes out as +CC…; the Messages row keeps the number as observed.
+  var ccP = String(c.cc || '');
+  var toT = phone.replace(/[\\s()-]/g, '');
+  out.reply = { to: (ccP && /^0\\d{5,14}$/.test(toT)) ? ccP + toT.slice(1) : phone, body: reply };
   out.outboundMessage = {
     message_id: 'smsflow_' + String(taskId || phone.replace(/[^0-9]/g, '')) + '_' + newExchanges,
     phone: phone,
@@ -1685,6 +1748,20 @@ export const aokieReceptionistPack: PackData = {
               { id: 'blocked', label: 'Blocked', value: 'blocked' },
             ],
           },
+        },
+        {
+          // PHASE 0.5 (call-policy spec): landlines take calls fine but can't
+          // receive SMS — 'No' stops every automated text (kickoff + reply
+          // loop) so the follow-up task tells a human to CALL instead. Blank
+          // counts as Yes (mobiles are the common case; nothing changes for
+          // existing records).
+          id: 'sms_capable',
+          type: 'dropdown',
+          label: 'Can receive SMS',
+          required: false,
+          description:
+            "Set to No for landlines: the receptionist then never texts this customer — booking confirmations become call-back tasks for the team instead. Blank counts as Yes.",
+          properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No (landline)', value: 'no' }] },
         },
         { id: 'last_call_at', type: 'date', label: 'Last Call', required: false, properties: {} },
         { id: 'notes', type: 'long_text', label: 'Notes', required: false, properties: { placeholder: 'Preferences, context for the receptionist…' } },
@@ -2357,6 +2434,31 @@ export const aokieReceptionistPack: PackData = {
             ],
           },
         },
+        {
+          // PHASE 0.5 record-driven screening (flow layer): read per call by
+          // the personalize-caller flow, so it applies from the NEXT call —
+          // no reconnect. Distinct from the plugin-level number rules
+          // (blockedNumbers / acceptPattern) which live in plugin settings.
+          id: 'whitelist_only',
+          type: 'dropdown',
+          label: 'Whitelist mode (known customers only)',
+          required: false,
+          description:
+            'Yes = callers with no Customer record are rejected as soon as their number is known; customers whose Status is Blocked are always rejected. Callers who WITHHOLD their number are not covered by this — use "Screen private numbers" in Call screening for those.',
+          properties: { options: [{ id: 'no', label: 'No (allow everyone)', value: 'no' }, { id: 'yes', label: 'Yes (known customers only)', value: 'yes' }] },
+        },
+        {
+          // PHASE 0.5 defaultCountryCode: outbound SMS to a locally-typed
+          // number (leading 0) is sent as +CC…; RECOGNITION is unaffected
+          // (matching is digits-only last-9-suffix everywhere).
+          id: 'default_country_code',
+          type: 'short_text',
+          label: 'Default country code for texts (e.g. +61)',
+          required: false,
+          description:
+            'Used when texting a customer whose saved number starts with 0: the leading 0 is replaced with this code (0412… becomes +61412…). Leave blank to send numbers exactly as saved. Caller recognition does not need this.',
+          properties: { placeholder: 'e.g. +61' },
+        },
         { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
       ],
       // The section IS the settings console (SDK screen): grouped cards, a
@@ -2721,8 +2823,8 @@ export const aokieReceptionistPack: PackData = {
       name: 'Personalize Caller',
       slug: 'personalize-caller',
       description:
-        "Sync on aokie.call.caller_id (the caller's number becomes known ~1s after an instant auto-answer — usually before the greeting plays): match the number against Customers (digits-only, last-9 suffix so +61… and 04… formats agree) and push a by-name greeting plus a KNOWN-CALLER persona block via call.configureAgent — a CALL-SCOPED overlay the plugin wipes at the call boundary, so a failed or raced setup on the NEXT call can never leak this caller's personalization to a different caller (settings.set remains for durable, caller-independent config). Unknown numbers push the same base config as a call-scoped overlay (identical to the global config — a no-op in effect). If this loses the race with the greeting, the persona context still personalizes every AI reply on the call.",
-      nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.call.configureAgent'],
+        "Sync on aokie.call.caller_id (the caller's number becomes known ~1s after an instant auto-answer — usually before the greeting plays): match the number against Customers (digits-only, last-9 suffix so +61… and 04… formats agree) and push a by-name greeting plus a KNOWN-CALLER persona block via call.configureAgent — a CALL-SCOPED overlay the plugin wipes at the call boundary, so a failed or raced setup on the NEXT call can never leak this caller's personalization to a different caller (settings.set remains for durable, caller-independent config). Unknown numbers push the same base config as a call-scoped overlay (identical to the global config — a no-op in effect). If this loses the race with the greeting, the persona context still personalizes every AI reply on the call. RECORD-DRIVEN SCREENING (call-policy spec Phase 0.5): a matched customer whose Status is 'blocked' — or, in whitelist mode (Receptionist Settings), any caller with NO Customer record — is rejected via call.reject instead of configured: the call ends immediately and its Calls row reads outcome 'rejected'. Withheld numbers never reach this flow (no caller_id event) — the plugin's 'Screen private numbers' setting covers those.",
+      nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.call.configureAgent', 'connector.aokie.call.reject'],
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
@@ -2751,6 +2853,23 @@ export const aokieReceptionistPack: PackData = {
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_PERSONALIZE_CALLER } },
+          // PHASE 0.5: blocked customer / not-on-whitelist → reject the call
+          // instead of configuring the agent for it. Exclusive branches: a
+          // rejected call must never also receive a persona push (and a
+          // configured call must never be hung up on).
+          { id: 'gate', type: 'condition', data: { expr: '(nodes.make || {}).reject === true' } },
+          {
+            id: 'reject',
+            type: 'connector_request',
+            data: {
+              connectorId: 'aokie',
+              command: 'call.reject',
+              // On post-answer-id phones (the live Pixel: CLCC) the call is
+              // already active — reject_or_hangup ends it cleanly and the
+              // session tracker records outcome 'rejected' (audit trail).
+              payload: { callId: '$inputs.callId' },
+            },
+          },
           {
             id: 'push',
             type: 'connector_request',
@@ -2763,7 +2882,7 @@ export const aokieReceptionistPack: PackData = {
               payload: { callId: '$inputs.callId', persona: '$nodes.make.persona', greeting: '$nodes.make.greeting' },
             },
           },
-          { id: 'out', type: 'output', data: { value: { found: '$nodes.make.found', name: '$nodes.make.name', greeting: '$nodes.make.greeting' } } },
+          { id: 'out', type: 'output', data: { value: { found: '$nodes.make.found', name: '$nodes.make.name', greeting: '$nodes.make.greeting', reject: '$nodes.make.reject', rejectReason: '$nodes.make.rejectReason' } } },
         ],
         edges: [
           { source: 'in', target: 'customers' },
@@ -2771,7 +2890,10 @@ export const aokieReceptionistPack: PackData = {
           { source: 'appointments', target: 'allappts' },
           { source: 'allappts', target: 'settings' },
           { source: 'settings', target: 'make' },
-          { source: 'make', target: 'push' },
+          { source: 'make', target: 'gate' },
+          { source: 'gate', target: 'reject', sourceHandle: 'true' },
+          { source: 'gate', target: 'push', sourceHandle: 'false' },
+          { source: 'reject', target: 'out' },
           { source: 'push', target: 'out' },
         ],
       },
@@ -2949,6 +3071,14 @@ export const aokieReceptionistPack: PackData = {
             data: { form: '@pack:sms-messages', return: 'all', limit: 30, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          // PHASE 0.5: the sender's Customer record (phone_eq) — an owner can
+          // mark a customer not-SMS-capable or blocked MID-LOOP; the ctx block
+          // then stops the loop deterministically (verdict 'no_sms').
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
+          },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_SMS_CONVO_CTX } },
           // Only the 'llm' verdict pays for a model call: no matching task, STOP,
           // a plain YES, and the exchange cap are all decided deterministically.
@@ -3002,7 +3132,8 @@ export const aokieReceptionistPack: PackData = {
           { source: 'tasks', target: 'appointments' },
           { source: 'appointments', target: 'messages' },
           { source: 'messages', target: 'settings' },
-          { source: 'settings', target: 'ctx' },
+          { source: 'settings', target: 'customers' },
+          { source: 'customers', target: 'ctx' },
           { source: 'ctx', target: 'gate' },
           { source: 'gate', target: 'decide', sourceHandle: 'true' },
           { source: 'gate', target: 'plan', sourceHandle: 'false' },

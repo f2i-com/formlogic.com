@@ -185,6 +185,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         prev.loaded
           ? prev
           : {
+              ...prev,
               loaded: true,
               blockedNumbers: typeof settings.blockedNumbers === 'string' ? settings.blockedNumbers : '',
               acceptPattern: typeof settings.acceptPattern === 'string' ? settings.acceptPattern : '',
@@ -230,14 +231,51 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
   }, [formId, draft, recordId, updateResponse, createResponse, records]);
 
   // ── Call screening (plugin settings — block list / filters / private) ──
+  // whitelistOnly + defaultCountryCode are RECORD fields (Phase 0.5: the
+  // personalize-caller / SMS flows read them per call), seeded from the
+  // singleton record and saved by the same Save-screening button so every
+  // screening control lives behind one save.
   const [screening, setScreening] = useState({
     loaded: false,
+    recordLoaded: false,
     blockedNumbers: '',
     acceptPattern: '',
     rejectPrivate: false,
     screenMessage: '',
     blockedMessage: '',
+    whitelistOnly: false,
+    defaultCountryCode: '',
   });
+  useEffect(() => {
+    if (records.loading) return;
+    setScreening((prev) => {
+      if (prev.recordLoaded) return prev;
+      const a = (records.rows[0]?.answers ?? {}) as Record<string, unknown>;
+      return {
+        ...prev,
+        recordLoaded: true,
+        whitelistOnly: String(a.whitelist_only ?? '') === 'yes',
+        defaultCountryCode: typeof a.default_country_code === 'string' ? a.default_country_code : '',
+      };
+    });
+  }, [records.loading, records.rows]);
+  // The block list rendered as removable chips: deleting a number is one
+  // click (live report 2026-07-14: editing the raw textarea didn't FEEL like
+  // it removed anything — the state was saved but nothing confirmed it).
+  const blockedEntries = useMemo(
+    () => screening.blockedNumbers.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean),
+    [screening.blockedNumbers]
+  );
+  const removeBlockedNumber = useCallback((entry: string) => {
+    setScreening((sc) => ({
+      ...sc,
+      blockedNumbers: sc.blockedNumbers
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter((s) => s && s !== entry)
+        .join('\n'),
+    }));
+  }, []);
   const [screeningSaving, setScreeningSaving] = useState(false);
   const handleSaveScreening = useCallback(async () => {
     setScreeningSaving(true);
@@ -250,13 +288,45 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         screenMessage: screening.screenMessage.trim(),
         blockedMessage: screening.blockedMessage.trim(),
       });
+      // Whitelist mode + country code live on the settings RECORD (the flows
+      // read them per call). Patch just these two keys — the API merges, so
+      // the persona draft in the cards above is never touched.
+      if (formId) {
+        const answers = {
+          whitelist_only: screening.whitelistOnly ? 'yes' : 'no',
+          default_country_code: screening.defaultCountryCode.trim(),
+        };
+        if (recordId) {
+          await updateResponse(formId, recordId, { answers });
+        } else {
+          const created = (await createResponse(formId, answers)) as { id?: string } | undefined;
+          if (created && typeof created.id === 'string') setRecordId(created.id);
+        }
+        records.reload();
+      }
+      // Read the plugin settings BACK so the card shows the authoritative
+      // saved state — a removed number visibly stays gone.
+      try {
+        const res = await runCommand('settings.get');
+        const s = (res.settings && typeof res.settings === 'object' ? res.settings : {}) as Record<string, unknown>;
+        setScreening((prev) => ({
+          ...prev,
+          blockedNumbers: typeof s.blockedNumbers === 'string' ? s.blockedNumbers : prev.blockedNumbers,
+          acceptPattern: typeof s.acceptPattern === 'string' ? s.acceptPattern : prev.acceptPattern,
+          rejectPrivate: s.rejectPrivate === true || s.rejectPrivate === 'true',
+          screenMessage: typeof s.screenMessage === 'string' ? s.screenMessage : prev.screenMessage,
+          blockedMessage: typeof s.blockedMessage === 'string' ? s.blockedMessage : prev.blockedMessage,
+        }));
+      } catch {
+        // Read-back is confirmation only — the save above already succeeded.
+      }
       toast.success('Call screening saved', 'Applies on the next incoming call.');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setScreeningSaving(false);
     }
-  }, [runCommand, screening]);
+  }, [runCommand, screening, formId, recordId, updateResponse, createResponse, records]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -477,6 +547,27 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
                 Any format — numbers match on their digits, so +61 and 0-prefixed forms are the same number.
               </p>
+              {blockedEntries.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {blockedEntries.map((entry) => (
+                    <span
+                      key={entry}
+                      className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 font-mono text-[11px] text-gray-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {entry}
+                      <button
+                        type="button"
+                        onClick={() => removeBlockedNumber(entry)}
+                        aria-label={`Unblock ${entry}`}
+                        title="Remove from the block list (then Save screening)"
+                        className="cursor-pointer rounded-full px-0.5 text-gray-400 hover:text-red-600 dark:text-slate-500 dark:hover:text-red-400"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className={labelCls} htmlFor="rs-blockedmsg">Message for blocked numbers</label>
@@ -527,6 +618,37 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               />
               <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
                 For callers screened by the accept filter or the private-number setting — not the block list.
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={screening.whitelistOnly}
+                onChange={(e) => setScreening((sc) => ({ ...sc, whitelistOnly: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
+              />
+              <span>
+                Whitelist mode — known customers only
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  Callers with no Customer record are rejected once their number is known; customers marked
+                  Blocked are always rejected. Withheld numbers aren't covered — use the private-number
+                  setting above for those.
+                </span>
+              </span>
+            </label>
+            <div>
+              <label className={labelCls} htmlFor="rs-cc">Default country code for texts</label>
+              <input
+                id="rs-cc"
+                type="text"
+                value={screening.defaultCountryCode}
+                onChange={(e) => setScreening((sc) => ({ ...sc, defaultCountryCode: e.target.value }))}
+                placeholder="e.g. +61 — blank = send numbers exactly as saved"
+                className={inputCls + ' font-mono text-xs'}
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Outbound texts to a 0-prefixed number go out as this code plus the rest (0412… → +61412…).
+                Caller recognition doesn't need it.
               </p>
             </div>
             <div>

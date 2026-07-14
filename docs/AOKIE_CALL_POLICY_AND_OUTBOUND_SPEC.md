@@ -44,21 +44,34 @@ existing id-wait window: no id by answer time = private.
 Records: screened calls still write a Calls row (status `rejected`, note
 `screened: blocked|filtered|private`) — an audit trail, not a black hole.
 
-## Phase 0.5 — Record-driven screening (flow layer)
+## Phase 0.5 — Record-driven screening (flow layer)  ← SHIPPED 2026-07-14
 
-- Customers form gains `blocked` (yes/no) and `sms_capable` (yes/no,
-  default yes).
-- `personalize-caller` (runs at caller-id): if the matched customer is
-  `blocked` → `connector.request call.reject {callId}` (on post-answer-id
-  phones this is an immediate hangup — acceptable).
-- `whitelistOnly` (Bool setting): when on, `personalize-caller` rejects any
-  caller with NO matching Customer record.
-- Every `sms.send` site (kickoff, conversation loop, missed-call fallback)
-  gates on the customer's `sms_capable` (unknown numbers default to
-  attempting SMS as today).
-- `defaultCountryCode` (Str, e.g. `+61`) on Receptionist Settings:
-  normalizes locally-formatted numbers (leading 0 → +CC) for OUTBOUND sms/
-  dial; matching stays last-9-suffix.
+As built (deltas from the draft in brackets):
+- Customers: the EXISTING `status` dropdown already had a 'blocked' option —
+  that IS the blocked flag now (no separate yes/no field; blocking from the
+  profile = set Status to Blocked). `sms_capable` (yes/no, blank = yes)
+  added.
+- `personalize-caller` (runs at caller-id): matched customer with status
+  'blocked' → condition-gated `connector.request call.reject {callId}`,
+  configureAgent SKIPPED (exclusive branches). On post-answer-id phones this
+  is an immediate clean hangup; the session tracker records outcome
+  'rejected' (the plugin's reject_or_hangup path — no plugin change needed).
+- `whitelist_only` [a Receptionist Settings FORM field, not a plugin
+  setting — the flow already reads the record per call, so it applies from
+  the next call with no reconnect]: on = callers with NO Customer record are
+  rejected. Withheld ids never mint a caller_id event, so whitelist cannot
+  see them — the console copy points those at rejectPrivate.
+- `sms.send` gates: after-call kickoff (hasKickoffSms false + call-back note
+  in the task) and the conversation loop (deterministic ctx verdict
+  'no_sms' → task handoff, LLM skipped) both respect `sms_capable`='no' and
+  blocked status. Unknown numbers still text, as before.
+- `default_country_code` [also a form field]: outbound `to` numbers with a
+  leading 0 are sent as +CC…; bare '61' tolerated; junk disables; Messages
+  rows keep the observed number (matching is last-9-suffix everywhere).
+- Console: whitelist toggle + country code live in the Call screening card
+  (saved by the same Save-screening button: settings.set + record patch);
+  blocked numbers render as chips with one-click remove + post-save
+  read-back.
 
 ## Phase 1 — Abuse handling
 
@@ -121,9 +134,9 @@ Records: screened calls still write a Calls row (status `rejected`, note
 
 ## Rollout order
 
-0. Phase 0 (plugin screening) — this session.
-0.5 Phase 0.5 (blocked/sms_capable/whitelist/country code) — next.
-1. Phase 1 (abuse) — small, after 0.5.
+0. Phase 0 (plugin screening) — SHIPPED 2026-07-14.
+0.5 Phase 0.5 (blocked/sms_capable/whitelist/country code) — SHIPPED 2026-07-14.
+1. Phase 1 (abuse) — small, NEXT.
 2. Phase 2 (outbound + missed-call queue) — the big one, own session(s).
 3. Phase 3 (manager line) — after outbound proves the dial path.
 4. Phase 4 (hold/waiting) — last, behind flags.

@@ -1235,6 +1235,237 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
   });
 });
 
+describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS policy (call-policy spec)', () => {
+  const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
+  const nodeExpr = (slug: string, nodeId: string): string => {
+    const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
+    return String((node.data as { expr: string }).expr);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const evalExpr = (expr: string, scope: { nodes?: unknown; inputs?: unknown }): any =>
+    new Function('nodes', 'inputs', `return ${expr};`)(scope.nodes ?? {}, scope.inputs ?? {});
+  const future = new Date(Date.now() + 7 * 86400000);
+  const futureIso = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`;
+
+  describe('personalize-caller: blocked customers & whitelist mode', () => {
+    const makeExpr = nodeExpr('personalize-caller', 'make');
+    const run = (customers: Array<Record<string, unknown>>, settingsAnswers: Record<string, unknown> = {}) =>
+      evalExpr(makeExpr, {
+        inputs: { from: '+61400000000' },
+        nodes: {
+          customers: { responses: customers },
+          appointments: { responses: [] },
+          allappts: { responses: [] },
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', ...settingsAnswers } }] },
+        },
+      });
+
+    it("a customer whose profile Status is 'blocked' is rejected (reason blocked_customer)", () => {
+      const r = run([{ id: 'c1', answers: { name: 'Lance Baker', phone: '+61400000000', status: 'blocked' } }]);
+      expect(r.reject).toBe(true);
+      expect(r.rejectReason).toBe('blocked_customer');
+    });
+
+    it('whitelist mode rejects a caller with NO Customer record (reason not_whitelisted)', () => {
+      const r = run([], { whitelist_only: 'yes' });
+      expect(r.reject).toBe(true);
+      expect(r.rejectReason).toBe('not_whitelisted');
+    });
+
+    it('whitelist mode ADMITS a known (non-blocked) customer', () => {
+      const r = run([{ id: 'c1', answers: { name: 'Lance Baker', phone: '+61400000000', status: 'active' } }], { whitelist_only: 'yes' });
+      expect(r.reject).toBe(false);
+      expect(r.rejectReason).toBe('');
+      expect(r.found).toBe(true);
+    });
+
+    it('whitelist off (blank/legacy records): unknown callers are configured exactly as before', () => {
+      const r = run([]);
+      expect(r.reject).toBe(false);
+      expect(r.found).toBe(false);
+      expect(typeof r.persona).toBe('string');
+    });
+
+    it('the flow routes reject → call.reject and SKIPS configureAgent (exclusive branches)', () => {
+      const flow = flowBySlug('personalize-caller');
+      const gate = flow.flowJson.nodes.find((n) => n.id === 'gate')!;
+      expect(String((gate.data as { expr: string }).expr)).toContain('reject');
+      const reject = flow.flowJson.nodes.find((n) => n.id === 'reject')!;
+      const rejData = reject.data as { command: string; payload: Record<string, string> };
+      expect(rejData.command).toBe('call.reject');
+      expect(rejData.payload.callId).toBe('$inputs.callId');
+      const edges = flow.flowJson.edges as Array<{ source: string; target: string; sourceHandle?: string }>;
+      expect(edges).toContainEqual({ source: 'gate', target: 'reject', sourceHandle: 'true' });
+      expect(edges).toContainEqual({ source: 'gate', target: 'push', sourceHandle: 'false' });
+      // Capability for the new command rides the flow definition.
+      expect(flow.nodeCapabilities).toContain('connector.aokie.call.reject');
+    });
+
+    it('the output node maps reject + rejectReason (the output-map trap: unmapped fields silently vanish)', () => {
+      const out = flowBySlug('personalize-caller').flowJson.nodes.find((n) => n.type === 'output')!;
+      const value = (out.data as { value: Record<string, string> }).value;
+      expect(value.reject).toBe('$nodes.make.reject');
+      expect(value.rejectReason).toBe('$nodes.make.rejectReason');
+    });
+  });
+
+  describe('after-call-actions plan: sms_capable gate + defaultCountryCode', () => {
+    const planExpr = nodeExpr('after-call-actions', 'plan');
+    const booking = {
+      intent: 'appointment', sentiment: 'positive', caller_name: 'Lance Baker', service: 'Haircut',
+      date: futureIso, time: '14:00', summary: 'Booked a haircut.', callback_requested: false,
+    };
+    const scopeFor = (opts: { customer?: Record<string, unknown> | null; settings?: Record<string, unknown>; phone?: string } = {}) => ({
+      inputs: { callId: 'call_1' },
+      nodes: {
+        ctx: { hasTranscript: true, phone: opts.phone ?? '+61400000000', customerId: opts.customer ? 'cust-1' : null, customerName: '', today: 'today' },
+        extract: { content: JSON.stringify(booking) },
+        calls: { responses: [{ id: 'resp-call-1', answers: {} }] },
+        customers: { responses: opts.customer ? [{ id: 'cust-1', answers: opts.customer }] : [] },
+        settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', ...(opts.settings ?? {}) } }] },
+      },
+    });
+
+    it("sms_capable 'no' (landline) → NO kickoff text; the task tells a human to call", () => {
+      const r = evalExpr(planExpr, scopeFor({ customer: { name: 'Lance Baker', phone: '+61400000000', sms_capable: 'no' } }));
+      expect(r.hasKickoffSms).toBe(false);
+      expect(r.task.sms_state).toBeUndefined();
+      expect(r.task.summary).toContain('cannot receive SMS - call them to confirm');
+      expect(r.summaryLine).toContain('SMS skipped (customer cannot receive SMS)');
+    });
+
+    it('a blocked customer never gets a kickoff text either', () => {
+      const r = evalExpr(planExpr, scopeFor({ customer: { name: 'X', phone: '+61400000000', status: 'blocked' } }));
+      expect(r.hasKickoffSms).toBe(false);
+      expect(r.summaryLine).toContain('SMS skipped (customer is blocked)');
+    });
+
+    it('blank sms_capable counts as Yes (existing records unchanged); unknown numbers still text', () => {
+      const known = evalExpr(planExpr, scopeFor({ customer: { name: 'Lance Baker', phone: '+61400000000' } }));
+      expect(known.hasKickoffSms).toBe(true);
+      const unknown = evalExpr(planExpr, scopeFor({}));
+      expect(unknown.hasKickoffSms).toBe(true);
+    });
+
+    it('defaultCountryCode: a 0-prefixed number is texted as +CC…; records keep the observed number', () => {
+      const r = evalExpr(planExpr, scopeFor({ phone: '0491570156', settings: { default_country_code: '+61' } }));
+      expect(r.hasKickoffSms).toBe(true);
+      expect(r.kickoffSms.to).toBe('+61491570156');
+      // Matching is last-9-suffix everywhere: rows keep the observed format.
+      expect(r.task.phone).toBe('0491570156');
+      expect(r.kickoffMessage.phone).toBe('0491570156');
+    });
+
+    it("defaultCountryCode tolerance: bare '61' works, junk disables, +numbers pass through untouched", () => {
+      const bare = evalExpr(planExpr, scopeFor({ phone: '0491570156', settings: { default_country_code: '61' } }));
+      expect(bare.kickoffSms.to).toBe('+61491570156');
+      const junk = evalExpr(planExpr, scopeFor({ phone: '0491570156', settings: { default_country_code: 'oops' } }));
+      expect(junk.kickoffSms.to).toBe('0491570156');
+      const intl = evalExpr(planExpr, scopeFor({ phone: '+61491570156', settings: { default_country_code: '+61' } }));
+      expect(intl.kickoffSms.to).toBe('+61491570156');
+      const none = evalExpr(planExpr, scopeFor({ phone: '0491570156' }));
+      expect(none.kickoffSms.to).toBe('0491570156');
+    });
+  });
+
+  describe('sms-followup-conversation: mid-loop no_sms stop + reply normalization', () => {
+    const ctxExpr = nodeExpr('sms-followup-conversation', 'ctx');
+    const planExpr = nodeExpr('sms-followup-conversation', 'plan');
+    const nodesFor = (customer: Record<string, unknown> | null, settingsAnswers: Record<string, unknown> = {}) => ({
+      settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', ...settingsAnswers } }] },
+      customers: { responses: customer ? [{ id: 'c1', answers: customer }] : [] },
+      tasks: { responses: [{ id: 'task-1', answers: { status: 'open', sms_state: 'active', phone: '+61400000000', call_id: 'call_1', sms_exchanges: 1, summary: 'Confirm appointment' } }] },
+      appointments: { responses: [{ id: 'appt-1', answers: { call_id: 'call_1', service: 'Haircut', date: futureIso, time: '14:00', status: 'requested' } }] },
+      messages: { responses: [] },
+    });
+    const runCtx = (body: string, customer: Record<string, unknown> | null, settingsAnswers: Record<string, unknown> = {}) =>
+      evalExpr(ctxExpr, { inputs: { from: '+61400000000', body }, nodes: nodesFor(customer, settingsAnswers) });
+
+    it("a sender marked sms_capable 'no' (or blocked) mid-loop → verdict no_sms, LLM never runs", () => {
+      expect(runCtx('how about friday', { sms_capable: 'no' }).verdict).toBe('no_sms');
+      expect(runCtx('YES', { status: 'blocked' }).verdict).toBe('no_sms');
+      // The flow's LLM gate only passes verdict 'llm'.
+      const gate = flowBySlug('sms-followup-conversation').flowJson.nodes.find((n) => n.id === 'gate')!;
+      expect(String((gate.data as { expr: string }).expr)).toContain("'llm'");
+    });
+
+    it('STOP still wins over no_sms (the opt-out must always be recorded)', () => {
+      expect(runCtx('STOP', { sms_capable: 'no' }).verdict).toBe('stop');
+    });
+
+    it('a normal customer (or none on record) keeps the existing verdicts', () => {
+      expect(runCtx('YES', { name: 'Lance' }).verdict).toBe('yes');
+      expect(runCtx('YES', null).verdict).toBe('yes');
+    });
+
+    it('the plan turns no_sms into a human handoff with NO reply', () => {
+      const r = evalExpr(planExpr, {
+        inputs: { body: 'how about friday' },
+        nodes: { ctx: { verdict: 'no_sms', hasTask: true, taskId: 'task-1', exchanges: 1, phone: '+61400000000' } },
+      });
+      expect(r.hasReply).toBe(false);
+      expect(r.hasTaskUpdate).toBe(true);
+      expect(r.taskUpdate.sms_state).toBe('handoff');
+      expect(r.taskUpdate.priority).toBe('high');
+    });
+
+    it('ctx validates + passes the country code through; the plan normalizes the reply target with it', () => {
+      expect(runCtx('YES', null, { default_country_code: '61' }).cc).toBe('+61');
+      expect(runCtx('YES', null, { default_country_code: 'oops' }).cc).toBe('');
+      const r = evalExpr(planExpr, {
+        inputs: { body: 'YES' },
+        nodes: {
+          ctx: {
+            verdict: 'yes', hasTask: true, taskId: 'task-1', taskCallId: 'call_1', taskCustomer: '',
+            exchanges: 1, apptId: 'appt-1', apptDate: futureIso, apptTime: '14:00', apptService: 'Haircut',
+            apptNotes: '', business: 'Pirate Cuts', model: '', today: 'today', llmContext: '',
+            phone: '0491570156', cc: '+61',
+          },
+        },
+      });
+      expect(r.hasReply).toBe(true);
+      expect(r.reply.to).toBe('+61491570156');
+      // The Messages row keeps the number as observed (suffix matching).
+      expect(r.outboundMessage.phone).toBe('0491570156');
+    });
+
+    it('the sender lookup is a phone_eq node feeding ctx (works at any customer count)', () => {
+      const flow = flowBySlug('sms-followup-conversation');
+      const cust = flow.flowJson.nodes.find((n) => n.id === 'customers')!;
+      const data = cust.data as { form: string; filters: Array<{ field: string; op: string; value: string }> };
+      expect(data.form).toBe('@pack:customers');
+      expect(data.filters).toEqual([{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }]);
+      const edges = flow.flowJson.edges as Array<{ source: string; target: string }>;
+      expect(edges).toContainEqual({ source: 'customers', target: 'ctx' });
+    });
+  });
+
+  describe('form fields', () => {
+    it("Customers has sms_capable (yes/no, blank = yes semantics documented) and the existing status dropdown offers 'blocked'", () => {
+      const customers = pack.forms.find((f) => f.packFormId === 'customers')!;
+      const smsCap = customers.fields.find((f) => f.id === 'sms_capable')!;
+      expect(smsCap.type).toBe('dropdown');
+      const values = (smsCap.properties as { options: Array<{ value: string }> }).options.map((o) => o.value);
+      expect(values).toEqual(['yes', 'no']);
+      const status = customers.fields.find((f) => f.id === 'status')!;
+      const statusValues = (status.properties as { options: Array<{ value: string }> }).options.map((o) => o.value);
+      expect(statusValues).toContain('blocked');
+    });
+
+    it('Receptionist Settings has whitelist_only + default_country_code (the flow layer reads the record per call)', () => {
+      const settings = pack.forms.find((f) => f.packFormId === 'receptionist-settings')!;
+      const wl = settings.fields.find((f) => f.id === 'whitelist_only')!;
+      expect(wl.type).toBe('dropdown');
+      expect((wl.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['no', 'yes']);
+      // The whitelist cannot see withheld numbers (no caller_id event) — the
+      // field copy must point at the plugin's private-number screening.
+      expect(String(wl.description ?? '')).toContain('WITHHOLD');
+      const cc = settings.fields.find((f) => f.id === 'default_country_code')!;
+      expect(cc.type).toBe('short_text');
+    });
+  });
+});
+
 describe('aokieReceptionistPack — catalog', () => {
   it('is registered in the pack catalog with matching counts', () => {
     const entry = packCatalog.find((e) => e.id === 'aokie-receptionist');
