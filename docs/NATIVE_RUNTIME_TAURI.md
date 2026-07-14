@@ -1,6 +1,6 @@
 # FormLogic Native Runtime (Tauri v2)
 
-Status: **implemented + built** (Windows desktop + Android, with deep-link "open in app"). Spec §38–39, §26. Location: `form-builder/native-runtime/`.
+Status: **implemented + built** (Windows desktop + Android, with deep-link "open in app"). Spec §38–39, §26. Location: `formlogic/native-runtime/`.
 
 A generic desktop/mobile shell that loads a FormLogic app and exposes a small, approved set of
 native capabilities over `window.FormLogicNative` — a connector registry and an offline sync queue.
@@ -10,7 +10,7 @@ native powers with no code change.
 ## Build & run
 
 ```bash
-cd form-builder/native-runtime
+cd formlogic/native-runtime
 npm install
 npm run tauri dev      # dev: launches the window against the Vite dev server
 npm run tauri build    # release: produces installers under src-tauri/target/release/bundle/

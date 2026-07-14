@@ -1047,9 +1047,9 @@ Server-rendered domain launch pages can come later.
 Add:
 
 ```txt
-form-builder/ui/src/pages/AppLaunchPage.tsx
-form-builder/ui/src/pages/DomainLaunchRouter.tsx
-form-builder/ui/src/lib/domainLaunchApi.ts
+formlogic/ui/src/pages/AppLaunchPage.tsx
+formlogic/ui/src/pages/DomainLaunchRouter.tsx
+formlogic/ui/src/lib/domainLaunchApi.ts
 ```
 
 The launch page should include:
@@ -1484,7 +1484,7 @@ Long-term package:
 In-repo MVP location:
 
 ```txt
-form-builder/ui/src/sdk/
+formlogic/ui/src/sdk/
 ```
 
 Suggested structure:
@@ -2695,13 +2695,13 @@ function run(ctx) {
 Create:
 
 ```txt
-form-builder/native-runtime/
+formlogic/native-runtime/
 ```
 
 Suggested structure:
 
 ```txt
-form-builder/native-runtime/
+formlogic/native-runtime/
 ├── package.json
 ├── src/
 │   ├── main.tsx
@@ -3814,7 +3814,7 @@ with auth/membership.
 Add:
 
 ```txt
-form-builder/ui/src/client-runtime/
+formlogic/ui/src/client-runtime/
 ```
 
 Suggested files:
@@ -3846,7 +3846,7 @@ client-runtime/
 Add:
 
 ```txt
-form-builder/ui/src/sdk/
+formlogic/ui/src/sdk/
 ```
 
 Suggested files:
@@ -3863,7 +3863,7 @@ sdk/
 Add:
 
 ```txt
-form-builder/ui/src/application-package/
+formlogic/ui/src/application-package/
 ```
 
 Suggested files:
@@ -4189,7 +4189,7 @@ Native runtime can verify signature.
 Create:
 
 ```txt
-form-builder/native-runtime
+formlogic/native-runtime
 ```
 
 Acceptance:

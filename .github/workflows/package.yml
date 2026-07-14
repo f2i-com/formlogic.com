@@ -58,7 +58,7 @@ jobs:
       # main CI — a tag could previously package from a commit that never ran
       # lint, audits, the bundle budget or the prelude-sync check.
       - name: Backend gates (validate, lint, tests, audit)
-        working-directory: form-builder/backend
+        working-directory: formlogic/backend
         run: |
           composer validate --no-check-publish
           composer install --no-interaction --prefer-dist --no-progress
@@ -91,10 +91,10 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: form-builder/ui/package-lock.json
+          cache-dependency-path: formlogic/ui/package-lock.json
 
       - name: Frontend gates (lint, tests, build, budget, invariants, audit)
-        working-directory: form-builder/ui
+        working-directory: formlogic/ui
         run: |
           npm ci
           npm run lint
@@ -104,7 +104,7 @@ jobs:
           node scripts/check-pack-screens.mjs
           node scripts/check-security-invariants.mjs
           git diff --exit-code ../backend/resources/formlogic-prelude.js \
-            || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in form-builder/ui and commit the result" && exit 1)
+            || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in formlogic/ui and commit the result" && exit 1)
           npm audit --audit-level=high
 
   # Audit FL-E2E-001: the launch golden paths are a RELEASE REQUIREMENT — the
@@ -134,30 +134,30 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: form-builder/desktop/package-lock.json
+          cache-dependency-path: formlogic/desktop/package-lock.json
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: form-builder/desktop/src-tauri
+          workspaces: formlogic/desktop/src-tauri
 
       - name: Desktop tests (release gate on the exact SHA)
-        working-directory: form-builder/desktop/src-tauri
+        working-directory: formlogic/desktop/src-tauri
         # CI-DESKTOP-001: lib AND integration tests on the release SHA (the
         # aokie contract tests self-skip without the plugin binary).
         run: cargo test
 
       - name: Build installers (NSIS + MSI)
-        working-directory: form-builder/desktop
+        working-directory: formlogic/desktop
         run: |
           npm ci
           npm run tauri build -- --features gui
 
       - name: Sign installers (when a certificate is configured)
         shell: pwsh
-        working-directory: form-builder/desktop/src-tauri/target/release/bundle
+        working-directory: formlogic/desktop/src-tauri/target/release/bundle
         env:
           CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_B64 }}
           CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
@@ -184,7 +184,7 @@ jobs:
       # verify a downloaded installer wasn't tampered with in transit.
       - name: Checksums
         shell: pwsh
-        working-directory: form-builder/desktop/src-tauri/target/release/bundle
+        working-directory: formlogic/desktop/src-tauri/target/release/bundle
         run: |
           $files = Get-ChildItem -Recurse -Include *.exe,*.msi
           $files | Get-FileHash -Algorithm SHA256 |
@@ -197,9 +197,9 @@ jobs:
         with:
           name: formlogic-desktop-windows
           path: |
-            form-builder/desktop/src-tauri/target/release/bundle/**/*.exe
-            form-builder/desktop/src-tauri/target/release/bundle/**/*.msi
-            form-builder/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt
+            formlogic/desktop/src-tauri/target/release/bundle/**/*.exe
+            formlogic/desktop/src-tauri/target/release/bundle/**/*.msi
+            formlogic/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -209,7 +209,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $files = Get-ChildItem -Recurse form-builder/desktop/src-tauri/target/release/bundle -Include *.exe,*.msi,SHA256SUMS.txt | ForEach-Object FullName
+          $files = Get-ChildItem -Recurse formlogic/desktop/src-tauri/target/release/bundle -Include *.exe,*.msi,SHA256SUMS.txt | ForEach-Object FullName
           gh release upload "$env:GITHUB_REF_NAME" @files --repo "$env:GITHUB_REPOSITORY" --clobber
 
   package:
@@ -235,7 +235,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: form-builder/ui/package-lock.json
+          cache-dependency-path: formlogic/ui/package-lock.json
 
       # npm ci + npm run build + backend staging + composer --no-dev + zip, all in one script.
       # Version comes from the tag (vX.Y.Z -> X.Y.Z) or falls back to <short-sha>-<date>.

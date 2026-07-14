@@ -18,8 +18,8 @@ Anything unchecked is a launch blocker.
       "Golden-path coverage" list in LAUNCH_CHECKLIST.md): pack install → dashboard, submit → dashboard
       updates, export/import, live-demo isolation, billing-disabled/self-host, MCP token flow. These are
       tracked follow-up specs — until they land, they are a **manual** gate, not an automated one.
-- [ ] Dependency audits clean: `cd form-builder/backend && composer audit` and
-      `cd form-builder/ui && npm audit --audit-level=high`. Triage anything flagged.
+- [ ] Dependency audits clean: `cd formlogic/backend && composer audit` and
+      `cd formlogic/ui && npm audit --audit-level=high`. Triage anything flagged.
 
 ## 1. Environment & secrets
 
@@ -38,8 +38,8 @@ Anything unchecked is a launch blocker.
 ## 2. Data & services
 
 - [ ] Marketplace + demo seeded/refreshed:
-      `cd form-builder/ui && node scripts/emit-marketplace.mjs` →
-      `cd form-builder/backend && php scripts/provision-demo.php`.
+      `cd formlogic/ui && node scripts/emit-marketplace.mjs` →
+      `cd formlogic/backend && php scripts/provision-demo.php`.
 - [ ] `GET /api/health/deep` returns healthy (DB, SQLite storage, writable dirs, migrations).
 - [ ] Webhook retry worker cron is scheduled and its last-run heartbeat is recent (see DEPLOYMENT.md).
 - [ ] Email verified: Doctor → **Email** check is green (or explicitly acknowledged as link-only).
@@ -63,7 +63,7 @@ Anything unchecked is a launch blocker.
       the shared demo.
 - [ ] AI disabled/misconfigured state renders safely (no crash, clear "bring your own AI" path).
 - [ ] Billing disabled/self-host state renders safely.
-- [ ] **Dashboard perf**: run `node form-builder/ui/scripts/perf-demo-dashboards.mjs` against
+- [ ] **Dashboard perf**: run `node formlogic/ui/scripts/perf-demo-dashboards.mjs` against
       staging/prod (set `APP_BASE`/`API_BASE`) and **paste the output** (first-chart paint per demo
       app) into the release issue. Investigate anything over the threshold.
 

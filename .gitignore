@@ -1,7 +1,7 @@
-# Root repo tracks form-builder/. Build artifacts and dependencies are ignored by
-# form-builder/.gitignore. (The old engine source repos formlogic-php and
+# Root repo tracks formlogic/. Build artifacts and dependencies are ignored by
+# formlogic/.gitignore. (The old engine source repos formlogic-php and
 # formlogic-rust were removed — the scripting engine is now the vendored QuickJS
-# runtime under form-builder/.)
+# runtime under formlogic/.)
 
 # Playwright output (any location)
 test-results/
@@ -12,3 +12,6 @@ dist-package/
 
 # Session resume notes (local only — full status for picking up in a new session)
 CLAUDE.md
+
+# Root-level node_modules (stray tool installs land here; the real one lives in formlogic/ui)
+node_modules/

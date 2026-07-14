@@ -19,7 +19,7 @@ Prerequisites:
   `/.well-known/formlogic-app.json` return **503** (`signing_unsupported`) unless
   `NATIVE_TRUST_REQUIRES_ED25519=0`.
 - For steps 6–8: Rust + a WebView2/WebKit toolchain to run the native runtime
-  (`form-builder/native-runtime`).
+  (`formlogic/native-runtime`).
 
 ---
 
@@ -118,7 +118,7 @@ curl -s "$BASE/api/public/signing-key"      # → { alg: "Ed25519", keyId, publi
 ## 5. Open in the native runtime (`formlogic://` deep link)
 
 ```bash
-cd form-builder/native-runtime && npm install && npm run tauri dev
+cd formlogic/native-runtime && npm install && npm run tauri dev
 ```
 
 Open the app via deep link — this is exactly what the launch page's **Open in native runtime**
@@ -148,7 +148,7 @@ Expected:
   `connectors.list()` → `[]`, connector/sync calls → `origin_denied`; a granted origin asking for an
   ungranted command → `capability_denied`. The page still renders (display-only), it just gets no
   native capabilities.
-- Headless contract check: `cd form-builder/native-runtime/src-tauri && cargo test`.
+- Headless contract check: `cd formlogic/native-runtime/src-tauri && cargo test`.
 
 ## 6. Offline submit — browser
 
@@ -191,9 +191,9 @@ The `app_submission_idempotency` table grows one row per offline submission key;
 windows that have expired:
 
 ```bash
-php form-builder/backend/bin/idempotency-cleanup.php --dry-run     # count only, deletes nothing
-php form-builder/backend/bin/idempotency-cleanup.php               # delete rows older than 30 days
-php form-builder/backend/bin/idempotency-cleanup.php --days=7      # override retention
+php formlogic/backend/bin/idempotency-cleanup.php --dry-run     # count only, deletes nothing
+php formlogic/backend/bin/idempotency-cleanup.php               # delete rows older than 30 days
+php formlogic/backend/bin/idempotency-cleanup.php --days=7      # override retention
 ```
 
 Expected output: `idempotency cleanup: deleted N row(s) older than D day(s) (< <cutoff>)`.
@@ -201,7 +201,7 @@ Retention: `--days=N` wins, else env `IDEMPOTENCY_RETENTION_DAYS`, else 30 (clam
 Safe to re-run (batched deletes + a lock file prevents overlapping cron ticks). Cron example:
 
 ```
-17 3 * * * php /path/to/form-builder/backend/bin/idempotency-cleanup.php >> /var/log/formlogic-idempotency.log 2>&1
+17 3 * * * php /path/to/formlogic/backend/bin/idempotency-cleanup.php >> /var/log/formlogic-idempotency.log 2>&1
 ```
 
 ---

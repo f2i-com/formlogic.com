@@ -246,7 +246,7 @@ Node.js is not needed on the production server at runtime. Server-side user logi
 
 ```bash
 git clone git@github.com:f2i-com/formlogic.com.git
-cd formlogic.com/form-builder
+cd formlogic.com/formlogic
 chmod +x install.sh
 ./install.sh
 ```
@@ -258,13 +258,13 @@ The installer creates the environment files, generates security keys and prepare
 Serve the repository from your web root and open:
 
 ```text
-http://localhost/<your-folder>/form-builder/install.php
+http://localhost/<your-folder>/formlogic/install.php
 ```
 
 > [!WARNING]
 > Delete `install.php` after setup, serve only the backend `public/` directory and use HTTPS in production.
 
-For manual development setup, production web-server examples, environment variables, tests and troubleshooting, see [form-builder/README.md](form-builder/README.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
+For manual development setup, production web-server examples, environment variables, tests and troubleshooting, see [formlogic/README.md](formlogic/README.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Under the hood
 
@@ -281,7 +281,7 @@ For manual development setup, production web-server examples, environment variab
 
 ```text
 formlogic.com/
-├── form-builder/
+├── formlogic/
 │   ├── backend/          PHP/Slim API, workers, migrations and storage
 │   ├── ui/               React builder, app runtime, dashboards and flows
 │   ├── desktop/          Tauri Desktop, local services, plugins and flow runner
@@ -303,7 +303,7 @@ Release tags are gated by backend tests, frontend unit tests, type checking, lin
 
 ```bash
 # Backend
-cd form-builder/backend
+cd formlogic/backend
 composer test
 composer analyse
 
@@ -340,7 +340,7 @@ Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF p
 
 | Guide | What it covers |
 |---|---|
-| [Developer setup](form-builder/README.md) | Local development, environment variables, tests and web-server configuration |
+| [Developer setup](formlogic/README.md) | Local development, environment variables, tests and web-server configuration |
 | [Deployment](DEPLOYMENT.md) | Production checklist, backups, workers, health checks and recovery |
 | [External API](docs/API.md) | Scoped API keys and the REST endpoint reference |
 | [MCP](docs/MCP.md) | Connecting your own AI with scoped access |

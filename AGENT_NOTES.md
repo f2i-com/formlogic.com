@@ -15,7 +15,7 @@
 2. [Project Structure](#project-structure)
 3. [Key Architectural Patterns](#key-architectural-patterns)
 
-### Part 2: Backend (`form-builder/backend/`)
+### Part 2: Backend (`formlogic/backend/`)
 4. [Configuration & Entry Point](#configuration--entry-point)
 5. [Database Layer](#database-layer)
 6. [Models](#models)
@@ -25,7 +25,7 @@
 10. [Helpers & Constants](#helpers--constants)
 11. [Routes & DI Container](#routes--di-container)
 
-### Part 3: Frontend (`form-builder/ui/src/`)
+### Part 3: Frontend (`formlogic/ui/src/`)
 12. [Stores](#stores)
 13. [Types](#types)
 14. [API Client](#api-client)
@@ -42,8 +42,8 @@
 
 ## Architecture Overview
 
-- **Backend**: PHP Slim 4 with PHP-DI container (`form-builder/backend/`)
-- **Frontend**: React 19 + TypeScript + Vite + Zustand (`form-builder/ui/`)
+- **Backend**: PHP Slim 4 with PHP-DI container (`formlogic/backend/`)
+- **Frontend**: React 19 + TypeScript + Vite + Zustand (`formlogic/ui/`)
 - **Dual Database**: MySQL (metadata, users, apps, analytics) + SQLite (per-form field definitions, responses, computed data)
 - **Auth**: JWT via HttpOnly cookies (firebase/php-jwt, HS256), with Bearer header fallback for API clients
 - **CSRF**: Double-submit cookie pattern (non-HttpOnly cookie readable by JS, matched against `X-CSRF-Token` header)
@@ -58,7 +58,7 @@
 
 ```
 formlogic-app/
-  form-builder/
+  formlogic/
     backend/
       public/index.php          # Entry point, DI container, routes
       config/settings.php       # Environment-based config

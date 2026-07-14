@@ -326,7 +326,7 @@ glyph, briefing clause selection, and section naming in the domain's vernacular 
 
 ## Verification pipeline
 
-1. `cd form-builder/ui && node <checker> src/data/packs/<pack>.ts` — syntax (new Function), no emoji, no hardcoded hex, wire()/data-nav present. The checker script lives inline in the repo history (commit 166ea8a tooling) and is trivial to recreate: esbuild-bundle the pack, `new Function(customScreen.js)`, regex policy checks.
+1. `cd formlogic/ui && node <checker> src/data/packs/<pack>.ts` — syntax (new Function), no emoji, no hardcoded hex, wire()/data-nav present. The checker script lives inline in the repo history (commit 166ea8a tooling) and is trivial to recreate: esbuild-bundle the pack, `new Function(customScreen.js)`, regex policy checks.
 2. `node scripts/emit-marketplace.mjs` (ui/) → `php scripts/provision-demo.php` (backend/; `RESEED_DEMO=1` to regenerate data).
 3. Screenshot every demo app (manifest: backend/storage/pack-screenshots/manifest.json) at 1360px light+dark and 390px mobile; POST /api/demo/start mints the session (re-mint on "Sign in to continue" — the shared demo user can trip rate limits mid-burst).
 4. Marketplace thumbnails: `THEME=light node scripts/capture-pack-shots.mjs` (writes backend/resources/pack-screenshots, committed).

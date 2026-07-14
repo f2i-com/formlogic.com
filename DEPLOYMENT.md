@@ -2,7 +2,7 @@
 
 This guide covers the production launch checklist, backups, the webhook worker, and the
 health/diagnostics endpoint. For first-time setup see the installer in
-[`form-builder/install.php`](form-builder/README.md) or the manual steps in the README.
+[`formlogic/install.php`](formlogic/README.md) or the manual steps in the README.
 **Upgrading an existing install to a new release?** Follow [docs/UPGRADING.md](docs/UPGRADING.md) —
 back up, replace files (keep `api/.env` + `api/storage/`), then run the `api/bin/upgrade.php` migration CLI.
 
@@ -14,7 +14,7 @@ back up, replace files (keep `api/.env` + `api/storage/`), then run the `api/bin
 ## 1. Production launch checklist
 
 Work top to bottom before exposing the app publicly. Most of these live in
-`form-builder/backend/.env`.
+`formlogic/backend/.env`.
 
 **App & secrets**
 - [ ] `APP_ENV=production`
@@ -32,9 +32,9 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] `TRUSTED_PROXIES` set if behind a reverse proxy/load balancer (for correct client IPs)
 
 **Installer & files**
-- [ ] **Delete `form-builder/install.php`** (it hard-disables itself once installed, but delete it anyway)
-- [ ] `form-builder/backend/storage/` and `logs/` are **not** web-readable (serve only `public/`)
-- [ ] `form-builder/backend/.env` is not web-readable
+- [ ] **Delete `formlogic/install.php`** (it hard-disables itself once installed, but delete it anyway)
+- [ ] `formlogic/backend/storage/` and `logs/` are **not** web-readable (serve only `public/`)
+- [ ] `formlogic/backend/.env` is not web-readable
 
 **Email (optional but recommended)**
 - [ ] `MAIL_FROM_ADDRESS` (+ SMTP_* if using SMTP) set, and a test email sent (password reset / invite)
@@ -68,17 +68,17 @@ per-form **SQLite** files plus uploaded files on disk. A backup is *not* just a 
 
 **Back up all of:**
 - MySQL database (`mysqldump formlogic > formlogic.sql`)
-- `form-builder/backend/storage/forms/` — per-form SQLite response databases
-- `form-builder/backend/storage/uploads/` — uploaded files
-- `form-builder/backend/storage/packs/` — pack archives
-- `form-builder/backend/.env` — secrets (store securely/separately)
+- `formlogic/backend/storage/forms/` — per-form SQLite response databases
+- `formlogic/backend/storage/uploads/` — uploaded files
+- `formlogic/backend/storage/packs/` — pack archives
+- `formlogic/backend/.env` — secrets (store securely/separately)
 
 Example:
 
 ```bash
 mysqldump -u USER -p formlogic | gzip > backups/db-$(date +%F).sql.gz
-tar czf backups/storage-$(date +%F).tar.gz -C form-builder/backend storage
-cp form-builder/backend/.env backups/env-$(date +%F)   # keep this somewhere safe
+tar czf backups/storage-$(date +%F).tar.gz -C formlogic/backend storage
+cp formlogic/backend/.env backups/env-$(date +%F)   # keep this somewhere safe
 ```
 
 **Restore:**
@@ -100,13 +100,13 @@ worker so retries actually fire:
 
 ```cron
 # once a minute
-* * * * * php /path/to/form-builder/backend/bin/webhook-worker.php >> /var/log/formlogic-webhooks.log 2>&1
+* * * * * php /path/to/formlogic/backend/bin/webhook-worker.php >> /var/log/formlogic-webhooks.log 2>&1
 ```
 
 On hosts without cron, run it continuously (sleeps 60s between passes):
 
 ```bash
-php form-builder/backend/bin/webhook-worker.php --loop
+php formlogic/backend/bin/webhook-worker.php --loop
 ```
 
 If the worker isn't running, initial (synchronous) deliveries still happen, but failed ones
@@ -157,8 +157,8 @@ MySQL (metadata) and the per-form SQLite files (responses) can drift after a par
 `GET /api/health/deep` surfaces file-level drift cheaply; for a full report/repair run:
 
 ```bash
-php form-builder/backend/bin/reconcile.php        # read-only report
-php form-builder/backend/bin/reconcile.php --fix  # re-sync forms.response_count + drop orphaned response_links
+php formlogic/backend/bin/reconcile.php        # read-only report
+php formlogic/backend/bin/reconcile.php --fix  # re-sync forms.response_count + drop orphaned response_links
 ```
 
 Orphaned SQLite files / upload dirs are reported but never auto-deleted — remove them by hand after review.

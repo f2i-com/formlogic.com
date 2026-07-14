@@ -107,7 +107,7 @@ The whole app can be exported as a signed `.formlogic` from the **Application pa
 
 ## FormLogic SDK
 
-Status: **implemented** (foundation). Spec §27–28. Location: `form-builder/ui/src/sdk/`.
+Status: **implemented** (foundation). Spec §27–28. Location: `formlogic/ui/src/sdk/`.
 
 A thin, permission-aware wrapper over the app runtime store so custom screens / AI-generated UI can
 read app data and act on it without touching raw endpoints, the runtime store internals, or the

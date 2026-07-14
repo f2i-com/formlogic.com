@@ -30,7 +30,7 @@ Added via the standard `MySQLConnection` idempotent migration pattern. Key types
 
 Selection order (from the plan): Desktop runner for flows needing local models/hardware → **browser for pure/browser-safe flows** → server/headless later. The MVP implements the **browser runner** inside the app runtime; Desktop `/api/flows/run` stays reserved (501) until the Desktop-side runner lands.
 
-**v0 executor** (`form-builder/ui/src/client-runtime/flows/`): a small, well-tested interpreter over the WorkflowGraph JSON supporting a restricted node set:
+**v0 executor** (`formlogic/ui/src/client-runtime/flows/`): a small, well-tested interpreter over the WorkflowGraph JSON supporting a restricted node set:
 
 ```
 input, output, condition, template, logic_block (QuickJS-sandboxed expression),

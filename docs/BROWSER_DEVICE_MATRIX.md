@@ -4,7 +4,7 @@ Manual pre-launch verification. Run each flow on each target and record the resu
 ❌ bug + issue link). This is a **manual** checklist — automated coverage is the Playwright release
 gate (`.github/workflows/e2e.yml`); this catches the rendering/gesture/PWA issues automation misses.
 
-Perf sanity for dashboards is scripted: `node form-builder/ui/scripts/perf-demo-dashboards.mjs`
+Perf sanity for dashboards is scripted: `node formlogic/ui/scripts/perf-demo-dashboards.mjs`
 (first-chart paint per demo app); bundle budget is reported in CI (`check-bundle-budget.mjs`).
 
 ## Targets

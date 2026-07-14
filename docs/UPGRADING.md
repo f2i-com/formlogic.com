@@ -1,7 +1,7 @@
 # Upgrading an existing FormLogic install
 
 How to move a deployed FormLogic instance (an existing client install) to a new release **without
-losing data**. For first-time setup see the [developer guide](../form-builder/README.md); for the
+losing data**. For first-time setup see the [developer guide](../formlogic/README.md); for the
 production checklist, full backup/restore detail, and health checks see
 [DEPLOYMENT.md](../DEPLOYMENT.md).
 
@@ -149,9 +149,9 @@ needed — if the app can reach the database, so can the CLI.
 
 ## Notes
 
-- **Source checkout instead of a release zip?** The backend lives at `form-builder/backend`, so the
-  same command is `php form-builder/backend/bin/upgrade.php --check`. After pulling new code, also
-  run `composer install` in `form-builder/backend` and rebuild the UI (`cd form-builder/ui && npm
+- **Source checkout instead of a release zip?** The backend lives at `formlogic/backend`, so the
+  same command is `php formlogic/backend/bin/upgrade.php --check`. After pulling new code, also
+  run `composer install` in `formlogic/backend` and rebuild the UI (`cd formlogic/ui && npm
   ci && npm run build`) — the release zip ships both pre-built.
 - **Idempotent by design**: every schema step is guarded, so re-running the CLI (or letting the web
   app re-run the same migrations) never double-applies anything.

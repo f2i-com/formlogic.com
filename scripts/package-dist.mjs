@@ -2,11 +2,11 @@
 /**
  * FormLogic — distributable zip packager.
  *
- * Builds the single-domain release zip that `form-builder/ui/public/.htaccess` documents:
+ * Builds the single-domain release zip that `formlogic/ui/public/.htaccess` documents:
  *
- *   <zip root>/            the BUILT ui (contents of form-builder/ui/dist: index.html, assets/, .htaccess, ...)
+ *   <zip root>/            the BUILT ui (contents of formlogic/ui/dist: index.html, assets/, .htaccess, ...)
  *   <zip root>/api/        the backend (front controller api/public/index.php), production-filtered
- *   <zip root>/install.php the browser install/upgrade wizard (form-builder/install.php; it detects
+ *   <zip root>/install.php the browser install/upgrade wizard (formlogic/install.php; it detects
  *                          the bundle layout via the api/ folder beside it — delete after installing)
  *   <zip root>/INSTALL.txt fresh-install steps (wizard first, manual fallback)
  *   <zip root>/UPGRADE.txt existing-install steps (wizard upgrade mode / api/bin/upgrade.php + docs/UPGRADING.md)
@@ -21,7 +21,7 @@
  * Usage:
  *   node scripts/package-dist.mjs [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]
  *
- *   --skip-ui-build  reuse the existing form-builder/ui/dist (must exist and contain .htaccess)
+ *   --skip-ui-build  reuse the existing formlogic/ui/dist (must exist and contain .htaccess)
  *   --no-install     skip `npm ci` before the UI build (reuse existing node_modules)
  *   --out <dir>      output directory (default: <repo>/dist-package)
  *   --keep-staging   keep the staging directory next to the zip for inspection
@@ -39,9 +39,9 @@ import { fileURLToPath } from 'node:url';
 
 const isWindows = process.platform === 'win32';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const uiDir = path.join(repoRoot, 'form-builder', 'ui');
+const uiDir = path.join(repoRoot, 'formlogic', 'ui');
 const distDir = path.join(uiDir, 'dist');
-const backendDir = path.join(repoRoot, 'form-builder', 'backend');
+const backendDir = path.join(repoRoot, 'formlogic', 'backend');
 
 // ---------------------------------------------------------------------------
 // Backend production filter (the pinned packaging contract).
@@ -347,12 +347,12 @@ console.log(`  output  : ${zipPath}`);
 
 // [1] Build the UI ------------------------------------------------------------
 if (cli.skipUiBuild) {
-  step('UI build skipped (--skip-ui-build) — reusing form-builder/ui/dist');
+  step('UI build skipped (--skip-ui-build) — reusing formlogic/ui/dist');
   if (!existsSync(path.join(distDir, 'index.html'))) {
-    fail('form-builder/ui/dist/index.html not found — run without --skip-ui-build first');
+    fail('formlogic/ui/dist/index.html not found — run without --skip-ui-build first');
   }
 } else {
-  step('Building the UI (form-builder/ui)');
+  step('Building the UI (formlogic/ui)');
   if (!cli.noInstall) {
     run('npm', ['ci'], { cwd: uiDir });
   } else {
@@ -365,7 +365,7 @@ if (cli.skipUiBuild) {
 // The root .htaccess ships from ui/public/ via the Vite build — it IS the
 // single-domain routing + hardening, so its absence is a hard error.
 for (const f of ['index.html', '.htaccess', 'assets']) {
-  if (!existsSync(path.join(distDir, f))) fail(`UI build incomplete: form-builder/ui/dist/${f} is missing`);
+  if (!existsSync(path.join(distDir, f))) fail(`UI build incomplete: formlogic/ui/dist/${f} is missing`);
 }
 
 // [2] Stage the UI at the zip root ---------------------------------------------
@@ -387,7 +387,7 @@ const apiDst = path.join(staging, 'api');
 mkdirSync(apiDst, { recursive: true });
 for (const dir of BACKEND_COPY_DIRS) {
   const src = path.join(backendDir, dir);
-  if (!existsSync(src)) fail(`backend directory missing: form-builder/backend/${dir}`);
+  if (!existsSync(src)) fail(`backend directory missing: formlogic/backend/${dir}`);
   cpSync(src, path.join(apiDst, dir), {
     recursive: true,
     // Defence in depth inside allowlisted dirs: never ship a stray .env/.env.* (except
@@ -403,7 +403,7 @@ for (const dir of BACKEND_COPY_DIRS) {
 }
 for (const file of BACKEND_COPY_FILES) {
   const src = path.join(backendDir, file);
-  if (!existsSync(src)) fail(`backend file missing: form-builder/backend/${file}`);
+  if (!existsSync(src)) fail(`backend file missing: formlogic/backend/${file}`);
   copyFileSync(src, path.join(apiDst, file));
   info(`copied backend/${file}`);
 }
@@ -430,10 +430,10 @@ if (existsSync(path.join(apiDst, 'vendor', 'phpunit'))) {
 
 // [5] Install/upgrade wizard at the zip root -------------------------------------
 step('Staging the install wizard (install.php) at the zip root');
-const installerSrc = path.join(repoRoot, 'form-builder', 'install.php');
-if (!existsSync(installerSrc)) fail('form-builder/install.php not found');
+const installerSrc = path.join(repoRoot, 'formlogic', 'install.php');
+if (!existsSync(installerSrc)) fail('formlogic/install.php not found');
 copyFileSync(installerSrc, path.join(staging, 'install.php'));
-info('copied form-builder/install.php -> install.php (the wizard resolves the bundle layout via the api/ folder beside it)');
+info('copied formlogic/install.php -> install.php (the wizard resolves the bundle layout via the api/ folder beside it)');
 
 // [6] VERSION + INSTALL.txt + UPGRADE.txt ---------------------------------------
 step('Writing VERSION, INSTALL.txt, UPGRADE.txt');
