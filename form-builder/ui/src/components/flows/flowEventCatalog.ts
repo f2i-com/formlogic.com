@@ -75,6 +75,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.sms.received',
   'aokie.sms.sent',
   'aokie.sms.failed',
+  'aokie.manager.action',
   'aokie.hardware.error',
 ] as const;
 
@@ -216,6 +217,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     description: 'Handle ended calls whose outcome is missed.',
     payloadHints: CALL_ENDED_HINTS,
     presetCondition: "event.data.outcome === 'missed'",
+  },
+  {
+    kind: 'event',
+    id: 'aokie.manager.action',
+    group: 'aokie.calls',
+    event: 'aokie.manager.action',
+    label: 'Manager action (PIN-verified)',
+    description:
+      'The manager asked for a change on the manager line and the spoken PIN verified (deterministic digit comparison in the plugin - never the model). Carries the validated record-update plan; the manager-action-apply binding performs the write.',
+    payloadHints: ['$event.data.callId', '$event.data.summary', '$event.data.hasUpdate', '$event.data.updateId', '$event.data.update'],
   },
   {
     kind: 'event',

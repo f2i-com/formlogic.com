@@ -1181,6 +1181,230 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     + (direct.length ? ' A DIRECT ANSWER line above is AUTHORITATIVE for its date - answer the caller from it.' : '');
   return out;
 })()`;
+
+// Phase 3 slice 2 — manager write tools. The ctx block composes the LLM's
+// structuring context FROM RECORDS (numbered upcoming bookings with customer
+// names — the caller already proved manager: caller-id match + spoken PIN in
+// the plugin, both before this flow ever runs). The model only STRUCTURES;
+// it never composes the spoken outcome and never decides what is written.
+const FLOW_MANAGER_CTX = `(function () {
+  var request = String(inputs.request || '').replace(/[^\\x20-\\x7E]/g, ' ').trim().slice(0, 500);
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var i = 0; i < sRows.length; i++) {
+    var sa = (sRows[i] && sRows[i].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var model = String(cfg.model || '').trim();
+  var nowT = new Date();
+  var todayIso = nowT.getFullYear() + '-' + ('0' + (nowT.getMonth() + 1)).slice(-2) + '-' + ('0' + nowT.getDate()).slice(-2);
+  // Customer names by phone digits (last-9 suffix, same rule as everywhere).
+  var nameBy = {};
+  var cRows = (nodes.customers && nodes.customers.responses) || [];
+  for (var nc = 0; nc < cRows.length; nc++) {
+    var cAns = (cRows[nc] && cRows[nc].answers) || {};
+    var cd = String(cAns.phone || '').replace(/\\D+/g, '').slice(-9);
+    if (cd.length >= 6 && cAns.name) nameBy[cd] = String(cAns.name);
+  }
+  // Every live upcoming booking (the appts node is already DB-windowed
+  // today..horizon); sorted, capped, each with its REAL record id so the
+  // plan block can match the model's chosen target back to a record.
+  var rows = (nodes.appts && nodes.appts.responses) || [];
+  var appts = [];
+  for (var r = 0; r < rows.length; r++) {
+    var a = (rows[r] && rows[r].answers) || {};
+    var st = String(a.status || '');
+    var d = String(a.date || '');
+    if (st === 'cancelled') continue;
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d) || d < todayIso) continue;
+    var digits = String(a.phone || '').replace(/\\D+/g, '').slice(-9);
+    appts.push({
+      id: rows[r].id,
+      date: d,
+      time: String(a.time || ''),
+      service: String(a.service || 'Appointment'),
+      status: st || 'requested',
+      name: nameBy[digits] || String(a.customer_name || '').trim(),
+      notes: String(a.notes || ''),
+    });
+  }
+  appts.sort(function (x, y) { var xa = x.date + ' ' + x.time, yb = y.date + ' ' + y.time; return xa < yb ? -1 : xa > yb ? 1 : 0; });
+  if (appts.length > 40) appts = appts.slice(0, 40);
+  var lines = [];
+  for (var l = 0; l < appts.length; l++) {
+    var ap = appts[l];
+    lines.push('- ' + ap.date + (ap.time ? ' ' + ap.time : ' (no time set)') + ' ' + ap.service + ' (' + ap.status + ')' + (ap.name ? ' for ' + ap.name : ''));
+  }
+  var llmContext = 'MANAGER REQUEST: "' + request + '"\\n\\nUPCOMING BOOKINGS (date time service (status) for name):\\n'
+    + (lines.length ? lines.join('\\n') : '- none on the calendar');
+  return { hasRequest: request.length > 0, request: request, model: model, today: todayIso, llmContext: llmContext, appts: appts };
+})()`;
+
+// Validates the model's structured verdict against real records and composes
+// the spoken outcome FROM those records. Every invalid/ambiguous path returns
+// ok:false with an honest spoken question — the plugin speaks it and nothing
+// is written. The flow itself writes NOTHING either way: the plugin emits
+// aokie.manager.action and the manager-action-apply binding owns the write.
+const FLOW_MANAGER_PLAN = `(function () {
+  var c = nodes.ctx || {};
+  var out = { ok: false, spoken: '', summary: '', hasUpdate: false, updateId: '', update: {}, hasBlock: false, blockNumber: '' };
+  if (c.hasRequest !== true) {
+    out.spoken = 'I did not catch the change you want - say it again?';
+    return out;
+  }
+  var raw = String(((nodes.decide || {}).content) || '').trim();
+  var m = raw.match(/\\{[\\s\\S]*\\}/);
+  var data = {};
+  try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
+  var action = String(data.action || 'none').toLowerCase();
+  if (['confirm', 'cancel', 'move', 'block', 'none'].indexOf(action) === -1) action = 'none';
+  if (action === 'none') {
+    out.spoken = 'I could not map that to a change. You can confirm, move or cancel a booking, or block a number - say it again with the full date?';
+    return out;
+  }
+  if (action === 'block') {
+    var num = String(data.block_number || '').replace(/[^0-9+]/g, '');
+    if (num.replace(/\\D+/g, '').length < 6) {
+      out.spoken = 'Which number should I block? Say the full number.';
+      return out;
+    }
+    out.ok = true;
+    out.hasBlock = true;
+    out.blockNumber = num;
+    out.summary = 'Manager blocked ' + num + '.';
+    out.spoken = 'Done - that number is now blocked.';
+    return out;
+  }
+  var DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONFULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var nowD = new Date();
+  function dayLabel(dStr) {
+    var hp = dStr.split('-');
+    var dt = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2]));
+    var label = DAYFULL[dt.getDay()] + ' ' + dt.getDate() + ' ' + MONFULL[dt.getMonth()];
+    if (dt.getFullYear() !== nowD.getFullYear()) label += ' ' + dt.getFullYear();
+    return label;
+  }
+  function t12(tStr) {
+    if (!/^\\d{2}:\\d{2}$/.test(tStr)) return '';
+    var th = Number(tStr.slice(0, 2));
+    var h = th % 12 === 0 ? 12 : th % 12;
+    return h + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (th >= 12 ? 'PM' : 'AM');
+  }
+  function realIso(dStr) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dStr)) return false;
+    var dp = dStr.split('-');
+    var dObj = new Date(Number(dp[0]), Number(dp[1]) - 1, Number(dp[2]));
+    return dObj.getFullYear() === Number(dp[0]) && (dObj.getMonth() + 1) === Number(dp[1]) && dObj.getDate() === Number(dp[2]);
+  }
+  function validClock(tStr) {
+    return /^\\d{2}:\\d{2}$/.test(tStr) && Number(tStr.slice(0, 2)) <= 23 && Number(tStr.slice(3, 5)) <= 59;
+  }
+  function apptLabel(ap) {
+    return ap.service + ' on ' + dayLabel(ap.date) + (ap.time && t12(ap.time) ? ' at ' + t12(ap.time) : '') + (ap.name ? ' for ' + ap.name : '');
+  }
+  // Which booking? The date is REQUIRED (the model is told to fill it from
+  // the list); time and name only narrow when the day has several.
+  var targetDate = String(data.target_date || '').trim().slice(0, 10);
+  var targetTime = String(data.target_time || '').trim().slice(0, 5);
+  var targetName = String(data.target_name || '').trim().toLowerCase();
+  if (!realIso(targetDate)) {
+    out.spoken = 'Which date is that booking on? Say the change again with the full date.';
+    return out;
+  }
+  var appts = Array.isArray(c.appts) ? c.appts : [];
+  var cands = [];
+  for (var q = 0; q < appts.length; q++) {
+    if (String(appts[q].date || '') === targetDate) cands.push(appts[q]);
+  }
+  if (!cands.length) {
+    out.spoken = 'I do not see any booking on ' + dayLabel(targetDate) + '.';
+    return out;
+  }
+  if (cands.length > 1 && validClock(targetTime)) {
+    var byTime = [];
+    for (var qt = 0; qt < cands.length; qt++) { if (String(cands[qt].time || '') === targetTime) byTime.push(cands[qt]); }
+    if (byTime.length) cands = byTime;
+  }
+  if (cands.length > 1 && targetName) {
+    var byName = [];
+    for (var qn = 0; qn < cands.length; qn++) { if (String(cands[qn].name || '').toLowerCase().indexOf(targetName) !== -1) byName.push(cands[qn]); }
+    if (byName.length) cands = byName;
+  }
+  if (cands.length > 1) {
+    var labels = [];
+    for (var ql = 0; ql < cands.length && ql < 3; ql++) labels.push(apptLabel(cands[ql]));
+    out.spoken = 'That day has more than one booking - which one do you mean: ' + labels.join(', or ') + '?';
+    return out;
+  }
+  var target = cands[0];
+  // Interaction log line on the appointment's notes (same audit-trail rule
+  // as the SMS loop: updates patch-merge whole answers, so append).
+  function noteWith(outcome) {
+    var hh12 = nowD.getHours() % 12 === 0 ? 12 : nowD.getHours() % 12;
+    var mm = ('0' + nowD.getMinutes()).slice(-2);
+    var stamp = nowD.toDateString() + ' ' + hh12 + ':' + mm + ' ' + (nowD.getHours() >= 12 ? 'PM' : 'AM');
+    var existing = String(target.notes || '');
+    if (existing.length > 7600) existing = existing.slice(0, 7600);
+    return (existing ? existing + '\\n' : '') + 'Manager line (' + stamp + '): "' + String(c.request || '') + '" - ' + outcome;
+  }
+  if (action === 'confirm') {
+    out.ok = true;
+    out.hasUpdate = true;
+    out.updateId = target.id;
+    out.update = { status: 'confirmed', notes: noteWith('CONFIRMED by the manager') };
+    out.summary = 'Manager confirmed ' + apptLabel(target) + '.';
+    out.spoken = 'Done - ' + apptLabel(target) + ' is confirmed.';
+    return out;
+  }
+  if (action === 'cancel') {
+    out.ok = true;
+    out.hasUpdate = true;
+    out.updateId = target.id;
+    out.update = { status: 'cancelled', notes: noteWith('CANCELLED by the manager') };
+    out.summary = 'Manager cancelled ' + apptLabel(target) + '.';
+    out.spoken = 'Done - ' + apptLabel(target) + ' is cancelled.';
+    return out;
+  }
+  // move: at least one of new_date / new_time, both re-validated. The date
+  // must be real-calendar and not in the past - the model resolved any
+  // relative wording against today, but the guard never trusts it.
+  var newDate = String(data.new_date || '').trim().slice(0, 10);
+  var newTime = String(data.new_time || '').trim().slice(0, 5);
+  var todayIso = String(c.today || '');
+  var useDate = realIso(newDate) && newDate >= todayIso;
+  var useTime = validClock(newTime);
+  if (!useDate && !useTime) {
+    out.spoken = 'Where should I move it to? Say the new day or time.';
+    return out;
+  }
+  var movedDate = useDate ? newDate : target.date;
+  var movedTime = useTime ? newTime : String(target.time || '');
+  out.ok = true;
+  out.hasUpdate = true;
+  out.updateId = target.id;
+  out.update = { date: movedDate, time: movedTime, notes: noteWith('MOVED to ' + movedDate + (movedTime ? ' ' + movedTime : '') + ' by the manager') };
+  out.summary = 'Manager moved ' + apptLabel(target) + ' to ' + movedDate + (movedTime ? ' ' + movedTime : '') + '.';
+  out.spoken = 'Done - ' + target.service + (target.name ? ' for ' + target.name : '') + ' is moved to ' + dayLabel(movedDate) + (movedTime && t12(movedTime) ? ' at ' + t12(movedTime) : '') + '.';
+  return out;
+})()`;
+
+// The write half rides the durable plane: aokie.manager.action -> this
+// pass-through -> the binding's guarded updateResponse. Deliberately thin -
+// validation already happened in manager-action-plan; this only refuses a
+// malformed event so the update can never be a non-object.
+const FLOW_MANAGER_APPLY = `(function () {
+  var id = String(inputs.updateId || '');
+  var upd = (inputs.update && typeof inputs.update === 'object' && !Array.isArray(inputs.update)) ? inputs.update : null;
+  var ok = inputs.hasUpdate === true && id.length > 0 && upd !== null;
+  return {
+    hasUpdate: ok === true,
+    updateId: id,
+    update: upd || {},
+    summaryLine: String(inputs.summary || 'Manager change applied.'),
+  };
+})()`;
 const FLOW_PERSONALIZE_CALLER = `(function () {
   var phone = String(inputs.from || '');
   // The customers node pre-filters with the phone_eq op (digits-only last-9
@@ -3166,6 +3390,119 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Manager Action Plan',
+      slug: 'manager-action-plan',
+      description:
+        "Phase 3 slice 2 (manager write tools): the Aokie plugin invokes this over flow.run ONLY after the caller passed BOTH manager gates - caller id matched managerNumbers AND the spoken PIN verified (deterministic digit comparison in the plugin; the model never sees or judges a PIN). The local LLM only STRUCTURES the manager's spoken request into one action (confirm / cancel / move a booking, block a number, or none); every date is re-validated as real-calendar and not-past, the target booking is matched against real records (an ambiguous day gets an honest spoken question listing the choices - never a guessed write), and the spoken outcome is composed from records, never model prose. This flow writes NOTHING: the plugin emits aokie.manager.action with the validated update and the manager-action-apply binding performs the single appointment write on the durable plane. No event binding - it only runs when the plugin asks.",
+      nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'request', example: 'Cancel the 2 PM on Friday' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          // Same DB-side window as business-lookup: managers change UPCOMING
+          // bookings, so old + far-future rows never crowd the fetch cap.
+          { id: 'win', type: 'logic_block', data: { expr: FLOW_LOOKUP_WINDOW } },
+          {
+            id: 'appts',
+            type: 'formlogic_list_responses',
+            data: {
+              form: '@pack:appointments',
+              return: 'all',
+              limit: 200,
+              filters: [
+                { field: 'date', op: 'gte', value: '$nodes.win.todayIso' },
+                { field: 'date', op: 'lte', value: '$nodes.win.horizonIso' },
+              ],
+            },
+          },
+          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'ctx', type: 'logic_block', data: { expr: FLOW_MANAGER_CTX } },
+          {
+            id: 'decide',
+            type: 'llm_chat',
+            data: {
+              system:
+                'You structure a business manager\'s spoken request about their own booking calendar. Reply with ONLY one JSON object - no prose, no markdown fences.',
+              prompt:
+                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "cancel" | "move" | "block" | "none", "target_date": "YYYY-MM-DD" or null, "target_time": "HH:MM" or null, "target_name": string or null, "new_date": "YYYY-MM-DD" or null, "new_time": "HH:MM" or null, "block_number": string or null}\n\nRules: "confirm" / "cancel" / "move" act on ONE existing booking from the list - set "target_date" to that booking\'s EXISTING date (resolve relative wording like "Friday" or "tomorrow" from today\'s date), and fill "target_time"/"target_name" only when the manager said them; for "move", "new_date"/"new_time" are the NEW slot in YYYY-MM-DD / 24-hour HH:MM (only the parts the manager gave); "block" is for blocking a phone number - put the digits they said in "block_number"; anything that is not one of these changes (questions, greetings, unclear speech) is "none". Use null when unsure - never guess.',
+              model: '{{nodes.ctx.model}}',
+              maxTokens: 250,
+              temperature: 0,
+              extraBody: { chat_template_kwargs: { enable_thinking: false } },
+            },
+          },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_MANAGER_PLAN } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                ok: '$nodes.plan.ok',
+                spoken: '$nodes.plan.spoken',
+                summary: '$nodes.plan.summary',
+                hasUpdate: '$nodes.plan.hasUpdate',
+                updateId: '$nodes.plan.updateId',
+                update: '$nodes.plan.update',
+                hasBlock: '$nodes.plan.hasBlock',
+                blockNumber: '$nodes.plan.blockNumber',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'win' },
+          { source: 'win', target: 'appts' },
+          { source: 'appts', target: 'customers' },
+          { source: 'customers', target: 'settings' },
+          { source: 'settings', target: 'ctx' },
+          { source: 'ctx', target: 'decide' },
+          { source: 'decide', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
+      name: 'Manager Action Apply',
+      slug: 'manager-action-apply',
+      description:
+        "The write half of the manager line: bound to aokie.manager.action, which the plugin emits ONLY for a PIN-verified manager change that the manager-action-plan flow validated. Deliberately a thin pass-through - validation already happened in the plan flow - so the binding's guarded output action performs the one appointment write on the durable plane (outboxed, acked, retried): a crash between the spoken confirmation and the write is replayed instead of lost.",
+      nodeCapabilities: [],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: {
+              inputs: [
+                { name: 'callId', example: 'call_123' },
+                { name: 'summary', example: 'Manager confirmed the Friday 14:00 booking.' },
+                { name: 'hasUpdate', example: true },
+                { name: 'updateId', example: 'resp_1' },
+                { name: 'update', example: { status: 'confirmed' } },
+              ],
+            },
+          },
+          { id: 'pass', type: 'logic_block', data: { expr: FLOW_MANAGER_APPLY } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                hasUpdate: '$nodes.pass.hasUpdate',
+                updateId: '$nodes.pass.updateId',
+                update: '$nodes.pass.update',
+                summaryLine: '$nodes.pass.summaryLine',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'pass' },
+          { source: 'pass', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Call Summary + Follow-up',
       slug: 'call-summary-follow-up',
       description:
@@ -3904,6 +4241,30 @@ export const aokieReceptionistPack: PackData = {
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 12,
+    },
+    {
+      flow: 'manager-action-apply',
+      event: 'aokie.manager.action',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      inputMap: {
+        callId: '$event.data.callId',
+        summary: '$event.data.summary',
+        hasUpdate: '$event.data.hasUpdate',
+        updateId: '$event.data.updateId',
+        update: '$event.data.update',
+      },
+      // ONE guarded appointment write per event - the plan flow already
+      // validated it and the manager already heard the spoken confirmation;
+      // this is the durable copy of that promise.
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:appointments', when: '$result.hasUpdate', responseId: '$result.updateId', answers: '$result.update' },
+        { type: 'formlogic.toast', message: 'Manager line: {{result.summaryLine}}' },
+      ],
+      retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 13,
     },
     {
       flow: 'hardware-error-alert',

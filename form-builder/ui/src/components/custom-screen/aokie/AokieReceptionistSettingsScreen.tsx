@@ -194,6 +194,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               blockedMessage: typeof settings.blockedMessage === 'string' ? settings.blockedMessage : '',
               autoBlockAbuse: !(settings.autoBlockAbuse === false || settings.autoBlockAbuse === 'false'),
               managerNumbers: typeof settings.managerNumbers === 'string' ? settings.managerNumbers : '',
+              managerPin: typeof settings.managerPin === 'string' ? settings.managerPin : '',
             }
       );
       setRunning({
@@ -248,9 +249,11 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     // Phase 1: default ON — the plugin auto-blocks a caller the AI flags as
     // abusive; unblocking is one click on the chips above.
     autoBlockAbuse: true,
-    // Phase 3 manager line (read-only): callers from these numbers get the
-    // MANAGER persona + name-inclusive lookups.
+    // Phase 3 manager line: callers from these numbers get the MANAGER
+    // persona + name-inclusive lookups; with a PIN set they can also make
+    // booking changes by voice (spoken PIN checked in the plugin).
     managerNumbers: '',
+    managerPin: '',
     whitelistOnly: false,
     defaultCountryCode: '',
   });
@@ -297,6 +300,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         blockedMessage: screening.blockedMessage.trim(),
         autoBlockAbuse: screening.autoBlockAbuse,
         managerNumbers: screening.managerNumbers.trim(),
+        managerPin: screening.managerPin.trim(),
       });
       // Whitelist mode + country code live on the settings RECORD (the flows
       // read them per call). Patch just these two keys — the API merges, so
@@ -328,6 +332,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           blockedMessage: typeof s.blockedMessage === 'string' ? s.blockedMessage : prev.blockedMessage,
           autoBlockAbuse: !(s.autoBlockAbuse === false || s.autoBlockAbuse === 'false'),
           managerNumbers: typeof s.managerNumbers === 'string' ? s.managerNumbers : prev.managerNumbers,
+          managerPin: typeof s.managerPin === 'string' ? s.managerPin : prev.managerPin,
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -665,7 +670,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               </span>
             </label>
             <div>
-              <label className={labelCls} htmlFor="rs-mgr">Manager numbers (read-only manager line)</label>
+              <label className={labelCls} htmlFor="rs-mgr">Manager numbers</label>
               <textarea
                 id="rs-mgr"
                 value={screening.managerNumbers}
@@ -675,9 +680,27 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
                 className={inputCls + ' font-mono text-xs'}
               />
               <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
-                Calls from these numbers get the manager treatment: business questions answered freely, and
-                lookups include customer names. Read-only — caller ID can be spoofed, so booking changes by
-                phone will require a spoken PIN (coming next). Manager numbers are never screened out.
+                Calls from these numbers get the manager treatment: a manager greeting, business questions
+                answered freely, and lookups include customer names. Manager numbers are never screened out.
+              </p>
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="rs-mgrpin">Manager PIN (spoken)</label>
+              <input
+                id="rs-mgrpin"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                value={screening.managerPin}
+                onChange={(e) => setScreening((sc) => ({ ...sc, managerPin: e.target.value }))}
+                placeholder="4–8 digits — blank = manager line stays read-only"
+                className={inputCls + ' font-mono text-xs'}
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Caller ID can be spoofed, so booking changes by voice (confirm, move, cancel, block a number)
+                need this PIN spoken once per call. Aokie asks for it, checks it exactly (digits or words —
+                "one two three four"), and the PIN never appears in transcripts. Blank keeps the manager line
+                read-only.
               </p>
             </div>
             <div>

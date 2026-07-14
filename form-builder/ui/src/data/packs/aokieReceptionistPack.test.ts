@@ -65,6 +65,7 @@ const AOKIE_EVENTS = new Set([
   'aokie.call.incoming', 'aokie.call.answered', 'aokie.call.caller_id', 'aokie.call.rejected',
   'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.ended',
   'aokie.sms.received', 'aokie.sms.sent', 'aokie.sms.failed',
+  'aokie.manager.action',
   'aokie.hardware.error',
 ]);
 
@@ -218,6 +219,8 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'hardware-error-alert',
       'incoming-caller-lookup',
       'live-reply',
+      'manager-action-apply',
+      'manager-action-plan',
       'missed-call-follow-up',
       'outbound-callback-result',
       'personalize-caller',
@@ -250,7 +253,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(13);
+    expect(pack.flowBindings?.length).toBe(14);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -1249,6 +1252,126 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         });
         expect(r2.digest).not.toContain('DIRECT ANSWER');
         expect(r2.spoken).toBeUndefined();
+      });
+
+      describe('manager-action-plan (Phase 3 slice 2): validated writes, honest refusals', () => {
+        const ctxExpr = nodeExpr('manager-action-plan', 'ctx');
+        const planExpr = nodeExpr('manager-action-plan', 'plan');
+        const day2 = new Date(Date.now() + 9 * 86400000);
+        const day2Iso = `${day2.getFullYear()}-${String(day2.getMonth() + 1).padStart(2, '0')}-${String(day2.getDate()).padStart(2, '0')}`;
+        const ctxScope = (request: string) => ({
+          inputs: { request, callId: 'call_m1', from: '+61400000333' },
+          nodes: {
+            settings: { responses: [{ answers: { business_name: 'Pirate Cuts', model: 'test-model', active: 'yes' } }] },
+            customers: { responses: [{ id: 'cu1', answers: { name: 'Lance Baker', phone: '+61400000111' } }] },
+            appts: {
+              responses: [
+                { id: 'ap1', answers: { status: 'requested', date: futureIso, time: '14:00', service: 'Haircut', phone: '0400000111', notes: 'existing note' } },
+                { id: 'ap2', answers: { status: 'confirmed', date: futureIso, time: '16:00', service: 'Dinner', phone: '+61499999999' } },
+                { id: 'ap3', answers: { status: 'cancelled', date: futureIso, time: '10:00', service: 'Ghost' } },
+              ],
+            },
+          },
+        });
+        const planFor = (request: string, decision: unknown) => {
+          const ctx = evalExpr(ctxExpr, ctxScope(request));
+          return evalExpr(planExpr, {
+            inputs: {},
+            nodes: { ctx, decide: { content: typeof decision === 'string' ? decision : JSON.stringify(decision) } },
+          });
+        };
+
+        it('ctx: numbered upcoming bookings with customer names, cancelled + past rows dropped, model from settings', () => {
+          const ctx = evalExpr(ctxExpr, ctxScope('cancel the haircut'));
+          expect(ctx.hasRequest).toBe(true);
+          expect(ctx.model).toBe('test-model');
+          expect(ctx.llmContext).toContain('Haircut (requested) for Lance Baker');
+          expect(ctx.llmContext).toContain('Dinner (confirmed)');
+          expect(ctx.llmContext).not.toContain('Ghost');
+          expect(ctx.appts.map((a: { id: string }) => a.id)).toEqual(['ap1', 'ap2']);
+        });
+
+        it('confirm: target matched by date+time, status flips, notes append the audit line, spoken composed from the record', () => {
+          const r = planFor('confirm the 2 PM haircut on that day', { action: 'confirm', target_date: futureIso, target_time: '14:00' });
+          expect(r.ok).toBe(true);
+          expect(r.hasUpdate).toBe(true);
+          expect(r.updateId).toBe('ap1');
+          expect(r.update.status).toBe('confirmed');
+          expect(r.update.notes).toContain('existing note');
+          expect(r.update.notes).toContain('Manager line (');
+          expect(r.update.notes).toContain('CONFIRMED by the manager');
+          expect(r.spoken).toContain('Haircut');
+          expect(r.spoken).toContain('confirmed');
+          expect(r.hasBlock).toBe(false);
+        });
+
+        it('ambiguous day (two live bookings, no time/name) = spoken question listing choices, NO write; target_name narrows it', () => {
+          const vague = planFor('cancel the booking that day', { action: 'cancel', target_date: futureIso });
+          expect(vague.ok).toBe(false);
+          expect(vague.hasUpdate).toBe(false);
+          expect(vague.spoken).toContain('more than one booking');
+          expect(vague.spoken).toContain('Haircut');
+          expect(vague.spoken).toContain('Dinner');
+          const byName = planFor('cancel lance', { action: 'cancel', target_date: futureIso, target_name: 'Lance' });
+          expect(byName.ok).toBe(true);
+          expect(byName.updateId).toBe('ap1');
+          expect(byName.update.status).toBe('cancelled');
+        });
+
+        it('move: new slot re-validated (past date refused with a question); a valid move keeps the parts not given', () => {
+          const past = planFor('move it', { action: 'move', target_date: futureIso, target_time: '14:00', new_date: '2020-01-01' });
+          expect(past.ok).toBe(false);
+          expect(past.hasUpdate).toBe(false);
+          expect(past.spoken).toContain('Where should I move it to?');
+          const timeOnly = planFor('make the haircut 3pm', { action: 'move', target_date: futureIso, target_time: '14:00', new_time: '15:00' });
+          expect(timeOnly.ok).toBe(true);
+          expect(timeOnly.updateId).toBe('ap1');
+          expect(timeOnly.update.date).toBe(futureIso);
+          expect(timeOnly.update.time).toBe('15:00');
+          const dayMove = planFor('move the haircut', { action: 'move', target_date: futureIso, target_time: '14:00', new_date: day2Iso });
+          expect(dayMove.ok).toBe(true);
+          expect(dayMove.update.date).toBe(day2Iso);
+          expect(dayMove.update.time).toBe('14:00');
+        });
+
+        it('block: digits pass through; a too-short number is refused, never half-blocked', () => {
+          const r = planFor('block that last caller', { action: 'block', block_number: '+61 499 999 999' });
+          expect(r.ok).toBe(true);
+          expect(r.hasBlock).toBe(true);
+          expect(r.blockNumber).toBe('+61499999999');
+          expect(r.hasUpdate).toBe(false);
+          const short = planFor('block 12', { action: 'block', block_number: '12' });
+          expect(short.ok).toBe(false);
+          expect(short.hasBlock).toBe(false);
+        });
+
+        it('garbled JSON / unknown action / missing date / no booking on the date = ok:false with an honest spoken line', () => {
+          const garbled = planFor('confirm friday', 'not json at all');
+          expect(garbled.ok).toBe(false);
+          expect(garbled.spoken.length).toBeGreaterThan(0);
+          const unknown = planFor('do a dance', { action: 'jazzhands' });
+          expect(unknown.ok).toBe(false);
+          const dateless = planFor('confirm the booking', { action: 'confirm' });
+          expect(dateless.ok).toBe(false);
+          expect(dateless.spoken).toContain('Which date');
+          const empty = planFor('confirm the tenth', { action: 'confirm', target_date: day2Iso });
+          expect(empty.ok).toBe(false);
+          expect(empty.spoken).toContain('do not see any booking');
+        });
+
+        it('manager-action-apply pass-through refuses malformed events (non-object update / missing id)', () => {
+          const passExpr = nodeExpr('manager-action-apply', 'pass');
+          const good = evalExpr(passExpr, {
+            inputs: { hasUpdate: true, updateId: 'ap1', update: { status: 'confirmed' }, summary: 'ok' },
+            nodes: {},
+          });
+          expect(good.hasUpdate).toBe(true);
+          expect(good.update.status).toBe('confirmed');
+          const badUpdate = evalExpr(passExpr, { inputs: { hasUpdate: true, updateId: 'ap1', update: 'DROP TABLE' }, nodes: {} });
+          expect(badUpdate.hasUpdate).toBe(false);
+          const noId = evalExpr(passExpr, { inputs: { hasUpdate: true, update: { a: 1 } }, nodes: {} });
+          expect(noId.hasUpdate).toBe(false);
+        });
       });
 
       it('calendar occupancy digest: whole-calendar times, NEVER other customers names (2026-07-14 live business data)', () => {

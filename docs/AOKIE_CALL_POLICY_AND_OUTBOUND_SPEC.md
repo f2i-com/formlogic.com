@@ -166,7 +166,7 @@ records. Owner-confirmed audio quality.
 - Guardrails: outbound only to numbers that called first OR are Customer
   records (no cold-dial arbitrary numbers), per-day dial cap, kill switch.
 
-## Phase 3 — Manager line  ← SLICE 1 SHIPPED 2026-07-14 (read-only)
+## Phase 3 — Manager line  ← SHIPPED 2026-07-14 (slice 1 read-only + slice 2 PIN/writes)
 
 Slice 1 (aokie `720cc4c` + formlogic `2cddb07`, deployed z32): the
 CALLER-ID-GATED read-only half. `managerNumbers` setting (applies live via
@@ -178,11 +178,36 @@ the business-lookup flow.run input (plugin truth, never caller words) so
 occupancy digests AND the verbatim spoken date answers include customer
 names — for them alone; the privacy lock is test-locked from both
 directions — and screening immunity (the boss is never blocked/filtered/
-private-screened). Remaining slice: the spoken PIN (`managerPin`,
-deterministic digit verification — never the LLM) unlocking WRITE tools
-(confirm/cancel/move bookings, block numbers) via `[[MANAGER_ACTION:]]`-
-style markers + a manager-action flow; PIN turns redacted from
-transcripts/history.
+private-screened).
+
+Slice 2 (2026-07-14, deployed z33): the spoken PIN + write tools.
+- Manager GREETING: a manager caller hears "You're on the manager line…"
+  instead of the customer greeting, so the mode is never ambiguous.
+- `managerPin` setting (Str ≤32, applies live; console field with honest
+  copy). Blank = the manager line stays READ-ONLY.
+- The agent marks a change request `[[MANAGER: one clear sentence with
+  full dates]]` — held back from speech like `[[LOOKUP]]`; garbled/unclosed
+  markers fall back to the caller's own words. On a NON-manager call the
+  marker gets an honest spoken refusal (the model can never be tricked
+  into arming the gate).
+- PIN gate in the PLUGIN, never the model: the next caller turn after the
+  PIN prompt is intercepted at the turn choke point, compared by
+  `spoken_digits` normalization ("one two three four" == "1234"), 2
+  attempts. The PIN utterance is recorded/captioned ONLY as
+  `[manager PIN redacted]` — including the end-of-call boundary flushes —
+  and the live-hypothesis caption lane is disarmed while awaiting it.
+- Verified change → host flow `manager-action-plan`: the local LLM only
+  STRUCTURES the request (confirm/cancel/move/block/none + targets); the
+  flow re-validates every date, matches the target booking against real
+  records (ambiguity = an honest spoken question listing the choices),
+  appends the audit line to the appointment's notes, and composes the
+  spoken outcome from records. The flow writes NOTHING.
+- The write rides the durable plane: plugin emits `aokie.manager.action
+  {callId, summary, hasUpdate, updateId, update, at}` → the
+  `manager-action-apply` binding performs the single guarded
+  `updateResponse` (outboxed, acked, retried). Number blocks reuse the
+  Phase-1 auto-block machinery (live policy + env now, persisted at the
+  next host poll).
 
 Original sketch:
 
@@ -217,5 +242,5 @@ Original sketch:
 0.5 Phase 0.5 (blocked/sms_capable/whitelist/country code) — SHIPPED 2026-07-14.
 1. Phase 1 (abuse) — SHIPPED 2026-07-14.
 2. Phase 2 (outbound + missed-call queue) — the big one, own session(s).
-3. Phase 3 (manager line) — after outbound proves the dial path.
+3. Phase 3 (manager line) — SHIPPED 2026-07-14 (both slices).
 4. Phase 4 (hold/waiting) — last, behind flags.
