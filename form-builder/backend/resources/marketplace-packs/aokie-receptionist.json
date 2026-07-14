@@ -2891,7 +2891,9 @@
             "connector.aokie.call.configureAgent",
             "connector.aokie.sms.threads",
             "connector.aokie.sms.thread",
-            "connector.aokie.sms.send"
+            "connector.aokie.sms.send",
+            "connector.aokie.settings.get",
+            "connector.aokie.settings.set"
           ],
           "scripts": [
             {

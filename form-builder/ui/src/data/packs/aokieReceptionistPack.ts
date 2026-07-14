@@ -2474,6 +2474,12 @@ export const aokieReceptionistPack: PackData = {
           'connector.aokie.sms.threads',
           'connector.aokie.sms.thread',
           'connector.aokie.sms.send',
+          // The Receptionist Settings console reads the RUNNING config and
+          // pushes 'Save & apply now' / Call screening via settings.get/set —
+          // these grants vanished in an earlier permission sync and the whole
+          // console quietly hid its apply controls (live report 2026-07-14).
+          'connector.aokie.settings.get',
+          'connector.aokie.settings.set',
         ],
         scripts: [
           { id: 'aokie-call-incoming', hook: 'onConnectorEvent', runtime: 'quickjs', description: 'Log a Calls row the moment a call rings (deduped on the event idempotencyKey).', source: LOGIC_CALL_INCOMING },
