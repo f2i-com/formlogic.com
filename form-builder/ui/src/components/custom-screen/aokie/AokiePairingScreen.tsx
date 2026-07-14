@@ -111,6 +111,13 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   const canDeleteEvents = useAppRuntimeStore((s) => s.canDelete);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [clearingEvents, setClearingEvents] = useState(false);
+  // Start-fresh (testing) reset: wipes RECORDS across the app's forms —
+  // never forms/flows/settings. Gated by an INLINE type-to-confirm (no
+  // modal, per the standing pages-not-popups preference).
+  const appForms = useAppRuntimeStore((st) => st.config?.forms);
+  const [freshConfirm, setFreshConfirm] = useState('');
+  const [freshBusy, setFreshBusy] = useState(false);
+  const [freshProgress, setFreshProgress] = useState<string | null>(null);
 
   // Runtime presence: when the receptionist runs on ANOTHER machine's Desktop, the device
   // status card below names that device instead of pushing a local install (§14).
@@ -143,6 +150,48 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
       events.reload();
     }
   }, [eventsFormId, fetchRecentRows, deleteEventResponse, events]);
+
+  // Start fresh: delete every RECORD in the app's forms, except the
+  // Receptionist Settings singleton (that is CONFIG — persona, greeting,
+  // business info — not test data). Only response rows in the per-form
+  // databases are touched: forms, flows, roles and settings all survive.
+  const handleStartFresh = useCallback(async () => {
+    if (!appForms || freshBusy) return;
+    setFreshBusy(true);
+    setFreshProgress(null);
+    let deleted = 0;
+    const skipped: string[] = [];
+    try {
+      const targets = appForms.filter((f) => f.packFormId !== 'receptionist-settings' && f.displayName !== 'Receptionist Settings');
+      for (const form of targets) {
+        if (!canDeleteEvents(form.formId)) {
+          skipped.push(form.displayName);
+          continue;
+        }
+        setFreshProgress(`Clearing ${form.displayName}…`);
+        // New rows can land mid-clear (a live call writing turns), so loop
+        // until the form reads empty — bounded, this is a testing reset.
+        for (let pass = 0; pass < 6; pass++) {
+          const rows = await fetchRecentRows(form.formId, 200);
+          if (rows.length === 0) break;
+          for (const row of rows) {
+            if (await deleteEventResponse(form.formId, row.id)) deleted++;
+          }
+        }
+      }
+      toast.success(
+        'Fresh start',
+        `${deleted} record${deleted === 1 ? '' : 's'} removed${skipped.length ? ` — no delete permission on: ${skipped.join(', ')}` : ''}. Settings, forms and flows untouched.`
+      );
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setFreshBusy(false);
+      setFreshProgress(null);
+      setFreshConfirm('');
+      events.reload();
+    }
+  }, [appForms, freshBusy, canDeleteEvents, fetchRecentRows, deleteEventResponse, events]);
 
   // Route a connector command to the RIGHT transport: local desktop bridge
   // (connector.request) when the receptionist runs on THIS machine, or the
@@ -682,6 +731,46 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
           isLoading={clearingEvents}
         />
       </div>
+
+      {/* Start fresh (testing): wipe all RECORDS, keep config. Inline
+          type-to-confirm — deliberately not a modal. */}
+      {appForms && appForms.length > 0 && (
+        <div className={`${card} border-red-200/70 p-5 dark:border-red-900/40`}>
+          <div className="mb-2 flex items-center gap-2">
+            <Trash2 className="h-4 w-4 text-red-400 dark:text-red-500/80" />
+            <h2 className="text-sm font-medium text-gray-900 dark:text-white">Start fresh</h2>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Deletes <span className="font-semibold">every record</span> in this app — calls, transcripts, appointments,
+            customers, follow-up tasks, messages and hardware events — so testing starts from a clean slate. Your
+            Receptionist Settings, forms and flows are <span className="font-semibold">not</span> touched.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={freshConfirm}
+              onChange={(e) => setFreshConfirm(e.target.value)}
+              disabled={freshBusy}
+              placeholder='Type "delete all" to enable'
+              spellCheck={false}
+              autoComplete="off"
+              className="w-56 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-red-400 focus:outline-none disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500"
+            />
+            <button
+              type="button"
+              onClick={() => void handleStartFresh()}
+              disabled={freshBusy || freshConfirm.trim().toLowerCase() !== 'delete all'}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Trash2 className="h-4 w-4" />
+              {freshBusy ? 'Deleting…' : 'Delete all records'}
+            </button>
+            {freshProgress && (
+              <span className="text-xs text-gray-500 dark:text-slate-400">{freshProgress}</span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
