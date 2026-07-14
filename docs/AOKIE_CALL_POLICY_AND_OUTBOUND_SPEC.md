@@ -100,7 +100,23 @@ As built:
 - Unblock = one click on the console's blocked-number chips (shipped with
   Phase 0.5).
 
-## Phase 2 — Outbound calling
+## Phase 2 — Outbound calling  ← IN PROGRESS (slice 1a shipped 2026-07-14)
+
+Slice 1a (aokie `ad64616`, deployed z26): the radio/MO layer — `ATD` dial
+command through both HFP paths, MO callsetup tracking (2=dialing → new
+OutgoingDialing event, 3=alerting → the existing Ringing), the MT held
+verdict extended to the MO answer race, outbound CallSessions with honest
+never-answered outcomes (`no_answer` when alerted, `failed` when not,
+reason `cancelled` when we gave up), and `direction` on call.ended.
+Outbound sessions are OBSERVER-ONLY so far: no greeting, no auto-answer,
+no STT/agent — which also fixed a latent bug where an owner dialing from
+the handset got GREETED by the receptionist on their own outgoing call.
+Remaining slices: connector `call.dial {number, purpose, openingLine}`
+(kill-switch default OFF + daily cap + quiet hours; openingLine spoken
+deterministically — records-compose pattern), the outbound.dialing
+contract event + manifest/fixture churn, agent-driven outbound
+conversations, then the missed-call queue (Callback Tasks form + flows)
+and the formlogic Calls direction/no_answer statuses.
 
 - Radio: `dial(number)` via HFP `ATD<number>;` + outbound call session
   (state: dialing → ringing → active/failed/no-answer). The agent session
