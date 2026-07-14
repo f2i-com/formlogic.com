@@ -800,7 +800,7 @@ class ApiClient {
   // Response endpoints
   async getResponses(
     formId: string,
-    options?: { status?: string; from?: string; to?: string; limit?: number; offset?: number; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string> }
+    options?: { status?: string; from?: string; to?: string; limit?: number; offset?: number; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string>; answersGte?: Record<string, string>; answersLte?: Record<string, string> }
   ): Promise<ApiResponse<{ responses: FormResponse[]; count: number }>> {
     const params = new URLSearchParams();
     if (options?.status) params.set('status', options.status);
@@ -815,6 +815,13 @@ class ApiClient {
     // Phone-normalized lookups (flow filter op phone_eq): digits-suffix match in the DB.
     for (const [field, value] of Object.entries(options?.answersPhoneEq ?? {})) {
       params.set(`answersPhone.${field}`, value);
+    }
+    // Range bounds (flow filter ops gte/lte): filtered server-side BEFORE the limit.
+    for (const [field, value] of Object.entries(options?.answersGte ?? {})) {
+      params.set(`answersGte.${field}`, value);
+    }
+    for (const [field, value] of Object.entries(options?.answersLte ?? {})) {
+      params.set(`answersLte.${field}`, value);
     }
 
     const query = params.toString();
@@ -1628,7 +1635,7 @@ class ApiClient {
     });
   }
 
-  async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string> }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
+  async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string>; answersGte?: Record<string, string>; answersLte?: Record<string, string> }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
     const params = new URLSearchParams();
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
@@ -1639,6 +1646,13 @@ class ApiClient {
     // Phone-normalized lookups (flow filter op phone_eq): digits-suffix match in the DB.
     for (const [field, value] of Object.entries(options?.answersPhoneEq ?? {})) {
       params.set(`answersPhone.${field}`, value);
+    }
+    // Range bounds (flow filter ops gte/lte): filtered server-side BEFORE the limit.
+    for (const [field, value] of Object.entries(options?.answersGte ?? {})) {
+      params.set(`answersGte.${field}`, value);
+    }
+    for (const [field, value] of Object.entries(options?.answersLte ?? {})) {
+      params.set(`answersLte.${field}`, value);
     }
     const query = params.toString();
     const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);

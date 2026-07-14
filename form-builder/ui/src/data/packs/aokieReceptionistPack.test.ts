@@ -1106,6 +1106,25 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(value.spoken).toBe('$nodes.make.spoken');
       });
 
+      it('business-lookup appointments fetch is date-windowed IN THE DATABASE (gte/lte pushdown - a growing calendar must not overflow the 200-row cap)', () => {
+        const flow = flowBySlug('business-lookup');
+        const win = flow.flowJson.nodes.find((n) => n.id === 'win')!;
+        const winOut = evalExpr(String((win.data as { expr: string }).expr), {});
+        expect(winOut.todayIso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(winOut.horizonIso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(winOut.todayIso < winOut.horizonIso).toBe(true);
+        const appts = flow.flowJson.nodes.find((n) => n.id === 'appts')!;
+        const filters = (appts.data as { filters: Array<{ field: string; op: string; value: string }> }).filters;
+        expect(filters).toEqual([
+          { field: 'date', op: 'gte', value: '$nodes.win.todayIso' },
+          { field: 'date', op: 'lte', value: '$nodes.win.horizonIso' },
+        ]);
+        // The window node feeds the fetch: edges run in -> win -> appts.
+        const edges = flow.flowJson.edges as Array<{ source: string; target: string }>;
+        expect(edges).toContainEqual({ source: 'in', target: 'win' });
+        expect(edges).toContainEqual({ source: 'win', target: 'appts' });
+      });
+
       it('business-lookup spoken: absent when the question names no date (the LLM path still owns free-form questions)', () => {
         const lookupExpr = nodeExpr('business-lookup', 'make');
         const r = evalExpr(lookupExpr, {

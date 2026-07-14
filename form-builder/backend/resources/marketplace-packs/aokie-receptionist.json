@@ -3626,7 +3626,7 @@
       {
         "name": "Business Lookup",
         "slug": "business-lookup",
-        "description": "Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns. Read-only and deterministic (no LLM, no writes): 14-day calendar occupancy with TIMES ONLY (other customers are never named) plus the caller phone number own bookings. No event binding - it only runs when the plugin asks.",
+        "description": "Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns (date questions get a flow-composed spoken sentence delivered verbatim). Read-only and deterministic (no LLM, no writes): 90-day calendar occupancy with TIMES ONLY (other customers are never named) plus the caller phone number own bookings. The appointments fetch is windowed IN THE DATABASE (gte/lte pushdown) so a growing calendar cannot overflow the fetch cap. No event binding - it only runs when the plugin asks.",
         "nodeCapabilities": [
           "formlogic.responses.read"
         ],
@@ -3653,12 +3653,31 @@
               }
             },
             {
+              "id": "win",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var nowD = new Date();\n  function iso(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }\n  return { todayIso: iso(nowD), horizonIso: iso(new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 90)) };\n})()"
+              }
+            },
+            {
               "id": "appts",
               "type": "formlogic_list_responses",
               "data": {
                 "form": "@pack:appointments",
                 "return": "all",
-                "limit": 200
+                "limit": 200,
+                "filters": [
+                  {
+                    "field": "date",
+                    "op": "gte",
+                    "value": "$nodes.win.todayIso"
+                  },
+                  {
+                    "field": "date",
+                    "op": "lte",
+                    "value": "$nodes.win.horizonIso"
+                  }
+                ]
               }
             },
             {
@@ -3682,6 +3701,10 @@
           "edges": [
             {
               "source": "in",
+              "target": "win"
+            },
+            {
+              "source": "win",
               "target": "appts"
             },
             {

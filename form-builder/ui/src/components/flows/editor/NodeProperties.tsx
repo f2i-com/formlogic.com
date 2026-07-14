@@ -72,6 +72,10 @@ const FILTER_OP_OPTIONS: { value: FlowFilterOp; label: string }[] = [
   { value: 'contains', label: 'contains' },
   { value: 'gt', label: 'greater than' },
   { value: 'lt', label: 'less than' },
+  // Inclusive bounds, pushed down to the database — the date-window ops
+  // (ISO dates compare chronologically; the window applies BEFORE the limit).
+  { value: 'gte', label: 'on or after (>=)' },
+  { value: 'lte', label: 'on or before (<=)' },
   { value: 'in', label: 'one of' },
   // Digits-only last-9-suffix match, pushed down to the database — the
   // caller-ID lookup op ('+61 491 570 156' matches '0491570156').

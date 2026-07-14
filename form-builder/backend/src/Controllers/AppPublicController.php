@@ -877,6 +877,8 @@ class AppPublicController
         // to '_', so both spellings arrive here.
         $answersEq = [];
         $answersPhoneEq = [];
+        $answersGte = [];
+        $answersLte = [];
         foreach ($queryParams as $qk => $qv) {
             if (!is_string($qv)) {
                 continue;
@@ -885,6 +887,12 @@ class AppPublicController
             // filter op phone_eq): digits-only last-9 suffix match server-side.
             if (str_starts_with((string) $qk, 'answersPhone.') || str_starts_with((string) $qk, 'answersPhone_')) {
                 $answersPhoneEq[substr((string) $qk, 13)] = $qv;
+            // ?answersGte.<fieldId> / ?answersLte.<fieldId> — range bounds
+            // (flow filter ops gte/lte): filtered server-side BEFORE the limit.
+            } elseif (str_starts_with((string) $qk, 'answersGte.') || str_starts_with((string) $qk, 'answersGte_')) {
+                $answersGte[substr((string) $qk, 11)] = $qv;
+            } elseif (str_starts_with((string) $qk, 'answersLte.') || str_starts_with((string) $qk, 'answersLte_')) {
+                $answersLte[substr((string) $qk, 11)] = $qv;
             } elseif (str_starts_with((string) $qk, 'answers.') || str_starts_with((string) $qk, 'answers_')) {
                 $answersEq[substr((string) $qk, 8)] = $qv;
             }
@@ -892,6 +900,8 @@ class AppPublicController
         $options = [
             'answersEq' => $answersEq,
             'answersPhoneEq' => $answersPhoneEq,
+            'answersGte' => $answersGte,
+            'answersLte' => $answersLte,
             'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 200)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];

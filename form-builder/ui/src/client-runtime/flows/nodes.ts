@@ -76,7 +76,7 @@ export const LIST_RESPONSES_DEFAULT_LIMIT = 200;
 export const LIST_RESPONSES_MAX_LIMIT = 500;
 
 /** A comparison operator for a formlogic_list_responses filter row. */
-export type FlowFilterOp = 'eq' | 'neq' | 'contains' | 'gt' | 'lt' | 'in' | 'phone_eq';
+export type FlowFilterOp = 'eq' | 'neq' | 'contains' | 'gt' | 'lt' | 'gte' | 'lte' | 'in' | 'phone_eq';
 
 /** One AND-ed filter over a form field: `answers[field] <op> value`. */
 export interface FlowResponseFilter {
@@ -102,7 +102,7 @@ export interface FlowListResponsesResult {
   found: boolean;
 }
 
-const FILTER_OPS = new Set<FlowFilterOp>(['eq', 'neq', 'contains', 'gt', 'lt', 'in', 'phone_eq']);
+const FILTER_OPS = new Set<FlowFilterOp>(['eq', 'neq', 'contains', 'gt', 'lt', 'gte', 'lte', 'in', 'phone_eq']);
 
 /** Typed executor failure carrying the flow-run-result error code + offending node. */
 export class FlowExecError extends Error {
@@ -421,6 +421,12 @@ function matchesFilterOp(fieldValue: unknown, op: FlowFilterOp, filterValue: unk
       return numericCompare(fieldValue, filterValue) > 0;
     case 'lt':
       return numericCompare(fieldValue, filterValue) < 0;
+    // Inclusive bounds — the date-window ops (numericCompare already falls
+    // back to string comparison, which is chronological for ISO dates).
+    case 'gte':
+      return numericCompare(fieldValue, filterValue) >= 0;
+    case 'lte':
+      return numericCompare(fieldValue, filterValue) <= 0;
     case 'in':
       return inList(fieldValue, filterValue);
     case 'phone_eq':
@@ -1193,6 +1199,8 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // fully client-side, identically to the Rust runner.
       const answersEq: Record<string, string> = {};
       const answersPhoneEq: Record<string, string> = {};
+      const answersGte: Record<string, string> = {};
+      const answersLte: Record<string, string> = {};
       for (const f of parseResponseFilters(data.filters)) {
         if (!/^[A-Za-z0-9_]{1,64}$/.test(f.field)) continue;
         const resolved = resolveSelector(f.value, ctx.scope);
@@ -1202,10 +1210,17 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
         // rule (coarse LIKE + exact check), so a customer match beyond the
         // fetch limit is found by the database, not scanned for client-side.
         else if (f.op === 'phone_eq') answersPhoneEq[f.field] = resolved;
+        // gte/lte push down as range bounds — the server filters BEFORE the
+        // limit, so a date window over a large table can't silently drop
+        // in-window rows to the fetch cap (aokie business-lookup).
+        else if (f.op === 'gte') answersGte[f.field] = resolved;
+        else if (f.op === 'lte') answersLte[f.field] = resolved;
       }
       const query: Record<string, unknown> = { limit };
       if (Object.keys(answersEq).length > 0) query.answersEq = answersEq;
       if (Object.keys(answersPhoneEq).length > 0) query.answersPhoneEq = answersPhoneEq;
+      if (Object.keys(answersGte).length > 0) query.answersGte = answersGte;
+      if (Object.keys(answersLte).length > 0) query.answersLte = answersLte;
       const raw = await deps.listResponses(formId, query);
       const rows: FlowResponseRow[] = [];
       for (const item of Array.isArray(raw) ? raw : []) {

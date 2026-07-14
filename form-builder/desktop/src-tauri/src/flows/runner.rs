@@ -465,6 +465,11 @@ enum FilterOp {
     Contains,
     Gt,
     Lt,
+    /// Inclusive bounds — the date-window ops (`numeric_compare` falls back
+    /// to string comparison, chronological for ISO dates). Pushed down as
+    /// `answersGte.<field>` / `answersLte.<field>`.
+    Gte,
+    Lte,
     In,
     /// Phone-normalized equality: digits-only last-9-suffix match (see
     /// `phone_digits_match`). Pushed down as `answersPhone.<field>`.
@@ -478,6 +483,8 @@ fn parse_filter_op(raw: &str) -> FilterOp {
         "contains" => FilterOp::Contains,
         "gt" => FilterOp::Gt,
         "lt" => FilterOp::Lt,
+        "gte" => FilterOp::Gte,
+        "lte" => FilterOp::Lte,
         "in" => FilterOp::In,
         "phone_eq" => FilterOp::PhoneEq,
         _ => FilterOp::Eq,
@@ -512,7 +519,12 @@ struct ResponseFilter {
 fn pushdown_eq_filters(filters_raw: Option<&Value>, scope: &SelectorScope) -> Vec<(String, String)> {
     parse_response_filters(filters_raw)
         .iter()
-        .filter(|f| matches!(f.op, FilterOp::Eq | FilterOp::PhoneEq))
+        .filter(|f| {
+            matches!(
+                f.op,
+                FilterOp::Eq | FilterOp::PhoneEq | FilterOp::Gte | FilterOp::Lte
+            )
+        })
         .filter_map(|f| {
             let scalar = match resolve_selector(&f.value, scope) {
                 Value::String(v) => v,
@@ -524,6 +536,11 @@ fn pushdown_eq_filters(filters_raw: Option<&Value>, scope: &SelectorScope) -> Ve
                 // customer match beyond the fetch limit is found by the
                 // database, not scanned for client-side.
                 FilterOp::PhoneEq => "answersPhone",
+                // Range bounds: the server filters BEFORE the limit, so a
+                // date window over a large table can't silently drop
+                // in-window rows to the fetch cap.
+                FilterOp::Gte => "answersGte",
+                FilterOp::Lte => "answersLte",
                 _ => "answers",
             };
             (!f.field.is_empty()
@@ -724,6 +741,8 @@ fn matches_filter_op(field_value: &Value, op: FilterOp, filter_value: &Value) ->
             .contains(&js_string_nullish(filter_value).to_lowercase()),
         FilterOp::Gt => numeric_compare(field_value, filter_value) > 0.0,
         FilterOp::Lt => numeric_compare(field_value, filter_value) < 0.0,
+        FilterOp::Gte => numeric_compare(field_value, filter_value) >= 0.0,
+        FilterOp::Lte => numeric_compare(field_value, filter_value) <= 0.0,
         FilterOp::In => in_list(field_value, filter_value),
         FilterOp::PhoneEq => {
             phone_digits_match(&js_string_nullish(field_value), &js_string_nullish(filter_value))
@@ -2105,6 +2124,42 @@ mod tests {
                 ("answersPhone.phone".to_string(), "+61400111222".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn pushdown_covers_gte_lte_range_bounds() {
+        let filters = json!([
+            { "field": "date", "op": "gte", "value": "2026-07-14" },
+            { "field": "date", "op": "lte", "value": "2026-10-12" },
+            { "field": "age", "op": "gte", "value": 40 }
+        ]);
+        let pairs = pushdown_eq_filters(Some(&filters), &SelectorScope::default());
+        assert_eq!(
+            pairs,
+            vec![
+                ("answersGte.date".to_string(), "2026-07-14".to_string()),
+                ("answersLte.date".to_string(), "2026-10-12".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_responses_gte_lte_window_iso_dates_inclusive() {
+        let rows = vec![
+            json!({ "id": "d1", "answers": { "name": "Past", "date": "2026-01-05" } }),
+            json!({ "id": "d2", "answers": { "name": "InWindow", "date": "2026-07-20" } }),
+            json!({ "id": "d3", "answers": { "name": "Boundary", "date": "2026-10-12" } }),
+            json!({ "id": "d4", "answers": { "name": "Beyond", "date": "2026-12-01" } }),
+            json!({ "id": "d5", "answers": { "name": "NoDate" } }),
+        ];
+        let filters = json!([
+            { "field": "date", "op": "gte", "value": "2026-07-14" },
+            { "field": "date", "op": "lte", "value": "2026-10-12" }
+        ]);
+        let out = apply_list_responses(&rows, Some(&filters), &SelectorScope::default());
+        assert_eq!(out["count"], json!(2)); // inclusive boundary; missing date fails gte
+        assert_eq!(out["responses"][0]["answers"]["name"], json!("InWindow"));
+        assert_eq!(out["responses"][1]["answers"]["name"], json!("Boundary"));
     }
 
     #[test]

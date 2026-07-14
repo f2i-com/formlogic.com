@@ -757,6 +757,11 @@ ${BUSINESS_INFO_BLOCK_JS}
 // deterministic: no LLM here, no writes; the agent's own model does the
 // reasoning. Privacy: whole-calendar entries expose TIMES ONLY; the caller's
 // OWN bookings (phone match) may carry service + status.
+const FLOW_LOOKUP_WINDOW = `(function () {
+  var nowD = new Date();
+  function iso(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  return { todayIso: iso(nowD), horizonIso: iso(new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 90)) };
+})()`;
 const FLOW_BUSINESS_LOOKUP = `(function () {
   var out = { digest: '' };
   var nowD = new Date();
@@ -2695,17 +2700,34 @@ export const aokieReceptionistPack: PackData = {
       name: 'Business Lookup',
       slug: 'business-lookup',
       description:
-        'Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns. Read-only and deterministic (no LLM, no writes): 14-day calendar occupancy with TIMES ONLY (other customers are never named) plus the caller phone number own bookings. No event binding - it only runs when the plugin asks.',
+        'Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns (date questions get a flow-composed spoken sentence delivered verbatim). Read-only and deterministic (no LLM, no writes): 90-day calendar occupancy with TIMES ONLY (other customers are never named) plus the caller phone number own bookings. The appointments fetch is windowed IN THE DATABASE (gte/lte pushdown) so a growing calendar cannot overflow the fetch cap. No event binding - it only runs when the plugin asks.',
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'question', example: 'Any tables free Friday night?' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
-          { id: 'appts', type: 'formlogic_list_responses', data: { form: '@pack:appointments', return: 'all', limit: 200 } },
+          // The window bounds the DB query itself: gte/lte push down (server
+          // filters BEFORE the limit), so old + far-future rows never crowd
+          // in-window bookings out of the 200-row cap.
+          { id: 'win', type: 'logic_block', data: { expr: FLOW_LOOKUP_WINDOW } },
+          {
+            id: 'appts',
+            type: 'formlogic_list_responses',
+            data: {
+              form: '@pack:appointments',
+              return: 'all',
+              limit: 200,
+              filters: [
+                { field: 'date', op: 'gte', value: '$nodes.win.todayIso' },
+                { field: 'date', op: 'lte', value: '$nodes.win.horizonIso' },
+              ],
+            },
+          },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_BUSINESS_LOOKUP } },
           { id: 'out', type: 'output', data: { value: { digest: '$nodes.make.digest', spoken: '$nodes.make.spoken' } } },
         ],
         edges: [
-          { source: 'in', target: 'appts' },
+          { source: 'in', target: 'win' },
+          { source: 'win', target: 'appts' },
           { source: 'appts', target: 'make' },
           { source: 'make', target: 'out' },
         ],

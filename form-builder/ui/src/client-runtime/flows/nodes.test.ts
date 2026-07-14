@@ -526,6 +526,62 @@ describe('formlogic_list_responses', () => {
     const node: WorkflowGraphNode = { id: 'lookup', type: 'formlogic_list_responses', data: {} };
     await expect(executeNode(ctxFor(node, fakeDeps()))).rejects.toMatchObject({ code: 'invalid_flow' });
   });
+
+  it('gte/lte compare ISO dates chronologically (string fallback) and numbers numerically', async () => {
+    const rows = [
+      { id: 'd1', answers: { name: 'Past', date: '2026-01-05' } },
+      { id: 'd2', answers: { name: 'InWindow', date: '2026-07-20' } },
+      { id: 'd3', answers: { name: 'Boundary', date: '2026-10-12' } },
+      { id: 'd4', answers: { name: 'Beyond', date: '2026-12-01' } },
+      { id: 'd5', answers: { name: 'NoDate' } },
+    ];
+    const deps = fakeDeps({ listResponses: vi.fn(async () => rows) });
+    const out = (await executeNode(
+      ctxFor(
+        listNode({
+          filters: [
+            { field: 'date', op: 'gte', value: '2026-07-14' },
+            { field: 'date', op: 'lte', value: '2026-10-12' },
+          ],
+        }),
+        deps
+      )
+    )) as { count: number; responses: Array<{ answers: { name: string } }> };
+    // Inclusive on the boundary; the missing-date row fails gte.
+    expect(out.count).toBe(2);
+    expect(out.responses.map((r) => r.answers.name)).toEqual(['InWindow', 'Boundary']);
+    // Numeric semantics survive: 9 < 10 numerically.
+    const nout = (await executeNode(
+      ctxFor(listNode({ filters: [{ field: 'age', op: 'gte', value: 10 }] }), fakeDeps({
+        listResponses: vi.fn(async () => [
+          { id: 'n1', answers: { age: 9 } },
+          { id: 'n2', answers: { age: 10 } },
+        ]),
+      }))
+    )) as { count: number };
+    expect(nout.count).toBe(1);
+  });
+
+  it('pushes gte/lte string bounds down to the fetch (the date window filters BEFORE the limit)', async () => {
+    const listResponses = vi.fn(async () => []);
+    await executeNode(
+      ctxFor(
+        listNode({
+          filters: [
+            { field: 'date', op: 'gte', value: '2026-07-14' },
+            { field: 'date', op: 'lte', value: '2026-10-12' },
+            { field: 'age', op: 'gte', value: 40 }, // non-string — stays client-side only
+          ],
+        }),
+        fakeDeps({ listResponses })
+      )
+    );
+    expect(listResponses).toHaveBeenCalledWith('form-1', {
+      limit: 200,
+      answersGte: { date: '2026-07-14' },
+      answersLte: { date: '2026-10-12' },
+    });
+  });
 });
 
 describe('llm_chat endpoint resolution', () => {

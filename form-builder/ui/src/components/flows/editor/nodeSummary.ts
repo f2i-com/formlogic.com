@@ -16,6 +16,8 @@ const OP_WORDS: Record<FlowFilterOp, string> = {
   contains: 'contains',
   gt: '>',
   lt: '<',
+  gte: '>=',
+  lte: '<=',
   in: 'is one of',
   phone_eq: 'phone matches',
 };

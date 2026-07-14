@@ -816,6 +816,9 @@ class ResponseService
         // Phone-normalized lookups (flow filter op `phone_eq`): a coarse
         // ordered-digit LIKE narrows in SQL, the exact digits check runs below.
         $this->applyAnswersPhoneEq($options, $conditions, $params);
+        // Range bounds (flow filter ops `gte`/`lte`): date windows narrow in
+        // SQL before the limit; the exact re-check runs below.
+        $this->applyAnswersRange($options, $conditions, $params);
 
         if (!empty($conditions)) {
             $sql .= " WHERE " . implode(' AND ', $conditions);
@@ -851,6 +854,10 @@ class ResponseService
                 }
                 return true;
             }));
+        }
+        // Exact gte/lte re-check (see applyAnswersRange).
+        if (!empty($options['answersGte']) || !empty($options['answersLte'])) {
+            $rows = array_values(array_filter($rows, static fn (array $row): bool => self::matchesAnswersRange($row, $options)));
         }
         return $this->formatResponses($db, $rows);
     }
@@ -902,6 +909,70 @@ class ResponseService
             $conditions[] = "CAST(json_extract(answers, '$.\"" . $field . "\"') AS TEXT) LIKE :ans_ph_{$i}";
             $params["ans_ph_{$i}"] = $pattern;
         }
+    }
+
+    /**
+     * Range bounds (flow filter ops `gte`/`lte`), pushed down so the window is
+     * applied BEFORE the row limit (the aokie business-lookup date window: a
+     * capped fetch over a growing Appointments table must not silently drop
+     * in-window rows). Only ISO-date-shaped bounds (YYYY-MM-DD…) push into
+     * SQL — stored ISO dates compare chronologically as TEXT; any other bound
+     * stays client-side where the runners' numeric-first compare owns it.
+     * `lte` admits missing/NULL fields to mirror the runners (a missing value
+     * stringifies to '', which sorts before any bound); `gte` excludes them
+     * for the same reason. An exact PHP re-check runs over the fetched rows.
+     */
+    private function applyAnswersRange(array $options, array &$conditions, array &$params): void
+    {
+        $i = 0;
+        foreach (['answersGte' => '>=', 'answersLte' => '<='] as $opt => $cmp) {
+            if (empty($options[$opt]) || !is_array($options[$opt])) {
+                continue;
+            }
+            foreach ($options[$opt] as $field => $value) {
+                if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', (string) $field)) {
+                    continue;
+                }
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $value)) {
+                    continue; // non-date bounds stay client-side
+                }
+                $i++;
+                $path = "json_extract(answers, '$.\"" . $field . "\"')";
+                $conditions[] = $cmp === '<='
+                    ? "({$path} IS NULL OR CAST({$path} AS TEXT) <= :ans_rng_{$i})"
+                    : "CAST({$path} AS TEXT) >= :ans_rng_{$i}";
+                $params["ans_rng_{$i}"] = (string) $value;
+            }
+        }
+    }
+
+    /**
+     * Exact `gte`/`lte` re-check over fetched rows (belt over the SQL
+     * narrowing, and the only filter for non-date bounds): numeric-first,
+     * string-fallback comparison mirroring `numericCompare` in nodes.ts and
+     * `numeric_compare` in the desktop runner.
+     */
+    private static function matchesAnswersRange(array $row, array $options): bool
+    {
+        $answers = json_decode((string) ($row['answers'] ?? ''), true);
+        $answers = is_array($answers) ? $answers : [];
+        $cmp = static function ($stored, $bound): int {
+            if (is_numeric($stored) && is_numeric($bound)) {
+                return (float) $stored <=> (float) $bound;
+            }
+            return strcmp((string) (is_scalar($stored) ? $stored : ''), (string) $bound);
+        };
+        foreach ((array) ($options['answersGte'] ?? []) as $field => $bound) {
+            if ($cmp($answers[$field] ?? '', $bound) < 0) {
+                return false;
+            }
+        }
+        foreach ((array) ($options['answersLte'] ?? []) as $field => $bound) {
+            if ($cmp($answers[$field] ?? '', $bound) > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -1194,6 +1265,10 @@ class ResponseService
         // Phone-normalized lookups (flow filter op `phone_eq`) — coarse SQL
         // narrowing; the exact digits check runs over the fetched page below.
         $this->applyAnswersPhoneEq($options, $conditions, $params);
+        // Range bounds (flow filter ops `gte`/`lte`) — same semantics as
+        // getFormResponses (the app route serves the flow runners from HERE:
+        // the phone_eq lesson).
+        $this->applyAnswersRange($options, $conditions, $params);
 
         // Build search conditions using json_extract
         if ($searchQuery !== '') {
@@ -1287,6 +1362,10 @@ class ResponseService
                 }
                 return true;
             }));
+        }
+        // Exact gte/lte re-check (see applyAnswersRange).
+        if (!empty($options['answersGte']) || !empty($options['answersLte'])) {
+            $rows = array_values(array_filter($rows, static fn (array $row): bool => self::matchesAnswersRange($row, $options)));
         }
         return ['responses' => $this->formatResponses($db, $rows), 'total' => $total];
     }

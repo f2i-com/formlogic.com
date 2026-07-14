@@ -306,8 +306,19 @@ class ResponseController
         // ?answers.<fieldId>=<value>, ANDed. PHP parses '.' in query keys
         // to '_', so both spellings arrive here.
         $answersEq = [];
+        $answersGte = [];
+        $answersLte = [];
         foreach ($queryParams as $qk => $qv) {
-            if (is_string($qv) && (str_starts_with((string) $qk, 'answers.') || str_starts_with((string) $qk, 'answers_'))) {
+            if (!is_string($qv)) {
+                continue;
+            }
+            // ?answersGte.<fieldId> / ?answersLte.<fieldId> — range bounds
+            // (flow filter ops gte/lte): filtered server-side BEFORE the limit.
+            if (str_starts_with((string) $qk, 'answersGte.') || str_starts_with((string) $qk, 'answersGte_')) {
+                $answersGte[substr((string) $qk, 11)] = $qv;
+            } elseif (str_starts_with((string) $qk, 'answersLte.') || str_starts_with((string) $qk, 'answersLte_')) {
+                $answersLte[substr((string) $qk, 11)] = $qv;
+            } elseif (str_starts_with((string) $qk, 'answers.') || str_starts_with((string) $qk, 'answers_')) {
                 $answersEq[substr((string) $qk, 8)] = $qv;
             }
         }
@@ -316,6 +327,8 @@ class ResponseController
             'from' => $queryParams['from'] ?? null,
             'to' => $queryParams['to'] ?? null,
             'answersEq' => $answersEq,
+            'answersGte' => $answersGte,
+            'answersLte' => $answersLte,
             'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 1000)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
