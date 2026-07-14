@@ -222,6 +222,11 @@ pub struct PluginHost {
     /// receipt journal so rotation/retention never drops an entry that is the
     /// only durable copy of an acked event. Set by the flow runtime.
     pub(crate) receipts_guard: Mutex<Option<Arc<crate::plugins::receipts::AccountedFn>>>,
+    /// Volatile realtime lane (guide §9.1): droppable observation frames from
+    /// plugins (`realtime.emit` — live caller partials, session phase).
+    /// Bounded broadcast; NEVER journalled, acked, or flow-dispatched — a
+    /// lagging subscriber just skips ahead. Deliberately NOT the EventBus.
+    pub(crate) realtime: tokio::sync::broadcast::Sender<String>,
 }
 
 impl PluginHost {
@@ -244,6 +249,7 @@ impl PluginHost {
             plugins: Mutex::new(HashMap::new()),
             rpc_handler: Mutex::new(None),
             receipts_guard: Mutex::new(None),
+            realtime: tokio::sync::broadcast::channel(256).0,
         });
         host.scan();
         host
@@ -273,6 +279,11 @@ impl PluginHost {
 
     pub fn events(&self) -> &EventBus {
         &self.events
+    }
+
+    /// Subscribe to the volatile realtime lane (frames as raw JSON strings).
+    pub fn realtime_subscribe(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.realtime.subscribe()
     }
 
     /// Register the handler for inbound plugin requests (the `flow.run` RPC).

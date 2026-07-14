@@ -595,6 +595,11 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
                             }
                         }
                     }
+                    rpc::PluginNotification::Realtime(frame) => {
+                        // Volatile lane: fan out and forget. No receipts, no
+                        // ack, no EventBus, no journal — by design (§9.1).
+                        let _ = host.realtime.send(frame.to_string());
+                    }
                     rpc::PluginNotification::Log { level, message } => {
                         logs.push("stdout", format!("[{level}] {message}"));
                     }

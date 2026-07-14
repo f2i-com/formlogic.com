@@ -1388,6 +1388,31 @@ async fn events_sse(State(st): State<DesktopState>) -> impl IntoResponse {
     )
 }
 
+/// `GET /api/plugins/realtime` — Server-Sent Events stream of VOLATILE
+/// realtime frames (`event: realtime`, `data:` = the frame JSON). Frames are
+/// droppable observations (live caller partials, session phase) — a lagged
+/// subscriber skips ahead; nothing here is journalled or replayable.
+async fn realtime_sse(State(st): State<DesktopState>) -> impl IntoResponse {
+    let rx = st.host.realtime_subscribe();
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(frame) => {
+                    let e = SseEvent::default().event("realtime").data(frame);
+                    return Some((Ok::<_, std::convert::Infallible>(e), rx));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(20))
+            .text("ping"),
+    )
+}
+
 // ---- pairing ----
 
 #[derive(Deserialize)]
@@ -2113,6 +2138,10 @@ pub async fn serve(
         .route("/api/connectors/:id/status", get(connector_status))
         .route("/api/connectors/:id/request", post(connector_request))
         .route("/api/events", get(events_sse))
+        // Volatile realtime lane (guide §9.2): live caller partials + session
+        // phase. Under /api/plugins* so the SAME management-plane auth guard
+        // applies (webview | server token | pairing token).
+        .route("/api/plugins/realtime", get(realtime_sse))
         .route("/api/origins", get(list_origins))
         .route("/api/origins/:origin", delete(revoke_origin))
         // LIVE desktop flow runner (docs/FORMLOGIC_DESKTOP.md §2).

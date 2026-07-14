@@ -99,6 +99,10 @@ pub enum RpcFailure {
 /// the desktop (e.g. `flow.run` — see `docs/DESKTOP_PLUGIN_SDK.md`).
 #[derive(Debug)]
 pub enum PluginNotification {
+    /// `realtime.emit` — a VOLATILE observation frame (guide §9.2): fan out
+    /// to local subscribers and forget. Never journalled, never acked, never
+    /// flow-dispatched; dropped silently when oversized or malformed.
+    Realtime(Value),
     /// `event.emit` — `params.event` is the desktop-event envelope (validated
     /// upstream by the event bus, NOT here).
     Event(Value),
@@ -451,6 +455,15 @@ fn dispatch_object(
 fn parse_notification(obj: &serde_json::Map<String, Value>) -> Option<PluginNotification> {
     let params = obj.get("params");
     match obj.get("method").and_then(Value::as_str)? {
+        "realtime.emit" => {
+            let frame = params?.get("frame")?.clone();
+            // App-level frame cap (guide §9.2): the stdio protocol allows
+            // 1 MiB lines, but realtime frames must stay small.
+            if frame.to_string().len() > 16 * 1024 {
+                return None;
+            }
+            Some(PluginNotification::Realtime(frame))
+        }
         "event.emit" => {
             let event = params?.get("event")?.clone();
             Some(PluginNotification::Event(event))
@@ -554,6 +567,27 @@ fn finish_line(mut buf: Vec<u8>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn realtime_emit_parses_to_the_volatile_variant() {
+        let obj = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "realtime.emit",
+            "params": { "frame": { "kind": "user.partial", "seq": 1 } }
+        });
+        let n = parse_notification(obj.as_object().unwrap());
+        assert!(matches!(n, Some(PluginNotification::Realtime(_))));
+        // Oversized frames are dropped whole (guide §9.2 16 KiB app cap).
+        let big = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "realtime.emit",
+            "params": { "frame": { "text": "x".repeat(20_000) } }
+        });
+        assert!(parse_notification(big.as_object().unwrap()).is_none());
+        // Malformed (no frame) is dropped, not mistaken for an event.
+        let bad = serde_json::json!({ "jsonrpc": "2.0", "method": "realtime.emit", "params": {} });
+        assert!(parse_notification(bad.as_object().unwrap()).is_none());
+    }
 
     async fn read_all(input: &[u8], max: usize) -> Vec<BoundedLine> {
         let mut reader = BufReader::new(input);
