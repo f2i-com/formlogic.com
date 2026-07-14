@@ -807,7 +807,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     + '\\nCALLER OWN BOOKINGS:' + (mine.length ? '\\n- ' + mine.join('\\n- ') : ' none on record')
     + '\\nCALENDAR OCCUPANCY next 14 days (times TAKEN, all customers - never name them):'
     + (lines.length ? '\\n' + lines.join('\\n') : '\\n- no bookings')
-    + '\\nDays not listed are fully open. New bookings are requests the team confirms.';
+    + '\\nDays not listed within this window are fully open. If the question is about dates BEYOND this window, say the calendar view does not reach that far and the team will confirm - do not guess. New bookings are requests the team confirms.';
   return out;
 })()`;
 const FLOW_PERSONALIZE_CALLER = `(function () {
