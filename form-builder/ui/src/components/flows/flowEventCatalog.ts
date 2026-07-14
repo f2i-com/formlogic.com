@@ -71,6 +71,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.turn.partial',
   'aokie.call.turn.final',
   'aokie.call.ended',
+  'aokie.call.outbound.dialing',
   'aokie.sms.received',
   'aokie.sms.sent',
   'aokie.sms.failed',
@@ -99,6 +100,7 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'call.hangup',
   'call.operatorSpeak',
   'call.configureAgent',
+  'call.dial',
   'sms.threads',
   'sms.thread',
   'sms.send',
@@ -214,6 +216,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     description: 'Handle ended calls whose outcome is missed.',
     payloadHints: CALL_ENDED_HINTS,
     presetCondition: "event.data.outcome === 'missed'",
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.outbound.dialing',
+    group: 'aokie.calls',
+    event: 'aokie.call.outbound.dialing',
+    label: 'Outbound call dialing',
+    description:
+      'The receptionist started placing an OUTBOUND call (call.dial). The rest of the lifecycle rides the normal call events with the same callId; call.ended carries direction "outbound" and outcome completed / no_answer / failed.',
+    payloadHints: ['$event.data.callId', '$event.data.to', '$event.data.purpose'],
   },
   {
     kind: 'event',

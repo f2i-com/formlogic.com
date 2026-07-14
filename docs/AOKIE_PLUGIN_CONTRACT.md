@@ -20,7 +20,7 @@ dongle.installDriver   dongle.diagnostics
 phone.status           phone.startPairing     phone.stopPairing     phone.listPaired
 phone.removePaired     phone.confirmPairing   phone.disconnect      phone.connect
 call.current           call.answer            call.reject           call.hangup
-call.operatorSpeak     call.configureAgent
+call.operatorSpeak     call.configureAgent    call.dial
 sms.threads            sms.thread             sms.send
 settings.get           settings.set
 ```
@@ -42,6 +42,7 @@ Payload/response shapes follow the legacy Tauri commands they wrap (e.g. `sms.se
 - `call.answer` / `call.reject` / `call.hangup` accept `{callId?}`; `call.operatorSpeak` accepts `{text, callId?, inResponseTo?}`. When `callId` is present it MUST equal the plugin's current call id, else the typed **`stale_call`** error is returned and the phone is NOT touched (a stale browser tab can never control a newer call). An omitted `callId` acts on the current call (compatibility for flow/desktop callers).
 - `inResponseTo` (§9.2 within-call staleness): the `turn` NUMBER of the caller turn the speech answers (from `aokie.call.turn.final`). When a NEWER caller turn already exists the command is refused with typed **`stale_turn`** and nothing is spoken. Callers MUST treat `stale_turn` (and `stale_call`) as a benign skip — never as a failure that triggers fallback speech (that would speak another stale answer into the newer turn). Both runners' `aokie_speak` node defaults it from the flow's `turn` input and resolves stale refusals as `{skipped: true}`.
 - `call.configureAgent {callId, persona?, greeting?}` (§9.3 call-scoped agent config): a caller-specific persona/greeting overlay bound to ONE call. `callId` is **REQUIRED** — no legacy-compat window on this newer surface (missing ⇒ `command_failed`, mismatched ⇒ `stale_call`); at least one of `persona`/`greeting` must be non-empty. The plugin wipes the overlay at the call boundary, so a failed or raced next-call setup can never leak the previous caller's personalization; `settings.set` remains the path for durable, caller-independent config.
+- `call.dial {number, openingLine, purpose?}` (Phase 2 outbound): places an OUTBOUND call. `openingLine` (1–500 chars, REQUIRED) is spoken VERBATIM when the remote party answers (records-compose pattern — the first words are never model prose); `purpose` (≤1000 chars) grounds the agent's conversation. Guardrails, all typed refusals BEFORE the radio: the `outboundEnabled` kill switch (**default OFF**), local quiet hours (`quietHoursStart`/`quietHoursEnd`, default 21→8, equal values disable), and the persisted `maxDailyDials` cap (default 20; counted per operator-LOCAL day, attempt counted before it reaches the radio). Result reports acceptance: `{accepted, queued, operationId, callId, to, dialsToday, maxDailyDials, via: "radio"}`. Lifecycle: `aokie.call.outbound.dialing {callId, to, purpose?, at}` then the NORMAL family with the same callId (`call.ringing` = remote alerting, `call.answered` = remote pickup, `call.ended` with `direction: "outbound"` and outcome `completed|no_answer|failed`). A handset-originated outbound call (the owner dialing) is observed silently — session tracked, no greeting/transcription. A dedicated `outbound` consent scope + wizard checkbox is a documented follow-up; until then the default-off kill switch is the explicit operator opt-in.
 - `call.current` → `{call: null | {callId, from?, callerName?, state, startedAt?, …}}` with `state ∈ ringing|active|ended`. The real radio, the plugin's dev mock and the browser mock all return exactly this shape.
 - `phone.status` → `{paired, connected, device: null | {address, name, …}, …}` — the paired device is always NESTED under `device`; there is no root-level `deviceName`.
 
@@ -55,6 +56,7 @@ aokie.phone.pairing_started  aokie.phone.paired             aokie.phone.connecte
 aokie.call.incoming          aokie.call.ringing             aokie.call.answered   aokie.call.rejected
 aokie.call.audio.connected   aokie.call.audio.disconnected
 aokie.call.turn.partial      aokie.call.turn.final          aokie.call.ended
+aokie.call.outbound.dialing
 aokie.sms.received           aokie.sms.sent                 aokie.sms.failed
 aokie.hardware.error
 ```
@@ -67,9 +69,12 @@ Conventions:
   async STT/LLM/TTS pipeline so a slow result from call A is dropped, never attributed to
   call B (audit AK-002/C-05; drops are visible as `staleSttResults` in `dongle.diagnostics`).
 - `aokie.call.ended` data: `{callId, from, callerPhone, durationSeconds, durationMs, outcome,
-  reason, at}`. `outcome ∈ completed|rejected|missed` comes from the call-session state
-  machine (audit AK-001): answered → `completed` (even a sub-second call), operator-rejected
-  → `rejected`, never answered → `missed`. `durationSeconds`/`durationMs` count from ANSWER.
+  reason, direction, at}`. `outcome ∈ completed|rejected|missed|terminated_abuse` (inbound) comes
+  from the call-session state machine (audit AK-001): answered → `completed` (even a sub-second
+  call), operator-rejected → `rejected`, never answered → `missed`, abuse-terminated (Phase 1) →
+  `terminated_abuse`. OUTBOUND calls (`direction: "outbound"`, Phase 2) add `no_answer` (remote
+  alerted, never picked up) and `failed` (never even alerted); `from` is the DIALED number.
+  `durationSeconds`/`durationMs` count from ANSWER.
 - `idempotencyKey` = `aokie:<correlationId>:<step>:v1` (e.g. `aokie:call_abc:incoming:v1`; turn events append the turn index: `aokie:call_abc:turn.4.final:v1`).
 - `data` carries the minimum needed by FormLogic (caller phone/name, timestamps, durations, transcript text for turn events). No raw audio over the event bus.
 

@@ -2946,6 +2946,7 @@
             "connector.aokie.call.hangup",
             "connector.aokie.call.operatorSpeak",
             "connector.aokie.call.configureAgent",
+            "connector.aokie.call.dial",
             "connector.aokie.sms.threads",
             "connector.aokie.sms.thread",
             "connector.aokie.sms.send",

@@ -2577,6 +2577,10 @@ export const aokieReceptionistPack: PackData = {
           'connector.aokie.call.hangup',
           'connector.aokie.call.operatorSpeak',
           'connector.aokie.call.configureAgent',
+          // Phase 2 outbound: the plugin's kill switch (outboundEnabled,
+          // default OFF) + quiet hours + daily cap gate every dial — this
+          // grant alone can never place a call.
+          'connector.aokie.call.dial',
           'connector.aokie.sms.threads',
           'connector.aokie.sms.thread',
           'connector.aokie.sms.send',

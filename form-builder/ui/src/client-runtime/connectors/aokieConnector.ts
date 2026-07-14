@@ -50,6 +50,7 @@ const AOKIE_COMMANDS = [
   'call.hangup',
   'call.operatorSpeak',
   'call.configureAgent',
+  'call.dial',
   'sms.threads',
   'sms.thread',
   'sms.send',
@@ -233,6 +234,40 @@ export const mockAokieConnector: BrowserConnector = {
           })
         );
         return { answered: true };
+      }
+      case 'call.dial': {
+        // Phase 2 mock parity: validates like the plugin (number shape +
+        // required opening line) and emits the outbound.dialing envelope so
+        // demo flows can bind to it. No simulated conversation follows —
+        // the demo has no remote party to answer.
+        const p = (payload ?? {}) as { number?: unknown; openingLine?: unknown; purpose?: unknown };
+        const number = typeof p.number === 'string' ? p.number.trim() : '';
+        const openingLine = typeof p.openingLine === 'string' ? p.openingLine.trim() : '';
+        const purpose = typeof p.purpose === 'string' ? p.purpose : undefined;
+        if (!/^\+?[0-9][0-9 ()\-.]{4,}$/.test(number)) {
+          throw new ConnectorError('command_failed', 'call.dial requires a phone-format {number}.');
+        }
+        if (!openingLine) {
+          throw new ConnectorError(
+            'command_failed',
+            'call.dial requires {openingLine} — the exact first words spoken when they answer.'
+          );
+        }
+        if (mockCurrentCall && mockCurrentCall.state !== 'ended') {
+          throw new ConnectorError(
+            'command_failed',
+            'a call is already in progress — outbound dialing needs an idle line.'
+          );
+        }
+        const callId = `call_demo_${Date.now().toString(36)}`;
+        emitLocalDesktopEvent(
+          aokieEnvelope(callId, 'aokie.call.outbound.dialing', `aokie:${callId}:outbound.dialing:v1`, {
+            callId,
+            to: number,
+            purpose: purpose ?? null,
+          })
+        );
+        return { accepted: true, queued: true, callId, to: number };
       }
       case 'call.reject': {
         const call = requireMockCall('call.reject', payload, ['ringing']);
