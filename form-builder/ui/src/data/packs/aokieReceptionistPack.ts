@@ -762,7 +762,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   var nowD = new Date();
   function iso(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
   var todayIso = iso(nowD);
-  var horizonIso = iso(new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 14));
+  var horizonIso = iso(new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 90));
   var DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONFULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   function dayLabel(dStr) {
@@ -805,7 +805,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   }
   out.digest = 'DATA as of ' + todayIso + ' (question: "' + String(inputs.question || '').slice(0, 200) + '")'
     + '\\nCALLER OWN BOOKINGS:' + (mine.length ? '\\n- ' + mine.join('\\n- ') : ' none on record')
-    + '\\nCALENDAR OCCUPANCY next 14 days (times TAKEN, all customers - never name them):'
+    + '\\nCALENDAR OCCUPANCY next 90 days (times TAKEN, all customers - never name them):'
     + (lines.length ? '\\n' + lines.join('\\n') : '\\n- no bookings')
     + '\\nDays not listed within this window are fully open. If the question is about dates BEYOND this window, say the calendar view does not reach that far and the team will confirm - do not guess. New bookings are requests the team confirms.';
   return out;
