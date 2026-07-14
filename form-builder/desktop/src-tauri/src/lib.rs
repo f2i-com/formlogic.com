@@ -378,6 +378,14 @@ fn write_llama_model_override(app: &tauri::AppHandle, model: Option<&str>) -> Re
     write_config_str(app, "llamaModel", model)
 }
 
+fn read_llama_mmproj_override(app: &tauri::AppHandle) -> Option<String> {
+    read_config_str(app, "llamaMmproj")
+}
+
+fn write_llama_mmproj_override(app: &tauri::AppHandle, path: Option<&str>) -> Result<(), String> {
+    write_config_str(app, "llamaMmproj", path)
+}
+
 /// The model NAME a multi-model server (Ollama) should use, if the user picked
 /// one in its Model selector. Unset ⇒ the pre-pulled default (qwen2.5:0.5b).
 fn read_ollama_model_override(app: &tauri::AppHandle) -> Option<String> {
@@ -608,6 +616,7 @@ pub(crate) fn config_snapshot(app: &tauri::AppHandle, registry: &RegistryHandle)
         models_default_dir,
         models_configured_dir,
         llama_model: read_llama_model_override(app),
+        llama_mmproj: read_llama_mmproj_override(app),
         ollama_model: read_ollama_model_override(app),
     }
 }
@@ -808,6 +817,28 @@ fn set_llama_model(
     write_llama_model_override(&app, value)?;
     if let Ok(mut r) = registry.lock() {
         r.set_llama_model(value.map(str::to_string));
+    }
+    Ok(())
+}
+
+/// Set (or clear with "") the optional mmproj projector for the llama service —
+/// required for audio/vision content parts (Gemma 4 E2B class GGUFs).
+#[tauri::command]
+fn set_llama_mmproj(
+    app: tauri::AppHandle,
+    registry: tauri::State<RegistryHandle>,
+    path: String,
+) -> Result<(), String> {
+    let trimmed = path.trim();
+    let value = if trimmed.is_empty() { None } else { Some(trimmed) };
+    if let Some(v) = value {
+        if !PathBuf::from(v).is_file() {
+            return Err(format!("not a file: {v}"));
+        }
+    }
+    write_llama_mmproj_override(&app, value)?;
+    if let Ok(mut r) = registry.lock() {
+        r.set_llama_mmproj(value.map(str::to_string));
     }
     Ok(())
 }
@@ -1334,6 +1365,7 @@ pub fn run() {
             remove_model_dir,
             list_gguf_models,
             set_llama_model,
+            set_llama_mmproj,
             set_ollama_model,
             list_gpus,
             set_service_gpu,
@@ -1388,6 +1420,7 @@ pub fn run() {
             // registry so the next flow-triggered start loads it — no restart.
             if let Ok(mut r) = registry.lock() {
                 r.set_llama_model(read_llama_model_override(app.handle()));
+                r.set_llama_mmproj(read_llama_mmproj_override(app.handle()));
                 r.set_ollama_model(read_ollama_model_override(app.handle()));
                 // Drop GPU pins to cards that no longer exist (removed / re-imaged box) —
                 // otherwise start() would export CUDA_VISIBLE_DEVICES at a missing index and

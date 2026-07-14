@@ -385,6 +385,10 @@ pub struct Registry {
     /// `${llamaModel}` placeholder. `None` ⇒ no model selected; start() refuses
     /// to spawn (no implicit default). Set live from the Model picker.
     llama_model: Option<String>,
+    /// Optional multimodal projector (mmproj GGUF) for the single-model llama
+    /// service: appended as `--mmproj <path>` at spawn. Required for
+    /// input_audio/image content parts (Gemma 4 E2B class); None = text-only.
+    llama_mmproj: Option<String>,
     /// The model NAME a multi-model server (Ollama) should use — substituted
     /// into the node body template as `${ollamaModel}`. `None` ⇒ the small
     /// default the installer pre-pulls (qwen2.5:0.5b). Set live from its picker.
@@ -807,6 +811,7 @@ impl Registry {
             models_dir,
             model_dirs,
             llama_model: None,
+            llama_mmproj: None,
             ollama_model: None,
             service_gpus: HashMap::new(),
             remembered_running,
@@ -825,6 +830,7 @@ impl Registry {
             models_dir,
             model_dirs,
             llama_model: None,
+            llama_mmproj: None,
             ollama_model: None,
             service_gpus: HashMap::new(),
             remembered_running: std::collections::HashSet::new(),
@@ -878,6 +884,14 @@ impl Registry {
 
     /// Set (or clear) the GGUF a single-model server loads. Live — the next
     /// service start reads it via `${llamaModel}`, no restart needed.
+    pub fn llama_mmproj(&self) -> Option<String> {
+        self.llama_mmproj.clone()
+    }
+
+    pub fn set_llama_mmproj(&mut self, path: Option<String>) {
+        self.llama_mmproj = clean_model_opt(path);
+    }
+
     pub fn set_llama_model(&mut self, model: Option<String>) {
         self.llama_model = clean_model_opt(model);
     }
@@ -1406,11 +1420,21 @@ impl Registry {
                 .unwrap_or(raw_cmd)
         };
 
-        let args: Vec<String> = run_spec
+        let mut args: Vec<String> = run_spec
             .args
             .iter()
             .map(|a| os_fix_path(substitute(a, &ctx)))
             .collect();
+        // Optional multimodal projector for the single-model llama service
+        // (the template that loads `${llamaModel}`): llama-server only accepts
+        // input_audio/image content parts when launched with --mmproj. Only
+        // appended when the user picked one, so text-only setups are untouched.
+        if let Some(mm) = self.llama_mmproj.clone().filter(|s| !s.trim().is_empty()) {
+            if run_spec.args.iter().any(|a| a.contains("${llamaModel}")) {
+                args.push("--mmproj".to_string());
+                args.push(os_fix_path(mm));
+            }
+        }
         let mut env: HashMap<String, String> = run_spec
             .env
             .iter()

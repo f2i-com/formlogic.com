@@ -643,6 +643,7 @@ function LlamaModelSelector({ running }: { running: boolean }) {
   const [customPath, setCustomPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mmproj, setMmproj] = useState<string>(''); // '' = none (text-only)
 
   useEffect(() => {
     let alive = true;
@@ -652,6 +653,7 @@ function LlamaModelSelector({ running }: { running: boolean }) {
         setModels(list);
         const sel = cfg.llamaModel ?? '';
         setCurrent(sel);
+        setMmproj(cfg.llamaMmproj ?? '');
         if (sel && !list.includes(sel)) {
           setCustomMode(true);
           setCustomPath(sel);
@@ -751,6 +753,116 @@ function LlamaModelSelector({ running }: { running: boolean }) {
           {error}
         </span>
       )}
+      {/* Optional multimodal projector: shown once a GGUF is picked. Audio/
+          vision GGUFs (Gemma 4 E2B class) need their mmproj loaded via
+          --mmproj before llama-server accepts input_audio/image parts; leave
+          "None" for ordinary text models. */}
+      {(current || customPath).toLowerCase().endsWith('.gguf') && (
+        <MmprojSelector
+          models={models}
+          value={mmproj}
+          running={running}
+          onChange={async (path) => {
+            setError(null);
+            try {
+              await appConfig.setLlamaMmproj(path);
+              setMmproj(path);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Optional mmproj (multimodal projector) picker for the llama service - the
+ * companion appends `--mmproj <path>` at spawn when set. Candidates are the
+ * discovered GGUFs whose filename mentions "mmproj"; anything else via the
+ * custom path. Clearing returns the model to text-only.
+ */
+function MmprojSelector({
+  models,
+  value,
+  running,
+  onChange,
+}: {
+  models: string[];
+  value: string;
+  running: boolean;
+  onChange: (path: string) => void | Promise<void>;
+}) {
+  const [customMode, setCustomMode] = useState(false);
+  const [customPath, setCustomPath] = useState('');
+  const baseName = (p: string) => p.split(/[/\\]/).pop() || p;
+  const candidates = models.filter((m) => baseName(m).toLowerCase().includes('mmproj'));
+  useEffect(() => {
+    if (value && !candidates.includes(value)) {
+      setCustomMode(true);
+      setCustomPath(value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <div className="llama-model service-config-row">
+      <span className="service-config-label">Projector (mmproj)</span>
+      {customMode ? (
+        <>
+          <input
+            type="text"
+            spellCheck={false}
+            placeholder="C:\\path\\to\\mmproj.gguf"
+            value={customPath}
+            onChange={(e) => setCustomPath(e.target.value)}
+            className="service-config-control-wide"
+          />
+          <button
+            className="btn btn-secondary"
+            disabled={!customPath.trim()}
+            onClick={() => void onChange(customPath.trim())}
+          >
+            Set
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setCustomMode(false);
+              setCustomPath('');
+            }}
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <select
+          value={candidates.includes(value) ? value : ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__custom__') {
+              setCustomMode(true);
+              return;
+            }
+            void onChange(v); // '' = clear -> text-only
+          }}
+        >
+          <option value="">None (text-only)</option>
+          {candidates.map((m) => (
+            <option key={m} value={m}>
+              {baseName(m)}
+            </option>
+          ))}
+          <option value="__custom__">Custom path…</option>
+        </select>
+      )}
+      <span className="service-config-note">
+        {value
+          ? running
+            ? 'Loaded via --mmproj. Restart the service to apply a change.'
+            : 'Loads via --mmproj - enables audio/vision input for capable models.'
+          : 'Optional: pick this model matching mmproj file to enable audio/vision input.'}
+      </span>
     </div>
   );
 }

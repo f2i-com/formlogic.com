@@ -682,6 +682,7 @@ export interface CompanionConfig {
   /** The GGUF a single-model server (llama.cpp) is set to load, if the user
    * picked one in its Model selector (null = the `model.gguf` default). */
   llamaModel: string | null;
+  llamaMmproj?: string | null;
 
   /** The model name the Ollama node uses, if the user picked one in its Model
    * selector (null = the pre-pulled default qwen2.5:0.5b). */
@@ -764,6 +765,7 @@ export const appConfig = {
   /** Set (or reset, with '') which GGUF the llama.cpp server loads. Applies to
    * the next start of the service — no app restart needed. */
   setLlamaModel: (path: string) => tauriInvoke<void>('set_llama_model', { path }),
+  setLlamaMmproj: (path: string) => tauriInvoke<void>('set_llama_mmproj', { path }),
 
   // ----- multi-model server (Ollama) model selection -----
   /** Models pulled into the running Ollama server — the Ollama picker options

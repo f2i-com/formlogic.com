@@ -64,6 +64,10 @@ impl ConfigProvider for EnvConfig {
             models_restart_required: false,
             // Headless: reflect the FORMLOGIC_LLAMACPP_MODEL env (applied to the live
             // registry at startup) so /api/config reports the active model.
+            llama_mmproj: std::env::var("FORMLOGIC_LLAMACPP_MMPROJ")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
             llama_model: std::env::var("FORMLOGIC_LLAMACPP_MODEL")
                 .ok()
                 .map(|s| s.trim().to_string())
@@ -198,6 +202,12 @@ async fn main() {
         if !m.is_empty() {
             if let Ok(mut r) = registry.lock() {
                 r.set_llama_model(Some(m));
+                if let Ok(mm) = std::env::var("FORMLOGIC_LLAMACPP_MMPROJ") {
+                    let mm = mm.trim().to_string();
+                    if !mm.is_empty() {
+                        r.set_llama_mmproj(Some(mm));
+                    }
+                }
             }
         }
     }
