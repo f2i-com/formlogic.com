@@ -166,7 +166,25 @@ records. Owner-confirmed audio quality.
 - Guardrails: outbound only to numbers that called first OR are Customer
   records (no cold-dial arbitrary numbers), per-day dial cap, kill switch.
 
-## Phase 3 — Manager line
+## Phase 3 — Manager line  ← SLICE 1 SHIPPED 2026-07-14 (read-only)
+
+Slice 1 (aokie `720cc4c` + formlogic `2cddb07`, deployed z32): the
+CALLER-ID-GATED read-only half. `managerNumbers` setting (applies live via
+the screening reload machinery; console field in the Call screening card
+with the spoofing note). A matching caller gets: the MANAGER persona block
+(business questions answered freely, lookups encouraged, explicit
+READ-ONLY framing + a standing-rules injection guard), `manager: true` on
+the business-lookup flow.run input (plugin truth, never caller words) so
+occupancy digests AND the verbatim spoken date answers include customer
+names — for them alone; the privacy lock is test-locked from both
+directions — and screening immunity (the boss is never blocked/filtered/
+private-screened). Remaining slice: the spoken PIN (`managerPin`,
+deterministic digit verification — never the LLM) unlocking WRITE tools
+(confirm/cancel/move bookings, block numbers) via `[[MANAGER_ACTION:]]`-
+style markers + a manager-action flow; PIN turns redacted from
+transcripts/history.
+
+Original sketch:
 
 - `managerNumbers` (Str list) + `managerPin` (Str, spoken digits).
 - A manager caller gets the MANAGER persona: full read access via the
