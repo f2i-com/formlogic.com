@@ -108,15 +108,27 @@ OutgoingDialing event, 3=alerting → the existing Ringing), the MT held
 verdict extended to the MO answer race, outbound CallSessions with honest
 never-answered outcomes (`no_answer` when alerted, `failed` when not,
 reason `cancelled` when we gave up), and `direction` on call.ended.
-Outbound sessions are OBSERVER-ONLY so far: no greeting, no auto-answer,
-no STT/agent — which also fixed a latent bug where an owner dialing from
-the handset got GREETED by the receptionist on their own outgoing call.
-Remaining slices: connector `call.dial {number, purpose, openingLine}`
-(kill-switch default OFF + daily cap + quiet hours; openingLine spoken
-deterministically — records-compose pattern), the outbound.dialing
-contract event + manifest/fixture churn, agent-driven outbound
-conversations, then the missed-call queue (Callback Tasks form + flows)
-and the formlogic Calls direction/no_answer statuses.
+Slice 1a fixed a latent bug: an owner dialing from the handset got GREETED
+by the receptionist on their own outgoing call — now observed silently.
+
+Slice 1b (aokie `1f5e628` + formlogic `caa0779`, deployed z27): outbound
+is COMMANDABLE — `call.dial {number, openingLine, purpose?}` with typed
+guardrails BEFORE the radio: `outboundEnabled` kill switch (DEFAULT OFF,
+live-smoked on z27), local quiet hours (21→8 default, equal = disabled),
+persisted per-local-day `maxDailyDials` (default 20, crash-safe counting).
+openingLine spoken VERBATIM at pickup via the call-scoped overlay's
+greeting slot; purpose → OUTBOUND persona block (be brief, [[END_CALL]]
+when done, voicemail = one short message); 60s dial watchdog. Outbound
+calls never mint caller_id events (whitelist would reject our own dial)
+and are never screened. Contract churn complete both repos (manifests,
+fixtures, flowEventCatalog, browser mock with demo parity, customLogic
+grant retrofitted).
+
+Remaining slices: dedicated `outbound` consent scope + wizard checkbox
+(pre-GA), `aokie_dial` flow node (both runners), the missed-call queue
+(Callback Tasks form + dial-back flow + SMS fallback via sms_capable),
+formlogic Calls direction field + no_answer status + outbound app-logic,
+and a LIVE dial test (user-gated — needs a second phone to receive).
 
 - Radio: `dial(number)` via HFP `ATD<number>;` + outbound call session
   (state: dialing → ringing → active/failed/no-answer). The agent session
