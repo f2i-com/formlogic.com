@@ -726,8 +726,14 @@ export function AppFormView() {
   // When a record already exists, visiting the form opens that record in edit mode instead
   // of a section screen / blank entry; only the very first visit shows the entry form.
   const singleRecord = (config?.forms.find((f) => f.formId === formId)?.settings as { singleRecord?: boolean } | undefined)?.singleRecord === true;
+  // A form with an ENABLED custom screen owns its singleton (the Receptionist
+  // Settings console creates/edits the record itself): the redirect below
+  // would bounce every visit into raw record-edit mode the moment a record
+  // exists, hiding the console forever (live report 2026-07-14).
+  const customScreenOwnsForm =
+    (config?.forms.find((f) => f.formId === formId)?.customScreen as CustomScreen | undefined)?.enabled === true;
   useEffect(() => {
-    if (!singleRecord || !appSlug || !formId) return;
+    if (!singleRecord || customScreenOwnsForm || !appSlug || !formId) return;
     if (!(canViewOwn(formId) || canViewAll(formId))) return; // entry-only roles keep the plain form
     let cancelled = false;
     api.getAppResponses(appSlug, formId, { limit: 1 }).then((res) => {
@@ -739,7 +745,7 @@ export function AppFormView() {
     }).catch(() => { /* fall through to the normal form view */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- canViewOwn/canViewAll are stable store actions
-  }, [singleRecord, appSlug, formId, navigate]);
+  }, [singleRecord, customScreenOwnsForm, appSlug, formId, navigate]);
 
   // Related-records "Add": arriving from a record's related sub-grid with
   // ?linkField=<fieldId>&linkTo=<parentResponseId> pre-links the new record back
