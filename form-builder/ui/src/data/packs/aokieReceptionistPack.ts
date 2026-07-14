@@ -751,6 +751,66 @@ ${BUSINESS_INFO_BLOCK_JS}
 // "Hi Lance!" and never re-asks for a name/number it already has. A no-match
 // returns the SAME base config the Configure Receptionist flow pushed —
 // re-sending it is an idempotent no-op, never a downgrade.
+// Mid-call LIVE LOOKUP (2026-07-14, guide P1-16): the Aokie plugin invokes
+// this over flow.run while the agent is ON THE CALL - it replied
+// [[LOOKUP: question]] and answers from this digest. READ-ONLY and
+// deterministic: no LLM here, no writes; the agent's own model does the
+// reasoning. Privacy: whole-calendar entries expose TIMES ONLY; the caller's
+// OWN bookings (phone match) may carry service + status.
+const FLOW_BUSINESS_LOOKUP = `(function () {
+  var out = { digest: '' };
+  var nowD = new Date();
+  function iso(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  var todayIso = iso(nowD);
+  var horizonIso = iso(new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 14));
+  var DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONFULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function dayLabel(dStr) {
+    var hp = dStr.split('-');
+    var dt = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2]));
+    var label = DAYFULL[dt.getDay()] + ' ' + dt.getDate() + ' ' + MONFULL[dt.getMonth()];
+    if (dt.getFullYear() !== nowD.getFullYear()) label += ' ' + dt.getFullYear();
+    return label;
+  }
+  function t12(tStr) {
+    if (!/^\d{2}:\d{2}$/.test(tStr)) return tStr || '?';
+    var th = Number(tStr.slice(0, 2));
+    var h = th % 12 === 0 ? 12 : th % 12;
+    return h + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (th >= 12 ? 'PM' : 'AM');
+  }
+  var digitsIn = String(inputs.from || '').replace(/\D+/g, '').slice(-9);
+  var rows = (nodes.appts && nodes.appts.responses) || [];
+  var occ = {};
+  var mine = [];
+  for (var i = 0; i < rows.length; i++) {
+    var a = (rows[i] && rows[i].answers) || {};
+    var st = String(a.status || '');
+    var d = String(a.date || '');
+    if (!(st === 'requested' || st === 'confirmed')) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < todayIso || d > horizonIso) continue;
+    if (!occ[d]) occ[d] = [];
+    occ[d].push(String(a.time || ''));
+    var rowDigits = String(a.phone || '').replace(/\D+/g, '').slice(-9);
+    if (digitsIn.length >= 6 && rowDigits === digitsIn) {
+      mine.push(dayLabel(d) + ' at ' + t12(String(a.time || '')) + ': ' + String(a.service || 'appointment') + ' (' + st + ')');
+    }
+  }
+  var dates = Object.keys(occ).sort();
+  var lines = [];
+  for (var j = 0; j < dates.length; j++) {
+    var ts = occ[dates[j]].sort();
+    var lab = [];
+    for (var k = 0; k < ts.length; k++) lab.push(t12(ts[k]));
+    lines.push('- ' + dayLabel(dates[j]) + ': booked at ' + lab.join(', '));
+  }
+  out.digest = 'DATA as of ' + todayIso + ' (question: "' + String(inputs.question || '').slice(0, 200) + '")'
+    + '\nCALLER OWN BOOKINGS:' + (mine.length ? '\n- ' + mine.join('\n- ') : ' none on record')
+    + '\nCALENDAR OCCUPANCY next 14 days (times TAKEN, all customers - never name them):'
+    + (lines.length ? '\n' + lines.join('\n') : '\n- no bookings')
+    + '\nDays not listed are fully open. New bookings are requests the team confirms.';
+  return out;
+})()`;
+
 const FLOW_PERSONALIZE_CALLER = `(function () {
   var phone = String(inputs.from || '');
   // The customers node pre-filters with the phone_eq op (digits-only last-9
@@ -2534,6 +2594,26 @@ export const aokieReceptionistPack: PackData = {
           { source: 'settings', target: 'make' },
           { source: 'make', target: 'push' },
           { source: 'push', target: 'out' },
+        ],
+      },
+    },
+    {
+      name: 'Business Lookup',
+      slug: 'business-lookup',
+      description:
+        'Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns. Read-only and deterministic (no LLM, no writes): 14-day calendar occupancy with TIMES ONLY (other customers are never named) plus the caller phone number own bookings. No event binding - it only runs when the plugin asks.',
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'question', example: 'Any tables free Friday night?' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          { id: 'appts', type: 'formlogic_list_responses', data: { form: '@pack:appointments', return: 'all', limit: 200 } },
+          { id: 'make', type: 'logic_block', data: { expr: FLOW_BUSINESS_LOOKUP } },
+          { id: 'out', type: 'output', data: { value: { digest: '$nodes.make.digest' } } },
+        ],
+        edges: [
+          { source: 'in', target: 'appts' },
+          { source: 'appts', target: 'make' },
+          { source: 'make', target: 'out' },
         ],
       },
     },

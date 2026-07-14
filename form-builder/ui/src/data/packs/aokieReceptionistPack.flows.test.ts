@@ -15,6 +15,7 @@ describe('aokie pack flows', () => {
   it('has all starter flows', () => {
     expect(flows.map((f) => f.slug).sort()).toEqual(
       ['after-call-actions',
+      'business-lookup',
       'call-summary-follow-up', 'configure-receptionist', 'hardware-error-alert', 'incoming-caller-lookup', 'live-reply', 'missed-call-follow-up', 'personalize-caller', 'sms-auto-reply-draft', 'sms-delivery-status', 'sms-followup-conversation'],
     );
   });

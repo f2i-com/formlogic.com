@@ -212,6 +212,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   it('ships the starter flows on valid v0 graphs', () => {
     expect([...FLOW_SLUGS].sort()).toEqual([
       'after-call-actions',
+      'business-lookup',
       'call-summary-follow-up',
       'configure-receptionist',
       'hardware-error-alert',

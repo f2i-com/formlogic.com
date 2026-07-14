@@ -2171,13 +2171,21 @@ impl FlowRuntime {
     }
 
     /// Handle the plugin `flow.run` RPC ({flowSlug, appSlug?, input, correlationId, idempotencyKey}).
-    async fn handle_flow_run_rpc(self: &Arc<Self>, _plugin_id: String, params: Value) -> Result<Value, RpcErrorObj> {
+    async fn handle_flow_run_rpc(self: &Arc<Self>, plugin_id: String, params: Value) -> Result<Value, RpcErrorObj> {
         let flow_slug = params.get("flowSlug").or_else(|| params.get("flowId")).and_then(Value::as_str).map(str::to_string);
         let flow_json = params.get("flowJson").filter(|v| v.is_object()).cloned();
         if flow_slug.is_none() && flow_json.is_none() {
             return Err(RpcErrorObj { code: -32602, message: "flow.run requires flowSlug or flowJson".into(), data: Some(json!({ "code": "invalid_flow" })) });
         }
-        let app_slug = params.get("appSlug").and_then(Value::as_str).map(str::to_string);
+        // P1-16 (mid-call business lookups): a plugin's flow.run WITHOUT an
+        // appSlug defaults to the app its CONNECTOR is assigned to (INT-004
+        // routing; plugin id == connector id for builtin plugins) — the aokie
+        // plugin can invoke its own pack's flows with zero configuration.
+        let app_slug = params
+            .get("appSlug")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.assigned_app_slug(&plugin_id));
         let input = params.get("input").cloned().unwrap_or(json!({}));
         let correlation = params.get("correlationId").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("plugin-{}", uuid::Uuid::new_v4().simple()));
         let idem = params.get("idempotencyKey").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("flowrun:{correlation}"));
@@ -2229,6 +2237,24 @@ impl FlowRuntime {
 
     fn find_binding(&self, binding_id: &str) -> Option<Value> {
         self.with_snapshot(|s| s.bindings.iter().find(|b| b.get("id").and_then(Value::as_str) == Some(binding_id)).cloned()).flatten()
+    }
+
+    /// The slug of the app the given CONNECTOR is explicitly assigned to
+    /// (INT-004). None when unassigned/ambiguous — the caller then needs an
+    /// explicit appSlug, exactly as before.
+    fn assigned_app_slug(&self, connector_id: &str) -> Option<String> {
+        self.with_snapshot(|s| {
+            let app_id = s.assignments.get(connector_id)?.clone();
+            s.applogic.iter().find_map(|e| {
+                let app = e.get("app")?;
+                if app.get("id").and_then(Value::as_str) == Some(app_id.as_str()) {
+                    app.get("slug").and_then(Value::as_str).map(str::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+        .flatten()
     }
 
     fn app_id_for_slug(&self, slug: &str) -> Option<String> {
