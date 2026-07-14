@@ -773,14 +773,17 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     return label;
   }
   function t12(tStr) {
-    if (!/^\\d{2}:\\d{2}$/.test(tStr)) return tStr || '?';
+    if (!/^\\d{2}:\\d{2}$/.test(tStr)) return '';
     var th = Number(tStr.slice(0, 2));
     var h = th % 12 === 0 ? 12 : th % 12;
     return h + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (th >= 12 ? 'PM' : 'AM');
   }
   var digitsIn = String(inputs.from || '').replace(/\\D+/g, '').slice(-9);
   var rows = (nodes.appts && nodes.appts.responses) || [];
-  var occ = {};
+  var occT = {};
+  var occU = {};
+  var mineBy = {};
+  var mineU = {};
   var mine = [];
   for (var i = 0; i < rows.length; i++) {
     var a = (rows[i] && rows[i].answers) || {};
@@ -788,26 +791,90 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     var d = String(a.date || '');
     if (!(st === 'requested' || st === 'confirmed')) continue;
     if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d) || d < todayIso || d > horizonIso) continue;
-    if (!occ[d]) occ[d] = [];
-    occ[d].push(String(a.time || ''));
+    var tRaw = String(a.time || '');
+    var tv = t12(tRaw);
+    if (tv) { if (!occT[d]) occT[d] = []; occT[d].push(tRaw); }
+    else { occU[d] = (occU[d] || 0) + 1; }
     var rowDigits = String(a.phone || '').replace(/\\D+/g, '').slice(-9);
     if (digitsIn.length >= 6 && rowDigits === digitsIn) {
-      mine.push(dayLabel(d) + ' at ' + t12(String(a.time || '')) + ': ' + String(a.service || 'appointment') + ' (' + st + ')');
+      var desc = String(a.service || 'appointment') + ' (' + st + (tv ? ', ' + tv : ', time not yet set') + ')';
+      if (!mineBy[d]) mineBy[d] = [];
+      mineBy[d].push(desc);
+      if (!tv) mineU[d] = (mineU[d] || 0) + 1;
+      mine.push(dayLabel(d) + ': ' + desc);
     }
   }
-  var dates = Object.keys(occ).sort();
+  var seenD = {};
+  var dates = [];
+  for (var od in occT) { if (!seenD[od]) { seenD[od] = 1; dates.push(od); } }
+  for (var ou in occU) { if (!seenD[ou]) { seenD[ou] = 1; dates.push(ou); } }
+  dates.sort();
   var lines = [];
   for (var j = 0; j < dates.length; j++) {
-    var ts = occ[dates[j]].sort();
-    var lab = [];
-    for (var k = 0; k < ts.length; k++) lab.push(t12(ts[k]));
-    lines.push('- ' + dayLabel(dates[j]) + ': booked at ' + lab.join(', '));
+    var dj = dates[j];
+    var parts = [];
+    if (occT[dj]) {
+      var ts = occT[dj].slice().sort();
+      var lab = [];
+      for (var k = 0; k < ts.length; k++) lab.push(t12(ts[k]));
+      parts.push('booked at ' + lab.join(', '));
+    }
+    if (occU[dj]) parts.push(occU[dj] + ' booking' + (occU[dj] > 1 ? 's' : '') + ' with no set time');
+    lines.push('- ' + dayLabel(dj) + ': ' + parts.join(' + '));
   }
-  out.digest = 'DATA as of ' + todayIso + ' (question: "' + String(inputs.question || '').slice(0, 200) + '")'
+  // DIRECT ANSWERS: parse dates out of the QUESTION and answer them
+  // deterministically - the 9B agent proved it cannot be trusted to do
+  // window/absence inference over the digest (live call 1defd805: window
+  // through October, August 1 listed, and it still said 'not in our current
+  // booking window'). The agent is told to write YYYY-MM-DD dates into the
+  // lookup question; prose 'August 1' / '1st of August' is caught as backup.
+  var q = String(inputs.question || '');
+  var want = [];
+  var seenW = {};
+  function addDate(dIso) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dIso) || seenW[dIso]) return;
+    seenW[dIso] = 1;
+    if (want.length < 3) want.push(dIso);
+  }
+  var isoHits = q.match(/\\d{4}-\\d{2}-\\d{2}/g) || [];
+  for (var qi = 0; qi < isoHits.length; qi++) addDate(isoHits[qi]);
+  function proseDate(dayNum, monName) {
+    var mi = -1;
+    for (var pm = 0; pm < 12; pm++) { if (MONFULL[pm].toLowerCase() === String(monName).toLowerCase()) { mi = pm; break; } }
+    if (mi < 0 || dayNum < 1 || dayNum > 31) return;
+    var cand = new Date(nowD.getFullYear(), mi, dayNum);
+    if (iso(cand) < todayIso) cand = new Date(nowD.getFullYear() + 1, mi, dayNum);
+    if (cand.getDate() !== dayNum) return;
+    addDate(iso(cand));
+  }
+  var reDM = /(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(January|February|March|April|May|June|July|August|September|October|November|December)/gi;
+  var reMD = /(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?/gi;
+  var mm;
+  while ((mm = reDM.exec(q))) proseDate(Number(mm[1]), mm[2]);
+  while ((mm = reMD.exec(q))) proseDate(Number(mm[2]), mm[1]);
+  var direct = [];
+  for (var w = 0; w < want.length; w++) {
+    var wd = want[w];
+    if (wd > horizonIso) { direct.push('DIRECT ANSWER for ' + dayLabel(wd) + ': beyond the calendar view (which ends ' + dayLabel(horizonIso) + ') - say the team will confirm availability for that date.'); continue; }
+    if (wd < todayIso) { direct.push('DIRECT ANSWER for ' + dayLabel(wd) + ': that date has already passed.'); continue; }
+    var bits = [];
+    if (mineBy[wd]) bits.push('this caller ALREADY has: ' + mineBy[wd].join('; ') + ' - mention it');
+    var takenLab = [];
+    if (occT[wd]) { var srt = occT[wd].slice().sort(); for (var ot = 0; ot < srt.length; ot++) takenLab.push(t12(srt[ot])); }
+    var othersU = (occU[wd] || 0) - (mineU[wd] || 0);
+    if (takenLab.length) bits.push('times already booked that day: ' + takenLab.join(', '));
+    if (othersU > 0) bits.push(othersU + ' other booking' + (othersU > 1 ? 's' : '') + ' with no set time that day');
+    if (!takenLab.length && !othersU && !mineBy[wd]) bits.push('NO bookings that day at all - it looks OPEN; offer to put a booking request in');
+    else bits.push('other times look open - offer to put a booking request in');
+    direct.push('DIRECT ANSWER for ' + dayLabel(wd) + ': ' + bits.join('. ') + '.');
+  }
+  out.digest = 'DATA as of ' + todayIso + ' (question: "' + q.slice(0, 200) + '")'
+    + (direct.length ? '\\n' + direct.join('\\n') : '')
     + '\\nCALLER OWN BOOKINGS:' + (mine.length ? '\\n- ' + mine.join('\\n- ') : ' none on record')
     + '\\nCALENDAR OCCUPANCY, window ' + todayIso + ' through ' + horizonIso + ' (times TAKEN, all customers - never name them):'
     + (lines.length ? '\\n' + lines.join('\\n') : '\\n- no bookings')
-    + '\\nAny date INSIDE this window that is not listed above has NO bookings: state plainly that it looks open and offer to put a booking request in. Only dates AFTER ' + horizonIso + ' are outside the view - for those say the calendar view does not reach that far and the team will confirm. New bookings are requests the team confirms.';
+    + '\\nAny date INSIDE this window that is not listed above has NO bookings: state plainly that it looks open and offer to put a booking request in. Only dates AFTER ' + horizonIso + ' are outside the view - for those say the calendar view does not reach that far and the team will confirm. New bookings are requests the team confirms.'
+    + (direct.length ? ' A DIRECT ANSWER line above is AUTHORITATIVE for its date - answer the caller from it.' : '');
   return out;
 })()`;
 const FLOW_PERSONALIZE_CALLER = `(function () {

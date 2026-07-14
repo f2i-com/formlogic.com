@@ -1041,6 +1041,64 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.digest.split('\n').length).toBeGreaterThan(3);
       });
 
+      it('business-lookup DIRECT ANSWER: dates in the question get a deterministic verdict (2026-07-14 live call 1defd805: the 9B model failed the window/absence inference)', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const near = new Date(Date.now() + 20 * 86400_000);
+        const iso = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const nearIso = iso(near);
+        const emptyDay = iso(new Date(Date.now() + 21 * 86400_000));
+        const beyond = iso(new Date(Date.now() + 120 * 86400_000));
+        const r = evalExpr(lookupExpr, {
+          inputs: {
+            question: `availability ${nearIso} and ${emptyDay} and ${beyond}`,
+            from: '+61400000000',
+            callId: 'c1',
+          },
+          nodes: {
+            appts: {
+              responses: [
+                // The caller's OWN time-less request on the asked day (the live
+                // situation: repeated test calls minted 'Saturday 1 August at ?').
+                { id: 'b1', answers: { status: 'requested', date: nearIso, service: 'Appointment', phone: '+61400000000' } },
+                { id: 'b2', answers: { status: 'confirmed', date: nearIso, time: '18:00', service: 'x', phone: '+61499999999' } },
+              ],
+            },
+          },
+        });
+        const lines: string[] = r.digest.split('\n');
+        const direct = lines.filter((l: string) => l.startsWith('DIRECT ANSWER'));
+        expect(direct).toHaveLength(3);
+        // Day with the caller's own time-less request + another booking.
+        expect(direct[0]).toContain('this caller ALREADY has');
+        expect(direct[0]).toContain('time not yet set');
+        expect(direct[0]).toContain('6 PM');
+        expect(direct[0]).toContain('other times look open');
+        // The caller's own time-less booking is never double-counted as
+        // somebody ELSE's untimed booking.
+        expect(direct[0]).not.toContain('other booking with no set time');
+        // Empty in-window day → plainly open.
+        expect(direct[1]).toContain('NO bookings that day at all');
+        expect(direct[1]).toContain('OPEN');
+        // Beyond the 90-day horizon → team confirms.
+        expect(direct[2]).toContain('beyond the calendar view');
+        // The confusing 'at ?' rendering is gone everywhere.
+        expect(r.digest).not.toContain('?:');
+        expect(r.digest).not.toContain('at ?');
+        expect(r.digest).toContain('with no set time');
+        expect(r.digest).toContain('AUTHORITATIVE');
+      });
+
+      it('business-lookup DIRECT ANSWER: prose dates like "August 1" resolve to the next occurrence', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const r = evalExpr(lookupExpr, {
+          inputs: { question: 'any tables on the 1st of August?', from: '', callId: 'c1' },
+          nodes: { appts: { responses: [] } },
+        });
+        expect(r.digest).toContain('DIRECT ANSWER for');
+        expect(r.digest).toContain('1 August');
+      });
+
       it('calendar occupancy digest: whole-calendar times, NEVER other customers names (2026-07-14 live business data)', () => {
         const futureIsoLocal = futureIso;
         const r = evalExpr(makeExpr, {
