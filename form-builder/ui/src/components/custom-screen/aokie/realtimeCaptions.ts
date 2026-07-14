@@ -36,6 +36,11 @@ export interface CaptionState {
   /// Turn ids finalized by the DURABLE plane — later partials are rejected.
   tombstoned: string[];
   phase: string | null;
+  /// The bot's CURRENT sentence (assistant.delivery) — what is being spoken
+  /// right now. Cleared when the phase settles back to listening/paused (the
+  /// durable transcript then owns the full turn).
+  botText: string;
+  botRevision: number;
 }
 
 export function emptyCaptionState(): CaptionState {
@@ -49,6 +54,8 @@ export function emptyCaptionState(): CaptionState {
     partialRevision: 0,
     tombstoned: [],
     phase: null,
+    botText: '',
+    botRevision: 0,
   };
 }
 
@@ -82,7 +89,22 @@ export function applyRealtimeFrame(state: CaptionState, frame: RealtimeFrame): C
   const next = { ...state, seq: frame.seq };
   if (frame.kind === 'session.phase') {
     const phase = frame.data?.phase;
-    if (typeof phase === 'string') next.phase = phase;
+    if (typeof phase === 'string') {
+      next.phase = phase;
+      if (phase === 'listening' || phase === 'paused') {
+        // The reply settled: the durable transcript owns the turn now.
+        next.botText = '';
+        next.botRevision = 0;
+      }
+    }
+    return next;
+  }
+  if (frame.kind === 'assistant.delivery') {
+    const revision = frame.revision ?? 0;
+    if (revision <= next.botRevision) return next;
+    const text = frame.data?.text;
+    next.botRevision = revision;
+    next.botText = typeof text === 'string' ? text : '';
     return next;
   }
   if (frame.kind === 'user.partial') {

@@ -60,6 +60,25 @@ describe('realtime caption reconciliation (guide §9.2)', () => {
     expect(s).toBe(before);
   });
 
+  it('assistant.delivery shows the bot sentence, replaced by revision, cleared when the reply settles', () => {
+    let s = applyRealtimeFrame(emptyCaptionState(), frame({}));
+    s = applyRealtimeFrame(s, frame({ seq: 2, kind: 'assistant.delivery', revision: 1, data: { text: 'Ahoy there!' } }));
+    expect(s.botText).toBe('Ahoy there!');
+    // The caller partial is untouched.
+    expect(s.partialText).toBe('hello');
+    s = applyRealtimeFrame(s, frame({ seq: 3, kind: 'assistant.delivery', revision: 2, data: { text: 'Second sentence.' } }));
+    expect(s.botText).toBe('Second sentence.');
+    // Older revision on a later seq: ignored.
+    s = applyRealtimeFrame(s, frame({ seq: 4, kind: 'assistant.delivery', revision: 1, data: { text: 'stale' } }));
+    expect(s.botText).toBe('Second sentence.');
+    // Reply settles -> the bot line clears (the durable transcript owns it).
+    s = applyRealtimeFrame(s, frame({ seq: 5, kind: 'session.phase', data: { phase: 'listening' } }));
+    expect(s.botText).toBe('');
+    // A NEW reply starts at revision 1 again after turn rollover.
+    s = applyRealtimeFrame(s, frame({ seq: 6, kind: 'assistant.delivery', revision: 1, turnId: 't2', data: { text: 'Next reply.' } }));
+    expect(s.botText).toBe('Next reply.');
+  });
+
   it('phase frames update the phase without touching the partial', () => {
     let s = applyRealtimeFrame(emptyCaptionState(), frame({}));
     s = applyRealtimeFrame(s, frame({ seq: 2, kind: 'session.phase', data: { phase: 'thinking' } }));

@@ -759,7 +759,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
               lane) — partials are replaceable hypotheses, visually distinct from
               the durable transcript below and superseded the moment a final
               caller turn lands. */}
-          {presence.kind === 'local' && active && captions.callId === active.callId && (captions.partialText !== '' || captions.phase !== null) && (
+          {presence.kind === 'local' && active && captions.callId === active.callId && (captions.partialText !== '' || captions.botText !== '' || captions.phase !== null) && (
             <div className={`${card} px-5 py-3`}>
               <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-gray-400 dark:text-[#7f899e]">
                 <span
@@ -779,6 +779,12 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
               {captions.partialText !== '' && (
                 <p className="mt-1 text-sm italic text-gray-600 dark:text-[#aab3c5]">
                   &ldquo;{captions.partialText}&hellip;&rdquo;
+                </p>
+              )}
+              {captions.botText !== '' && (
+                <p className="mt-1 text-sm text-emerald-700 dark:text-[#8ddfae]">
+                  <span className="mr-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-600/70 dark:text-[#8ddfae]/70">Aokie</span>
+                  {captions.botText}
                 </p>
               )}
             </div>
