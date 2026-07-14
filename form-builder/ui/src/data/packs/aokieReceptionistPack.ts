@@ -920,7 +920,7 @@ ${BUSINESS_INFO_BLOCK_JS}
   }
   var occBlock = '\\n\\nCALENDAR OCCUPANCY (next 7 days, ALL customers; these times are already TAKEN):\\n'
     + (occLines.length ? occLines.join('\\n') : '- no bookings in the next 7 days')
-    + '\\nDays not listed are fully open. Use this ONLY to say whether a time is taken or looks free - NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
+    + '\\nDays not listed IN THIS 7-DAY WINDOW have no bookings yet. This list covers ONLY the next 7 days: for ANY date beyond it, run a live lookup ([[LOOKUP: ...]]) instead of guessing or deferring to the team. NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
   if (!hit) return { found: false, name: '', persona: persona + calBlock + occBlock, greeting: greeting };
   var ca = (hit.answers || {});
   var name = String(ca.name || '').trim();
