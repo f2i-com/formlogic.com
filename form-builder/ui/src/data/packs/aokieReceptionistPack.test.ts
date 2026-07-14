@@ -219,6 +219,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'incoming-caller-lookup',
       'live-reply',
       'missed-call-follow-up',
+      'outbound-callback-result',
       'personalize-caller',
       'sms-auto-reply-draft',
       'sms-delivery-status',
@@ -249,7 +250,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(12);
+    expect(pack.flowBindings?.length).toBe(13);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -1482,6 +1483,150 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       const evalSummary = (data: Record<string, unknown>): any =>
         new Function('event', `return ${sExpr};`)({ data });
       expect(evalSummary({ durationSeconds: 30, outcome: 'terminated_abuse' })).toBe(true);
+    });
+  });
+
+  describe('Phase 2: missed-call callback queue', () => {
+    const taskExpr = nodeExpr('missed-call-follow-up', 'task');
+    const resultExpr = nodeExpr('outbound-callback-result', 'plan');
+    const runMissed = (opts: {
+      phone?: string;
+      customer?: Record<string, unknown> | null;
+      tasks?: Array<Record<string, unknown>>;
+      settings?: Record<string, unknown>;
+    } = {}) =>
+      evalExpr(taskExpr, {
+        inputs: { callerPhone: opts.phone ?? '0491570156', callId: 'call_m1' },
+        nodes: {
+          customers: { responses: opts.customer ? [{ id: 'c1', answers: opts.customer }] : [] },
+          tasks: { responses: (opts.tasks ?? []).map((answers, i) => ({ id: `t-${i}`, answers })) },
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', ...(opts.settings ?? {}) } }] },
+        },
+      });
+
+    it('a dialable missed caller gets a QUEUED callback task + a composed opening line', () => {
+      const r = runMissed({ customer: { name: 'Lance Baker', phone: '0491570156' }, settings: { default_country_code: '+61' } });
+      expect(r.wantsCallback).toBe(true);
+      expect(r.task.callback_state).toBe('queued');
+      expect(r.task.summary).toContain('calling back automatically');
+      expect(r.task.phone).toBe('0491570156');
+      expect(r.task.call_id).toBe('call_m1');
+      expect(r.task.customer_link).toBe('c1');
+      expect(r.dial.number).toBe('+61491570156');
+      expect(r.dial.openingLine).toContain('Hi Lance!');
+      expect(r.dial.openingLine).toContain('missed your call');
+      expect(r.dial.openingLine).toContain('Pirate Cuts');
+      // eslint-disable-next-line no-control-regex
+      expect(r.dial.openingLine).toMatch(/^[\x20-\x7E]+$/);
+      expect(r.dial.purpose).toContain('RETURNING a missed call');
+    });
+
+    it('withheld ids and blocked customers never get a callback (task still raised)', () => {
+      const withheld = runMissed({ phone: 'unknown' });
+      expect(withheld.wantsCallback).toBe(false);
+      expect(withheld.task.callback_state).toBe('');
+      expect(withheld.task.summary).toContain('call back');
+      const blocked = runMissed({ customer: { name: 'X', phone: '0491570156', status: 'blocked' } });
+      expect(blocked.wantsCallback).toBe(false);
+    });
+
+    it('one callback per number: an already-queued open task suppresses a second dial', () => {
+      const r = runMissed({ tasks: [{ status: 'open', callback_state: 'queued', phone: '0491570156' }] });
+      expect(r.wantsCallback).toBe(false);
+      const closed = runMissed({ tasks: [{ status: 'done', callback_state: 'reached', phone: '0491570156' }] });
+      expect(closed.wantsCallback).toBe(true);
+    });
+
+    const runResult = (outcome: string, opts: {
+      tasks?: Array<Record<string, unknown>>;
+      customer?: Record<string, unknown> | null;
+      settings?: Record<string, unknown>;
+    } = {}) =>
+      evalExpr(resultExpr, {
+        inputs: { callId: 'call_o1', to: '0491570156', outcome },
+        nodes: {
+          tasks: {
+            responses: (opts.tasks ?? [{ status: 'open', callback_state: 'queued', phone: '0491570156', summary: 'Missed call from Lance' }]).map(
+              (answers, i) => ({ id: `t-${i}`, answers })
+            ),
+          },
+          customers: { responses: opts.customer === null ? [] : [{ id: 'c1', answers: opts.customer ?? { name: 'Lance Baker', phone: '0491570156' } }] },
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', ...(opts.settings ?? {}) } }] },
+        },
+      });
+
+    it('callback REACHED → task done, no SMS', () => {
+      const r = runResult('completed');
+      expect(r.hasTaskUpdate).toBe(true);
+      expect(r.taskUpdate.status).toBe('done');
+      expect(r.taskUpdate.callback_state).toBe('reached');
+      expect(r.hasSms).toBe(false);
+    });
+
+    it('callback NOT answered + sms-capable → apology text (normalized to +CC), task stays open as sms_sent', () => {
+      const r = runResult('no_answer', { settings: { default_country_code: '61' } });
+      expect(r.hasSms).toBe(true);
+      expect(r.sms.to).toBe('+61491570156');
+      expect(r.sms.body).toContain('sorry we missed your call');
+      expect(r.sms.body).toContain('Pirate Cuts');
+      // eslint-disable-next-line no-control-regex
+      expect(r.sms.body).toMatch(/^[\x20-\x7E]+$/);
+      expect(r.smsMessage.status).toBe('queued');
+      expect(r.taskUpdate.callback_state).toBe('sms_sent');
+      expect(r.taskUpdate.status).toBeUndefined();
+    });
+
+    it('callback NOT answered + landline/blocked → needs_human at urgent priority, never a text', () => {
+      const landline = runResult('no_answer', { customer: { name: 'X', phone: '0491570156', sms_capable: 'no' } });
+      expect(landline.hasSms).toBe(false);
+      expect(landline.taskUpdate.callback_state).toBe('needs_human');
+      expect(landline.taskUpdate.priority).toBe('urgent');
+      const blocked = runResult('failed', { customer: { name: 'X', phone: '0491570156', status: 'blocked' } });
+      expect(blocked.hasSms).toBe(false);
+      expect(blocked.taskUpdate.callback_state).toBe('needs_human');
+    });
+
+    it('an outbound call with NO queued callback (manual test dial) is a clean no-op', () => {
+      const r = runResult('completed', { tasks: [] });
+      expect(r.hasTaskUpdate).toBe(false);
+      expect(r.hasSms).toBe(false);
+      expect(r.summaryLine).toContain('no pending callback');
+    });
+
+    it('bindings: missed-call dials via output action gated on wantsCallback; outbound results route by direction', () => {
+      const missed = (pack.flowBindings ?? []).find((b) => b.flow === 'missed-call-follow-up')!;
+      const dialAction = (missed.outputActions ?? []).find(
+        (a) => (a as { command?: string }).command === 'call.dial'
+      ) as { when?: string; payload?: Record<string, string> };
+      expect(dialAction).toBeDefined();
+      expect(dialAction.when).toBe('$result.wantsCallback');
+      expect(dialAction.payload?.openingLine).toBe('$result.dial.openingLine');
+      // A missed OUTBOUND call must never trigger its own callback loop.
+      const mExpr = String((missed.condition as { expr: string }).expr);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const evalM = (data: Record<string, unknown>): any => new Function('event', `return ${mExpr};`)({ data });
+      expect(evalM({ outcome: 'missed' })).toBe(true);
+      expect(evalM({ outcome: 'missed', direction: 'outbound' })).toBe(false);
+      const result = (pack.flowBindings ?? []).find((b) => b.flow === 'outbound-callback-result')!;
+      const rExpr = String((result.condition as { expr: string }).expr);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const evalR = (data: Record<string, unknown>): any => new Function('event', `return ${rExpr};`)({ data });
+      expect(evalR({ outcome: 'no_answer', direction: 'outbound' })).toBe(true);
+      expect(evalR({ outcome: 'completed', direction: 'inbound' })).toBe(false);
+    });
+
+    it('LOGIC_CALL_ENDED stores direction + passes no_answer through; the forms carry the new fields', () => {
+      const app = pack.apps![0];
+      const script = (app.customLogic!.scripts as Array<{ id: string; source: string }>).find((s) => s.id === 'aokie-call-ended')!;
+      expect(script.source).toContain("outcome === 'no_answer'");
+      expect(script.source).toContain("answers.direction = 'outbound'");
+      const calls = pack.forms.find((f) => f.packFormId === 'calls')!;
+      const status = calls.fields.find((f) => f.id === 'status')!;
+      expect((status.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toContain('no_answer');
+      expect(calls.fields.some((f) => f.id === 'direction')).toBe(true);
+      const tasks = pack.forms.find((f) => f.packFormId === 'follow-up-tasks')!;
+      const cb = tasks.fields.find((f) => f.id === 'callback_state')!;
+      expect((cb.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['queued', 'reached', 'sms_sent', 'needs_human']);
     });
   });
 

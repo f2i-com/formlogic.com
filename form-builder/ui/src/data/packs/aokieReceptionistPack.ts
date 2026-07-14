@@ -134,7 +134,7 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
   if (ev.name !== 'aokie.call.ended') return {};
   var d = ev.data || {};
   var outcome = String(d.outcome || d.status || '');
-  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse')
+  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse' || outcome === 'no_answer')
     ? outcome : 'completed';
   var callId = String(d.callId || ev.correlationId || '');
   // Lifecycle upsert (audit §8): a call whose incoming write failed or
@@ -145,6 +145,9 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
     ended_at: String(ev.occurredAt || ''),
     duration_seconds: Number(d.durationSeconds || 0)
   };
+  // Phase 2: outbound calls have no call.incoming, so this upsert CREATES
+  // their row - record the direction (blank = inbound, the legacy default).
+  if (String(d.direction || '') === 'outbound') answers.direction = 'outbound';
   // Caller-id backfill: with instant auto-answer the +CLIP number usually
   // arrives AFTER call.incoming was recorded (the row got caller_phone ''),
   // but call.ended carries it — write it now so the record and the
@@ -288,15 +291,155 @@ const FLOW_SMS_DRAFT_BUILD = `(function () {
   };
 })()`;
 
+// Missed-call callback queue (Phase 2, call-policy spec): every missed call
+// still raises the task; when the caller is DIALABLE the task is queued as an
+// automatic callback and the binding fires call.dial with a records-composed
+// opening line. The plugin's guardrails (outboundEnabled kill switch OFF by
+// default, quiet hours, daily cap) refuse the dial typed — the task then just
+// stays 'queued', visibly pending for a human. The callback call's own
+// call.ended (direction outbound) transitions the task via the
+// outbound-callback-result flow: reached / sms_sent / needs_human.
 const FLOW_MISSED_TASK = `(function () {
   var phone = String(inputs.callerPhone || inputs.from || '');
-  return {
-    task: {
-      summary: 'Missed call' + (phone ? ' from ' + phone : '') + ' - call back',
-      status: 'open',
-      priority: 'high'
+  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);
+  var custNode = nodes.customers || {};
+  var hit = custNode.first || ((custNode.responses || [])[0] || null);
+  var ca = (hit && hit.answers) || {};
+  var blocked = String(ca.status || '').toLowerCase() === 'blocked';
+  var name = String(ca.name || '').trim();
+  var first = name.split(/\\s+/)[0] || '';
+  // One callback per number at a time: an open task already queued/dialed
+  // for this phone means a second missed call must not mint a second dial.
+  var tRows = (nodes.tasks && nodes.tasks.responses) || [];
+  var pending = false;
+  for (var t = 0; t < tRows.length; t++) {
+    var ta = (tRows[t] && tRows[t].answers) || {};
+    var st = String(ta.status || '');
+    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {
+      pending = true;
+      break;
     }
+  }
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var i = 0; i < sRows.length; i++) {
+    var sa = (sRows[i] && sRows[i].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var business = String(cfg.business_name || '').trim();
+  // Outbound dial target rides defaultCountryCode like every other outbound
+  // number (0412... -> +61412...); records keep the observed format.
+  var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');
+  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;
+  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';
+  var digits = phone.replace(/[\\s()-]/g, '');
+  var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;
+  // Callback only for numbers that CALLED US (by construction here), are
+  // real (never withheld ids) and are not blocked customers.
+  var wantsCallback = realPhone && !blocked && !pending;
+  var opening = 'Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the receptionist')
+    + ' - sorry, we just missed your call. How can I help you?';
+  opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);
+  var purpose = 'You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '
+    + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.';
+  var task = {
+    summary: 'Missed call' + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')
+      + (wantsCallback ? ' - calling back automatically' : ' - call back'),
+    status: 'open',
+    priority: 'high',
+    phone: realPhone ? phone : '',
+    call_id: String(inputs.callId || ''),
+    callback_state: wantsCallback ? 'queued' : ''
   };
+  if (hit) task.customer_link = hit.id;
+  return {
+    wantsCallback: wantsCallback,
+    dial: { number: dialNumber, openingLine: opening, purpose: purpose },
+    task: task
+  };
+})()`;
+
+// Callback-result handler (Phase 2): the callback call's own aokie.call.ended
+// (direction outbound) transitions the queued task. Reached -> done; not
+// reached -> sms_capable customers get a records-composed apology text
+// (replies ride the existing human-approval draft path - deliberately NOT the
+// booking confirmation loop), landlines/blocked go straight to a human. A
+// manual test dial with no queued task is a clean no-op.
+const FLOW_CALLBACK_RESULT = `(function () {
+  var phone = String(inputs.to || '');
+  var outcome = String(inputs.outcome || '');
+  var out = { hasTaskUpdate: false, hasSms: false, summaryLine: '' };
+  var tRows = (nodes.tasks && nodes.tasks.responses) || [];
+  var task = null;
+  for (var t = 0; t < tRows.length; t++) {
+    var ta = (tRows[t] && tRows[t].answers) || {};
+    var st = String(ta.status || '');
+    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {
+      task = tRows[t];
+      break;
+    }
+  }
+  if (!task) {
+    out.summaryLine = 'Outbound call ended (' + (outcome || 'unknown') + ') - no pending callback for this number.';
+    return out;
+  }
+  var taskA = task.answers || {};
+  var oldSummary = String(taskA.summary || '').slice(0, 380);
+  if (outcome === 'completed') {
+    out.hasTaskUpdate = true;
+    out.taskId = task.id;
+    out.taskUpdate = { status: 'done', callback_state: 'reached', summary: (oldSummary + ' [called back - reached them]').slice(0, 500) };
+    out.summaryLine = 'Callback reached the caller - task closed.';
+    return out;
+  }
+  // no_answer / failed / anything else un-reached: apologise by text when the
+  // customer can receive SMS; otherwise a human rings them.
+  var custNode = nodes.customers || {};
+  var hit = custNode.first || ((custNode.responses || [])[0] || null);
+  var ca = (hit && hit.answers) || {};
+  var smsCapable = String(ca.sms_capable || 'yes') !== 'no' && String(ca.status || '').toLowerCase() !== 'blocked';
+  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var i = 0; i < sRows.length; i++) {
+    var sa = (sRows[i] && sRows[i].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var business = String(cfg.business_name || '').trim();
+  if (smsCapable && realPhone) {
+    var first = String(ca.name || '').trim().split(/\\s+/)[0] || '';
+    var body = 'Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the team')
+      + ' - sorry we missed your call, and we could not reach you back just now. Reply here or call us again and we will help you out.';
+    body = body.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
+    var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');
+    if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;
+    if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';
+    var digits = phone.replace(/[\\s()-]/g, '');
+    out.hasSms = true;
+    out.sms = { to: (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone, body: body };
+    out.smsMessage = {
+      message_id: 'smscb_' + String(inputs.callId || task.id),
+      phone: phone,
+      direction: 'outbound',
+      body: body,
+      timestamp: new Date().toISOString(),
+      status: 'queued',
+      is_ai_reply: ['yes'],
+      approval_status: 'not_required'
+    };
+    out.hasTaskUpdate = true;
+    out.taskId = task.id;
+    out.taskUpdate = { callback_state: 'sms_sent', priority: 'high', summary: (oldSummary + ' [callback not answered - apology text sent]').slice(0, 500) };
+    out.summaryLine = 'Callback not answered - apology SMS sent, task stays open.';
+    return out;
+  }
+  out.hasTaskUpdate = true;
+  out.taskId = task.id;
+  out.taskUpdate = { callback_state: 'needs_human', priority: 'urgent', summary: (oldSummary + ' [callback not answered - cannot text this customer, please ring them]').slice(0, 500) };
+  out.summaryLine = 'Callback not answered and the customer cannot receive SMS - flagged for a human.';
+  return out;
 })()`;
 
 // After-call actions context: this call's transcript (ordered by turn), the caller
@@ -1821,6 +1964,23 @@ export const aokieReceptionistPack: PackData = {
               // plugin ended the call by policy — its own status so the audit
               // trail never reads as an ordinary completion.
               { id: 'terminated_abuse', label: 'Ended (abusive caller)', value: 'terminated_abuse' },
+              // Phase 2 outbound: we dialed, the remote alerted, nobody
+              // picked up (never used for inbound calls — those are missed).
+              { id: 'no_answer', label: 'No answer (outbound)', value: 'no_answer' },
+            ],
+          },
+        },
+        // Phase 2: which way the call went. Blank = inbound (every record
+        // from before this field existed is an inbound call).
+        {
+          id: 'direction',
+          type: 'dropdown',
+          label: 'Direction',
+          required: false,
+          properties: {
+            options: [
+              { id: 'inbound', label: 'Inbound', value: 'inbound' },
+              { id: 'outbound', label: 'Outbound (receptionist called)', value: 'outbound' },
             ],
           },
         },
@@ -2271,6 +2431,26 @@ export const aokieReceptionistPack: PackData = {
           },
         },
         { id: 'sms_exchanges', type: 'number', label: 'SMS messages sent', required: false, properties: { min: 0, step: 1 } },
+        // Phase 2 missed-call callback queue (blank = not a callback task).
+        // 'queued' is the switch the outbound-callback-result flow acts on:
+        // the missed-call flow creates the task queued + fires call.dial; the
+        // callback's own call.ended then transitions it (reached / sms_sent /
+        // needs_human). A refused dial (outbound off, quiet hours, cap) just
+        // leaves it queued — visibly pending for a human.
+        {
+          id: 'callback_state',
+          type: 'dropdown',
+          label: 'Callback',
+          required: false,
+          properties: {
+            options: [
+              { id: 'queued', label: 'Calling back automatically', value: 'queued' },
+              { id: 'reached', label: 'Reached by callback', value: 'reached' },
+              { id: 'sms_sent', label: "Couldn't reach — apology text sent", value: 'sms_sent' },
+              { id: 'needs_human', label: "Couldn't reach — please ring them", value: 'needs_human' },
+            ],
+          },
+        },
       ],
       customScreen: {
         enabled: true,
@@ -3340,17 +3520,83 @@ export const aokieReceptionistPack: PackData = {
       name: 'Missed Call Follow-up',
       slug: 'missed-call-follow-up',
       description:
-        'Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task. Pure — no models, no hardware.',
-      nodeCapabilities: ['formlogic.responses.write'],
+        "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task — and, Phase 2, CALL THEM BACK. When the caller is dialable (real number, not a blocked customer, no callback already pending) the task is created with callback_state 'queued' and the binding fires call.dial with a records-composed opening line ('sorry, we just missed your call'). The plugin's guardrails (outboundEnabled kill switch — default OFF, quiet hours, daily cap) refuse the dial typed, in which case the task simply stays queued for a human. The callback call's own call.ended (direction outbound) then transitions the task via the outbound-callback-result flow.",
+      nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
+          // Existing open callbacks for this number: a second missed call
+          // must not mint a second dial while one is already pending.
+          {
+            id: 'tasks',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'task', type: 'logic_block', data: { expr: FLOW_MISSED_TASK } },
-          { id: 'out', type: 'output', data: { value: { task: '$nodes.task.task' } } },
+          { id: 'out', type: 'output', data: { value: { task: '$nodes.task.task', wantsCallback: '$nodes.task.wantsCallback', dial: '$nodes.task.dial' } } },
         ],
         edges: [
-          { source: 'in', target: 'task' },
+          { source: 'in', target: 'customers' },
+          { source: 'customers', target: 'tasks' },
+          { source: 'tasks', target: 'settings' },
+          { source: 'settings', target: 'task' },
           { source: 'task', target: 'out' },
+        ],
+      },
+    },
+    {
+      name: 'Outbound Callback Result',
+      slug: 'outbound-callback-result',
+      description:
+        "Async on aokie.call.ended for OUTBOUND calls (direction 'outbound'): transition the pending missed-call callback task by what actually happened. Reached (outcome completed) → task done. Not reached (no_answer/failed) → sms_capable customers get a records-composed apology text (replies ride the existing human-approval draft path — deliberately NOT the booking confirmation loop) and the task stays open as 'sms_sent'; landline/blocked customers go straight to 'needs_human' at urgent priority. An outbound call with no queued callback task (e.g. a manual test dial) is a clean no-op.",
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'no_answer' }] },
+          },
+          {
+            id: 'tasks',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.to' }] },
+          },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.to' }] },
+          },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_CALLBACK_RESULT } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                summaryLine: '$nodes.plan.summaryLine',
+                hasTaskUpdate: '$nodes.plan.hasTaskUpdate',
+                taskId: '$nodes.plan.taskId',
+                taskUpdate: '$nodes.plan.taskUpdate',
+                hasSms: '$nodes.plan.hasSms',
+                sms: '$nodes.plan.sms',
+                smsMessage: '$nodes.plan.smsMessage',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'tasks' },
+          { source: 'tasks', target: 'customers' },
+          { source: 'customers', target: 'settings' },
+          { source: 'settings', target: 'plan' },
+          { source: 'plan', target: 'out' },
         ],
       },
     },
@@ -3576,16 +3822,46 @@ export const aokieReceptionistPack: PackData = {
       connectorId: 'aokie',
       mode: 'async',
       timeoutMs: 15000,
+      // Belt-and-braces direction guard: outbound attempts end no_answer/
+      // failed (never 'missed'), but a missed OUTBOUND call must never
+      // trigger its own callback loop.
       condition: {
         type: 'expression',
-        expr: "event && event.data ? (String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') : false",
+        expr: "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') && String(event.data.direction || '') !== 'outbound') : false",
       },
       inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from' },
+      // Task row FIRST (always — the audit trail), then the dial. A refused
+      // dial (kill switch off, quiet hours, daily cap) lands in
+      // outputActionErrors and the task stays visibly 'queued' for a human.
       outputActions: [
         { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', answers: '$result.task' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'call.dial', when: '$result.wantsCallback', payload: { number: '$result.dial.number', openingLine: '$result.dial.openingLine', purpose: '$result.dial.purpose' } },
+        { type: 'formlogic.toast', message: 'Missed call: {{result.task.summary}}' },
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 4,
+    },
+    {
+      flow: 'outbound-callback-result',
+      event: 'aokie.call.ended',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 30000,
+      condition: {
+        type: 'expression',
+        expr: "event && event.data ? String(event.data.direction || '') === 'outbound' : false",
+      },
+      inputMap: { callId: '$event.data.callId', to: '$event.data.from', outcome: '$event.data.outcome' },
+      // Task transition BEFORE the apology text (same records-before-send
+      // rule as the SMS loop), then the Messages row for the thread history.
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSms', payload: { to: '$result.sms.to', body: '$result.sms.body' } },
+        { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasSms', answers: '$result.smsMessage' },
+        { type: 'formlogic.toast', message: 'Callback: {{result.summaryLine}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 12,
     },
     {
       flow: 'hardware-error-alert',

@@ -376,6 +376,31 @@
                   "id": "terminated_abuse",
                   "label": "Ended (abusive caller)",
                   "value": "terminated_abuse"
+                },
+                {
+                  "id": "no_answer",
+                  "label": "No answer (outbound)",
+                  "value": "no_answer"
+                }
+              ]
+            }
+          },
+          {
+            "id": "direction",
+            "type": "dropdown",
+            "label": "Direction",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "inbound",
+                  "label": "Inbound",
+                  "value": "inbound"
+                },
+                {
+                  "id": "outbound",
+                  "label": "Outbound (receptionist called)",
+                  "value": "outbound"
                 }
               ]
             }
@@ -2061,6 +2086,36 @@
               "min": 0,
               "step": 1
             }
+          },
+          {
+            "id": "callback_state",
+            "type": "dropdown",
+            "label": "Callback",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "queued",
+                  "label": "Calling back automatically",
+                  "value": "queued"
+                },
+                {
+                  "id": "reached",
+                  "label": "Reached by callback",
+                  "value": "reached"
+                },
+                {
+                  "id": "sms_sent",
+                  "label": "Couldn't reach — apology text sent",
+                  "value": "sms_sent"
+                },
+                {
+                  "id": "needs_human",
+                  "label": "Couldn't reach — please ring them",
+                  "value": "needs_human"
+                }
+              ]
+            }
           }
         ],
         "customScreen": {
@@ -2980,7 +3035,7 @@
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Finalise the Calls row (status / ended_at / duration).",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  var answers = {\n    call_id: callId,\n    status: status,\n    ended_at: String(ev.occurredAt || ''),\n    duration_seconds: Number(d.durationSeconds || 0)\n  };\n  // Caller-id backfill: with instant auto-answer the +CLIP number usually\n  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),\n  // but call.ended carries it — write it now so the record and the\n  // customer_link match stop reading as an unknown caller. Same phone-format\n  // guard as the incoming script (a non-number must not fail the row).\n  var phone = String(d.callerPhone || d.from || '');\n  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: answers }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse' || outcome === 'no_answer')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  var answers = {\n    call_id: callId,\n    status: status,\n    ended_at: String(ev.occurredAt || ''),\n    duration_seconds: Number(d.durationSeconds || 0)\n  };\n  // Phase 2: outbound calls have no call.incoming, so this upsert CREATES\n  // their row - record the direction (blank = inbound, the legacy default).\n  if (String(d.direction || '') === 'outbound') answers.direction = 'outbound';\n  // Caller-id backfill: with instant auto-answer the +CLIP number usually\n  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),\n  // but call.ended carries it — write it now so the record and the\n  // customer_link match stop reading as an unknown caller. Same phone-format\n  // guard as the incoming script (a non-number must not fail the row).\n  var phone = String(d.callerPhone || d.from || '');\n  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: answers }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-sms-received",
@@ -4698,9 +4753,9 @@
       {
         "name": "Missed Call Follow-up",
         "slug": "missed-call-follow-up",
-        "description": "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task. Pure — no models, no hardware.",
+        "description": "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task — and, Phase 2, CALL THEM BACK. When the caller is dialable (real number, not a blocked customer, no callback already pending) the task is created with callback_state 'queued' and the binding fires call.dial with a records-composed opening line ('sorry, we just missed your call'). The plugin's guardrails (outboundEnabled kill switch — default OFF, quiet hours, daily cap) refuse the dial typed, in which case the task simply stays queued for a human. The callback call's own call.ended (direction outbound) then transitions the task via the outbound-callback-result flow.",
         "nodeCapabilities": [
-          "formlogic.responses.write"
+          "formlogic.responses.read"
         ],
         "flowJson": {
           "nodes": [
@@ -4725,10 +4780,51 @@
               }
             },
             {
+              "id": "customers",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:customers",
+                "return": "all",
+                "limit": 5,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.callerPhone"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "tasks",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:follow-up-tasks",
+                "return": "all",
+                "limit": 10,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.callerPhone"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "settings",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:receptionist-settings",
+                "return": "all",
+                "limit": 5
+              }
+            },
+            {
               "id": "task",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  return {\n    task: {\n      summary: 'Missed call' + (phone ? ' from ' + phone : '') + ' - call back',\n      status: 'open',\n      priority: 'high'\n    }\n  };\n})()"
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var blocked = String(ca.status || '').toLowerCase() === 'blocked';\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || '';\n  // One callback per number at a time: an open task already queued/dialed\n  // for this phone means a second missed call must not mint a second dial.\n  var tRows = (nodes.tasks && nodes.tasks.responses) || [];\n  var pending = false;\n  for (var t = 0; t < tRows.length; t++) {\n    var ta = (tRows[t] && tRows[t].answers) || {};\n    var st = String(ta.status || '');\n    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {\n      pending = true;\n      break;\n    }\n  }\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  // Outbound dial target rides defaultCountryCode like every other outbound\n  // number (0412... -> +61412...); records keep the observed format.\n  var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n  var digits = phone.replace(/[\\s()-]/g, '');\n  var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;\n  // Callback only for numbers that CALLED US (by construction here), are\n  // real (never withheld ids) and are not blocked customers.\n  var wantsCallback = realPhone && !blocked && !pending;\n  var opening = 'Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n    + ' - sorry, we just missed your call. How can I help you?';\n  opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);\n  var purpose = 'You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '\n    + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.';\n  var task = {\n    summary: 'Missed call' + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')\n      + (wantsCallback ? ' - calling back automatically' : ' - call back'),\n    status: 'open',\n    priority: 'high',\n    phone: realPhone ? phone : '',\n    call_id: String(inputs.callId || ''),\n    callback_state: wantsCallback ? 'queued' : ''\n  };\n  if (hit) task.customer_link = hit.id;\n  return {\n    wantsCallback: wantsCallback,\n    dial: { number: dialNumber, openingLine: opening, purpose: purpose },\n    task: task\n  };\n})()"
               }
             },
             {
@@ -4736,7 +4832,9 @@
               "type": "output",
               "data": {
                 "value": {
-                  "task": "$nodes.task.task"
+                  "task": "$nodes.task.task",
+                  "wantsCallback": "$nodes.task.wantsCallback",
+                  "dial": "$nodes.task.dial"
                 }
               }
             }
@@ -4744,10 +4842,139 @@
           "edges": [
             {
               "source": "in",
+              "target": "customers"
+            },
+            {
+              "source": "customers",
+              "target": "tasks"
+            },
+            {
+              "source": "tasks",
+              "target": "settings"
+            },
+            {
+              "source": "settings",
               "target": "task"
             },
             {
               "source": "task",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Outbound Callback Result",
+        "slug": "outbound-callback-result",
+        "description": "Async on aokie.call.ended for OUTBOUND calls (direction 'outbound'): transition the pending missed-call callback task by what actually happened. Reached (outcome completed) → task done. Not reached (no_answer/failed) → sms_capable customers get a records-composed apology text (replies ride the existing human-approval draft path — deliberately NOT the booking confirmation loop) and the task stays open as 'sms_sent'; landline/blocked customers go straight to 'needs_human' at urgent priority. An outbound call with no queued callback task (e.g. a manual test dial) is a clean no-op.",
+        "nodeCapabilities": [
+          "formlogic.responses.read"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "to",
+                    "example": "+61400000000"
+                  },
+                  {
+                    "name": "outcome",
+                    "example": "no_answer"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "tasks",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:follow-up-tasks",
+                "return": "all",
+                "limit": 10,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.to"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "customers",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:customers",
+                "return": "all",
+                "limit": 5,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.to"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "settings",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:receptionist-settings",
+                "return": "all",
+                "limit": 5
+              }
+            },
+            {
+              "id": "plan",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var phone = String(inputs.to || '');\n  var outcome = String(inputs.outcome || '');\n  var out = { hasTaskUpdate: false, hasSms: false, summaryLine: '' };\n  var tRows = (nodes.tasks && nodes.tasks.responses) || [];\n  var task = null;\n  for (var t = 0; t < tRows.length; t++) {\n    var ta = (tRows[t] && tRows[t].answers) || {};\n    var st = String(ta.status || '');\n    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {\n      task = tRows[t];\n      break;\n    }\n  }\n  if (!task) {\n    out.summaryLine = 'Outbound call ended (' + (outcome || 'unknown') + ') - no pending callback for this number.';\n    return out;\n  }\n  var taskA = task.answers || {};\n  var oldSummary = String(taskA.summary || '').slice(0, 380);\n  if (outcome === 'completed') {\n    out.hasTaskUpdate = true;\n    out.taskId = task.id;\n    out.taskUpdate = { status: 'done', callback_state: 'reached', summary: (oldSummary + ' [called back - reached them]').slice(0, 500) };\n    out.summaryLine = 'Callback reached the caller - task closed.';\n    return out;\n  }\n  // no_answer / failed / anything else un-reached: apologise by text when the\n  // customer can receive SMS; otherwise a human rings them.\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var smsCapable = String(ca.sms_capable || 'yes') !== 'no' && String(ca.status || '').toLowerCase() !== 'blocked';\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  if (smsCapable && realPhone) {\n    var first = String(ca.name || '').trim().split(/\\s+/)[0] || '';\n    var body = 'Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the team')\n      + ' - sorry we missed your call, and we could not reach you back just now. Reply here or call us again and we will help you out.';\n    body = body.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);\n    var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n    if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n    if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n    var digits = phone.replace(/[\\s()-]/g, '');\n    out.hasSms = true;\n    out.sms = { to: (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone, body: body };\n    out.smsMessage = {\n      message_id: 'smscb_' + String(inputs.callId || task.id),\n      phone: phone,\n      direction: 'outbound',\n      body: body,\n      timestamp: new Date().toISOString(),\n      status: 'queued',\n      is_ai_reply: ['yes'],\n      approval_status: 'not_required'\n    };\n    out.hasTaskUpdate = true;\n    out.taskId = task.id;\n    out.taskUpdate = { callback_state: 'sms_sent', priority: 'high', summary: (oldSummary + ' [callback not answered - apology text sent]').slice(0, 500) };\n    out.summaryLine = 'Callback not answered - apology SMS sent, task stays open.';\n    return out;\n  }\n  out.hasTaskUpdate = true;\n  out.taskId = task.id;\n  out.taskUpdate = { callback_state: 'needs_human', priority: 'urgent', summary: (oldSummary + ' [callback not answered - cannot text this customer, please ring them]').slice(0, 500) };\n  out.summaryLine = 'Callback not answered and the customer cannot receive SMS - flagged for a human.';\n  return out;\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "summaryLine": "$nodes.plan.summaryLine",
+                  "hasTaskUpdate": "$nodes.plan.hasTaskUpdate",
+                  "taskId": "$nodes.plan.taskId",
+                  "taskUpdate": "$nodes.plan.taskUpdate",
+                  "hasSms": "$nodes.plan.hasSms",
+                  "sms": "$nodes.plan.sms",
+                  "smsMessage": "$nodes.plan.smsMessage"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "tasks"
+            },
+            {
+              "source": "tasks",
+              "target": "customers"
+            },
+            {
+              "source": "customers",
+              "target": "settings"
+            },
+            {
+              "source": "settings",
+              "target": "plan"
+            },
+            {
+              "source": "plan",
               "target": "out"
             }
           ]
@@ -5144,7 +5371,7 @@
         "timeoutMs": 15000,
         "condition": {
           "type": "expression",
-          "expr": "event && event.data ? (String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') : false"
+          "expr": "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') && String(event.data.direction || '') !== 'outbound') : false"
         },
         "inputMap": {
           "callId": "$event.data.callId",
@@ -5156,12 +5383,76 @@
             "type": "formlogic.submitResponse",
             "form": "@pack:follow-up-tasks",
             "answers": "$result.task"
+          },
+          {
+            "type": "connector.request",
+            "connectorId": "aokie",
+            "command": "call.dial",
+            "when": "$result.wantsCallback",
+            "payload": {
+              "number": "$result.dial.number",
+              "openingLine": "$result.dial.openingLine",
+              "purpose": "$result.dial.purpose"
+            }
+          },
+          {
+            "type": "formlogic.toast",
+            "message": "Missed call: {{result.task.summary}}"
           }
         ],
         "fallbackPolicy": {
           "onError": "log_and_continue"
         },
         "sortOrder": 4
+      },
+      {
+        "flow": "outbound-callback-result",
+        "event": "aokie.call.ended",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 30000,
+        "condition": {
+          "type": "expression",
+          "expr": "event && event.data ? String(event.data.direction || '') === 'outbound' : false"
+        },
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "to": "$event.data.from",
+          "outcome": "$event.data.outcome"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.updateResponse",
+            "form": "@pack:follow-up-tasks",
+            "when": "$result.hasTaskUpdate",
+            "responseId": "$result.taskId",
+            "answers": "$result.taskUpdate"
+          },
+          {
+            "type": "connector.request",
+            "connectorId": "aokie",
+            "command": "sms.send",
+            "when": "$result.hasSms",
+            "payload": {
+              "to": "$result.sms.to",
+              "body": "$result.sms.body"
+            }
+          },
+          {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasSms",
+            "answers": "$result.smsMessage"
+          },
+          {
+            "type": "formlogic.toast",
+            "message": "Callback: {{result.summaryLine}}"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 12
       },
       {
         "flow": "hardware-error-alert",
