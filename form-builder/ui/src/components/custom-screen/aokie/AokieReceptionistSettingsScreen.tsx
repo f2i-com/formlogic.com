@@ -179,6 +179,19 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     try {
       const res = await runCommand('settings.get');
       const settings = (res.settings && typeof res.settings === 'object' ? res.settings : {}) as Record<string, unknown>;
+      // Seed the call-screening card once from the live plugin settings
+      // (these are PLUGIN settings, not part of the persona record).
+      setScreening((prev) =>
+        prev.loaded
+          ? prev
+          : {
+              loaded: true,
+              blockedNumbers: typeof settings.blockedNumbers === 'string' ? settings.blockedNumbers : '',
+              acceptPattern: typeof settings.acceptPattern === 'string' ? settings.acceptPattern : '',
+              rejectPrivate: settings.rejectPrivate === true || settings.rejectPrivate === 'true',
+              screenMessage: typeof settings.screenMessage === 'string' ? settings.screenMessage : '',
+            }
+      );
       setRunning({
         greeting: typeof settings.greeting === 'string' ? settings.greeting : undefined,
         persona: typeof settings.persona === 'string' ? settings.persona : undefined,
@@ -214,6 +227,33 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       return false;
     }
   }, [formId, draft, recordId, updateResponse, createResponse, records]);
+
+  // ── Call screening (plugin settings — block list / filters / private) ──
+  const [screening, setScreening] = useState({
+    loaded: false,
+    blockedNumbers: '',
+    acceptPattern: '',
+    rejectPrivate: false,
+    screenMessage: '',
+  });
+  const [screeningSaving, setScreeningSaving] = useState(false);
+  const handleSaveScreening = useCallback(async () => {
+    setScreeningSaving(true);
+    setError(null);
+    try {
+      await runCommand('settings.set', {
+        blockedNumbers: screening.blockedNumbers.trim(),
+        acceptPattern: screening.acceptPattern.trim(),
+        rejectPrivate: screening.rejectPrivate,
+        screenMessage: screening.screenMessage.trim(),
+      });
+      toast.success('Call screening saved', 'Applies when the receptionist next reconnects (restart the Aokie plugin or the phone link).');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScreeningSaving(false);
+    }
+  }, [runCommand, screening]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -411,6 +451,80 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           </div>
         </div>
       </div>
+
+      {/* ── Call screening (plugin-level: block list, filters, private numbers) ── */}
+      {can('settings.set') && (
+        <div className={`${card} p-4 sm:p-5`}>
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Call screening</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+            Who gets through to the receptionist. Screened callers hear the message below (or silence) and the call
+            ends — no greeting, no AI. Changes apply when the receptionist next reconnects.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <div>
+              <label className={labelCls} htmlFor="rs-blocked">Blocked numbers</label>
+              <textarea
+                id="rs-blocked"
+                value={screening.blockedNumbers}
+                onChange={(e) => setScreening((sc) => ({ ...sc, blockedNumbers: e.target.value }))}
+                placeholder={'One per line (or comma-separated)\n+61 400 111 222\n0491570156'}
+                rows={3}
+                className={inputCls + ' font-mono text-xs'}
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Any format — numbers match on their digits, so +61 and 0-prefixed forms are the same number.
+              </p>
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="rs-accept">Accept filter (regular expression)</label>
+              <input
+                id="rs-accept"
+                type="text"
+                value={screening.acceptPattern}
+                onChange={(e) => setScreening((sc) => ({ ...sc, acceptPattern: e.target.value }))}
+                placeholder={'e.g. ^(\\+?61|0)4  — Australian mobiles only. Blank = accept all.'}
+                className={inputCls + ' font-mono text-xs'}
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Caller IDs that don't match are screened out. An invalid pattern is ignored (never blocks everyone).
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={screening.rejectPrivate}
+                onChange={(e) => setScreening((sc) => ({ ...sc, rejectPrivate: e.target.checked }))}
+                className="h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
+              />
+              Screen private / withheld numbers
+            </label>
+            <div>
+              <label className={labelCls} htmlFor="rs-screenmsg">Message for screened callers</label>
+              <input
+                id="rs-screenmsg"
+                type="text"
+                value={screening.screenMessage}
+                onChange={(e) => setScreening((sc) => ({ ...sc, screenMessage: e.target.value }))}
+                placeholder="e.g. Please call back with caller ID enabled. (blank = hang up silently)"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => void handleSaveScreening()}
+                disabled={screeningSaving || !screening.loaded}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-gray-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+              >
+                {screeningSaving ? 'Saving…' : 'Save screening'}
+              </button>
+              {!screening.loaded && (
+                <span className="ml-2 text-[11px] text-gray-400 dark:text-slate-500">Loading current values…</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Advanced (collapsed by default) ── */}
       <div className={`${card} p-4 sm:p-5`}>
