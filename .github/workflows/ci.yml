@@ -35,7 +35,7 @@ jobs:
       DB_PASSWORD: root
       DB_TEST_DATABASE: formlogic_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -93,7 +93,7 @@ jobs:
       run:
         working-directory: formlogic/ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -160,7 +160,7 @@ jobs:
       run:
         working-directory: formlogic/desktop/src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
