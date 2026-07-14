@@ -193,6 +193,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               screenMessage: typeof settings.screenMessage === 'string' ? settings.screenMessage : '',
               blockedMessage: typeof settings.blockedMessage === 'string' ? settings.blockedMessage : '',
               autoBlockAbuse: !(settings.autoBlockAbuse === false || settings.autoBlockAbuse === 'false'),
+              managerNumbers: typeof settings.managerNumbers === 'string' ? settings.managerNumbers : '',
             }
       );
       setRunning({
@@ -247,6 +248,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     // Phase 1: default ON — the plugin auto-blocks a caller the AI flags as
     // abusive; unblocking is one click on the chips above.
     autoBlockAbuse: true,
+    // Phase 3 manager line (read-only): callers from these numbers get the
+    // MANAGER persona + name-inclusive lookups.
+    managerNumbers: '',
     whitelistOnly: false,
     defaultCountryCode: '',
   });
@@ -292,6 +296,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         screenMessage: screening.screenMessage.trim(),
         blockedMessage: screening.blockedMessage.trim(),
         autoBlockAbuse: screening.autoBlockAbuse,
+        managerNumbers: screening.managerNumbers.trim(),
       });
       // Whitelist mode + country code live on the settings RECORD (the flows
       // read them per call). Patch just these two keys — the API merges, so
@@ -322,6 +327,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           screenMessage: typeof s.screenMessage === 'string' ? s.screenMessage : prev.screenMessage,
           blockedMessage: typeof s.blockedMessage === 'string' ? s.blockedMessage : prev.blockedMessage,
           autoBlockAbuse: !(s.autoBlockAbuse === false || s.autoBlockAbuse === 'false'),
+          managerNumbers: typeof s.managerNumbers === 'string' ? s.managerNumbers : prev.managerNumbers,
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -658,6 +664,22 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
                 </span>
               </span>
             </label>
+            <div>
+              <label className={labelCls} htmlFor="rs-mgr">Manager numbers (read-only manager line)</label>
+              <textarea
+                id="rs-mgr"
+                value={screening.managerNumbers}
+                onChange={(e) => setScreening((sc) => ({ ...sc, managerNumbers: e.target.value }))}
+                placeholder={'One per line (or comma-separated) — e.g. your own mobile'}
+                rows={2}
+                className={inputCls + ' font-mono text-xs'}
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Calls from these numbers get the manager treatment: business questions answered freely, and
+                lookups include customer names. Read-only — caller ID can be spoofed, so booking changes by
+                phone will require a spoken PIN (coming next). Manager numbers are never screened out.
+              </p>
+            </div>
             <div>
               <label className={labelCls} htmlFor="rs-cc">Default country code for texts</label>
               <input

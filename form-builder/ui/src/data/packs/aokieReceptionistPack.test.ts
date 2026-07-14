@@ -1042,6 +1042,59 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.digest.split('\n').length).toBeGreaterThan(3);
       });
 
+      it('business-lookup MANAGER calls (Phase 3): occupancy slots gain customer names; ordinary calls never do — even with the customers node populated', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const nodesWith = {
+          appts: {
+            responses: [
+              // The manager's own booking (never name-annotated — it's the
+              // CALLER OWN BOOKINGS section's job).
+              { id: 'b1', answers: { status: 'confirmed', date: futureIso, time: '10:00', service: 'diner', phone: '+61400999888' } },
+              { id: 'b2', answers: { status: 'requested', date: futureIso, time: '18:00', service: 'cut', phone: '+61499999999' } },
+              // Untimed booking from a named customer.
+              { id: 'b4', answers: { status: 'requested', date: futureIso2, service: 'colour', phone: '+61488888888' } },
+            ],
+          },
+          customers: {
+            responses: [
+              { id: 'c1', answers: { name: 'Jane Customer', phone: '0499 999 999' } },
+              { id: 'c2', answers: { name: 'Bob Untimed', phone: '0488888888' } },
+              { id: 'c3', answers: { name: 'The Manager', phone: '0400999888' } },
+            ],
+          },
+        };
+        const mgr = evalExpr(lookupExpr, {
+          inputs: { question: `who is booked on ${futureIso}?`, from: '+61400999888', callId: 'c1', manager: true },
+          nodes: nodesWith,
+        });
+        expect(mgr.digest).toContain('6 PM (Jane Customer)');
+        expect(mgr.digest).toContain('customer names included');
+        expect(mgr.digest).toContain('(Bob Untimed)');
+        // The manager's own 10 AM slot is their own booking — the occupancy
+        // slot never re-labels it with their name.
+        expect(mgr.digest).not.toContain('10 AM (The Manager)');
+        // The verbatim spoken date answer names customers for managers too
+        // (a manager's 'who is booked Friday?' is a date question).
+        expect(String(mgr.spoken ?? '')).toContain('Jane Customer');
+        // Ordinary caller, SAME nodes (even if the fetch somehow ran): the
+        // privacy lock holds everywhere.
+        const plain = evalExpr(lookupExpr, {
+          inputs: { question: `who is booked on ${futureIso}?`, from: '+61400000000', callId: 'c1' },
+          nodes: nodesWith,
+        });
+        expect(plain.digest).not.toContain('Jane Customer');
+        expect(plain.digest).not.toContain('Bob Untimed');
+        expect(String(plain.spoken ?? '')).not.toContain('Jane Customer');
+        expect(plain.digest).toContain('never name them');
+        // Graph: the customers fetch is condition-gated on the manager flag.
+        const flow = flowBySlug('business-lookup');
+        const gate = flow.flowJson.nodes.find((n) => n.id === 'mgr')!;
+        expect(String((gate.data as { expr: string }).expr)).toContain('manager === true');
+        const edges = flow.flowJson.edges as Array<{ source: string; target: string; sourceHandle?: string }>;
+        expect(edges).toContainEqual({ source: 'mgr', target: 'customers', sourceHandle: 'true' });
+        expect(edges).toContainEqual({ source: 'mgr', target: 'make', sourceHandle: 'false' });
+      });
+
       it('business-lookup DIRECT ANSWER: dates in the question get a deterministic verdict (2026-07-14 live call 1defd805: the 9B model failed the window/absence inference)', () => {
         const lookupExpr = nodeExpr('business-lookup', 'make');
         const near = new Date(Date.now() + 20 * 86400_000);

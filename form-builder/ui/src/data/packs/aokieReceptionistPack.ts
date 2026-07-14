@@ -951,6 +951,29 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     return h + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (th >= 12 ? 'PM' : 'AM');
   }
   var digitsIn = String(inputs.from || '').replace(/\\D+/g, '').slice(-9);
+  // Phase 3 manager line: the flag comes from the PLUGIN's caller-id match
+  // against managerNumbers (its flow.run input) - never from caller words.
+  // Managers get customer NAMES on occupancy slots; everyone else keeps the
+  // privacy lock (times only). The customers node only runs on manager
+  // calls (condition-gated), so nodes.customers is null otherwise.
+  var manager = inputs.manager === true;
+  var nameBy = {};
+  if (manager) {
+    var cRows = (nodes.customers && nodes.customers.responses) || [];
+    for (var nc = 0; nc < cRows.length; nc++) {
+      var cAns = (cRows[nc] && cRows[nc].answers) || {};
+      var cd = String(cAns.phone || '').replace(/\\D+/g, '').slice(-9);
+      if (cd.length >= 6 && cAns.name) nameBy[cd] = String(cAns.name);
+    }
+  }
+  var nmDT = {};
+  var occUN = {};
+  function slot(d0, tRaw0) {
+    var l0 = t12(tRaw0);
+    if (!manager) return l0;
+    var nm0 = nmDT[d0 + '|' + tRaw0];
+    return nm0 ? l0 + ' (' + nm0 + ')' : l0;
+  }
   var rows = (nodes.appts && nodes.appts.responses) || [];
   var occT = {};
   var occU = {};
@@ -969,6 +992,13 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     if (tv) { if (!occT[d]) occT[d] = []; occT[d].push(tRaw); }
     else { occU[d] = (occU[d] || 0) + 1; }
     var rowDigits = String(a.phone || '').replace(/\\D+/g, '').slice(-9);
+    if (manager && !(digitsIn.length >= 6 && rowDigits === digitsIn)) {
+      var nm = nameBy[rowDigits] || '';
+      if (nm) {
+        if (tv) { var kdt = d + '|' + tRaw; nmDT[kdt] = nmDT[kdt] ? nmDT[kdt] + ' & ' + nm : nm; }
+        else { if (!occUN[d]) occUN[d] = []; occUN[d].push(nm); }
+      }
+    }
     if (digitsIn.length >= 6 && rowDigits === digitsIn) {
       var desc = String(a.service || 'appointment') + ' (' + st + (tv ? ', ' + tv : ', time not yet set') + ')';
       if (!mineBy[d]) { mineBy[d] = []; mineSay[d] = []; }
@@ -990,10 +1020,10 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     if (occT[dj]) {
       var ts = occT[dj].slice().sort();
       var lab = [];
-      for (var k = 0; k < ts.length; k++) lab.push(t12(ts[k]));
+      for (var k = 0; k < ts.length; k++) lab.push(slot(dj, ts[k]));
       parts.push('booked at ' + lab.join(', '));
     }
-    if (occU[dj]) parts.push(occU[dj] + ' booking' + (occU[dj] > 1 ? 's' : '') + ' with no set time');
+    if (occU[dj]) parts.push(occU[dj] + ' booking' + (occU[dj] > 1 ? 's' : '') + ' with no set time' + (manager && occUN[dj] ? ' (' + occUN[dj].join(', ') + ')' : ''));
     lines.push('- ' + dayLabel(dj) + ': ' + parts.join(' + '));
   }
   // DIRECT ANSWERS: parse dates out of the QUESTION and answer them
@@ -1074,7 +1104,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
       else {
         total++;
         var parts2 = [];
-        if (occT[di]) { var st2 = occT[di].slice().sort(); var lb = []; for (var k2 = 0; k2 < st2.length; k2++) lb.push(t12(st2[k2])); parts2.push('booked at ' + lb.join(', ')); }
+        if (occT[di]) { var st2 = occT[di].slice().sort(); var lb = []; for (var k2 = 0; k2 < st2.length; k2++) lb.push(slot(di, st2[k2])); parts2.push('booked at ' + lb.join(', ')); }
         var oU = (occU[di] || 0) - (mineU[di] || 0);
         if (oU > 0) parts2.push(oU + ' booking' + (oU > 1 ? 's' : '') + ' with no set time');
         if (mineBy[di]) ownIn.push('on ' + dayLabel(di) + ' you already have ' + mineSay[di].join(' and '));
@@ -1123,7 +1153,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
       say.push('For ' + wl + ', you already have ' + mineSay[wd].join(' and ') + ' on record.');
     }
     var takenLab = [];
-    if (occT[wd]) { var srt = occT[wd].slice().sort(); for (var ot = 0; ot < srt.length; ot++) takenLab.push(t12(srt[ot])); }
+    if (occT[wd]) { var srt = occT[wd].slice().sort(); for (var ot = 0; ot < srt.length; ot++) takenLab.push(slot(wd, srt[ot])); }
     var othersU = (occU[wd] || 0) - (mineU[wd] || 0);
     if (takenLab.length) { bits.push('times already booked that day: ' + takenLab.join(', ')); segs.push('times already taken are ' + takenLab.join(', ')); }
     if (othersU > 0) { bits.push(othersU + ' other booking' + (othersU > 1 ? 's' : '') + ' with no set time that day'); }
@@ -1145,7 +1175,7 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   out.digest = 'DATA as of ' + todayIso + ' (question: "' + q.slice(0, 200) + '")'
     + (direct.length ? '\\n' + direct.join('\\n') : '')
     + '\\nCALLER OWN BOOKINGS:' + (mine.length ? '\\n- ' + mine.join('\\n- ') : ' none on record')
-    + '\\nCALENDAR OCCUPANCY, window ' + todayIso + ' through ' + horizonIso + ' (times TAKEN, all customers - never name them):'
+    + '\\nCALENDAR OCCUPANCY, window ' + todayIso + ' through ' + horizonIso + (manager ? ' (times TAKEN - customer names included: this caller is the MANAGER):' : ' (times TAKEN, all customers - never name them):')
     + (lines.length ? '\\n' + lines.join('\\n') : '\\n- no bookings')
     + '\\nAny date INSIDE this window that is not listed above has NO bookings: state plainly that it looks open and offer to put a booking request in. Only dates AFTER ' + horizonIso + ' are outside the view - for those say the calendar view does not reach that far and the team will confirm. New bookings are requests the team confirms.'
     + (direct.length ? ' A DIRECT ANSWER line above is AUTHORITATIVE for its date - answer the caller from it.' : '');
@@ -3090,11 +3120,11 @@ export const aokieReceptionistPack: PackData = {
       name: 'Business Lookup',
       slug: 'business-lookup',
       description:
-        'Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns (date questions get a flow-composed spoken sentence delivered verbatim). Read-only and deterministic (no LLM, no writes): 90-day calendar occupancy with TIMES ONLY (other customers are never named) plus the caller phone number own bookings. The appointments fetch is windowed IN THE DATABASE (gte/lte pushdown) so a growing calendar cannot overflow the fetch cap. No event binding - it only runs when the plugin asks.',
+        "Mid-call live lookup (2026-07-14): the Aokie plugin invokes this over the plugin flow.run RPC while the agent is ON the call - the agent replied [[LOOKUP: question]] and speaks its answer from the digest this flow returns (date questions get a flow-composed spoken sentence delivered verbatim). Read-only and deterministic (no LLM, no writes): 90-day calendar occupancy with TIMES ONLY for ordinary callers (other customers are never named) plus the caller phone number own bookings. MANAGER CALLS (Phase 3): the plugin sets manager:true in its flow.run input when the caller id matched managerNumbers - the digest and spoken answers then include customer NAMES on occupancy slots (the condition-gated customers fetch only runs for managers; caller ID alone stays READ-ONLY - writes will require the spoken PIN). The appointments fetch is windowed IN THE DATABASE (gte/lte pushdown) so a growing calendar cannot overflow the fetch cap. No event binding - it only runs when the plugin asks.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
-          { id: 'in', type: 'input', data: { inputs: [{ name: 'question', example: 'Any tables free Friday night?' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'question', example: 'Any tables free Friday night?' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'manager', example: false }] } },
           // The window bounds the DB query itself: gte/lte push down (server
           // filters BEFORE the limit), so old + far-future rows never crowd
           // in-window bookings out of the 200-row cap.
@@ -3112,13 +3142,25 @@ export const aokieReceptionistPack: PackData = {
               ],
             },
           },
+          // Phase 3: the customer-name map costs a 200-row fetch — only
+          // manager calls pay it. $nodes.customers is null on the false
+          // branch, which the make block treats as "no names".
+          { id: 'mgr', type: 'condition', data: { expr: 'inputs.manager === true' } },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:customers', return: 'all', limit: 200 },
+          },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_BUSINESS_LOOKUP } },
           { id: 'out', type: 'output', data: { value: { digest: '$nodes.make.digest', spoken: '$nodes.make.spoken' } } },
         ],
         edges: [
           { source: 'in', target: 'win' },
           { source: 'win', target: 'appts' },
-          { source: 'appts', target: 'make' },
+          { source: 'appts', target: 'mgr' },
+          { source: 'mgr', target: 'customers', sourceHandle: 'true' },
+          { source: 'mgr', target: 'make', sourceHandle: 'false' },
+          { source: 'customers', target: 'make' },
           { source: 'make', target: 'out' },
         ],
       },
