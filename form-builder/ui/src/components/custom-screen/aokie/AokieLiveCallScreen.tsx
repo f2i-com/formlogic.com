@@ -46,6 +46,7 @@ import { describeSpeaker, turnBubble } from './callBubbles';
 import { cn } from '../../../lib/utils';
 import { subscribeDesktopEvents } from '../../../client-runtime/desktop/desktopEvents';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../../client-runtime/desktop/desktopDetection';
+import { emptyCaptionState, startRealtimeCaptions, type CaptionState } from './realtimeCaptions';
 import { desktopClient } from '../../../client-runtime/desktop/desktopClient';
 import { simulateIncomingCall } from '../../../client-runtime/connectors/aokieConnector';
 import type { DesktopEventEnvelope } from '../../../client-runtime/desktop/desktopTypes';
@@ -259,6 +260,35 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   const roleAllowsOperating = callsFormId ? canSubmitCalls(callsFormId) : permissions.appLevel.includes('manage_app');
 
   useEffect(() => subscribeDesktopStatus((info) => setDesktop(info)), []);
+
+  // LIVE CAPTIONS (volatile realtime lane, guide §9.2): the caller's
+  // in-progress partial + the session phase, streamed from the LOCAL
+  // desktop's SSE endpoint. Best-effort observation — remote/relay and demo
+  // modes simply have no stream. The DURABLE transcript below stays the
+  // authority: when it gains a caller turn, the visible partial is
+  // tombstoned (final wins) through the reader so late frames stay dead.
+  const [captions, setCaptions] = useState<CaptionState>(() => emptyCaptionState());
+  const captionsHandle = useRef<{ tombstone: () => void } | null>(null);
+  useEffect(() => {
+    if (presence.kind !== 'local') {
+      setCaptions(emptyCaptionState());
+      return;
+    }
+    const handle = startRealtimeCaptions((snapshot) => setCaptions(snapshot));
+    captionsHandle.current = handle;
+    return () => {
+      captionsHandle.current = null;
+      handle.stop();
+    };
+  }, [presence.kind]);
+  const callerTurnCount = useMemo(() => turns.filter((t) => t.speaker === 'caller').length, [turns]);
+  const prevCallerTurnCount = useRef(0);
+  useEffect(() => {
+    if (callerTurnCount > prevCallerTurnCount.current) {
+      captionsHandle.current?.tombstone();
+    }
+    prevCallerTurnCount.current = callerTurnCount;
+  }, [callerTurnCount]);
 
   // Truthful readiness (audit INT-006/C-15): while the LOCAL bridge is the
   // presence source, poll the desktop's info card for the aokie plugin's
@@ -722,6 +752,35 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* LIVE CAPTIONS: what the receptionist is hearing RIGHT NOW (volatile
+              lane) — partials are replaceable hypotheses, visually distinct from
+              the durable transcript below and superseded the moment a final
+              caller turn lands. */}
+          {presence.kind === 'local' && active && captions.callId === active.callId && (captions.partialText !== '' || captions.phase !== null) && (
+            <div className={`${card} px-5 py-3`}>
+              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-gray-400 dark:text-[#7f899e]">
+                <span
+                  className={cn(
+                    'inline-block h-1.5 w-1.5 rounded-full',
+                    captions.phase === 'speaking'
+                      ? 'bg-emerald-500'
+                      : captions.phase === 'thinking'
+                        ? 'animate-pulse bg-amber-500'
+                        : captions.phase === 'paused'
+                          ? 'bg-gray-400'
+                          : 'animate-pulse bg-primary-500'
+                  )}
+                />
+                <span>Live · {captions.phase ?? 'listening'}</span>
+              </div>
+              {captions.partialText !== '' && (
+                <p className="mt-1 text-sm italic text-gray-600 dark:text-[#aab3c5]">
+                  &ldquo;{captions.partialText}&hellip;&rdquo;
+                </p>
+              )}
             </div>
           )}
 
