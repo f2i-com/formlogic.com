@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Switch } from '../../components/ui/Switch';
 import { api } from '../../lib/api';
+import { generateId } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import type { Form, FormField } from '../../types/form';
 
@@ -79,7 +80,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
       const sourceForm = sourceRes.data.form as Form;
 
       const newField: FormField = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: 'linked_record',
         label: label.trim(),
         required: false,

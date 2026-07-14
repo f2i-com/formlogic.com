@@ -9,6 +9,7 @@
 // The relay path is permission-identical to the local path: a control is offered only when the app
 // holds the SAME connector.aokie.<command> grant AND the viewer's role can write Calls records.
 import type { ConnectorCommand, ConnectorCommandStatus } from '../../../types/flows';
+import { generateId } from '../../../lib/utils';
 
 /** Poll cadence while a relayed command is in flight. */
 export const RELAY_POLL_MS = 1200;
@@ -90,7 +91,13 @@ export async function runRelayCommand(
   // Client intent id (audit INT-005/C-14): ONE key per operator action, minted
   // here — any transport-level retry of this enqueue dedupes server-side
   // instead of creating a second command.
-  const idempotencyKey = `ui-${command}-${crypto.randomUUID()}`;
+  // generateId, NOT bare crypto.randomUUID: randomUUID only exists in SECURE
+  // contexts, and the app runs on http://formlogic.local — the relay path
+  // crashed 'crypto.randomUUID is not a function' whenever Device Setup fell
+  // back to the relay before the local desktop was detected (live report
+  // 2026-07-14; a refresh 'fixed' it because the silent re-pair had finished
+  // and the LOCAL connector path took over).
+  const idempotencyKey = `ui-${command}-${generateId()}`;
   const enq = await api.enqueueConnectorCommand(slug, { connectorId: 'aokie', command, payload, idempotencyKey });
   if (enq.error || !enq.data) {
     throw new Error(enq.error || 'Failed to reach the desktop runtime');
