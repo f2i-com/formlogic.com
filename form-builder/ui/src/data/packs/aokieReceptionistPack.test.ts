@@ -1018,6 +1018,29 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.persona).toContain('Diner');
       });
 
+      it('business-lookup digest evaluates + stays privacy-safe (2026-07-14: an escaping bug shipped a syntax error because this test was missing)', () => {
+        const lookupExpr = nodeExpr('business-lookup', 'make');
+        const r = evalExpr(lookupExpr, {
+          inputs: { question: 'any tables Friday?', from: '+61400000000', callId: 'c1' },
+          nodes: {
+            appts: {
+              responses: [
+                { id: 'b1', answers: { status: 'confirmed', date: futureIso, time: '10:00', service: 'diner', phone: '+61400000000' } },
+                { id: 'b2', answers: { status: 'requested', date: futureIso, time: '18:00', service: 'x', phone: '+61499999999', name: 'Somebody Else' } },
+                { id: 'b3', answers: { status: 'cancelled', date: futureIso, time: '12:00' } },
+              ],
+            },
+          },
+        });
+        expect(r.digest).toContain('CALENDAR OCCUPANCY');
+        expect(r.digest).toContain('CALLER OWN BOOKINGS');
+        expect(r.digest).toContain('10 AM');
+        expect(r.digest).toContain('6 PM');
+        expect(r.digest).not.toContain('Somebody Else');
+        expect(r.digest).not.toContain('12 PM');
+        expect(r.digest.split('\n').length).toBeGreaterThan(3);
+      });
+
       it('calendar occupancy digest: whole-calendar times, NEVER other customers names (2026-07-14 live business data)', () => {
         const futureIsoLocal = futureIso;
         const r = evalExpr(makeExpr, {

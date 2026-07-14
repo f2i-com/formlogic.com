@@ -773,12 +773,12 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     return label;
   }
   function t12(tStr) {
-    if (!/^\d{2}:\d{2}$/.test(tStr)) return tStr || '?';
+    if (!/^\\d{2}:\\d{2}$/.test(tStr)) return tStr || '?';
     var th = Number(tStr.slice(0, 2));
     var h = th % 12 === 0 ? 12 : th % 12;
     return h + (tStr.slice(3, 5) === '00' ? '' : ':' + tStr.slice(3, 5)) + ' ' + (th >= 12 ? 'PM' : 'AM');
   }
-  var digitsIn = String(inputs.from || '').replace(/\D+/g, '').slice(-9);
+  var digitsIn = String(inputs.from || '').replace(/\\D+/g, '').slice(-9);
   var rows = (nodes.appts && nodes.appts.responses) || [];
   var occ = {};
   var mine = [];
@@ -787,10 +787,10 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     var st = String(a.status || '');
     var d = String(a.date || '');
     if (!(st === 'requested' || st === 'confirmed')) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < todayIso || d > horizonIso) continue;
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d) || d < todayIso || d > horizonIso) continue;
     if (!occ[d]) occ[d] = [];
     occ[d].push(String(a.time || ''));
-    var rowDigits = String(a.phone || '').replace(/\D+/g, '').slice(-9);
+    var rowDigits = String(a.phone || '').replace(/\\D+/g, '').slice(-9);
     if (digitsIn.length >= 6 && rowDigits === digitsIn) {
       mine.push(dayLabel(d) + ' at ' + t12(String(a.time || '')) + ': ' + String(a.service || 'appointment') + ' (' + st + ')');
     }
@@ -804,13 +804,12 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
     lines.push('- ' + dayLabel(dates[j]) + ': booked at ' + lab.join(', '));
   }
   out.digest = 'DATA as of ' + todayIso + ' (question: "' + String(inputs.question || '').slice(0, 200) + '")'
-    + '\nCALLER OWN BOOKINGS:' + (mine.length ? '\n- ' + mine.join('\n- ') : ' none on record')
-    + '\nCALENDAR OCCUPANCY next 14 days (times TAKEN, all customers - never name them):'
-    + (lines.length ? '\n' + lines.join('\n') : '\n- no bookings')
-    + '\nDays not listed are fully open. New bookings are requests the team confirms.';
+    + '\\nCALLER OWN BOOKINGS:' + (mine.length ? '\\n- ' + mine.join('\\n- ') : ' none on record')
+    + '\\nCALENDAR OCCUPANCY next 14 days (times TAKEN, all customers - never name them):'
+    + (lines.length ? '\\n' + lines.join('\\n') : '\\n- no bookings')
+    + '\\nDays not listed are fully open. New bookings are requests the team confirms.';
   return out;
 })()`;
-
 const FLOW_PERSONALIZE_CALLER = `(function () {
   var phone = String(inputs.from || '');
   // The customers node pre-filters with the phone_eq op (digits-only last-9
