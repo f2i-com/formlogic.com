@@ -100,7 +100,7 @@ As built:
 - Unblock = one click on the console's blocked-number chips (shipped with
   Phase 0.5).
 
-## Phase 2 — Outbound calling  ← IN PROGRESS (slice 1a shipped 2026-07-14)
+## Phase 2 — Outbound calling  ← LIVE-PROVEN 2026-07-14 (two real calls; queue slices remain)
 
 Slice 1a (aokie `ad64616`, deployed z26): the radio/MO layer — `ATD` dial
 command through both HFP paths, MO callsetup tracking (2=dialing → new
@@ -128,7 +128,14 @@ Remaining slices: dedicated `outbound` consent scope + wizard checkbox
 (pre-GA), `aokie_dial` flow node (both runners), the missed-call queue
 (Callback Tasks form + dial-back flow + SMS fallback via sms_capable),
 formlogic Calls direction field + no_answer status + outbound app-logic,
-and a LIVE dial test (user-gated — needs a second phone to receive).
+and outbound-aware post-call processing.
+
+LIVE-PROVEN (z28): two real dials to the owner's phone. Call 1 exposed the
+overlay-wipe bug (callee got the INBOUND greeting) + the inbound booking
+extractor minting junk records off an outbound transcript — both fixed
+(scoped overlay wipe; after-call-actions skips direction 'outbound'). Call
+2: opening line spoken verbatim, agent knew it placed the call, clean
+records. Owner-confirmed audio quality.
 
 - Radio: `dial(number)` via HFP `ATD<number>;` + outbound call session
   (state: dialing → ringing → active/failed/no-answer). The agent session
