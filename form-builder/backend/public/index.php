@@ -2490,6 +2490,12 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->deleteResponseById($request, $response, $getArgs($request));
     })->add($authRequired);
+
+    // Bulk clear (Device Setup 'start fresh'): every record of one form in
+    // ONE operation — permission-gated inside (delete + view-all required).
+    $group->delete('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->clearFormResponses($request, $response, $getArgs($request));
+    })->add($authRequired);
 });
 
 // Run app

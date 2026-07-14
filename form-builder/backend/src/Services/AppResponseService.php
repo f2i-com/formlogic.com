@@ -77,6 +77,13 @@ class AppResponseService
         return $result;
     }
 
+    /** Bulk clear for the app runtime ('start fresh'): delegates — the
+     *  service handles links/metadata/files/count in batch. */
+    public function deleteAllResponses(string $formId): int
+    {
+        return $this->responseService->deleteAllResponses($formId);
+    }
+
     public function deleteResponse(string $formId, string $responseId): bool
     {
         $deleted = $this->responseService->deleteResponse($formId, $responseId);

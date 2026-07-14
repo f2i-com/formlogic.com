@@ -2259,6 +2259,79 @@ class ResponseService
     }
 
     /**
+     * Delete EVERY response of a form in bulk — the 'start fresh' testing
+     * reset. One SQLite DELETE instead of N requests; the same cross-store
+     * hygiene as deleteResponse, batched: chunked response_metadata +
+     * response_links cleanup, uploaded files handed to the deferred GC (never
+     * inline-deleted, FILE-PRIV-001), ONE garbage sweep, ONE response_count
+     * resync. Per-row webhooks are deliberately NOT dispatched (a bulk clear
+     * firing hundreds of response.deleted hooks is the pattern this replaces).
+     * Returns the number of rows removed.
+     */
+    public function deleteAllResponses(string $formId): int
+    {
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            return 0;
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+
+        // Collect ids (for the MySQL mirrors) and file ids (for the GC)
+        // BEFORE the rows disappear.
+        $ids = [];
+        $fileIds = [];
+        $rows = $db->query('SELECT id, answers FROM responses')->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $row) {
+            $ids[] = (string) $row['id'];
+            if ($this->fileStorageService !== null && !empty($row['answers'])) {
+                $decoded = json_decode((string) $row['answers'], true);
+                if (is_array($decoded)) {
+                    foreach ($this->fileStorageService->extractFileIds($decoded) as $fid) {
+                        $fileIds[] = $fid;
+                    }
+                }
+            }
+        }
+        if ($ids === []) {
+            return 0;
+        }
+
+        // Source of truth first.
+        $deleted = $db->exec('DELETE FROM responses');
+        $deleted = is_int($deleted) ? $deleted : count($ids);
+
+        // Cross-store cleanup is best-effort (same posture as deleteResponse):
+        // the authoritative rows are already gone.
+        try {
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $ph = implode(',', array_fill(0, count($chunk), '?'));
+                $this->mysql->prepare("DELETE FROM response_metadata WHERE id IN ($ph)")->execute($chunk);
+                $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id IN ($ph)")->execute($chunk);
+                $this->mysql->prepare("DELETE FROM response_links WHERE target_response_id IN ($ph)")->execute($chunk);
+            }
+        } catch (\Throwable $metaErr) {
+            $this->logger->error('Cross-store cleanup failed after bulk response delete', [
+                'formId' => $formId, 'error' => $metaErr->getMessage(),
+            ]);
+        }
+
+        if ($this->fileStorageService !== null && $fileIds !== []) {
+            try {
+                foreach (array_unique($fileIds) as $fid) {
+                    $this->fileStorageService->markOrphaned($formId, $fid);
+                }
+                $this->sweepFileGarbage($formId);
+            } catch (\Throwable $fileErr) {
+                $this->logger->error('File cleanup failed after bulk response delete', [
+                    'formId' => $formId, 'error' => $fileErr->getMessage(),
+                ]);
+            }
+        }
+
+        $this->syncResponseCount($formId);
+        return $deleted;
+    }
+
+    /**
      * Recompute the per-form response count from the source-of-truth SQLite table
      * and store it on the MySQL forms row (denormalized for list views). Recompute
      * (not increment) so the count can't drift; best-effort so a sync failure never

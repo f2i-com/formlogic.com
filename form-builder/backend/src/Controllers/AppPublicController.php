@@ -1212,6 +1212,41 @@ class AppPublicController
         return $this->jsonResponse($response, ['response' => $updated]);
     }
 
+    /**
+     * DELETE /api/app/{slug}/forms/{formId}/responses — clear EVERY record of
+     * one form (the Device Setup 'start fresh' testing reset). Requires BOTH
+     * delete_responses AND view_all_responses on the form: this removes other
+     * members' rows, so own-rows-only deleters don't qualify. One backend
+     * operation replaces the hundreds of per-row requests the UI used to send.
+     */
+    public function clearFormResponses(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $formId = $args['formId'];
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (
+            !$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::DELETE_RESPONSES, $formId)
+            || !$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId)
+        ) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+        $deleted = $this->appResponseService->deleteAllResponses($formId);
+        return $this->jsonResponse($response, ['success' => true, 'deleted' => $deleted]);
+    }
+
     public function deleteResponseById(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];

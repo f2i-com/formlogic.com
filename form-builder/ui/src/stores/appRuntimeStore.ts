@@ -62,6 +62,8 @@ interface AppRuntimeState {
   createResponse: (formId: string, answers: Record<string, unknown>) => Promise<unknown>;
   updateResponse: (formId: string, responseId: string, data: Record<string, unknown>) => Promise<unknown>;
   deleteResponse: (formId: string, responseId: string) => Promise<boolean>;
+  /** Bulk clear of one form's records — one backend operation, returns the count. */
+  clearFormResponses: (formId: string) => Promise<number>;
 
   // Linked records
   lookupRecords: (formId: string, options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; ids?: string[] }) => Promise<LinkedRecord[]>;
@@ -259,6 +261,14 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (result.error) throw new Error(result.error);
         if (!result.data?.response) throw new Error('Update failed: no response was returned.');
         return result.data.response;
+      },
+
+      clearFormResponses: async (formId) => {
+        const slug = get().appSlug;
+        if (!slug) return 0;
+        const result = await api.clearAppFormResponses(slug, formId);
+        if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to clear records');
+        return result.data?.deleted ?? 0;
       },
 
       deleteResponse: async (formId, responseId) => {

@@ -1635,6 +1635,11 @@ class ApiClient {
     });
   }
 
+  /** Bulk clear of one app form's records (Device Setup 'start fresh'). */
+  async clearAppFormResponses(slug: string, formId: string): Promise<ApiResponse<{ success: boolean; deleted: number }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses`, { method: 'DELETE' });
+  }
+
   async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string>; answersGte?: Record<string, string>; answersLte?: Record<string, string> }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
     const params = new URLSearchParams();
     if (options?.limit) params.set('limit', String(options.limit));

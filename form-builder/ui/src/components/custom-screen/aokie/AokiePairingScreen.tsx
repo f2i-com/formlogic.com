@@ -155,6 +155,7 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // Receptionist Settings singleton (that is CONFIG — persona, greeting,
   // business info — not test data). Only response rows in the per-form
   // databases are touched: forms, flows, roles and settings all survive.
+  const clearFormResponses = useAppRuntimeStore((st) => st.clearFormResponses);
   const handleStartFresh = useCallback(async () => {
     if (!appForms || freshBusy) return;
     setFreshBusy(true);
@@ -169,15 +170,10 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
           continue;
         }
         setFreshProgress(`Clearing ${form.displayName}…`);
-        // New rows can land mid-clear (a live call writing turns), so loop
-        // until the form reads empty — bounded, this is a testing reset.
-        for (let pass = 0; pass < 6; pass++) {
-          const rows = await fetchRecentRows(form.formId, 200);
-          if (rows.length === 0) break;
-          for (const row of rows) {
-            if (await deleteEventResponse(form.formId, row.id)) deleted++;
-          }
-        }
+        // ONE backend operation per form (bulk clear) — the per-row loop this
+        // replaces sent hundreds of requests and its bounded passes stalled
+        // out on Transcript Turns (983 rows, live report 2026-07-14).
+        deleted += await clearFormResponses(form.formId);
       }
       toast.success(
         'Fresh start',
@@ -191,7 +187,7 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
       setFreshConfirm('');
       events.reload();
     }
-  }, [appForms, freshBusy, canDeleteEvents, fetchRecentRows, deleteEventResponse, events]);
+  }, [appForms, freshBusy, canDeleteEvents, clearFormResponses, events]);
 
   // Route a connector command to the RIGHT transport: local desktop bridge
   // (connector.request) when the receptionist runs on THIS machine, or the
