@@ -12,6 +12,7 @@ import {
 } from '../desktop/desktopDetection';
 import { clearDesktopToken, storeDesktopToken } from '../desktop/desktopPairing';
 import { __resetDesktopEventsForTests, subscribeDesktopEvents } from '../desktop/desktopEvents';
+import { api } from '../../lib/api';
 
 // Aokie connector routing (FL-CONN-001): desktop present+paired → the Desktop gateway;
 // desktop absent/unpaired → the simulator ONLY inside an explicit simulator session,
@@ -37,6 +38,7 @@ afterEach(() => {
   __resetDesktopEventsForTests();
   __resetAokieSimulatorForTests();
   clearDesktopToken();
+  api.setDemoMode(false);
   vi.restoreAllMocks();
   delete (globalThis as unknown as { fetch?: unknown }).fetch;
 });
@@ -129,6 +131,54 @@ describe('aokieConnector.request routing', () => {
     await expect(aokieConnector.request('sms.threads')).rejects.toMatchObject({
       name: 'ConnectorError',
     });
+  });
+});
+
+describe('demo mode never routes to a real desktop (live report 2026-07-14)', () => {
+  // The local gateway bypasses the server's demo_readonly guard entirely, so a demo
+  // session on a machine running a paired FormLogic Desktop could otherwise DRIVE the
+  // operator's actual phone bridge (and Device Setup showed the real dongle while
+  // "Calls" read Listening off the real radio). Demo = the simulator, unconditionally.
+  it('request: demo + desktop detected AND paired still answers from the simulator', async () => {
+    api.setDemoMode(true);
+    desktopPairedAndDetected();
+    const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('the real desktop must never be called'))));
+
+    const result = (await aokieConnector.request('phone.status')) as {
+      device?: { name?: string };
+      simulated?: boolean;
+    };
+
+    expect(result.simulated).toBe(true);
+    expect(result.device?.name).toBe('Demo Phone');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('status: demo + paired desktop reports the demo bridge, never the desktop', async () => {
+    api.setDemoMode(true);
+    desktopPairedAndDetected();
+    const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('the real desktop must never be called'))));
+
+    const status = await aokieConnector.status();
+
+    expect(status.source).toBe('mock');
+    expect(status.available).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a demo mutation (call.dial) stays inside the simulator — provenance stamped', async () => {
+    api.setDemoMode(true);
+    desktopPairedAndDetected();
+    const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('the real desktop must never be called'))));
+
+    const result = (await aokieConnector.request('call.dial', {
+      number: '+61491570156',
+      openingLine: 'Hi, this is a demo call.',
+    })) as { accepted?: boolean; simulated?: boolean };
+
+    expect(result.accepted).toBe(true);
+    expect(result.simulated).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

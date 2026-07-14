@@ -483,8 +483,17 @@ export async function simulateIncomingCall(options: SimulateIncomingCallOptions 
 // Composed connector: desktop first; the simulator ONLY in an explicit session.
 // ---------------------------------------------------------------------------
 
-/** Desktop is a candidate route only when detected AND this origin holds a pairing token. */
+/**
+ * Desktop is a candidate route only when detected AND this origin holds a pairing token —
+ * and NEVER for the shared Demo account. A demo session on a machine that happens to run
+ * a paired FormLogic Desktop (the operator's own box, or any visitor who also uses the
+ * real product) must not detect, display, or DRIVE the actual phone bridge: the local
+ * gateway bypasses the server's demo_readonly guard entirely, so without this gate the
+ * demo's Device Setup showed the real dongle and "Calls" read "Listening" off the real
+ * radio (live report 2026-07-14). In demo mode the simulator IS the bridge, full stop.
+ */
 function desktopRouteAvailable(): boolean {
+  if (api.isDemoMode()) return false;
   return getDesktopInfo().available && isDesktopPaired();
 }
 

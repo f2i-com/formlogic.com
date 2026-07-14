@@ -124,13 +124,21 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   const presence = useAokiePresence();
   const appSlug = useAppRuntimeStore((s) => s.appSlug);
   const remoteMode = presence.kind === 'remote';
+  // Shared Demo account: everything on this screen is the simulated bridge
+  // (the connector + presence layers already refuse the real desktop route),
+  // the desktop detection panel is replaced with an honest demo card, and the
+  // destructive controls (Start fresh, Clear events) are disabled — the
+  // server's demo_readonly guard would refuse them anyway.
+  const demoMode = api.isDemoMode();
   const [enumerationNote, setEnumerationNote] = useState<string | null>(null);
 
   // Clear the hardware-event log: delete EVERY row, not just the 8 shown.
   // New events may land mid-clear, so loop until the form reads empty
   // (bounded — this is hygiene, not a guarantee against a live event storm).
   const handleClearEvents = useCallback(async () => {
-    if (!eventsFormId) return;
+    // Demo defense-in-depth: the button is hidden in demo mode and the server
+    // 403s demo mutations anyway — but a stale render must still be a no-op.
+    if (!eventsFormId || api.isDemoMode()) return;
     setClearingEvents(true);
     try {
       let deleted = 0;
@@ -157,7 +165,9 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // databases are touched: forms, flows, roles and settings all survive.
   const clearFormResponses = useAppRuntimeStore((st) => st.clearFormResponses);
   const handleStartFresh = useCallback(async () => {
-    if (!appForms || freshBusy) return;
+    // Demo defense-in-depth: the controls are replaced with a note in demo
+    // mode and the server 403s the bulk clear anyway — never even try.
+    if (!appForms || freshBusy || api.isDemoMode()) return;
     setFreshBusy(true);
     setFreshProgress(null);
     let deleted = 0;
@@ -483,8 +493,25 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         </div>
       )}
 
-      {/* Desktop detection + pairing — the shared building block. */}
-      <DesktopStatusPanel />
+      {/* Desktop detection + pairing — the shared building block. In demo mode the
+          panel is replaced outright: it would truthfully report a locally-running
+          FormLogic Desktop, which reads as "the demo is connected to real hardware"
+          (live report 2026-07-14) — and the demo must never touch one anyway. */}
+      {demoMode ? (
+        <div className={`${card} p-5`}>
+          <div className="mb-1 flex items-center gap-2">
+            <Cast className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+            <h2 className="text-sm font-medium text-gray-900 dark:text-white">Demo bridge</h2>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            This is the shared demo, so the hardware below is simulated — FormLogic Desktop and real
+            phones are never used here, even if the Desktop app is running on this machine. Use
+            "Simulate incoming call" on the Calls screen to see the receptionist in action.
+          </p>
+        </div>
+      ) : (
+        <DesktopStatusPanel />
+      )}
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
@@ -661,7 +688,7 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         <div className="mb-3 flex items-center gap-2">
           <TriangleAlert className="h-4 w-4 text-gray-400 dark:text-slate-500" />
           <h2 className="text-sm font-medium text-gray-900 dark:text-white">Recent hardware events</h2>
-          {eventsFormId && events.rows.length > 0 && canDeleteEvents(eventsFormId) && (
+          {eventsFormId && events.rows.length > 0 && canDeleteEvents(eventsFormId) && !demoMode && (
             <button
               type="button"
               onClick={() => setConfirmClearOpen(true)}
@@ -741,6 +768,12 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
             customers, follow-up tasks, messages and hardware events — so testing starts from a clean slate. Your
             Receptionist Settings, forms and flows are <span className="font-semibold">not</span> touched.
           </p>
+          {demoMode ? (
+            <p className="mt-3 text-xs text-gray-400 dark:text-slate-500">
+              Not available in the shared demo — the demo's records are managed automatically, and nothing
+              you do here changes them for other visitors.
+            </p>
+          ) : (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <input
               type="text"
@@ -765,6 +798,7 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
               <span className="text-xs text-gray-500 dark:text-slate-400">{freshProgress}</span>
             )}
           </div>
+          )}
         </div>
       )}
     </div>
