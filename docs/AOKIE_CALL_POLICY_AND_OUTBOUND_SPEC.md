@@ -124,11 +124,22 @@ and are never screened. Contract churn complete both repos (manifests,
 fixtures, flowEventCatalog, browser mock with demo parity, customLogic
 grant retrofitted).
 
-Remaining slices: dedicated `outbound` consent scope + wizard checkbox
-(pre-GA), `aokie_dial` flow node (both runners), the missed-call queue
-(Callback Tasks form + dial-back flow + SMS fallback via sms_capable),
-formlogic Calls direction field + no_answer status + outbound app-logic,
-and outbound-aware post-call processing.
+Slice 2 (formlogic `ca2e6b8` + aokie `a94f9a1`, z29): the MISSED-CALL
+CALLBACK QUEUE. Deviations from the draft, all deliberate: no new Callback
+Tasks form (Follow-up Tasks gained `callback_state` — one console surface);
+no dedicated `aokie_dial` node (the generic connector.request action does
+it, same as call.reject); dial-back is IMMEDIATE, not delayed N minutes
+(the caller just hung up, their line is free; there is no flow scheduler);
+the apology-SMS replies ride the existing human-approval draft path rather
+than a new reply loop. Calls gained direction + no_answer; the queue is
+one-callback-per-number, blocked-customer-guarded, and a refused dial
+(kill switch/quiet hours/cap) leaves the task visibly queued for a human.
+The callee's pickup "Hello?" is now recorded on outbound calls (the
+inbound ringtone-garbage clear was wiping it).
+
+Remaining: dedicated `outbound` consent scope + wizard checkbox (pre-GA),
+outbound-aware post-call processing (summaries/records for agent-placed
+calls), live missed-call loop test (user-gated).
 
 LIVE-PROVEN (z28): two real dials to the owner's phone. Call 1 exposed the
 overlay-wipe bug (callee got the INBOUND greeting) + the inbound booking
