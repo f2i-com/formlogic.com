@@ -794,9 +794,17 @@ ${BUSINESS_INFO_BLOCK_JS}
   }
   upcoming.sort(function (x, y) { var a = x.date + ' ' + x.time, b = y.date + ' ' + y.time; return a < b ? -1 : a > b ? 1 : 0; });
   if (upcoming.length > 5) upcoming = upcoming.slice(0, 5);
+  var DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONFULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   function humanWhenP(dStr, tStr) {
+    // Spoken-friendly label (live report 2026-07-14: toDateString()'s
+    // "Tue Jul 14 2026" was voiced as garbled numbers): full weekday + day +
+    // full month, year only when it isn't this year - the model's
+    // copy-dates-EXACTLY rule then reproduces speakable text.
     var hp = dStr.split('-');
-    var label = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2])).toDateString();
+    var dt = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2]));
+    var label = DAYFULL[dt.getDay()] + ' ' + dt.getDate() + ' ' + MONFULL[dt.getMonth()];
+    if (dt.getFullYear() !== new Date().getFullYear()) label += ' ' + dt.getFullYear();
     if (/^\\d{2}:\\d{2}$/.test(tStr)) {
       var hh = Number(tStr.slice(0, 2));
       var h12 = hh % 12 === 0 ? 12 : hh % 12;
@@ -812,7 +820,14 @@ ${BUSINESS_INFO_BLOCK_JS}
     }
     calBlock = '\\n\\nBOOKINGS ON RECORD for this caller (today is ' + todayIso + '):\\n' + calLines.join('\\n')
       + '\\nAnswer questions about their bookings ONLY from this list - never invent or guess dates. requested = awaiting confirmation, confirmed = locked in.'
+      + '\\nThis list is the ONLY source of booking dates. Anything about bookings or dates in the customer notes is OLD HISTORY, never a current booking.'
       + '\\nIf they want to change or cancel one, or book another, note the details clearly; the booking is updated after the call and confirmed by text.';
+  } else {
+    // No upcoming rows: say so explicitly - an empty block left the model
+    // free to dredge old dates out of the customer notes (live report
+    // 2026-07-14: a long-past 'Sunday July 12th' resurfaced as a booking).
+    calBlock = '\\n\\nBOOKINGS ON RECORD for this caller (today is ' + todayIso + '): none upcoming.'
+      + '\\nIf they ask about a booking, say you do not see one coming up and offer to take a new request. Never treat dates from the customer notes as bookings.';
   }
   if (!hit) return { found: false, name: '', persona: persona + calBlock, greeting: greeting };
   var ca = (hit.answers || {});

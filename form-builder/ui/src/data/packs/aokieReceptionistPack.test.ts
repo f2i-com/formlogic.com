@@ -1017,9 +1017,11 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.persona).toContain('Diner');
       });
 
-      it('no upcoming bookings → persona untouched (no empty calendar block)', () => {
+      it('no upcoming bookings → an EXPLICIT none-upcoming block (2026-07-14: an absent block let the model dredge old dates out of customer notes)', () => {
         const r = run([]);
-        expect(r.persona).not.toContain('BOOKINGS ON RECORD');
+        expect(r.persona).toContain('BOOKINGS ON RECORD');
+        expect(r.persona).toContain('none upcoming');
+        expect(r.persona).toContain('Never treat dates from the customer notes as bookings');
       });
     });
   });
