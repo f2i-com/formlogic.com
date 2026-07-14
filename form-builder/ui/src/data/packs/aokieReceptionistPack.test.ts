@@ -1468,6 +1468,11 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(evalCond({ durationSeconds: 30, outcome: 'completed' })).toBe(true);
       expect(evalCond({ durationSeconds: 30, outcome: 'terminated_abuse' })).toBe(false);
       expect(evalCond({ durationSeconds: 2, outcome: 'completed' })).toBe(false);
+      // Phase 2 (live test call 2821e7e2): the inbound booking extractor must
+      // never run on an OUTBOUND call — it minted a junk appointment + an
+      // active SMS loop at the callee on the very first outbound test.
+      expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'outbound' })).toBe(false);
+      expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound' })).toBe(true);
       // The summary binding still covers the Calls row for abuse calls.
       const summary = (pack.flowBindings ?? []).find(
         (b) => b.flow === 'call-summary-follow-up' && b.event === 'aokie.call.ended'

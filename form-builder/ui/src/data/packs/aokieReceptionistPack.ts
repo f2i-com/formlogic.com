@@ -3476,11 +3476,15 @@ export const aokieReceptionistPack: PackData = {
       // missed-call binding below owns the missed path). Abuse-terminated calls
       // are skipped too (Phase 1): no records, tasks or SMS may be minted off
       // an abusive transcript — texting a just-blocked caller would be worse
-      // than doing nothing. The call-summary binding still records what
-      // happened on the Calls row.
+      // than doing nothing. OUTBOUND calls are skipped as well (Phase 2, live
+      // test call 2821e7e2: the INBOUND booking extractor ran on the very
+      // first outbound test call and minted a junk appointment + an active
+      // SMS confirmation loop at the callee) — outbound-aware post-call
+      // processing arrives with the callback-queue slice. The call-summary
+      // binding still records what happened on the Calls row.
       condition: {
         type: 'expression',
-        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse') : false",
+        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound') : false",
       },
       inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
       outputActions: [
