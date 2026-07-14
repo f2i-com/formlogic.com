@@ -805,9 +805,9 @@ const FLOW_BUSINESS_LOOKUP = `(function () {
   }
   out.digest = 'DATA as of ' + todayIso + ' (question: "' + String(inputs.question || '').slice(0, 200) + '")'
     + '\\nCALLER OWN BOOKINGS:' + (mine.length ? '\\n- ' + mine.join('\\n- ') : ' none on record')
-    + '\\nCALENDAR OCCUPANCY next 90 days (times TAKEN, all customers - never name them):'
+    + '\\nCALENDAR OCCUPANCY, window ' + todayIso + ' through ' + horizonIso + ' (times TAKEN, all customers - never name them):'
     + (lines.length ? '\\n' + lines.join('\\n') : '\\n- no bookings')
-    + '\\nDays not listed within this window are fully open. If the question is about dates BEYOND this window, say the calendar view does not reach that far and the team will confirm - do not guess. New bookings are requests the team confirms.';
+    + '\\nAny date INSIDE this window that is not listed above has NO bookings: state plainly that it looks open and offer to put a booking request in. Only dates AFTER ' + horizonIso + ' are outside the view - for those say the calendar view does not reach that far and the team will confirm. New bookings are requests the team confirms.';
   return out;
 })()`;
 const FLOW_PERSONALIZE_CALLER = `(function () {
