@@ -211,16 +211,22 @@ class AdminPanelTest extends TestCase
 
     // ── admin identity + gate ───────────────────────────────────────────────
 
-    public function testPlatformAdminFlagAllowlistAndDemoRules(): void
+    public function testPlatformAdminRequiresDurableFlagAndDemoIsDenied(): void
     {
         $this->assertTrue(self::$auth->isPlatformAdmin($this->userModel($this->adminId)));
         $this->assertFalse(self::$auth->isPlatformAdmin($this->userModel($this->userId)));
 
-        // ADMIN_EMAILS bootstrap allowlist works without the DB flag.
+        // A configured bootstrap address is reserved, never runtime authority.
         $allowId = 'u-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash) VALUES (?, 'allowlisted-admin@test.local', 'x')")->execute([$allowId]);
         try {
-            $this->assertTrue(self::$auth->isPlatformAdmin($this->userModel($allowId)));
+            $this->assertFalse(self::$auth->isPlatformAdmin($this->userModel($allowId)));
+            try {
+                self::$auth->register('allowlisted-admin@test.local', 'correct-horse-battery');
+                $this->fail('reserved bootstrap address must not register publicly');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('reserved', $e->getMessage());
+            }
         } finally {
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$allowId]);
         }

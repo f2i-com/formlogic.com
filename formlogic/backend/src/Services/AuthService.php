@@ -58,7 +58,7 @@ class AuthService
     private RateLimiter $rateLimiter;
     private ?EmailService $emailService;
     private int $signupFreeDays = 30;
-    /** Lowercased emails always treated as platform admins (ADMIN_EMAILS env bootstrap). */
+    /** Lowercased bootstrap addresses reserved from public registration. */
     private array $adminEmails = [];
     /** Per-request memo of the global session epoch (system_meta 'session_epoch'). */
     private ?int $sessionEpochCache = null;
@@ -96,6 +96,11 @@ class AuthService
      */
     public function register(string $email, string $password, ?string $name = null, ?string $timezone = null): array
     {
+        if (in_array(strtolower(trim($email)), $this->adminEmails, true)) {
+            throw new \RuntimeException(
+                'This address is reserved for administrator bootstrap and cannot be registered publicly.'
+            );
+        }
         if ($name !== null && mb_strlen($name) > self::MAX_NAME_LENGTH) {
             throw new \InvalidArgumentException('Name must be ' . self::MAX_NAME_LENGTH . ' characters or fewer.');
         }
@@ -409,9 +414,8 @@ class AuthService
     // ── Platform administration (admin panel) ───────────────────────────────
 
     /**
-     * Platform admin = the users.is_admin flag OR membership in the ADMIN_EMAILS
-     * env allowlist (the bootstrap path before any flag has been granted).
-     * Distinct from app-level RBAC. The shared demo account can never be admin.
+     * Platform admin authorization comes only from the durable users.is_admin
+     * flag. Configured email strings are reservation hints, never authority.
      */
     public function isPlatformAdmin(User $user): bool
     {
@@ -419,10 +423,7 @@ class AuthService
         if (strtolower($user->email) === $demoEmail) {
             return false;
         }
-        if ($user->isAdmin) {
-            return true;
-        }
-        return $this->adminEmails !== [] && in_array(strtolower($user->email), $this->adminEmails, true);
+        return $user->isAdmin;
     }
 
     /**
@@ -628,25 +629,15 @@ class AuthService
      * exists) to avoid account enumeration. Best-effort email — if no email
      * service is configured the token is still created but undeliverable.
      */
-    public function requestPasswordReset(string $email, string $resetUrlBase): void
+    public function requestPasswordReset(string $email, string $resetUrlBase, bool $countAttempt = true): void
     {
         // Per-email rate limit, checked BEFORE the existence lookup below and keyed on the
         // raw submitted email string itself (never on whether an account was found). This
         // way, hitting the limit only reveals "this email string has been submitted N times
         // in the window" - a fact the caller already knows, since they are the one submitting
         // it - and reveals nothing about whether an account exists behind it.
-        $resetKey = $this->getPasswordResetRateLimitKey($email);
-        $resetCount = $this->rateLimiter->hit($resetKey, self::PASSWORD_RESET_DECAY_SECONDS);
-        if ($resetCount === RateLimiter::UNAVAILABLE) {
-            // Password reset is a HIGH-RISK action — fail CLOSED on a limiter
-            // outage (audit RATE-001) rather than allowing unlimited requests.
-            throw new RateLimiterUnavailableException();
-        }
-        if ($resetCount > self::PASSWORD_RESET_MAX_ATTEMPTS) {
-            throw new \RuntimeException(
-                "Too many password reset requests for this email. Please try again in " .
-                ceil($this->rateLimiter->secondsUntilReset(self::PASSWORD_RESET_DECAY_SECONDS) / 60) . " minute(s)."
-            );
+        if ($countAttempt) {
+            $this->consumePasswordResetAttempt($email);
         }
 
         $stmt = $this->mysql->prepare("SELECT id, name FROM users WHERE email = :email LIMIT 1");
@@ -683,6 +674,26 @@ class AuthService
                 . "<p><a href=\"{$safeLink}\">Reset your password</a></p>"
                 . "<p>If you didn't request this, you can safely ignore this email.</p>";
             $this->emailService->send((string) $email, 'Reset your FormLogic password', $html);
+        }
+    }
+
+    /**
+     * Consume the enumeration-safe, per-email password-reset budget before
+     * any URL resolution or account lookup. Keeping this callable separately
+     * lets the controller throttle even when APP_URL is misconfigured.
+     */
+    public function consumePasswordResetAttempt(string $email): void
+    {
+        $resetKey = $this->getPasswordResetRateLimitKey($email);
+        $resetCount = $this->rateLimiter->hit($resetKey, self::PASSWORD_RESET_DECAY_SECONDS);
+        if ($resetCount === RateLimiter::UNAVAILABLE) {
+            throw new RateLimiterUnavailableException();
+        }
+        if ($resetCount > self::PASSWORD_RESET_MAX_ATTEMPTS) {
+            throw new \RuntimeException(
+                "Too many password reset requests for this email. Please try again in " .
+                ceil($this->rateLimiter->secondsUntilReset(self::PASSWORD_RESET_DECAY_SECONDS) / 60) . " minute(s)."
+            );
         }
     }
 

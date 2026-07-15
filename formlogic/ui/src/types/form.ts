@@ -138,6 +138,9 @@ export interface FormTheme {
 }
 
 export interface CustomScreen {
+  /** Server-derived provenance gate. Client-authored values are stripped on save. */
+  _trust?: 'owner' | 'verified' | 'untrusted';
+  _provenance?: Record<string, unknown>;
   enabled?: boolean;
   html?: string;
   css?: string;

@@ -14,7 +14,7 @@ use Slim\Psr7\Response as SlimResponse;
 /**
  * Platform-administrator gate for /api/admin/* — runs INSIDE AuthMiddleware
  * (which sets the 'user' attribute) and refuses anyone who isn't a platform
- * admin (users.is_admin or the ADMIN_EMAILS bootstrap allowlist). The shared
+ * admin (the durable users.is_admin flag). The shared
  * demo account is never an admin.
  */
 class AdminGateMiddleware implements MiddlewareInterface

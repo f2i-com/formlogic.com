@@ -73,6 +73,9 @@ Options -Indexes
   # whole backend lives under ./api, this funnel is ALSO what keeps api/.env,
   # api/config, api/src, api/storage and api/vendor from being fetched directly —
   # the Slim router simply 404s anything that isn't a real API route.
+  # Only use the bundled API rewrite when its front controller exists. This
+  # prevents a split-domain deployment from looping on a missing ./api path.
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
   RewriteRule ^api/ api/public/index.php [QSA,L]
 
   # Custom-domain launch endpoints served by the backend at the domain ROOT. Map three top-level

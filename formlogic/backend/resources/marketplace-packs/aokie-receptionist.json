@@ -4307,6 +4307,10 @@
               "data": {
                 "inputs": [
                   {
+                    "name": "managerActionId",
+                    "example": "manager_123"
+                  },
+                  {
                     "name": "callId",
                     "example": "call_123"
                   },
@@ -4335,7 +4339,7 @@
               "id": "pass",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var id = String(inputs.updateId || '');\n  var upd = (inputs.update && typeof inputs.update === 'object' && !Array.isArray(inputs.update)) ? inputs.update : null;\n  var ok = inputs.hasUpdate === true && id.length > 0 && upd !== null;\n  return {\n    hasUpdate: ok === true,\n    updateId: id,\n    update: upd || {},\n    summaryLine: String(inputs.summary || 'Manager change applied.'),\n  };\n})()"
+                "expr": "(function () {\n  var actionId = String(inputs.managerActionId || '').trim();\n  var id = String(inputs.updateId || '');\n  var upd = (inputs.update && typeof inputs.update === 'object' && !Array.isArray(inputs.update)) ? inputs.update : null;\n  var ok = actionId.length > 0 && inputs.hasUpdate === true && id.length > 0 && upd !== null;\n  return {\n    managerActionId: actionId,\n    hasUpdate: ok === true,\n    updateId: id,\n    update: upd || {},\n    summaryLine: String(inputs.summary || 'Manager change applied.'),\n  };\n})()"
               }
             },
             {
@@ -4343,6 +4347,7 @@
               "type": "output",
               "data": {
                 "value": {
+                  "managerActionId": "$nodes.pass.managerActionId",
                   "hasUpdate": "$nodes.pass.hasUpdate",
                   "updateId": "$nodes.pass.updateId",
                   "update": "$nodes.pass.update",
@@ -4820,7 +4825,7 @@
       {
         "name": "SMS Delivery Status",
         "slug": "sms-delivery-status",
-        "description": "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text): find the newest QUEUED outbound Messages row for the recipient and flip its status to sent or failed — so the Messages screen tells the truth about delivery instead of showing 'Queued' forever. The ack's messageId is plugin-minted and never matches our rows, so recipient + newest-queued is the correlation.",
+        "description": "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text): update the one queued Messages row whose immutable messageId exactly matches the acknowledgement. The row is persisted before dispatch and the same pre-minted ID is sent to Aokie, so concurrent texts to one recipient cannot update each other's delivery state.",
         "nodeCapabilities": [
           "formlogic.responses.read"
         ],
@@ -4831,6 +4836,10 @@
               "type": "input",
               "data": {
                 "inputs": [
+                  {
+                    "name": "messageId",
+                    "example": "sms_123"
+                  },
                   {
                     "name": "to",
                     "example": "+61400000000"
@@ -4855,9 +4864,9 @@
                 "limit": 10,
                 "filters": [
                   {
-                    "field": "phone",
-                    "op": "phone_eq",
-                    "value": "$inputs.to"
+                    "field": "message_id",
+                    "op": "eq",
+                    "value": "$inputs.messageId"
                   }
                 ]
               }
@@ -4866,7 +4875,7 @@
               "id": "mark",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var outcome = String(inputs.outcome || 'sent');\n  if (outcome !== 'sent' && outcome !== 'failed') outcome = 'sent';\n  var rows = (nodes.messages && nodes.messages.responses) || [];\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued') {\n      return {\n        hasUpdate: true,\n        responseId: rows[i].id,\n        update: { status: outcome },\n        summaryLine: 'Outbound SMS to ' + String(a.phone || '') + ' marked ' + outcome + '.'\n      };\n    }\n  }\n  return { hasUpdate: false, summaryLine: 'No queued outbound SMS row matched the ' + outcome + ' ack.' };\n})()"
+                "expr": "(function () {\n  var outcome = String(inputs.outcome || 'sent');\n  if (outcome !== 'sent' && outcome !== 'failed') outcome = 'sent';\n  var messageId = String(inputs.messageId || '');\n  if (!messageId) return { hasUpdate: false, summaryLine: 'SMS acknowledgement had no messageId.' };\n  var rows = (nodes.messages && nodes.messages.responses) || [];\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued' && String(a.message_id || '') === messageId) {\n      return {\n        hasUpdate: true,\n        responseId: rows[i].id,\n        update: { status: outcome },\n        summaryLine: 'Outbound SMS to ' + String(a.phone || '') + ' marked ' + outcome + '.'\n      };\n    }\n  }\n  return { hasUpdate: false, summaryLine: 'No outbound SMS row matched messageId ' + messageId + '.' };\n})()"
               }
             },
             {
@@ -5740,20 +5749,21 @@
             "answers": "$result.task"
           },
           {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasKickoffSms",
+            "answers": "$result.kickoffMessage"
+          },
+          {
             "type": "connector.request",
             "connectorId": "aokie",
             "command": "sms.send",
             "when": "$result.hasKickoffSms",
             "payload": {
+              "messageId": "$result.kickoffMessage.message_id",
               "to": "$result.kickoffSms.to",
               "body": "$result.kickoffSms.body"
             }
-          },
-          {
-            "type": "formlogic.submitResponse",
-            "form": "@pack:sms-messages",
-            "when": "$result.hasKickoffSms",
-            "answers": "$result.kickoffMessage"
           },
           {
             "type": "formlogic.toast",
@@ -5816,20 +5826,21 @@
             "answers": "$result.taskUpdate"
           },
           {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasReply",
+            "answers": "$result.outboundMessage"
+          },
+          {
             "type": "connector.request",
             "connectorId": "aokie",
             "command": "sms.send",
             "when": "$result.hasReply",
             "payload": {
+              "messageId": "$result.outboundMessage.message_id",
               "to": "$result.reply.to",
               "body": "$result.reply.body"
             }
-          },
-          {
-            "type": "formlogic.submitResponse",
-            "form": "@pack:sms-messages",
-            "when": "$result.hasReply",
-            "answers": "$result.outboundMessage"
           },
           {
             "type": "formlogic.toast",
@@ -5852,6 +5863,7 @@
         "mode": "async",
         "timeoutMs": 15000,
         "inputMap": {
+          "messageId": "$event.data.messageId",
           "to": "$event.data.to",
           "outcome": "sent"
         },
@@ -5876,6 +5888,7 @@
         "mode": "async",
         "timeoutMs": 15000,
         "inputMap": {
+          "messageId": "$event.data.messageId",
           "to": "$event.data.to",
           "outcome": "failed",
           "reason": "$event.data.reason"
@@ -5965,20 +5978,21 @@
             "answers": "$result.taskUpdate"
           },
           {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasSms",
+            "answers": "$result.smsMessage"
+          },
+          {
             "type": "connector.request",
             "connectorId": "aokie",
             "command": "sms.send",
             "when": "$result.hasSms",
             "payload": {
+              "messageId": "$result.smsMessage.message_id",
               "to": "$result.sms.to",
               "body": "$result.sms.body"
             }
-          },
-          {
-            "type": "formlogic.submitResponse",
-            "form": "@pack:sms-messages",
-            "when": "$result.hasSms",
-            "answers": "$result.smsMessage"
           },
           {
             "type": "formlogic.toast",
@@ -6013,20 +6027,21 @@
             "answers": "$result.task"
           },
           {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasSms",
+            "answers": "$result.smsMessage"
+          },
+          {
             "type": "connector.request",
             "connectorId": "aokie",
             "command": "sms.send",
             "when": "$result.hasSms",
             "payload": {
+              "messageId": "$result.smsMessage.message_id",
               "to": "$result.sms.to",
               "body": "$result.sms.body"
             }
-          },
-          {
-            "type": "formlogic.submitResponse",
-            "form": "@pack:sms-messages",
-            "when": "$result.hasSms",
-            "answers": "$result.smsMessage"
           },
           {
             "type": "formlogic.toast",
@@ -6086,6 +6101,7 @@
         "mode": "async",
         "timeoutMs": 15000,
         "inputMap": {
+          "managerActionId": "$event.data.managerActionId",
           "callId": "$event.data.callId",
           "summary": "$event.data.summary",
           "hasUpdate": "$event.data.hasUpdate",

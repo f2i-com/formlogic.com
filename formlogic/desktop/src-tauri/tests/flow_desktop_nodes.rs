@@ -128,6 +128,7 @@ fn opts() -> RunOptions {
         timeout_ms: DEFAULT_TIMEOUT_MS,
         capabilities: vec![],
         flow_slug: "t".into(),
+        request_id_seed: "desktop-node-test".into(),
     }
 }
 

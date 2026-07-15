@@ -3,14 +3,15 @@
 declare(strict_types=1);
 
 use Monolog\Logger;
+use FormLogic\Support\Environment;
 
 // Determine if we're in production mode.
 // Safe-by-default: any value other than an explicit 'development' is treated as
 // production, so a missing/typo'd APP_ENV never silently exposes debug details.
-$isProduction = (($_ENV['APP_ENV'] ?? 'production') !== 'development');
+$isProduction = (Environment::get('APP_ENV', 'production') !== 'development');
 
 // Get JWT secret - fail hard in production if using a default/placeholder value.
-$jwtSecret = $_ENV['JWT_SECRET'] ?? 'formlogic-dev-jwt-secret-change!';
+$jwtSecret = Environment::get('JWT_SECRET', 'formlogic-dev-jwt-secret-change!');
 $jwtPlaceholders = [
     'formlogic-dev-jwt-secret-change!',
     'your-super-secret-jwt-key-change-in-production',
@@ -31,13 +32,7 @@ if ($isProduction && (strlen($jwtSecret) < 32 || $isPlaceholderSecret)) {
 // IMMUTABLE Dotenv skips writing a var into $_ENV when it already exists in the environment
 // ($_SERVER counts), so relying on $_ENV alone silently falls back to defaults. (This exact
 // interaction broke the E2E release gate's provision step.)
-$envOr = static function (string $key, ?string $default = null): ?string {
-    if (isset($_ENV[$key]) && $_ENV[$key] !== '') {
-        return (string) $_ENV[$key];
-    }
-    $v = getenv($key);
-    return ($v !== false && $v !== '') ? $v : $default;
-};
+$envOr = static fn (string $key, ?string $default = null): ?string => Environment::nonEmpty($key, $default);
 $dbPassword = $envOr('DB_PASSWORD', 'password');
 if ($isProduction && $dbPassword === 'password') {
     throw new \RuntimeException(
@@ -48,26 +43,26 @@ if ($isProduction && $dbPassword === 'password') {
 // Cloud plan enforcement (hosted SaaS only). OFF by default so self-hosters are
 // unlimited. If a hosted operator turns it on in production, PayPal must be configured
 // or users would hit limits with no way to pay to lift them.
-$cloudPlanEnforced = filter_var($_ENV['CLOUD_PLAN_ENFORCED'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+$cloudPlanEnforced = filter_var(Environment::get('CLOUD_PLAN_ENFORCED', 'false'), FILTER_VALIDATE_BOOLEAN);
 
 // Public-beta mode: free signup for a limited window, payments disabled, nothing enforced — so people
 // can test without paying while the product is still maturing. New accounts get BETA_FREE_DAYS of Cloud
 // (default 90 = ~3 months) as a runway for when the beta ends and enforcement is switched on. While
 // BETA_MODE is on we DON'T enforce the plan (no lockouts) and don't require PayPal.
-$betaMode = filter_var($_ENV['BETA_MODE'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
-$signupFreeDays = $betaMode ? max(1, (int) ($_ENV['BETA_FREE_DAYS'] ?? 90)) : 30;
+$betaMode = filter_var(Environment::get('BETA_MODE', 'false'), FILTER_VALIDATE_BOOLEAN);
+$signupFreeDays = $betaMode ? max(1, (int) Environment::get('BETA_FREE_DAYS', '90')) : 30;
 if ($betaMode) {
     $cloudPlanEnforced = false;
 }
 
 // Support / contact address shown to users when transactional email isn't configured yet (e.g. a
 // fresh install with no SMTP) — the password-reset page points people here to reset or verify by hand.
-$supportEmail = trim((string) ($_ENV['SUPPORT_EMAIL'] ?? '')) ?: 'hello@formlogic.com';
+$supportEmail = trim((string) Environment::get('SUPPORT_EMAIL', '')) ?: 'hello@formlogic.com';
 
 if ($isProduction && $cloudPlanEnforced) {
     $missingPaypal = array_values(array_filter(
         ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET'],
-        fn($k) => empty($_ENV[$k])
+        fn($k) => Environment::nonEmpty($k) === null
     ));
     if ($missingPaypal) {
         throw new \RuntimeException(
@@ -83,12 +78,12 @@ if ($isProduction && $cloudPlanEnforced) {
 // durable flag to itself/others).
 $adminEmails = array_values(array_filter(array_map(
     'trim',
-    explode(',', (string) ($_ENV['ADMIN_EMAILS'] ?? ''))
+    explode(',', (string) Environment::get('ADMIN_EMAILS', ''))
 )));
 
 return [
     'settings' => [
-        'displayErrorDetails' => !$isProduction && ($_ENV['APP_DEBUG'] ?? 'false') === 'true',
+        'displayErrorDetails' => !$isProduction && Environment::get('APP_DEBUG', 'false') === 'true',
         'logErrors' => true,
         'logErrorDetails' => !$isProduction,
         'supportEmail' => $supportEmail,
@@ -113,10 +108,10 @@ return [
 
         'jwt' => [
             'secret' => $jwtSecret,
-            'expiry' => (int)($_ENV['JWT_EXPIRY'] ?? 86400),
+            'expiry' => (int) Environment::get('JWT_EXPIRY', '86400'),
             'algorithm' => 'HS256',
-            'issuer' => $_ENV['JWT_ISSUER'] ?? 'formlogic',
-            'audience' => $_ENV['JWT_AUDIENCE'] ?? 'formlogic-api',
+            'issuer' => Environment::get('JWT_ISSUER', 'formlogic'),
+            'audience' => Environment::get('JWT_AUDIENCE', 'formlogic-api'),
         ],
 
         // Cookie settings for secure authentication.
@@ -128,35 +123,35 @@ return [
         'cookie' => [
             'name' => 'formlogic_auth',
             'httpOnly' => true,
-            'secure' => in_array(strtolower((string) ($_ENV['COOKIE_SECURE'] ?? '')), ['true', 'false'], true)
-                ? strtolower((string) $_ENV['COOKIE_SECURE']) === 'true'
+            'secure' => in_array(strtolower((string) Environment::get('COOKIE_SECURE', '')), ['true', 'false'], true)
+                ? strtolower((string) Environment::get('COOKIE_SECURE', '')) === 'true'
                 : $isProduction,
             'sameSite' => 'Lax', // Provides CSRF protection while allowing normal navigation
             'path' => '/',
-            'domain' => $_ENV['COOKIE_DOMAIN'] ?? '', // Empty = current domain only
+            'domain' => Environment::get('COOKIE_DOMAIN', ''), // Empty = current domain only
         ],
 
         'sqlite' => [
-            'storage_path' => __DIR__ . '/../' . ($_ENV['SQLITE_STORAGE_PATH'] ?? 'storage/forms'),
+            'storage_path' => __DIR__ . '/../' . Environment::get('SQLITE_STORAGE_PATH', 'storage/forms'),
         ],
 
         'cors' => [
-            'origin' => $_ENV['CORS_ORIGIN'] ?? 'http://localhost:5173',
+            'origin' => Environment::get('CORS_ORIGIN', 'http://localhost:5173'),
             'allowedOrigins' => array_filter(
-                array_map('trim', explode(',', $_ENV['CORS_ALLOWED_ORIGINS'] ?? '')),
+                array_map('trim', explode(',', Environment::get('CORS_ALLOWED_ORIGINS', ''))),
                 fn($o) => !empty($o)
             ) ?: null, // null means use single origin mode
         ],
 
         'rateLimit' => [
             'login' => [
-                'maxAttempts' => (int)($_ENV['LOGIN_MAX_ATTEMPTS'] ?? 5),
-                'decayMinutes' => (int)($_ENV['LOGIN_DECAY_MINUTES'] ?? 15),
+                'maxAttempts' => (int) Environment::get('LOGIN_MAX_ATTEMPTS', '5'),
+                'decayMinutes' => (int) Environment::get('LOGIN_DECAY_MINUTES', '15'),
             ],
         ],
 
         'uploads' => [
-            'maxFileSize' => (int)($_ENV['UPLOAD_MAX_FILE_SIZE'] ?? 10 * 1024 * 1024), // 10MB default
+            'maxFileSize' => (int) Environment::get('UPLOAD_MAX_FILE_SIZE', (string) (10 * 1024 * 1024)), // 10MB default
             'allowedTypes' => [
                 'application/pdf',
                 'application/msword',
@@ -176,27 +171,27 @@ return [
 
         // Account backups (Settings → Backup & restore): a full-workspace zip —
         // apps/forms/flows structure + per-form SQLite record databases + uploaded
-        // files. The zip cap feeds the global BodySizeLimit calculation in
-        // public/index.php; the other caps bound the import validator.
+        // files. The zip cap feeds the exact authenticated backup route policy
+        // in public/index.php; the other caps bound the import validator.
         'backups' => [
-            'maxZipSize' => (int)($_ENV['BACKUP_MAX_ZIP_SIZE'] ?? 200 * 1024 * 1024),            // 200MB upload
-            'maxEntryBytes' => (int)($_ENV['BACKUP_MAX_ENTRY_BYTES'] ?? 256 * 1024 * 1024),      // one sqlite can be big
-            'maxTotalUncompressed' => (int)($_ENV['BACKUP_MAX_TOTAL_BYTES'] ?? 1024 * 1024 * 1024), // 1GB unpacked
-            'maxResponsesPerForm' => (int)($_ENV['BACKUP_MAX_RESPONSES_PER_FORM'] ?? 200000),
+            'maxZipSize' => (int) Environment::get('BACKUP_MAX_ZIP_SIZE', (string) (200 * 1024 * 1024)),
+            'maxEntryBytes' => (int) Environment::get('BACKUP_MAX_ENTRY_BYTES', (string) (256 * 1024 * 1024)),
+            'maxTotalUncompressed' => (int) Environment::get('BACKUP_MAX_TOTAL_BYTES', (string) (1024 * 1024 * 1024)),
+            'maxResponsesPerForm' => (int) Environment::get('BACKUP_MAX_RESPONSES_PER_FORM', '200000'),
             'maxForms' => 500,
             'maxApps' => 100,
             'maxFlows' => 200,
             'maxBindings' => 400,
             // Scheduled nightly backups (bin/backup-accounts.php): dated folders of
             // per-account zips + a whole-site MySQL dump, pruned to retentionDays.
-            'retentionDays' => max(1, (int)($_ENV['BACKUP_RETENTION_DAYS'] ?? 7)),
-            'scheduledIncludeFiles' => strtolower((string)($_ENV['BACKUP_INCLUDE_FILES'] ?? 'true')) !== 'false',
+            'retentionDays' => max(1, (int) Environment::get('BACKUP_RETENTION_DAYS', '7')),
+            'scheduledIncludeFiles' => strtolower((string) Environment::get('BACKUP_INCLUDE_FILES', 'true')) !== 'false',
         ],
 
         // Recycle bin: user-facing deletes of forms/apps/flows capture a restorable
         // snapshot first (hard delete unchanged); snapshots purge after retentionDays.
         'trash' => [
-            'retentionDays' => max(1, (int)($_ENV['TRASH_RETENTION_DAYS'] ?? 30)),
+            'retentionDays' => max(1, (int) Environment::get('TRASH_RETENTION_DAYS', '30')),
         ],
 
         // Hosted-cloud plan limits. Only enforced when planEnforced is true (hosted SaaS);
@@ -205,8 +200,8 @@ return [
             'planEnforced' => $cloudPlanEnforced,
             'betaMode' => $betaMode,
             'signupFreeDays' => $signupFreeDays,
-            'maxForms' => (int)($_ENV['CLOUD_MAX_FORMS'] ?? 100),
-            'maxStorageBytes' => (int)($_ENV['CLOUD_MAX_STORAGE_BYTES'] ?? 1024 * 1024 * 1024), // 1 GB
+            'maxForms' => (int) Environment::get('CLOUD_MAX_FORMS', '100'),
+            'maxStorageBytes' => (int) Environment::get('CLOUD_MAX_STORAGE_BYTES', (string) (1024 * 1024 * 1024)), // 1 GB
         ],
     ],
 ];

@@ -18,6 +18,8 @@ class App
         public array $theme = [],
         public array $navConfig = [],
         public array $customScreen = [],
+        public string $customScreenTrust = 'untrusted',
+        public array $customScreenProvenance = [],
         public array $reports = [],
         public array $customLogic = [],
         public ?string $createdAt = null,
@@ -46,6 +48,10 @@ class App
             customScreen: is_string($data['custom_screen'] ?? null)
                 ? json_decode($data['custom_screen'], true) ?? []
                 : ($data['customScreen'] ?? []),
+            customScreenTrust: (string) ($data['custom_screen_trust'] ?? $data['customScreenTrust'] ?? 'untrusted'),
+            customScreenProvenance: is_string($data['custom_screen_provenance'] ?? null)
+                ? json_decode($data['custom_screen_provenance'], true) ?? []
+                : ($data['customScreenProvenance'] ?? []),
             reports: is_string($data['reports'] ?? null)
                 ? json_decode($data['reports'], true) ?? []
                 : ($data['reports'] ?? []),
@@ -59,6 +65,11 @@ class App
 
     public function toArray(): array
     {
+        $customScreen = $this->customScreen;
+        if ($customScreen !== []) {
+            $customScreen['_trust'] = $this->customScreenTrust;
+            $customScreen['_provenance'] = $this->customScreenProvenance;
+        }
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -70,7 +81,7 @@ class App
             'settings' => $this->settings,
             'theme' => $this->theme,
             'navConfig' => $this->navConfig,
-            'customScreen' => $this->customScreen,
+            'customScreen' => $customScreen,
             'reports' => $this->reports,
             'customLogic' => $this->customLogic,
             'createdAt' => $this->createdAt,

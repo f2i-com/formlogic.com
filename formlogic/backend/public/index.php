@@ -61,7 +61,8 @@ date_default_timezone_set('UTC');
 
 // Load environment variables
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
-$dotenv->load();
+$dotenv->safeLoad();
+\FormLogic\Support\Environment::bootstrap();
 
 // Load settings
 $settings = require __DIR__ . '/../config/settings.php';
@@ -246,7 +247,7 @@ $container->set(WebhookService::class, function (Container $c) {
 // Register audit service
 $container->set(AuditService::class, function (Container $c) use ($settings) {
     // Use explicit AUDIT_HMAC_KEY if set, otherwise derive from JWT secret
-    $auditHmacKey = $_ENV['AUDIT_HMAC_KEY'] ?? null;
+    $auditHmacKey = \FormLogic\Support\Environment::get('AUDIT_HMAC_KEY');
     if (empty($auditHmacKey)) {
         $jwtSecret = $settings['settings']['jwt']['secret'] ?? '';
         $auditHmacKey = hash('sha256', 'formlogic-audit:' . $jwtSecret);
@@ -796,7 +797,7 @@ $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csr
 // browser via the client overlay). Self-contained token check, so global placement is fine.
 $app->add(new \FormLogic\Middleware\DemoReadOnlyMiddleware(
     $container->get(AuthService::class),
-    $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local',
+    \FormLogic\Support\Environment::get('DEMO_EMAIL', 'demo@formlogic.local'),
     $cookieName
 ));
 
@@ -820,16 +821,27 @@ $app->add(new CorsMiddleware(
 // Add security headers middleware
 $app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
 
-// Global body-size safety net. It must accommodate the largest legitimate body —
-// account-backup zip uploads (backups.maxZipSize, 200MB default) are the largest,
-// ahead of pack zips and ordinary file uploads — plus multipart/base64 envelope
-// overhead. Stricter per-route/per-field limits are still enforced in the
-// upload/pack/backup handlers.
+// The unauthenticated default is deliberately small. Exact routes may opt into a
+// larger content-type-specific cap; authenticated policies verify a bearer/cookie
+// token before the stream is consumed. Handler-level file/pack limits still apply.
 $uploadMax = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1024);
 $packMax = $settings['settings']['packs']['maxZipSize'] ?? (50 * 1024 * 1024);
 $backupMax = $settings['settings']['backups']['maxZipSize'] ?? (200 * 1024 * 1024);
-$maxBodySize = max($uploadMax, $packMax, $backupMax) + (16 * 1024 * 1024);
-$app->add(new BodySizeLimitMiddleware($maxBodySize));
+$multipart = ['multipart/form-data'];
+$app->add(new BodySizeLimitMiddleware(
+    2 * 1024 * 1024,
+    [
+        ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/(application-packages/import|packs/catalog/upload)$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/packs/(import|describe)$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        ['path' => '#^/api/ai/generate-form-from-file$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/app/[^/]+/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => false],
+    ],
+    $container->get(AuthService::class),
+    $cookieName
+));
 
 // Public MCP-OAuth endpoints (RFC 9728/8414 discovery + token + register) must be readable from ANY
 // origin (Access-Control-Allow-Origin: *) — browser-based MCP clients fetch them cross-origin and

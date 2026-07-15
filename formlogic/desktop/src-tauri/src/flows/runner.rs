@@ -155,6 +155,9 @@ pub struct RunOptions {
     pub timeout_ms: u64,
     pub capabilities: Vec<String>,
     pub flow_slug: String,
+    /// Stable per-run seed used to derive physical connector request IDs. It
+    /// must survive flow retries/recovery so a connector can replay safely.
+    pub request_id_seed: String,
 }
 
 // ── graph model ────────────────────────────────────────────────────────────
@@ -966,7 +969,16 @@ async fn execute_node(
             } else {
                 None
             };
-            connector_request(node, deps, &opts.capabilities, &connector_id, &command, payload).await
+            connector_request(
+                node,
+                deps,
+                &opts.capabilities,
+                &connector_id,
+                &command,
+                payload,
+                connector_request_id(opts, node),
+            )
+            .await
         }
 
         "aokie_speak" => {
@@ -1022,6 +1034,7 @@ async fn execute_node(
                 "call.operatorSpeak",
                 Some(payload),
                 &["stale_call", "stale_turn"],
+                connector_request_id(opts, node),
             )
             .await
         }
@@ -1093,8 +1106,19 @@ async fn connector_request(
     connector_id: &str,
     command: &str,
     payload: Option<Value>,
+    request_id: String,
 ) -> Result<Value, FlowError> {
-    connector_request_allowing(node, deps, capabilities, connector_id, command, payload, &[]).await
+    connector_request_allowing(
+        node,
+        deps,
+        capabilities,
+        connector_id,
+        command,
+        payload,
+        &[],
+        request_id,
+    )
+    .await
 }
 
 /// Like [`connector_request`], but the listed typed connector error codes
@@ -1111,6 +1135,7 @@ async fn connector_request_allowing(
     command: &str,
     payload: Option<Value>,
     benign_codes: &[&str],
+    request_id: String,
 ) -> Result<Value, FlowError> {
     let exact = format!("connector.{connector_id}.{command}");
     let wildcard = format!("connector.{connector_id}.*");
@@ -1129,7 +1154,7 @@ async fn connector_request_allowing(
         command: command.to_string(),
         payload,
         timeout_ms: None,
-        request_id: None,
+        request_id: Some(request_id),
     };
     match connectors::dispatch(host, connector_id, &body).await {
         Ok(v) => Ok(v),
@@ -1145,6 +1170,15 @@ async fn connector_request_allowing(
             Err(FlowError::new(code, format!("Node '{}' connector {connector_id}.{command}: {}", node.id, f.message), Some(node.id.clone())))
         }
     }
+}
+
+fn connector_request_id(opts: &RunOptions, node: &GraphNode) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(
+        format!("{}:{}:{}", opts.request_id_seed, opts.flow_slug, node.id).as_bytes(),
+    );
+    let hex = format!("{digest:x}");
+    format!("flowcmd:{}", &hex[..48])
 }
 
 async fn run_http_request(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
@@ -1746,6 +1780,7 @@ mod tests {
             timeout_ms: DEFAULT_TIMEOUT_MS,
             capabilities: vec![],
             flow_slug: "t".into(),
+            request_id_seed: "test-run-1".into(),
         }
     }
 

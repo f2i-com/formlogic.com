@@ -1716,7 +1716,16 @@ impl FlowRuntime {
                                 payload["inResponseTo"] = json!(turn);
                             }
                         }
-                        if let Err(e) = self.connector(&connector_id, "call.operatorSpeak", Some(payload)).await {
+                        let request_id = Self::output_effect_key(Some(event), binding_id, usize::MAX);
+                        if let Err(e) = self
+                            .connector(
+                                &connector_id,
+                                "call.operatorSpeak",
+                                Some(payload),
+                                request_id.as_deref(),
+                            )
+                            .await
+                        {
                             self.note_error(format!("binding {binding_id} fallback speak via {connector_id}: {e}"));
                         }
                     }
@@ -1899,6 +1908,13 @@ impl FlowRuntime {
         let flow_slug = flow.get("slug").and_then(Value::as_str).unwrap_or_default().to_string();
         let app_id = flow.get("appId").and_then(Value::as_str).map(str::to_string);
         let deps = self.build_deps(app_id, Some(client.clone()));
+        let request_id_seed = event
+            .as_ref()
+            .and_then(|e| e.get("idempotencyKey"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("flowrun:{}", uuid::Uuid::new_v4().simple()));
         let opts = RunOptions {
             inputs: inputs.clone(),
             event,
@@ -1906,6 +1922,7 @@ impl FlowRuntime {
             timeout_ms: timeout_ms.unwrap_or(runner::DEFAULT_TIMEOUT_MS),
             capabilities,
             flow_slug,
+            request_id_seed,
         };
 
         let mut outcome = FlowOutcome { status: "error", result: None, error: None, nodes_executed: 0 };
@@ -2063,7 +2080,7 @@ impl FlowRuntime {
                 let cid = action.get("connectorId").and_then(Value::as_str).ok_or("connector.request missing connectorId")?;
                 let cmd = action.get("command").and_then(Value::as_str).ok_or("connector.request missing command")?;
                 let payload = resolve_deep(action.get("payload").unwrap_or(&Value::Null), scope);
-                self.connector(cid, cmd, Some(payload)).await
+                self.connector(cid, cmd, Some(payload), effect_key).await
             }
             "call.speak" => {
                 let msg = interpolate_template(action.get("message").and_then(Value::as_str).unwrap_or(""), &tctx);
@@ -2082,19 +2099,31 @@ impl FlowRuntime {
                         payload["inResponseTo"] = json!(turn);
                     }
                 }
-                self.connector("aokie", "call.operatorSpeak", Some(payload)).await
+                self.connector(
+                    "aokie",
+                    "call.operatorSpeak",
+                    Some(payload),
+                    effect_key,
+                )
+                .await
             }
             _ => Ok(()),
         }
     }
 
-    async fn connector(&self, connector_id: &str, command: &str, payload: Option<Value>) -> Result<(), String> {
+    async fn connector(
+        &self,
+        connector_id: &str,
+        command: &str,
+        payload: Option<Value>,
+        request_id: Option<&str>,
+    ) -> Result<(), String> {
         let body = crate::connectors::ConnectorRequestBody {
             connector_id: Some(connector_id.to_string()),
             command: command.to_string(),
             payload,
             timeout_ms: None,
-            request_id: None,
+            request_id: request_id.map(str::to_string),
         };
         crate::connectors::dispatch(&self.host, connector_id, &body).await.map(|_| ()).map_err(|f| f.message)
     }
@@ -2126,6 +2155,7 @@ impl FlowRuntime {
                 timeout_ms: timeout_ms.unwrap_or(runner::DEFAULT_TIMEOUT_MS),
                 capabilities,
                 flow_slug: flow_slug.unwrap_or_default(),
+                request_id_seed: idempotency_key.clone(),
             };
             let outcome = runner::execute_flow(&fj, &deps, &opts).await;
             self.note_run();
@@ -2426,6 +2456,7 @@ impl FlowRuntime {
     async fn handle_command(self: &Arc<Self>, client: &Arc<FormLogicClient>, command: &Value) {
         let instance = self.instance_id.clone();
         let host = self.host.clone();
+        let request_id = relay::command_id(command);
         let disposition = relay::process_one(
             command,
             RELAY_COMPLETE_ATTEMPTS,
@@ -2436,13 +2467,14 @@ impl FlowRuntime {
             },
             |connector_id, cmd, payload| {
                 let host = host.clone();
+                let request_id = request_id.clone();
                 async move {
                     let body = crate::connectors::ConnectorRequestBody {
                         connector_id: Some(connector_id.clone()),
                         command: cmd,
                         payload: if payload.is_null() { None } else { Some(payload) },
                         timeout_ms: None,
-                        request_id: None,
+                        request_id,
                     };
                     crate::connectors::dispatch(&host, &connector_id, &body)
                         .await

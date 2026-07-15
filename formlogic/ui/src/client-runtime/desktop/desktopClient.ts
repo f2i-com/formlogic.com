@@ -20,6 +20,7 @@ import {
   type DesktopTrustedOrigin,
 } from './desktopTypes';
 import { clearDesktopToken, desktopAuthHeaders } from './desktopPairing';
+import { resolveBackendApiUrl } from '../../lib/apiBase';
 
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -167,8 +168,9 @@ export interface DesktopServiceSnapshot {
 // A LINKED desktop refuses browser connector commands without a server-minted,
 // role-derived capability, so origin pairing alone no longer authorises the
 // phone. Minted per (current app, connector), cached until shortly before
-// expiry. Deliberately free of lib/api imports (module-cycle safety): the mint
-// endpoint only needs the session cookie + CSRF token on a same-origin fetch.
+// expiry. Deliberately free of the full lib/api client (module-cycle safety): the
+// mint endpoint only needs the configured backend base, session cookie, and CSRF
+// token. The base may be absolute in a split-domain deployment.
 let capabilityAppSlug: string | null = null;
 const capabilityCache = new Map<string, { token: string; validUntil: number }>();
 
@@ -194,7 +196,7 @@ async function getConnectorCapability(connectorId: string): Promise<string | nul
     const csrf = typeof document !== 'undefined'
       ? document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/)?.[1]
       : undefined;
-    const res = await fetch(`/api/app/${encodeURIComponent(capabilityAppSlug)}/connector-capability`, {
+    const res = await fetch(resolveBackendApiUrl(`/app/${encodeURIComponent(capabilityAppSlug)}/connector-capability`), {
       method: 'POST',
       credentials: 'include',
       headers: {

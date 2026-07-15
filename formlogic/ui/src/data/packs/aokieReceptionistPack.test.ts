@@ -441,7 +441,6 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.kickoffSms.body).toContain('Hi Lance!');
       expect(r.kickoffSms.body).toContain('Reply YES to confirm');
       expect(r.kickoffSms.body).toContain('Reply STOP to opt out');
-      // eslint-disable-next-line no-control-regex
       expect(r.kickoffSms.body).toMatch(/^[\x20-\x7E]+$/); // plain ASCII (GSM envelope)
       expect(r.kickoffMessage.direction).toBe('outbound');
       expect(r.kickoffMessage.status).toBe('queued');
@@ -660,20 +659,19 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
     });
   });
 
-  describe('sms-delivery-status: queued → sent/failed on the phone\'s ack', () => {
+  describe('sms-delivery-status: exact messageId → sent/failed on the phone\'s ack', () => {
     const markExpr = nodeExpr('sms-delivery-status', 'mark');
     const rows = (list: Array<Record<string, unknown>>) => ({
       nodes: { messages: { responses: list.map((answers, i) => ({ id: `msg-${i}`, answers })) } },
     });
 
-    it('flips the newest QUEUED outbound row to sent', () => {
+    it('flips only the queued outbound row with the acknowledged messageId', () => {
       const r = evalExpr(markExpr, {
-        inputs: { to: '+61400000000', outcome: 'sent' },
-        // Newest-first, as the list node returns them.
+        inputs: { messageId: 'sms-target', to: '+61400000000', outcome: 'sent' },
         nodes: rows([
-          { direction: 'inbound', status: 'received', phone: '+61400000000' },
-          { direction: 'outbound', status: 'queued', phone: '+61400000000' },
-          { direction: 'outbound', status: 'sent', phone: '+61400000000' },
+          { direction: 'outbound', status: 'queued', phone: '+61400000000', message_id: 'sms-other' },
+          { direction: 'outbound', status: 'queued', phone: '+61400000000', message_id: 'sms-target' },
+          { direction: 'outbound', status: 'sent', phone: '+61400000000', message_id: 'sms-target' },
         ]).nodes,
       });
       expect(r.hasUpdate).toBe(true);
@@ -683,10 +681,10 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
 
     it('marks failed on the failure ack — inbound and already-sent rows are never touched', () => {
       const r = evalExpr(markExpr, {
-        inputs: { to: '+61400000000', outcome: 'failed' },
+        inputs: { messageId: 'sms-failed', to: '+61400000000', outcome: 'failed' },
         nodes: rows([
-          { direction: 'inbound', status: 'received' },
-          { direction: 'outbound', status: 'queued' },
+          { direction: 'inbound', status: 'received', message_id: 'sms-failed' },
+          { direction: 'outbound', status: 'queued', message_id: 'sms-failed' },
         ]).nodes,
       });
       expect(r.update).toEqual({ status: 'failed' });
@@ -694,10 +692,10 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
 
     it('no queued outbound row → no write (a stray ack never corrupts history)', () => {
       const r = evalExpr(markExpr, {
-        inputs: { to: '+61400000000', outcome: 'sent' },
+        inputs: { messageId: 'sms-stray', to: '+61400000000', outcome: 'sent' },
         nodes: rows([
-          { direction: 'outbound', status: 'sent' },
-          { direction: 'inbound', status: 'received' },
+          { direction: 'outbound', status: 'sent', message_id: 'sms-stray' },
+          { direction: 'inbound', status: 'received', message_id: 'sms-stray' },
         ]).nodes,
       });
       expect(r.hasUpdate).toBe(false);
@@ -705,8 +703,8 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
 
     it('an unknown outcome coerces to sent — never an invalid dropdown value', () => {
       const r = evalExpr(markExpr, {
-        inputs: { to: '+61400000000', outcome: 'exploded' },
-        nodes: rows([{ direction: 'outbound', status: 'queued' }]).nodes,
+        inputs: { messageId: 'sms-unknown', to: '+61400000000', outcome: 'exploded' },
+        nodes: rows([{ direction: 'outbound', status: 'queued', message_id: 'sms-unknown' }]).nodes,
       });
       expect(r.update).toEqual({ status: 'sent' });
     });
@@ -1408,15 +1406,18 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         it('manager-action-apply pass-through refuses malformed events (non-object update / missing id)', () => {
           const passExpr = nodeExpr('manager-action-apply', 'pass');
           const good = evalExpr(passExpr, {
-            inputs: { hasUpdate: true, updateId: 'ap1', update: { status: 'confirmed' }, summary: 'ok' },
+            inputs: { managerActionId: 'manager_1', hasUpdate: true, updateId: 'ap1', update: { status: 'confirmed' }, summary: 'ok' },
             nodes: {},
           });
           expect(good.hasUpdate).toBe(true);
+          expect(good.managerActionId).toBe('manager_1');
           expect(good.update.status).toBe('confirmed');
-          const badUpdate = evalExpr(passExpr, { inputs: { hasUpdate: true, updateId: 'ap1', update: 'DROP TABLE' }, nodes: {} });
+          const badUpdate = evalExpr(passExpr, { inputs: { managerActionId: 'manager_2', hasUpdate: true, updateId: 'ap1', update: 'DROP TABLE' }, nodes: {} });
           expect(badUpdate.hasUpdate).toBe(false);
-          const noId = evalExpr(passExpr, { inputs: { hasUpdate: true, update: { a: 1 } }, nodes: {} });
+          const noId = evalExpr(passExpr, { inputs: { managerActionId: 'manager_3', hasUpdate: true, update: { a: 1 } }, nodes: {} });
           expect(noId.hasUpdate).toBe(false);
+          const noActionId = evalExpr(passExpr, { inputs: { hasUpdate: true, updateId: 'ap1', update: { status: 'confirmed' } }, nodes: {} });
+          expect(noActionId.hasUpdate).toBe(false);
         });
       });
 
@@ -1745,7 +1746,6 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(r.dial.openingLine).toContain('Hi Lance!');
       expect(r.dial.openingLine).toContain('missed your call');
       expect(r.dial.openingLine).toContain('Pirate Cuts');
-      // eslint-disable-next-line no-control-regex
       expect(r.dial.openingLine).toMatch(/^[\x20-\x7E]+$/);
       expect(r.dial.purpose).toContain('RETURNING a missed call');
     });
@@ -1798,7 +1798,6 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(r.sms.to).toBe('+61491570156');
       expect(r.sms.body).toContain('sorry we missed your call');
       expect(r.sms.body).toContain('Pirate Cuts');
-      // eslint-disable-next-line no-control-regex
       expect(r.sms.body).toMatch(/^[\x20-\x7E]+$/);
       expect(r.smsMessage.status).toBe('queued');
       expect(r.taskUpdate.callback_state).toBe('sms_sent');

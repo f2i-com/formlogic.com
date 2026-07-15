@@ -30,6 +30,13 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] `CORS_ORIGIN` = your exact production frontend origin
 - [ ] `CORS_ALLOWED_ORIGINS` contains only real origins (no leftover `localhost`/staging)
 - [ ] `TRUSTED_PROXIES` set if behind a reverse proxy/load balancer (for correct client IPs)
+- [ ] Request-size layers are aligned: ordinary API JSON is capped at 2 MiB by the app; with
+      the default 200 MiB backup setting, use a 220 MiB proxy/PHP request ceiling
+      (`client_max_body_size 220m`, `post_max_size=220M`, `upload_max_filesize=200M`). Do not
+      grant that ceiling to another virtual host. FormLogic grants it only to the exact
+      authenticated backup/upgrade multipart routes; packs and ordinary uploads have smaller caps.
+      If `BACKUP_MAX_ZIP_SIZE` changes, adjust all three ceilings together with 16 MiB of multipart
+      overhead.
 
 **Installer & files**
 - [ ] **Delete `formlogic/install.php`** (it hard-disables itself once installed, but delete it anyway)

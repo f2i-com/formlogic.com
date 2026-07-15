@@ -1600,10 +1600,12 @@ const FLOW_MANAGER_PLAN = `(function () {
 // validation already happened in manager-action-plan; this only refuses a
 // malformed event so the update can never be a non-object.
 const FLOW_MANAGER_APPLY = `(function () {
+  var actionId = String(inputs.managerActionId || '').trim();
   var id = String(inputs.updateId || '');
   var upd = (inputs.update && typeof inputs.update === 'object' && !Array.isArray(inputs.update)) ? inputs.update : null;
-  var ok = inputs.hasUpdate === true && id.length > 0 && upd !== null;
+  var ok = actionId.length > 0 && inputs.hasUpdate === true && id.length > 0 && upd !== null;
   return {
+    managerActionId: actionId,
     hasUpdate: ok === true,
     updateId: id,
     update: upd || {},
@@ -2291,10 +2293,12 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
 const FLOW_SMS_DELIVERY = `(function () {
   var outcome = String(inputs.outcome || 'sent');
   if (outcome !== 'sent' && outcome !== 'failed') outcome = 'sent';
+  var messageId = String(inputs.messageId || '');
+  if (!messageId) return { hasUpdate: false, summaryLine: 'SMS acknowledgement had no messageId.' };
   var rows = (nodes.messages && nodes.messages.responses) || [];
   for (var i = 0; i < rows.length; i++) {
     var a = (rows[i] && rows[i].answers) || {};
-    if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued') {
+    if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued' && String(a.message_id || '') === messageId) {
       return {
         hasUpdate: true,
         responseId: rows[i].id,
@@ -2303,7 +2307,7 @@ const FLOW_SMS_DELIVERY = `(function () {
       };
     }
   }
-  return { hasUpdate: false, summaryLine: 'No queued outbound SMS row matched the ' + outcome + ' ack.' };
+  return { hasUpdate: false, summaryLine: 'No outbound SMS row matched messageId ' + messageId + '.' };
 })()`;
 
 // ── Pack data ───────────────────────────────────────────────────────────────
@@ -3753,6 +3757,7 @@ export const aokieReceptionistPack: PackData = {
             type: 'input',
             data: {
               inputs: [
+                { name: 'managerActionId', example: 'manager_123' },
                 { name: 'callId', example: 'call_123' },
                 { name: 'summary', example: 'Manager confirmed the Friday 14:00 booking.' },
                 { name: 'hasUpdate', example: true },
@@ -3767,6 +3772,7 @@ export const aokieReceptionistPack: PackData = {
             type: 'output',
             data: {
               value: {
+                managerActionId: '$nodes.pass.managerActionId',
                 hasUpdate: '$nodes.pass.hasUpdate',
                 updateId: '$nodes.pass.updateId',
                 update: '$nodes.pass.update',
@@ -3992,19 +3998,19 @@ export const aokieReceptionistPack: PackData = {
       name: 'SMS Delivery Status',
       slug: 'sms-delivery-status',
       description:
-        "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text): find the newest QUEUED outbound Messages row for the recipient and flip its status to sent or failed — so the Messages screen tells the truth about delivery instead of showing 'Queued' forever. The ack's messageId is plugin-minted and never matches our rows, so recipient + newest-queued is the correlation.",
+        "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text): update the one queued Messages row whose immutable messageId exactly matches the acknowledgement. The row is persisted before dispatch and the same pre-minted ID is sent to Aokie, so concurrent texts to one recipient cannot update each other's delivery state.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
           {
             id: 'in',
             type: 'input',
-            data: { inputs: [{ name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'sent' }, { name: 'reason', example: '' }] },
+            data: { inputs: [{ name: 'messageId', example: 'sms_123' }, { name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'sent' }, { name: 'reason', example: '' }] },
           },
           {
             id: 'messages',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:sms-messages', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.to' }] },
+            data: { form: '@pack:sms-messages', return: 'all', limit: 10, filters: [{ field: 'message_id', op: 'eq', value: '$inputs.messageId' }] },
           },
           { id: 'mark', type: 'logic_block', data: { expr: FLOW_SMS_DELIVERY } },
           {
@@ -4423,8 +4429,8 @@ export const aokieReceptionistPack: PackData = {
         // the moment the task exists (actions run in order, so the task row above is
         // already written). A failed send surfaces in outputActionErrors + the
         // desktop error log; the task stays open either way, so nothing is lost.
-        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasKickoffSms', payload: { to: '$result.kickoffSms.to', body: '$result.kickoffSms.body' } },
         { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasKickoffSms', answers: '$result.kickoffMessage' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasKickoffSms', payload: { messageId: '$result.kickoffMessage.message_id', to: '$result.kickoffSms.to', body: '$result.kickoffSms.body' } },
         { type: 'formlogic.toast', message: 'After-call: {{result.summaryLine}}' },
       ],
       retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
@@ -4451,8 +4457,8 @@ export const aokieReceptionistPack: PackData = {
         { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
         // Record updates land BEFORE the reply is sent, so the customer is never
         // told something the records don't yet say.
-        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasReply', payload: { to: '$result.reply.to', body: '$result.reply.body' } },
         { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasReply', answers: '$result.outboundMessage' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasReply', payload: { messageId: '$result.outboundMessage.message_id', to: '$result.reply.to', body: '$result.reply.body' } },
         { type: 'formlogic.toast', message: 'SMS follow-up: {{result.summaryLine}}' },
       ],
       retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
@@ -4466,7 +4472,7 @@ export const aokieReceptionistPack: PackData = {
       mode: 'async',
       timeoutMs: 15000,
       // The literal 'sent' rides the inputMap so ONE flow serves both acks.
-      inputMap: { to: '$event.data.to', outcome: 'sent' },
+      inputMap: { messageId: '$event.data.messageId', to: '$event.data.to', outcome: 'sent' },
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
       ],
@@ -4479,7 +4485,7 @@ export const aokieReceptionistPack: PackData = {
       connectorId: 'aokie',
       mode: 'async',
       timeoutMs: 15000,
-      inputMap: { to: '$event.data.to', outcome: 'failed', reason: '$event.data.reason' },
+      inputMap: { messageId: '$event.data.messageId', to: '$event.data.to', outcome: 'failed', reason: '$event.data.reason' },
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
         // A failed send is a customer who was promised a text — shout about it.
@@ -4528,8 +4534,8 @@ export const aokieReceptionistPack: PackData = {
       // rule as the SMS loop), then the Messages row for the thread history.
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
-        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSms', payload: { to: '$result.sms.to', body: '$result.sms.body' } },
         { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasSms', answers: '$result.smsMessage' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSms', payload: { messageId: '$result.smsMessage.message_id', to: '$result.sms.to', body: '$result.sms.body' } },
         { type: 'formlogic.toast', message: 'Callback: {{result.summaryLine}}' },
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
@@ -4550,8 +4556,8 @@ export const aokieReceptionistPack: PackData = {
       // right after the send for the thread history.
       outputActions: [
         { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
-        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSms', payload: { to: '$result.sms.to', body: '$result.sms.body' } },
         { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasSms', answers: '$result.smsMessage' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSms', payload: { messageId: '$result.smsMessage.message_id', to: '$result.sms.to', body: '$result.sms.body' } },
         { type: 'formlogic.toast', message: 'Hold lost: {{result.summaryLine}}' },
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
@@ -4584,6 +4590,7 @@ export const aokieReceptionistPack: PackData = {
       mode: 'async',
       timeoutMs: 15000,
       inputMap: {
+        managerActionId: '$event.data.managerActionId',
         callId: '$event.data.callId',
         summary: '$event.data.summary',
         hasUpdate: '$event.data.hasUpdate',

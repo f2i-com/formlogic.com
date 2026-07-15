@@ -36,7 +36,13 @@ class PackService
      * @param string $userId   Authenticated user importing the pack
      * @return array { installationId, forms: [{id, title}], apps: [{id, name}] }
      */
-    public function importPack(array $packData, string $userId, ?string $catalogId = null, ?string $versionId = null): array
+    public function importPack(
+        array $packData,
+        string $userId,
+        ?string $catalogId = null,
+        ?string $versionId = null,
+        ?string $verifiedScreenTrust = null
+    ): array
     {
         // Validate structure
         $this->validatePack($packData);
@@ -53,6 +59,9 @@ class PackService
         // name); direct JSON imports fall back to the embedded id/name.
         $dedupeKey = $catalogId ?? ($meta['id'] ?? $meta['name'] ?? 'custom');
         $installLock = ($dedupeKey !== 'custom') ? $this->acquireInstallLock($dedupeKey, $userId) : null;
+        [$screenTrust, $screenProvenance] = $verifiedScreenTrust !== null
+            ? [$verifiedScreenTrust, ['source' => 'signed-package', 'trust' => $verifiedScreenTrust]]
+            : $this->screenTrustForImport($catalogId, $versionId, $userId);
 
         $this->mysql->beginTransaction();
 
@@ -104,6 +113,9 @@ class PackService
                 ];
 
                 $this->formService->createForm($formData);
+                if (!empty($formData['customScreen'])) {
+                    $this->formService->setCustomScreenTrust($newFormId, $screenTrust, $screenProvenance);
+                }
                 $createdFormIds[] = $newFormId;
                 $formSummary[] = ['id' => $newFormId, 'title' => $packForm['title']];
             }
@@ -151,6 +163,9 @@ class PackService
                 ];
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
+                if (!empty($appData['customScreen'])) {
+                    $this->appService->setCustomScreenTrust($appId, $screenTrust, $screenProvenance);
+                }
                 $createdAppIds[] = $appId;
                 $appIdByPackId[(string) $packApp['packAppId']] = $appId;
 
@@ -1012,7 +1027,8 @@ class PackService
         }
 
         // 5. Delegate to the existing atomic importer (customLogic embedded in pack.json is applied there).
-        $result = $this->importPack($pack, $userId, $catalogId, $versionId);
+        $screenTrust = in_array($trust, ['official', 'local-only'], true) ? 'verified' : 'untrusted';
+        $result = $this->importPack($pack, $userId, $catalogId, $versionId, $screenTrust);
         $result['trust'] = $trust;
 
         // 6. Apply the envelope metadata (quickjs/customLogic.json, launch.json, native.json, assets/logo)
@@ -2057,6 +2073,36 @@ class PackService
             $cs['dashboard'] = $this->resolvePackDashboard($cs['dashboard'], $formIdMap);
         }
         return $cs;
+    }
+
+    /**
+     * Server-derived provenance for executable screens. Direct/community
+     * imports are untrusted; a positively verified catalog publisher is
+     * trusted; a publisher installing their own private pack is owner-authored.
+     * Client pack JSON never participates in this decision.
+     *
+     * @return array{0:string,1:array<string,mixed>}
+     */
+    private function screenTrustForImport(?string $catalogId, ?string $versionId, string $userId): array
+    {
+        if ($catalogId === null) {
+            return ['untrusted', ['source' => 'direct-import']];
+        }
+        $stmt = $this->mysql->prepare(
+            'SELECT trust_level, publisher_id FROM pack_catalog WHERE id = :id LIMIT 1'
+        );
+        $stmt->execute(['id' => $catalogId]);
+        $row = $stmt->fetch() ?: [];
+        $catalogTrust = (string) ($row['trust_level'] ?? 'community');
+        $trust = ((string) ($row['publisher_id'] ?? '') === $userId)
+            ? 'owner'
+            : (in_array($catalogTrust, ['official', 'verified'], true) ? 'verified' : 'untrusted');
+        return [$trust, [
+            'source' => 'catalog',
+            'catalogId' => $catalogId,
+            'versionId' => $versionId,
+            'catalogTrust' => $catalogTrust,
+        ]];
     }
 
     /** Inverse of resolvePackDashboard: rewrite real form ids in a dashboard → @pack: refs for export. */

@@ -441,7 +441,7 @@ class HealthController
         try {
             $conn = $this->db->getConnection();
             $missingCatalogCols = [];
-            foreach (['item_type', 'trust_level'] as $col) {
+            foreach (['item_type', 'trust_level', 'screenshot', 'screenshots'] as $col) {
                 $stmt = $conn->query('SHOW COLUMNS FROM pack_catalog LIKE ' . $conn->quote($col));
                 if (!$stmt || $stmt->fetchColumn() === false) {
                     $missingCatalogCols[] = $col;
@@ -451,7 +451,7 @@ class HealthController
                 'ok' => $missingCatalogCols === [],
                 'critical' => false,
                 'detail' => $missingCatalogCols === []
-                    ? 'item_type/trust_level present (marketplace)'
+                    ? 'item_type/trust_level/screenshot/screenshots present (marketplace)'
                     : 'missing: ' . implode(', ', $missingCatalogCols) . ' — run schema init',
             ];
         } catch (\Throwable $e) {

@@ -16,6 +16,8 @@ class Form
         public array $settings = [],
         public array $theme = [],
         public array $customScreen = [],
+        public string $customScreenTrust = 'untrusted',
+        public array $customScreenProvenance = [],
         public array $customLogic = [],
         public ?string $logicScript = null,
         public ?string $logicPrompt = null,
@@ -47,6 +49,10 @@ class Form
             customScreen: is_string($data['custom_screen'] ?? null)
                 ? json_decode($data['custom_screen'], true) ?? []
                 : ($data['customScreen'] ?? []),
+            customScreenTrust: (string) ($data['custom_screen_trust'] ?? $data['customScreenTrust'] ?? 'untrusted'),
+            customScreenProvenance: is_string($data['custom_screen_provenance'] ?? null)
+                ? json_decode($data['custom_screen_provenance'], true) ?? []
+                : ($data['customScreenProvenance'] ?? []),
             customLogic: is_string($data['custom_logic'] ?? null)
                 ? json_decode($data['custom_logic'], true) ?? []
                 : ($data['customLogic'] ?? []),
@@ -65,6 +71,11 @@ class Form
 
     public function toArray(): array
     {
+        $customScreen = $this->customScreen;
+        if ($customScreen !== []) {
+            $customScreen['_trust'] = $this->customScreenTrust;
+            $customScreen['_provenance'] = $this->customScreenProvenance;
+        }
         return [
             'id' => $this->id,
             'title' => $this->title,
@@ -74,7 +85,7 @@ class Form
             'fields' => $this->fields,
             'settings' => $this->settings,
             'theme' => $this->theme,
-            'customScreen' => $this->customScreen,
+            'customScreen' => $customScreen,
             'customLogic' => $this->customLogic,
             'logicScript' => $this->logicScript,
             'logicPrompt' => $this->logicPrompt,
@@ -89,6 +100,8 @@ class Form
 
     public function toDbArray(): array
     {
+        $customScreen = $this->customScreen;
+        unset($customScreen['_trust'], $customScreen['_provenance']);
         return [
             'id' => $this->id,
             'title' => $this->title,
@@ -97,7 +110,9 @@ class Form
             'status' => $this->status,
             'settings' => json_encode($this->settings),
             'theme' => json_encode($this->theme),
-            'custom_screen' => empty($this->customScreen) ? null : json_encode($this->customScreen),
+            'custom_screen' => empty($customScreen) ? null : json_encode($customScreen),
+            'custom_screen_trust' => $this->customScreenTrust,
+            'custom_screen_provenance' => empty($this->customScreenProvenance) ? null : json_encode($this->customScreenProvenance),
             'custom_logic' => empty($this->customLogic) ? null : json_encode($this->customLogic),
             'logic_script' => $this->logicScript,
             'logic_prompt' => $this->logicPrompt,

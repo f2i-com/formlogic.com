@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
+const API = process.env.E2E_API_URL || 'http://api.formlogic.local';
+
 /**
  * The shared demo must let a visitor edit Flows WITHOUT the server read-only error —
  * changes persist in the per-browser IndexedDB overlay (demoLocal), not the server.
@@ -9,16 +11,16 @@ import { test, expect, type Page } from '@playwright/test';
 async function startDemo(page: Page) {
   await page.goto('/');
   // Enter the shared demo via the live-demo section (POST /api/demo/start under the hood).
-  const res = await page.evaluate(async () => {
+  const res = await page.evaluate(async (apiBase) => {
     const m = document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/);
     const token = m ? decodeURIComponent(m[1]) : '';
-    const r = await fetch('http://api.formlogic.local/api/demo/start', {
+    const r = await fetch(`${apiBase}/api/demo/start`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
     });
     return { status: r.status, body: await r.json().catch(() => null) };
-  });
+  }, API);
   expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
 }
 

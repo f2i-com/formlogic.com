@@ -170,6 +170,8 @@ class MySQLConnection
                 logic_script TEXT DEFAULT NULL,
                 logic_prompt TEXT DEFAULT NULL,
                 custom_screen MEDIUMTEXT DEFAULT NULL,
+                custom_screen_trust VARCHAR(16) NOT NULL DEFAULT 'untrusted',
+                custom_screen_provenance JSON DEFAULT NULL,
                 icon VARCHAR(255) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -262,6 +264,8 @@ class MySQLConnection
                 theme JSON,
                 nav_config JSON,
                 custom_screen MEDIUMTEXT DEFAULT NULL,
+                custom_screen_trust VARCHAR(16) NOT NULL DEFAULT 'untrusted',
+                custom_screen_provenance JSON DEFAULT NULL,
                 reports JSON DEFAULT NULL,
                 custom_logic MEDIUMTEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -476,6 +480,8 @@ class MySQLConnection
                 name VARCHAR(255) NOT NULL,
                 description TEXT,
                 icon VARCHAR(50),
+                screenshot VARCHAR(500),
+                screenshots JSON,
                 tags JSON,
                 category VARCHAR(100),
                 item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
@@ -800,6 +806,14 @@ class MySQLConnection
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER logic_prompt");
         }
+        foreach ([
+            'custom_screen_trust' => "ALTER TABLE forms ADD COLUMN custom_screen_trust VARCHAR(16) NOT NULL DEFAULT 'untrusted' AFTER custom_screen",
+            'custom_screen_provenance' => "ALTER TABLE forms ADD COLUMN custom_screen_provenance JSON DEFAULT NULL AFTER custom_screen_trust",
+        ] as $column => $ddl) {
+            if ($pdo->query("SHOW COLUMNS FROM forms LIKE '{$column}'")->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
+        }
 
         // Add custom_logic column to forms (form-scoped sandboxed QuickJS app-logic) if it doesn't exist
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'custom_logic'");
@@ -811,6 +825,14 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_screen'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER nav_config");
+        }
+        foreach ([
+            'custom_screen_trust' => "ALTER TABLE apps ADD COLUMN custom_screen_trust VARCHAR(16) NOT NULL DEFAULT 'untrusted' AFTER custom_screen",
+            'custom_screen_provenance' => "ALTER TABLE apps ADD COLUMN custom_screen_provenance JSON DEFAULT NULL AFTER custom_screen_trust",
+        ] as $column => $ddl) {
+            if ($pdo->query("SHOW COLUMNS FROM apps LIKE '{$column}'")->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
         }
 
         // Add reports column to apps (saved chart reports + PDF documents) if it doesn't exist
@@ -989,6 +1011,8 @@ class MySQLConnection
                 name VARCHAR(255) NOT NULL,
                 description TEXT,
                 icon VARCHAR(50),
+                screenshot VARCHAR(500),
+                screenshots JSON,
                 tags JSON,
                 category VARCHAR(100),
                 item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
@@ -1020,6 +1044,17 @@ class MySQLConnection
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN trust_level ENUM('official','verified','community','private') DEFAULT 'community' AFTER item_type");
             $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_trust_level (trust_level)");
+        }
+
+        // Screenshot metadata is written by PackCatalogService during first-party
+        // pack provisioning. Keep older databases compatible with that pipeline.
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'screenshot'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN screenshot VARCHAR(500) NULL AFTER icon");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'screenshots'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN screenshots JSON NULL AFTER screenshot");
         }
 
         $pdo->exec("
@@ -1282,7 +1317,7 @@ class MySQLConnection
         }
 
         // Platform administrator flag (admin panel) — distinct from app-level RBAC.
-        // Bootstrapped via ADMIN_EMAILS env or granted from the admin panel itself.
+        // The first flag is set by bin/bootstrap-admin.php; email is never authority.
         $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'is_admin'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE users ADD COLUMN is_admin TINYINT(1) NOT NULL DEFAULT 0");

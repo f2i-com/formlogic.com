@@ -7,8 +7,8 @@ production checklist, full backup/restore detail, and health checks see
 
 ## The easiest path: the admin panel
 
-A platform administrator (an account with `users.is_admin`, or one listed in the `ADMIN_EMAILS`
-env bootstrap) can upgrade entirely from the browser: **Admin → Upgrade → upload the release zip**
+A platform administrator (an account with the durable `users.is_admin=1` flag) can upgrade
+entirely from the browser: **Admin → Upgrade → upload the release zip**
 (the same `formlogic-vX.Y.Z.zip` the CI attaches to each GitHub release). The wizard then:
 
 1. verifies the package's `manifest.json` checksums (every file sha256-checked after extraction),

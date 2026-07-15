@@ -323,9 +323,10 @@ class AppService
             $this->mysql->beginTransaction();
         }
         try {
+            $customScreen = $this->screenForStorage($data['customScreen'] ?? null);
             $stmt = $this->mysql->prepare("
-                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, custom_screen, custom_logic, created_at, updated_at)
-                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :custom_screen, :custom_logic, :created_at, :updated_at)
+                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, custom_screen, custom_screen_trust, custom_screen_provenance, custom_logic, created_at, updated_at)
+                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :custom_screen, :custom_screen_trust, :custom_screen_provenance, :custom_logic, :created_at, :updated_at)
             ");
 
             $stmt->execute([
@@ -339,7 +340,9 @@ class AppService
                 'settings' => json_encode($settings),
                 'theme' => json_encode($data['theme'] ?? []),
                 'nav_config' => json_encode($data['navConfig'] ?? []),
-                'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
+                'custom_screen' => !empty($customScreen) ? json_encode($customScreen) : null,
+                'custom_screen_trust' => 'owner',
+                'custom_screen_provenance' => !empty($customScreen) ? json_encode(['source' => 'owner']) : null,
                 'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -578,8 +581,12 @@ class AppService
         }
 
         if (array_key_exists('customScreen', $data)) {
+            $customScreen = $this->screenForStorage($data['customScreen']);
             $updates[] = "custom_screen = :custom_screen";
-            $params['custom_screen'] = !empty($data['customScreen']) ? json_encode($data['customScreen']) : null;
+            $params['custom_screen'] = !empty($customScreen) ? json_encode($customScreen) : null;
+            $updates[] = "custom_screen_trust = 'owner'";
+            $updates[] = "custom_screen_provenance = :custom_screen_provenance";
+            $params['custom_screen_provenance'] = !empty($customScreen) ? json_encode(['source' => 'owner']) : null;
         }
 
         if (array_key_exists('reports', $data)) {
@@ -1202,6 +1209,35 @@ class AppService
         $stmt->execute(['slug' => $slug]);
         $row = $stmt->fetch();
         return (int)($row['cnt'] ?? 0) > 0;
+    }
+
+    private function screenForStorage(mixed $screen): ?array
+    {
+        if (!is_array($screen) || $screen === []) {
+            return null;
+        }
+        unset($screen['_trust'], $screen['_provenance']);
+        return $screen;
+    }
+
+    /** Internal import boundary: persist server-derived screen provenance. */
+    public function setCustomScreenTrust(string $appId, string $trust, array $provenance): void
+    {
+        if (!in_array($trust, ['owner', 'verified', 'untrusted'], true)) {
+            throw new \InvalidArgumentException('Invalid custom-screen trust level');
+        }
+        $stmt = $this->mysql->prepare(
+            'UPDATE apps
+                SET custom_screen_trust = :trust,
+                    custom_screen_provenance = :provenance,
+                    updated_at = updated_at
+              WHERE id = :id AND custom_screen IS NOT NULL'
+        );
+        $stmt->execute([
+            'trust' => $trust,
+            'provenance' => json_encode($provenance, JSON_UNESCAPED_SLASHES),
+            'id' => $appId,
+        ]);
     }
 
     private function generateUuid(): string

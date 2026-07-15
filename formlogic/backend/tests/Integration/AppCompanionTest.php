@@ -357,7 +357,8 @@ class AppCompanionTest extends TestCase
 
         $companion = $this->makeCompanion($source, $owner, null, ['copyDashboard' => true]);
 
-        $this->assertSame($screen, $companion['customScreen'], 'a widget dashboard copies verbatim — its widgets reference the shared form ids');
+        $expectedScreen = $screen + ['_trust' => 'owner', '_provenance' => ['source' => 'owner']];
+        $this->assertSame($expectedScreen, $companion['customScreen'], 'a widget dashboard copies verbatim and is marked as owner-authored');
         // Exactly its piece: reports and logic stay the companion's own.
         $this->assertSame([], $companion['reports']);
         $this->assertSame([], $companion['customLogic']);
@@ -555,7 +556,8 @@ class AppCompanionTest extends TestCase
             $this->appIds[] = $r['body']['app']['id'];
         }
         $this->assertSame(201, $r['status']);
-        $this->assertSame($screen, $r['body']['app']['customScreen'] ?? null);
+        $expectedScreen = $screen + ['_trust' => 'owner', '_provenance' => ['source' => 'owner']];
+        $this->assertSame($expectedScreen, $r['body']['app']['customScreen'] ?? null);
         $this->assertSame($reports, $r['body']['app']['reports'] ?? null);
         $this->assertSame([], $r['body']['app']['customLogic'] ?? null);
 

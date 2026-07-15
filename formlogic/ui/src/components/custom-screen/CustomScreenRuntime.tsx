@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
-import { SCREEN_CSP, createSdkRateLimiter } from './sdkRuntime';
+import { SCREEN_CSP, createSdkRateLimiter, isScreenSdkActionAllowed } from './sdkRuntime';
 import { screenPaletteCss, SCREEN_THEME_SHIM } from './screenTheme';
 import { readableForegroundColor } from '../../lib/color';
 import { resolveScreenAssets } from '../../lib/screenCompile';
@@ -62,7 +62,7 @@ const SDK_SHIM = `
 })();
 `;
 
-export interface CustomScreen { html?: string; css?: string; js?: string; ts?: string; files?: Array<{ path: string; content: string }>; entry?: string; allowNewResponses?: boolean }
+export interface CustomScreen { html?: string; css?: string; js?: string; ts?: string; files?: Array<{ path: string; content: string }>; entry?: string; allowNewResponses?: boolean; _trust?: 'owner' | 'verified' | 'untrusted' }
 
 export function CustomScreenRuntime({
   screen,
@@ -152,6 +152,9 @@ export function CustomScreenRuntime({
         return;
       }
       try {
+        if (!isScreenSdkActionAllowed(screen._trust, String(m.action))) {
+          throw new Error('This SDK action is disabled for an unverified custom screen.');
+        }
         switch (m.action) {
           case 'submit': {
             const answers = (m.payload?.answers as Record<string, unknown>) || {};
@@ -221,7 +224,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, screen._trust]);
 
   return (
     <iframe

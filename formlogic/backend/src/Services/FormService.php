@@ -282,9 +282,10 @@ class FormService
                 'fieldCount' => count($data['fields'] ?? []),
             ]);
 
+            $customScreen = $this->screenForStorage($data['customScreen'] ?? null);
             $stmt = $this->mysql->prepare("
-                INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, custom_logic, icon, created_at, updated_at)
-                VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :custom_logic, :icon, :created_at, :updated_at)
+                INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, custom_screen_trust, custom_screen_provenance, custom_logic, icon, created_at, updated_at)
+                VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :custom_screen_trust, :custom_screen_provenance, :custom_logic, :icon, :created_at, :updated_at)
             ");
 
             $stmt->execute([
@@ -297,7 +298,9 @@ class FormService
                 'theme' => json_encode($data['theme'] ?? []),
                 'logic_script' => $data['logicScript'] ?? null,
                 'logic_prompt' => $data['logicPrompt'] ?? null,
-                'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
+                'custom_screen' => !empty($customScreen) ? json_encode($customScreen) : null,
+                'custom_screen_trust' => 'owner',
+                'custom_screen_provenance' => !empty($customScreen) ? json_encode(['source' => 'owner']) : null,
                 'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
                 'icon' => $data['icon'] ?? null,
                 'created_at' => $now,
@@ -412,8 +415,12 @@ class FormService
         }
 
         if (array_key_exists('customScreen', $data)) {
+            $customScreen = $this->screenForStorage($data['customScreen']);
             $updates[] = "custom_screen = :custom_screen";
-            $params['custom_screen'] = !empty($data['customScreen']) ? json_encode($data['customScreen']) : null;
+            $params['custom_screen'] = !empty($customScreen) ? json_encode($customScreen) : null;
+            $updates[] = "custom_screen_trust = 'owner'";
+            $updates[] = "custom_screen_provenance = :custom_screen_provenance";
+            $params['custom_screen_provenance'] = !empty($customScreen) ? json_encode(['source' => 'owner']) : null;
         }
 
         if (array_key_exists('customLogic', $data)) {
@@ -916,6 +923,36 @@ class FormService
         $id = trim($id, '_');
         $id = substr($id, 0, 32);
         return $id ?: 'field';
+    }
+
+    /** Strip output-only trust metadata; callers cannot self-assert trust. */
+    private function screenForStorage(mixed $screen): ?array
+    {
+        if (!is_array($screen) || $screen === []) {
+            return null;
+        }
+        unset($screen['_trust'], $screen['_provenance']);
+        return $screen;
+    }
+
+    /** Internal import boundary: persist server-derived screen provenance. */
+    public function setCustomScreenTrust(string $formId, string $trust, array $provenance): void
+    {
+        if (!in_array($trust, ['owner', 'verified', 'untrusted'], true)) {
+            throw new \InvalidArgumentException('Invalid custom-screen trust level');
+        }
+        $stmt = $this->mysql->prepare(
+            'UPDATE forms
+                SET custom_screen_trust = :trust,
+                    custom_screen_provenance = :provenance,
+                    updated_at = updated_at
+              WHERE id = :id AND custom_screen IS NOT NULL'
+        );
+        $stmt->execute([
+            'trust' => $trust,
+            'provenance' => json_encode($provenance, JSON_UNESCAPED_SLASHES),
+            'id' => $formId,
+        ]);
     }
 
     /**

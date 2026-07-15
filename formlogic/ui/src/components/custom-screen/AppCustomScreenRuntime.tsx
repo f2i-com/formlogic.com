@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
-import { SCREEN_CSP, createSdkRateLimiter } from './sdkRuntime';
+import { SCREEN_CSP, createSdkRateLimiter, isScreenSdkActionAllowed } from './sdkRuntime';
 import { screenPaletteCss, SCREEN_THEME_SHIM } from './screenTheme';
 import { readableForegroundColor } from '../../lib/color';
 import { resolveScreenAssets } from '../../lib/screenCompile';
@@ -132,6 +132,9 @@ export function AppCustomScreenRuntime({
         return fid;
       };
       try {
+        if (!isScreenSdkActionAllowed(screen._trust, String(m.action))) {
+          throw new Error('This SDK action is disabled for an unverified custom screen.');
+        }
         switch (m.action) {
           case 'context':
             result = { appName, appSlug, forms: ctxForms, colorScheme: schemeRef.current, accent: accentColor };
@@ -181,7 +184,7 @@ export function AppCustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [appSlug, appName, forms, user, onNavigate, accentColor]);
+  }, [appSlug, appName, forms, user, onNavigate, accentColor, screen._trust]);
 
   return (
     <iframe

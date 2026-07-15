@@ -476,11 +476,14 @@ class AuthController
         // account enumeration.
         if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
             try {
+                // Count before trusted-link resolution. A missing APP_URL must
+                // not silently disable the enumeration-safe per-email limit.
+                $this->authService->consumePasswordResetAttempt($email);
                 // SECURITY: the reset-link host must be server-trusted only — never
                 // from the request body (would let an attacker point a victim's
                 // valid reset token at their own domain = account takeover).
                 $base = AppUrl::frontendBase($request) . '/reset-password';
-                $this->authService->requestPasswordReset($email, $base);
+                $this->authService->requestPasswordReset($email, $base, false);
             } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
                 // High-risk limiter outage: fail closed, retryable (audit RATE-001).
                 // Safe to surface distinctly — it reveals an OPERATIONAL state,

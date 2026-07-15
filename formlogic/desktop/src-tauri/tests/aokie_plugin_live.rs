@@ -152,6 +152,16 @@ fn body(command: &str, payload: Value) -> ConnectorRequestBody {
         .expect("body")
 }
 
+fn physical_body(command: &str, payload: Value, request_id: &str) -> ConnectorRequestBody {
+    serde_json::from_value(json!({
+        "connectorId": "aokie",
+        "command": command,
+        "payload": payload,
+        "requestId": request_id,
+    }))
+    .expect("physical command body")
+}
+
 /// Test 1: the real desktop connector gateway <-> the real external aokie-plugin.exe,
 /// AND the real Rust flow executor's `aokie_speak` node reaching that same real
 /// process. Proves the non-hardware half of the signal path end-to-end.
@@ -179,7 +189,11 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
     println!("[ok] settings.get round-trip: {ok}");
 
     // With no active call, operatorSpeak is typed-rejected (not faked success).
-    let err = connectors::dispatch(&host, "aokie", &body("call.operatorSpeak", json!({ "text": "hi" })))
+    let err = connectors::dispatch(
+        &host,
+        "aokie",
+        &physical_body("call.operatorSpeak", json!({ "text": "hi" }), "live-no-call-speak"),
+    )
         .await
         .expect_err("no active call yet");
     assert_eq!(err.code, "command_failed");
@@ -245,6 +259,7 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
         timeout_ms: DEFAULT_TIMEOUT_MS,
         capabilities: vec!["connector.aokie.call.operatorSpeak".to_string()],
         flow_slug: "live-reply-test".to_string(),
+        request_id_seed: "aokie-plugin-live".to_string(),
     };
     let outcome = execute_flow(&flow_json, &deps, &opts).await;
     // The mock call already ran to completion (Ended) above — so the REAL plugin
@@ -271,6 +286,7 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
         timeout_ms: DEFAULT_TIMEOUT_MS,
         capabilities: vec![],
         flow_slug: "live-reply-test".to_string(),
+        request_id_seed: "aokie-plugin-live-no-cap".to_string(),
     };
     let outcome2 = execute_flow(&flow_json, &deps, &opts_no_cap).await;
     assert_eq!(outcome2.status, "error");

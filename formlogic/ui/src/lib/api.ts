@@ -22,8 +22,7 @@ import type {
 } from '../types/flows';
 import { logger } from './logger';
 import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+import { API_BASE_URL } from './apiBase';
 
 interface ApiResponse<T> {
   data?: T;
