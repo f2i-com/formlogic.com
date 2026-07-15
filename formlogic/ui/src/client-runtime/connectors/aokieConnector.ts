@@ -29,6 +29,7 @@ import { getDesktopInfo } from '../desktop/desktopDetection';
 import { isDesktopPaired } from '../desktop/desktopPairing';
 import { emitLocalDesktopEvent } from '../desktop/desktopEvents';
 import type { DesktopEventEnvelope } from '../desktop/desktopTypes';
+import { generateId } from '../../lib/utils';
 
 /** MVP command surface (AOKIE_PLUGIN_CONTRACT.md §2). */
 const AOKIE_COMMANDS = [
@@ -57,6 +58,38 @@ const AOKIE_COMMANDS = [
   'settings.get',
   'settings.set',
 ];
+
+/**
+ * Physical mutations are journalled by the Aokie plugin. One ID is minted at
+ * this browser-to-Desktop boundary for each operator/flow action; Desktop may
+ * then retry the same request (for example after refreshing a capability)
+ * without repeating a phone or radio effect.
+ *
+ * Keep this in sync with `is_journalled_command` in aokie-plugin. generateId
+ * includes the plain-HTTP fallback required by http://formlogic.local.
+ */
+const JOURNALLED_AOKIE_COMMANDS = new Set([
+  'phone.startPairing',
+  'phone.stopPairing',
+  'phone.removePaired',
+  'phone.disconnect',
+  'phone.connect',
+  'phone.confirmPairing',
+  'call.activate',
+  'call.answer',
+  'call.reject',
+  'call.hangup',
+  'call.operatorSpeak',
+  'call.configureAgent',
+  'call.dial',
+  'sms.send',
+]);
+
+function requestOptionsFor(command: string): { requestId: string } | undefined {
+  return JOURNALLED_AOKIE_COMMANDS.has(command)
+    ? { requestId: `ui-${command}-${generateId()}` }
+    : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Explicit simulator session (audit FL-CONN-001).
@@ -554,7 +587,12 @@ export const aokieConnector: BrowserConnector = {
       );
     }
 
-    const res = await desktopClient.connectors.request('aokie', command, payload);
+    const res = await desktopClient.connectors.request(
+      'aokie',
+      command,
+      payload,
+      requestOptionsFor(command)
+    );
     if (res.ok) return res.data;
 
     // FL-CONN-001: once a REAL desktop route was attempted, NOTHING falls back to the

@@ -1047,12 +1047,19 @@ async fn plugin_command(
         command,
         payload: parsed.payload,
         timeout_ms: parsed.timeout_ms,
-        request_id: parsed.request_id,
+        // Native plugin controls do not have a caller-supplied retry key.
+        // Mint one at this boundary so plugins can durably journal physical
+        // effects; preserve an explicit key when a diagnostic caller supplies it.
+        request_id: Some(direct_command_request_id(parsed.request_id)),
     };
     match connectors::dispatch(&st.host, &connector_id, &req).await {
         Ok(body) => (StatusCode::OK, Json(body)).into_response(),
         Err(f) => connector_failure_response(&f),
     }
+}
+
+fn direct_command_request_id(provided: Option<String>) -> String {
+    provided.unwrap_or_else(|| format!("desktop-admin:{}", uuid::Uuid::new_v4().simple()))
 }
 
 // ---- connectors ----
@@ -2208,12 +2215,30 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::{
-        connector_failure_status, desktop_auth_decision, desktop_info_body, grant_covers_capability,
-        health_body, is_gui_webview_origin, is_privileged_path, management_auth_decision,
-        offline_grace_grants, OFFLINE_GRACE_MAX_AGE,
+        connector_failure_status, desktop_auth_decision, desktop_info_body,
+        direct_command_request_id, grant_covers_capability, health_body, is_gui_webview_origin,
+        is_privileged_path, management_auth_decision, offline_grace_grants,
+        OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::{Method, StatusCode};
+
+    #[test]
+    fn direct_plugin_commands_always_have_a_safe_request_id() {
+        let supplied = "ui-phone.connect-existing".to_string();
+        assert_eq!(
+            direct_command_request_id(Some(supplied.clone())),
+            supplied,
+            "a caller's retry key must be preserved"
+        );
+
+        let generated = direct_command_request_id(None);
+        assert!(generated.starts_with("desktop-admin:"));
+        assert_eq!(generated.len(), "desktop-admin:".len() + 32);
+        assert!(generated.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':')
+        }));
+    }
 
     #[test]
     fn flow_run_capability_requests_map_onto_grants() {

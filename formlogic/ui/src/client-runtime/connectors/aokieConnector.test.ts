@@ -55,6 +55,29 @@ describe('aokieConnector.request routing', () => {
     expect(url).toBe('http://127.0.0.1:17872/api/connectors/aokie/request');
   });
 
+  it('supplies a durable requestId for physical mutations but not read commands', async () => {
+    desktopPairedAndDetected();
+    const fetchMock = setFetch(
+      vi.fn(() => jsonResponse({ ok: true, data: { accepted: true } }))
+    );
+
+    await aokieConnector.request('phone.connect', { address: '00:11:22:33:44:55' });
+    await aokieConnector.request('phone.status');
+
+    const requestBodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/api/connectors/aokie/request'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>);
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]).toMatchObject({
+      connectorId: 'aokie',
+      command: 'phone.connect',
+      payload: { address: '00:11:22:33:44:55' },
+    });
+    expect(requestBodies[0].requestId).toMatch(/^ui-phone\.connect-[0-9a-f-]{36}$/);
+    expect(requestBodies[1]).toMatchObject({ connectorId: 'aokie', command: 'phone.status' });
+    expect(requestBodies[1]).not.toHaveProperty('requestId');
+  });
+
   it('Desktop absent WITHOUT a simulator session: typed connector_unavailable, never the mock', async () => {
     const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('should not be called'))));
 
