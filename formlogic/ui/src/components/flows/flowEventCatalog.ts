@@ -72,6 +72,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.turn.final',
   'aokie.call.turn.corrected',
   'aokie.call.ended',
+  'aokie.call.waiting',
   'aokie.call.outbound.dialing',
   'aokie.sms.received',
   'aokie.sms.sent',
@@ -218,6 +219,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Call ended',
     description: 'A call finished with an outcome and optional duration.',
     payloadHints: CALL_ENDED_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.waiting',
+    group: 'aokie.calls',
+    event: 'aokie.call.waiting',
+    label: 'Second caller waiting',
+    description:
+      'A second caller rang while a call was active (requires the holdAndCallWaiting setting and phone support). callId is the ACTIVE call; from is the waiting number ("" when withheld). Aokie does not answer or hold them yet — they hear the network tone until they give up, so bind here for follow-ups like a we-missed-you text. Never treat this as a new call.',
+    payloadHints: [...CALL_ID_HINTS, '$event.data.from'],
   },
   {
     kind: 'teach',

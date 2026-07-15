@@ -57,7 +57,7 @@ aokie.phone.pairing_started  aokie.phone.paired             aokie.phone.connecte
 aokie.call.incoming          aokie.call.ringing             aokie.call.answered   aokie.call.rejected
 aokie.call.audio.connected   aokie.call.audio.disconnected
 aokie.call.turn.partial      aokie.call.turn.final          aokie.call.turn.corrected
-aokie.call.ended             aokie.call.outbound.dialing
+aokie.call.ended             aokie.call.waiting             aokie.call.outbound.dialing
 aokie.sms.received           aokie.sms.sent                 aokie.sms.failed
 aokie.manager.action
 aokie.hardware.error
@@ -87,6 +87,16 @@ Conventions:
   `terminated_abuse`. OUTBOUND calls (`direction: "outbound"`, Phase 2) add `no_answer` (remote
   alerted, never picked up) and `failed` (never even alerted); `from` is the DIALED number.
   `durationSeconds`/`durationMs` count from ANSWER.
+- `aokie.call.waiting` data: `{callId, from, at}` (Phase 4, observe-only slice): a SECOND caller
+  rang while `callId` was active. `callId` is the ACTIVE call the knock happened during — the
+  waiting caller has no session or call id of their own yet; `from` is their number, `""` when
+  withheld. Emitted at most once per waiting episode, and only on connections that negotiated
+  call waiting (`holdAndCallWaiting` setting on + the phone advertises HFP three-way calling +
+  `AT+CHLD=?`/`AT+CCWA=1` accepted). Aokie does NOT answer, hold or switch yet — the waiting
+  caller hears the network's tone until they give up (bind a flow here for follow-ups, e.g. a
+  we-missed-you text); if the active call ends while they are still waiting, their ring is
+  promoted to a normal `aokie.call.incoming` with a FRESH call id and auto-answer picks it up.
+  Consumers must never treat this event as a new call or a caller turn.
 - `idempotencyKey` = `aokie:<correlationId>:<step>:v1` (e.g. `aokie:call_abc:incoming:v1`; turn events append the turn index: `aokie:call_abc:turn.4.final:v1`).
 - `data` carries the minimum needed by FormLogic (caller phone/name, timestamps, durations, transcript text for turn events). No raw audio over the event bus.
 
