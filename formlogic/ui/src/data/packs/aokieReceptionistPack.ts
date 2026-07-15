@@ -155,7 +155,7 @@ const LOGIC_CALL_ENDED = `function run(ctx) {
   if (ev.name !== 'aokie.call.ended') return {};
   var d = ev.data || {};
   var outcome = String(d.outcome || d.status || '');
-  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse' || outcome === 'no_answer')
+  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse' || outcome === 'no_answer' || outcome === 'abandoned_on_hold' || outcome === 'abandoned_in_queue')
     ? outcome : 'completed';
   var callId = String(d.callId || ev.correlationId || '');
   // Lifecycle upsert (audit §8): a call whose incoming write failed or
@@ -359,13 +359,53 @@ const FLOW_MISSED_TASK = `(function () {
   // Callback only for numbers that CALLED US (by construction here), are
   // real (never withheld ids) and are not blocked customers.
   var wantsCallback = realPhone && !blocked && !pending;
-  var opening = 'Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the receptionist')
-    + ' - sorry, we just missed your call. How can I help you?';
+  // Phase 4 hold queue: a caller who gave up waiting in the queue is rung
+  // back like a missed call, but the FIRST words own the hold - being left
+  // on hold then rung back with a chirpy "we missed your call" reads tone-deaf.
+  var heldQueue = String(inputs.outcome || '') === 'abandoned_in_queue';
+  var opening = heldQueue
+    ? ('Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the receptionist')
+      + " - so sorry to keep you waiting on hold just now. I'm calling you right back - how can I help you?")
+    : ('Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the receptionist')
+      + ' - sorry, we just missed your call. How can I help you?');
   opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);
-  var purpose = 'You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '
-    + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.';
+  var purpose = heldQueue
+    ? ('You are calling back a caller who GAVE UP WAITING ON HOLD: ' + (name || 'this caller') + ' (' + phone + ') rang '
+      + (business || 'the business') + ', was asked to hold, and hung up before anyone got back to them. Apologise sincerely for the wait, then help with whatever they called about.')
+    : ('You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '
+      + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.');
+  // Their upcoming bookings ride the dial purpose: outbound calls never run
+  // personalize-caller, so WITHOUT this the agent cannot answer "what are my
+  // appointments?" on a callback (live gap, user report 2026-07-15).
+  var apptRows = (nodes.appts && nodes.appts.responses) || [];
+  var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var bookingLines = [];
+  for (var a2 = 0; a2 < apptRows.length && bookingLines.length < 6; a2++) {
+    var aa = (apptRows[a2] && apptRows[a2].answers) || {};
+    var ast = String(aa.status || '');
+    if (ast === 'cancelled') continue;
+    var adm = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(aa.date || ''));
+    if (!adm) continue;
+    var adate = new Date(Number(adm[1]), Number(adm[2]) - 1, Number(adm[3]));
+    var when = dayNames[adate.getDay()] + ' ' + Number(adm[3]) + ' ' + monthNames[Number(adm[2]) - 1];
+    var atm = /^(\\d{2}):(\\d{2})$/.exec(String(aa.time || ''));
+    if (atm) {
+      var ah = Number(atm[1]);
+      var h12 = ah % 12; if (h12 === 0) h12 = 12;
+      when += ' at ' + h12 + (atm[2] === '00' ? '' : ':' + atm[2]) + ' ' + (ah >= 12 ? 'PM' : 'AM');
+    }
+    bookingLines.push(when + ' - ' + String(aa.service || 'appointment') + (ast ? ' (' + ast + ')' : ''));
+  }
+  if (bookingLines.length) {
+    purpose += ' THEIR UPCOMING BOOKINGS ON RECORD: ' + bookingLines.join('; ')
+      + '. Answer their booking questions from THIS list only - never invent or guess bookings.';
+  } else {
+    purpose += ' They have NO upcoming bookings on record.';
+  }
+  purpose = purpose.replace(/[^\\x20-\\x7E]/g, '').slice(0, 990);
   var task = {
-    summary: 'Missed call' + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')
+    summary: (heldQueue ? 'Caller gave up on hold' : 'Missed call') + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')
       + (wantsCallback ? ' - calling back automatically' : ' - call back'),
     status: 'open',
     priority: 'high',
@@ -460,6 +500,71 @@ const FLOW_CALLBACK_RESULT = `(function () {
   out.taskId = task.id;
   out.taskUpdate = { callback_state: 'needs_human', priority: 'urgent', summary: (oldSummary + ' [callback not answered - cannot text this customer, please ring them]').slice(0, 500) };
   out.summaryLine = 'Callback not answered and the customer cannot receive SMS - flagged for a human.';
+  return out;
+})()`;
+
+// Hold-lost apology (Phase 4 hold queue): a caller who was parked
+// MID-CONVERSATION hung up before the receptionist got back to them
+// (call.ended outcome 'abandoned_on_hold'). They chose to leave, so a
+// machine callback would be rude - apologise by SMS and leave the choice
+// with them. Customers who cannot receive SMS raise a human task instead.
+const FLOW_HOLD_LOST = `(function () {
+  var phone = String(inputs.callerPhone || inputs.from || '');
+  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);
+  var out = { hasSms: false, hasTask: false, summaryLine: '' };
+  var custNode = nodes.customers || {};
+  var hit = custNode.first || ((custNode.responses || [])[0] || null);
+  var ca = (hit && hit.answers) || {};
+  var blocked = String(ca.status || '').toLowerCase() === 'blocked';
+  var smsCapable = String(ca.sms_capable || 'yes') !== 'no' && !blocked;
+  var name = String(ca.name || '').trim();
+  var first = name.split(/\\s+/)[0] || '';
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var i = 0; i < sRows.length; i++) {
+    var sa = (sRows[i] && sRows[i].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var business = String(cfg.business_name || '').trim();
+  if (blocked || !realPhone) {
+    out.summaryLine = blocked ? 'Caller lost on hold is blocked - no follow-up.' : 'Caller lost on hold had no usable number - no follow-up.';
+    return out;
+  }
+  if (smsCapable) {
+    var body = 'Hi' + (first ? ' ' + first : '') + "! It's " + (business || 'the team')
+      + ' - so sorry, we had you on hold and lost you. No need to wait on us: call back whenever suits you, or reply here and we will help you out.';
+    body = body.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
+    var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');
+    if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;
+    if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';
+    var digits = phone.replace(/[\\s()-]/g, '');
+    out.hasSms = true;
+    out.sms = { to: (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone, body: body };
+    out.smsMessage = {
+      message_id: 'smshold_' + String(inputs.callId || ''),
+      phone: phone,
+      direction: 'outbound',
+      body: body,
+      timestamp: new Date().toISOString(),
+      status: 'queued',
+      is_ai_reply: ['yes'],
+      approval_status: 'not_required'
+    };
+    out.summaryLine = 'Apology text sent to the caller we lost on hold.';
+    return out;
+  }
+  out.hasTask = true;
+  out.task = {
+    summary: 'Caller ' + (name ? name + ' (' + phone + ')' : phone) + ' gave up while ON HOLD and cannot receive SMS - please ring them back with an apology.',
+    status: 'open',
+    priority: 'high',
+    phone: phone,
+    call_id: String(inputs.callId || ''),
+    callback_state: ''
+  };
+  if (hit) out.task.customer_link = hit.id;
+  out.summaryLine = 'Caller lost on hold cannot receive SMS - task raised for a human.';
   return out;
 })()`;
 
@@ -2242,6 +2347,12 @@ export const aokieReceptionistPack: PackData = {
               // Phase 2 outbound: we dialed, the remote alerted, nobody
               // picked up (never used for inbound calls — those are missed).
               { id: 'no_answer', label: 'No answer (outbound)', value: 'no_answer' },
+              // Phase 4 hold queue: a parked caller hung up before the
+              // receptionist got back to them. On-hold = they had a real
+              // conversation first (apology SMS follow-up); in-queue = they
+              // only ever heard "please hold" (callback follow-up).
+              { id: 'abandoned_on_hold', label: 'Ended (gave up on hold)', value: 'abandoned_on_hold' },
+              { id: 'abandoned_in_queue', label: 'Ended (gave up in queue)', value: 'abandoned_in_queue' },
             ],
           },
         },
@@ -3421,6 +3532,32 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Hold Lost Apology',
+      slug: 'hold-lost-apology',
+      description:
+        "Async on aokie.call.ended outcome 'abandoned_on_hold' — a caller who was parked MID-CONVERSATION hung up before the receptionist got back to them. They chose to leave, so ringing them back would be rude: apologise by SMS instead ('so sorry - we had you on hold and lost you; call back whenever suits') and leave the choice with them. Replies ride the human-approval draft path, never the booking loop. Customers who cannot receive SMS (sms_capable No) raise a high-priority human task instead; blocked customers and withheld numbers are a clean no-op. (Callers who gave up waiting IN THE QUEUE — outcome abandoned_in_queue — are handled by missed-call-follow-up with a hold apology in the callback's opening line.)",
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'callerPhone', example: '+61400000000' }, { name: 'from', example: '+61400000000' }] } },
+          {
+            id: 'customers',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+          },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_HOLD_LOST } },
+          { id: 'out', type: 'output', data: { value: { hasSms: '$nodes.plan.hasSms', sms: '$nodes.plan.sms', smsMessage: '$nodes.plan.smsMessage', hasTask: '$nodes.plan.hasTask', task: '$nodes.plan.task', summaryLine: '$nodes.plan.summaryLine' } } },
+        ],
+        edges: [
+          { source: 'in', target: 'customers' },
+          { source: 'customers', target: 'settings' },
+          { source: 'settings', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Manager Action Plan',
       slug: 'manager-action-plan',
       description:
@@ -3934,7 +4071,7 @@ export const aokieReceptionistPack: PackData = {
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
-          { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'outcome', example: 'missed' }] } },
           {
             id: 'customers',
             type: 'formlogic_list_responses',
@@ -3948,6 +4085,14 @@ export const aokieReceptionistPack: PackData = {
             data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          // Their upcoming bookings (date-windowed in SQL) ride the dial
+          // purpose so the callback agent can answer appointment questions.
+          { id: 'win', type: 'logic_block', data: { expr: FLOW_LOOKUP_WINDOW } },
+          {
+            id: 'appts',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }, { field: 'date', op: 'gte', value: '$nodes.win.todayIso' }] },
+          },
           { id: 'task', type: 'logic_block', data: { expr: FLOW_MISSED_TASK } },
           { id: 'out', type: 'output', data: { value: { task: '$nodes.task.task', wantsCallback: '$nodes.task.wantsCallback', dial: '$nodes.task.dial' } } },
         ],
@@ -3955,7 +4100,9 @@ export const aokieReceptionistPack: PackData = {
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'tasks' },
           { source: 'tasks', target: 'settings' },
-          { source: 'settings', target: 'task' },
+          { source: 'settings', target: 'win' },
+          { source: 'win', target: 'appts' },
+          { source: 'appts', target: 'task' },
           { source: 'task', target: 'out' },
         ],
       },
@@ -4144,7 +4291,7 @@ export const aokieReceptionistPack: PackData = {
       // records what happened on the Calls row.
       condition: {
         type: 'expression',
-        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false",
+        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.outcome || '') !== 'abandoned_on_hold' && String(event.data.outcome || '') !== 'abandoned_in_queue' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false",
       },
       inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
       outputActions: [
@@ -4241,9 +4388,9 @@ export const aokieReceptionistPack: PackData = {
       // trigger its own callback loop.
       condition: {
         type: 'expression',
-        expr: "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') && String(event.data.direction || '') !== 'outbound') : false",
+        expr: "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed' || String(event.data.outcome || '') === 'abandoned_in_queue') && String(event.data.direction || '') !== 'outbound') : false",
       },
-      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from' },
+      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from', outcome: '$event.data.outcome' },
       // Task row FIRST (always — the audit trail), then the dial. A refused
       // dial (kill switch off, quiet hours, daily cap) lands in
       // outputActionErrors and the task stays visibly 'queued' for a human.
@@ -4276,6 +4423,28 @@ export const aokieReceptionistPack: PackData = {
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 12,
+    },
+    {
+      flow: 'hold-lost-apology',
+      event: 'aokie.call.ended',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      condition: {
+        type: 'expression',
+        expr: "event && event.data ? (String(event.data.outcome || '') === 'abandoned_on_hold' && String(event.data.direction || '') !== 'outbound') : false",
+      },
+      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from' },
+      // Record writes BEFORE the send (standing rule), and the Messages row
+      // right after the send for the thread history.
+      outputActions: [
+        { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSms', payload: { to: '$result.sms.to', body: '$result.sms.body' } },
+        { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasSms', answers: '$result.smsMessage' },
+        { type: 'formlogic.toast', message: 'Hold lost: {{result.summaryLine}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 13,
     },
     {
       flow: 'manager-action-apply',

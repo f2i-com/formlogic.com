@@ -381,6 +381,16 @@
                   "id": "no_answer",
                   "label": "No answer (outbound)",
                   "value": "no_answer"
+                },
+                {
+                  "id": "abandoned_on_hold",
+                  "label": "Ended (gave up on hold)",
+                  "value": "abandoned_on_hold"
+                },
+                {
+                  "id": "abandoned_in_queue",
+                  "label": "Ended (gave up in queue)",
+                  "value": "abandoned_in_queue"
                 }
               ]
             }
@@ -3054,7 +3064,7 @@
               "hook": "onConnectorEvent",
               "runtime": "quickjs",
               "description": "Finalise the Calls row (status / ended_at / duration).",
-              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse' || outcome === 'no_answer')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  var answers = {\n    call_id: callId,\n    status: status,\n    ended_at: String(ev.occurredAt || ''),\n    duration_seconds: Number(d.durationSeconds || 0)\n  };\n  // Phase 2: outbound calls have no call.incoming, so this upsert CREATES\n  // their row - record the direction (blank = inbound, the legacy default).\n  if (String(d.direction || '') === 'outbound') answers.direction = 'outbound';\n  // Caller-id backfill: with instant auto-answer the +CLIP number usually\n  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),\n  // but call.ended carries it — write it now so the record and the\n  // customer_link match stop reading as an unknown caller. Same phone-format\n  // guard as the incoming script (a non-number must not fail the row).\n  var phone = String(d.callerPhone || d.from || '');\n  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: answers }\n    ]\n  };\n}"
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = (outcome === 'missed' || outcome === 'failed' || outcome === 'rejected' || outcome === 'terminated_abuse' || outcome === 'no_answer' || outcome === 'abandoned_on_hold' || outcome === 'abandoned_in_queue')\n    ? outcome : 'completed';\n  var callId = String(d.callId || ev.correlationId || '');\n  // Lifecycle upsert (audit §8): a call whose incoming write failed or\n  // arrived out of order still deserves a final record.\n  var answers = {\n    call_id: callId,\n    status: status,\n    ended_at: String(ev.occurredAt || ''),\n    duration_seconds: Number(d.durationSeconds || 0)\n  };\n  // Phase 2: outbound calls have no call.incoming, so this upsert CREATES\n  // their row - record the direction (blank = inbound, the legacy default).\n  if (String(d.direction || '') === 'outbound') answers.direction = 'outbound';\n  // Caller-id backfill: with instant auto-answer the +CLIP number usually\n  // arrives AFTER call.incoming was recorded (the row got caller_phone ''),\n  // but call.ended carries it — write it now so the record and the\n  // customer_link match stop reading as an unknown caller. Same phone-format\n  // guard as the incoming script (a non-number must not fail the row).\n  var phone = String(d.callerPhone || d.from || '');\n  if (/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)) answers.caller_phone = phone;\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'calls', upsert: true,\n        match: { field: 'call_id', value: callId },\n        answers: answers }\n    ]\n  };\n}"
             },
             {
               "id": "aokie-sms-received",
@@ -3916,6 +3926,102 @@
             },
             {
               "source": "make",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Hold Lost Apology",
+        "slug": "hold-lost-apology",
+        "description": "Async on aokie.call.ended outcome 'abandoned_on_hold' — a caller who was parked MID-CONVERSATION hung up before the receptionist got back to them. They chose to leave, so ringing them back would be rude: apologise by SMS instead ('so sorry - we had you on hold and lost you; call back whenever suits') and leave the choice with them. Replies ride the human-approval draft path, never the booking loop. Customers who cannot receive SMS (sms_capable No) raise a high-priority human task instead; blocked customers and withheld numbers are a clean no-op. (Callers who gave up waiting IN THE QUEUE — outcome abandoned_in_queue — are handled by missed-call-follow-up with a hold apology in the callback's opening line.)",
+        "nodeCapabilities": [
+          "formlogic.responses.read"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "callerPhone",
+                    "example": "+61400000000"
+                  },
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "customers",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:customers",
+                "return": "all",
+                "limit": 5,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.callerPhone"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "settings",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:receptionist-settings",
+                "return": "all",
+                "limit": 5
+              }
+            },
+            {
+              "id": "plan",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var out = { hasSms: false, hasTask: false, summaryLine: '' };\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var blocked = String(ca.status || '').toLowerCase() === 'blocked';\n  var smsCapable = String(ca.sms_capable || 'yes') !== 'no' && !blocked;\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || '';\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  if (blocked || !realPhone) {\n    out.summaryLine = blocked ? 'Caller lost on hold is blocked - no follow-up.' : 'Caller lost on hold had no usable number - no follow-up.';\n    return out;\n  }\n  if (smsCapable) {\n    var body = 'Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the team')\n      + ' - so sorry, we had you on hold and lost you. No need to wait on us: call back whenever suits you, or reply here and we will help you out.';\n    body = body.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);\n    var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n    if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n    if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n    var digits = phone.replace(/[\\s()-]/g, '');\n    out.hasSms = true;\n    out.sms = { to: (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone, body: body };\n    out.smsMessage = {\n      message_id: 'smshold_' + String(inputs.callId || ''),\n      phone: phone,\n      direction: 'outbound',\n      body: body,\n      timestamp: new Date().toISOString(),\n      status: 'queued',\n      is_ai_reply: ['yes'],\n      approval_status: 'not_required'\n    };\n    out.summaryLine = 'Apology text sent to the caller we lost on hold.';\n    return out;\n  }\n  out.hasTask = true;\n  out.task = {\n    summary: 'Caller ' + (name ? name + ' (' + phone + ')' : phone) + ' gave up while ON HOLD and cannot receive SMS - please ring them back with an apology.',\n    status: 'open',\n    priority: 'high',\n    phone: phone,\n    call_id: String(inputs.callId || ''),\n    callback_state: ''\n  };\n  if (hit) out.task.customer_link = hit.id;\n  out.summaryLine = 'Caller lost on hold cannot receive SMS - task raised for a human.';\n  return out;\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "hasSms": "$nodes.plan.hasSms",
+                  "sms": "$nodes.plan.sms",
+                  "smsMessage": "$nodes.plan.smsMessage",
+                  "hasTask": "$nodes.plan.hasTask",
+                  "task": "$nodes.plan.task",
+                  "summaryLine": "$nodes.plan.summaryLine"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "customers"
+            },
+            {
+              "source": "customers",
+              "target": "settings"
+            },
+            {
+              "source": "settings",
+              "target": "plan"
+            },
+            {
+              "source": "plan",
               "target": "out"
             }
           ]
@@ -5056,6 +5162,10 @@
                   {
                     "name": "from",
                     "example": "+61400000000"
+                  },
+                  {
+                    "name": "outcome",
+                    "example": "missed"
                   }
                 ]
               }
@@ -5102,10 +5212,38 @@
               }
             },
             {
+              "id": "win",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var nowD = new Date();\n  function iso(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }\n  return { todayIso: iso(nowD), horizonIso: iso(new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 90)) };\n})()"
+              }
+            },
+            {
+              "id": "appts",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:appointments",
+                "return": "all",
+                "limit": 20,
+                "filters": [
+                  {
+                    "field": "phone",
+                    "op": "phone_eq",
+                    "value": "$inputs.callerPhone"
+                  },
+                  {
+                    "field": "date",
+                    "op": "gte",
+                    "value": "$nodes.win.todayIso"
+                  }
+                ]
+              }
+            },
+            {
               "id": "task",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var blocked = String(ca.status || '').toLowerCase() === 'blocked';\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || '';\n  // One callback per number at a time: an open task already queued/dialed\n  // for this phone means a second missed call must not mint a second dial.\n  var tRows = (nodes.tasks && nodes.tasks.responses) || [];\n  var pending = false;\n  for (var t = 0; t < tRows.length; t++) {\n    var ta = (tRows[t] && tRows[t].answers) || {};\n    var st = String(ta.status || '');\n    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {\n      pending = true;\n      break;\n    }\n  }\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  // Outbound dial target rides defaultCountryCode like every other outbound\n  // number (0412... -> +61412...); records keep the observed format.\n  var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n  var digits = phone.replace(/[\\s()-]/g, '');\n  var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;\n  // Callback only for numbers that CALLED US (by construction here), are\n  // real (never withheld ids) and are not blocked customers.\n  var wantsCallback = realPhone && !blocked && !pending;\n  var opening = 'Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n    + ' - sorry, we just missed your call. How can I help you?';\n  opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);\n  var purpose = 'You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '\n    + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.';\n  var task = {\n    summary: 'Missed call' + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')\n      + (wantsCallback ? ' - calling back automatically' : ' - call back'),\n    status: 'open',\n    priority: 'high',\n    phone: realPhone ? phone : '',\n    call_id: String(inputs.callId || ''),\n    callback_state: wantsCallback ? 'queued' : ''\n  };\n  if (hit) task.customer_link = hit.id;\n  return {\n    wantsCallback: wantsCallback,\n    dial: { number: dialNumber, openingLine: opening, purpose: purpose },\n    task: task\n  };\n})()"
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var blocked = String(ca.status || '').toLowerCase() === 'blocked';\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || '';\n  // One callback per number at a time: an open task already queued/dialed\n  // for this phone means a second missed call must not mint a second dial.\n  var tRows = (nodes.tasks && nodes.tasks.responses) || [];\n  var pending = false;\n  for (var t = 0; t < tRows.length; t++) {\n    var ta = (tRows[t] && tRows[t].answers) || {};\n    var st = String(ta.status || '');\n    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {\n      pending = true;\n      break;\n    }\n  }\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  // Outbound dial target rides defaultCountryCode like every other outbound\n  // number (0412... -> +61412...); records keep the observed format.\n  var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n  var digits = phone.replace(/[\\s()-]/g, '');\n  var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;\n  // Callback only for numbers that CALLED US (by construction here), are\n  // real (never withheld ids) and are not blocked customers.\n  var wantsCallback = realPhone && !blocked && !pending;\n  // Phase 4 hold queue: a caller who gave up waiting in the queue is rung\n  // back like a missed call, but the FIRST words own the hold - being left\n  // on hold then rung back with a chirpy \"we missed your call\" reads tone-deaf.\n  var heldQueue = String(inputs.outcome || '') === 'abandoned_in_queue';\n  var opening = heldQueue\n    ? ('Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n      + \" - so sorry to keep you waiting on hold just now. I'm calling you right back - how can I help you?\")\n    : ('Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n      + ' - sorry, we just missed your call. How can I help you?');\n  opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);\n  var purpose = heldQueue\n    ? ('You are calling back a caller who GAVE UP WAITING ON HOLD: ' + (name || 'this caller') + ' (' + phone + ') rang '\n      + (business || 'the business') + ', was asked to hold, and hung up before anyone got back to them. Apologise sincerely for the wait, then help with whatever they called about.')\n    : ('You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '\n      + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.');\n  // Their upcoming bookings ride the dial purpose: outbound calls never run\n  // personalize-caller, so WITHOUT this the agent cannot answer \"what are my\n  // appointments?\" on a callback (live gap, user report 2026-07-15).\n  var apptRows = (nodes.appts && nodes.appts.responses) || [];\n  var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n  var monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];\n  var bookingLines = [];\n  for (var a2 = 0; a2 < apptRows.length && bookingLines.length < 6; a2++) {\n    var aa = (apptRows[a2] && apptRows[a2].answers) || {};\n    var ast = String(aa.status || '');\n    if (ast === 'cancelled') continue;\n    var adm = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(aa.date || ''));\n    if (!adm) continue;\n    var adate = new Date(Number(adm[1]), Number(adm[2]) - 1, Number(adm[3]));\n    var when = dayNames[adate.getDay()] + ' ' + Number(adm[3]) + ' ' + monthNames[Number(adm[2]) - 1];\n    var atm = /^(\\d{2}):(\\d{2})$/.exec(String(aa.time || ''));\n    if (atm) {\n      var ah = Number(atm[1]);\n      var h12 = ah % 12; if (h12 === 0) h12 = 12;\n      when += ' at ' + h12 + (atm[2] === '00' ? '' : ':' + atm[2]) + ' ' + (ah >= 12 ? 'PM' : 'AM');\n    }\n    bookingLines.push(when + ' - ' + String(aa.service || 'appointment') + (ast ? ' (' + ast + ')' : ''));\n  }\n  if (bookingLines.length) {\n    purpose += ' THEIR UPCOMING BOOKINGS ON RECORD: ' + bookingLines.join('; ')\n      + '. Answer their booking questions from THIS list only - never invent or guess bookings.';\n  } else {\n    purpose += ' They have NO upcoming bookings on record.';\n  }\n  purpose = purpose.replace(/[^\\x20-\\x7E]/g, '').slice(0, 990);\n  var task = {\n    summary: (heldQueue ? 'Caller gave up on hold' : 'Missed call') + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')\n      + (wantsCallback ? ' - calling back automatically' : ' - call back'),\n    status: 'open',\n    priority: 'high',\n    phone: realPhone ? phone : '',\n    call_id: String(inputs.callId || ''),\n    callback_state: wantsCallback ? 'queued' : ''\n  };\n  if (hit) task.customer_link = hit.id;\n  return {\n    wantsCallback: wantsCallback,\n    dial: { number: dialNumber, openingLine: opening, purpose: purpose },\n    task: task\n  };\n})()"
               }
             },
             {
@@ -5135,6 +5273,14 @@
             },
             {
               "source": "settings",
+              "target": "win"
+            },
+            {
+              "source": "win",
+              "target": "appts"
+            },
+            {
+              "source": "appts",
               "target": "task"
             },
             {
@@ -5427,7 +5573,7 @@
         "timeoutMs": 90000,
         "condition": {
           "type": "expression",
-          "expr": "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false"
+          "expr": "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.outcome || '') !== 'abandoned_on_hold' && String(event.data.outcome || '') !== 'abandoned_in_queue' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false"
         },
         "inputMap": {
           "callId": "$event.data.callId",
@@ -5652,12 +5798,13 @@
         "timeoutMs": 15000,
         "condition": {
           "type": "expression",
-          "expr": "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') && String(event.data.direction || '') !== 'outbound') : false"
+          "expr": "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed' || String(event.data.outcome || '') === 'abandoned_in_queue') && String(event.data.direction || '') !== 'outbound') : false"
         },
         "inputMap": {
           "callId": "$event.data.callId",
           "callerPhone": "$event.data.callerPhone",
-          "from": "$event.data.from"
+          "from": "$event.data.from",
+          "outcome": "$event.data.outcome"
         },
         "outputActions": [
           {
@@ -5734,6 +5881,54 @@
           "onError": "log_and_continue"
         },
         "sortOrder": 12
+      },
+      {
+        "flow": "hold-lost-apology",
+        "event": "aokie.call.ended",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 15000,
+        "condition": {
+          "type": "expression",
+          "expr": "event && event.data ? (String(event.data.outcome || '') === 'abandoned_on_hold' && String(event.data.direction || '') !== 'outbound') : false"
+        },
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "callerPhone": "$event.data.callerPhone",
+          "from": "$event.data.from"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:follow-up-tasks",
+            "when": "$result.hasTask",
+            "answers": "$result.task"
+          },
+          {
+            "type": "connector.request",
+            "connectorId": "aokie",
+            "command": "sms.send",
+            "when": "$result.hasSms",
+            "payload": {
+              "to": "$result.sms.to",
+              "body": "$result.sms.body"
+            }
+          },
+          {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasSms",
+            "answers": "$result.smsMessage"
+          },
+          {
+            "type": "formlogic.toast",
+            "message": "Hold lost: {{result.summaryLine}}"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 13
       },
       {
         "flow": "manager-action-apply",

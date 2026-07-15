@@ -261,6 +261,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'call-summary-follow-up',
       'configure-receptionist',
       'hardware-error-alert',
+      'hold-lost-apology',
       'incoming-caller-lookup',
       'live-reply',
       'manager-action-apply',
@@ -297,7 +298,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(14);
+    expect(pack.flowBindings?.length).toBe(15);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -1889,5 +1890,137 @@ describe('aokieReceptionistPack — catalog', () => {
     expect(entry).toBeDefined();
     expect(entry!.formCount).toBe(pack.forms.length);
     expect(entry!.appCount).toBe(1);
+  });
+});
+
+describe('aokieReceptionistPack — hold-abandonment follow-ups (Phase 4 hold queue)', () => {
+  const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
+  const nodeExpr = (slug: string, nodeId: string): string => {
+    const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
+    return String((node.data as { expr: string }).expr);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const evalExpr = (expr: string, scope: { nodes?: unknown; inputs?: unknown }): any =>
+    new Function('nodes', 'inputs', `return ${expr};`)(scope.nodes ?? {}, scope.inputs ?? {});
+  const future = new Date(Date.now() + 7 * 86400000);
+  const futureIso = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`;
+
+  describe('missed-call-follow-up: hold apology + bookings context in the dial purpose', () => {
+    const taskExpr = nodeExpr('missed-call-follow-up', 'task');
+    const scopeFor = (inputsOver: Record<string, unknown> = {}, apptRows: unknown[] = []) => ({
+      inputs: { callId: 'call_9', callerPhone: '0491570156', from: '0491570156', ...inputsOver },
+      nodes: {
+        customers: { first: { id: 'cust-1', answers: { name: 'Jane Customer', phone: '0491570156', status: 'active' } }, responses: [] },
+        tasks: { responses: [] },
+        settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', default_country_code: '61' } }] },
+        appts: { responses: apptRows },
+      },
+    });
+
+    it('a plain missed call keeps the classic opening + cc-normalized dial target', () => {
+      const r = evalExpr(taskExpr, scopeFor());
+      expect(r.wantsCallback).toBe(true);
+      expect(r.dial.openingLine).toContain('sorry, we just missed your call');
+      expect(r.dial.number).toBe('+61491570156');
+      expect(r.dial.purpose).toContain('NO upcoming bookings');
+      expect(r.task.summary).toContain('Missed call');
+    });
+
+    it('abandoned_in_queue leads with the hold apology, never the missed-call line', () => {
+      const r = evalExpr(taskExpr, scopeFor({ outcome: 'abandoned_in_queue' }));
+      expect(r.dial.openingLine).toContain('so sorry to keep you waiting on hold');
+      expect(r.dial.openingLine).not.toContain('missed your call');
+      expect(r.dial.purpose).toContain('GAVE UP WAITING ON HOLD');
+      expect(r.task.summary).toContain('Caller gave up on hold');
+      // Still a callback: they never got served, so ringing back is right.
+      expect(r.wantsCallback).toBe(true);
+    });
+
+    it('upcoming bookings ride the purpose so the callback can answer appointment questions', () => {
+      const rows = [
+        { id: 'a1', answers: { date: futureIso, time: '15:00', service: 'general checkup', status: 'confirmed' } },
+        { id: 'a2', answers: { date: futureIso, time: '09:30', service: 'cleaning', status: 'cancelled' } },
+      ];
+      const r = evalExpr(taskExpr, scopeFor({}, rows));
+      expect(r.dial.purpose).toContain('THEIR UPCOMING BOOKINGS ON RECORD');
+      expect(r.dial.purpose).toContain('general checkup');
+      expect(r.dial.purpose).toContain('3 PM');
+      // Cancelled bookings never surface; the purpose stays within the
+      // plugin's 1000-char cap.
+      expect(r.dial.purpose).not.toContain('cleaning');
+      expect(r.dial.purpose.length).toBeLessThanOrEqual(990);
+    });
+  });
+
+  describe('hold-lost-apology: SMS to a caller who hung up while parked mid-conversation', () => {
+    const planExpr = nodeExpr('hold-lost-apology', 'plan');
+    const scopeFor = (customer: Record<string, unknown> | null, inputsOver: Record<string, unknown> = {}) => ({
+      inputs: { callId: 'call_h1', callerPhone: '0491570156', from: '0491570156', ...inputsOver },
+      nodes: {
+        customers: customer ? { first: { id: 'cust-1', answers: customer }, responses: [] } : { responses: [] },
+        settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', default_country_code: '61' } }] },
+      },
+    });
+
+    it('sms-capable caller gets the apology text (cc-normalized), never a callback dial', () => {
+      const r = evalExpr(planExpr, scopeFor({ name: 'Jane Customer', status: 'active' }));
+      expect(r.hasSms).toBe(true);
+      expect(r.hasTask).toBe(false);
+      expect(r.sms.to).toBe('+61491570156');
+      expect(r.sms.body).toContain('we had you on hold and lost you');
+      expect(r.sms.body).toContain('call back whenever suits');
+      expect(r.sms.body.length).toBeLessThanOrEqual(440);
+      expect(r.smsMessage.status).toBe('queued');
+      expect(r.smsMessage.direction).toBe('outbound');
+    });
+
+    it('sms_capable No raises a human task instead of a text', () => {
+      const r = evalExpr(planExpr, scopeFor({ name: 'Jane Customer', status: 'active', sms_capable: 'no' }));
+      expect(r.hasSms).toBe(false);
+      expect(r.hasTask).toBe(true);
+      expect(r.task.summary).toContain('gave up while ON HOLD');
+      expect(r.task.callback_state).toBe('');
+      expect(r.task.customer_link).toBe('cust-1');
+    });
+
+    it('blocked customers and withheld numbers are a clean no-op', () => {
+      const blocked = evalExpr(planExpr, scopeFor({ name: 'X', status: 'blocked' }));
+      expect(blocked.hasSms).toBe(false);
+      expect(blocked.hasTask).toBe(false);
+      const withheld = evalExpr(planExpr, scopeFor(null, { callerPhone: '', from: '' }));
+      expect(withheld.hasSms).toBe(false);
+      expect(withheld.hasTask).toBe(false);
+    });
+  });
+
+  describe('binding conditions route the two abandonment outcomes correctly', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const evalCond = (expr: string, data: Record<string, unknown>): any =>
+      new Function('event', `return ${expr};`)({ data });
+    const bindingFor = (flow: string, event = 'aokie.call.ended') =>
+      (pack.flowBindings ?? []).find((b) => b.flow === flow && b.event === event)!;
+
+    it('abandoned_in_queue rings back via missed-call-follow-up; abandoned_on_hold does not', () => {
+      const cond = (bindingFor('missed-call-follow-up').condition as { expr: string }).expr;
+      expect(evalCond(cond, { outcome: 'abandoned_in_queue' })).toBe(true);
+      expect(evalCond(cond, { outcome: 'missed' })).toBe(true);
+      expect(evalCond(cond, { outcome: 'abandoned_on_hold' })).toBe(false);
+      expect(evalCond(cond, { outcome: 'abandoned_in_queue', direction: 'outbound' })).toBe(false);
+    });
+
+    it('abandoned_on_hold gets the apology SMS flow; nothing else does', () => {
+      const cond = (bindingFor('hold-lost-apology').condition as { expr: string }).expr;
+      expect(evalCond(cond, { outcome: 'abandoned_on_hold' })).toBe(true);
+      expect(evalCond(cond, { outcome: 'abandoned_in_queue' })).toBe(false);
+      expect(evalCond(cond, { outcome: 'completed' })).toBe(false);
+      expect(evalCond(cond, { outcome: 'abandoned_on_hold', direction: 'outbound' })).toBe(false);
+    });
+
+    it('after-call-actions skips both abandonment outcomes (no booking mining off a cut conversation)', () => {
+      const cond = (bindingFor('after-call-actions').condition as { expr: string }).expr;
+      expect(evalCond(cond, { durationSeconds: 60, outcome: 'abandoned_on_hold' })).toBe(false);
+      expect(evalCond(cond, { durationSeconds: 60, outcome: 'abandoned_in_queue' })).toBe(false);
+      expect(evalCond(cond, { durationSeconds: 60, outcome: 'completed' })).toBe(true);
+    });
   });
 });

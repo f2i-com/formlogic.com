@@ -265,7 +265,10 @@ class PackFlowImportTest extends TestCase
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 
-        // 15 flows / 14 bindings: the Phase 3 manager pair (2026-07-14 —
+        // 16 flows / 15 bindings: hold-lost-apology (2026-07-15 Phase 4
+        // hold queue — apology SMS to a caller who hung up while parked
+        // mid-conversation, bound to aokie.call.ended outcome
+        // abandoned_on_hold) joined the Phase 3 manager pair (2026-07-14 —
         // manager-action-plan, invoked by the plugin over flow.run and
         // deliberately UNBOUND like business-lookup, plus manager-action-apply
         // bound to aokie.manager.action) joined outbound-callback-result
@@ -276,9 +279,9 @@ class PackFlowImportTest extends TestCase
         // eight. The live-reply binding ships DISABLED (the in-plugin
         // receptionist owns replies) but still imports as a row.
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(15, $flows);
+        $this->assertCount(16, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(14, $bindings);
+        $this->assertCount(15, $bindings);
         $this->assertStringNotContainsString('@pack:', json_encode($flows));
         $this->assertStringNotContainsString('@pack:', json_encode($bindings));
 

@@ -84,12 +84,16 @@ Conventions:
   reason, direction, manager, at}`. `manager: true` marks an inbound call whose caller id
   digit-matched the `managerNumbers` setting — the after-call booking extractor skips those
   (manager changes write deterministically through `aokie.manager.action`; absent/false =
-  ordinary caller, so older plugins keep working). `outcome ∈ completed|rejected|missed|terminated_abuse` (inbound) comes
+  ordinary caller, so older plugins keep working). `outcome ∈ completed|rejected|missed|terminated_abuse|abandoned_on_hold|abandoned_in_queue` (inbound) comes
   from the call-session state machine (audit AK-001): answered → `completed` (even a sub-second
   call), operator-rejected → `rejected`, never answered → `missed`, abuse-terminated (Phase 1) →
-  `terminated_abuse`. OUTBOUND calls (`direction: "outbound"`, Phase 2) add `no_answer` (remote
-  alerted, never picked up) and `failed` (never even alerted); `from` is the DIALED number.
-  `durationSeconds`/`durationMs` count from ANSWER.
+  `terminated_abuse`. Phase 4 hold queue: a PARKED caller who hangs up before the receptionist
+  returns ends `abandoned_on_hold` when they had a real conversation first (follow-ups should
+  apologise by SMS, never ring back someone who chose to leave) or `abandoned_in_queue` when
+  they only ever heard the "please hold — you're next" line (follow-ups treat it like a missed
+  call and ring back with a hold apology). OUTBOUND calls (`direction: "outbound"`, Phase 2) add
+  `no_answer` (remote alerted, never picked up) and `failed` (never even alerted); `from` is the
+  DIALED number. `durationSeconds`/`durationMs` count from ANSWER.
 - `aokie.call.waiting` data: `{callId, from, at}` (Phase 4, observe-only slice): a SECOND caller
   rang while `callId` was active. `callId` is the ACTIVE call the knock happened during — the
   waiting caller has no session or call id of their own yet; `from` is their number, `""` when

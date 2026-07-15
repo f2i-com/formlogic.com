@@ -16,7 +16,7 @@ describe('aokie pack flows', () => {
     expect(flows.map((f) => f.slug).sort()).toEqual(
       ['after-call-actions',
       'business-lookup',
-      'call-summary-follow-up', 'configure-receptionist', 'hardware-error-alert', 'incoming-caller-lookup', 'live-reply', 'manager-action-apply', 'manager-action-plan', 'missed-call-follow-up', 'outbound-callback-result', 'personalize-caller', 'sms-auto-reply-draft', 'sms-delivery-status', 'sms-followup-conversation'],
+      'call-summary-follow-up', 'configure-receptionist', 'hardware-error-alert', 'hold-lost-apology', 'incoming-caller-lookup', 'live-reply', 'manager-action-apply', 'manager-action-plan', 'missed-call-follow-up', 'outbound-callback-result', 'personalize-caller', 'sms-auto-reply-draft', 'sms-delivery-status', 'sms-followup-conversation'],
     );
   });
 
