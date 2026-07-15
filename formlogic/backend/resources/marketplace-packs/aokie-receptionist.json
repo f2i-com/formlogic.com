@@ -4051,7 +4051,7 @@
       {
         "name": "Callback Drain",
         "slug": "callback-drain",
-        "description": "Async on every INBOUND aokie.call.ended: dial the OLDEST queued callback task (open/in_progress, callback_state 'queued', has a stored callback_number, no older than 12 hours). The missed-call flow's own dial is typically refused while the line is still busy — a knocker who gave up did so DURING a live call — so this drain retries whenever the line frees up. The plugin's radio guard still refuses typed if a call is already up again (the task just stays queued for the next attempt), and the callback's own outbound call.ended transitions the task via outbound-callback-result. Never fires on outbound endeds (no dial loops).",
+        "description": "Async on EVERY aokie.call.ended: dial the OLDEST queued callback task (open/in_progress, callback_state 'queued', stored callback_number, <12h old). Inbound endeds start the chain (the missed-call flow's own dial is typically refused while the line is busy); a finished CALLBACK chains to the NEXT queued number — several missed callers are rung back one after the other — but never redials the number it just served (outbound-callback-result owns that task's transition, so no dial loops). A caller with a queued callback who rings back and REACHES us themselves gets their task closed instead of a redundant machine ring-back. The plugin's radio guard still refuses typed if a call is up (the task stays queued for the next attempt).",
         "nodeCapabilities": [
           "formlogic.responses.read"
         ],
@@ -4073,6 +4073,10 @@
                   {
                     "name": "direction",
                     "example": ""
+                  },
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
                   }
                 ]
               }
@@ -4097,7 +4101,7 @@
               "id": "plan",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var out = { hasDial: false, summaryLine: '' };\n  var rows = (nodes.tasks && nodes.tasks.responses) || [];\n  var best = null;\n  var bestAt = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var r = rows[i] || {};\n    var ta = r.answers || {};\n    var st = String(ta.status || '');\n    if (st !== 'open' && st !== 'in_progress') continue;\n    if (String(ta.callback_state || '') !== 'queued') continue;\n    var num = String(ta.callback_number || '');\n    if (!num) continue; // queued before the drain existed - a human owns it\n    var atRaw = String(r.submittedAt || '');\n    var atIso = atRaw.indexOf('T') === -1 ? atRaw.replace(' ', 'T') + 'Z' : atRaw;\n    var t = atRaw ? new Date(atIso).getTime() : 0;\n    // Staleness gate: never machine-dial a queue entry older than 12 hours\n    // (a stale queue must not ring people out of the blue days later).\n    if (atRaw && (isNaN(t) || Date.now() - t > 12 * 3600 * 1000)) continue;\n    if (!best || t < bestAt) { best = r; bestAt = t; }\n  }\n  if (!best) {\n    out.summaryLine = 'No queued callbacks to dial.';\n    return out;\n  }\n  var ba = best.answers || {};\n  out.hasDial = true;\n  out.dial = {\n    number: String(ba.callback_number || ''),\n    openingLine: (String(ba.callback_opening || '').slice(0, 480)) || 'Hi! Sorry we missed your call - calling you back now. How can I help?',\n    purpose: String(ba.callback_purpose || '').slice(0, 990)\n  };\n  out.summaryLine = 'Dialing queued callback to ' + String(ba.phone || ba.callback_number || '') + '.';\n  return out;\n})()"
+                "expr": "(function () {\n  var out = { hasDial: false, hasTaskUpdate: false, summaryLine: '' };\n  var endedDigits = String(inputs.from || '').replace(/[^0-9]/g, '');\n  var endedSuffix = endedDigits.length >= 6 ? endedDigits.slice(-9) : '';\n  var isOutbound = String(inputs.direction || '') === 'outbound';\n  var rows = (nodes.tasks && nodes.tasks.responses) || [];\n  function suffixOf(v) {\n    var d = String(v || '').replace(/[^0-9]/g, '');\n    return d.length >= 6 ? d.slice(-9) : '';\n  }\n  var best = null;\n  var bestAt = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var r = rows[i] || {};\n    var ta = r.answers || {};\n    var st = String(ta.status || '');\n    if (st !== 'open' && st !== 'in_progress') continue;\n    if (String(ta.callback_state || '') !== 'queued') continue;\n    var num = String(ta.callback_number || '');\n    if (!num) continue; // queued before the drain existed - a human owns it\n    var sfx = suffixOf(num) || suffixOf(ta.phone);\n    if (endedSuffix && sfx && sfx === endedSuffix) {\n      // The just-ended call involved THIS number.\n      if (!isOutbound && String(inputs.outcome || '') === 'completed' && !out.hasTaskUpdate) {\n        // They rang us and REACHED us themselves - close the queued\n        // callback instead of machine-ringing them again later.\n        out.hasTaskUpdate = true;\n        out.taskId = r.id;\n        out.taskUpdate = {\n          status: 'done',\n          callback_state: 'reached',\n          summary: (String(ta.summary || '').slice(0, 400) + ' [caller reached us before the callback]').slice(0, 500)\n        };\n      }\n      // Outbound: this is the task the just-finished callback SERVED -\n      // outbound-callback-result owns its transition; never redial the\n      // same person in the same beat.\n      continue;\n    }\n    var atRaw = String(r.submittedAt || '');\n    var atIso = atRaw.indexOf('T') === -1 ? atRaw.replace(' ', 'T') + 'Z' : atRaw;\n    var t = atRaw ? new Date(atIso).getTime() : 0;\n    // Staleness gate: never machine-dial a queue entry older than 12 hours\n    // (a stale queue must not ring people out of the blue days later).\n    if (atRaw && (isNaN(t) || Date.now() - t > 12 * 3600 * 1000)) continue;\n    if (!best || t < bestAt) { best = r; bestAt = t; }\n  }\n  if (!best) {\n    out.summaryLine = out.hasTaskUpdate\n      ? 'Caller reached us - queued callback closed; nothing else to dial.'\n      : 'No queued callbacks to dial.';\n    return out;\n  }\n  var ba = best.answers || {};\n  out.hasDial = true;\n  out.dial = {\n    number: String(ba.callback_number || ''),\n    openingLine: (String(ba.callback_opening || '').slice(0, 480)) || 'Hi! Sorry we missed your call - calling you back now. How can I help?',\n    purpose: String(ba.callback_purpose || '').slice(0, 990)\n  };\n  out.summaryLine = (out.hasTaskUpdate ? 'Queued callback closed (caller reached us); ' : '')\n    + 'Dialing queued callback to ' + String(ba.phone || ba.callback_number || '') + '.';\n  return out;\n})()"
               }
             },
             {
@@ -4107,6 +4111,9 @@
                 "value": {
                   "hasDial": "$nodes.plan.hasDial",
                   "dial": "$nodes.plan.dial",
+                  "hasTaskUpdate": "$nodes.plan.hasTaskUpdate",
+                  "taskId": "$nodes.plan.taskId",
+                  "taskUpdate": "$nodes.plan.taskUpdate",
                   "summaryLine": "$nodes.plan.summaryLine"
                 }
               }
@@ -6037,16 +6044,20 @@
         "connectorId": "aokie",
         "mode": "async",
         "timeoutMs": 15000,
-        "condition": {
-          "type": "expression",
-          "expr": "event && event.data ? String(event.data.direction || '') !== 'outbound' : false"
-        },
         "inputMap": {
           "callId": "$event.data.callId",
           "outcome": "$event.data.outcome",
-          "direction": "$event.data.direction"
+          "direction": "$event.data.direction",
+          "from": "$event.data.from"
         },
         "outputActions": [
+          {
+            "type": "formlogic.updateResponse",
+            "form": "@pack:follow-up-tasks",
+            "when": "$result.hasTaskUpdate",
+            "responseId": "$result.taskId",
+            "answers": "$result.taskUpdate"
+          },
           {
             "type": "connector.request",
             "connectorId": "aokie",

@@ -2078,15 +2078,38 @@ describe('aokieReceptionistPack — callback drain (queued callbacks dial when t
     expect(r.summaryLine).toContain('No queued callbacks');
   });
 
-  it('binding fires on inbound endeds only (the callback own-ended never re-drains)', () => {
+  it('a finished callback CHAINS to the next queued number, never redialing itself', () => {
+    const served = task({ callback_number: '+61491570156', phone: '0491570156' }, minsAgo(30));
+    const next = task({ callback_number: '+61491570157', phone: '0491570157' }, minsAgo(20));
+    const r = evalExpr(planExpr, {
+      nodes: { tasks: { responses: [served, next] } },
+      inputs: { direction: 'outbound', outcome: 'no_answer', from: '+61491570156' },
+    });
+    expect(r.hasDial).toBe(true);
+    expect(r.dial.number).toBe('+61491570157');
+    // The served task's transition belongs to outbound-callback-result.
+    expect(r.hasTaskUpdate).toBe(false);
+  });
+
+  it('a caller who reaches us themselves gets their queued callback closed, and the chain continues', () => {
+    const theirs = task({ callback_number: '0491570156', phone: '0491570156' }, minsAgo(30));
+    const other = task({ callback_number: '0491570157', phone: '0491570157' }, minsAgo(20));
+    const r = evalExpr(planExpr, {
+      nodes: { tasks: { responses: [theirs, other] } },
+      inputs: { direction: '', outcome: 'completed', from: '+61491570156' },
+    });
+    expect(r.hasTaskUpdate).toBe(true);
+    expect(r.taskUpdate.status).toBe('done');
+    expect(r.taskUpdate.callback_state).toBe('reached');
+    expect(r.hasDial).toBe(true);
+    expect(r.dial.number).toBe('0491570157');
+  });
+
+  it('binding fires unconditionally (chaining) and closes the task before dialing', () => {
     const binding = (pack.flowBindings ?? []).find((b) => b.flow === 'callback-drain')!;
-    const cond = (binding.condition as { expr: string }).expr;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const evalCond = (data: Record<string, unknown>): any =>
-      new Function('event', `return ${cond};`)({ data });
-    expect(evalCond({ outcome: 'completed' })).toBe(true);
-    expect(evalCond({ outcome: 'missed', direction: '' })).toBe(true);
-    expect(evalCond({ outcome: 'no_answer', direction: 'outbound' })).toBe(false);
+    expect(binding.condition).toBeUndefined();
+    const kinds = (binding.outputActions ?? []).map((a: { type: string }) => a.type);
+    expect(kinds.indexOf('formlogic.updateResponse')).toBeLessThan(kinds.indexOf('connector.request'));
   });
 
   it('the missed-call task stores the composed callback payload for the drain', () => {
