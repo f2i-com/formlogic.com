@@ -98,6 +98,8 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'phone.disconnect',
   'phone.connect',
   'call.current',
+  'call.switchboard',
+  'call.activate',
   'call.answer',
   'call.reject',
   'call.hangup',
@@ -227,8 +229,8 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     event: 'aokie.call.waiting',
     label: 'Second caller waiting',
     description:
-      'A second caller rang while a call was active (requires the holdAndCallWaiting setting and phone support). callId is the ACTIVE call; from is the waiting number ("" when withheld). Aokie does not answer or hold them yet — they hear the network tone until they give up, so bind here for follow-ups like a we-missed-you text. Never treat this as a new call.',
-    payloadHints: [...CALL_ID_HINTS, '$event.data.from'],
+      'A second caller rang while a call was active (requires the holdAndCallWaiting setting and phone support). callId is the ACTIVE call; from is the waiting number ("" when withheld); waitingCallId is the stable identity call.activate accepts them under. Until someone activates them they hear the network tone, so bind here for follow-ups like a we-missed-you text. Never treat this event as a new call.',
+    payloadHints: [...CALL_ID_HINTS, '$event.data.from', '$event.data.waitingCallId'],
   },
   {
     kind: 'teach',
