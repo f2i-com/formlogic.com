@@ -413,6 +413,13 @@ const FLOW_MISSED_TASK = `(function () {
     call_id: String(inputs.callId || ''),
     callback_state: wantsCallback ? 'queued' : ''
   };
+  if (wantsCallback) {
+    // The drain flow dials from EXACTLY these if this dial is refused
+    // because the line is busy right now.
+    task.callback_number = dialNumber;
+    task.callback_opening = opening;
+    task.callback_purpose = purpose;
+  }
   if (hit) task.customer_link = hit.id;
   return {
     wantsCallback: wantsCallback,
@@ -565,6 +572,49 @@ const FLOW_HOLD_LOST = `(function () {
   };
   if (hit) out.task.customer_link = hit.id;
   out.summaryLine = 'Caller lost on hold cannot receive SMS - task raised for a human.';
+  return out;
+})()`;
+
+// Callback drain: whenever an INBOUND call ends, dial the oldest queued
+// callback task (the missed-call flow's own dial is refused typed while the
+// line is busy — e.g. a knocker who gave up DURING a live call). The
+// plugin's radio guard still refuses if another call is already up again;
+// the task simply stays queued and the next ended call retries. The
+// callback's own call.ended (direction outbound) transitions the task via
+// outbound-callback-result exactly as before.
+const FLOW_CALLBACK_DRAIN = `(function () {
+  var out = { hasDial: false, summaryLine: '' };
+  var rows = (nodes.tasks && nodes.tasks.responses) || [];
+  var best = null;
+  var bestAt = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i] || {};
+    var ta = r.answers || {};
+    var st = String(ta.status || '');
+    if (st !== 'open' && st !== 'in_progress') continue;
+    if (String(ta.callback_state || '') !== 'queued') continue;
+    var num = String(ta.callback_number || '');
+    if (!num) continue; // queued before the drain existed - a human owns it
+    var atRaw = String(r.submittedAt || '');
+    var atIso = atRaw.indexOf('T') === -1 ? atRaw.replace(' ', 'T') + 'Z' : atRaw;
+    var t = atRaw ? new Date(atIso).getTime() : 0;
+    // Staleness gate: never machine-dial a queue entry older than 12 hours
+    // (a stale queue must not ring people out of the blue days later).
+    if (atRaw && (isNaN(t) || Date.now() - t > 12 * 3600 * 1000)) continue;
+    if (!best || t < bestAt) { best = r; bestAt = t; }
+  }
+  if (!best) {
+    out.summaryLine = 'No queued callbacks to dial.';
+    return out;
+  }
+  var ba = best.answers || {};
+  out.hasDial = true;
+  out.dial = {
+    number: String(ba.callback_number || ''),
+    openingLine: (String(ba.callback_opening || '').slice(0, 480)) || 'Hi! Sorry we missed your call - calling you back now. How can I help?',
+    purpose: String(ba.callback_purpose || '').slice(0, 990)
+  };
+  out.summaryLine = 'Dialing queued callback to ' + String(ba.phone || ba.callback_number || '') + '.';
   return out;
 })()`;
 
@@ -2847,6 +2897,14 @@ export const aokieReceptionistPack: PackData = {
             ],
           },
         },
+        // The composed callback payload, written at queue time so the
+        // callback-drain flow can dial WITHOUT recomposing: the missed-call
+        // dial usually fires while the line is still busy (the knocker gave
+        // up DURING a live call) and is refused typed — the drain retries
+        // whenever an inbound call ends, until the line can take it.
+        { id: 'callback_number', type: 'short_text', label: 'Callback number (normalized)', required: false, properties: {} },
+        { id: 'callback_opening', type: 'long_text', label: 'Callback opening line', required: false, properties: {} },
+        { id: 'callback_purpose', type: 'long_text', label: 'Callback purpose (agent grounding)', required: false, properties: {} },
       ],
       customScreen: {
         enabled: true,
@@ -3553,6 +3611,30 @@ export const aokieReceptionistPack: PackData = {
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'settings' },
           { source: 'settings', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
+      name: 'Callback Drain',
+      slug: 'callback-drain',
+      description:
+        "Async on every INBOUND aokie.call.ended: dial the OLDEST queued callback task (open/in_progress, callback_state 'queued', has a stored callback_number, no older than 12 hours). The missed-call flow's own dial is typically refused while the line is still busy — a knocker who gave up did so DURING a live call — so this drain retries whenever the line frees up. The plugin's radio guard still refuses typed if a call is already up again (the task just stays queued for the next attempt), and the callback's own outbound call.ended transitions the task via outbound-callback-result. Never fires on outbound endeds (no dial loops).",
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'outcome', example: 'completed' }, { name: 'direction', example: '' }] } },
+          {
+            id: 'tasks',
+            type: 'formlogic_list_responses',
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 20, filters: [{ field: 'callback_state', op: 'eq', value: 'queued' }] },
+          },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_CALLBACK_DRAIN } },
+          { id: 'out', type: 'output', data: { value: { hasDial: '$nodes.plan.hasDial', dial: '$nodes.plan.dial', summaryLine: '$nodes.plan.summaryLine' } } },
+        ],
+        edges: [
+          { source: 'in', target: 'tasks' },
+          { source: 'tasks', target: 'plan' },
           { source: 'plan', target: 'out' },
         ],
       },
@@ -4445,6 +4527,26 @@ export const aokieReceptionistPack: PackData = {
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 13,
+    },
+    {
+      flow: 'callback-drain',
+      event: 'aokie.call.ended',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      // Inbound endeds only: the callback's own outbound ended must never
+      // trigger another drain (outbound-callback-result owns that moment).
+      condition: {
+        type: 'expression',
+        expr: "event && event.data ? String(event.data.direction || '') !== 'outbound' : false",
+      },
+      inputMap: { callId: '$event.data.callId', outcome: '$event.data.outcome', direction: '$event.data.direction' },
+      outputActions: [
+        { type: 'connector.request', connectorId: 'aokie', command: 'call.dial', when: '$result.hasDial', payload: { number: '$result.dial.number', openingLine: '$result.dial.openingLine', purpose: '$result.dial.purpose' } },
+        { type: 'formlogic.toast', message: 'Callback drain: {{result.summaryLine}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 14,
     },
     {
       flow: 'manager-action-apply',

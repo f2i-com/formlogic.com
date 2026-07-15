@@ -2145,6 +2145,27 @@
                 }
               ]
             }
+          },
+          {
+            "id": "callback_number",
+            "type": "short_text",
+            "label": "Callback number (normalized)",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "callback_opening",
+            "type": "long_text",
+            "label": "Callback opening line",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "callback_purpose",
+            "type": "long_text",
+            "label": "Callback purpose (agent grounding)",
+            "required": false,
+            "properties": {}
           }
         ],
         "customScreen": {
@@ -4028,6 +4049,86 @@
         }
       },
       {
+        "name": "Callback Drain",
+        "slug": "callback-drain",
+        "description": "Async on every INBOUND aokie.call.ended: dial the OLDEST queued callback task (open/in_progress, callback_state 'queued', has a stored callback_number, no older than 12 hours). The missed-call flow's own dial is typically refused while the line is still busy — a knocker who gave up did so DURING a live call — so this drain retries whenever the line frees up. The plugin's radio guard still refuses typed if a call is already up again (the task just stays queued for the next attempt), and the callback's own outbound call.ended transitions the task via outbound-callback-result. Never fires on outbound endeds (no dial loops).",
+        "nodeCapabilities": [
+          "formlogic.responses.read"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "outcome",
+                    "example": "completed"
+                  },
+                  {
+                    "name": "direction",
+                    "example": ""
+                  }
+                ]
+              }
+            },
+            {
+              "id": "tasks",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:follow-up-tasks",
+                "return": "all",
+                "limit": 20,
+                "filters": [
+                  {
+                    "field": "callback_state",
+                    "op": "eq",
+                    "value": "queued"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "plan",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var out = { hasDial: false, summaryLine: '' };\n  var rows = (nodes.tasks && nodes.tasks.responses) || [];\n  var best = null;\n  var bestAt = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var r = rows[i] || {};\n    var ta = r.answers || {};\n    var st = String(ta.status || '');\n    if (st !== 'open' && st !== 'in_progress') continue;\n    if (String(ta.callback_state || '') !== 'queued') continue;\n    var num = String(ta.callback_number || '');\n    if (!num) continue; // queued before the drain existed - a human owns it\n    var atRaw = String(r.submittedAt || '');\n    var atIso = atRaw.indexOf('T') === -1 ? atRaw.replace(' ', 'T') + 'Z' : atRaw;\n    var t = atRaw ? new Date(atIso).getTime() : 0;\n    // Staleness gate: never machine-dial a queue entry older than 12 hours\n    // (a stale queue must not ring people out of the blue days later).\n    if (atRaw && (isNaN(t) || Date.now() - t > 12 * 3600 * 1000)) continue;\n    if (!best || t < bestAt) { best = r; bestAt = t; }\n  }\n  if (!best) {\n    out.summaryLine = 'No queued callbacks to dial.';\n    return out;\n  }\n  var ba = best.answers || {};\n  out.hasDial = true;\n  out.dial = {\n    number: String(ba.callback_number || ''),\n    openingLine: (String(ba.callback_opening || '').slice(0, 480)) || 'Hi! Sorry we missed your call - calling you back now. How can I help?',\n    purpose: String(ba.callback_purpose || '').slice(0, 990)\n  };\n  out.summaryLine = 'Dialing queued callback to ' + String(ba.phone || ba.callback_number || '') + '.';\n  return out;\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "hasDial": "$nodes.plan.hasDial",
+                  "dial": "$nodes.plan.dial",
+                  "summaryLine": "$nodes.plan.summaryLine"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "tasks"
+            },
+            {
+              "source": "tasks",
+              "target": "plan"
+            },
+            {
+              "source": "plan",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
         "name": "Manager Action Plan",
         "slug": "manager-action-plan",
         "description": "Phase 3 slice 2 (manager write tools): the Aokie plugin invokes this over flow.run ONLY after the caller passed BOTH manager gates - caller id matched managerNumbers AND the spoken PIN verified (deterministic digit comparison in the plugin; the model never sees or judges a PIN). The local LLM only STRUCTURES the manager's spoken request into one action (confirm / cancel / move a booking, block a number, or none); every date is re-validated as real-calendar and not-past, the target booking is matched against real records (an ambiguous day gets an honest spoken question listing the choices - never a guessed write), and the spoken outcome is composed from records, never model prose. This flow writes NOTHING: the plugin emits aokie.manager.action with the validated update and the manager-action-apply binding performs the single appointment write on the durable plane. No event binding - it only runs when the plugin asks.",
@@ -5243,7 +5344,7 @@
               "id": "task",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var blocked = String(ca.status || '').toLowerCase() === 'blocked';\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || '';\n  // One callback per number at a time: an open task already queued/dialed\n  // for this phone means a second missed call must not mint a second dial.\n  var tRows = (nodes.tasks && nodes.tasks.responses) || [];\n  var pending = false;\n  for (var t = 0; t < tRows.length; t++) {\n    var ta = (tRows[t] && tRows[t].answers) || {};\n    var st = String(ta.status || '');\n    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {\n      pending = true;\n      break;\n    }\n  }\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  // Outbound dial target rides defaultCountryCode like every other outbound\n  // number (0412... -> +61412...); records keep the observed format.\n  var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n  var digits = phone.replace(/[\\s()-]/g, '');\n  var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;\n  // Callback only for numbers that CALLED US (by construction here), are\n  // real (never withheld ids) and are not blocked customers.\n  var wantsCallback = realPhone && !blocked && !pending;\n  // Phase 4 hold queue: a caller who gave up waiting in the queue is rung\n  // back like a missed call, but the FIRST words own the hold - being left\n  // on hold then rung back with a chirpy \"we missed your call\" reads tone-deaf.\n  var heldQueue = String(inputs.outcome || '') === 'abandoned_in_queue';\n  var opening = heldQueue\n    ? ('Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n      + \" - so sorry to keep you waiting on hold just now. I'm calling you right back - how can I help you?\")\n    : ('Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n      + ' - sorry, we just missed your call. How can I help you?');\n  opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);\n  var purpose = heldQueue\n    ? ('You are calling back a caller who GAVE UP WAITING ON HOLD: ' + (name || 'this caller') + ' (' + phone + ') rang '\n      + (business || 'the business') + ', was asked to hold, and hung up before anyone got back to them. Apologise sincerely for the wait, then help with whatever they called about.')\n    : ('You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '\n      + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.');\n  // Their upcoming bookings ride the dial purpose: outbound calls never run\n  // personalize-caller, so WITHOUT this the agent cannot answer \"what are my\n  // appointments?\" on a callback (live gap, user report 2026-07-15).\n  var apptRows = (nodes.appts && nodes.appts.responses) || [];\n  var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n  var monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];\n  var bookingLines = [];\n  for (var a2 = 0; a2 < apptRows.length && bookingLines.length < 6; a2++) {\n    var aa = (apptRows[a2] && apptRows[a2].answers) || {};\n    var ast = String(aa.status || '');\n    if (ast === 'cancelled') continue;\n    var adm = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(aa.date || ''));\n    if (!adm) continue;\n    var adate = new Date(Number(adm[1]), Number(adm[2]) - 1, Number(adm[3]));\n    var when = dayNames[adate.getDay()] + ' ' + Number(adm[3]) + ' ' + monthNames[Number(adm[2]) - 1];\n    var atm = /^(\\d{2}):(\\d{2})$/.exec(String(aa.time || ''));\n    if (atm) {\n      var ah = Number(atm[1]);\n      var h12 = ah % 12; if (h12 === 0) h12 = 12;\n      when += ' at ' + h12 + (atm[2] === '00' ? '' : ':' + atm[2]) + ' ' + (ah >= 12 ? 'PM' : 'AM');\n    }\n    bookingLines.push(when + ' - ' + String(aa.service || 'appointment') + (ast ? ' (' + ast + ')' : ''));\n  }\n  if (bookingLines.length) {\n    purpose += ' THEIR UPCOMING BOOKINGS ON RECORD: ' + bookingLines.join('; ')\n      + '. Answer their booking questions from THIS list only - never invent or guess bookings.';\n  } else {\n    purpose += ' They have NO upcoming bookings on record.';\n  }\n  purpose = purpose.replace(/[^\\x20-\\x7E]/g, '').slice(0, 990);\n  var task = {\n    summary: (heldQueue ? 'Caller gave up on hold' : 'Missed call') + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')\n      + (wantsCallback ? ' - calling back automatically' : ' - call back'),\n    status: 'open',\n    priority: 'high',\n    phone: realPhone ? phone : '',\n    call_id: String(inputs.callId || ''),\n    callback_state: wantsCallback ? 'queued' : ''\n  };\n  if (hit) task.customer_link = hit.id;\n  return {\n    wantsCallback: wantsCallback,\n    dial: { number: dialNumber, openingLine: opening, purpose: purpose },\n    task: task\n  };\n})()"
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);\n  var custNode = nodes.customers || {};\n  var hit = custNode.first || ((custNode.responses || [])[0] || null);\n  var ca = (hit && hit.answers) || {};\n  var blocked = String(ca.status || '').toLowerCase() === 'blocked';\n  var name = String(ca.name || '').trim();\n  var first = name.split(/\\s+/)[0] || '';\n  // One callback per number at a time: an open task already queued/dialed\n  // for this phone means a second missed call must not mint a second dial.\n  var tRows = (nodes.tasks && nodes.tasks.responses) || [];\n  var pending = false;\n  for (var t = 0; t < tRows.length; t++) {\n    var ta = (tRows[t] && tRows[t].answers) || {};\n    var st = String(ta.status || '');\n    if ((st === 'open' || st === 'in_progress') && String(ta.callback_state || '') === 'queued') {\n      pending = true;\n      break;\n    }\n  }\n  var sNode = nodes.settings;\n  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);\n  var cfg = {};\n  for (var i = 0; i < sRows.length; i++) {\n    var sa = (sRows[i] && sRows[i].answers) || {};\n    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }\n  }\n  var business = String(cfg.business_name || '').trim();\n  // Outbound dial target rides defaultCountryCode like every other outbound\n  // number (0412... -> +61412...); records keep the observed format.\n  var cc = String(cfg.default_country_code || '').replace(/\\s+/g, '');\n  if (/^\\d{1,3}$/.test(cc)) cc = '+' + cc;\n  if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';\n  var digits = phone.replace(/[\\s()-]/g, '');\n  var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;\n  // Callback only for numbers that CALLED US (by construction here), are\n  // real (never withheld ids) and are not blocked customers.\n  var wantsCallback = realPhone && !blocked && !pending;\n  // Phase 4 hold queue: a caller who gave up waiting in the queue is rung\n  // back like a missed call, but the FIRST words own the hold - being left\n  // on hold then rung back with a chirpy \"we missed your call\" reads tone-deaf.\n  var heldQueue = String(inputs.outcome || '') === 'abandoned_in_queue';\n  var opening = heldQueue\n    ? ('Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n      + \" - so sorry to keep you waiting on hold just now. I'm calling you right back - how can I help you?\")\n    : ('Hi' + (first ? ' ' + first : '') + \"! It's \" + (business || 'the receptionist')\n      + ' - sorry, we just missed your call. How can I help you?');\n  opening = opening.replace(/[^\\x20-\\x7E]/g, '').slice(0, 480);\n  var purpose = heldQueue\n    ? ('You are calling back a caller who GAVE UP WAITING ON HOLD: ' + (name || 'this caller') + ' (' + phone + ') rang '\n      + (business || 'the business') + ', was asked to hold, and hung up before anyone got back to them. Apologise sincerely for the wait, then help with whatever they called about.')\n    : ('You are RETURNING a missed call: ' + (name || 'this caller') + ' (' + phone + ') just rang '\n      + (business || 'the business') + ' and nobody picked up, so you are calling them straight back. Ask how you can help and handle it as usual.');\n  // Their upcoming bookings ride the dial purpose: outbound calls never run\n  // personalize-caller, so WITHOUT this the agent cannot answer \"what are my\n  // appointments?\" on a callback (live gap, user report 2026-07-15).\n  var apptRows = (nodes.appts && nodes.appts.responses) || [];\n  var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\n  var monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];\n  var bookingLines = [];\n  for (var a2 = 0; a2 < apptRows.length && bookingLines.length < 6; a2++) {\n    var aa = (apptRows[a2] && apptRows[a2].answers) || {};\n    var ast = String(aa.status || '');\n    if (ast === 'cancelled') continue;\n    var adm = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(aa.date || ''));\n    if (!adm) continue;\n    var adate = new Date(Number(adm[1]), Number(adm[2]) - 1, Number(adm[3]));\n    var when = dayNames[adate.getDay()] + ' ' + Number(adm[3]) + ' ' + monthNames[Number(adm[2]) - 1];\n    var atm = /^(\\d{2}):(\\d{2})$/.exec(String(aa.time || ''));\n    if (atm) {\n      var ah = Number(atm[1]);\n      var h12 = ah % 12; if (h12 === 0) h12 = 12;\n      when += ' at ' + h12 + (atm[2] === '00' ? '' : ':' + atm[2]) + ' ' + (ah >= 12 ? 'PM' : 'AM');\n    }\n    bookingLines.push(when + ' - ' + String(aa.service || 'appointment') + (ast ? ' (' + ast + ')' : ''));\n  }\n  if (bookingLines.length) {\n    purpose += ' THEIR UPCOMING BOOKINGS ON RECORD: ' + bookingLines.join('; ')\n      + '. Answer their booking questions from THIS list only - never invent or guess bookings.';\n  } else {\n    purpose += ' They have NO upcoming bookings on record.';\n  }\n  purpose = purpose.replace(/[^\\x20-\\x7E]/g, '').slice(0, 990);\n  var task = {\n    summary: (heldQueue ? 'Caller gave up on hold' : 'Missed call') + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')\n      + (wantsCallback ? ' - calling back automatically' : ' - call back'),\n    status: 'open',\n    priority: 'high',\n    phone: realPhone ? phone : '',\n    call_id: String(inputs.callId || ''),\n    callback_state: wantsCallback ? 'queued' : ''\n  };\n  if (wantsCallback) {\n    // The drain flow dials from EXACTLY these if this dial is refused\n    // because the line is busy right now.\n    task.callback_number = dialNumber;\n    task.callback_opening = opening;\n    task.callback_purpose = purpose;\n  }\n  if (hit) task.customer_link = hit.id;\n  return {\n    wantsCallback: wantsCallback,\n    dial: { number: dialNumber, openingLine: opening, purpose: purpose },\n    task: task\n  };\n})()"
               }
             },
             {
@@ -5929,6 +6030,43 @@
           "onError": "log_and_continue"
         },
         "sortOrder": 13
+      },
+      {
+        "flow": "callback-drain",
+        "event": "aokie.call.ended",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 15000,
+        "condition": {
+          "type": "expression",
+          "expr": "event && event.data ? String(event.data.direction || '') !== 'outbound' : false"
+        },
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "outcome": "$event.data.outcome",
+          "direction": "$event.data.direction"
+        },
+        "outputActions": [
+          {
+            "type": "connector.request",
+            "connectorId": "aokie",
+            "command": "call.dial",
+            "when": "$result.hasDial",
+            "payload": {
+              "number": "$result.dial.number",
+              "openingLine": "$result.dial.openingLine",
+              "purpose": "$result.dial.purpose"
+            }
+          },
+          {
+            "type": "formlogic.toast",
+            "message": "Callback drain: {{result.summaryLine}}"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 14
       },
       {
         "flow": "manager-action-apply",

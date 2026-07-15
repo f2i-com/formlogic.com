@@ -259,6 +259,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
       'after-call-actions',
       'business-lookup',
       'call-summary-follow-up',
+      'callback-drain',
       'configure-receptionist',
       'hardware-error-alert',
       'hold-lost-apology',
@@ -298,7 +299,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(15);
+    expect(pack.flowBindings?.length).toBe(16);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -2022,5 +2023,85 @@ describe('aokieReceptionistPack — hold-abandonment follow-ups (Phase 4 hold qu
       expect(evalCond(cond, { durationSeconds: 60, outcome: 'abandoned_in_queue' })).toBe(false);
       expect(evalCond(cond, { durationSeconds: 60, outcome: 'completed' })).toBe(true);
     });
+  });
+});
+
+describe('aokieReceptionistPack — callback drain (queued callbacks dial when the line frees)', () => {
+  const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
+  const nodeExpr = (slug: string, nodeId: string): string => {
+    const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
+    return String((node.data as { expr: string }).expr);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const evalExpr = (expr: string, scope: { nodes?: unknown; inputs?: unknown }): any =>
+    new Function('nodes', 'inputs', `return ${expr};`)(scope.nodes ?? {}, scope.inputs ?? {});
+  const planExpr = nodeExpr('callback-drain', 'plan');
+  const minsAgo = (m: number) => new Date(Date.now() - m * 60000).toISOString();
+  const task = (over: Record<string, unknown>, submittedAt?: string) => ({
+    id: 't-' + Math.random().toString(36).slice(2, 8),
+    submittedAt,
+    answers: {
+      status: 'open',
+      callback_state: 'queued',
+      phone: '0491570156',
+      callback_number: '+61491570156',
+      callback_opening: "Hi! It's the clinic - sorry we missed your call.",
+      callback_purpose: 'You are returning a missed call.',
+      ...over,
+    },
+  });
+
+  it('dials the OLDEST fresh queued callback', () => {
+    const older = task({ callback_number: '+61491570156' }, minsAgo(30));
+    const newer = task({ callback_number: '+61491570157' }, minsAgo(5));
+    const r = evalExpr(planExpr, { nodes: { tasks: { responses: [newer, older] } }, inputs: {} });
+    expect(r.hasDial).toBe(true);
+    expect(r.dial.number).toBe('+61491570156');
+    expect(r.dial.openingLine).toContain('missed your call');
+  });
+
+  it('skips stale entries (>12h), tasks without a stored number, and non-queued states', () => {
+    const stale = task({}, minsAgo(13 * 60));
+    const numberless = task({ callback_number: '' }, minsAgo(10));
+    const done = task({ status: 'done' }, minsAgo(10));
+    const reached = task({ callback_state: 'reached' }, minsAgo(10));
+    const r = evalExpr(planExpr, {
+      nodes: { tasks: { responses: [stale, numberless, done, reached] } },
+      inputs: {},
+    });
+    expect(r.hasDial).toBe(false);
+  });
+
+  it('no queued callbacks is a clean no-op', () => {
+    const r = evalExpr(planExpr, { nodes: { tasks: { responses: [] } }, inputs: {} });
+    expect(r.hasDial).toBe(false);
+    expect(r.summaryLine).toContain('No queued callbacks');
+  });
+
+  it('binding fires on inbound endeds only (the callback own-ended never re-drains)', () => {
+    const binding = (pack.flowBindings ?? []).find((b) => b.flow === 'callback-drain')!;
+    const cond = (binding.condition as { expr: string }).expr;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const evalCond = (data: Record<string, unknown>): any =>
+      new Function('event', `return ${cond};`)({ data });
+    expect(evalCond({ outcome: 'completed' })).toBe(true);
+    expect(evalCond({ outcome: 'missed', direction: '' })).toBe(true);
+    expect(evalCond({ outcome: 'no_answer', direction: 'outbound' })).toBe(false);
+  });
+
+  it('the missed-call task stores the composed callback payload for the drain', () => {
+    const taskExpr = nodeExpr('missed-call-follow-up', 'task');
+    const r = evalExpr(taskExpr, {
+      inputs: { callId: 'call_9', callerPhone: '0491570156', from: '0491570156' },
+      nodes: {
+        customers: { first: { id: 'cust-1', answers: { name: 'Jane', phone: '0491570156', status: 'active' } }, responses: [] },
+        tasks: { responses: [] },
+        settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', default_country_code: '61' } }] },
+        appts: { responses: [] },
+      },
+    });
+    expect(r.task.callback_number).toBe('+61491570156');
+    expect(r.task.callback_opening).toContain('missed your call');
+    expect(r.task.callback_purpose).toContain('RETURNING a missed call');
   });
 });
