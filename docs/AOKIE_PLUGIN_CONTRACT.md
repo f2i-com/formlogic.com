@@ -101,8 +101,14 @@ Conventions:
   call waiting (`holdAndCallWaiting` setting on + the phone advertises HFP three-way calling +
   `AT+CHLD=?`/`AT+CCWA=1` accepted). By default Aokie does NOT answer, hold or switch — the
   waiting caller hears the network's tone until they give up (bind a flow here for follow-ups,
-  e.g. a we-missed-you text); if the active call ends while they are still waiting, their ring is
-  promoted to a normal `aokie.call.incoming` with a FRESH call id and auto-answer picks it up.
+  e.g. a we-missed-you text); if the active call ends while they are still waiting AND nothing is
+  held, their ring is promoted to a normal `aokie.call.incoming` with a FRESH call id and
+  auto-answer picks it up. With a caller HELD, the promotion is suppressed (it would auto-answer
+  the knocker AHEAD of the held caller — live 2026-07-15) and the FIFO cascade serves them
+  instead. A knocker who gives up UNSERVED gets an honest `aokie.call.ended` under their
+  `waitingCallId` — `{outcome: "missed", reason: "gave_up_waiting", durationSeconds: 0}` — so the
+  missed-call flows ring them back like any other missed call (the Calls row is created by the
+  ended upsert; there is no incoming/answered for it).
   With the `autoHoldQueue` setting on (bool, default OFF, applies at radio start; requires
   `holdAndCallWaiting`), the plugin instead JUGGLES automatically: it tells the active caller
   "another call came in, one moment", answers the knocking caller ("please hold — you're next in
