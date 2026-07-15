@@ -95,11 +95,23 @@ Conventions:
   waiting caller has no session or call id of their own yet; `from` is their number, `""` when
   withheld. Emitted at most once per waiting episode, and only on connections that negotiated
   call waiting (`holdAndCallWaiting` setting on + the phone advertises HFP three-way calling +
-  `AT+CHLD=?`/`AT+CCWA=1` accepted). Aokie does NOT answer, hold or switch yet — the waiting
-  caller hears the network's tone until they give up (bind a flow here for follow-ups, e.g. a
-  we-missed-you text); if the active call ends while they are still waiting, their ring is
+  `AT+CHLD=?`/`AT+CCWA=1` accepted). By default Aokie does NOT answer, hold or switch — the
+  waiting caller hears the network's tone until they give up (bind a flow here for follow-ups,
+  e.g. a we-missed-you text); if the active call ends while they are still waiting, their ring is
   promoted to a normal `aokie.call.incoming` with a FRESH call id and auto-answer picks it up.
-  Consumers must never treat this event as a new call or a caller turn.
+  With the `autoHoldQueue` setting on (bool, default OFF, applies at radio start; requires
+  `holdAndCallWaiting`), the plugin instead JUGGLES automatically: it tells the active caller
+  "another call came in, one moment", answers the knocking caller ("please hold — you're next in
+  the queue"), parks them, and resumes the first caller; parked callers are retrieved FIFO as
+  calls end (a caller parked mid-conversation hears "thanks for holding — where were we", one who
+  never got past the hold line hears a fresh "thanks for holding, how can I help"). Every
+  `AT+CHLD=2` outcome is VERIFIED against the phone's callheld indicator + an on-demand `AT+CLCC`
+  before any session state moves; when the phone refuses to give the first caller back, the
+  plugin degrades to single-swap (the newcomer becomes the conversation, the first caller stays
+  parked for auto-retrieve) rather than retrying blindly. The knocking caller still gets the
+  normal lifecycle events (`call.incoming` → `call.caller_id` → `call.answered`) under the
+  `waitingCallId` the moment they are accepted. Consumers must never treat this event as a new
+  call or a caller turn.
 - `idempotencyKey` = `aokie:<correlationId>:<step>:v1` (e.g. `aokie:call_abc:incoming:v1`; turn events append the turn index: `aokie:call_abc:turn.4.final:v1`).
 - `data` carries the minimum needed by FormLogic (caller phone/name, timestamps, durations, transcript text for turn events). No raw audio over the event bus.
 

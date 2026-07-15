@@ -229,7 +229,7 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     event: 'aokie.call.waiting',
     label: 'Second caller waiting',
     description:
-      'A second caller rang while a call was active (requires the holdAndCallWaiting setting and phone support). callId is the ACTIVE call; from is the waiting number ("" when withheld); waitingCallId is the stable identity call.activate accepts them under. Until someone activates them they hear the network tone, so bind here for follow-ups like a we-missed-you text. Never treat this event as a new call.',
+      'A second caller rang while a call was active (requires the holdAndCallWaiting setting and phone support). callId is the ACTIVE call; from is the waiting number ("" when withheld); waitingCallId is the stable identity call.activate accepts them under. Until someone activates them they hear the network tone — unless the autoHoldQueue setting is on, in which case the receptionist answers them automatically with a spoken "please hold, you\'re next in the queue", parks them, and returns to the first caller (FIFO). Bind here for follow-ups like a we-missed-you text. Never treat this event as a new call.',
     payloadHints: [...CALL_ID_HINTS, '$event.data.from', '$event.data.waitingCallId'],
   },
   {

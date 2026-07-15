@@ -190,6 +190,16 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               audioTranscript: settings.audioTranscript === true || settings.audioTranscript === 'true',
             }
       );
+      setWaitingCfg((prev) =>
+        prev.loaded
+          ? prev
+          : {
+              loaded: true,
+              holdAndCallWaiting:
+                settings.holdAndCallWaiting === true || settings.holdAndCallWaiting === 'true',
+              autoHoldQueue: settings.autoHoldQueue === true || settings.autoHoldQueue === 'true',
+            }
+      );
       setScreening((prev) =>
         prev.loaded
           ? prev
@@ -275,6 +285,45 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       setAudioSaving(false);
     }
   }, [runCommand, audioCfg]);
+
+  // ── Call waiting & hold queue (plugin settings) ──
+  // holdAndCallWaiting negotiates the phone capability (a second caller
+  // becomes a visible "waiting" episode instead of disturbing the call);
+  // autoHoldQueue additionally answers them with a spoken "please hold,
+  // you're next in the queue", parks them, and returns to the first caller
+  // (FIFO as calls end). Both read at radio start → apply at next reconnect.
+  const [waitingCfg, setWaitingCfg] = useState({
+    loaded: false,
+    holdAndCallWaiting: false,
+    autoHoldQueue: false,
+  });
+  const [waitingSaving, setWaitingSaving] = useState(false);
+  const handleSaveWaiting = useCallback(async () => {
+    setWaitingSaving(true);
+    setError(null);
+    try {
+      await runCommand('settings.set', {
+        holdAndCallWaiting: waitingCfg.holdAndCallWaiting,
+        autoHoldQueue: waitingCfg.autoHoldQueue,
+      });
+      try {
+        const res = await runCommand('settings.get');
+        const s = (res.settings && typeof res.settings === 'object' ? res.settings : {}) as Record<string, unknown>;
+        setWaitingCfg((prev) => ({
+          ...prev,
+          holdAndCallWaiting: s.holdAndCallWaiting === true || s.holdAndCallWaiting === 'true',
+          autoHoldQueue: s.autoHoldQueue === true || s.autoHoldQueue === 'true',
+        }));
+      } catch {
+        // Read-back is confirmation only — the save above already succeeded.
+      }
+      toast.success('Call waiting saved', 'Applies when the receptionist next reconnects.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWaitingSaving(false);
+    }
+  }, [runCommand, waitingCfg]);
 
   // ── Call screening (plugin settings — block list / filters / private) ──
   // whitelistOnly + defaultCountryCode are RECORD fields (Phase 0.5: the
@@ -636,6 +685,73 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
                 {audioSaving ? 'Saving…' : 'Save audio settings'}
               </button>
               {!audioCfg.loaded && (
+                <span className="ml-2 text-[11px] text-gray-400 dark:text-slate-500">Loading current values…</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Call waiting & hold queue (plugin-level) ── */}
+      {can('settings.set') && (
+        <div className={`${card} p-4 sm:p-5`}>
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Call waiting & hold queue</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+            How a second caller is handled while the receptionist is already on a call. Both apply
+            the next time the receptionist reconnects, and need a phone plan with call waiting.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={waitingCfg.holdAndCallWaiting}
+                onChange={(e) =>
+                  setWaitingCfg((c) => ({
+                    ...c,
+                    holdAndCallWaiting: e.target.checked,
+                    autoHoldQueue: e.target.checked ? c.autoHoldQueue : false,
+                  }))
+                }
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
+              />
+              <span>
+                Detect a second caller (call waiting)
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  A second caller ringing mid-call is noticed and recorded (flows can send them a
+                  we-missed-you text) without disturbing the live conversation. On its own it never
+                  answers them — they hear normal ringing until they give up.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={waitingCfg.autoHoldQueue}
+                disabled={!waitingCfg.holdAndCallWaiting}
+                onChange={(e) => setWaitingCfg((c) => ({ ...c, autoHoldQueue: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600"
+              />
+              <span className={waitingCfg.holdAndCallWaiting ? '' : 'opacity-50'}>
+                Automatically hold &amp; queue callers
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  The receptionist tells the current caller another call came in, answers the new
+                  caller with "please hold — you're next in the queue", puts them on hold, and
+                  returns to the first caller. Held callers are picked up in order as calls end.
+                  Needs "Detect a second caller" on. The phone can hold one caller at a time — a
+                  third caller keeps ringing until a spot frees up.
+                </span>
+              </span>
+            </label>
+            <div>
+              <button
+                type="button"
+                onClick={() => void handleSaveWaiting()}
+                disabled={waitingSaving || !waitingCfg.loaded}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-gray-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+              >
+                {waitingSaving ? 'Saving…' : 'Save call waiting'}
+              </button>
+              {!waitingCfg.loaded && (
                 <span className="ml-2 text-[11px] text-gray-400 dark:text-slate-500">Loading current values…</span>
               )}
             </div>
