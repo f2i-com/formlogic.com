@@ -105,6 +105,14 @@ export interface GpuInfo {
 export interface RegistrySnapshot {
   services: ServiceSnapshot[];
   dataDir: string;
+  /** SRV-001: monotonic change counter — equal revisions are byte-identical
+   *  responses, so consumers can skip re-rendering. */
+  revision?: number;
+  /** SRV-001: when the snapshot body was BUILT (ISO) — drives "data as of". */
+  generatedAt?: string;
+  /** SRV-001: how long the (cached, in-memory) snapshot build took, in ms —
+   *  the regression instrument for the no-filesystem-on-GET invariant. */
+  buildMs?: number;
 }
 
 export interface LogLine {

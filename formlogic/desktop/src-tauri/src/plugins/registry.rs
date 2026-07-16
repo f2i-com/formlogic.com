@@ -99,6 +99,12 @@ pub(crate) struct PluginSlot {
     /// TRUST-001: the package-signature assessment from the last scan
     /// (re-checked again at launch). Tampered ⇒ quarantined (Disabled).
     pub package_trust: crate::plugins::package_trust::PackageTrust,
+    /// SRV-003: the dir fingerprint (stat walk — names/sizes/mtimes) the
+    /// current `package_trust` verdict was computed for. Scans re-run the full
+    /// SHA-256 assessment only when this changes, instead of re-hashing the
+    /// whole (possibly multi-hundred-MB) plugin dir on every 2 s poll. The
+    /// launch gate still fully re-verifies regardless.
+    pub trust_fp: Option<u64>,
     /// PROC-001: structured record of the last crash — exit code, when, and
     /// the final stderr lines (kept until the next crash replaces it).
     pub last_exit: Option<PluginExit>,
@@ -133,6 +139,7 @@ impl PluginSlot {
             started_at: None,
             pid: None,
             package_trust: crate::plugins::package_trust::PackageTrust::Unsigned,
+            trust_fp: None,
             last_exit: None,
         }
     }
@@ -443,8 +450,16 @@ impl PluginHost {
             }
         }
 
-        {
+        let changed = {
             let mut map = self.lock_plugins();
+            // SRV-003: capture the persisted-relevant view (disabled flags +
+            // states) so persist() runs only when a scan actually changed
+            // something — this used to rewrite registry.json on every 2 s poll.
+            let mut prev: Vec<(String, bool, PluginState)> = map
+                .iter()
+                .map(|(id, s)| (id.clone(), s.user_disabled, s.state))
+                .collect();
+            prev.sort_by(|a, b| a.0.cmp(&b.0));
             // Drop slots whose directory vanished — unless a process is still
             // live (it keeps its slot until it stops/crashes).
             map.retain(|id, slot| found.contains_key(id) || slot.state.is_active());
@@ -461,11 +476,20 @@ impl PluginHost {
                     .map(|p| p.disabled)
                     .unwrap_or(false);
                 // TRUST-001 "verify before staging": assess the package
-                // signature/digests for every inert plugin dir on each scan. A
+                // signature/digests for every inert plugin dir. A
                 // present-but-invalid package manifest QUARANTINES the plugin;
                 // a missing one is an unsigned sideload (refused only when
                 // FORMLOGIC_REQUIRE_SIGNED_PLUGINS=1). start() re-checks.
-                slot.package_trust = crate::plugins::package_trust::assess(&slot.dir);
+                // SRV-003: the full SHA-256 assessment is fingerprint-gated —
+                // a cheap stat walk decides whether the dir's contents changed
+                // since the last verdict, so a stopped 35 MB plugin is no
+                // longer re-hashed on every 2 s GET /api/plugins poll. The
+                // launch-time re-verify (the security boundary) is unchanged.
+                let fp = crate::plugins::package_trust::dir_fingerprint(&slot.dir);
+                if slot.trust_fp != Some(fp) {
+                    slot.package_trust = crate::plugins::package_trust::assess(&slot.dir);
+                    slot.trust_fp = Some(fp);
+                }
                 let trust_block: Option<String> = match &slot.package_trust {
                     crate::plugins::package_trust::PackageTrust::Tampered(r) => {
                         Some(format!("package verification failed (quarantined): {r}"))
@@ -523,8 +547,16 @@ impl PluginHost {
                     }
                 }
             }
+            let mut now: Vec<(String, bool, PluginState)> = map
+                .iter()
+                .map(|(id, s)| (id.clone(), s.user_disabled, s.state))
+                .collect();
+            now.sort_by(|a, b| a.0.cmp(&b.0));
+            now != prev
+        };
+        if changed {
+            self.persist();
         }
-        self.persist();
     }
 
     /// Rescan + snapshot every plugin (the `GET /api/plugins` body).

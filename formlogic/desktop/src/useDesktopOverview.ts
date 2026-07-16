@@ -18,6 +18,7 @@ import {
   type RegistrySnapshot,
   type TrustedOrigin,
 } from './api';
+import { primeServicesStore } from './servicesStore';
 
 /**
  * Aggregate snapshot for the Overview workspace (redesign 2026-07).
@@ -70,6 +71,9 @@ export function useDesktopOverview(): DesktopOverviewData {
         trustedOrigins.list(),
       ]);
       if (cancelled) return;
+      // SRV-002: feed the services snapshot into the shared store so a
+      // navigation Overview → Services paints instantly with fresh data.
+      if (svc.status === 'fulfilled') primeServicesStore(svc.value);
       setData((prev) => ({
         loaded: true,
         services: svc.status === 'fulfilled' ? svc.value : prev.services,

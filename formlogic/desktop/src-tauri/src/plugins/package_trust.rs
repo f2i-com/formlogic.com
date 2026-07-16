@@ -75,6 +75,48 @@ pub fn require_signed() -> bool {
     std::env::var(REQUIRE_SIGNED_ENV).map(|v| v == "1").unwrap_or(false)
 }
 
+/// SRV-003: cheap content fingerprint of a plugin dir — a hash over every
+/// file's (relative path, size, mtime) from a recursive stat walk, with NO
+/// file reads. The scan path re-runs the full SHA-256 package verification
+/// only when this changes (redeploy, file swap, re-sign) instead of re-hashing
+/// a multi-hundred-MB stopped plugin on every 2 s `GET /api/plugins` poll.
+/// Security note: this gates only the *display* verdict's refresh cadence for
+/// INERT plugins — the launch gate (`runner::start`) still fully re-verifies
+/// digests every time, so an mtime-forged edit can change what the panel says
+/// until the next real assessment, but never what is allowed to execute.
+pub fn dir_fingerprint(dir: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64, u128)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                walk(&p, base, out);
+            } else {
+                let rel = p
+                    .strip_prefix(base)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                out.push((rel, meta.len(), mtime));
+            }
+        }
+    }
+    let mut entries = Vec::new();
+    walk(dir, dir, &mut entries);
+    entries.sort();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    entries.hash(&mut h);
+    h.finish()
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Envelope {
@@ -304,6 +346,31 @@ mod tests {
 
     fn sha_of(bytes: &[u8]) -> String {
         hex_encode(&Sha256::digest(bytes))
+    }
+
+    /// SRV-003: the dir fingerprint is stable across identical states and
+    /// changes when a file is added, resized, or rewritten — the cheap gate
+    /// that decides whether a scan re-runs the full SHA-256 assessment.
+    #[test]
+    fn dir_fingerprint_tracks_content_shape() {
+        let d = tmp("fp");
+        std::fs::write(d.join("a.exe"), b"aaaa").unwrap();
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        std::fs::write(d.join("sub").join("b.dll"), b"bb").unwrap();
+
+        let fp1 = dir_fingerprint(&d);
+        let fp2 = dir_fingerprint(&d);
+        assert_eq!(fp1, fp2, "unchanged dir → identical fingerprint");
+
+        std::fs::write(d.join("c.txt"), b"new file").unwrap();
+        let fp3 = dir_fingerprint(&d);
+        assert_ne!(fp1, fp3, "added file must change the fingerprint");
+
+        std::fs::write(d.join("a.exe"), b"aaaa-grown").unwrap();
+        let fp4 = dir_fingerprint(&d);
+        assert_ne!(fp3, fp4, "resized file must change the fingerprint");
+
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// Sign a directory the same way package-signer does (kept in lockstep by

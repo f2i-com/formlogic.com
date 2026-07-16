@@ -1629,6 +1629,7 @@ pub fn run() {
             let registry_for_reaper = registry.clone();
             let python_for_reaper = python.clone();
             tauri::async_runtime::spawn(async move {
+                let mut tick: u64 = 0;
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     if let Ok(mut reg) = registry_for_reaper.lock() {
@@ -1638,6 +1639,20 @@ pub fn run() {
                         reg.run_scheduled_restarts();
                     }
                     python_for_reaper.reap_exited();
+                    // SRV-001: every 5th tick (~10 s), run the background
+                    // maintenance pass — installed-exe probing + templates-dir
+                    // fingerprinting — on the blocking pool, with the registry
+                    // lock held only for the cheap collect/apply halves. This
+                    // is the filesystem work GET /api/services used to do
+                    // inline on every 2 s poll.
+                    tick = tick.wrapping_add(1);
+                    if tick % 5 == 0 {
+                        let reg = registry_for_reaper.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            crate::services::registry::background_refresh(&reg);
+                        })
+                        .await;
+                    }
                 }
             });
 

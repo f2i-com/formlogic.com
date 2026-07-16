@@ -5,7 +5,6 @@ import {
   openInExplorer,
   services,
   type GpuInfo,
-  type RegistrySnapshot,
   type ServiceSnapshot,
   type ServiceStatus,
   type ServiceTemplateInput,
@@ -13,20 +12,25 @@ import {
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, DownloadIcon, TrashIcon, UploadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
+import { refreshServices, useServicesStore } from './servicesStore';
 import { useToast } from './Toasts';
 
 /**
  * Services panel — list every template, surface status, and offer
- * install / start / stop / logs actions per row. Polls /api/services
- * every 2s so status transitions (e.g. install completing) show without
- * the user clicking refresh.
+ * install / start / stop / logs actions per row.
+ *
+ * SRV-002/SRV-004: data comes from the SHARED services store (instant paint
+ * from the cached snapshot on every visit + background revalidation), the
+ * header shows live status counts, search, and snapshot freshness/build
+ * instrumentation, cold start renders skeleton cards, and logs open in a
+ * slide-over drawer instead of accordioning the list.
  */
 export default function ServicesPanel() {
-  const [snapshot, setSnapshot] = useState<RegistrySnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { snapshot, error, refreshing, lastFetchedAt } = useServicesStore();
+  const [logsId, setLogsId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [filter, setFilter] = useState('');
   // Per-service ids with an action in flight — disables that row's buttons so a
   // double-click can't fire duplicate start/stop/install/delete requests.
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
@@ -35,71 +39,62 @@ export default function ServicesPanel() {
   const toast = useToast();
   const { confirm: requestConfirm } = useConfirm();
   // Track previous status per service so we fire toasts on transition,
-  // not every poll. Skip the first poll's transitions to avoid spam on
-  // first load (every service starts as Stopped, and we don't want
-  // "X stopped" toasts for every entry).
+  // not every snapshot. The first snapshot seen by THIS mount seeds the map
+  // silently (no toast spam for pre-existing states — including the cached
+  // snapshot the shared store hands us instantly on a revisit).
   const seenStatusRef = useRef<Map<string, ServiceStatus>>(new Map());
-  // First-poll flag is independent of `seen.size` — an empty first poll (API up
-  // but no services yet) must still count as "seeded", or the first real
-  // transition afterwards gets suppressed.
   const firstPollRef = useRef(true);
-  // Monotonic request id so a slow poll response that lands after a newer one
-  // can't clobber state out of order.
-  const reqSeqRef = useRef(0);
   const cancelledInstallIdsRef = useRef<Set<string>>(new Set());
 
-  const refresh = useCallback(async () => {
-    const seq = ++reqSeqRef.current;
-    try {
-      const next = await services.list();
-      if (seq !== reqSeqRef.current) return; // superseded by a newer refresh
-      const seen = seenStatusRef.current;
-      const firstPoll = firstPollRef.current;
-      for (const svc of next.services) {
-        const prev = seen.get(svc.id);
-        if (prev !== svc.status && !firstPoll && prev !== undefined) {
-          if (svc.status === 'errored') {
-            toast.push({
-              kind: 'error',
-              title: `${svc.name} errored`,
-              body: svc.error ?? undefined,
-              timeoutMs: 8000,
-            });
-          } else if (svc.status === 'running' && prev !== 'running') {
-            toast.push({
-              kind: 'success',
-              title: `${svc.name} is running`,
-              body: `port ${svc.port}`,
-            });
-          } else if (svc.status === 'stopped' && prev === 'installing') {
-            const cancelled = cancelledInstallIdsRef.current.delete(svc.id);
-            if (!svc.installed || cancelled) {
-              seen.set(svc.id, svc.status);
-              continue;
-            }
-            toast.push({
-              kind: 'success',
-              title: `${svc.name} installed`,
-              body: 'Click Start to launch it.',
-            });
-          }
-        }
-        seen.set(svc.id, svc.status);
-      }
-      firstPollRef.current = false;
-      setSnapshot(next);
-      setError(null);
-    } catch (e) {
-      if (seq !== reqSeqRef.current) return;
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [toast]);
-
   useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 2000);
-    return () => clearInterval(id);
-  }, [refresh]);
+    if (!snapshot) return;
+    const seen = seenStatusRef.current;
+    const firstPoll = firstPollRef.current;
+    for (const svc of snapshot.services) {
+      const prev = seen.get(svc.id);
+      if (prev !== svc.status && !firstPoll && prev !== undefined) {
+        if (svc.status === 'errored') {
+          toast.push({
+            kind: 'error',
+            title: `${svc.name} errored`,
+            body: svc.error ?? undefined,
+            timeoutMs: 8000,
+          });
+        } else if (svc.status === 'running' && prev !== 'running') {
+          toast.push({
+            kind: 'success',
+            title: `${svc.name} is running`,
+            body: `port ${svc.port}`,
+          });
+        } else if (svc.status === 'stopped' && prev === 'installing') {
+          const cancelled = cancelledInstallIdsRef.current.delete(svc.id);
+          if (!svc.installed || cancelled) {
+            seen.set(svc.id, svc.status);
+            continue;
+          }
+          toast.push({
+            kind: 'success',
+            title: `${svc.name} installed`,
+            body: 'Click Start to launch it.',
+          });
+        }
+      }
+      seen.set(svc.id, svc.status);
+    }
+    firstPollRef.current = false;
+  }, [snapshot, toast]);
+
+  const refresh = useCallback(() => refreshServices(), []);
+
+  // Esc closes the logs drawer.
+  useEffect(() => {
+    if (!logsId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLogsId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [logsId]);
 
   const runAction = useCallback(
     async (fn: () => Promise<void>, key?: string) => {
@@ -183,22 +178,96 @@ export default function ServicesPanel() {
     }
   }, [toast]);
 
-  // Group by category for cleaner sectioning.
+  // Group by category for cleaner sectioning, after the search filter.
   const grouped = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const match = (s: ServiceSnapshot) =>
+      !q ||
+      s.name.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      s.category.toLowerCase().includes(q);
     const map = new Map<string, ServiceSnapshot[]>();
     for (const s of snapshot?.services ?? []) {
+      if (!match(s)) continue;
       const arr = map.get(s.category) ?? [];
       arr.push(s);
       map.set(s.category, arr);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [snapshot, filter]);
+
+  // SRV-004 summary counts (from the UNFILTERED snapshot — the chips describe
+  // the machine, not the current search).
+  const counts = useMemo(() => {
+    const c = { running: 0, stopped: 0, errored: 0, busy: 0 };
+    for (const s of snapshot?.services ?? []) {
+      if (s.status === 'running') c.running += 1;
+      else if (s.status === 'errored') c.errored += 1;
+      else if (s.status === 'installing' || s.status === 'starting') c.busy += 1;
+      else c.stopped += 1;
+    }
+    return c;
   }, [snapshot]);
+
+  const logsService = logsId
+    ? snapshot?.services.find((s) => s.id === logsId) ?? null
+    : null;
+  // Stable loader per service id — LogsViewer restarts its poll effect when
+  // the `load` identity changes, so an inline lambda would reset it on every
+  // 2 s store update.
+  const loadLogs = useMemo(
+    () => (logsId ? () => services.logs(logsId, 200) : null),
+    [logsId],
+  );
+  // Snapshot freshness: with a 2 s poll anything over ~3 missed polls is
+  // worth flagging as stale (backend down / tab was hidden).
+  const ageSecs = lastFetchedAt ? Math.round((Date.now() - lastFetchedAt) / 1000) : null;
+  const stale = ageSecs !== null && ageSecs > 6;
 
   return (
     <div className="panel">
       {error && (
         <div className="banner banner-err">
           Couldn't reach the FormLogic Desktop API: {error}
+          {snapshot && ' — showing the last known state.'}
+        </div>
+      )}
+      {snapshot && (
+        <div className="services-summary">
+          <div className="services-summary-chips">
+            <span className="summary-chip summary-chip-ok">{counts.running} running</span>
+            <span className="summary-chip summary-chip-neutral">{counts.stopped} stopped</span>
+            {counts.busy > 0 && (
+              <span className="summary-chip summary-chip-pending">{counts.busy} busy</span>
+            )}
+            {counts.errored > 0 && (
+              <span className="summary-chip summary-chip-err">{counts.errored} errored</span>
+            )}
+          </div>
+          <input
+            type="search"
+            className="services-search"
+            placeholder="Filter services…"
+            aria-label="Filter services"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <span
+            className={`services-freshness${stale ? ' services-freshness-stale' : ''}`}
+            title={
+              snapshot.generatedAt
+                ? `Snapshot built ${new Date(snapshot.generatedAt).toLocaleTimeString()} in ${
+                    snapshot.buildMs?.toFixed(2) ?? '?'
+                  } ms (revision ${snapshot.revision ?? '?'})`
+                : undefined
+            }
+          >
+            {refreshing ? 'refreshing…' : stale ? `stale (${ageSecs}s)` : 'live'}
+            {snapshot.buildMs !== undefined && (
+              <span className="services-buildms"> · built in {snapshot.buildMs.toFixed(1)} ms</span>
+            )}
+          </span>
         </div>
       )}
       {actionError && (
@@ -242,12 +311,23 @@ export default function ServicesPanel() {
       )}
       {grouped.length === 0 && snapshot && !error && (
         <div className="empty-state">
-          No service templates loaded. Built-ins should appear on first
-          run — if you just installed FormLogic Desktop, try restarting it.
+          {filter.trim()
+            ? 'No services match the filter.'
+            : 'No service templates loaded. Built-ins should appear on first run — if you just installed FormLogic Desktop, try restarting it.'}
         </div>
       )}
       {!snapshot && !error && (
-        <div className="empty-state">Loading services…</div>
+        // SRV-004: stable skeleton rows on a true cold start (no cached
+        // snapshot yet) — never a bare text line, and no layout shift when
+        // the data arrives.
+        <section className="service-section" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="service-card service-skeleton">
+              <div className="skeleton-line skeleton-line-title" />
+              <div className="skeleton-line skeleton-line-body" />
+            </div>
+          ))}
+        </section>
       )}
       {grouped.map(([category, svcs]) => (
         <section key={category} className="service-section">
@@ -256,11 +336,9 @@ export default function ServicesPanel() {
             <ServiceCard
               key={svc.id}
               service={svc}
-              expanded={expandedId === svc.id}
+              logsOpen={logsId === svc.id}
               pending={pendingIds.has(svc.id)}
-              onToggle={() =>
-                setExpandedId(expandedId === svc.id ? null : svc.id)
-              }
+              onToggleLogs={() => setLogsId(logsId === svc.id ? null : svc.id)}
               onStart={() => runAction(() => services.start(svc.id), svc.id)}
               onStop={() => runAction(() => services.stop(svc.id), svc.id)}
               onRepair={() => runAction(() => services.repair(svc.id), svc.id)}
@@ -363,6 +441,29 @@ export default function ServicesPanel() {
           </div>
         )}
       </section>
+
+      {/* SRV-004: logs open in a slide-over drawer (no accordion jumping the
+          card list around). Esc, the scrim, or the viewer's close all exit. */}
+      {logsService && loadLogs && (
+        <div
+          className="drawer-scrim"
+          onClick={() => setLogsId(null)}
+          role="presentation"
+        >
+          <div
+            className="logs-drawer"
+            role="dialog"
+            aria-label={`${logsService.name} logs`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <LogsViewer
+              load={loadLogs}
+              title={`${logsService.name} · logs`}
+              onClose={() => setLogsId(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -523,10 +624,11 @@ function AddServiceForm({ onCancel, onSaved, onError }: AddFormProps) {
 
 interface CardProps {
   service: ServiceSnapshot;
-  expanded: boolean;
+  /** This service's logs drawer is open (highlights the button). */
+  logsOpen: boolean;
   /** An action for this service is in flight — disable its buttons. */
   pending: boolean;
-  onToggle: () => void;
+  onToggleLogs: () => void;
   onStart: () => void;
   onStop: () => void;
   /** PROC-001: reset crash-loop state + stale processes, then start fresh. */
@@ -992,9 +1094,9 @@ function OllamaModelSelector() {
 
 function ServiceCard({
   service,
-  expanded,
+  logsOpen,
   pending,
-  onToggle,
+  onToggleLogs,
   onStart,
   onStop,
   onRepair,
@@ -1005,10 +1107,9 @@ function ServiceCard({
   onExport,
   onDelete,
 }: CardProps) {
-  const loadLogs = useMemo(
-    () => () => services.logs(service.id, 200),
-    [service.id],
-  );
+  // llama-cpp refuses to start without a model — surface that on the card
+  // header (the picker itself lives behind Configure).
+  const needsModelHint = service.id === 'llama-cpp';
 
   return (
     <div className={`service-card service-card-${service.status}`}>
@@ -1017,15 +1118,15 @@ function ServiceCard({
           <div className="service-name">
             {service.name}
             <StatusBadge status={service.status} />
-          </div>
-          <div className="service-desc" title={service.description}>
-            {service.description}
+            {!service.installed && service.installable && service.status === 'stopped' && (
+              <span className="badge badge-neutral">not installed</span>
+            )}
           </div>
           <div className="service-meta">
             port {service.port}
             {service.pid != null && <> · pid {service.pid}</>}
             {service.startedAt && (
-              <> · started {new Date(service.startedAt).toLocaleTimeString()}</>
+              <> · up since {new Date(service.startedAt).toLocaleTimeString()}</>
             )}
             {service.docsUrl && /^https?:\/\//i.test(service.docsUrl) && (
               <>
@@ -1048,6 +1149,9 @@ function ServiceCard({
               </>
             )}
           </div>
+          <div className="service-desc" title={service.description}>
+            {service.description}
+          </div>
           {service.error && (
             <div className="service-error">
               <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
@@ -1068,27 +1172,36 @@ function ServiceCard({
                 ` — ${service.lastExit.stderrTail[service.lastExit.stderrTail.length - 1]}`}
             </div>
           )}
-          {service.id === 'llama-cpp' && (
-            <LlamaModelSelector
-              running={service.status === 'running' || service.status === 'starting'}
-            />
-          )}
-          {service.id === 'ollama' && <OllamaModelSelector />}
-          <GpuSelector serviceId={service.id} currentGpu={service.gpu} />
-          {/* PROC-001: explicit per-service boot policy. Auto = restore whatever
-              was running last session (the default); Always/Never override it. */}
-          <label className="service-meta" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Start at launch:
-            <select
-              value={service.autostart}
-              disabled={pending}
-              onChange={(e) => onAutostart(e.target.value as 'auto' | 'always' | 'never')}
-            >
-              <option value="auto">Auto (restore last session)</option>
-              <option value="always">Always</option>
-              <option value="never">Never</option>
-            </select>
-          </label>
+          {/* SRV-004: configuration (model/projector/GPU/autostart pickers)
+              lives behind an expander — the card header stays status-first
+              and the list stops shifting as pickers load. */}
+          <details className="service-config">
+            <summary>
+              Configure
+              {needsModelHint && <span className="service-config-hint"> · model & GPU</span>}
+            </summary>
+            {service.id === 'llama-cpp' && (
+              <LlamaModelSelector
+                running={service.status === 'running' || service.status === 'starting'}
+              />
+            )}
+            {service.id === 'ollama' && <OllamaModelSelector />}
+            <GpuSelector serviceId={service.id} currentGpu={service.gpu} />
+            {/* PROC-001: explicit per-service boot policy. Auto = restore whatever
+                was running last session (the default); Always/Never override it. */}
+            <label className="service-config-row service-meta">
+              Start at launch:
+              <select
+                value={service.autostart}
+                disabled={pending}
+                onChange={(e) => onAutostart(e.target.value as 'auto' | 'always' | 'never')}
+              >
+                <option value="auto">Auto (restore last session)</option>
+                <option value="always">Always</option>
+                <option value="never">Never</option>
+              </select>
+            </label>
+          </details>
         </div>
         <div className="service-actions">
           {/* Start / Stop — only meaningful once installed (you can't start what isn't
@@ -1150,8 +1263,8 @@ function ServiceCard({
               Reinstall
             </button>
           ) : null}
-          <button onClick={onToggle} className="btn btn-ghost">
-            {expanded ? 'Hide logs' : 'Logs'}
+          <button onClick={onToggleLogs} className={`btn btn-ghost${logsOpen ? ' btn-active' : ''}`}>
+            {logsOpen ? 'Hide logs' : 'Logs'}
           </button>
           <button
             onClick={onExport}
@@ -1176,13 +1289,6 @@ function ServiceCard({
           </button>
         </div>
       </div>
-      {expanded && (
-        <LogsViewer
-          load={loadLogs}
-          title={`${service.name} · logs`}
-          onClose={onToggle}
-        />
-      )}
     </div>
   );
 }

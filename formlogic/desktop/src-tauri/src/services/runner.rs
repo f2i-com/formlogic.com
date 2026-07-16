@@ -180,6 +180,29 @@ impl Runner {
         self.child.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
+    /// SRV-001: hand the child over to an external tree-kill
+    /// (`kill_process_tree`, which is fire-and-forget on every OS now).
+    ///
+    /// On Windows the detached `taskkill /T` must snapshot the process tree
+    /// while the direct child is STILL ALIVE — TerminateProcess-ing it here
+    /// first would orphan its grandchildren (pip/curl/model downloads) — so
+    /// only clear the slot; the handle closes and taskkill terminates the
+    /// whole tree. On Unix the group signal targets the pgid (valid while any
+    /// member lives), and a dropped-but-unwaited child would linger as a
+    /// zombie, so kill + reap exactly like stop().
+    pub fn abandon(&self) {
+        #[cfg(windows)]
+        {
+            if let Ok(mut guard) = self.child.lock() {
+                let _ = guard.take();
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = self.stop();
+        }
+    }
+
     /// Send SIGTERM (Unix) or TerminateProcess (Windows) and wait briefly.
     /// Returns Ok even if the child was already gone.
     pub fn stop(&self) -> std::io::Result<()> {

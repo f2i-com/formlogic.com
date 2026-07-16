@@ -255,14 +255,27 @@ async fn desktop_journals_clear(State(state): State<AppState>) -> impl IntoRespo
 // ------- services -------
 
 async fn list_services(State(state): State<AppState>) -> impl IntoResponse {
-    match state.registry.lock() {
-        Ok(mut reg) => {
-            // Pick up any package dropped into templates/ since last poll, so
-            // services are dynamically loadable just by adding a file there.
-            reg.reload_new_templates();
-            (StatusCode::OK, Json(reg.snapshot())).into_response()
-        }
-        Err(_) => err500("registry mutex poisoned"),
+    // SRV-001: serve the pre-serialized, revision-keyed snapshot body — an Arc
+    // clone on the hot path, with NO filesystem or process probing. Template
+    // folder-drops are picked up by the background refresher (registry::
+    // background_refresh) instead of a rescan-per-poll here, and the mutex is
+    // taken on the blocking pool so a rebuild can never stall async workers.
+    let registry = state.registry.clone();
+    match tokio::task::spawn_blocking(move || {
+        registry
+            .lock()
+            .map(|mut reg| reg.snapshot_cached())
+            .map_err(|_| ())
+    })
+    .await
+    {
+        Ok(Ok(body)) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body.as_str().to_owned(),
+        )
+            .into_response(),
+        _ => err500("registry mutex poisoned"),
     }
 }
 

@@ -165,6 +165,13 @@ pub struct ServiceRuntime {
     /// PROC-001: the last spontaneous exit's diagnostics (kept across
     /// restarts until the next spontaneous exit replaces it).
     pub last_exit: Option<ExitDiagnostics>,
+    /// SRV-001: when WE last fired a kill at this service's own process tree.
+    /// `kill_process_tree` is fire-and-forget on every OS now (Windows gained
+    /// parity with the always-detached Unix branch), so the dying process can
+    /// hold its port for a beat after stop/repair/restart. The pre-spawn
+    /// foreign-port probe is skipped inside this grace window — a lingering
+    /// own process is expected teardown, not a foreign holder.
+    pub own_teardown_at: Option<DateTime<Utc>>,
 }
 
 impl ServiceRuntime {
@@ -183,6 +190,7 @@ impl ServiceRuntime {
             last_crash_at: None,
             ever_healthy: false,
             last_exit: None,
+            own_teardown_at: None,
         }
     }
 
@@ -255,6 +263,124 @@ pub struct RegistrySnapshot {
     /// Without the rename this came across as `data_dir` and the
     /// "configs live under …" line + open-folder button got `undefined`.
     pub data_dir: String,
+    /// SRV-001: monotonic change counter. Bumped on every registry mutation;
+    /// two responses with the same revision are byte-identical, so clients can
+    /// skip re-rendering (and the server serves them from one cached body).
+    pub revision: u64,
+    /// SRV-001: when this snapshot body was BUILT (not when it was served) —
+    /// the client shows "data as of …" / cache age from this.
+    pub generated_at: DateTime<Utc>,
+    /// SRV-001: how long the snapshot build took, in milliseconds. Regression
+    /// instrumentation for the "no filesystem work on GET" invariant — this
+    /// should stay well under a millisecond.
+    pub build_ms: f64,
+}
+
+/// SRV-001: one pre-serialized snapshot body, valid while `revision` matches.
+/// `GET /api/services` clones the `Arc` — zero building, zero filesystem work.
+struct SnapshotCache {
+    revision: u64,
+    body: Arc<String>,
+}
+
+/// SRV-001: what the background prober needs to answer "is this service
+/// installed?" WITHOUT the registry lock. Placeholder resolution (cheap string
+/// work) happens under the lock when targets are collected; every filesystem
+/// stat happens outside it.
+pub struct InstalledProbe {
+    pub id: String,
+    pub kind: InstalledProbeKind,
+}
+
+pub enum InstalledProbeKind {
+    /// Resolved install-completion marker path — installed iff it exists.
+    Marker(PathBuf),
+    /// Resolved run command. Bare names probe `bin_dir` first, then PATH
+    /// (skipping UNC entries), then the per-user Programs dir.
+    Command { resolved: String, bin_dir: PathBuf },
+}
+
+/// SRV-001: the filesystem half of the installed probe — a free function so it
+/// can run with NO registry lock held. Mirrors `run_command_exists` /
+/// `run_installed` exactly, plus: PATH directories that are UNC network paths
+/// are skipped (a dead share would block on the SMB timeout — the same class
+/// of hazard the run-command UNC guard already covers), and repeated bare
+/// commands are memoized within one pass.
+pub fn probe_installed(targets: &[InstalledProbe]) -> Vec<(String, bool)> {
+    let path_var = std::env::var("PATH").ok();
+    let mut memo: HashMap<&str, bool> = HashMap::new();
+    let is_unc = |s: &str| s.starts_with("\\\\") || s.starts_with("//");
+    targets
+        .iter()
+        .map(|t| {
+            let ok = match &t.kind {
+                InstalledProbeKind::Marker(p) => p.exists(),
+                InstalledProbeKind::Command { resolved, bin_dir } => {
+                    if resolved.contains(std::path::is_separator) {
+                        // Same posture as run_command_exists: never stat a UNC
+                        // path from an attacker-controllable template field.
+                        !is_unc(resolved) && Path::new(resolved).exists()
+                    } else if let Some(&hit) = memo.get(resolved.as_str()) {
+                        hit
+                    } else {
+                        let bin = bin_dir.join(resolved);
+                        let hit = bin.with_extension("exe").exists()
+                            || bin.exists()
+                            || path_var.as_deref().is_some_and(|path| {
+                                std::env::split_paths(path)
+                                    .filter(|dir| !is_unc(&dir.to_string_lossy()))
+                                    .any(|dir| {
+                                        let p = dir.join(resolved);
+                                        p.exists() || p.with_extension("exe").exists()
+                                    })
+                            })
+                            || user_programs_exe(resolved).is_some();
+                        memo.insert(resolved.as_str(), hit);
+                        hit
+                    }
+                }
+            };
+            (t.id.clone(), ok)
+        })
+        .collect()
+}
+
+/// SRV-001: cheap change fingerprint of the templates dir — (json file count,
+/// newest json mtime). One read_dir + a stat per template file; NO parsing.
+/// The background refresher re-parses templates only when this changes, so a
+/// folder-dropped package still appears live (within one refresh tick) without
+/// `GET /api/services` ever touching the disk.
+pub fn templates_fingerprint(dir: &Path) -> Option<(usize, std::time::SystemTime)> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut count = 0usize;
+    let mut newest = std::time::SystemTime::UNIX_EPOCH;
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        count += 1;
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(m) = meta.modified() {
+                if m > newest {
+                    newest = m;
+                }
+            }
+        }
+    }
+    Some((count, newest))
+}
+
+/// SRV-001: how long after our own fire-and-forget kill a lingering port is
+/// still presumed to be OUR dying process (probe skipped) rather than a
+/// foreign holder. Unix has always had this window (its kill embeds a 2 s
+/// TERM→KILL grace); 5 s covers taskkill scheduling on a loaded box too.
+const TEARDOWN_PORT_GRACE_SECS: i64 = 5;
+
+/// SRV-001: pure decision — skip the pre-spawn foreign-port probe when we just
+/// tore our own process down (it may legitimately hold the port for a beat).
+fn own_teardown_recent(teardown_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    teardown_at.is_some_and(|t| (now - t).num_seconds() < TEARDOWN_PORT_GRACE_SECS)
 }
 
 /// Combine the primary models dir with extra roots into an ordered, deduped
@@ -408,6 +534,22 @@ pub struct Registry {
     /// `<dataDir>/services-autostart.json` (only non-Auto entries). Combined
     /// with `remembered_running` by [`Registry::autostart_remembered`].
     autostart_policies: HashMap<String, AutostartPolicy>,
+    /// SRV-001: monotonic mutation counter. Every state change that could
+    /// alter the snapshot bumps it (over-bumping is harmless — one cheap
+    /// in-memory rebuild; under-bumping would serve a stale snapshot, so
+    /// mutating methods bump unconditionally and only the tick-driven
+    /// reap/health/installed appliers track real changes).
+    revision: u64,
+    /// SRV-001: the pre-serialized snapshot body for the current revision.
+    snapshot_cache: Option<SnapshotCache>,
+    /// SRV-001: per-service "run executable / install marker exists" verdicts,
+    /// maintained by the background prober (`background_refresh`) + targeted
+    /// refreshes after install/uninstall/import — so `snapshot()` never stats
+    /// the filesystem. Seeded synchronously once at init.
+    installed_cache: HashMap<String, bool>,
+    /// SRV-001: last observed templates-dir fingerprint; the background
+    /// refresher re-parses the dir only when this changes.
+    templates_fp: Option<(usize, std::time::SystemTime)>,
 }
 
 /// DESK-PROC-001 backoff policy, factored pure for tests: given how many
@@ -805,7 +947,7 @@ impl Registry {
         let model_dirs = combine_model_dirs(&models_dir, extra_model_dirs);
         let remembered_running = load_remembered_running(&data_dir.join("services-running.json"));
         let autostart_policies = load_autostart_policies(&data_dir.join("services-autostart.json"));
-        Ok(Self {
+        let mut reg = Self {
             services,
             data_dir,
             models_dir,
@@ -816,7 +958,18 @@ impl Registry {
             service_gpus: HashMap::new(),
             remembered_running,
             autostart_policies,
-        })
+            revision: 1,
+            snapshot_cache: None,
+            installed_cache: HashMap::new(),
+            templates_fp: None,
+        };
+        // SRV-001: seed the installed cache synchronously ONCE (startup is the
+        // one place filesystem probing is acceptable inline); afterwards the
+        // background refresher + targeted post-install/uninstall refreshes own
+        // it, and snapshot()/GET never touch the disk.
+        reg.refresh_installed_now();
+        reg.templates_fp = templates_fingerprint(&reg.data_dir.join("templates"));
+        Ok(reg)
     }
 
     /// Last-resort in-memory registry with NO templates and NO filesystem work.
@@ -835,7 +988,17 @@ impl Registry {
             service_gpus: HashMap::new(),
             remembered_running: std::collections::HashSet::new(),
             autostart_policies: HashMap::new(),
+            revision: 1,
+            snapshot_cache: None,
+            installed_cache: HashMap::new(),
+            templates_fp: None,
         }
+    }
+
+    /// SRV-001: bump the mutation counter (invalidates the cached snapshot
+    /// body). Called by every mutating method; cheap and safe to over-call.
+    fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Root config dir. Used by the gui-feature config/migration Tauri commands;
@@ -874,6 +1037,7 @@ impl Registry {
     /// them up via `${modelDirs}` / `FORMLOGIC_MODEL_DIRS`). Primary stays index 0.
     pub fn set_extra_model_dirs(&mut self, extra: Vec<PathBuf>) {
         self.model_dirs = combine_model_dirs(&self.models_dir, extra);
+        self.touch();
     }
 
     /// The configured single-model override (`${llamaModel}`), if any. `None`
@@ -890,10 +1054,12 @@ impl Registry {
 
     pub fn set_llama_mmproj(&mut self, path: Option<String>) {
         self.llama_mmproj = clean_model_opt(path);
+        self.touch();
     }
 
     pub fn set_llama_model(&mut self, model: Option<String>) {
         self.llama_model = clean_model_opt(model);
+        self.touch();
     }
 
     /// The configured Ollama model name (`${ollamaModel}`), if any.
@@ -905,6 +1071,7 @@ impl Registry {
     /// snapshot resolves `${ollamaModel}` in the node body, no restart needed.
     pub fn set_ollama_model(&mut self, model: Option<String>) {
         self.ollama_model = clean_model_opt(model);
+        self.touch();
     }
 
     /// The GPU index pinned for a service, if any (`None` ⇒ default placement).
@@ -923,11 +1090,13 @@ impl Registry {
                 self.service_gpus.remove(id);
             }
         }
+        self.touch();
     }
 
     /// Replace the whole per-service GPU map (loads the saved config at startup).
     pub fn set_service_gpus(&mut self, map: HashMap<String, u32>) {
         self.service_gpus = map;
+        self.touch();
     }
 
     /// The live port of a service by id (e.g. to query Ollama's /api/tags for
@@ -1127,6 +1296,10 @@ impl Registry {
             svc.set_status(ServiceStatus::Stopped, None);
             svc.error = None;
         }
+        // SRV-001: the run exe / marker may just have been removed — refresh
+        // this one service's installed verdict (and the snapshot revision).
+        self.refresh_installed_for(id);
+        self.touch();
         log::info!("uninstall {id}: removed {removed} item(s)");
         Ok(removed)
     }
@@ -1168,24 +1341,12 @@ impl Registry {
             .map(|m| os_fix_path(substitute(m, &self.ctx(port))))
     }
 
-    /// Whether the service is installed. When the template declares an `installedMarker` — a
-    /// venv service whose interpreter exists after step 1 of a multi-GB install, BEFORE the
-    /// pip/download that can fail — that marker (written only when the installer exits 0, see
-    /// reap_exited) is the source of truth, so a partial/failed install correctly reads as
-    /// not-installed (Start hidden, Install shown). Otherwise fall back to "run exe exists".
-    fn run_installed(&self, template: &ServiceTemplate, port: u16) -> bool {
-        if let Some(marker) = self.install_marker_path(template, port) {
-            return Path::new(&marker).exists();
-        }
-        self.run_command_exists(&template.run.command, port)
-    }
-
     /// One-time migration for installs that predate the install-completion marker: their venv
     /// interpreter exists but the marker doesn't, so they'd wrongly read as not-installed.
     /// Backfill the marker when the run executable IS present (the prior "installed" heuristic)
     /// but the marker is missing — preserving existing installs' behavior, while NEW installs
     /// get the accurate marker from reap_exited (so a partial install reads as not-installed).
-    pub fn backfill_install_markers(&self) {
+    pub fn backfill_install_markers(&mut self) {
         // ONE-TIME migration, gated by a persisted sentinel. WITHOUT this gate backfill re-runs
         // every launch and — because run_command_exists only sees the venv interpreter, created
         // at install step 1 — would re-bless a NEW failed install (interpreter present, marker
@@ -1197,6 +1358,7 @@ impl Registry {
         if sentinel.exists() {
             return;
         }
+        let mut backfilled: Vec<String> = Vec::new();
         for svc in self.services.values() {
             let Some(marker) = self.install_marker_path(&svc.template, svc.port) else {
                 continue;
@@ -1209,7 +1371,18 @@ impl Registry {
             if let Some(parent) = Path::new(&marker).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::write(&marker, "installed by formlogic\n");
+            if std::fs::write(&marker, "installed by formlogic\n").is_ok() {
+                backfilled.push(svc.template.id.clone());
+            }
+        }
+        // SRV-001: the markers just written flip these services' installed
+        // verdicts — reflect that in the cache now rather than waiting for
+        // the next background probe pass.
+        if !backfilled.is_empty() {
+            for id in backfilled {
+                self.installed_cache.insert(id, true);
+            }
+            self.touch();
         }
         let _ = std::fs::write(&sentinel, "");
     }
@@ -1233,7 +1406,14 @@ impl Registry {
                 docs_url: s.template.docs_url.clone(),
                 installable: !matches!(s.template.install, InstallSpec::None),
                 uninstallable: s.template.uninstall.is_some(),
-                installed: self.run_installed(&s.template, s.port),
+                // SRV-001: served from the background-maintained cache — the
+                // snapshot itself must NEVER stat the filesystem (this used to
+                // walk the whole PATH per bare-command service on every poll).
+                installed: self
+                    .installed_cache
+                    .get(&s.template.id)
+                    .copied()
+                    .unwrap_or(false),
                 gpu: self.service_gpus.get(&s.template.id).copied(),
                 autostart: self
                     .autostart_policies
@@ -1257,7 +1437,128 @@ impl Registry {
         RegistrySnapshot {
             services,
             data_dir: self.data_dir.display().to_string(),
+            revision: self.revision,
+            generated_at: Utc::now(),
+            build_ms: 0.0,
         }
+    }
+
+    /// SRV-001: the pre-serialized snapshot body for the current revision.
+    /// `GET /api/services` calls ONLY this — a cache hit is an Arc clone; a
+    /// miss rebuilds from in-memory state (no filesystem, no process probing)
+    /// and records how long the build took.
+    pub fn snapshot_cached(&mut self) -> Arc<String> {
+        if let Some(c) = &self.snapshot_cache {
+            if c.revision == self.revision {
+                return c.body.clone();
+            }
+        }
+        let t0 = std::time::Instant::now();
+        let mut snap = self.snapshot();
+        snap.build_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let body = Arc::new(serde_json::to_string(&snap).unwrap_or_else(|e| {
+            format!("{{\"services\":[],\"dataDir\":\"\",\"error\":\"snapshot serialize failed: {e}\"}}")
+        }));
+        self.snapshot_cache = Some(SnapshotCache {
+            revision: self.revision,
+            body: body.clone(),
+        });
+        body
+    }
+
+    /// SRV-001: collect the (cheap, in-memory) probe targets for every
+    /// service. Placeholder resolution happens here under the lock; all
+    /// filesystem work happens in [`probe_installed`] with NO lock held.
+    pub fn installed_probe_targets(&self) -> Vec<InstalledProbe> {
+        self.services
+            .values()
+            .map(|s| {
+                let kind = match self.install_marker_path(&s.template, s.port) {
+                    Some(marker) => InstalledProbeKind::Marker(PathBuf::from(marker)),
+                    None => InstalledProbeKind::Command {
+                        resolved: os_fix_path(substitute(
+                            &s.template.run.command,
+                            &self.ctx(s.port),
+                        )),
+                        bin_dir: self.data_dir.join("bin"),
+                    },
+                };
+                InstalledProbe {
+                    id: s.template.id.clone(),
+                    kind,
+                }
+            })
+            .collect()
+    }
+
+    /// SRV-001: fold background probe results into the installed cache.
+    /// Bumps the revision only when a verdict actually changed.
+    pub fn apply_installed_results(&mut self, results: &[(String, bool)]) {
+        let mut changed = false;
+        for (id, installed) in results {
+            // A service can be deleted between collect + apply — don't
+            // resurrect a stale cache entry for it.
+            if !self.services.contains_key(id) {
+                continue;
+            }
+            if self.installed_cache.insert(id.clone(), *installed) != Some(*installed) {
+                changed = true;
+            }
+        }
+        if changed {
+            self.touch();
+        }
+    }
+
+    /// SRV-001: synchronous full refresh of the installed cache (targets +
+    /// filesystem probe + apply, all inline). Startup-only — everywhere else
+    /// the split collect/probe/apply keeps FS work off the lock.
+    pub fn refresh_installed_now(&mut self) {
+        let targets = self.installed_probe_targets();
+        let results = probe_installed(&targets);
+        self.apply_installed_results(&results);
+    }
+
+    /// SRV-001: targeted single-service refresh after install / uninstall /
+    /// import. One marker or bin-dir stat (plus a PATH walk for bare commands)
+    /// — acceptable inline for an explicit user action on one service.
+    fn refresh_installed_for(&mut self, id: &str) {
+        let Some(s) = self.services.get(id) else {
+            self.installed_cache.remove(id);
+            return;
+        };
+        let target = InstalledProbe {
+            id: id.to_string(),
+            kind: match self.install_marker_path(&s.template, s.port) {
+                Some(marker) => InstalledProbeKind::Marker(PathBuf::from(marker)),
+                None => InstalledProbeKind::Command {
+                    resolved: os_fix_path(substitute(&s.template.run.command, &self.ctx(s.port))),
+                    bin_dir: self.data_dir.join("bin"),
+                },
+            },
+        };
+        let results = probe_installed(std::slice::from_ref(&target));
+        self.apply_installed_results(&results);
+    }
+
+    /// SRV-001: the templates dir path — the background refresher fingerprints
+    /// it OUTSIDE the lock.
+    pub fn templates_dir(&self) -> PathBuf {
+        self.data_dir.join("templates")
+    }
+
+    /// SRV-001: compare + store a freshly computed templates-dir fingerprint.
+    /// Returns true when it differs from the last observed one (i.e. the dir
+    /// changed and `reload_new_templates` is worth calling).
+    pub fn note_templates_fingerprint(
+        &mut self,
+        fp: Option<(usize, std::time::SystemTime)>,
+    ) -> bool {
+        if self.templates_fp == fp {
+            return false;
+        }
+        self.templates_fp = fp;
+        true
     }
 
     /// Map venv name → ids of services whose run spec references it
@@ -1376,6 +1677,9 @@ impl Registry {
     /// `false` so its attempt counter survives across restarts and the
     /// crash-loop breaker can trip (DESK-PROC-001).
     fn start_with(&mut self, id: &str, manual: bool) -> Result<(), String> {
+        // SRV-001: any start attempt can mutate status/error — invalidate the
+        // cached snapshot up front (over-bumping is harmless).
+        self.touch();
         // Extract everything we need under a read-only borrow first so
         // we can call `self.ctx(...)` (which also borrows `self`) without
         // hitting the borrow checker. `RunSpec.clone()` is cheap — small
@@ -1502,13 +1806,18 @@ impl Registry {
         let had_own_process = svc.runner.is_some();
         if let Some(old) = svc.runner.take() {
             kill_process_tree(old.pid);
-            let _ = old.stop();
+            old.abandon();
+            svc.own_teardown_at = Some(Utc::now());
         }
         // PROC-001: name a busy port BEFORE spawning. Only when WE didn't just
-        // tear our own previous process down (its port can linger for a beat) —
+        // tear our own previous process down (its port can linger for a beat —
+        // kill_process_tree is fire-and-forget on every OS, see SRV-001 grace) —
         // a fresh start against a foreign holder would otherwise spawn, lose
         // the bind race, and surface as an opaque crash loop.
-        if !had_own_process && port_in_use(port) {
+        if !had_own_process
+            && !own_teardown_recent(svc.own_teardown_at, Utc::now())
+            && port_in_use(port)
+        {
             let msg = format!(
                 "{id}: port {port} is already in use by another process (not one this desktop \
                  started) — close it, or change the service's port, then press Start"
@@ -1600,6 +1909,7 @@ impl Registry {
             &self.data_dir.join("services-autostart.json"),
             &self.autostart_policies,
         );
+        self.touch();
         Ok(())
     }
 
@@ -1609,6 +1919,9 @@ impl Registry {
     /// held by a FOREIGN process even after our own tree is gone, refuse with
     /// a named diagnosis instead of spawning into a doomed bind race.
     pub fn repair(&mut self, id: &str) -> Result<(), String> {
+        // SRV-001: repair mutates supervision state — invalidate the cached
+        // snapshot up front.
+        self.touch();
         {
             let svc = self.services.get_mut(id).ok_or("unknown service")?;
             if svc.status == ServiceStatus::Installing {
@@ -1619,7 +1932,8 @@ impl Registry {
             // Tear down anything of ours that's still alive.
             if let Some(runner) = svc.runner.take() {
                 kill_process_tree(runner.pid);
-                let _ = runner.stop();
+                runner.abandon();
+                svc.own_teardown_at = Some(Utc::now());
             }
             // Reset supervision state: the operator explicitly re-armed it.
             svc.restart_attempts = 0;
@@ -1627,7 +1941,12 @@ impl Registry {
             svc.last_crash_at = None;
             svc.set_status(ServiceStatus::Stopped, None);
             let port = svc.port;
-            if port_in_use(port) {
+            // SRV-001: the kill above is fire-and-forget, so our own dying
+            // process may legitimately hold the port for a beat — only a port
+            // held OUTSIDE the teardown grace is a named foreign holder. (If a
+            // foreign process really does hold it, the spawn loses the bind
+            // race and the crash-restart's next probe names it a cycle later.)
+            if !own_teardown_recent(svc.own_teardown_at, Utc::now()) && port_in_use(port) {
                 let msg = format!(
                     "{id}: port {port} is still in use by another process (not one this desktop \
                      started) — close it, then press Start"
@@ -1670,6 +1989,9 @@ impl Registry {
     }
 
     pub fn stop(&mut self, id: &str) -> Result<(), String> {
+        // SRV-001: stop mutates status/remembered state — invalidate the
+        // cached snapshot up front.
+        self.touch();
         // DESK-PROC-001: an explicit Stop means "the operator wants it not
         // running" — forget it (so it won't be restored at boot) and cancel
         // any pending crash-restart.
@@ -1686,10 +2008,11 @@ impl Registry {
         if let Some(runner) = svc.runner.take() {
             // The runner may have spawned children (a shell wrapper, python
             // subprocesses); a plain kill of the direct child would orphan
-            // them, so kill the whole process tree first, then stop() to reap
-            // the direct child and clear the slot.
+            // them, so tree-kill by pid and hand the child handle over to it
+            // (abandon — see Runner::abandon for the ordering rationale).
             kill_process_tree(runner.pid);
-            let _ = runner.stop();
+            runner.abandon();
+            svc.own_teardown_at = Some(Utc::now());
         }
         // Stop during an in-flight install: the live process tree is owned by
         // svc.installer (the script + its pip/curl/git children), NOT runner — so
@@ -1701,7 +2024,8 @@ impl Registry {
         if svc.status == ServiceStatus::Installing {
             if let Some(installer) = &svc.installer {
                 kill_process_tree(installer.pid);
-                let _ = installer.stop();
+                installer.abandon();
+                svc.own_teardown_at = Some(Utc::now());
             }
         }
         svc.set_status(ServiceStatus::Stopped, None);
@@ -1778,18 +2102,32 @@ impl Registry {
     /// Poll for unexpected exits and update status. Cheap — only walks
     /// services that currently think they're Running or Installing.
     pub fn reap_exited(&mut self) {
+        // SRV-001: this runs on the 2 s tick — bump the snapshot revision only
+        // when something actually changed, so an idle system keeps serving the
+        // same cached body (and clients can skip re-rendering on it).
+        let mut changed = false;
         // Services whose install just succeeded (exit 0) + declare an install-completion marker.
         // Collected here, written AFTER the loop so we can resolve the marker path via self.ctx
         // (an immutable borrow) without conflicting with the mutable services iteration.
-        let mut mark_installed: Vec<(u16, String)> = Vec::new();
+        let mut mark_installed: Vec<(String, u16, String)> = Vec::new();
+        // SRV-001: marker-less services whose install just succeeded — their
+        // installed verdict needs a filesystem re-probe (done after the loop).
+        let mut reprobe_installed: Vec<String> = Vec::new();
         for svc in self.services.values_mut() {
             // Reap the install script if one's in flight.
             if svc.status == ServiceStatus::Installing {
                 if let Some(installer) = &svc.installer {
                     if let Some(code) = installer.check_exited() {
                         if code == 0 {
-                            if let Some(marker) = svc.template.installed_marker.clone() {
-                                mark_installed.push((svc.port, marker));
+                            match svc.template.installed_marker.clone() {
+                                Some(marker) => mark_installed
+                                    .push((svc.template.id.clone(), svc.port, marker)),
+                                // SRV-001: no marker → installed-ness derives
+                                // from the run exe the installer just laid
+                                // down; re-probe this one service after the
+                                // loop so the card flips without waiting for
+                                // the next background pass.
+                                None => reprobe_installed.push(svc.template.id.clone()),
                             }
                         }
                         // KEEP the installer (and its LogBuffer) so a failed
@@ -1811,6 +2149,7 @@ impl Registry {
                             },
                             err,
                         );
+                        changed = true;
                     }
                 }
                 continue;
@@ -1834,6 +2173,7 @@ impl Registry {
                         at: Utc::now(),
                         stderr_tail: exit_stderr_tail(&runner.logs.snapshot(None)),
                     });
+                    changed = true;
                     if code == 0 {
                         // A clean spontaneous exit is presumed intentional
                         // (the service shut itself down) — no auto-restart.
@@ -1875,14 +2215,26 @@ impl Registry {
         // Write the install-completion marker for any service whose installer just exited 0, so
         // run_installed() flips it to installed=true. A partial/failed install (non-zero exit →
         // no marker) correctly stays not-installed even though its venv interpreter exists.
-        for (port, marker) in mark_installed {
+        for (id, port, marker) in mark_installed {
             let resolved = os_fix_path(substitute(&marker, &self.ctx(port)));
             if let Some(parent) = Path::new(&resolved).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = std::fs::write(&resolved, "installed by formlogic\n") {
-                log::warn!("could not write install marker {resolved}: {e}");
+            match std::fs::write(&resolved, "installed by formlogic\n") {
+                // SRV-001: we just wrote the marker ourselves — flip the
+                // cached installed verdict directly (no filesystem re-probe).
+                Ok(()) => {
+                    self.installed_cache.insert(id, true);
+                    changed = true;
+                }
+                Err(e) => log::warn!("could not write install marker {resolved}: {e}"),
             }
+        }
+        for id in reprobe_installed {
+            self.refresh_installed_for(&id);
+        }
+        if changed {
+            self.touch();
         }
     }
 
@@ -1920,6 +2272,9 @@ impl Registry {
     /// window (the health timeout), so a slow model load isn't flagged.
     pub fn apply_health_results(&mut self, results: &[(String, bool)]) {
         let now = Utc::now();
+        // SRV-001: tick-driven — bump the snapshot revision only on a real
+        // state change, so a healthy steady state keeps the cached body valid.
+        let mut changed = false;
         for (id, ok) in results {
             let Some(svc) = self.services.get_mut(id) else { continue };
             if *ok {
@@ -1934,6 +2289,7 @@ impl Registry {
                     && svc.runner.as_ref().is_some_and(|r| r.is_alive())
                 {
                     svc.set_status(ServiceStatus::Running, None);
+                    changed = true;
                 }
                 continue;
             }
@@ -1964,6 +2320,10 @@ impl Registry {
                 ServiceStatus::Errored,
                 Some(readiness_failure_message(svc.ever_healthy, grace)),
             );
+            changed = true;
+        }
+        if changed {
+            self.touch();
         }
     }
 
@@ -2036,7 +2396,8 @@ impl Registry {
             if svc.runner.as_ref().is_some_and(|r| r.is_alive()) {
                 if let Some(old) = svc.runner.take() {
                     kill_process_tree(old.pid);
-                    let _ = old.stop();
+                    old.abandon();
+                    svc.own_teardown_at = Some(Utc::now());
                 }
             }
         }
@@ -2110,6 +2471,7 @@ impl Registry {
         let svc = self.services.get_mut(id).ok_or("unknown service")?;
         svc.installer = Some(Arc::new(runner));
         svc.set_status(ServiceStatus::Installing, None);
+        self.touch();
         Ok(())
     }
 
@@ -2124,9 +2486,11 @@ impl Registry {
         }
         if let Some(installer) = &svc.installer {
             kill_process_tree(installer.pid);
-            let _ = installer.stop();
+            installer.abandon();
+            svc.own_teardown_at = Some(Utc::now());
         }
         svc.set_status(ServiceStatus::Stopped, Some("install cancelled".into()));
+        self.touch();
         Ok(())
     }
 
@@ -2143,7 +2507,7 @@ impl Registry {
             if let Some(svc) = self.services.get_mut(&id) {
                 if let Some(installer) = svc.installer.take() {
                     kill_process_tree(installer.pid);
-                    let _ = installer.stop();
+                    installer.abandon();
                 }
             }
         }
@@ -2188,7 +2552,14 @@ impl Registry {
             materialize_package_files(&self.data_dir.join("scripts"), &template.id, &template.files);
         }
         let id = template.id.clone();
-        self.services.insert(id, ServiceRuntime::new(template));
+        self.services.insert(id.clone(), ServiceRuntime::new(template));
+        // SRV-001: seed this service's installed verdict now (explicit user
+        // action, one service) instead of waiting for the background pass,
+        // and refresh the templates fingerprint so the background refresher
+        // doesn't re-parse the dir for a change we just made ourselves.
+        self.refresh_installed_for(&id);
+        self.templates_fp = templates_fingerprint(&self.data_dir.join("templates"));
+        self.touch();
         Ok(())
     }
 
@@ -2292,8 +2663,15 @@ impl Registry {
             }
             log::info!("dynamically loaded service '{}' from {}", t.id, path.display());
             let id = t.id.clone();
-            self.services.insert(id, ServiceRuntime::new(t));
+            self.services.insert(id.clone(), ServiceRuntime::new(t));
+            // SRV-001: seed the new service's installed verdict immediately —
+            // this path only runs when the templates fingerprint changed
+            // (folder drop / import), never on the GET hot path.
+            self.refresh_installed_for(&id);
             added += 1;
+        }
+        if added > 0 {
+            self.touch();
         }
         added
     }
@@ -2317,6 +2695,9 @@ impl Registry {
         // memory (shouldn't happen normally) we still proceed.
         let _ = std::fs::remove_file(&path);
         self.services.remove(id);
+        self.installed_cache.remove(id);
+        self.templates_fp = templates_fingerprint(&self.data_dir.join("templates"));
+        self.touch();
         Ok(())
     }
 }
@@ -2329,10 +2710,19 @@ fn kill_process_tree(pid: u32) {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SRV-001: fire-and-forget (`spawn`, not `status`) — parity with the
+        // always-detached Unix branch below. The old blocking `.status()` wait
+        // ran UNDER the registry mutex on every stop/repair/restart, stalling
+        // concurrent `GET /api/services` for the taskkill round trip. Callers
+        // stamp `own_teardown_at` and the pre-spawn port probe tolerates the
+        // brief window where the dying process still holds its port.
         let _ = std::process::Command::new(system32_exe("taskkill.exe"))
             .args(["/T", "/F", "/PID", &pid.to_string()])
             .creation_flags(CREATE_NO_WINDOW)
-            .status();
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
     #[cfg(not(windows))]
     {
@@ -2385,6 +2775,31 @@ fn venv_name_in(s: &str) -> Option<String> {
 
 pub type RegistryHandle = Arc<Mutex<Registry>>;
 
+/// SRV-001: one background maintenance pass — the filesystem work that used to
+/// run inline (under the registry mutex!) on EVERY `GET /api/services` poll:
+/// per-service installed probing (bin-dir stats + PATH walks) and templates-dir
+/// re-parsing. Collect under a short lock → probe with NO lock → apply under a
+/// short lock; templates are re-parsed only when the dir fingerprint changed.
+/// Callers drive this on a ~10 s cadence from a blocking-pool task.
+pub fn background_refresh(registry: &RegistryHandle) {
+    // Phase A: collect targets under a short lock (string/placeholder work only).
+    let (targets, templates_dir) = {
+        let reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        (reg.installed_probe_targets(), reg.templates_dir())
+    };
+    // Phase B: every filesystem stat happens here, lock-free.
+    let results = probe_installed(&targets);
+    let fp = templates_fingerprint(&templates_dir);
+    // Phase C: fold back in under a short lock. reload_new_templates does
+    // read+parse under the lock, but ONLY when the fingerprint changed (a
+    // folder drop / import) — never on the steady-state path.
+    let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+    reg.apply_installed_results(&results);
+    if reg.note_templates_fingerprint(fp) {
+        reg.reload_new_templates();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::venv_name_in;
@@ -2395,6 +2810,7 @@ mod tests {
     };
     use chrono::Utc;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     /// DESK-PROC-001 backoff decision table: exponential delays, then the
     /// crash-loop breaker.
@@ -2736,7 +3152,6 @@ mod tests {
         let data = std::env::temp_dir().join(format!("formlogic-marker-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&data);
         std::fs::create_dir_all(&data).unwrap();
-        let reg = super::Registry::empty(data.clone(), data.join("models"));
 
         let json = r#"{
             "id": "svc", "name": "Svc", "description": "", "category": "test",
@@ -2745,6 +3160,15 @@ mod tests {
             "run": { "command": "${dataDir}/venvs/svc/Scripts/python.exe", "args": [] }
         }"#;
         let t: super::ServiceTemplate = serde_json::from_str(json).unwrap();
+        let mut reg = super::Registry::empty(data.clone(), data.join("models"));
+        reg.services
+            .insert("svc".to_string(), super::ServiceRuntime::new(t.clone()));
+        // SRV-001: installed-ness is read from the cache, maintained via the
+        // probe machinery — exercise it exactly the way the background pass does.
+        let installed = |reg: &mut super::Registry| {
+            reg.refresh_installed_for("svc");
+            reg.installed_cache.get("svc").copied().unwrap_or(false)
+        };
 
         // The venv interpreter exists (a partial install creates it at step 1) BUT no marker →
         // must read as NOT installed (this is the whole point of the marker).
@@ -2752,13 +3176,13 @@ mod tests {
         std::fs::create_dir_all(interp.parent().unwrap()).unwrap();
         std::fs::write(&interp, "").unwrap();
         assert!(
-            !reg.run_installed(&t, 9999),
+            !installed(&mut reg),
             "interpreter present but no marker must read as not-installed"
         );
 
         // Marker present (installer exited 0) → installed.
         std::fs::write(data.join("venvs/svc/.formlogic-installed"), "").unwrap();
-        assert!(reg.run_installed(&t, 9999), "marker present → installed");
+        assert!(installed(&mut reg), "marker present → installed");
 
         // backfill: a pre-marker install (interp present, marker removed) gets the marker back.
         std::fs::remove_file(data.join("venvs/svc/.formlogic-installed")).unwrap();
@@ -2769,6 +3193,11 @@ mod tests {
         assert!(
             data.join("venvs/svc/.formlogic-installed").exists(),
             "backfill should restore the marker for an existing install (interp present)"
+        );
+        assert_eq!(
+            reg2.installed_cache.get("svc"),
+            Some(&true),
+            "backfill must flip the cached installed verdict too"
         );
 
         // backfill is ONE-TIME (sentinel persisted): a NEW partial install after migration
@@ -2781,5 +3210,121 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// SRV-001: the snapshot body is served from a revision-keyed cache — the
+    /// same revision returns the SAME Arc (no rebuild), any mutation bumps the
+    /// revision and produces a fresh body.
+    #[test]
+    fn snapshot_cache_hits_until_a_mutation_bumps_the_revision() {
+        let data = std::env::temp_dir().join(format!("fl-snapcache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        let mut reg = super::Registry::empty(data.clone(), data.join("models"));
+
+        let a = reg.snapshot_cached();
+        let b = reg.snapshot_cached();
+        assert!(Arc::ptr_eq(&a, &b), "unchanged revision must serve the cached body");
+
+        reg.set_ollama_model(Some("qwen2.5:7b".into()));
+        let c = reg.snapshot_cached();
+        assert!(!Arc::ptr_eq(&a, &c), "a mutation must invalidate the cached body");
+        assert!(c.contains("\"revision\""), "snapshot carries its revision");
+        assert!(c.contains("\"generatedAt\""), "snapshot carries generatedAt");
+        assert!(c.contains("\"buildMs\""), "snapshot carries buildMs");
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// SRV-001: the lock-free installed prober — marker paths, bin-dir hits,
+    /// and the UNC refusal (never stat a network path from a template field).
+    #[test]
+    fn probe_installed_covers_marker_bindir_and_unc() {
+        use super::{probe_installed, InstalledProbe, InstalledProbeKind};
+        let data = std::env::temp_dir().join(format!("fl-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let bin = data.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("mytool.exe"), "").unwrap();
+        let marker = data.join("marker.txt");
+        std::fs::write(&marker, "").unwrap();
+
+        let targets = vec![
+            InstalledProbe {
+                id: "marker-present".into(),
+                kind: InstalledProbeKind::Marker(marker.clone()),
+            },
+            InstalledProbe {
+                id: "marker-missing".into(),
+                kind: InstalledProbeKind::Marker(data.join("nope.txt")),
+            },
+            InstalledProbe {
+                id: "bare-in-bindir".into(),
+                kind: InstalledProbeKind::Command {
+                    resolved: "mytool".into(),
+                    bin_dir: bin.clone(),
+                },
+            },
+            InstalledProbe {
+                id: "unc-refused".into(),
+                kind: InstalledProbeKind::Command {
+                    resolved: "\\\\attacker\\share\\x.exe".into(),
+                    bin_dir: bin.clone(),
+                },
+            },
+        ];
+        let results: std::collections::HashMap<String, bool> =
+            probe_installed(&targets).into_iter().collect();
+        assert_eq!(results["marker-present"], true);
+        assert_eq!(results["marker-missing"], false);
+        assert_eq!(results["bare-in-bindir"], true);
+        assert_eq!(results["unc-refused"], false, "UNC paths must never be statted");
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// SRV-001: the templates-dir fingerprint changes when a json is added or
+    /// removed — the background refresher's cheap "should I re-parse?" signal.
+    #[test]
+    fn templates_fingerprint_tracks_dir_changes() {
+        let dir = std::env::temp_dir().join(format!("fl-tfp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let fp0 = super::templates_fingerprint(&dir);
+        assert_eq!(fp0.map(|(n, _)| n), Some(0));
+        std::fs::write(dir.join("a.json"), "{}").unwrap();
+        let fp1 = super::templates_fingerprint(&dir);
+        assert_ne!(fp0, fp1, "adding a template must change the fingerprint");
+        std::fs::write(dir.join("notes.txt"), "ignored").unwrap();
+        let fp2 = super::templates_fingerprint(&dir);
+        assert_eq!(
+            fp1.map(|(n, _)| n),
+            fp2.map(|(n, _)| n),
+            "non-json files don't count"
+        );
+        std::fs::remove_file(dir.join("a.json")).unwrap();
+        let fp3 = super::templates_fingerprint(&dir);
+        assert_ne!(fp1.map(|(n, _)| n), fp3.map(|(n, _)| n));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// SRV-001: the own-teardown port-probe grace — a port lingering right
+    /// after OUR fire-and-forget kill is expected teardown; outside the window
+    /// (or with no teardown at all) the foreign-holder probe runs.
+    #[test]
+    fn own_teardown_grace_window() {
+        use super::own_teardown_recent;
+        let now = Utc::now();
+        assert!(!own_teardown_recent(None, now), "no teardown → probe runs");
+        assert!(
+            own_teardown_recent(Some(now - chrono::Duration::seconds(2)), now),
+            "2s after our own kill → inside the grace"
+        );
+        assert!(
+            !own_teardown_recent(Some(now - chrono::Duration::seconds(30)), now),
+            "30s later → grace expired, probe runs"
+        );
     }
 }

@@ -232,7 +232,7 @@ async fn main() {
     // One-time migration of install-completion markers for venv services installed before the
     // marker existed — mirrors the GUI (lib.rs) so headless + GUI hosts report installed-ness
     // identically. Idempotent + sentinel-gated, so safe to call every boot.
-    if let Ok(r) = registry.lock() {
+    if let Ok(mut r) = registry.lock() {
         r.backfill_install_markers();
     }
     // DESK-PROC-001: restore services that were running when the server last
@@ -301,6 +301,7 @@ async fn main() {
         let registry = registry.clone();
         let python = python.clone();
         tokio::spawn(async move {
+            let mut tick: u64 = 0;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 // Recover from poison so reaping survives a panic that poisoned the
@@ -313,6 +314,17 @@ async fn main() {
                     reg.run_scheduled_restarts();
                 }
                 python.reap_exited();
+                // SRV-001: every 5th tick (~10 s), run the background
+                // maintenance pass (installed probing + templates fingerprint)
+                // on the blocking pool — mirrors the GUI reaper loop.
+                tick = tick.wrapping_add(1);
+                if tick % 5 == 0 {
+                    let reg = registry.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        formlogic_desktop_lib::services::registry::background_refresh(&reg);
+                    })
+                    .await;
+                }
             }
         });
     }
