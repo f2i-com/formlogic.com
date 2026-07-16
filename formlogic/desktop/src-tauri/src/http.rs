@@ -33,7 +33,7 @@
 use axum::{
     extract::{Path, Query, Request, State},
     http::{
-        header::{AUTHORIZATION, ORIGIN},
+        header::{AUTHORIZATION, CONTENT_TYPE, ORIGIN},
         HeaderMap, Method, StatusCode,
     },
     middleware::{self, Next},
@@ -947,16 +947,141 @@ async fn restart_plugin(
     }
 }
 
-/// `DELETE /api/plugins/{id}` — stop + remove the plugin folder (manifest +
-/// binary). Plugin data under `plugin-data/<id>` is kept for a reinstall;
-/// bundled built-ins reappear as installable templates.
+/// `DELETE /api/plugins/{id}[?purge=1]` — stop + remove the plugin folder
+/// (manifest + binary). Plugin data under `plugin-data/<id>` is KEPT for a
+/// reinstall unless `?purge=1`, which also deletes the writable data (settings,
+/// outbox, receipts). Data OUTSIDE the desktop tree that the plugin declares is
+/// never auto-deleted — the UI shows that inventory as a manual checklist.
+/// Bundled built-ins reappear as installable templates.
+#[derive(Deserialize)]
+struct UninstallQuery {
+    #[serde(default)]
+    purge: Option<String>,
+}
+
 async fn uninstall_plugin(
     State(st): State<DesktopState>,
     Path(id): Path<String>,
+    Query(q): Query<UninstallQuery>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    match st.host.uninstall(&id).await {
+    // PLG-105/107: lifecycle mutations are webview/server-token only — a paired
+    // web page can start/stop a plugin but never install/uninstall/enable it.
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return lifecycle_admin_denied();
+    }
+    let purge = matches!(q.purge.as_deref(), Some("1") | Some("true"));
+    match st.host.uninstall(&id, purge).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    }
+}
+
+/// Shared 403 for the webview/server-token-only lifecycle routes.
+fn lifecycle_admin_denied() -> Response {
+    desktop_err(
+        StatusCode::FORBIDDEN,
+        "auth_required",
+        "plugin install/uninstall/enable/disable require the Desktop window (or the server token) — a paired page cannot change what native code is installed",
+    )
+}
+
+/// `POST /api/plugins/{id}/enable` and `.../disable` (PLG-105) — durable
+/// enable/disable, persisted across restart + rescan. Disable stops a running
+/// process and blocks autostart + dispatch; enable clears the opt-out.
+async fn enable_plugin(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return lifecycle_admin_denied();
+    }
+    match st.host.set_enabled(&id, true).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    }
+}
+
+async fn disable_plugin(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return lifecycle_admin_denied();
+    }
+    match st.host.set_enabled(&id, false).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    }
+}
+
+/// `POST /api/plugins/install` (PLG-102/103/104) — install a native plugin from
+/// a local folder or an uploaded `.formlogic-plugin` archive.
+///
+/// Two request shapes (both webview/server-token only — a paired web page can
+/// neither hand a filesystem path nor sideload a binary):
+///   - JSON `{ "path": "C:\\…\\myplugin" }` — install from a local folder;
+///   - a raw `application/zip` / `application/octet-stream` body — the archive
+///     bytes.
+/// Returns `{ "id": "<installed plugin id>" }`.
+async fn install_plugin_from_source(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    use crate::plugins::install::InstallSource;
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return lifecycle_admin_denied();
+    }
+    const MAX_UPLOAD: usize = 512 * 1024 * 1024;
+    if body.len() > MAX_UPLOAD {
+        return desktop_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "command_failed",
+            "plugin upload exceeds the 512 MiB cap",
+        );
+    }
+    let ctype = headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let source = if ctype.contains("application/json") {
+        #[derive(Deserialize)]
+        struct FolderBody {
+            path: String,
+        }
+        match serde_json::from_slice::<FolderBody>(&body) {
+            Ok(b) => InstallSource::Folder(std::path::PathBuf::from(b.path)),
+            Err(e) => {
+                return desktop_err(
+                    StatusCode::BAD_REQUEST,
+                    "command_failed",
+                    &format!("invalid body (expected {{path}}): {e}"),
+                )
+            }
+        }
+    } else {
+        if body.is_empty() {
+            return desktop_err(
+                StatusCode::BAD_REQUEST,
+                "command_failed",
+                "empty upload — send a .formlogic-plugin archive or a JSON {path}",
+            );
+        }
+        InstallSource::Zip(body.to_vec())
+    };
+    // Filesystem-heavy — run off the async worker.
+    let host = st.host.clone();
+    match tokio::task::spawn_blocking(move || host.install_from_source(&source)).await {
+        Ok(Ok(id)) => (StatusCode::OK, Json(serde_json::json!({ "id": id }))).into_response(),
+        Ok(Err(e)) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+        Err(e) => desktop_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "command_failed",
+            &format!("install task failed: {e}"),
+        ),
     }
 }
 
@@ -2335,8 +2460,14 @@ pub async fn serve(
     // Plugin-API routes: everything behind the pairing-token guard.
     let plugin_api = Router::new()
         .route("/api/plugins", get(list_plugins))
+        // PLG-102: UI-driven install from a folder path or an uploaded archive.
+        // Registered before the `:id` routes so `install` is not captured as an
+        // id (axum prefers a static segment, but keep the ordering explicit).
+        .route("/api/plugins/install", post(install_plugin_from_source))
         .route("/api/plugins/:id", get(get_plugin).delete(uninstall_plugin))
         .route("/api/plugins/:id/install", post(install_builtin_plugin))
+        .route("/api/plugins/:id/enable", post(enable_plugin))
+        .route("/api/plugins/:id/disable", post(disable_plugin))
         .route("/api/plugins/:id/start", post(start_plugin))
         .route("/api/plugins/:id/stop", post(stop_plugin))
         .route("/api/plugins/:id/restart", post(restart_plugin))

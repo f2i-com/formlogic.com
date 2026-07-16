@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::plugins::install::InstallSource;
 use crate::plugins::registry::{HealthReport, PluginHost, PluginState};
 use crate::plugins::rpc::{self, RpcClient, RpcFailure, SpawnSpec};
 
@@ -207,13 +208,89 @@ impl PluginHost {
         Ok(true)
     }
 
+    /// PLG-102/103/104: install a native plugin from a local folder or a
+    /// `.formlogic-plugin` archive. Stages under the plugins root, validates
+    /// (manifest, symlink refusal, package signature), refuses id/connector/
+    /// event collisions against installed plugins, then atomically moves it
+    /// into `<plugins>/<manifest.id>` (replacing an existing install of the
+    /// SAME id — an update). Returns the installed plugin id. Filesystem only;
+    /// the caller starts/binds it afterwards.
+    pub fn install_from_source(
+        self: &Arc<Self>,
+        source: &InstallSource,
+    ) -> Result<String, String> {
+        use crate::plugins::install;
+        let plugins_root = self.plugins_root().to_path_buf();
+        // 1. stage
+        let staging = match source {
+            InstallSource::Folder(p) => install::copy_folder_to_staging(&plugins_root, p),
+            InstallSource::Zip(bytes) => install::extract_zip_to_staging(&plugins_root, bytes),
+        }
+        .map_err(|e| e.to_string())?;
+        // 2. validate (manifest + symlink refusal + signature)
+        let require_signed = crate::plugins::package_trust::require_signed();
+        let manifest = match install::validate_staged(&staging, require_signed) {
+            Ok(m) => m,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(e.to_string());
+            }
+        };
+        // 3. collision check against OTHER installed plugins
+        let installed: Vec<install::OwnedSurface> = {
+            let map = self.lock_plugins();
+            map.values()
+                .filter_map(|s| s.manifest.as_ref())
+                .map(install::OwnedSurface::from_manifest)
+                .collect()
+        };
+        if let Some(reason) = install::collision_reason(&manifest, &installed) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(format!("cannot install {:?}: {reason}", manifest.id));
+        }
+        // 4. an existing install of the same id is an UPDATE — stop it first so
+        //    its files aren't locked during the swap (Windows). We can't await
+        //    here (install_from_source is sync for the HTTP handler), so refuse
+        //    an update to a currently-active plugin with a clear message.
+        {
+            let map = self.lock_plugins();
+            if let Some(slot) = map.get(&manifest.id) {
+                if slot.state.is_active() {
+                    drop(map);
+                    let _ = std::fs::remove_dir_all(&staging);
+                    return Err(format!(
+                        "plugin {:?} is running — stop it before reinstalling/updating",
+                        manifest.id
+                    ));
+                }
+            }
+        }
+        // 5. commit (atomic move, replacing same-id)
+        install::commit_staged(&plugins_root, &manifest.id, &staging)
+            .map_err(|e| e.to_string())?;
+        // 6. rescan so the new slot appears (with fresh trust assessment).
+        {
+            // Drop any stale slot for this id so scan re-derives it cleanly.
+            let mut map = self.lock_plugins();
+            map.remove(&manifest.id);
+        }
+        self.scan();
+        Ok(manifest.id)
+    }
+
     /// Uninstall a plugin (`DELETE /api/plugins/{id}`): stop it if active,
-    /// remove `<plugins>/<id>` (manifest + binary), and forget the slot. The
-    /// plugin's WRITABLE data under `<plugin-data>/<id>` (settings, outbox,
-    /// pairing) is deliberately KEPT so a reinstall resumes where it left off
-    /// — wiping data is a separate, explicit filesystem action. A bundled
-    /// built-in (e.g. Aokie) reappears as an installable template afterwards.
-    pub async fn uninstall(self: &Arc<Self>, id: &str) -> Result<(), String> {
+    /// remove `<plugins>/<id>` (manifest + binary), and forget the slot.
+    ///
+    /// PLG-107: when `purge` is true, ALSO remove the plugin's writable data at
+    /// `<plugin-data>/<id>` (settings, outbox, receipts, command journal). The
+    /// receipts journal handle held on the slot is dropped BEFORE the delete so
+    /// Windows can remove the open file. Data OUTSIDE the desktop's tree that a
+    /// plugin declares (its own `%APPDATA%`, credential-manager entries, driver
+    /// artifacts) is NEVER auto-deleted — the caller surfaces that inventory to
+    /// the user as a manual checklist. With `purge` false the data is kept so a
+    /// reinstall resumes where it left off. A bundled built-in reappears as an
+    /// installable template afterwards.
+    pub async fn uninstall(self: &Arc<Self>, id: &str, purge: bool) -> Result<(), String> {
         // Only registered slots can be uninstalled; slot ids exist only for
         // scanned folders whose `manifest.id == dir_name`, so this also rules
         // out path tricks in `id`.
@@ -240,7 +317,29 @@ impl PluginHost {
         })?;
         {
             let mut map = self.lock_plugins();
+            // PLG-107: drop the receipts handle so its journal file is closed
+            // before we try to remove the data dir (Windows locks open files).
+            if let Some(slot) = map.get_mut(id) {
+                slot.receipts = None;
+            }
             map.remove(id);
+        }
+        if purge {
+            let data_dir = self.plugin_data_root.join(id);
+            // Defense in depth: the data dir must sit under the plugin-data root.
+            if data_dir.starts_with(&self.plugin_data_root) && data_dir.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&data_dir) {
+                    // Non-fatal: the code is gone; report the data-purge miss.
+                    log::warn!("purge: could not remove {} : {e}", data_dir.display());
+                    self.persist();
+                    self.scan();
+                    return Err(format!(
+                        "plugin removed, but its data at {} could not be deleted (a file may be \
+                         locked): {e}",
+                        data_dir.display()
+                    ));
+                }
+            }
         }
         self.persist();
         self.scan();
@@ -1077,7 +1176,7 @@ mod tests {
         assert!(dir.join("manifest.json").is_file());
         assert!(h.get("aokie").is_some());
 
-        h.uninstall("aokie").await.expect("uninstall");
+        h.uninstall("aokie", false).await.expect("uninstall");
         assert!(!dir.exists(), "plugin dir must be removed");
         assert!(h.get("aokie").is_none(), "slot must be forgotten");
         // The bundled template is offered for install again.
@@ -1089,6 +1188,44 @@ mod tests {
         assert!(!aokie.installed);
 
         // Unknown ids refuse cleanly.
-        assert!(h.uninstall("aokie").await.is_err());
+        assert!(h.uninstall("aokie", false).await.is_err());
+    }
+
+    /// PLG-107: `purge` also removes the plugin's writable data dir; without it
+    /// the data survives an uninstall for a later reinstall.
+    #[tokio::test]
+    async fn uninstall_purge_removes_plugin_data() {
+        let h = host();
+        h.install_builtin("aokie").expect("install builtin");
+        // Seed some writable data as a running plugin would.
+        let data_dir = h.plugin_data_root.join("aokie");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(data_dir.join("settings.json"), "{}").unwrap();
+
+        // Uninstall WITHOUT purge keeps the data.
+        h.uninstall("aokie", false).await.expect("uninstall");
+        assert!(data_dir.join("settings.json").exists(), "data kept without purge");
+
+        // Reinstall + uninstall WITH purge removes it.
+        h.install_builtin("aokie").expect("reinstall builtin");
+        h.uninstall("aokie", true).await.expect("uninstall+purge");
+        assert!(!data_dir.exists(), "purge must remove the data dir");
+    }
+
+    /// PLG-105: disable persists the opt-out (stops + blocks autostart); enable
+    /// clears it.
+    #[tokio::test]
+    async fn disable_then_enable_round_trip() {
+        let h = host();
+        h.install_builtin("aokie").expect("install builtin");
+        h.set_enabled("aokie", false).await.expect("disable");
+        let snap = h.get("aokie").expect("slot");
+        assert_eq!(snap.state, PluginState::Disabled);
+        // The persisted flag survives a rescan.
+        h.scan();
+        assert_eq!(h.get("aokie").unwrap().state, PluginState::Disabled);
+        // Re-enable clears it (back to installed; binary-missing reason is fine).
+        h.set_enabled("aokie", true).await.expect("enable");
+        assert_ne!(h.get("aokie").unwrap().state, PluginState::Disabled);
     }
 }

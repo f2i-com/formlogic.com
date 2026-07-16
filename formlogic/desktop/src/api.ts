@@ -438,6 +438,12 @@ export interface PluginSnapshot {
   startedAt: string | null;
   lastHealth: PluginHealthReport | null;
   restartAttempts: number;
+  /** TRUST-001: package signature state — "verified" | "unsigned" | "tampered". */
+  package?: string;
+  /** Publisher key id + bundle version for a verified package. */
+  packageDetail?: string;
+  /** PROC-001: last crash exit diagnostics. */
+  lastExit?: { code: number | null; at: string; stderrTail: string[] } | null;
 }
 
 /** A bundled first-party plugin TEMPLATE (e.g. Aokie) offered for install. */
@@ -483,10 +489,37 @@ export const plugins = {
       method: 'POST',
     }),
   /** Stop + remove the plugin folder (manifest + binary). Plugin data under
-   *  `plugin-data/<id>` is kept; bundled built-ins become installable again. */
-  uninstall: (id: string) =>
-    request<void>(`/api/plugins/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
+   *  `plugin-data/<id>` is kept unless `purge`; bundled built-ins become
+   *  installable again. Webview/server-token only. */
+  uninstall: (id: string, purge = false) =>
+    request<void>(
+      `/api/plugins/${encodeURIComponent(id)}${purge ? '?purge=1' : ''}`,
+      { method: 'DELETE' },
+    ),
+  /** PLG-105: durable enable/disable (persists across restart + rescan).
+   *  Webview/server-token only. */
+  enable: (id: string) =>
+    request<void>(`/api/plugins/${encodeURIComponent(id)}/enable`, {
+      method: 'POST',
+    }),
+  disable: (id: string) =>
+    request<void>(`/api/plugins/${encodeURIComponent(id)}/disable`, {
+      method: 'POST',
+    }),
+  /** PLG-102: install a native plugin from a local FOLDER path.
+   *  Webview/server-token only (a paired page can't hand a filesystem path). */
+  installFromFolder: (path: string) =>
+    request<{ id: string }>('/api/plugins/install', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  /** PLG-102: install a native plugin from an uploaded `.formlogic-plugin`
+   *  archive (raw bytes). Webview/server-token only. */
+  installFromArchive: (bytes: ArrayBuffer) =>
+    request<{ id: string }>('/api/plugins/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes,
     }),
   health: (id: string) =>
     request<{ health: PluginHealthReport }>(

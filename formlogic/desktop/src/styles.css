@@ -2684,3 +2684,19 @@ code {
 }
 
 .btn-active { box-shadow: inset 0 0 0 1px var(--signal-line); color: var(--signal-bright); }
+
+/* PLG-102/105/107 — Plugin Manager install bar + purge row. */
+.plugin-install-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.plugin-purge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  cursor: pointer;
+}
+.plugin-purge-row input { cursor: pointer; }

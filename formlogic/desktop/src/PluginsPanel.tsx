@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  appConfig,
+  isTauri,
   openInExplorer,
   plugins,
   type BuiltinPluginInfo,
@@ -7,7 +9,7 @@ import {
   type PluginState,
   type PluginsListResponse,
 } from './api';
-import { AlertTriangleIcon, CheckIcon, XIcon } from './Icons';
+import { AlertTriangleIcon, CheckIcon, DownloadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { AokieCard } from './aokie/AokieCard';
 import { useConfirm } from './ConfirmDialog';
@@ -35,6 +37,8 @@ export default function PluginsPanel() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // Ids with an action in flight so double-clicks can't double-fire.
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const [installing, setInstalling] = useState(false);
+  const archiveInputRef = useRef<HTMLInputElement>(null);
 
   const toast = useToast();
   const { confirm } = useConfirm();
@@ -109,6 +113,50 @@ export default function PluginsPanel() {
     [refresh],
   );
 
+  // PLG-102: install a native plugin from a chosen local folder.
+  const installFromFolder = useCallback(async () => {
+    setActionError(null);
+    setInstalling(true);
+    try {
+      const path = await appConfig.pickFolder();
+      if (!path) return; // user cancelled
+      const { id } = await plugins.installFromFolder(path);
+      await refresh();
+      toast.push({
+        kind: 'success',
+        title: `Plugin "${id}" installed`,
+        body: 'Review its permissions, then Start it.',
+      });
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInstalling(false);
+    }
+  }, [refresh, toast]);
+
+  // PLG-102: install from an uploaded .formlogic-plugin archive.
+  const installFromArchive = useCallback(
+    async (file: File) => {
+      setActionError(null);
+      setInstalling(true);
+      try {
+        const bytes = await file.arrayBuffer();
+        const { id } = await plugins.installFromArchive(bytes);
+        await refresh();
+        toast.push({
+          kind: 'success',
+          title: `Plugin "${id}" installed`,
+          body: 'Review its permissions, then Start it.',
+        });
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setInstalling(false);
+      }
+    },
+    [refresh, toast],
+  );
+
   return (
     <div className="panel">
       {error && (
@@ -148,9 +196,47 @@ export default function PluginsPanel() {
           </button>{' '}
           Each plugin is a folder with a <code>manifest.json</code> and an
           executable, supervised by FormLogic Desktop and reachable from
-          FormLogic apps through connectors. Drop a plugin folder in and it
-          appears here — see <code>plugin-template/</code> in the repo for a
-          minimal example.
+          FormLogic apps through connectors. A native plugin runs as a full
+          user-level process — only install plugins from publishers you trust.
+        </div>
+      )}
+      {snapshot && (
+        <div className="plugin-install-bar">
+          {isTauri() && (
+            <button
+              className="btn btn-primary"
+              disabled={installing}
+              onClick={installFromFolder}
+              title="Install a native plugin from a local folder"
+            >
+              <span className="icon-button-label">
+                <DownloadIcon size={14} />
+                {installing ? 'Installing…' : 'Add plugin from folder'}
+              </span>
+            </button>
+          )}
+          <button
+            className="btn btn-secondary"
+            disabled={installing}
+            onClick={() => archiveInputRef.current?.click()}
+            title="Install a signed .formlogic-plugin archive"
+          >
+            <span className="icon-button-label">
+              <DownloadIcon size={14} />
+              Add plugin from file…
+            </span>
+          </button>
+          <input
+            ref={archiveInputRef}
+            type="file"
+            accept=".formlogic-plugin,.zip,application/zip,application/octet-stream"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void installFromArchive(f);
+              e.currentTarget.value = '';
+            }}
+          />
         </div>
       )}
       {snapshot && snapshot.plugins.length === 0 && !error && (
@@ -174,22 +260,38 @@ export default function PluginsPanel() {
             onStart={() => runAction(() => plugins.start(p.id), p.id)}
             onStop={() => runAction(() => plugins.stop(p.id), p.id)}
             onRestart={() => runAction(() => plugins.restart(p.id), p.id)}
-            onRemove={async () => {
+            onEnable={() =>
+              runAction(async () => {
+                await plugins.enable(p.id);
+                toast.push({ kind: 'success', title: `Plugin "${p.name}" enabled` });
+              }, p.id)
+            }
+            onDisable={() =>
+              runAction(async () => {
+                await plugins.disable(p.id);
+                toast.push({ kind: 'success', title: `Plugin "${p.name}" disabled` });
+              }, p.id)
+            }
+            onRemove={async ({ purge }) => {
               const ok = await confirm({
                 title: `Remove the ${p.name} plugin?`,
-                body:
-                  'The plugin is stopped and its folder (manifest + binary) is deleted. ' +
-                  'Its data (settings, journals) is kept, so reinstalling picks up where it left off.' +
-                  (snapshot.builtins.some((b) => b.id === p.id)
-                    ? ' It stays available to reinstall under "Built-in plugins".'
-                    : ''),
-                confirmLabel: 'Remove plugin',
+                body: purge
+                  ? 'The plugin is stopped and its folder AND its data (settings, journals, outbox) are deleted. This cannot be undone. Data the plugin stores outside FormLogic (its own folders, credential-manager entries, drivers) is not touched — see the plugin\'s docs to remove that.'
+                  : 'The plugin is stopped and its folder (manifest + binary) is deleted. ' +
+                    'Its data (settings, journals) is kept, so reinstalling picks up where it left off.' +
+                    (snapshot.builtins.some((b) => b.id === p.id)
+                      ? ' It stays available to reinstall under "Built-in plugins".'
+                      : ''),
+                confirmLabel: purge ? 'Remove & delete data' : 'Remove plugin',
                 danger: true,
               });
               if (!ok) return;
               await runAction(async () => {
-                await plugins.uninstall(p.id);
-                toast.push({ kind: 'success', title: `Plugin "${p.name}" removed` });
+                await plugins.uninstall(p.id, purge);
+                toast.push({
+                  kind: 'success',
+                  title: `Plugin "${p.name}" removed${purge ? ' (data deleted)' : ''}`,
+                });
               }, p.id);
             }}
           />
@@ -284,7 +386,9 @@ interface CardProps {
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
-  onRemove: () => void;
+  onEnable: () => void;
+  onDisable: () => void;
+  onRemove: (opts: { purge: boolean }) => void;
 }
 
 function PluginCard({
@@ -296,12 +400,15 @@ function PluginCard({
   onStart,
   onStop,
   onRestart,
+  onEnable,
+  onDisable,
   onRemove,
 }: CardProps) {
   const loadLogs = useMemo(
     () => () => plugins.logs(plugin.id, 200),
     [plugin.id],
   );
+  const [purge, setPurge] = useState(false);
   const active =
     plugin.state === 'running' ||
     plugin.state === 'starting' ||
@@ -310,6 +417,10 @@ function PluginCard({
     plugin.state === 'installed' ||
     plugin.state === 'stopped' ||
     plugin.state === 'crashed';
+  // A plugin whose ONLY problem is the user opt-out shows a distinct "disabled
+  // by user" reason — that's the re-enable case (vs quarantine/incompat).
+  const userDisabled =
+    plugin.state === 'disabled' && plugin.reason === 'disabled by user';
 
   return (
     <div className={`service-card service-card-${plugin.state}`}>
@@ -321,6 +432,7 @@ function PluginCard({
             {plugin.version && (
               <span className="badge badge-neutral">v{plugin.version}</span>
             )}
+            {plugin.package && <PackageBadge pkg={plugin.package} detail={plugin.packageDetail} />}
           </div>
           {plugin.description && (
             <div className="service-desc" title={plugin.description}>
@@ -387,17 +499,48 @@ function PluginCard({
             <button onClick={onStart} disabled={pending} className="btn btn-primary">
               {plugin.state === 'crashed' ? 'Start again' : 'Start'}
             </button>
+          ) : userDisabled ? (
+            <button onClick={onEnable} disabled={pending} className="btn btn-primary">
+              Enable
+            </button>
           ) : null}
+          {/* PLG-105: durable disable — the persistent off switch (Stop is
+              transient). Offered on any startable/active state. */}
+          {(active || startable) && (
+            <button
+              onClick={onDisable}
+              disabled={pending}
+              className="btn btn-ghost"
+              title="Durably disable — stays off across restarts until you Enable it"
+            >
+              Disable
+            </button>
+          )}
           <button onClick={onToggle} className="btn btn-ghost">
             {expanded ? 'Hide logs' : 'Logs'}
           </button>
           {!active && (
-            <button onClick={onRemove} disabled={pending} className="btn btn-danger">
+            <button
+              onClick={() => onRemove({ purge })}
+              disabled={pending}
+              className="btn btn-danger"
+            >
               Remove
             </button>
           )}
         </div>
       </div>
+      {/* PLG-107: optional data purge alongside Remove. */}
+      {!active && (
+        <label className="plugin-purge-row service-meta">
+          <input
+            type="checkbox"
+            checked={purge}
+            onChange={(e) => setPurge(e.target.checked)}
+          />
+          Also delete this plugin's data (settings, journals) on remove
+        </label>
+      )}
       {plugin.id === 'aokie' && (
         <AokieCard running={plugin.state === 'running'} devMode={devMode} />
       )}
@@ -423,4 +566,30 @@ function StateBadge({ state }: { state: PluginState }) {
           ? 'badge-pending'
           : 'badge-neutral';
   return <span className={`badge ${cls}`}>{state}</span>;
+}
+
+/** TRUST-001 package-signature badge — verified (with publisher detail),
+ *  unsigned (dev sideload), or tampered (quarantined). */
+function PackageBadge({ pkg, detail }: { pkg: string; detail?: string }) {
+  if (pkg === 'verified') {
+    return (
+      <span className="badge badge-ok" title={detail ? `Signed — ${detail}` : 'Signed by a trusted publisher'}>
+        <CheckIcon className="inline-icon icon-leading" size={11} />
+        signed
+      </span>
+    );
+  }
+  if (pkg === 'tampered') {
+    return (
+      <span className="badge badge-err" title="Package verification failed — quarantined">
+        <AlertTriangleIcon className="inline-icon icon-leading" size={11} />
+        tampered
+      </span>
+    );
+  }
+  return (
+    <span className="badge badge-neutral" title="No package signature — developer sideload">
+      unsigned
+    </span>
+  );
 }

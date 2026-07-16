@@ -337,6 +337,119 @@ async fn restart_if_active_cycles_only_an_active_plugin() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+/// PLG-102/105/107/108 — the full UI-driven lifecycle against the SAMPLE echo
+/// plugin (the mock-plugin binary), never live Aokie: install FROM A FOLDER
+/// (staging + validation + collision + atomic commit), start, disable
+/// (durable, survives rescan), enable, then uninstall WITH data purge.
+#[tokio::test(flavor = "multi_thread")]
+async fn install_from_folder_then_disable_enable_and_purge() {
+    let data = temp_data_dir("install-lifecycle");
+    // A SOURCE folder outside the plugins root — the shape a user picks.
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_mock-plugin"));
+    let exe_name = built.file_name().and_then(|n| n.to_str()).unwrap().to_string();
+    let src = data.join("mock-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(&built, src.join(&exe_name)).unwrap();
+    std::fs::write(
+        src.join("manifest.json"),
+        MOCK_MANIFEST.replace("COMMAND", &exe_name),
+    )
+    .unwrap();
+
+    let host = PluginHost::new(&data, true, EventBus::new());
+    assert!(host.list().is_empty(), "nothing installed yet");
+
+    // Install from the folder (sync host method the HTTP handler calls).
+    let id = host
+        .install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(
+            src.clone(),
+        ))
+        .expect("install from folder");
+    assert_eq!(id, "mock");
+    let snap = host.get("mock").expect("installed");
+    assert_eq!(snap.state, PluginState::Installed);
+    assert!(host.plugins_root().join("mock").join(&exe_name).is_file());
+
+    // A second install of the SAME id is an UPDATE — allowed while stopped.
+    host.install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(
+        src.clone(),
+    ))
+    .expect("reinstall (update) allowed while stopped");
+
+    // Start the real process, then seed some plugin data.
+    host.start("mock").expect("start");
+    wait_for(&host, "mock", "running", Duration::from_secs(15), |s| {
+        s.state == PluginState::Running
+    })
+    .await;
+    let data_dir = data.join("plugin-data").join("mock");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(data_dir.join("state.json"), "{}").unwrap();
+
+    // An UPDATE is refused while running (files would be locked).
+    assert!(
+        host.install_from_source(
+            &formlogic_desktop_lib::plugins::install::InstallSource::Folder(src.clone())
+        )
+        .is_err(),
+        "update refused while the plugin is running"
+    );
+
+    // Disable → stops the process + persists the opt-out across a rescan.
+    host.set_enabled("mock", false).await.expect("disable");
+    assert_eq!(host.get("mock").unwrap().state, PluginState::Disabled);
+    host.scan();
+    assert_eq!(
+        host.get("mock").unwrap().state,
+        PluginState::Disabled,
+        "disable survives a rescan"
+    );
+
+    // Enable → back to installed (a fresh host also reads it enabled).
+    host.set_enabled("mock", true).await.expect("enable");
+    assert_ne!(host.get("mock").unwrap().state, PluginState::Disabled);
+
+    // Uninstall WITH purge removes both the code AND the data dir.
+    host.uninstall("mock", true).await.expect("uninstall+purge");
+    assert!(host.get("mock").is_none(), "slot forgotten");
+    assert!(!host.plugins_root().join("mock").exists(), "code removed");
+    assert!(!data_dir.exists(), "purge removed the data dir");
+
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// PLG-104 — install refuses a plugin whose connector id collides with an
+/// already-installed plugin (deterministic first-match routing would otherwise
+/// be ambiguous). Exercised through the real install pipeline.
+#[tokio::test(flavor = "multi_thread")]
+async fn install_refuses_connector_collision() {
+    let data = temp_data_dir("install-collision");
+    install_mock_plugin(&data); // owns connector "mock"
+    let host = PluginHost::new(&data, false, EventBus::new());
+    assert_eq!(host.get("mock").unwrap().state, PluginState::Installed);
+
+    // A DIFFERENT plugin folder that also declares connector id "mock".
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_mock-plugin"));
+    let exe_name = built.file_name().and_then(|n| n.to_str()).unwrap().to_string();
+    let src = data.join("clash-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(&built, src.join(&exe_name)).unwrap();
+    let clash_manifest = format!(
+        "{{\"schemaVersion\":1,\"id\":\"clash\",\"name\":\"Clash\",\"version\":\"1.0.0\",\
+         \"entry\":{{\"kind\":\"process\",\"command\":\"{exe_name}\"}},\
+         \"connectors\":[{{\"id\":\"mock\",\"name\":\"Mock\",\"commands\":[\"echo.ping\"]}}]}}"
+    );
+    std::fs::write(src.join("manifest.json"), clash_manifest).unwrap();
+
+    let err = host
+        .install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(src))
+        .expect_err("collision must refuse");
+    assert!(err.contains("connector id"), "reason names the collision: {err}");
+    assert!(host.get("clash").is_none(), "the colliding plugin was not installed");
+
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn operator_speak_request_id_is_stable_across_retry_and_text_is_unchanged() {
     let data = temp_data_dir("speak-idempotency");

@@ -129,6 +129,12 @@ base64 = "0.22"
 # challenge; no admission/API bearer is ever encoded in the QR.
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
+# PLG-102: extraction of .formlogic-plugin archives (internally a ZIP) during
+# UI-driven install. `deflate` only (no bzip2/zstd/native-tls surface); the
+# extractor enforces its own file-count / size / compression-ratio / traversal
+# / symlink guards on top of the crate (see plugins/install.rs).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 # DESK-SECRET-001: the OS credential store (Windows Credential Manager) for the
 # long-lived FormLogic API key + HuggingFace token, so they never sit in a
 # plaintext config file. Windows-only backend — the audited/shipped platform;

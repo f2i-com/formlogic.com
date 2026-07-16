@@ -547,6 +547,15 @@ impl PluginHost {
                     }
                 }
             }
+            // PLG-104: connector-id / event-name ownership collisions across
+            // plugins. Two INERT plugins declaring the same connector id (or
+            // event) would make dispatch nondeterministic (connectors.rs routes
+            // first-match) and let one plugin trigger another's flows — so the
+            // loser is quarantined (Disabled) with a clear reason. A running
+            // plugin always wins (never touched); a stable tie-break (plugin id
+            // order) makes the outcome deterministic across scans.
+            quarantine_surface_collisions(&mut map);
+
             let mut now: Vec<(String, bool, PluginState)> = map
                 .iter()
                 .map(|(id, s)| (id.clone(), s.user_disabled, s.state))
@@ -557,6 +566,49 @@ impl PluginHost {
         if changed {
             self.persist();
         }
+    }
+
+    /// PLG-105: durably enable or disable a plugin. Disable stops a running
+    /// process, persists the opt-out (survives restart + rescan), and blocks
+    /// autostart + connector dispatch until re-enabled. Enable clears the flag
+    /// and returns the slot to `Installed`/`Stopped` (a later start/autostart
+    /// brings it up). Distinct from Stop (transient) — this is the durable
+    /// off switch operators need for a Store-shippable multi-plugin posture.
+    pub async fn set_enabled(self: &Arc<Self>, id: &str, enabled: bool) -> Result<(), String> {
+        {
+            let map = self.lock_plugins();
+            if !map.contains_key(id) {
+                return Err(format!("unknown plugin {id:?}"));
+            }
+        }
+        if !enabled {
+            // Stop first (idempotent), THEN flip the durable flag so a running
+            // process is torn down before it's marked disabled.
+            self.stop(id).await?;
+        }
+        {
+            let mut map = self.lock_plugins();
+            let Some(slot) = map.get_mut(id) else {
+                return Err(format!("unknown plugin {id:?}"));
+            };
+            slot.user_disabled = !enabled;
+            if !enabled {
+                slot.state = PluginState::Disabled;
+                slot.reason = Some("disabled by user".into());
+            } else if matches!(slot.state, PluginState::Disabled) {
+                // Only lift the disabled state if the flag was its ONLY cause;
+                // a re-scan re-derives quarantine/compat/missing-binary reasons.
+                slot.state = PluginState::Installed;
+                slot.reason = None;
+            }
+        }
+        self.persist();
+        // Re-derive any non-user reasons (missing binary, collision) for the
+        // freshly enabled slot.
+        if enabled {
+            self.scan();
+        }
+        Ok(())
     }
 
     /// Rescan + snapshot every plugin (the `GET /api/plugins` body).
@@ -654,6 +706,91 @@ impl PluginHost {
         if std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, &self.registry_path).is_err()
         {
             let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+/// PLG-104: quarantine inert plugins whose connector ids / event names collide
+/// with another plugin's. A running/active plugin always wins (its process owns
+/// the connector). Among inert plugins the lexicographically-smallest id wins,
+/// so the outcome is deterministic scan-to-scan. The loser becomes `Disabled`
+/// with a reason naming the winner; a user_disabled slot is left as-is.
+fn quarantine_surface_collisions(map: &mut HashMap<String, PluginSlot>) {
+    // Claimed connector id / event name → the winning plugin id. Active plugins
+    // claim first (order among active doesn't matter — at most one is meant to
+    // be active per connector, and if two race the first claim is stable enough
+    // for the reason string; dispatch itself is gated by AppBinding in Phase 2).
+    let mut connector_owner: HashMap<String, String> = HashMap::new();
+    let mut event_owner: HashMap<String, String> = HashMap::new();
+
+    // Deterministic order: active plugins first, then by id.
+    let mut order: Vec<String> = map.keys().cloned().collect();
+    order.sort();
+    order.sort_by_key(|id| !map.get(id).map(|s| s.state.is_active()).unwrap_or(false));
+
+    for id in order {
+        let (connectors, events, inert) = {
+            let Some(slot) = map.get(&id) else { continue };
+            // Only plugins with a valid manifest that aren't already disabled
+            // for another reason participate.
+            let Some(m) = &slot.manifest else { continue };
+            let inert = !slot.state.is_active();
+            (
+                m.connectors.iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+                m.events.clone(),
+                inert,
+            )
+        };
+        // If a disabled-by-user slot, don't quarantine-relabel it.
+        if map.get(&id).map(|s| s.user_disabled).unwrap_or(false) {
+            // Still let it CLAIM nothing (a disabled plugin owns no surface).
+            continue;
+        }
+        let mut loser_reason: Option<String> = None;
+        for c in &connectors {
+            match connector_owner.get(c) {
+                Some(winner) if winner != &id => {
+                    loser_reason = Some(format!(
+                        "connector id {c:?} is also provided by plugin {winner:?} — disabled to \
+                         avoid nondeterministic routing"
+                    ));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if loser_reason.is_none() {
+            for e in &events {
+                match event_owner.get(e) {
+                    Some(winner) if winner != &id => {
+                        loser_reason = Some(format!(
+                            "event {e:?} is also declared by plugin {winner:?} — disabled to avoid \
+                             cross-plugin delivery"
+                        ));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match loser_reason {
+            Some(reason) if inert => {
+                if let Some(slot) = map.get_mut(&id) {
+                    slot.state = PluginState::Disabled;
+                    slot.reason = Some(reason);
+                }
+                // A quarantined loser claims nothing.
+            }
+            _ => {
+                // Winner (or an active plugin that can't be quarantined here):
+                // record its claims.
+                for c in connectors {
+                    connector_owner.entry(c).or_insert_with(|| id.clone());
+                }
+                for e in events {
+                    event_owner.entry(e).or_insert_with(|| id.clone());
+                }
+            }
         }
     }
 }
@@ -819,6 +956,42 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("does not match"));
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn connector_collision_quarantines_the_loser_deterministically() {
+        let data = temp_data_dir("collide");
+        // Two inert plugins declaring the same connector id 'shared'. The
+        // lexicographically-smaller id ('aaa') wins; 'zzz' is quarantined.
+        let conn = r#", "connectors": [{ "id": "shared", "name": "S", "commands": ["do.ping"] }]"#;
+        write_plugin(&data, "aaa", &manifest_json("aaa", conn));
+        write_plugin(&data, "zzz", &manifest_json("zzz", conn));
+        let host = PluginHost::new(&data, false, EventBus::new());
+        let list = host.list();
+        let by_id = |id: &str| list.iter().find(|p| p.id == id).unwrap();
+        assert_ne!(by_id("aaa").state, PluginState::Disabled, "winner stays installed");
+        assert_eq!(by_id("zzz").state, PluginState::Disabled, "loser quarantined");
+        assert!(by_id("zzz")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("also provided by plugin \"aaa\""));
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn event_collision_quarantines_the_loser() {
+        let data = temp_data_dir("evcollide");
+        let ev = r#", "events": ["shared.event"]"#;
+        write_plugin(&data, "aaa", &manifest_json("aaa", ev));
+        write_plugin(&data, "zzz", &manifest_json("zzz", ev));
+        let host = PluginHost::new(&data, false, EventBus::new());
+        let list = host.list();
+        let by_id = |id: &str| list.iter().find(|p| p.id == id).unwrap();
+        assert_ne!(by_id("aaa").state, PluginState::Disabled);
+        assert_eq!(by_id("zzz").state, PluginState::Disabled);
+        assert!(by_id("zzz").reason.as_deref().unwrap().contains("also declared by plugin \"aaa\""));
         let _ = std::fs::remove_dir_all(&data);
     }
 
