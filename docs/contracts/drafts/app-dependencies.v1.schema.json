@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formlogic:app-dependencies.v1",
+  "title": "Application package dependency descriptor v1 (DRAFT — Phase 5 APP-502 locks it)",
+  "description": "dependencies.json inside a signed .formlogic-app archive: what the app needs from the other extension planes. The installer resolves these and tells the user what is present, missing, incompatible, or externally installed. Dependencies are DECLARATIONS — importing an app never silently installs native or server code.",
+  "type": "object",
+  "required": ["descriptorVersion"],
+  "properties": {
+    "descriptorVersion": { "const": 1 },
+    "desktop": {
+      "type": "object",
+      "properties": {
+        "minVersion": { "type": "string" },
+        "features": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "connectors": {
+      "type": "array",
+      "description": "Native connectors the app binds to (satisfied by a Desktop plugin installation + AppBinding).",
+      "items": {
+        "type": "object",
+        "required": ["connectorId", "minContractVersion"],
+        "properties": {
+          "connectorId": { "type": "string" },
+          "minContractVersion": { "type": "integer", "minimum": 1 },
+          "optional": { "type": "boolean", "default": false, "description": "true → the app degrades gracefully (presence callout) instead of failing install" },
+          "productPage": { "type": "string", "description": "https URL for the external plugin download (no in-app binary downloads)" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "aiCapabilities": {
+      "type": "array",
+      "description": "Logical AI capability aliases the device owner maps to provider profiles (ADR-008). Never a machine provider id, never a secret.",
+      "items": {
+        "type": "object",
+        "required": ["alias", "capability"],
+        "properties": {
+          "alias": { "type": "string" },
+          "capability": { "enum": ["chat", "transcription", "speech", "embeddings", "realtime"] },
+          "optional": { "type": "boolean", "default": false },
+          "requirements": { "type": "object", "description": "e.g. { audioInput: true, streaming: true }" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "hostedOperations": {
+      "type": "array",
+      "description": "Typed service.invoke capabilities the deployment must provide (ADR-004).",
+      "items": {
+        "type": "object",
+        "required": ["capability", "minVersion"],
+        "properties": {
+          "capability": { "type": "string" },
+          "minVersion": { "type": "integer", "minimum": 1 },
+          "optional": { "type": "boolean", "default": false }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

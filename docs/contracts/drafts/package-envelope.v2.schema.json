@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formlogic:package-envelope.v2",
+  "title": "Signed package envelope v2 (DRAFT — Phase 1 PLG-101 locks it)",
+  "description": "Successor to the v1 package-manifest.json. Adds the candidate public key / certificate chain (required for safe unknown-publisher approval), rotation co-signing, and revocation pointers. Signature is Ed25519 over the RAW canonical payload bytes (no re-canonicalization surface). Applies to both .formlogic-plugin and .formlogic-app archives.",
+  "type": "object",
+  "required": ["format", "alg", "keyId", "publisherKey", "payloadB64", "signature"],
+  "properties": {
+    "format": { "const": 2 },
+    "alg": { "const": "Ed25519" },
+    "keyId": { "type": "string", "maxLength": 64 },
+    "publisherKey": {
+      "type": "object",
+      "description": "The candidate public key material the verifier shows BEFORE any trust prompt.",
+      "required": ["publicKeyB64"],
+      "properties": {
+        "publicKeyB64": { "type": "string" },
+        "certChainPem": { "type": "string", "description": "optional X.509 chain when an external CA anchors the publisher" },
+        "catalogAssertion": { "type": "string", "description": "optional reference to an independently trusted catalog record" }
+      },
+      "additionalProperties": false
+    },
+    "rotation": {
+      "type": "object",
+      "description": "Present when this key supersedes an older publisher key: the payload is co-signed by BOTH.",
+      "required": ["previousKeyId", "previousSignature"],
+      "properties": {
+        "previousKeyId": { "type": "string" },
+        "previousSignature": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "payloadB64": {
+      "type": "string",
+      "description": "base64 of the canonical payload JSON: { name, version, createdAt, kind: 'plugin'|'app', files: [{ path (normalized, case-folded-unique, Windows-safe), sha256, size }], channel?, minDesktopVersion?, driverFlavour?, rebootRequired? }. Every executable/loadable file MUST be listed; manifest.json itself MUST be listed; version MUST equal the manifest + channel versions."
+    },
+    "signature": { "type": "string" }
+  },
+  "additionalProperties": false
+}

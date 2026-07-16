@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formlogic:plugin-manifest.v2",
+  "title": "FormLogic Desktop plugin manifest v2 (DRAFT — Phase 1 PLG-101A locks it)",
+  "description": "Additive successor to schemaVersion 1. Hosts accept {1,2}. Within v2: the execution / permission / trust / service / migration / update sections FAIL CLOSED on unknown fields; only sections marked presentation-only may be ignored by an older v2 host. A v2-only manifest is refused by a v1 host, so the Desktop update always ships before plugin packages using it.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "name", "version", "entry"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "version": { "type": "string", "description": "semver; must equal package-envelope + channel versions (release invariant)" },
+    "publisher": { "type": "string", "maxLength": 120 },
+    "publisherKeyId": { "type": "string", "maxLength": 64 },
+    "description": { "type": "string", "maxLength": 500 },
+    "pluginApiVersion": { "type": "integer", "minimum": 1 },
+    "minDesktopVersion": { "type": "string" },
+    "requires": {
+      "type": "object",
+      "description": "What the plugin REQUESTS. Fail-closed section.",
+      "properties": {
+        "hostFeatures": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "hostCapabilities": { "type": "array", "items": { "type": "string" }, "maxItems": 128 },
+        "network": {
+          "type": "array",
+          "description": "Declared egress destinations (disclosure + consent + host-API authorization — NOT an OS sandbox).",
+          "items": { "type": "object", "required": ["host", "purpose"], "properties": { "host": { "type": "string" }, "purpose": { "type": "string" }, "riskClass": { "enum": ["low", "medium", "high"] } } },
+          "maxItems": 32
+        }
+      },
+      "additionalProperties": false
+    },
+    "provides": {
+      "type": "object",
+      "description": "The plugin's public surface. Fail-closed section.",
+      "properties": {
+        "connectors": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "bindingCardinality": { "enum": ["one-app", "multi-app"], "default": "one-app" },
+              "commandsFile": { "type": "string", "description": "package-relative path to a signed command-contract file (command-contract.v1)" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "events": { "type": "array", "items": { "type": "string" }, "maxItems": 256 }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": ["kind", "command"],
+      "properties": {
+        "kind": { "const": "process" },
+        "command": { "type": "string", "description": "package-relative, listed+hashed in the signed envelope; bare PATH names are developer-mode only" },
+        "args": { "type": "array", "items": { "type": "string" }, "maxItems": 16 }
+      },
+      "additionalProperties": false
+    },
+    "ui": {
+      "type": "object",
+      "description": "Declarative contributions (presentation-only: an older v2 host may ignore unknown members INSIDE this section).",
+      "properties": {
+        "contributionsFile": { "type": "string", "description": "package-relative signed contributions/ui.json (nav items, overview cards, status tables, settings forms, ceremonies, deep-links, logs links)" }
+      },
+      "additionalProperties": true
+    },
+    "services": {
+      "type": "array",
+      "description": "Plugin-owned local service descriptors. Fail-closed section.",
+      "items": { "type": "object", "required": ["templateFile"], "properties": { "templateFile": { "type": "string" } }, "additionalProperties": false },
+      "maxItems": 8
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "machineSchemaFile": { "type": "string" },
+        "connectorSchemaFile": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "consent": {
+      "type": "object",
+      "description": "Consent/disclosure metadata for the generic wizard. Fail-closed section.",
+      "properties": {
+        "version": { "type": "integer", "minimum": 1 },
+        "scopesFile": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "data": {
+      "type": "object",
+      "description": "Data schema + migration metadata. Fail-closed section.",
+      "properties": {
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "downgradeCompatibleTo": { "type": "integer", "minimum": 1 },
+        "migrationsDir": { "type": "string" },
+        "externalInventory": {
+          "type": "array",
+          "description": "Data OUTSIDE plugin-data that a purge ceremony must list (never auto-delete).",
+          "items": { "type": "object", "properties": { "path": { "type": "string" }, "credential": { "type": "string" }, "label": { "type": "string" } }, "required": ["label"], "additionalProperties": false }
+        }
+      },
+      "additionalProperties": false
+    },
+    "update": {
+      "type": "object",
+      "description": "Update/rollback compatibility. Fail-closed section.",
+      "properties": {
+        "quiesce": { "type": "array", "items": { "enum": ["call", "lease", "pairing", "driver-transaction", "outbox-flush"] } },
+        "rebootRequired": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+    "commands": {
+      "type": "object",
+      "properties": {
+        "journalled": { "type": "array", "items": { "type": "string" }, "description": "Commands requiring durable requestIds (absorbs the hardcoded client mirrors)" }
+      },
+      "additionalProperties": false
+    },
+    "drivers": {
+      "type": "object",
+      "description": "Driver packages carried by the plugin. Fail-closed section.",
+      "properties": {
+        "flavour": { "enum": ["public-attested", "administrator-managed-beta"] },
+        "packagesDir": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

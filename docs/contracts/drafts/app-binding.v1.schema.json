@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formlogic:app-binding.v1",
+  "title": "AppBinding v1 (DRAFT — Phase 2 PLG-205 locks it)",
+  "description": "The host-authoritative record binding one ConnectorInstance to one app (ADR-002). The Desktop persists the local record; the hosted deployment persists the matching remote record; reconnect reconciles two-sided. Every command/event is stamped with these identities plus the binding epoch; stale epochs fail closed.",
+  "type": "object",
+  "required": [
+    "bindingId",
+    "deploymentId",
+    "appId",
+    "desktopConnectionId",
+    "pluginInstallationId",
+    "connectorInstanceId",
+    "contractVersion",
+    "epoch",
+    "state"
+  ],
+  "properties": {
+    "bindingId": { "type": "string" },
+    "deploymentId": { "type": "string" },
+    "appId": { "type": "string" },
+    "desktopConnectionId": { "type": "string" },
+    "pluginInstallationId": { "type": "string", "description": "stable per-install id (survives updates; a reinstall mints a new one and the binding shows 'missing' until reconnected)" },
+    "connectorInstanceId": { "type": "string" },
+    "settingsProfileId": { "type": "string" },
+    "contractVersion": { "type": "integer", "minimum": 1 },
+    "epoch": { "type": "integer", "minimum": 0, "description": "incremented on every ownership change; commands/events with a stale epoch fail closed" },
+    "state": { "enum": ["active", "inactive", "missing", "incompatible", "bound_elsewhere"] },
+    "offlinePolicy": {
+      "type": "object",
+      "description": "How long the last server-confirmed binding remains honoured offline. Offline can never create or transfer ownership.",
+      "properties": {
+        "maxOfflineSecs": { "type": "integer", "minimum": 0 },
+        "confirmedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

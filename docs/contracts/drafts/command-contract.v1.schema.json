@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formlogic:command-contract.v1",
+  "title": "Typed connector command contract v1 (DRAFT — Phase 2 PLG-202 locks it)",
+  "description": "The signed per-connector command registry a plugin ships (manifest provides.connectors[].commandsFile). Every command carries a version, IO schemas, typed errors, a query/mutation classification, a timeout, and a risk class. The HOST adds correlation + idempotency IDs to mutations; plugin- or pack-supplied scope/identity fields are ignored.",
+  "type": "object",
+  "required": ["contractVersion", "connectorId", "commands"],
+  "properties": {
+    "contractVersion": { "type": "integer", "minimum": 1 },
+    "connectorId": { "type": "string" },
+    "commands": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "kind", "input", "output", "timeoutMs", "riskClass"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9.]{1,63}$" },
+          "version": { "type": "integer", "minimum": 1 },
+          "kind": { "enum": ["query", "mutation"] },
+          "input": { "type": "object", "description": "JSON Schema for the payload" },
+          "output": { "type": "object", "description": "JSON Schema for the result" },
+          "errors": {
+            "type": "array",
+            "items": { "type": "object", "required": ["code"], "properties": { "code": { "type": "string" }, "retryable": { "type": "boolean" }, "description": { "type": "string" } }, "additionalProperties": false }
+          },
+          "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 600000 },
+          "riskClass": { "enum": ["read", "low", "high", "destructive"], "description": "high/destructive commands are host-ceremony-gated when invoked from UI contributions or pack screens" },
+          "journalled": { "type": "boolean", "default": false, "description": "requires a durable requestId (physical side effects)" },
+          "idempotent": { "type": "boolean", "default": false },
+          "cancellable": { "type": "boolean", "default": false },
+          "postcondition": { "type": "object", "description": "optional host-verifiable postcondition (query name + expected JSON-pointer value) for ceremony steps" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "Typed event payload schemas (name → JSON Schema), versioned like commands.",
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "payload"],
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 },
+          "payload": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
