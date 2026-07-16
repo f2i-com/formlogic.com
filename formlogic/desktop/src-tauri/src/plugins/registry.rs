@@ -195,7 +195,8 @@ pub type PluginHostHandle = Arc<PluginHost>;
 pub type PluginRpcFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, RpcErrorObj>> + Send>>;
 
-/// Routes INBOUND plugin requests (`flow.run`) to the flow runtime. The
+/// Routes capability-gated inbound plugin requests (`flow.run` and
+/// `companion.admission`) to linked FormLogic account services. The
 /// FlowRuntime implements this and registers it via [`PluginHost::set_rpc_handler`];
 /// the plugin supervisor pump calls it after the manifest capability check.
 pub trait PluginRpcHandler: Send + Sync {
@@ -227,6 +228,10 @@ pub struct PluginHost {
     /// Bounded broadcast; NEVER journalled, acked, or flow-dispatched — a
     /// lagging subscriber just skips ahead. Deliberately NOT the EventBus.
     pub(crate) realtime: tokio::sync::broadcast::Sender<String>,
+    /// Desktop-owned protocol-v2 endpoint key + approved mobile roster. The
+    /// private seed never enters registry snapshots or the public HTTP API.
+    pub(crate) aokie_endpoint_identity:
+        crate::aokie_endpoint_identity::AokieEndpointIdentityHandle,
 }
 
 impl PluginHost {
@@ -239,6 +244,10 @@ impl PluginHost {
         // CONSENT-001: the consent-signing key must exist BEFORE any plugin
         // spawns so the verify key rides in every child's environment.
         crate::consent_signing::init(&plugin_data_root);
+        let aokie_endpoint_identity =
+            crate::aokie_endpoint_identity::AokieEndpointIdentity::new(
+                plugin_data_root.join("aokie-companion-identity"),
+            );
         let registry_path = plugins_root.join("registry.json");
         let host = Arc::new(Self {
             plugins_root,
@@ -250,6 +259,7 @@ impl PluginHost {
             rpc_handler: Mutex::new(None),
             receipts_guard: Mutex::new(None),
             realtime: tokio::sync::broadcast::channel(256).0,
+            aokie_endpoint_identity,
         });
         host.scan();
         host
@@ -286,7 +296,13 @@ impl PluginHost {
         self.realtime.subscribe()
     }
 
-    /// Register the handler for inbound plugin requests (the `flow.run` RPC).
+    pub fn aokie_endpoint_identity(
+        &self,
+    ) -> crate::aokie_endpoint_identity::AokieEndpointIdentityHandle {
+        self.aokie_endpoint_identity.clone()
+    }
+
+    /// Register the handler for inbound plugin requests.
     pub fn set_rpc_handler(&self, handler: Arc<dyn PluginRpcHandler>) {
         *self.rpc_handler.lock().unwrap_or_else(|e| e.into_inner()) = Some(handler);
     }

@@ -290,6 +290,34 @@ class McpTest extends TestCase
         $this->assertSame('pending', $cmd['status']);
     }
 
+    public function testConnectorCommandCannotRelayPrivateAokieRealtimeOrBootstrapCommands(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 3600, ['connector:command'])['token'];
+        $commands = [
+            'remote.bootstrap',
+            'call.remoteStatus',
+            'call.assistance.respond',
+            'call.takeOver',
+            'call.resumeBot',
+            'call.endCaller',
+            'call.declineWaiting',
+        ];
+
+        foreach ($commands as $command) {
+            $r = $this->tool($tok, 'connector_command', [
+                'connectorId' => 'aokie',
+                'command' => $command,
+                'waitMs' => 0,
+            ]);
+            $this->assertTrue($r['isError'], $command);
+            $this->assertStringContainsStringIgnoringCase('private', $r['text'], $command);
+        }
+
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM desktop_commands WHERE owner_user_id = ?');
+        $stmt->execute([$this->userId]);
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+    }
+
     // ── connector_command batch DoS fix: one shared wall-clock deadline across a whole batch ──
 
     /**

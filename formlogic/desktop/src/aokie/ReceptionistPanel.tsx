@@ -13,6 +13,8 @@ import {
 import { AokieCard } from './AokieCard';
 import { DeliveryDiagnostics } from './DeliveryDiagnostics';
 import { LiveCallConsole } from './LiveCallConsole';
+import { CompanionPairingPanel } from './CompanionPairingPanel';
+import { deliveryStatusNote } from './deliveryStatusNote';
 
 /** `phone.status` response data (aokie connector) — readiness subset. */
 interface PhoneStatus {
@@ -69,13 +71,7 @@ export default function ReceptionistPanel() {
       }
       if (cloud.status === 'fulfilled') {
         setCloudLinked(cloud.value.linked);
-        setDeliveryNote(
-          cloud.value.lastError
-            ? cloud.value.lastError
-            : cloud.value.linked
-              ? `${cloud.value.recordsWritten} records written`
-              : 'link an account to deliver records'
-        );
+        setDeliveryNote(deliveryStatusNote(cloud.value));
       }
       // Radio/phone state only makes sense while the plugin runs.
       if (aokieRunning) {
@@ -258,6 +254,8 @@ export default function ReceptionistPanel() {
           </div>
         ))}
       </div>
+
+      <CompanionPairingPanel />
 
       {/* Live-call controls + delivery diagnostics — only meaningful while
           the plugin process is up. */}

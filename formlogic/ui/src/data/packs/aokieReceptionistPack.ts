@@ -3305,6 +3305,12 @@ export const aokieReceptionistPack: PackData = {
             { packFormId: 'follow-up-tasks', permission: 'edit_responses' },
             { packFormId: 'hardware-events', permission: 'submit_responses' },
             { packFormId: 'hardware-events', permission: 'view_all_responses' },
+            { packFormId: null, permission: 'aokie_companion_state' },
+            { packFormId: null, permission: 'aokie_companion_monitor' },
+            { packFormId: null, permission: 'aokie_companion_assistance' },
+            { packFormId: null, permission: 'aokie_companion_consult' },
+            { packFormId: null, permission: 'aokie_companion_takeover' },
+            { packFormId: null, permission: 'aokie_companion_resume' },
             // Declarative connector/flow intent (plan §12.6) — see the note above.
             { packFormId: null, permission: 'connector.aokie.call.current' },
             { packFormId: null, permission: 'connector.aokie.call.answer' },

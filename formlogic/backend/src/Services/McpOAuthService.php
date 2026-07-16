@@ -27,6 +27,8 @@ class McpOAuthService
     public const CODE_TTL = 60;
     /** OAuth access tokens get a hard 1h absolute expiry; clients refresh via the refresh grant. */
     public const ACCESS_TOKEN_TTL = 3600;
+    /** Native Companion access stays short; its rotating refresh family supplies continuity. */
+    public const AOKIE_COMPANION_ACCESS_TOKEN_TTL = 600;
     /** Refresh tokens last ~30 days (rotation for public clients keeps the family fresh). */
     public const REFRESH_TOKEN_TTL = 2592000;
 
@@ -43,6 +45,32 @@ class McpOAuthService
      */
     public const DESKTOP_CLIENT_ID = 'formlogic-desktop';
 
+    /** First-party public native client used by Windows/Android Companion. */
+    public const AOKIE_COMPANION_CLIENT_ID = 'aokie-companion';
+
+    /** App-narrowed call permissions shown explicitly on the OAuth consent page. */
+    public const AOKIE_COMPANION_SCOPES = [
+        'aokie:state',
+        'aokie:monitor',
+        'aokie:consult',
+        'aokie:takeover',
+        'aokie:resume',
+        'aokie:assistance',
+        'aokie:end_caller',
+        'offline_access',
+    ];
+
+    /** @var list<string> Scopes that no dynamically registered/MCP client may obtain. */
+    private const AOKIE_COMPANION_ONLY_SCOPES = [
+        'aokie:state',
+        'aokie:monitor',
+        'aokie:consult',
+        'aokie:takeover',
+        'aokie:resume',
+        'aokie:assistance',
+        'aokie:end_caller',
+    ];
+
     /**
      * The scope vocabulary the desktop client may request — DISTINCT from the MCP session scopes.
      * These are ApiKeyService scopes (the minted flk_ key holds exactly the granted subset):
@@ -51,7 +79,7 @@ class McpOAuthService
      *   when applying onConnectorEvent effects + flow output actions; connector:relay claims/completes
      *   the remote connector commands a web member enqueues.
      */
-    public const DESKTOP_SCOPES = ['flows:read', 'flows:write', 'responses:read', 'responses:write', 'responses:manage', 'connector:relay'];
+    public const DESKTOP_SCOPES = ['flows:read', 'flows:write', 'responses:read', 'responses:write', 'responses:manage', 'connector:relay', 'aokie:realtime'];
 
     /** CIMD (client-metadata-document) fetch limits: SSRF-guarded, 5s, 64KB, JSON only, no redirects. */
     private const CIMD_CACHE_TTL = 300;
@@ -110,6 +138,19 @@ class McpOAuthService
         return self::publicOrigin($request) . '/api/mcp';
     }
 
+    /** Dedicated audience for the native Companion profile; it cannot authenticate /api/mcp. */
+    public static function companionResourceFor(Request $request): string
+    {
+        return self::publicOrigin($request) . '/api/aokie-companion';
+    }
+
+    public static function resourceForClient(Request $request, string $clientId): string
+    {
+        return self::isAokieCompanionClient($clientId)
+            ? self::companionResourceFor($request)
+            : self::resourceFor($request);
+    }
+
     /**
      * The RFC 9728 §5.1 challenge that /api/mcp MUST send on every 401 — it is the discovery trigger
      * for MCP clients (Claude ignores WWW-Authenticate on 200s; the 401 header starts the OAuth flow).
@@ -129,7 +170,7 @@ class McpOAuthService
     public static function resourceMatchesRequest(string $resource, Request $request): bool
     {
         $stored = parse_url($resource);
-        if (!is_array($stored) || empty($stored['host'])) {
+        if (!is_array($stored) || empty($stored['host']) || empty($stored['scheme'])) {
             return false;
         }
         $storedHost = strtolower((string) $stored['host'])
@@ -137,19 +178,36 @@ class McpOAuthService
         $uri = $request->getUri();
         $port = $uri->getPort();
         $requestHost = strtolower($uri->getHost()) . (($port !== null && $port !== 80 && $port !== 443) ? ':' . $port : '');
-        return $storedHost !== '' && hash_equals($storedHost, $requestHost);
+        $storedPath = rtrim((string) ($stored['path'] ?? ''), '/');
+        $requestPath = rtrim($uri->getPath(), '/');
+        $pathMatches = $storedPath !== ''
+            && ($requestPath === $storedPath || str_starts_with($requestPath, $storedPath . '/'));
+        return $storedHost !== ''
+            && hash_equals(strtolower((string) $stored['scheme']), self::requestScheme($request))
+            && hash_equals($storedHost, $requestHost)
+            && $pathMatches;
     }
 
     /** Every scope an OAuth client may ask for: the MCP session scopes + offline_access (refresh). */
     public static function supportedScopes(): array
     {
-        return array_merge(McpTokenService::ALL_SCOPES, ['offline_access']);
+        // A DCR/CIMD client is an MCP client, not a native-call client. Keep the
+        // call scopes out of global discovery and out of its authorize policy.
+        return array_merge(
+            array_values(array_diff(McpTokenService::ALL_SCOPES, self::AOKIE_COMPANION_ONLY_SCOPES)),
+            ['offline_access'],
+        );
     }
 
     /** True for the static first-party FormLogic Desktop client (device-link → scoped API key). */
     public static function isDesktopClient(string $clientId): bool
     {
         return $clientId === self::DESKTOP_CLIENT_ID;
+    }
+
+    public static function isAokieCompanionClient(string $clientId): bool
+    {
+        return $clientId === self::AOKIE_COMPANION_CLIENT_ID;
     }
 
     /**
@@ -161,6 +219,9 @@ class McpOAuthService
     {
         if (self::isDesktopClient($clientId)) {
             return [self::DESKTOP_SCOPES, self::DESKTOP_SCOPES];
+        }
+        if (self::isAokieCompanionClient($clientId)) {
+            return [self::AOKIE_COMPANION_SCOPES, self::AOKIE_COMPANION_SCOPES];
         }
         return [self::supportedScopes(), McpTokenService::DEFAULT_SCOPES];
     }
@@ -180,6 +241,14 @@ class McpOAuthService
             'flows:read' => 'Read your flows, bindings and runs',
             'flows:write' => 'Run and complete flows',
             'connector:relay' => 'Act as a desktop runtime for connector commands',
+            'aokie:realtime' => 'Connect the assigned Aokie Desktop plugin to Companion realtime calls',
+            'aokie:state' => 'See live Aokie call state, caller details and captions for the selected app',
+            'aokie:monitor' => 'Listen to a live Aokie call without microphone access',
+            'aokie:consult' => 'Join a private voice consultation when invited',
+            'aokie:takeover' => 'Take over a live caller using this device microphone',
+            'aokie:resume' => 'Return a caller to the Aokie receptionist',
+            'aokie:assistance' => 'Read and respond to typed Aokie assistance requests',
+            'aokie:end_caller' => 'End the caller leg while you actively own the live call',
             'connector:command' => 'Send commands to your FormLogic Desktop connectors (e.g. control the Aokie phone) — account-wide',
         ];
         $out = [];
@@ -405,7 +474,7 @@ class McpOAuthService
         if (!preg_match('/^[A-Za-z0-9\-._~]{43,128}$/', $challenge)) {
             return $err('invalid_request', 'Malformed code_challenge');
         }
-        $expectedResource = self::resourceFor($request);
+        $expectedResource = self::resourceForClient($request, $client['clientId']);
         $resource = trim((string) ($p['resource'] ?? ''));
         if ($resource !== '' && $resource !== $expectedResource) {
             return $err('invalid_target', 'resource must be ' . $expectedResource);
@@ -414,6 +483,11 @@ class McpOAuthService
         $scopes = $this->grantedScopes((string) ($p['scope'] ?? ''), $supported, $default);
         if ($scopes === null) {
             return $err('invalid_scope', 'None of the requested scopes are supported');
+        }
+        $device = $this->cleanText($p['device'] ?? null, 100);
+        if (self::isAokieCompanionClient($client['clientId'])
+            && (!is_string($device) || preg_match('/^[A-Za-z0-9_.:-]{1,100}$/D', $device) !== 1)) {
+            return $err('invalid_request', 'device is required and must be a stable safe identifier for Aokie Companion');
         }
         return [
             'ok' => true,
@@ -424,7 +498,7 @@ class McpOAuthService
             'resource' => $expectedResource,
             // Sanitized device label from ?device= — carried through consent to the token exchange so
             // a desktop-minted key/connection can be named "FormLogic Desktop on <device>". null otherwise.
-            'device' => $this->cleanText($p['device'] ?? null, 100),
+            'device' => $device,
         ];
     }
 
@@ -517,38 +591,87 @@ class McpOAuthService
      * Mint the access token (an flm_oauth_ McpTokenService session, 1h absolute expiry, audience-bound
      * to $resource) + a refresh token, as the RFC 6749 token-response body.
      */
-    public function issueTokenPair(string $userId, ?string $appId, array $scopes, string $resource, string $clientId, ?string $familyId = null): array
+    public function issueTokenPair(
+        string $userId,
+        ?string $appId,
+        array $scopes,
+        string $resource,
+        string $clientId,
+        ?string $familyId = null,
+        ?string $deviceId = null,
+    ): array
     {
-        $access = $this->tokens->createOAuth($userId, $appId, $scopes, $resource, self::ACCESS_TOKEN_TTL);
+        $familyId ??= $this->uuid();
+        $ttl = self::isAokieCompanionClient($clientId)
+            ? self::AOKIE_COMPANION_ACCESS_TOKEN_TTL
+            : self::ACCESS_TOKEN_TTL;
+        $access = $this->tokens->createOAuth(
+            $userId,
+            $appId,
+            $scopes,
+            $resource,
+            $ttl,
+            $clientId,
+            $deviceId,
+            $familyId,
+        );
         return [
             'access_token' => $access['token'],
             'token_type' => 'Bearer',
-            'expires_in' => self::ACCESS_TOKEN_TTL,
-            'refresh_token' => $this->mintRefreshToken($userId, $clientId, $appId, $scopes, $resource, $familyId),
+            'expires_in' => $ttl,
+            'refresh_token' => $this->mintRefreshToken($userId, $clientId, $appId, $scopes, $resource, $familyId, $deviceId),
             'scope' => implode(' ', $scopes),
         ];
     }
 
     /** Access-token-only variant (confidential-client refresh keeps its same refresh token). */
-    public function issueAccessToken(string $userId, ?string $appId, array $scopes, string $resource): array
+    public function issueAccessToken(
+        string $userId,
+        ?string $appId,
+        array $scopes,
+        string $resource,
+        string $clientId,
+        ?string $deviceId = null,
+        ?string $familyId = null,
+    ): array
     {
-        $access = $this->tokens->createOAuth($userId, $appId, $scopes, $resource, self::ACCESS_TOKEN_TTL);
+        $ttl = self::isAokieCompanionClient($clientId)
+            ? self::AOKIE_COMPANION_ACCESS_TOKEN_TTL
+            : self::ACCESS_TOKEN_TTL;
+        $access = $this->tokens->createOAuth(
+            $userId,
+            $appId,
+            $scopes,
+            $resource,
+            $ttl,
+            $clientId,
+            $deviceId,
+            $familyId,
+        );
         return [
             'access_token' => $access['token'],
             'token_type' => 'Bearer',
-            'expires_in' => self::ACCESS_TOKEN_TTL,
+            'expires_in' => $ttl,
             'scope' => implode(' ', $scopes),
         ];
     }
 
     /** Mint a refresh token (hashed at rest). $familyId chains rotations for reuse detection. */
-    public function mintRefreshToken(string $userId, string $clientId, ?string $appId, array $scopes, string $resource, ?string $familyId = null): string
+    public function mintRefreshToken(
+        string $userId,
+        string $clientId,
+        ?string $appId,
+        array $scopes,
+        string $resource,
+        ?string $familyId = null,
+        ?string $deviceId = null,
+    ): string
     {
         $raw = self::REFRESH_PREFIX . bin2hex(random_bytes(24));
         $stmt = $this->db()->prepare("
             INSERT INTO mcp_oauth_refresh_tokens
-                (id, token_hash, family_id, client_id, user_id, app_id, scopes, resource, expires_at, created_at)
-            VALUES (:id, :h, :family, :cid, :uid, :app, :scopes, :resource, :exp, :now)
+                (id, token_hash, family_id, client_id, user_id, app_id, scopes, resource, device_id, expires_at, created_at)
+            VALUES (:id, :h, :family, :cid, :uid, :app, :scopes, :resource, :device, :exp, :now)
         ");
         $stmt->execute([
             'id' => $this->uuid(),
@@ -559,6 +682,7 @@ class McpOAuthService
             'app' => $appId,
             'scopes' => json_encode(array_values($scopes)),
             'resource' => $resource,
+            'device' => $deviceId,
             'exp' => date('Y-m-d H:i:s', time() + self::REFRESH_TOKEN_TTL),
             'now' => date('Y-m-d H:i:s'),
         ]);
@@ -605,6 +729,8 @@ class McpOAuthService
             'appId' => $row['app_id'] !== null ? (string) $row['app_id'] : null,
             'scopes' => is_array($scopes) ? $scopes : McpTokenService::DEFAULT_SCOPES,
             'resource' => (string) $row['resource'],
+            'deviceId' => isset($row['device_id']) && is_string($row['device_id']) ? $row['device_id'] : null,
+            'familyId' => (string) $row['family_id'],
             'newRefreshToken' => null,
         ];
         if ($isPublicClient) {
@@ -621,7 +747,8 @@ class McpOAuthService
                 $result['appId'],
                 $result['scopes'],
                 $result['resource'],
-                (string) $row['family_id']
+                (string) $row['family_id'],
+                $result['deviceId'],
             );
         }
         return $result;
@@ -662,7 +789,7 @@ class McpOAuthService
             return null;
         }
         if ($granted === ['offline_access']) {
-            return array_merge($default, ['offline_access']);
+            return array_values(array_unique(array_merge($default, ['offline_access'])));
         }
         return $granted;
     }
@@ -835,6 +962,14 @@ class McpOAuthService
     private function revokeRefreshFamily(string $familyId): void
     {
         $stmt = $this->db()->prepare("UPDATE mcp_oauth_refresh_tokens SET revoked_at = :now WHERE family_id = :f AND revoked_at IS NULL");
+        $stmt->execute(['now' => date('Y-m-d H:i:s'), 'f' => $familyId]);
+        // Access sessions remain database-backed specifically so a stolen,
+        // already-rotated refresh token can revoke every descendant access
+        // token immediately rather than waiting for its ten-minute TTL.
+        $stmt = $this->db()->prepare(
+            'UPDATE mcp_sessions SET revoked_at = :now
+             WHERE refresh_family_id = :f AND revoked_at IS NULL'
+        );
         $stmt->execute(['now' => date('Y-m-d H:i:s'), 'f' => $familyId]);
     }
 

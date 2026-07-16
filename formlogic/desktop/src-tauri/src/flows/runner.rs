@@ -969,6 +969,7 @@ async fn execute_node(
             } else {
                 None
             };
+            let request_id = flow_connector_request_id(node, opts, &connector_id, &command);
             connector_request(
                 node,
                 deps,
@@ -976,7 +977,7 @@ async fn execute_node(
                 &connector_id,
                 &command,
                 payload,
-                connector_request_id(opts, node),
+                request_id,
             )
             .await
         }
@@ -1033,8 +1034,8 @@ async fn execute_node(
                 "aokie",
                 "call.operatorSpeak",
                 Some(payload),
+                flow_connector_request_id(node, opts, "aokie", "call.operatorSpeak"),
                 &["stale_call", "stale_turn"],
-                connector_request_id(opts, node),
             )
             .await
         }
@@ -1106,7 +1107,7 @@ async fn connector_request(
     connector_id: &str,
     command: &str,
     payload: Option<Value>,
-    request_id: String,
+    request_id: Option<String>,
 ) -> Result<Value, FlowError> {
     connector_request_allowing(
         node,
@@ -1115,10 +1116,24 @@ async fn connector_request(
         connector_id,
         command,
         payload,
-        &[],
         request_id,
+        &[],
     )
     .await
+}
+
+fn flow_connector_request_id(
+    node: &GraphNode,
+    opts: &RunOptions,
+    connector_id: &str,
+    command: &str,
+) -> Option<String> {
+    (connector_id == "aokie" && connectors::aokie_command_requires_request_id(command)).then(|| {
+        connectors::stable_request_id(
+            "flow-command",
+            &[&opts.request_id_seed, &opts.flow_slug, &node.id, command],
+        )
+    })
 }
 
 /// Like [`connector_request`], but the listed typed connector error codes
@@ -1134,8 +1149,8 @@ async fn connector_request_allowing(
     connector_id: &str,
     command: &str,
     payload: Option<Value>,
+    request_id: Option<String>,
     benign_codes: &[&str],
-    request_id: String,
 ) -> Result<Value, FlowError> {
     let exact = format!("connector.{connector_id}.{command}");
     let wildcard = format!("connector.{connector_id}.*");
@@ -1154,7 +1169,7 @@ async fn connector_request_allowing(
         command: command.to_string(),
         payload,
         timeout_ms: None,
-        request_id: Some(request_id),
+        request_id,
     };
     match connectors::dispatch(host, connector_id, &body).await {
         Ok(v) => Ok(v),
@@ -1170,15 +1185,6 @@ async fn connector_request_allowing(
             Err(FlowError::new(code, format!("Node '{}' connector {connector_id}.{command}: {}", node.id, f.message), Some(node.id.clone())))
         }
     }
-}
-
-fn connector_request_id(opts: &RunOptions, node: &GraphNode) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(
-        format!("{}:{}:{}", opts.request_id_seed, opts.flow_slug, node.id).as_bytes(),
-    );
-    let hex = format!("{digest:x}");
-    format!("flowcmd:{}", &hex[..48])
 }
 
 async fn run_http_request(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
@@ -1782,6 +1788,30 @@ mod tests {
             flow_slug: "t".into(),
             request_id_seed: "test-run-1".into(),
         }
+    }
+
+    #[test]
+    fn physical_connector_effect_reuses_request_id_per_logical_flow_execution() {
+        let node = GraphNode {
+            id: "reconnect-phone".into(),
+            node_type: "connector_request".into(),
+            data: Value::Null,
+        };
+        let first = flow_connector_request_id(&node, &opts(), "aokie", "phone.connect");
+        let retry = flow_connector_request_id(&node, &opts(), "aokie", "phone.connect");
+        assert_eq!(first, retry);
+        assert!(first.as_deref().is_some_and(|id| id.len() <= 128));
+
+        let mut next_execution = opts();
+        next_execution.request_id_seed = "test-run-2".into();
+        assert_ne!(
+            first,
+            flow_connector_request_id(&node, &next_execution, "aokie", "phone.connect")
+        );
+        assert_eq!(
+            flow_connector_request_id(&node, &opts(), "aokie", "phone.status"),
+            None
+        );
     }
 
     #[tokio::test]

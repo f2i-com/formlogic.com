@@ -12,6 +12,7 @@ import {
 } from '../desktop/desktopDetection';
 import { clearDesktopToken, storeDesktopToken } from '../desktop/desktopPairing';
 import { __resetDesktopEventsForTests, subscribeDesktopEvents } from '../desktop/desktopEvents';
+import { setConnectorCapabilityContext } from '../desktop/desktopClient';
 import { api } from '../../lib/api';
 
 // Aokie connector routing (FL-CONN-001): desktop present+paired → the Desktop gateway;
@@ -38,6 +39,7 @@ afterEach(() => {
   __resetDesktopEventsForTests();
   __resetAokieSimulatorForTests();
   clearDesktopToken();
+  setConnectorCapabilityContext(null);
   api.setDemoMode(false);
   vi.restoreAllMocks();
   delete (globalThis as unknown as { fetch?: unknown }).fetch;
@@ -76,6 +78,45 @@ describe('aokieConnector.request routing', () => {
     expect(requestBodies[0].requestId).toMatch(/^ui-phone\.connect-[0-9a-f-]{36}$/);
     expect(requestBodies[1]).toMatchObject({ connectorId: 'aokie', command: 'phone.status' });
     expect(requestBodies[1]).not.toHaveProperty('requestId');
+  });
+
+  it('gives each phone.connect action a plugin-safe durable requestId', async () => {
+    desktopPairedAndDetected();
+    const fetchMock = setFetch(vi.fn(() => jsonResponse({ ok: true, data: { accepted: true } })));
+
+    await aokieConnector.request('phone.connect', { address: '00:11:22:33:44:55' });
+    await aokieConnector.request('phone.connect', { address: '00:11:22:33:44:55' });
+
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)) as {
+      requestId?: string;
+    });
+    expect(bodies[0].requestId).toMatch(/^ui-phone\.connect-[A-Za-z0-9_.:-]+$/);
+    expect(bodies[0].requestId?.length).toBeLessThanOrEqual(128);
+    expect(bodies[1].requestId).not.toBe(bodies[0].requestId);
+  });
+
+  it('reuses phone.connect requestId when capability refresh retries the same action', async () => {
+    desktopPairedAndDetected();
+    setConnectorCapabilityContext('aokie-app');
+    let capabilityMint = 0;
+    const gatewayBodies: Array<{ requestId?: string }> = [];
+    setFetch(vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).includes('/api/app/')) {
+        capabilityMint += 1;
+        return jsonResponse({ token: `cap-${capabilityMint}`, expiresInSeconds: 300 });
+      }
+      gatewayBodies.push(JSON.parse(String(init?.body)) as { requestId?: string });
+      return gatewayBodies.length === 1
+        ? jsonResponse({ ok: false, error: { code: 'capability_denied', message: 'refresh' } }, 403)
+        : jsonResponse({ ok: true, data: { accepted: true } });
+    }));
+
+    await aokieConnector.request('phone.connect', { address: '00:11:22:33:44:55' });
+
+    expect(capabilityMint).toBe(2);
+    expect(gatewayBodies).toHaveLength(2);
+    expect(gatewayBodies[0].requestId).toBeTruthy();
+    expect(gatewayBodies[1].requestId).toBe(gatewayBodies[0].requestId);
   });
 
   it('Desktop absent WITHOUT a simulator session: typed connector_unavailable, never the mock', async () => {

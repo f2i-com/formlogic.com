@@ -262,9 +262,10 @@ class McpOAuthFlowTest extends TestCase
             $this->assertSame([$this->origin()], $body['authorization_servers']);
             $this->assertSame(['header'], $body['bearer_methods_supported']);
             $this->assertContains('offline_access', $body['scopes_supported']);
-            foreach (McpTokenService::ALL_SCOPES as $scope) {
+            foreach (McpOAuthService::supportedScopes() as $scope) {
                 $this->assertContains($scope, $body['scopes_supported']);
             }
+            $this->assertNotContains('aokie:state', $body['scopes_supported'], 'native-call scopes are not MCP scopes');
         }
     }
 

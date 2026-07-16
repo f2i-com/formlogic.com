@@ -81,6 +81,404 @@ export interface BillingStatus {
   usage: PlanUsage | null;
 }
 
+/** Public, credential-free view of the app-specific Aokie Companion discovery document. */
+export interface AokieCompanionDiscovery {
+  schemaVersion: number;
+  issuer: string | null;
+  deploymentId: string | null;
+  appId: string | null;
+  appSlug: string | null;
+  available: boolean;
+  gatewayUrl: string | null;
+  features: string[];
+  scopesSupported: string[];
+  trustStatus: 'signed' | 'unverified' | 'unknown';
+  signatureVerified: boolean;
+  signatureAlgorithm: string | null;
+  signingKeyId: string | null;
+  iceServerCount: number;
+  hasTurnRelay: boolean;
+  relayOnly: boolean;
+  /** Earliest short-lived TURN expiry, as a Unix timestamp. Credentials and URLs are never exposed. */
+  turnCredentialExpiresAt: number | null;
+  remoteConsent: AokieCompanionRemoteConsent;
+  media: {
+    transport: string | null;
+    gatewayRelaysMedia: boolean;
+    companionUsesBluetoothDongle: boolean;
+    relayOnly: boolean;
+  };
+}
+
+/** Explicit application-level remote access policy. Missing/malformed policy fails closed. */
+export interface AokieCompanionRemoteConsent {
+  configured: boolean;
+  remoteMonitoring: boolean;
+  remoteConsult: boolean;
+  remoteTakeover: boolean;
+  remoteCaptions: boolean;
+  remoteAssistance: boolean;
+}
+
+export type AokieCompanionRemoteConsentInput = Omit<AokieCompanionRemoteConsent, 'configured'>;
+
+/** One owner-managed Desktop/plugin or Companion enrollment. */
+export interface AokieCompanionDevice {
+  id: string;
+  userId: string;
+  appId: string;
+  subjectId: string;
+  role: 'mobile' | 'plugin' | string;
+  displayName: string;
+  grants: string[];
+  approvedAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+}
+
+export interface AokieCompanionActivity {
+  id: string;
+  eventId: string;
+  appId: string;
+  sessionRecordId: string | null;
+  callId: string | null;
+  deviceId: string | null;
+  actorUserId: string | null;
+  subjectId: string;
+  eventType: string;
+  mode: string | null;
+  reason: string | null;
+  ownerEpoch: number | null;
+  occurredAt: string;
+}
+
+export interface AokieCompanionSession {
+  id: string;
+  sessionId: string;
+  callId: string;
+  deviceId: string | null;
+  subjectId: string;
+  mode: string;
+  state: string;
+  joinedAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  lastEventId: string;
+  lastEventAt: string;
+}
+
+export type AokieCompanionRoutingPolicy = 'all' | 'priority' | 'round_robin';
+export type AokieCompanionAvailability = 'available' | 'busy' | 'offline' | 'do_not_disturb';
+
+export interface AokieCompanionRoutingMember {
+  deviceId: string;
+  userId: string;
+  subjectId: string;
+  displayName: string;
+  priority: number;
+  enabled: boolean;
+  availability: AokieCompanionAvailability;
+  availabilityUpdatedAt: string;
+}
+
+export interface AokieCompanionRoutingGroup {
+  id: string;
+  appId: string;
+  name: string;
+  policy: AokieCompanionRoutingPolicy;
+  enabled: boolean;
+  members: AokieCompanionRoutingMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AokieCompanionRoutingGroupInput {
+  appId: string;
+  name: string;
+  policy: AokieCompanionRoutingPolicy;
+  enabled: boolean;
+  members: Array<{ deviceId: string; priority: number; enabled: boolean }>;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function companionRemoteConsent(value: unknown): AokieCompanionRemoteConsent {
+  const row = recordValue(value);
+  return {
+    configured: row?.configured === true,
+    remoteMonitoring: row?.remoteMonitoring === true,
+    remoteConsult: row?.remoteConsult === true,
+    remoteTakeover: row?.remoteTakeover === true,
+    remoteCaptions: row?.remoteCaptions === true,
+    remoteAssistance: row?.remoteAssistance === true,
+  };
+}
+
+function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
+function decodeBase64(value: string): ArrayBuffer {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  return ownedArrayBuffer(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+}
+
+/** Strip credentials, query strings and fragments before a gateway URL reaches rendered UI. */
+function displayEndpoint(value: unknown): string | null {
+  if (typeof value !== 'string' || value === '') return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password || !['ws:', 'wss:'].includes(parsed.protocol)) return null;
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify the normative signed envelope against the advertised same-issuer Ed25519 key.
+ * Discovery stays useful for diagnostics when WebCrypto/key retrieval is unavailable, but
+ * callers get signatureVerified=false and must not present the deployment as trusted.
+ */
+async function verifyAokieCompanionDiscovery(raw: Record<string, unknown>): Promise<boolean> {
+  const envelope = recordValue(raw.signatureEnvelope);
+  const payload = recordValue(envelope?.payload);
+  const keyUrl = typeof raw.signingKeyUrl === 'string' ? raw.signingKeyUrl : '';
+  const issuer = typeof raw.issuer === 'string' ? raw.issuer : '';
+  const signature = typeof envelope?.signature === 'string' ? envelope.signature : '';
+  const algorithm = typeof envelope?.alg === 'string' ? envelope.alg : '';
+  const keyId = typeof envelope?.keyId === 'string' ? envelope.keyId : '';
+  if (!envelope || !payload || raw.trustStatus !== 'signed' || algorithm !== 'Ed25519' || !signature || !keyId) {
+    return false;
+  }
+  if (raw.signature !== signature || raw.signatureAlgorithm !== algorithm || raw.signingKeyId !== keyId) {
+    return false;
+  }
+  // The additive top-level document must agree exactly with every signed payload member.
+  for (const [name, value] of Object.entries(payload)) {
+    if (JSON.stringify(raw[name]) !== JSON.stringify(value)) return false;
+  }
+  try {
+    const key = new URL(keyUrl);
+    const issuerUrl = new URL(issuer);
+    if (key.origin !== issuerUrl.origin || key.pathname !== '/api/public/signing-key') return false;
+    if (!globalThis.crypto?.subtle) return false;
+    const response = await fetch(key.toString(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    if (!response.ok) return false;
+    const keyDocument = recordValue(await response.json());
+    if (!keyDocument
+      || keyDocument.alg !== 'Ed25519'
+      || keyDocument.keyId !== keyId
+      || typeof keyDocument.publicKey !== 'string') {
+      return false;
+    }
+    const publicKey = await globalThis.crypto.subtle.importKey(
+      'raw',
+      decodeBase64(keyDocument.publicKey),
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    );
+    return globalThis.crypto.subtle.verify(
+      { name: 'Ed25519' },
+      publicKey,
+      decodeBase64(signature),
+      ownedArrayBuffer(new TextEncoder().encode(JSON.stringify(payload))),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function companionDiscoveryView(raw: Record<string, unknown>, signatureVerified: boolean): AokieCompanionDiscovery {
+  const envelope = recordValue(raw.signatureEnvelope);
+  // Prefer the signed payload even when local verification is unavailable; the trust flag remains
+  // false, so the UI can show diagnostics without silently treating unsigned top-level edits as ready.
+  const payload = recordValue(envelope?.payload) ?? raw;
+  const media = recordValue(payload.media);
+  const iceServers = Array.isArray(payload.iceServers) ? payload.iceServers : [];
+  const hasTurnRelay = iceServers.some((candidate) => {
+    const server = recordValue(candidate);
+    const urls = stringList(server?.urls);
+    return urls.some((url) => /^turns?:/i.test(url));
+  });
+  const rawTrust = typeof raw.trustStatus === 'string' ? raw.trustStatus : '';
+  return {
+    schemaVersion: typeof payload.schemaVersion === 'number' ? payload.schemaVersion : 0,
+    issuer: typeof payload.issuer === 'string' ? payload.issuer : null,
+    deploymentId: typeof payload.deploymentId === 'string' ? payload.deploymentId : null,
+    appId: typeof payload.appId === 'string' ? payload.appId : null,
+    appSlug: typeof payload.appSlug === 'string' ? payload.appSlug : null,
+    available: payload.available === true,
+    gatewayUrl: displayEndpoint(payload.gatewayUrl),
+    features: stringList(payload.features),
+    scopesSupported: stringList(payload.scopesSupported),
+    trustStatus: rawTrust === 'signed' || rawTrust === 'unverified' ? rawTrust : 'unknown',
+    signatureVerified,
+    signatureAlgorithm: typeof raw.signatureAlgorithm === 'string' ? raw.signatureAlgorithm : null,
+    signingKeyId: typeof raw.signingKeyId === 'string' ? raw.signingKeyId : null,
+    iceServerCount: iceServers.length,
+    hasTurnRelay,
+    relayOnly: payload.relayOnly === true,
+    turnCredentialExpiresAt: typeof payload.turnCredentialExpiresAt === 'number'
+      && Number.isSafeInteger(payload.turnCredentialExpiresAt)
+      ? payload.turnCredentialExpiresAt
+      : null,
+    remoteConsent: companionRemoteConsent(payload.remoteConsent),
+    media: {
+      transport: typeof media?.transport === 'string' ? media.transport : null,
+      gatewayRelaysMedia: media?.gatewayRelaysMedia === true,
+      companionUsesBluetoothDongle: media?.companionUsesBluetoothDongle === true,
+      relayOnly: media?.relayOnly === true,
+    },
+  };
+}
+
+function companionDevice(value: unknown): AokieCompanionDevice | null {
+  const row = recordValue(value);
+  if (!row
+    || typeof row.id !== 'string'
+    || typeof row.userId !== 'string'
+    || typeof row.appId !== 'string'
+    || typeof row.subjectId !== 'string'
+    || typeof row.role !== 'string'
+    || typeof row.displayName !== 'string'
+    || typeof row.approvedAt !== 'string'
+    || typeof row.lastSeenAt !== 'string') {
+    return null;
+  }
+  return {
+    id: row.id,
+    userId: row.userId,
+    appId: row.appId,
+    subjectId: row.subjectId,
+    role: row.role,
+    displayName: row.displayName,
+    grants: stringList(row.grants),
+    approvedAt: row.approvedAt,
+    lastSeenAt: row.lastSeenAt,
+    revokedAt: typeof row.revokedAt === 'string' ? row.revokedAt : null,
+  };
+}
+
+function companionActivity(value: unknown): AokieCompanionActivity | null {
+  const row = recordValue(value);
+  if (!row
+    || typeof row.id !== 'string'
+    || typeof row.eventId !== 'string'
+    || typeof row.appId !== 'string'
+    || typeof row.subjectId !== 'string'
+    || typeof row.eventType !== 'string'
+    || typeof row.occurredAt !== 'string') return null;
+  return {
+    id: row.id,
+    eventId: row.eventId,
+    appId: row.appId,
+    sessionRecordId: typeof row.sessionRecordId === 'string' ? row.sessionRecordId : null,
+    callId: typeof row.callId === 'string' ? row.callId : null,
+    deviceId: typeof row.deviceId === 'string' ? row.deviceId : null,
+    actorUserId: typeof row.actorUserId === 'string' ? row.actorUserId : null,
+    subjectId: row.subjectId,
+    eventType: row.eventType,
+    mode: typeof row.mode === 'string' ? row.mode : null,
+    reason: typeof row.reason === 'string' ? row.reason : null,
+    ownerEpoch: typeof row.ownerEpoch === 'number' && Number.isSafeInteger(row.ownerEpoch) ? row.ownerEpoch : null,
+    occurredAt: row.occurredAt,
+  };
+}
+
+function companionSession(value: unknown): AokieCompanionSession | null {
+  const row = recordValue(value);
+  if (!row
+    || typeof row.id !== 'string'
+    || typeof row.sessionId !== 'string'
+    || typeof row.callId !== 'string'
+    || typeof row.subjectId !== 'string'
+    || typeof row.mode !== 'string'
+    || typeof row.state !== 'string'
+    || typeof row.lastEventId !== 'string'
+    || typeof row.lastEventAt !== 'string') return null;
+  return {
+    id: row.id,
+    sessionId: row.sessionId,
+    callId: row.callId,
+    deviceId: typeof row.deviceId === 'string' ? row.deviceId : null,
+    subjectId: row.subjectId,
+    mode: row.mode,
+    state: row.state,
+    joinedAt: typeof row.joinedAt === 'string' ? row.joinedAt : null,
+    endedAt: typeof row.endedAt === 'string' ? row.endedAt : null,
+    endReason: typeof row.endReason === 'string' ? row.endReason : null,
+    lastEventId: row.lastEventId,
+    lastEventAt: row.lastEventAt,
+  };
+}
+
+function companionRoutingGroup(value: unknown): AokieCompanionRoutingGroup | null {
+  const row = recordValue(value);
+  const policy = row?.policy;
+  if (!row
+    || typeof row.id !== 'string'
+    || typeof row.appId !== 'string'
+    || typeof row.name !== 'string'
+    || !['all', 'priority', 'round_robin'].includes(String(policy))
+    || typeof row.enabled !== 'boolean'
+    || !Array.isArray(row.members)
+    || typeof row.createdAt !== 'string'
+    || typeof row.updatedAt !== 'string') return null;
+  const members = row.members.flatMap((value): AokieCompanionRoutingMember[] => {
+    const member = recordValue(value);
+    const availability = member?.availability;
+    if (!member
+      || typeof member.deviceId !== 'string'
+      || typeof member.userId !== 'string'
+      || typeof member.subjectId !== 'string'
+      || typeof member.displayName !== 'string'
+      || typeof member.priority !== 'number'
+      || !Number.isSafeInteger(member.priority)
+      || typeof member.enabled !== 'boolean'
+      || !['available', 'busy', 'offline', 'do_not_disturb'].includes(String(availability))
+      || typeof member.availabilityUpdatedAt !== 'string') return [];
+    return [{
+      deviceId: member.deviceId,
+      userId: member.userId,
+      subjectId: member.subjectId,
+      displayName: member.displayName,
+      priority: member.priority,
+      enabled: member.enabled,
+      availability: availability as AokieCompanionAvailability,
+      availabilityUpdatedAt: member.availabilityUpdatedAt,
+    }];
+  });
+  return {
+    id: row.id,
+    appId: row.appId,
+    name: row.name,
+    policy: policy as AokieCompanionRoutingPolicy,
+    enabled: row.enabled,
+    members,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 /** A collision-resistant idempotency key for a submission (crypto UUID when available). */
 export function newIdempotencyKey(): string {
   try {
@@ -1516,6 +1914,144 @@ class ApiClient {
 
   async getAppMyPermissions(slug: string): Promise<ApiResponse<{ permissions: unknown }>> {
     return this.request(`/app/${slug}/my-permissions`);
+  }
+
+  /**
+   * App-bound Aokie Companion discovery plus an in-browser Ed25519 trust check.
+   * The returned view is deliberately credential-free: TURN usernames/credentials,
+   * gateway admissions, SDP and ICE candidates never escape this method.
+   */
+  async getAokieCompanionDiscovery(slug: string): Promise<ApiResponse<AokieCompanionDiscovery>> {
+    const result = await this.request<Record<string, unknown>>(
+      `/app/${encodeURIComponent(slug)}/aokie-discovery`,
+    );
+    if (result.error || !result.data) return { error: result.error ?? 'Companion discovery is unavailable', status: result.status };
+    const verified = await verifyAokieCompanionDiscovery(result.data);
+    return { data: companionDiscoveryView(result.data, verified) };
+  }
+
+  /** Owner-only enrollment registry, optionally narrowed to one app. */
+  async getAokieCompanionDevices(appId?: string): Promise<ApiResponse<{ devices: AokieCompanionDevice[] }>> {
+    const query = appId ? `?appId=${encodeURIComponent(appId)}` : '';
+    const result = await this.request<{ devices?: unknown[] }>(`/aokie-companion/devices${query}`);
+    if (result.error || !result.data) return { error: result.error ?? 'Companion endpoints are unavailable', status: result.status };
+    return {
+      data: {
+        devices: (Array.isArray(result.data.devices) ? result.data.devices : [])
+          .map(companionDevice)
+          .filter((device): device is AokieCompanionDevice => device !== null),
+      },
+    };
+  }
+
+  /** Immediately revoke an endpoint and all of that native endpoint's access/refresh sessions. */
+  async revokeAokieCompanionDevice(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/aokie-companion/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  /** Re-open a revoked registry row; the endpoint must still complete native authorization again. */
+  async approveAokieCompanionDevice(id: string): Promise<ApiResponse<{ success: boolean; reauthorizationRequired: boolean }>> {
+    return this.request(`/aokie-companion/devices/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+  }
+
+  /** Read the fail-closed app policy. Every published app member may inspect it. */
+  async getAokieCompanionPolicy(appId: string): Promise<ApiResponse<{ appId: string; remoteConsent: AokieCompanionRemoteConsent }>> {
+    const result = await this.request<{ appId?: unknown; remoteConsent?: unknown }>(
+      `/aokie-companion/policy?appId=${encodeURIComponent(appId)}`,
+    );
+    if (result.error || !result.data) return { error: result.error ?? 'Companion policy is unavailable', status: result.status };
+    return {
+      data: {
+        appId: typeof result.data.appId === 'string' ? result.data.appId : appId,
+        remoteConsent: companionRemoteConsent(result.data.remoteConsent),
+      },
+    };
+  }
+
+  /** Management-permission update; all four booleans are sent explicitly. */
+  async updateAokieCompanionPolicy(
+    appId: string,
+    remoteConsent: AokieCompanionRemoteConsentInput,
+  ): Promise<ApiResponse<{ appId: string; remoteConsent: AokieCompanionRemoteConsent }>> {
+    const result = await this.request<{ appId?: unknown; remoteConsent?: unknown }>('/aokie-companion/policy', {
+      method: 'PUT',
+      body: JSON.stringify({ appId, remoteConsent }),
+    });
+    if (result.error || !result.data) return { error: result.error ?? 'Companion policy could not be saved', status: result.status };
+    return {
+      data: {
+        appId: typeof result.data.appId === 'string' ? result.data.appId : appId,
+        remoteConsent: { ...companionRemoteConsent(result.data.remoteConsent), configured: true },
+      },
+    };
+  }
+
+  async getAokieCompanionHistory(
+    appId: string,
+    limit = 100,
+    before?: number,
+  ): Promise<ApiResponse<{ activity: AokieCompanionActivity[]; sessions: AokieCompanionSession[] }>> {
+    const query = new URLSearchParams({ appId, limit: String(limit) });
+    if (before !== undefined) query.set('before', String(before));
+    const result = await this.request<{ activity?: unknown[]; sessions?: unknown[] }>(
+      `/aokie-companion/history?${query.toString()}`,
+    );
+    if (result.error || !result.data) return { error: result.error ?? 'Companion history is unavailable', status: result.status };
+    return {
+      data: {
+        activity: (Array.isArray(result.data.activity) ? result.data.activity : [])
+          .map(companionActivity).filter((row): row is AokieCompanionActivity => row !== null),
+        sessions: (Array.isArray(result.data.sessions) ? result.data.sessions : [])
+          .map(companionSession).filter((row): row is AokieCompanionSession => row !== null),
+      },
+    };
+  }
+
+  async getAokieCompanionRoutingGroups(appId: string): Promise<ApiResponse<{ groups: AokieCompanionRoutingGroup[] }>> {
+    const result = await this.request<{ groups?: unknown[] }>(
+      `/aokie-companion/routing-groups?appId=${encodeURIComponent(appId)}`,
+    );
+    if (result.error || !result.data) return { error: result.error ?? 'Companion routing is unavailable', status: result.status };
+    return {
+      data: {
+        groups: (Array.isArray(result.data.groups) ? result.data.groups : [])
+          .map(companionRoutingGroup).filter((row): row is AokieCompanionRoutingGroup => row !== null),
+      },
+    };
+  }
+
+  async createAokieCompanionRoutingGroup(
+    input: AokieCompanionRoutingGroupInput,
+  ): Promise<ApiResponse<{ group: AokieCompanionRoutingGroup }>> {
+    return this.request('/aokie-companion/routing-groups', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateAokieCompanionRoutingGroup(
+    id: string,
+    input: AokieCompanionRoutingGroupInput,
+  ): Promise<ApiResponse<{ group: AokieCompanionRoutingGroup }>> {
+    return this.request(`/aokie-companion/routing-groups/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async deleteAokieCompanionRoutingGroup(id: string, appId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(
+      `/aokie-companion/routing-groups/${encodeURIComponent(id)}?appId=${encodeURIComponent(appId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async setAokieCompanionAvailability(
+    appId: string,
+    deviceId: string,
+    availability: AokieCompanionAvailability,
+  ): Promise<ApiResponse<{ success: boolean; availability: AokieCompanionAvailability }>> {
+    return this.request('/aokie-companion/availability', {
+      method: 'PUT',
+      body: JSON.stringify({ appId, deviceId, availability }),
+    });
   }
 
   /**

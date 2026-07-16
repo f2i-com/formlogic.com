@@ -12,6 +12,7 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\RateLimiter;
 use FormLogic\Services\PlanService;
 use FormLogic\Services\FlowService;
@@ -780,6 +781,10 @@ class McpController
                     if ($connectorId === '' || $command === '') {
                         throw new \Exception('connectorId and command are required.');
                     }
+                    // MCP bypasses ConnectorCommandController, so repeat the
+                    // private-channel denial here before presence/target work;
+                    // DesktopCommandService repeats it before persistence.
+                    DesktopCommandService::assertPublicRelayCommand($connectorId, $command);
                     $payload = is_array($args['payload'] ?? null) ? $args['payload'] : null;
                     $waitMs = max(0, min(self::CONNECTOR_COMMAND_MAX_WAIT_MS, (int) ($args['waitMs'] ?? 15000)));
                     // Presence: if no desktop has polled the relay recently, don't block the full timeout

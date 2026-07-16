@@ -556,6 +556,7 @@ fn install_python_native(dest: &Path, logs: &LogBuffer) -> Result<(), String> {
 fn run_logged(program: &Path, args: &[String], logs: &LogBuffer) -> i32 {
     let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.env_remove("AOKIE_COMPANION_DESKTOP_TOKEN");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

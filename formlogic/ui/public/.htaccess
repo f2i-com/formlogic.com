@@ -78,6 +78,11 @@ Options -Indexes
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
   RewriteRule ^api/ api/public/index.php [QSA,L]
 
+  # Never hand a missing same-origin API to the SPA fallback: callers need a
+  # real HTTP failure, not index.html (and certainly not recursive rewrites).
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php !-f
+  RewriteRule ^api/ - [R=404,L]
+
   # Custom-domain launch endpoints served by the backend at the domain ROOT. Map three top-level
   # paths to the API front controller so the backend can answer them per-Host (signed client
   # manifest, same-origin PWA manifest, dynamic Android App Links). Gated on the bundled backend
@@ -98,6 +103,12 @@ Options -Indexes
   # the consent page is an SPA route, so the fallback below already serves it.)
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
   RewriteRule ^\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server)$ api/public/index.php [QSA,L]
+
+  # Native Aokie Companion deployment discovery. Keep both the extensionless
+  # well-known URI and its explicit JSON alias out of the SPA fallback so a
+  # native client always receives the signed PHP discovery document.
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteRule ^\.well-known/aokie-companion(\.json)?$ api/public/index.php [QSA,L]
 
   # SPA: serve real files (assets, index.html, service worker) as-is...
   RewriteRule ^index\.html$ - [L]

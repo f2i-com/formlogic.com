@@ -81,8 +81,7 @@ impl PluginHost {
             // same distinct, actionable reason the slot shows — instead of a
             // spawn failure counting as `crashed`.
             if let Some(m) = &slot.manifest {
-                if let Some(reason) =
-                    crate::plugins::registry::binary_missing_reason(&slot.dir, m)
+                if let Some(reason) = crate::plugins::registry::binary_missing_reason(&slot.dir, m)
                 {
                     slot.reason = Some(reason.clone());
                     return Err(reason);
@@ -189,6 +188,25 @@ impl PluginHost {
         self.start(id)
     }
 
+    /// Refresh an active plugin without turning an installed/stopped/disabled
+    /// plugin on as a side effect. This is used after native-only configuration
+    /// changes (such as the Aokie Companion peer roster) that are deliberately
+    /// supplied only during `plugin.init`.
+    pub async fn restart_if_active(self: &Arc<Self>, id: &str) -> Result<bool, String> {
+        let active = {
+            let map = self.lock_plugins();
+            let Some(slot) = map.get(id) else {
+                return Ok(false);
+            };
+            slot.state.is_active()
+        };
+        if !active {
+            return Ok(false);
+        }
+        self.restart(id).await?;
+        Ok(true)
+    }
+
     /// Uninstall a plugin (`DELETE /api/plugins/{id}`): stop it if active,
     /// remove `<plugins>/<id>` (manifest + binary), and forget the slot. The
     /// plugin's WRITABLE data under `<plugin-data>/<id>` (settings, outbox,
@@ -256,7 +274,9 @@ impl PluginHost {
                 _ => return Err(format!("plugin {id:?} is not running")),
             }
         };
-        let res = client.request("plugin.health", json!({}), HEALTH_TIMEOUT).await;
+        let res = client
+            .request("plugin.health", json!({}), HEALTH_TIMEOUT)
+            .await;
         let report = health_report(&res);
         self.record_health(id, gen, report.clone());
         match res {
@@ -307,6 +327,7 @@ impl PluginHost {
 
 /// The manifest capability that gates the inbound `flow.run` RPC.
 pub const FLOW_RUN_CAPABILITY: &str = "flow.run";
+pub const COMPANION_ADMISSION_CAPABILITY: &str = "companion.admission";
 
 /// True when a manifest declares the `flow.run` capability (bare or `flow.*`).
 pub fn declares_flow_run(manifest: &crate::plugins::manifest::PluginManifest) -> bool {
@@ -316,32 +337,65 @@ pub fn declares_flow_run(manifest: &crate::plugins::manifest::PluginManifest) ->
         .any(|c| c == FLOW_RUN_CAPABILITY || c == "flow.*")
 }
 
-/// Handle one inbound plugin request. Only `flow.run` is supported, and only
-/// when the manifest DECLARES the `flow.run` capability (else `capability_denied`)
-/// and a FormLogic account is linked (else `runner_unavailable`).
+/// The admission broker is intentionally a separate, exact capability. A
+/// generic `flow.*` grant must never expose a credential-minting host method.
+pub fn declares_companion_admission(
+    manifest: &crate::plugins::manifest::PluginManifest,
+) -> bool {
+    manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == COMPANION_ADMISSION_CAPABILITY)
+}
+
+/// Handle one inbound plugin request. Every method has an exact manifest
+/// capability and the credential broker is additionally pinned to plugin id
+/// `aokie`; neither method is reachable when the FormLogic account is unlinked.
 async fn handle_inbound_plugin_request(
     host: &Arc<PluginHost>,
     manifest: &crate::plugins::manifest::PluginManifest,
     plugin_id: &str,
+    package_verified: bool,
     method: &str,
     params: Value,
 ) -> Result<Value, crate::plugins::rpc::RpcErrorObj> {
     use crate::plugins::rpc::RpcErrorObj;
-    if method != "flow.run" {
-        return Err(RpcErrorObj { code: -32601, message: format!("method not found: {method}"), data: None });
-    }
-    if !declares_flow_run(manifest) {
-        return Err(RpcErrorObj {
-            code: -32000,
-            message: "capability 'flow.run' is not declared in the plugin manifest".into(),
-            data: Some(json!({ "code": "capability_denied" })),
-        });
+    match method {
+        "flow.run" if !declares_flow_run(manifest) => {
+            return Err(RpcErrorObj {
+                code: -32000,
+                message: "capability 'flow.run' is not declared in the plugin manifest".into(),
+                data: Some(json!({ "code": "capability_denied" })),
+            });
+        }
+        "companion.admission"
+            if plugin_id != "aokie"
+                || !package_verified
+                || !declares_companion_admission(manifest) =>
+        {
+            return Err(RpcErrorObj {
+                code: -32000,
+                message: "capability 'companion.admission' is not available to this plugin".into(),
+                data: Some(json!({ "code": "capability_denied" })),
+            });
+        }
+        "flow.run" | "companion.admission" => {}
+        _ => {
+            return Err(RpcErrorObj {
+                code: -32601,
+                message: format!("method not found: {method}"),
+                data: None,
+            });
+        }
     }
     match host.rpc_handler() {
-        Some(h) => h.handle(plugin_id.to_string(), method.to_string(), params).await,
+        Some(h) => {
+            h.handle(plugin_id.to_string(), method.to_string(), params)
+                .await
+        }
         None => Err(RpcErrorObj {
             code: -32001,
-            message: "flow runtime is not linked to a FormLogic account".into(),
+            message: "FormLogic account services are not linked".into(),
             data: Some(json!({ "code": "runner_unavailable" })),
         }),
     }
@@ -430,13 +484,72 @@ async fn supervise(host: Arc<PluginHost>, id: String, gen: u64) {
 }
 
 /// One process lifetime: spawn → init → run (health + control + exit watch).
+/// Assemble the Aokie-only private init object. A package name is not a trust
+/// boundary: the endpoint seed is released only after launch-time package
+/// verification, and only when the approved-mobile roster satisfies the v2
+/// plugin peer policy. An unsigned/dev Aokie build may still run its local
+/// Bluetooth connector, but remote Companion admission remains unavailable.
+fn private_aokie_bootstrap(
+    host: &Arc<PluginHost>,
+    plugin_id: &str,
+    package_verified: bool,
+) -> Result<Option<Value>, String> {
+    if plugin_id != "aokie" || !package_verified {
+        return Ok(None);
+    }
+    let Some(identity) = host.aokie_endpoint_identity.private_bootstrap()? else {
+        return Ok(None);
+    };
+    let session = crate::aokie_companion_publisher::plugin_v2_bootstrap(plugin_id)?;
+    Ok(Some(compose_private_aokie_bootstrap(
+        plugin_id,
+        identity,
+        session,
+    )?))
+}
+
+/// Combine the package-gated endpoint authority with either an explicit
+/// startup admission or the strict identity-only shape. In the latter case
+/// the plugin uses its private `companion.admission` host RPC to obtain the
+/// first short-lived admission, just as it already does for later rotations.
+fn compose_private_aokie_bootstrap(
+    plugin_id: &str,
+    identity: Value,
+    session: Option<Value>,
+) -> Result<Value, String> {
+    let mut bootstrap = session.unwrap_or_else(|| {
+        json!({
+            "schemaVersion": 2,
+            "pluginId": plugin_id,
+        })
+    });
+    let target = bootstrap
+        .as_object_mut()
+        .ok_or_else(|| "Aokie private bootstrap is not an object".to_string())?;
+    for (key, value) in identity
+        .as_object()
+        .ok_or_else(|| "Aokie endpoint identity bootstrap is not an object".to_string())?
+    {
+        target.insert(key.clone(), value.clone());
+    }
+    Ok(bootstrap)
+}
+
 async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
     // Snapshot everything needed to spawn, without holding the lock across IO.
-    let (dir, manifest, logs) = {
+    let (dir, manifest, logs, package_verified) = {
         let map = host.lock_plugins();
         match map.get(id) {
             Some(slot) if slot.generation == gen => match &slot.manifest {
-                Some(m) => (slot.dir.clone(), m.clone(), slot.logs.clone()),
+                Some(m) => (
+                    slot.dir.clone(),
+                    m.clone(),
+                    slot.logs.clone(),
+                    matches!(
+                        slot.package_trust,
+                        crate::plugins::package_trust::PackageTrust::Verified { .. }
+                    ),
+                ),
                 None => {
                     return RunOutcome::Crashed {
                         reason: "manifest missing".into(),
@@ -535,6 +648,7 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
         let logs = logs.clone();
         let pump_client = client.clone();
         let pump_receipts = receipts.clone();
+        let package_verified = package_verified;
         tokio::spawn(async move {
             while let Some(n) = notifications.recv().await {
                 match n {
@@ -552,14 +666,10 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
                                 use crate::plugins::receipts::ReceiptOutcome;
                                 match receipts.record(&key, &envelope) {
                                     Ok(ReceiptOutcome::New) => {
-                                        host.events.publish_from_plugin(
-                                            &id, &manifest, envelope, &logs,
-                                        );
+                                        host.events
+                                            .publish_from_plugin(&id, &manifest, envelope, &logs);
                                         pump_client
-                                            .notify(
-                                                "event.ack",
-                                                json!({ "idempotencyKey": key }),
-                                            )
+                                            .notify("event.ack", json!({ "idempotencyKey": key }))
                                             .await;
                                     }
                                     Ok(ReceiptOutcome::Duplicate) => {
@@ -570,10 +680,7 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
                                             ),
                                         );
                                         pump_client
-                                            .notify(
-                                                "event.ack",
-                                                json!({ "idempotencyKey": key }),
-                                            )
+                                            .notify("event.ack", json!({ "idempotencyKey": key }))
                                             .await;
                                     }
                                     Err(e) => {
@@ -583,15 +690,15 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
                                                 "[desktop] receipt journal write failed for {key}: {e} — NOT acked, plugin will re-deliver"
                                             ),
                                         );
-                                        host.events.publish_from_plugin(
-                                            &id, &manifest, envelope, &logs,
-                                        );
+                                        host.events
+                                            .publish_from_plugin(&id, &manifest, envelope, &logs);
                                     }
                                 }
                             }
                             // No journal or no idempotencyKey: legacy path.
                             _ => {
-                                host.events.publish_from_plugin(&id, &manifest, envelope, &logs);
+                                host.events
+                                    .publish_from_plugin(&id, &manifest, envelope, &logs);
                             }
                         }
                     }
@@ -603,7 +710,11 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
                     rpc::PluginNotification::Log { level, message } => {
                         logs.push("stdout", format!("[{level}] {message}"));
                     }
-                    rpc::PluginNotification::Request { id: rpc_id, method, params } => {
+                    rpc::PluginNotification::Request {
+                        id: rpc_id,
+                        method,
+                        params,
+                    } => {
                         // Gate + route off the pump so a slow flow can't stall
                         // event/log delivery; the reply goes back over stdin.
                         let host = host.clone();
@@ -611,8 +722,15 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
                         let client = pump_client.clone();
                         let plugin_id = id.clone();
                         tokio::spawn(async move {
-                            let outcome =
-                                handle_inbound_plugin_request(&host, &manifest, &plugin_id, &method, params).await;
+                            let outcome = handle_inbound_plugin_request(
+                                &host,
+                                &manifest,
+                                &plugin_id,
+                                package_verified,
+                                &method,
+                                params,
+                            )
+                            .await;
                             client.respond(rpc_id, outcome).await;
                         });
                     }
@@ -629,13 +747,33 @@ async fn run_once(host: &Arc<PluginHost>, id: &str, gen: u64) -> RunOutcome {
     if receipts.is_some() {
         features.push("eventAck");
     }
-    let init_params = json!({
+    let private_bootstrap = match private_aokie_bootstrap(host, id, package_verified) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return RunOutcome::Crashed {
+                reason: format!("private plugin bootstrap rejected: {error}"),
+                exit_code: None,
+            };
+        }
+    };
+    if private_bootstrap.is_some() {
+        features.push("aokieCompanionV2");
+    }
+    let mut init_params = json!({
         "desktopVersion": env!("CARGO_PKG_VERSION"),
         "pluginApiVersion": crate::PLUGIN_API_VERSION,
         "dataDir": data_dir.display().to_string(),
         "devMode": host.dev_mode,
         "features": features,
     });
+    if let Some(private_bootstrap) = private_bootstrap {
+        init_params
+            .as_object_mut()
+            .expect("plugin.init parameters are an object")
+            .insert("privateBootstrap".into(), private_bootstrap);
+    }
     tokio::select! {
         res = client.request("plugin.init", init_params, INIT_TIMEOUT) => {
             if let Err(f) = res {
@@ -739,10 +877,15 @@ async fn graceful_shutdown(
     logs: &rpc::LogRing,
 ) {
     let graceful = async {
-        let _ = client.request("plugin.shutdown", json!({}), SHUTDOWN_GRACE).await;
+        let _ = client
+            .request("plugin.shutdown", json!({}), SHUTDOWN_GRACE)
+            .await;
         let _ = child.wait().await;
     };
-    if tokio::time::timeout(SHUTDOWN_GRACE, graceful).await.is_err() {
+    if tokio::time::timeout(SHUTDOWN_GRACE, graceful)
+        .await
+        .is_err()
+    {
         logs.push(
             "stderr",
             "[desktop] plugin did not exit within the shutdown grace period — killing".into(),
@@ -763,10 +906,7 @@ fn health_report(res: &Result<Value, RpcFailure>) -> HealthReport {
             HealthReport {
                 at: chrono::Utc::now(),
                 ok: status == "ok",
-                detail: v
-                    .get("detail")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
+                detail: v.get("detail").and_then(Value::as_str).map(str::to_string),
                 components: v.get("components").cloned(),
                 status,
             }
@@ -812,14 +952,98 @@ mod tests {
     fn declares_flow_run_matches_bare_and_wildcard() {
         assert!(declares_flow_run(&manifest("\"flow.run\"")));
         assert!(declares_flow_run(&manifest("\"flow.*\"")));
-        assert!(!declares_flow_run(&manifest("\"connector.aokie.call.answer\"")));
+        assert!(!declares_flow_run(&manifest(
+            "\"connector.aokie.call.answer\""
+        )));
+    }
+
+    #[test]
+    fn companion_admission_requires_the_exact_capability() {
+        assert!(declares_companion_admission(&manifest(
+            "\"companion.admission\""
+        )));
+        assert!(!declares_companion_admission(&manifest("\"flow.*\"")));
+        assert!(!declares_companion_admission(&manifest(
+            "\"companion.*\""
+        )));
+    }
+
+    #[test]
+    fn identity_only_private_bootstrap_names_the_plugin_for_brokered_admission() {
+        let identity = json!({
+            "endpointIdentity": {
+                "algorithm": "ed25519",
+                "publicKey": "desktop-public-key",
+                "thumbprint": "desktop-thumbprint",
+                "privateKeySeed": "private-seed",
+            },
+            "approvedMobileRoster": {
+                "revision": 1,
+                "rosterHash": "roster-hash",
+                "keys": [],
+            },
+        });
+
+        let bootstrap =
+            compose_private_aokie_bootstrap("aokie", identity, None).expect("bootstrap");
+
+        assert_eq!(bootstrap["schemaVersion"], 2);
+        assert_eq!(bootstrap["pluginId"], "aokie");
+        assert!(bootstrap.get("endpointIdentity").is_some());
+        assert!(bootstrap.get("approvedMobileRoster").is_some());
+        assert!(bootstrap.get("gatewayUrl").is_none());
+        assert!(bootstrap.get("accessToken").is_none());
+        assert!(bootstrap.get("appId").is_none());
+    }
+
+    #[tokio::test]
+    async fn companion_admission_is_pinned_to_aokie_and_a_linked_handler() {
+        let h = host();
+        let m = manifest("\"companion.admission\"");
+        let wrong_plugin = handle_inbound_plugin_request(
+            &h,
+            &m,
+            "not-aokie",
+            true,
+            "companion.admission",
+            json!({}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(wrong_plugin.data.unwrap()["code"], "capability_denied");
+
+        let unsigned = handle_inbound_plugin_request(
+            &h,
+            &m,
+            "aokie",
+            false,
+            "companion.admission",
+            json!({}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unsigned.data.unwrap()["code"], "capability_denied");
+
+        let unlinked = handle_inbound_plugin_request(
+            &h,
+            &m,
+            "aokie",
+            true,
+            "companion.admission",
+            json!({ "appId": "app_1", "pluginId": "plugin_1" }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unlinked.data.unwrap()["code"], "runner_unavailable");
     }
 
     #[tokio::test]
     async fn missing_capability_is_capability_denied() {
         let h = host();
         let m = manifest("\"connector.aokie.call.answer\"");
-        let err = handle_inbound_plugin_request(&h, &m, "aokie", "flow.run", json!({})).await.unwrap_err();
+        let err = handle_inbound_plugin_request(&h, &m, "aokie", false, "flow.run", json!({}))
+            .await
+            .unwrap_err();
         assert_eq!(err.data.unwrap()["code"], "capability_denied");
     }
 
@@ -827,7 +1051,10 @@ mod tests {
     async fn declared_but_unlinked_is_runner_unavailable() {
         let h = host(); // no rpc handler registered (no account linked)
         let m = manifest("\"flow.run\"");
-        let err = handle_inbound_plugin_request(&h, &m, "aokie", "flow.run", json!({ "flowSlug": "x" })).await.unwrap_err();
+        let err =
+            handle_inbound_plugin_request(&h, &m, "aokie", false, "flow.run", json!({ "flowSlug": "x" }))
+                .await
+                .unwrap_err();
         assert_eq!(err.data.unwrap()["code"], "runner_unavailable");
     }
 
@@ -835,7 +1062,9 @@ mod tests {
     async fn unknown_method_is_method_not_found() {
         let h = host();
         let m = manifest("\"flow.run\"");
-        let err = handle_inbound_plugin_request(&h, &m, "aokie", "not.a.method", json!({})).await.unwrap_err();
+        let err = handle_inbound_plugin_request(&h, &m, "aokie", false, "not.a.method", json!({}))
+            .await
+            .unwrap_err();
         assert_eq!(err.code, -32601);
     }
 
@@ -853,7 +1082,10 @@ mod tests {
         assert!(h.get("aokie").is_none(), "slot must be forgotten");
         // The bundled template is offered for install again.
         let builtins = h.builtin_plugins();
-        let aokie = builtins.iter().find(|b| b.id == "aokie").expect("template listed");
+        let aokie = builtins
+            .iter()
+            .find(|b| b.id == "aokie")
+            .expect("template listed");
         assert!(!aokie.installed);
 
         // Unknown ids refuse cleanly.

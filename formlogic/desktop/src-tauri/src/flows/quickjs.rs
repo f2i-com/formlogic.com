@@ -188,6 +188,7 @@ async fn run_job(job: &Value, timeout: Duration) -> Result<Value, QjsError> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
+    cmd.env_remove("AOKIE_COMPANION_DESKTOP_TOKEN");
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;

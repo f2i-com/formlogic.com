@@ -68,6 +68,25 @@ class AppService
             ],
             'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::EXECUTE_FLOWS],
         ],
+        // Reception team: administrators can configure endpoints/routing and
+        // inspect the call-access audit trail. Standard members start receive-
+        // only; an owner must explicitly add takeover/resume when appropriate.
+        'aokie-reception' => [
+            'Admin' => [
+                AppPermissions::AOKIE_COMPANION_STATE,
+                AppPermissions::AOKIE_COMPANION_MONITOR,
+                AppPermissions::AOKIE_COMPANION_CONSULT,
+                AppPermissions::AOKIE_COMPANION_TAKEOVER,
+                AppPermissions::AOKIE_COMPANION_RESUME,
+                AppPermissions::AOKIE_COMPANION_ASSISTANCE,
+                AppPermissions::AOKIE_COMPANION_AUDIT,
+                AppPermissions::MANAGE_AOKIE_COMPANION,
+            ],
+            'Member' => [
+                AppPermissions::AOKIE_COMPANION_STATE,
+                AppPermissions::AOKIE_COMPANION_MONITOR,
+            ],
+        ],
     ];
 
     private PDO $mysql;

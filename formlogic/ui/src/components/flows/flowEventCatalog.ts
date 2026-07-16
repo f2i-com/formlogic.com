@@ -45,6 +45,13 @@ const CALL_ID_HINTS = ['$event.data.callId'] as const;
 const CALL_PARTY_HINTS = ['$event.data.callId', '$event.data.from', '$event.data.callerPhone', '$event.data.callerName'] as const;
 const CALL_TURN_HINTS = ['$event.data.callId', '$event.data.turn', '$event.data.speaker', '$event.data.text'] as const;
 const CALL_ENDED_HINTS = ['$event.data.callId', '$event.data.outcome', '$event.data.durationSeconds'] as const;
+const CALL_ASSISTANCE_HINTS = [
+  '$event.data.requestId',
+  '$event.data.callId',
+  '$event.data.outcome',
+  '$event.data.urgency',
+  '$event.data.at',
+] as const;
 const DONGLE_HINTS = ['$event.data.dongleId'] as const;
 const DEVICE_ERROR_HINTS = ['$event.data.dongleId', '$event.data.severity', '$event.data.message'] as const;
 const SMS_RECEIVED_HINTS = ['$event.data.messageId', '$event.data.from', '$event.data.phone', '$event.data.body', '$event.data.text', '$event.data.receivedAt'] as const;
@@ -72,6 +79,8 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.turn.final',
   'aokie.call.turn.corrected',
   'aokie.call.ended',
+  'aokie.call.assistance.requested',
+  'aokie.call.assistance.resolved',
   'aokie.call.waiting',
   'aokie.call.outbound.dialing',
   'aokie.sms.received',
@@ -221,6 +230,26 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Call ended',
     description: 'A call finished with an outcome and optional duration.',
     payloadHints: CALL_ENDED_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.assistance.requested',
+    group: 'aokie.calls',
+    event: 'aokie.call.assistance.requested',
+    label: 'Aokie requested assistance',
+    description:
+      'Aokie opened a redacted, time-limited request for approved staff help during a live call.',
+    payloadHints: CALL_ASSISTANCE_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.assistance.resolved',
+    group: 'aokie.calls',
+    event: 'aokie.call.assistance.resolved',
+    label: 'Assistance request resolved',
+    description:
+      'A live-call assistance request was answered or expired without exposing its question, context, answer or transcript.',
+    payloadHints: [...CALL_ASSISTANCE_HINTS, '$event.data.responderDeviceId'],
   },
   {
     kind: 'event',

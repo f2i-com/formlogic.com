@@ -3210,6 +3210,30 @@
               },
               {
                 "packFormId": null,
+                "permission": "aokie_companion_state"
+              },
+              {
+                "packFormId": null,
+                "permission": "aokie_companion_monitor"
+              },
+              {
+                "packFormId": null,
+                "permission": "aokie_companion_assistance"
+              },
+              {
+                "packFormId": null,
+                "permission": "aokie_companion_consult"
+              },
+              {
+                "packFormId": null,
+                "permission": "aokie_companion_takeover"
+              },
+              {
+                "packFormId": null,
+                "permission": "aokie_companion_resume"
+              },
+              {
+                "packFormId": null,
                 "permission": "connector.aokie.call.current"
               },
               {

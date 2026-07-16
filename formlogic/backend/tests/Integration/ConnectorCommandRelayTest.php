@@ -135,6 +135,13 @@ class ConnectorCommandRelayTest extends TestCase
             ->execute(['arp-' . bin2hex(random_bytes(10)), $this->roleId, $permission]);
     }
 
+    private function commandCount(): int
+    {
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM desktop_commands WHERE owner_user_id = ?');
+        $stmt->execute([$this->ownerId]);
+        return (int) $stmt->fetchColumn();
+    }
+
     /** POST /api/app/{slug}/connector-commands as $userId. */
     private function enqueue(string $userId, array $body): array
     {
@@ -210,6 +217,58 @@ class ConnectorCommandRelayTest extends TestCase
     {
         $r = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
         $this->assertSame(201, $r['status'], 'the app owner is not gated by role grants');
+    }
+
+    public function testPrivateAokieCommandsAreDeniedBeforeExactGrantsAndNeverPersisted(): void
+    {
+        $commands = [
+            'remote.bootstrap',
+            'call.remoteStatus',
+            'call.assistance.respond',
+            'call.takeOver',
+            'call.resumeBot',
+            'call.endCaller',
+            'call.declineWaiting',
+        ];
+
+        foreach ($commands as $command) {
+            $this->grant('connector.aokie.' . $command);
+            $r = $this->enqueue($this->memberId, ['connectorId' => 'aokie', 'command' => $command]);
+            $this->assertSame(403, $r['status'], $command);
+            $this->assertSame('private_connector_command', $r['body']['code'] ?? null, $command);
+            $this->assertSame(0, $this->commandCount(), $command . ' must not create a desktop_commands row');
+        }
+    }
+
+    public function testWildcardBareAndOwnerGrantBypassesCannotRelayPrivateAokieCommands(): void
+    {
+        foreach (['connector.aokie.*', 'connector.aokie'] as $grant) {
+            $this->grant($grant);
+            $r = $this->enqueue($this->memberId, ['connectorId' => 'aokie', 'command' => 'call.endCaller']);
+            $this->assertSame(403, $r['status'], $grant);
+            $this->assertSame('private_connector_command', $r['body']['code'] ?? null, $grant);
+        }
+
+        $owner = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'remote.ownerBootstrap']);
+        $this->assertSame(403, $owner['status'], 'app ownership must not bypass the private-channel denial');
+        $this->assertSame(0, $this->commandCount());
+    }
+
+    public function testDesktopCommandServiceRejectsPrivateAokieCommandsBeforePersistence(): void
+    {
+        foreach (['remote.bootstrap', 'call.remoteStatus', 'call.assistance.respond', 'call.takeOver', 'call.resumeBot', 'call.endCaller', 'call.declineWaiting'] as $command) {
+            try {
+                self::$commands->enqueue($this->ownerId, $this->ownerId, $this->appId, [
+                    'connectorId' => 'aokie',
+                    'command' => $command,
+                ]);
+                $this->fail($command . ' should have been rejected');
+            } catch (\InvalidArgumentException $e) {
+                $this->assertSame(DesktopCommandService::PRIVATE_AOKIE_RELAY_MESSAGE, $e->getMessage());
+            }
+        }
+
+        $this->assertSame(0, $this->commandCount());
     }
 
     public function testNonMemberIs403(): void

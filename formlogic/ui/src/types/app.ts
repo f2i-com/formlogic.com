@@ -296,6 +296,15 @@ export type PermissionAction =
   | 'manage_roles'
   | 'view_analytics'
   | 'execute_flows'
+  | 'aokie_companion_state'
+  | 'aokie_companion_monitor'
+  | 'aokie_companion_consult'
+  | 'aokie_companion_takeover'
+  | 'aokie_companion_resume'
+  | 'aokie_companion_end'
+  | 'aokie_companion_assistance'
+  | 'aokie_companion_audit'
+  | 'manage_aokie_companion'
   | 'submit_responses'
   | 'view_own_responses'
   | 'view_all_responses'
@@ -399,6 +408,15 @@ export const APP_PERMISSION_LABELS: Record<PermissionAction, string> = {
   manage_roles: 'Manage roles',
   view_analytics: 'View analytics',
   execute_flows: 'Run flows',
+  aokie_companion_state: 'Aokie Companion: view live call state',
+  aokie_companion_monitor: 'Aokie Companion: monitor call audio',
+  aokie_companion_consult: 'Aokie Companion: private voice consultation',
+  aokie_companion_takeover: 'Aokie Companion: take over live calls',
+  aokie_companion_resume: 'Aokie Companion: return calls to Aokie',
+  aokie_companion_end: 'Aokie Companion: end the caller call',
+  aokie_companion_assistance: 'Aokie Companion: typed assistance',
+  aokie_companion_audit: 'Aokie Companion: view audit history',
+  manage_aokie_companion: 'Manage Aokie Companion access',
   submit_responses: 'Submit responses',
   view_own_responses: 'View own responses',
   view_all_responses: 'View all responses',
@@ -415,6 +433,15 @@ export const APP_LEVEL_PERMISSIONS: PermissionAction[] = [
   // FL-AUTH-001: gates the runtime flow surface (definitions, run claiming, shared flow-KV).
   // App-wide only (form_id NULL) — the backend does not treat it as an admin-style permission.
   'execute_flows',
+  'aokie_companion_state',
+  'aokie_companion_monitor',
+  'aokie_companion_consult',
+  'aokie_companion_takeover',
+  'aokie_companion_resume',
+  'aokie_companion_end',
+  'aokie_companion_assistance',
+  'aokie_companion_audit',
+  'manage_aokie_companion',
 ];
 
 export const FORM_LEVEL_PERMISSIONS: PermissionAction[] = [

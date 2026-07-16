@@ -23,7 +23,14 @@ class McpTokenService
 
     /** Builder scopes granted by default — deliberately EXCLUDES responses:* (submission data). */
     public const DEFAULT_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write'];
-    public const ALL_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write', 'responses:read', 'responses:write', 'connector:command'];
+    public const ALL_SCOPES = [
+        'apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write',
+        'responses:read', 'responses:write', 'connector:command',
+        // First-party Aokie Companion OAuth client. These scopes authorize
+        // only the short-lived admission exchange; they are not MCP tools.
+        'aokie:state', 'aokie:monitor', 'aokie:consult', 'aokie:takeover', 'aokie:resume',
+        'aokie:assistance', 'aokie:end_caller',
+    ];
 
     public function __construct(private MySQLConnection $mysql) {}
 
@@ -81,7 +88,16 @@ class McpTokenService
      * The idle timeout is pinned to the TTL so the ABSOLUTE expiry (default 3600s) is what governs;
      * OAuth clients renew via the refresh grant, not by sliding an idle window.
      */
-    public function createOAuth(string $userId, ?string $appId, ?array $scopes, string $resource, int $ttl = 3600): array
+    public function createOAuth(
+        string $userId,
+        ?string $appId,
+        ?array $scopes,
+        string $resource,
+        int $ttl = 3600,
+        ?string $oauthClientId = null,
+        ?string $deviceId = null,
+        ?string $refreshFamilyId = null,
+    ): array
     {
         $this->purgeExpired();
         $ttl = max(300, min($ttl, self::MAX_TTL));
@@ -93,8 +109,12 @@ class McpTokenService
         $raw = self::OAUTH_TOKEN_PREFIX . bin2hex(random_bytes(24));
         $expiresAt = date('Y-m-d H:i:s', time() + $ttl);
         $stmt = $this->db()->prepare("
-            INSERT INTO mcp_sessions (id, user_id, app_id, token_hash, scopes, created_ids, resource, expires_at, idle_timeout_seconds, created_at)
-            VALUES (:id, :user_id, :app_id, :hash, :scopes, NULL, :resource, :expires_at, :idle, :created_at)
+            INSERT INTO mcp_sessions
+                (id, user_id, app_id, token_hash, scopes, created_ids, resource, oauth_client_id,
+                 device_id, refresh_family_id, expires_at, idle_timeout_seconds, created_at)
+            VALUES
+                (:id, :user_id, :app_id, :hash, :scopes, NULL, :resource, :oauth_client_id,
+                 :device_id, :refresh_family_id, :expires_at, :idle, :created_at)
         ");
         $stmt->execute([
             'id' => $id,
@@ -103,11 +123,24 @@ class McpTokenService
             'hash' => hash('sha256', $raw),
             'scopes' => json_encode($scopes),
             'resource' => $resource,
+            'oauth_client_id' => $oauthClientId,
+            'device_id' => $deviceId,
+            'refresh_family_id' => $refreshFamilyId,
             'expires_at' => $expiresAt,
             'idle' => $ttl,
             'created_at' => date('Y-m-d H:i:s'),
         ]);
-        return ['token' => $raw, 'id' => $id, 'appId' => $appId, 'scopes' => $scopes, 'expiresAt' => $expiresAt, 'resource' => $resource];
+        return [
+            'token' => $raw,
+            'id' => $id,
+            'appId' => $appId,
+            'scopes' => $scopes,
+            'expiresAt' => $expiresAt,
+            'resource' => $resource,
+            'oauthClientId' => $oauthClientId,
+            'deviceId' => $deviceId,
+            'refreshFamilyId' => $refreshFamilyId,
+        ];
     }
 
     /**
@@ -138,7 +171,9 @@ class McpTokenService
         }
         $hash = hash('sha256', $token);
         $stmt = $this->db()->prepare("
-            SELECT id, user_id, app_id, scopes, created_ids, resource, expires_at, idle_timeout_seconds, last_used_at, revoked_at
+            SELECT id, user_id, app_id, scopes, created_ids, resource, oauth_client_id, device_id,
+                   refresh_family_id,
+                   expires_at, idle_timeout_seconds, last_used_at, revoked_at
             FROM mcp_sessions WHERE token_hash = :hash LIMIT 1
         ");
         $stmt->execute(['hash' => $hash]);
@@ -172,6 +207,15 @@ class McpTokenService
             // OAuth-minted tokens carry the resource they were issued for (audience binding);
             // NULL for manual flm_ tokens.
             'resource' => isset($row['resource']) && is_string($row['resource']) ? $row['resource'] : null,
+            'oauthClientId' => isset($row['oauth_client_id']) && is_string($row['oauth_client_id'])
+                ? $row['oauth_client_id']
+                : null,
+            'deviceId' => isset($row['device_id']) && is_string($row['device_id'])
+                ? $row['device_id']
+                : null,
+            'refreshFamilyId' => isset($row['refresh_family_id']) && is_string($row['refresh_family_id'])
+                ? $row['refresh_family_id']
+                : null,
         ];
     }
 

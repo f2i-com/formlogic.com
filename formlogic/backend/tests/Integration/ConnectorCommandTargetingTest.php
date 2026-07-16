@@ -275,6 +275,20 @@ class ConnectorCommandTargetingTest extends TestCase
         $this->assertCount(2, $r['body']['desktops'] ?? []);
     }
 
+    public function testPrivateAokieCommandIsDeniedBeforeAmbiguousTargetResolution(): void
+    {
+        $this->connect('inst-a', 'Machine A');
+        $this->connect('inst-b', 'Machine B');
+
+        $r = $this->enqueueWeb(['connectorId' => 'aokie', 'command' => 'call.takeOver']);
+        $this->assertSame(403, $r['status']);
+        $this->assertSame('private_connector_command', $r['body']['code'] ?? null);
+
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM desktop_commands WHERE owner_user_id = ?');
+        $stmt->execute([$this->ownerId]);
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+    }
+
     public function testWebReadBackNamesTheMachines(): void
     {
         $this->connect('inst-solo', 'Front desk PC');

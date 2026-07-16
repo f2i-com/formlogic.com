@@ -375,6 +375,79 @@ class AppUserService
         return $users;
     }
 
+    /**
+     * Redacted, authoritative staff roster for the native Aokie Companion.
+     *
+     * Keep this separate from getAppUsers(): that administrative method includes
+     * email addresses and raw user ids, neither of which belongs in the mobile
+     * bootstrap contract. Readiness means the active member both currently has
+     * Companion-state authority and has at least one non-revoked mobile endpoint.
+     *
+     * @return list<array{id:string,displayName:string,roleName:string,isCurrentUser:bool,isOwner:bool,companionReady:bool}>
+     */
+    public function getAokieCompanionStaff(string $appId, string $currentUserId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT au.id,
+                   COALESCE(NULLIF(TRIM(u.name), ''), 'App member') AS display_name,
+                   ar.name AS role_name,
+                   (a.owner_id = au.user_id) AS is_owner,
+                   EXISTS (
+                       SELECT 1
+                       FROM aokie_companion_devices d
+                       WHERE d.app_id = au.app_id
+                         AND d.user_id = au.user_id
+                         AND d.role = 'mobile'
+                         AND d.revoked_at IS NULL
+                   ) AS has_mobile_endpoint,
+                   (
+                       a.owner_id = au.user_id OR EXISTS (
+                           SELECT 1
+                           FROM app_role_permissions arp
+                           WHERE arp.role_id = au.role_id
+                             AND arp.form_id IS NULL
+                             AND arp.permission = :companion_state
+                       )
+                   ) AS has_companion_access,
+                   (au.user_id = :current_user_id) AS is_current_user
+            FROM app_users au
+            JOIN apps a ON a.id = au.app_id
+            JOIN users u ON u.id = au.user_id
+            JOIN app_roles ar ON ar.id = au.role_id AND ar.app_id = au.app_id
+            WHERE au.app_id = :app_id AND au.status = 'active'
+            ORDER BY is_current_user DESC, display_name ASC, au.id ASC
+            LIMIT 200
+        ");
+        $stmt->execute([
+            'app_id' => $appId,
+            'current_user_id' => $currentUserId,
+            'companion_state' => AppPermissions::AOKIE_COMPANION_STATE,
+        ]);
+
+        $clean = static function (mixed $value, string $fallback): string {
+            $value = is_string($value) ? trim(preg_replace('/\p{Cc}+/u', '', $value) ?? '') : '';
+            $value = mb_strcut($value, 0, 120, 'UTF-8');
+            return $value !== '' ? $value : $fallback;
+        };
+        $staff = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $id = (string) ($row['id'] ?? '');
+            if ($id === '' || strlen($id) > 200 || preg_match('/^[A-Za-z0-9_.:-]+$/D', $id) !== 1) {
+                continue;
+            }
+            $staff[] = [
+                'id' => $id,
+                'displayName' => $clean($row['display_name'] ?? null, 'App member'),
+                'roleName' => $clean($row['role_name'] ?? null, 'Member'),
+                'isCurrentUser' => (bool) $row['is_current_user'],
+                'isOwner' => (bool) $row['is_owner'],
+                'companionReady' => (bool) $row['has_mobile_endpoint']
+                    && (bool) $row['has_companion_access'],
+            ];
+        }
+        return $staff;
+    }
+
     public function getAppUser(string $appId, string $userId): ?array
     {
         $stmt = $this->mysql->prepare("

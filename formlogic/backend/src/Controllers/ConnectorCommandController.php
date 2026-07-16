@@ -194,6 +194,17 @@ class ConnectorCommandController
         if ($connectorId === '' || $command === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'connectorId and command are required'], 400);
         }
+        // Private Aokie realtime/bootstrap commands are never public relay
+        // capabilities. Deny before consulting exact/wildcard/bare grants or
+        // resolving a desktop target, and let the service repeat the guard
+        // immediately before persistence for defense in depth.
+        if (DesktopCommandService::isPrivateAokieRelayCommand($connectorId, $command)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'private_connector_command',
+                'message' => DesktopCommandService::PRIVATE_AOKIE_RELAY_MESSAGE,
+            ], 403);
+        }
         if (!$this->memberCanRelay($app['id'], $userId, $connectorId, $command)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'You do not have permission to run this connector command'], 403);
         }

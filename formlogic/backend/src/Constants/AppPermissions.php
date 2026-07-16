@@ -12,6 +12,20 @@ class AppPermissions
     public const MANAGE_ROLES = 'manage_roles';
     public const VIEW_ANALYTICS = 'view_analytics';
 
+    // Aokie Companion (app-scoped call access). These permissions are deliberately
+    // separate from connector.* grants: a member may use the softphone without
+    // gaining arbitrary connector commands, and every OAuth scope is intersected
+    // with these exact role grants again when an admission is issued.
+    public const AOKIE_COMPANION_STATE = 'aokie_companion_state';
+    public const AOKIE_COMPANION_MONITOR = 'aokie_companion_monitor';
+    public const AOKIE_COMPANION_CONSULT = 'aokie_companion_consult';
+    public const AOKIE_COMPANION_TAKEOVER = 'aokie_companion_takeover';
+    public const AOKIE_COMPANION_RESUME = 'aokie_companion_resume';
+    public const AOKIE_COMPANION_END = 'aokie_companion_end';
+    public const AOKIE_COMPANION_ASSISTANCE = 'aokie_companion_assistance';
+    public const AOKIE_COMPANION_AUDIT = 'aokie_companion_audit';
+    public const MANAGE_AOKIE_COMPANION = 'manage_aokie_companion';
+
     // Flow execution (audit FL-AUTH-001): required for the app-runtime flow surface —
     // definitions, reserve/claim/complete, queued-run listing and the shared flow-KV store.
     // Stored app-level (form_id NULL) but deliberately NOT in APP_LEVEL: flows execute with
@@ -33,6 +47,15 @@ class AppPermissions
         self::MANAGE_USERS,
         self::MANAGE_ROLES,
         self::VIEW_ANALYTICS,
+        self::AOKIE_COMPANION_STATE,
+        self::AOKIE_COMPANION_MONITOR,
+        self::AOKIE_COMPANION_CONSULT,
+        self::AOKIE_COMPANION_TAKEOVER,
+        self::AOKIE_COMPANION_RESUME,
+        self::AOKIE_COMPANION_END,
+        self::AOKIE_COMPANION_ASSISTANCE,
+        self::AOKIE_COMPANION_AUDIT,
+        self::MANAGE_AOKIE_COMPANION,
     ];
 
     public const FORM_LEVEL = [
@@ -49,6 +72,15 @@ class AppPermissions
         self::MANAGE_USERS,
         self::MANAGE_ROLES,
         self::VIEW_ANALYTICS,
+        self::AOKIE_COMPANION_STATE,
+        self::AOKIE_COMPANION_MONITOR,
+        self::AOKIE_COMPANION_CONSULT,
+        self::AOKIE_COMPANION_TAKEOVER,
+        self::AOKIE_COMPANION_RESUME,
+        self::AOKIE_COMPANION_END,
+        self::AOKIE_COMPANION_ASSISTANCE,
+        self::AOKIE_COMPANION_AUDIT,
+        self::MANAGE_AOKIE_COMPANION,
         self::EXECUTE_FLOWS,
         self::SUBMIT_RESPONSES,
         self::VIEW_OWN_RESPONSES,

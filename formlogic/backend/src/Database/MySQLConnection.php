@@ -1132,6 +1132,9 @@ class MySQLConnection
                 scopes JSON DEFAULT NULL,
                 created_ids JSON DEFAULT NULL,
                 resource VARCHAR(500) DEFAULT NULL,
+                oauth_client_id VARCHAR(500) DEFAULT NULL,
+                device_id VARCHAR(200) DEFAULT NULL,
+                refresh_family_id VARCHAR(36) DEFAULT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 idle_timeout_seconds INT NOT NULL DEFAULT 1800,
                 last_used_at TIMESTAMP NULL,
@@ -1140,7 +1143,9 @@ class MySQLConnection
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE INDEX idx_mcp_hash (token_hash),
-                INDEX idx_mcp_user (user_id)
+                INDEX idx_mcp_user (user_id),
+                INDEX idx_mcp_oauth_device (oauth_client_id, device_id),
+                INDEX idx_mcp_refresh_family (refresh_family_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -1210,6 +1215,7 @@ class MySQLConnection
                 app_id VARCHAR(36) NULL,
                 scopes JSON NOT NULL,
                 resource VARCHAR(500) NULL,
+                device_id VARCHAR(200) NULL,
                 expires_at TIMESTAMP NOT NULL,
                 rotated_at TIMESTAMP NULL,
                 revoked_at TIMESTAMP NULL,
@@ -1221,6 +1227,39 @@ class MySQLConnection
                 INDEX idx_oauth_rt_expires (expires_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Durable native endpoint approval/revocation. Gateway admissions are
+        // deliberately short lived; this table remains the FormLogic source of
+        // truth checked on every admission exchange.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_devices (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                subject_id VARCHAR(200) NOT NULL,
+                role VARCHAR(16) NOT NULL,
+                display_name VARCHAR(120) NOT NULL,
+                grants JSON NOT NULL,
+                holder_key_thumbprint VARCHAR(64) NULL,
+                endpoint_public_key JSON NULL,
+                approved_peer_key_thumbprints JSON NULL,
+                peer_roster_revision BIGINT UNSIGNED NULL,
+                peer_roster_hash VARCHAR(64) NULL,
+                desktop_connection_id VARCHAR(36) NULL,
+                approved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TIMESTAMP NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_aokie_companion_endpoint (app_id, subject_id, role),
+                INDEX idx_aokie_companion_owner (user_id, app_id),
+                INDEX idx_aokie_companion_revoked (revoked_at),
+                INDEX idx_aokie_companion_desktop (desktop_connection_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $this->createAokieCompanionOperationalTables($pdo);
 
         // Add token_version column to users for JWT revocation (R2). Without this
         // on the runtime path, revocation silently no-ops (getTokenVersion fails open).
@@ -1559,6 +1598,84 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE connector_assignments ADD CONSTRAINT fk_connector_assignment_desktop
                         FOREIGN KEY (desktop_connection_id) REFERENCES desktop_connections(id) ON DELETE SET NULL");
         }
+        // Bind opaque OAuth sessions to the exact client profile and, for
+        // Companion, to one stable native device. Existing MCP/manual rows stay
+        // NULL and therefore cannot pass the Companion admission gate.
+        if ($pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'oauth_client_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_sessions ADD COLUMN oauth_client_id VARCHAR(500) NULL AFTER resource");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'device_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_sessions ADD COLUMN device_id VARCHAR(200) NULL AFTER oauth_client_id");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'refresh_family_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_sessions ADD COLUMN refresh_family_id VARCHAR(36) NULL AFTER device_id");
+        }
+        if ($pdo->query("SHOW INDEX FROM mcp_sessions WHERE Key_name = 'idx_mcp_oauth_device'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_sessions ADD INDEX idx_mcp_oauth_device (oauth_client_id, device_id)");
+        }
+        if ($pdo->query("SHOW INDEX FROM mcp_sessions WHERE Key_name = 'idx_mcp_refresh_family'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_sessions ADD INDEX idx_mcp_refresh_family (refresh_family_id)");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM mcp_oauth_refresh_tokens LIKE 'device_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_oauth_refresh_tokens ADD COLUMN device_id VARCHAR(200) NULL AFTER resource");
+        }
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_devices (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                subject_id VARCHAR(200) NOT NULL,
+                role VARCHAR(16) NOT NULL,
+                display_name VARCHAR(120) NOT NULL,
+                grants JSON NOT NULL,
+                holder_key_thumbprint VARCHAR(64) NULL,
+                endpoint_public_key JSON NULL,
+                approved_peer_key_thumbprints JSON NULL,
+                peer_roster_revision BIGINT UNSIGNED NULL,
+                peer_roster_hash VARCHAR(64) NULL,
+                desktop_connection_id VARCHAR(36) NULL,
+                approved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TIMESTAMP NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_aokie_companion_endpoint (app_id, subject_id, role),
+                INDEX idx_aokie_companion_owner (user_id, app_id),
+                INDEX idx_aokie_companion_revoked (revoked_at),
+                INDEX idx_aokie_companion_desktop (desktop_connection_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        foreach ([
+            'holder_key_thumbprint' => 'ALTER TABLE aokie_companion_devices ADD COLUMN holder_key_thumbprint VARCHAR(64) NULL AFTER grants',
+            'endpoint_public_key' => 'ALTER TABLE aokie_companion_devices ADD COLUMN endpoint_public_key JSON NULL AFTER holder_key_thumbprint',
+            'approved_peer_key_thumbprints' => 'ALTER TABLE aokie_companion_devices ADD COLUMN approved_peer_key_thumbprints JSON NULL AFTER endpoint_public_key',
+            'peer_roster_revision' => 'ALTER TABLE aokie_companion_devices ADD COLUMN peer_roster_revision BIGINT UNSIGNED NULL AFTER approved_peer_key_thumbprints',
+            'peer_roster_hash' => 'ALTER TABLE aokie_companion_devices ADD COLUMN peer_roster_hash VARCHAR(64) NULL AFTER peer_roster_revision',
+            'desktop_connection_id' => 'ALTER TABLE aokie_companion_devices ADD COLUMN desktop_connection_id VARCHAR(36) NULL AFTER peer_roster_hash',
+        ] as $column => $ddl) {
+            if ($pdo->query("SHOW COLUMNS FROM aokie_companion_devices LIKE '{$column}'")->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
+        }
+        if ($pdo->query("SHOW INDEX FROM aokie_companion_devices WHERE Key_name = 'idx_aokie_companion_desktop'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE aokie_companion_devices ADD INDEX idx_aokie_companion_desktop (desktop_connection_id)');
+        }
+        $this->createAokieCompanionOperationalTables($pdo);
+        if ($pdo->query("SHOW COLUMNS FROM aokie_companion_sessions LIKE 'last_event_at'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE aokie_companion_sessions ADD COLUMN last_event_at TIMESTAMP NULL AFTER last_event_id");
+            $pdo->exec("UPDATE aokie_companion_sessions SET last_event_at = COALESCE(updated_at, created_at, NOW()) WHERE last_event_at IS NULL");
+            $pdo->exec("ALTER TABLE aokie_companion_sessions MODIFY COLUMN last_event_at TIMESTAMP NOT NULL");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM aokie_companion_activity LIKE 'request_hash'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE aokie_companion_activity ADD COLUMN request_hash CHAR(64) NULL AFTER idempotency_key");
+            $pdo->exec("UPDATE aokie_companion_activity SET request_hash = SHA2(CONCAT(app_id, ':', idempotency_key), 256) WHERE request_hash IS NULL");
+            $pdo->exec("ALTER TABLE aokie_companion_activity MODIFY COLUMN request_hash CHAR(64) NOT NULL");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM aokie_companion_routing_members LIKE 'availability_expires_at'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE aokie_companion_routing_members ADD COLUMN availability_expires_at TIMESTAMP NULL AFTER availability_updated_at");
+        }
         // mcp_oauth_codes.device_label carries the sanitized ?device= label from the desktop
         // OAuth device-link consent through to the token exchange (names the minted key/connection).
         if ($pdo->query("SHOW TABLES LIKE 'mcp_oauth_codes'")->rowCount() > 0
@@ -1601,8 +1718,161 @@ class MySQLConnection
         $this->seedFirstPartyOAuthClients($pdo);
     }
 
+    /** Fresh installs and upgrades share the exact same durable Companion control-plane schema. */
+    private function createAokieCompanionOperationalTables(PDO $pdo): void
+    {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_sessions (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                external_session_id VARCHAR(200) NOT NULL,
+                call_id VARCHAR(200) NOT NULL,
+                device_id VARCHAR(36) NULL,
+                subject_id VARCHAR(200) NOT NULL,
+                mode VARCHAR(16) NOT NULL,
+                state VARCHAR(16) NOT NULL,
+                joined_at TIMESTAMP NULL,
+                ended_at TIMESTAMP NULL,
+                end_reason VARCHAR(120) NULL,
+                last_event_id VARCHAR(200) NOT NULL,
+                last_event_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (device_id) REFERENCES aokie_companion_devices(id) ON DELETE SET NULL,
+                UNIQUE INDEX idx_aokie_session_external (app_id, external_session_id),
+                INDEX idx_aokie_session_call (app_id, call_id, created_at),
+                INDEX idx_aokie_session_state (app_id, state, updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_activity (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                idempotency_key VARCHAR(200) NOT NULL,
+                request_hash CHAR(64) NOT NULL,
+                session_id VARCHAR(36) NULL,
+                call_id VARCHAR(200) NULL,
+                device_id VARCHAR(36) NULL,
+                actor_user_id VARCHAR(36) NULL,
+                subject_id VARCHAR(200) NOT NULL,
+                event_type VARCHAR(40) NOT NULL,
+                mode VARCHAR(16) NULL,
+                reason VARCHAR(120) NULL,
+                owner_epoch BIGINT UNSIGNED NULL,
+                occurred_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES aokie_companion_sessions(id) ON DELETE SET NULL,
+                FOREIGN KEY (device_id) REFERENCES aokie_companion_devices(id) ON DELETE SET NULL,
+                FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+                UNIQUE INDEX idx_aokie_activity_idempotency (app_id, idempotency_key),
+                INDEX idx_aokie_activity_history (app_id, occurred_at, id),
+                INDEX idx_aokie_activity_call (app_id, call_id, occurred_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_routing_groups (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                policy VARCHAR(20) NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                round_robin_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                created_by_user_id VARCHAR(36) NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_aokie_routing_name (app_id, name),
+                INDEX idx_aokie_routing_enabled (app_id, enabled)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_routing_members (
+                group_id VARCHAR(36) NOT NULL,
+                device_id VARCHAR(36) NOT NULL,
+                priority_value INT UNSIGNED NOT NULL DEFAULT 100,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                availability VARCHAR(20) NOT NULL DEFAULT 'available',
+                availability_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                availability_expires_at TIMESTAMP NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (group_id, device_id),
+                FOREIGN KEY (group_id) REFERENCES aokie_companion_routing_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (device_id) REFERENCES aokie_companion_devices(id) ON DELETE CASCADE,
+                INDEX idx_aokie_routing_available (group_id, enabled, availability, priority_value)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_push_endpoints (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                device_id VARCHAR(36) NOT NULL,
+                endpoint_kind VARCHAR(20) NOT NULL,
+                delivery_mode VARCHAR(16) NOT NULL,
+                provider VARCHAR(20) NOT NULL,
+                environment VARCHAR(16) NOT NULL,
+                topic VARCHAR(255) NULL,
+                endpoint_ciphertext TEXT NULL,
+                broker_handle VARCHAR(512) NULL,
+                endpoint_fingerprint CHAR(64) NOT NULL,
+                invalidated_at TIMESTAMP NULL,
+                rotated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (device_id) REFERENCES aokie_companion_devices(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_aokie_push_endpoint (app_id, device_id, endpoint_kind),
+                INDEX idx_aokie_push_active (app_id, invalidated_at, endpoint_kind)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_offers (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                routing_group_id VARCHAR(36) NOT NULL,
+                offer_kind VARCHAR(32) NOT NULL,
+                invitation_hash CHAR(64) NOT NULL,
+                request_hash CHAR(64) NOT NULL,
+                collapse_hash CHAR(64) NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (routing_group_id) REFERENCES aokie_companion_routing_groups(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_aokie_offer_invitation (app_id, invitation_hash),
+                INDEX idx_aokie_offer_expiry (app_id, expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_push_deliveries (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                offer_id VARCHAR(36) NOT NULL,
+                device_id VARCHAR(36) NOT NULL,
+                push_endpoint_id VARCHAR(36) NULL,
+                status VARCHAR(20) NOT NULL,
+                payload_json JSON NOT NULL,
+                attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+                claimed_at TIMESTAMP NULL,
+                completed_at TIMESTAMP NULL,
+                provider_message_hash CHAR(64) NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (offer_id) REFERENCES aokie_companion_offers(id) ON DELETE CASCADE,
+                FOREIGN KEY (device_id) REFERENCES aokie_companion_devices(id) ON DELETE CASCADE,
+                FOREIGN KEY (push_endpoint_id) REFERENCES aokie_companion_push_endpoints(id) ON DELETE SET NULL,
+                UNIQUE INDEX idx_aokie_delivery_target (offer_id, device_id),
+                INDEX idx_aokie_delivery_queue (status, expires_at, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    }
+
     /**
-     * Static, first-party OAuth clients seeded into mcp_oauth_clients (idempotent INSERT IGNORE on
+     * Static, first-party OAuth clients seeded into mcp_oauth_clients (idempotent upsert on
      * the client_id_hash PK). Currently: the "formlogic-desktop" PUBLIC native client (no secret,
      * PKCE S256 required) whose token exchange mints a scoped flk_ API key rather than an MCP
      * session — see McpOAuthService::DESKTOP_CLIENT_ID. The registered loopback redirect URIs are
@@ -1613,21 +1883,42 @@ class MySQLConnection
         if ($pdo->query("SHOW TABLES LIKE 'mcp_oauth_clients'")->rowCount() === 0) {
             return; // table not created yet on this ordering — nothing to seed
         }
-        $clientId = \FormLogic\Services\McpOAuthService::DESKTOP_CLIENT_ID;
-        $redirects = json_encode([
-            'http://127.0.0.1/callback',
-            'http://localhost/callback',
-        ]);
         $stmt = $pdo->prepare("
-            INSERT IGNORE INTO mcp_oauth_clients
+            INSERT INTO mcp_oauth_clients
                 (client_id_hash, client_id, secret_hash, token_endpoint_auth_method, client_name, client_uri, redirect_uris, is_cimd, fetched_at, created_at)
             VALUES (:h, :cid, NULL, 'none', :name, NULL, :redirects, 0, NULL, NOW())
+            ON DUPLICATE KEY UPDATE
+                client_id = VALUES(client_id), secret_hash = NULL,
+                token_endpoint_auth_method = 'none', client_name = VALUES(client_name),
+                client_uri = NULL, redirect_uris = VALUES(redirect_uris),
+                is_cimd = 0, fetched_at = NULL
         ");
-        $stmt->execute([
-            'h' => hash('sha256', $clientId),
-            'cid' => $clientId,
-            'name' => 'FormLogic Desktop',
-            'redirects' => $redirects,
-        ]);
+        $clients = [
+            [
+                'id' => \FormLogic\Services\McpOAuthService::DESKTOP_CLIENT_ID,
+                'name' => 'FormLogic Desktop',
+                'redirects' => ['http://127.0.0.1/callback', 'http://localhost/callback'],
+            ],
+            [
+                'id' => \FormLogic\Services\McpOAuthService::AOKIE_COMPANION_CLIENT_ID,
+                'name' => 'Aokie Companion',
+                'redirects' => [
+                    'com.aokie.companion:/oauth/callback',
+                    'http://127.0.0.1/oauth/callback',
+                    'http://localhost/oauth/callback',
+                ],
+            ],
+        ];
+        foreach ($clients as $client) {
+            $stmt->execute([
+                'h' => hash('sha256', $client['id']),
+                'cid' => $client['id'],
+                'name' => $client['name'],
+                'redirects' => json_encode(
+                    $client['redirects'],
+                    JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR,
+                ),
+            ]);
+        }
     }
 }

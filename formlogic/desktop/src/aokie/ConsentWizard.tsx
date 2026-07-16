@@ -8,8 +8,9 @@ import { useToast } from '../Toasts';
  *
  * Before the Aokie receptionist touches a phone line, the OPERATOR must
  * accept a versioned, scoped grant covering exactly what the system will
- * access (Bluetooth link, contacts, SMS, live-call transcription) and where
- * that data can be sent (the configured processing endpoints). Accepting
+ * access (Bluetooth link, contacts, SMS, live-call transcription and each
+ * remote Companion surface) and where that data can be sent (the configured
+ * processing and Companion endpoints). Accepting
  * issues a grant SIGNED by this Desktop's per-install key — the plugin
  * refuses grants signed anywhere else — and flips enforcement on
  * (`consentMode=enforce`), so a denied scope is refused at the point of
@@ -33,9 +34,21 @@ interface ConsentStatus {
   blocked?: string | null;
 }
 
+type ConsentScopeKey =
+  | 'bluetooth'
+  | 'contacts'
+  | 'sms'
+  | 'transcription'
+  | 'recording'
+  | 'remoteCaptions'
+  | 'remoteAssistance'
+  | 'remoteMonitoring'
+  | 'remoteConsult'
+  | 'remoteTakeover';
+
 /** The scopes the wizard offers, with honest one-line descriptions. */
 const SCOPE_ROWS: Array<{
-  key: 'bluetooth' | 'contacts' | 'sms' | 'transcription' | 'recording';
+  key: ConsentScopeKey;
   label: string;
   detail: string;
   defaultOn: boolean;
@@ -72,6 +85,41 @@ const SCOPE_ROWS: Array<{
     label: 'Call audio recording',
     detail:
       'Store raw call audio. Not currently used by any feature — leave off unless a future feature asks for it.',
+    defaultOn: false,
+  },
+  {
+    key: 'remoteCaptions',
+    label: 'Companion live captions',
+    detail:
+      'Send permission-filtered live caption text to authorised Companion users through the selected FormLogic or custom signalling server.',
+    defaultOn: false,
+  },
+  {
+    key: 'remoteAssistance',
+    label: 'Companion private assistance',
+    detail:
+      'Let Aokie ask an authorised team member one bounded question and accept one typed answer. Full transcripts and arbitrary recipient selection are not included.',
+    defaultOn: false,
+  },
+  {
+    key: 'remoteMonitoring',
+    label: 'Companion listen-only audio',
+    detail:
+      'Bridge caller audio over endpoint-encrypted WebRTC to authorised observers. Their microphones are not requested and cannot publish to the caller path.',
+    defaultOn: false,
+  },
+  {
+    key: 'remoteConsult',
+    label: 'Companion private voice consultation',
+    detail:
+      'Place the caller on software hold and open an isolated Aokie-to-operator voice lane. Caller audio cannot enter the consult and consult audio cannot reach the caller.',
+    defaultOn: false,
+  },
+  {
+    key: 'remoteTakeover',
+    label: 'Companion call takeover',
+    detail:
+      "Let one authorised Companion user speak to the caller through Aokie's encrypted media bridge using the Companion device's microphone and speakers. Desktop and the Aokie plugin relay the audio; they do not pair local audio hardware. This is not a carrier transfer.",
     defaultOn: false,
   },
 ];
@@ -137,6 +185,11 @@ export function ConsentWizard({
           sms: !!scopes.sms,
           transcription: !!scopes.transcription,
           recording: !!scopes.recording,
+          remoteCaptions: !!scopes.remoteCaptions,
+          remoteAssistance: !!scopes.remoteAssistance,
+          remoteMonitoring: !!scopes.remoteMonitoring,
+          remoteConsult: !!scopes.remoteConsult,
+          remoteTakeover: !!scopes.remoteTakeover,
           retentionDays,
           destinations: uniqueDestinations,
         },
@@ -196,7 +249,10 @@ export function ConsentWizard({
           <strong>Where call data goes</strong>
           {uniqueDestinations.length === 0 ? (
             <p className="form-hint">
-              All processing endpoints are local to this machine — no transcript leaves it. Linked
+              All speech-processing endpoints are local to this machine. If a Companion scope is
+              enabled, authorised state, captions or endpoint-encrypted WebRTC media can still
+              travel through the selected FormLogic or custom deployment. The signalling server
+              never receives unencrypted call audio; TURN can only relay encrypted packets. Linked
               FormLogic records follow each form's own retention settings.
             </p>
           ) : (

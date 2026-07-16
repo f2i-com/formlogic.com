@@ -34,6 +34,23 @@ class DesktopCommandService
     public const MAX_COMMAND = 96;
     public const MAX_IDEMPOTENCY_KEY = 255;
 
+    /**
+     * Aokie's authenticated realtime/bootstrap channel owns these commands.
+     * They must never cross the public member/MCP desktop-command relay, even
+     * when a caller holds an exact, wildcard, or bare connector grant.
+     */
+    private const PRIVATE_AOKIE_RELAY_COMMANDS = [
+        'call.remoteStatus',
+        'call.assistance.respond',
+        'call.takeOver',
+        'call.resumeBot',
+        'call.endCaller',
+        'call.declineWaiting',
+    ];
+
+    public const PRIVATE_AOKIE_RELAY_MESSAGE =
+        'This Aokie command is private to the authenticated realtime/bootstrap channel and cannot use the public connector relay';
+
     /** Terminal statuses a desktop may complete a claimed command with. */
     public const COMPLETE_STATUSES = ['done', 'failed'];
 
@@ -55,6 +72,25 @@ class DesktopCommandService
         $this->mysql = $mysql->getConnection();
     }
 
+    public static function isPrivateAokieRelayCommand(string $connectorId, string $command): bool
+    {
+        if (strtolower(trim($connectorId)) !== 'aokie') {
+            return false;
+        }
+
+        $command = trim($command);
+        return str_starts_with($command, 'remote.')
+            || in_array($command, self::PRIVATE_AOKIE_RELAY_COMMANDS, true);
+    }
+
+    /** @throws \InvalidArgumentException when a private Aokie command reaches a public relay surface. */
+    public static function assertPublicRelayCommand(string $connectorId, string $command): void
+    {
+        if (self::isPrivateAokieRelayCommand($connectorId, $command)) {
+            throw new \InvalidArgumentException(self::PRIVATE_AOKIE_RELAY_MESSAGE);
+        }
+    }
+
     /**
      * Enqueue a connector command for the owner's desktop runtime. Reserve-first on idempotency_key:
      * a duplicate returns the existing row (created=false). status 'pending', expires 60s out.
@@ -72,6 +108,9 @@ class DesktopCommandService
         if (!is_string($command) || $command === '' || strlen($command) > self::MAX_COMMAND) {
             throw new \InvalidArgumentException('command is required (max ' . self::MAX_COMMAND . ' chars)');
         }
+        // Defense in depth for direct callers such as MCP: reject before payload
+        // processing, idempotency reservation, targeting, or persistence.
+        self::assertPublicRelayCommand($connectorId, $command);
 
         $payloadJson = null;
         if (isset($data['payload']) && $data['payload'] !== null) {

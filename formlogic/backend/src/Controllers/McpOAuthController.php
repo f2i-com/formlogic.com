@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Constants\AppPermissions;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Helpers\AppUrl;
 use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\McpOAuthService;
@@ -20,12 +23,15 @@ use Psr\Log\LoggerInterface;
  *   GET  /.well-known/oauth-protected-resource[/api/mcp]  RFC 9728 PRM (public, CORS *)
  *   GET  /.well-known/oauth-authorization-server          RFC 8414 AS metadata (public, CORS *)
  *   POST /api/oauth/register                              RFC 7591 DCR (public, rate-limited, CORS *)
+ *   GET  /oauth/authorize                                 validates, then redirects an API-host request to the trusted SPA
  *   GET  /api/oauth/authorize-info                        validates an authorize request for the SPA consent page
  *   POST /api/oauth/approve                               AUTHED user consent -> mints the one-time code
  *   POST /api/oauth/token                                 code / refresh_token grants (public, form-encoded, CORS *)
  *
- * /oauth/authorize itself is an SPA route: the frontend consent page calls authorize-info, then
- * approve, then performs the returned redirect. Token responses are never cacheable (no-store).
+ * In a same-origin deployment /oauth/authorize is served directly by the SPA. A split API host
+ * reaches the backend route first; authorizationPage() validates the OAuth request and redirects
+ * it to APP_URL's fixed /oauth/authorize route. The SPA then calls authorize-info, approve, and
+ * performs the returned client redirect. Token responses are never cacheable (no-store).
  */
 class McpOAuthController
 {
@@ -41,6 +47,7 @@ class McpOAuthController
         // branch only runs for the DESKTOP_CLIENT_ID client, which those tests never use.
         private ?ApiKeyService $apiKeys = null,
         private ?FlowService $flows = null,
+        private ?AppUserService $appUsers = null,
     ) {}
 
     // ── Discovery (public, cache-friendly) ──
@@ -85,6 +92,53 @@ class McpOAuthController
     // ── Consent support for the SPA (/oauth/authorize) ──
 
     /**
+     * Split-host entry point for the system-browser authorization request.
+     *
+     * The native client is sent to the canonical API issuer so its RFC 8707 resource, token and
+     * admission audience remain one exact origin. When the visible SPA lives on APP_URL instead,
+     * validate the complete OAuth request here first, then preserve its raw query while redirecting
+     * only to the server-configured frontend. No request parameter can influence the redirect host.
+     */
+    public function authorizationPage(Request $request, Response $response): Response
+    {
+        $v = $this->oauth->validateAuthorizeRequest($request->getQueryParams(), $request);
+        if (!$v['ok']) {
+            return $this->oauthError($response, $v['error'], $v['error_description'], 400);
+        }
+
+        $query = $request->getUri()->getQuery();
+        if ($query === '' || strlen($query) > 16_384 || preg_match('/[\x00-\x1F\x7F]/', $query) === 1) {
+            return $this->oauthError($response, 'invalid_request', 'Authorization query is missing or invalid', 400);
+        }
+
+        try {
+            $frontend = $this->trustedFrontendOrigin($request);
+        } catch (\Throwable) {
+            return $this->oauthError(
+                $response,
+                'server_error',
+                'The trusted FormLogic consent-page origin is not configured',
+                503,
+            );
+        }
+        if (hash_equals($frontend, McpOAuthService::publicOrigin($request))) {
+            // A normal same-origin install serves this path from the SPA before PHP. If PHP did
+            // receive it, redirecting to itself would loop forever, so fail closed instead.
+            return $this->oauthError(
+                $response,
+                'server_error',
+                'The OAuth consent SPA must serve /oauth/authorize on this origin',
+                503,
+            );
+        }
+
+        return $response
+            ->withStatus(302)
+            ->withHeader('Location', $frontend . '/oauth/authorize?' . $query)
+            ->withHeader('Cache-Control', 'no-store');
+    }
+
+    /**
      * Validate an authorization request and return what the consent page must display: the client
      * name + the redirect host (shown prominently — anti-phishing per spec) + the scopes being
      * granted. A typed RFC 6749-style error otherwise.
@@ -95,16 +149,33 @@ class McpOAuthController
         if (!$v['ok']) {
             return $this->oauthError($response, $v['error'], $v['error_description'], 400);
         }
+        $scopes = $v['scopes'];
+        if (McpOAuthService::isAokieCompanionClient($v['client']['clientId'])) {
+            $userId = $request->getAttribute('userId');
+            $appId = $request->getQueryParams()['appId'] ?? null;
+            if (is_string($userId) && $userId !== '' && is_string($appId) && $appId !== '') {
+                $app = $this->apps->getApp($appId);
+                if (!$app || ($app['status'] ?? null) !== 'published' || !$this->apps->isAppMember($appId, $userId)) {
+                    return $this->oauthError($response, 'access_denied', 'Published app not found or access denied', 403);
+                }
+                $scopes = $this->allowedCompanionScopes($appId, $userId, $scopes);
+                if (!in_array('aokie:state', $scopes, true)) {
+                    return $this->oauthError($response, 'access_denied', 'Your app role does not permit Aokie Companion access', 403);
+                }
+            }
+        }
         return $this->jsonResponse($response, [
             'clientName' => $v['client']['name'] ?? null,
             'clientUri' => $v['client']['clientUri'] ?? null,
             'redirectHost' => (string) (parse_url($v['redirectUri'], PHP_URL_HOST) ?? ''),
-            'scopes' => $v['scopes'],
+            'scopes' => $scopes,
             // Human-readable scope labels for the consent screen + a flag the SPA uses to render the
             // desktop-link copy (and the device name it will link). Additive; the MCP consent UI can
             // ignore both.
-            'scopeLabels' => McpOAuthService::scopeLabels($v['scopes']),
+            'scopeLabels' => McpOAuthService::scopeLabels($scopes),
             'isDesktopLink' => McpOAuthService::isDesktopClient($v['client']['clientId']),
+            'isAokieCompanionLink' => McpOAuthService::isAokieCompanionClient($v['client']['clientId']),
+            'appBindingRequired' => McpOAuthService::isAokieCompanionClient($v['client']['clientId']),
             'device' => $v['device'] ?? null,
         ]);
     }
@@ -127,13 +198,30 @@ class McpOAuthController
             return $this->oauthError($response, $v['error'], $v['error_description'], 400);
         }
         $appId = (is_string($p['appId'] ?? null) && $p['appId'] !== '') ? $p['appId'] : null;
+        if (McpOAuthService::isAokieCompanionClient($v['client']['clientId']) && $appId === null) {
+            return $this->oauthError($response, 'invalid_request', 'Aokie Companion authorization must select an app', 400);
+        }
+        $grantedScopes = $v['scopes'];
         if ($appId !== null) {
             $app = $this->apps->getApp($appId);
-            if (!$app || ($app['ownerId'] ?? null) !== $userId) {
+            $isCompanion = McpOAuthService::isAokieCompanionClient($v['client']['clientId']);
+            $hasAccess = $isCompanion
+                ? $this->apps->isAppMember($appId, $userId)
+                : ($app['ownerId'] ?? null) === $userId;
+            if (!$app || !$hasAccess) {
                 return $this->oauthError($response, 'invalid_request', 'App not found or access denied', 400);
             }
+            if ($isCompanion && ($app['status'] ?? null) !== 'published') {
+                return $this->oauthError($response, 'invalid_request', 'Aokie Companion requires a published app', 400);
+            }
+            if ($isCompanion) {
+                $grantedScopes = $this->allowedCompanionScopes($appId, $userId, $grantedScopes);
+                if (!in_array('aokie:state', $grantedScopes, true)) {
+                    return $this->oauthError($response, 'access_denied', 'Your app role does not permit Aokie Companion access', 403);
+                }
+            }
         }
-        $code = $this->oauth->mintCode($userId, $v['client']['clientId'], $v['redirectUri'], $v['scopes'], $v['codeChallenge'], $v['resource'], $appId, $v['device'] ?? null);
+        $code = $this->oauth->mintCode($userId, $v['client']['clientId'], $v['redirectUri'], $grantedScopes, $v['codeChallenge'], $v['resource'], $appId, $v['device'] ?? null);
 
         $query = ['code' => $code];
         $state = $p['state'] ?? null;
@@ -145,10 +233,72 @@ class McpOAuthController
         $this->audit($request, 'mcp.oauth.approve', $userId, [
             'clientId' => $v['client']['clientId'],
             'appId' => $appId,
-            'scopes' => $v['scopes'],
+            'scopes' => $grantedScopes,
         ]);
         return $this->jsonResponse($response, ['redirectTo' => $redirectTo])
             ->withHeader('Cache-Control', 'no-store');
+    }
+
+    /** Trusted, canonical frontend origin used only as the fixed consent-page redirect target. */
+    private function trustedFrontendOrigin(Request $request): string
+    {
+        $base = rtrim(AppUrl::frontendBase($request), '/');
+        $parts = parse_url($base);
+        if (!is_array($parts)
+            || empty($parts['scheme'])
+            || empty($parts['host'])
+            || isset($parts['user'])
+            || isset($parts['pass'])
+            || isset($parts['query'])
+            || isset($parts['fragment'])
+            || !in_array(($parts['path'] ?? ''), ['', '/'], true)) {
+            throw new \RuntimeException('APP_URL must be an origin');
+        }
+        $scheme = strtolower((string) $parts['scheme']);
+        $environment = $_ENV['APP_ENV'] ?? (getenv('APP_ENV') ?: 'production');
+        if ($scheme !== 'https' && !($environment === 'development' && $scheme === 'http')) {
+            throw new \RuntimeException('APP_URL must use HTTPS');
+        }
+        $portNumber = isset($parts['port']) ? (int) $parts['port'] : null;
+        $port = $portNumber !== null
+            && !(($scheme === 'http' && $portNumber === 80) || ($scheme === 'https' && $portNumber === 443))
+            ? ':' . $portNumber
+            : '';
+        return $scheme . '://' . strtolower((string) $parts['host']) . $port;
+    }
+
+    /** @param list<string> $requested @return list<string> */
+    private function allowedCompanionScopes(string $appId, string $userId, array $requested): array
+    {
+        $map = [
+            'aokie:state' => AppPermissions::AOKIE_COMPANION_STATE,
+            'aokie:monitor' => AppPermissions::AOKIE_COMPANION_MONITOR,
+            'aokie:consult' => AppPermissions::AOKIE_COMPANION_CONSULT,
+            'aokie:takeover' => AppPermissions::AOKIE_COMPANION_TAKEOVER,
+            'aokie:resume' => AppPermissions::AOKIE_COMPANION_RESUME,
+            'aokie:end_caller' => AppPermissions::AOKIE_COMPANION_END,
+            'aokie:assistance' => AppPermissions::AOKIE_COMPANION_ASSISTANCE,
+        ];
+        $allowed = [];
+        foreach ($map as $scope => $permission) {
+            if (in_array($scope, $requested, true)
+                && $this->appUsers !== null
+                && $this->appUsers->hasPermission($appId, $userId, $permission)) {
+                $allowed[] = $scope;
+            }
+        }
+        // Tests/standalone embeddings may omit AppUserService; only the actual
+        // app owner gets the legacy implicit-all fallback. Members fail closed.
+        if ($this->appUsers === null) {
+            $app = $this->apps->getApp($appId);
+            if (($app['ownerId'] ?? null) === $userId) {
+                $allowed = array_values(array_intersect(array_keys($map), $requested));
+            }
+        }
+        if (in_array('offline_access', $requested, true) && in_array('aokie:state', $allowed, true)) {
+            $allowed[] = 'offline_access';
+        }
+        return $allowed;
     }
 
     // ── Token endpoint (RFC 6749 §3.2; application/x-www-form-urlencoded) ──
@@ -220,7 +370,18 @@ class McpOAuthController
             if (McpOAuthService::isDesktopClient($client['clientId'])) {
                 return $this->issueDesktopKey($request, $response, $r);
             }
-            $body = $this->oauth->issueTokenPair($r['userId'], $r['appId'], $r['scopes'], $r['resource'], $client['clientId']);
+            $deviceId = McpOAuthService::isAokieCompanionClient($client['clientId'])
+                ? ($r['deviceLabel'] ?? null)
+                : null;
+            $body = $this->oauth->issueTokenPair(
+                $r['userId'],
+                $r['appId'],
+                $r['scopes'],
+                $r['resource'],
+                $client['clientId'],
+                null,
+                is_string($deviceId) ? $deviceId : null,
+            );
             $this->audit($request, 'mcp.oauth.token', $r['userId'], ['grant' => 'authorization_code', 'clientId' => $client['clientId'], 'appId' => $r['appId']]);
             return $this->tokenResponse($response, $body);
         }
@@ -238,7 +399,15 @@ class McpOAuthController
             if ($scopes === null) {
                 return $this->oauthError($response, 'invalid_scope', 'Requested scope exceeds the original grant', 400);
             }
-            $body = $this->oauth->issueAccessToken($r['userId'], $r['appId'], $scopes, $r['resource']);
+            $body = $this->oauth->issueAccessToken(
+                $r['userId'],
+                $r['appId'],
+                $scopes,
+                $r['resource'],
+                $client['clientId'],
+                is_string($r['deviceId'] ?? null) ? $r['deviceId'] : null,
+                is_string($r['familyId'] ?? null) ? $r['familyId'] : null,
+            );
             // Rotation: public clients get a NEW refresh token (old one is already retired);
             // confidential clients keep the one they presented.
             $body['refresh_token'] = $r['newRefreshToken'] ?? $refreshToken;

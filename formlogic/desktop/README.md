@@ -143,6 +143,10 @@ Configuration is by environment variable (no pointer file):
 | `FORMLOGIC_SERVER_PORT` | `17872` | listen port (loopback only) |
 | `FORMLOGIC_SERVER_TOKEN` | — | bearer token gating privileged routes |
 | `FORMLOGIC_HF_TOKEN` | — | HuggingFace token for gated downloads |
+| `AOKIE_COMPANION_GATEWAY_URL` | — | optional authenticated Companion signalling endpoint |
+| `AOKIE_COMPANION_DESKTOP_TOKEN` | — | Desktop admission bearer token (native process only) |
+| `AOKIE_COMPANION_APP_ID` | — | app/tenant identity bound to the admission |
+| `AOKIE_COMPANION_DESKTOP_ID` | — | Desktop endpoint identity bound to the admission |
 
 **Auth:** reads stay open on loopback. *Privileged* routes (define a service,
 install Python, create/delete a venv, delete a model/service) require either an
@@ -160,6 +164,49 @@ runtime + venvs are already cross-platform, and venv `run.command` paths
 
 Drive it all from the CLI — see the management commands in `cli/README.md`
 (`formlogic python install`, `formlogic service install ollama`, `formlogic model download …`).
+
+## Aokie Companion publisher (read-only preview)
+
+Desktop account linking requests the dedicated `aokie:realtime` API scope in
+addition to `connector:relay`. The narrower scope is required for the assigned
+Aokie plugin to obtain short-lived Companion admissions and report call-access
+activity; older links must be relinked. A development server may expose an
+explicit legacy diagnostic override for local migration, but production does
+not treat `connector:relay` as realtime/media authority.
+
+FormLogic Desktop can optionally publish the local Aokie plugin's current call
+and switchboard observation to an Aokie-compatible realtime gateway. The same
+native task runs in the tray GUI and `formlogic-server`; it is disabled unless
+all four `AOKIE_COMPANION_*` variables in the table above are present.
+
+The endpoint is vendor-neutral: it may be the FormLogic-hosted gateway or a
+self-hosted implementation of the Aokie realtime publisher contract. Remote
+endpoints must use `wss://`. A debug build additionally permits `ws://` only
+for `localhost`, `127.0.0.0/8`, or `::1`, which keeps local development simple
+without weakening a release build.
+
+```powershell
+$env:AOKIE_COMPANION_GATEWAY_URL='ws://127.0.0.1:18787/v1/realtime'
+$env:AOKIE_COMPANION_DESKTOP_TOKEN='replace-with-the-desktop-admission-token'
+$env:AOKIE_COMPANION_APP_ID='app_local'
+$env:AOKIE_COMPANION_DESKTOP_ID='desktop_local'
+```
+
+The bearer token remains inside Rust: it is sent only in the native WebSocket
+upgrade and is never exposed to the webview, Tauri state, snapshots, logs, or
+managed service/Python/QuickJS child environments.
+Desktop sends `desktop_resume`, then a gateway-sequenced `desktop_snapshot` or
+`desktop_idle`. Reconnect state is read from both `call.current` and
+`call.switchboard`; inconsistent sequential reads assert neither live nor idle
+state and are retried. Volatile plugin captions are bounded and explicitly
+non-final.
+
+This slice is intentionally observation-only. `liveCaptions` is the only true
+capability; every media/control capability is `false`, no caller audio is
+routed, and every inbound Companion command gets
+a typed `forbidden` acknowledgement without invoking an Aokie connector
+control. Real call transfer still requires the separately audited native media
+bridge, ownership/lease fencing, and WebRTC/TURN path.
 
 **PATH-based services (e.g. ollama):** ollama installs system-wide and adds
 itself to `PATH`. A *running* server won't see a tool that landed on `PATH`

@@ -160,6 +160,32 @@ impl FormLogicClient {
             .map(|_| ())
     }
 
+    /// Exchange this linked Desktop's revocable `flk_` key for a one-use,
+    /// short-lived Aokie plugin admission. The returned bearer remains inside
+    /// the native plugin RPC pipe; it is never exposed to a renderer or log.
+    pub async fn aokie_companion_plugin_admission(
+        &self,
+        app_id: &str,
+        plugin_id: &str,
+        display_name: Option<&str>,
+        endpoint_binding: &Value,
+    ) -> FlResult<Value> {
+        let body = aokie_companion_plugin_admission_body(
+            app_id,
+            plugin_id,
+            display_name,
+            endpoint_binding,
+        )?;
+        self.send(
+            reqwest::Method::POST,
+            "aokie-companion/admission",
+            &[],
+            Some(&body),
+        )
+        .await
+        .map(|(_, value)| value)
+    }
+
     // ── flows / bindings / app-logic ──────────────────────────────────────────
 
     /// Every flow the key's owner owns; `app_id` narrows to one app, `workspace`
@@ -405,13 +431,25 @@ impl FormLogicClient {
     // ── desktop-connection heartbeat (remote-viewer presence, docs §14) ───────
 
     /// Upsert the paired-desktop registry row (doubles as a heartbeat so the web
-    /// app's remote-viewer presence sees this runtime). Best-effort.
-    pub async fn upsert_desktop_connection(&self, payload: &Value) -> FlResult<()> {
+    /// app's remote-viewer presence sees this runtime). Returns the canonical
+    /// server-side connection id: an OAuth link initially mints a placeholder
+    /// row, while the first stable-instance heartbeat may absorb/sweep that row
+    /// and return a different id. Older deployments without this endpoint keep
+    /// working through the explicit `Ok(None)` 404 compatibility path.
+    pub async fn upsert_desktop_connection(&self, payload: &Value) -> FlResult<Option<String>> {
         // Registry lives on the session/owner surface, not /api/v1; skip if the
         // deployment doesn't expose it under the key (404) — never fatal.
-        match self.send(reqwest::Method::POST, "desktop-connections", &[], Some(payload)).await {
-            Ok(_) => Ok(()),
-            Err(FlError::Http { status: 404, .. }) => Ok(()),
+        match self
+            .send(
+                reqwest::Method::POST,
+                "desktop-connections",
+                &[],
+                Some(payload),
+            )
+            .await
+        {
+            Ok((status, response)) => parse_desktop_connection_id(status, &response).map(Some),
+            Err(FlError::Http { status: 404, .. }) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -510,6 +548,62 @@ impl FormLogicClient {
             Err(e) => Err(e),
         }
     }
+}
+
+fn aokie_companion_plugin_admission_body(
+    app_id: &str,
+    plugin_id: &str,
+    display_name: Option<&str>,
+    endpoint_binding: &Value,
+) -> FlResult<Value> {
+    let mut body = json!({
+        "appId": app_id,
+        "pluginId": plugin_id,
+    });
+    if let Some(name) = display_name.filter(|name| !name.trim().is_empty()) {
+        body["displayName"] = json!(name.trim());
+    }
+    // Public proof-of-possession policy only. The corresponding Desktop seed
+    // never enters this request (or any renderer/cloud surface).
+    for field in [
+        "endpointPublicKey",
+        "holderKeyThumbprint",
+        "approvedPeerKeyThumbprints",
+        "peerRosterRevision",
+        "peerRosterHash",
+    ] {
+        let value = endpoint_binding.get(field).ok_or_else(|| FlError::Http {
+            status: 0,
+            message: format!("Desktop endpoint binding is missing {field}"),
+        })?;
+        body[field] = value.clone();
+    }
+    Ok(body)
+}
+
+/// Extract the authoritative id returned by the authenticated Desktop
+/// heartbeat. A successful response without this exact public identifier is a
+/// contract error: silently retaining an OAuth placeholder would later make
+/// Companion pairing proofs refer to a row the server has already swept.
+fn parse_desktop_connection_id(status: u16, response: &Value) -> FlResult<String> {
+    let id = response
+        .get("connection")
+        .and_then(|connection| connection.get("id"))
+        .and_then(Value::as_str)
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                    })
+        })
+        .map(str::to_string);
+    id.ok_or_else(|| FlError::Http {
+        status,
+        message: "desktop heartbeat response is missing a valid connection.id".into(),
+    })
 }
 
 /// The parsed FormLogic Desktop device-link token response (docs/MCP.md
@@ -613,6 +707,31 @@ fn array_field(v: &Value, field: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+
+    #[derive(Clone)]
+    struct HeartbeatStub {
+        status: StatusCode,
+        body: Value,
+    }
+
+    async fn heartbeat_stub_response(State(stub): State<HeartbeatStub>) -> (StatusCode, Json<Value>) {
+        (stub.status, Json(stub.body))
+    }
+
+    async fn heartbeat_stub(status: StatusCode, body: Value) -> String {
+        let app = Router::new()
+            .route("/api/v1/desktop-connections", post(heartbeat_stub_response))
+            .with_state(HeartbeatStub { status, body });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind heartbeat stub");
+        let base_url = format!("http://{}", listener.local_addr().expect("stub address"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        base_url
+    }
 
     #[test]
     fn base_url_normalization() {
@@ -630,6 +749,72 @@ mod tests {
         assert!(FormLogicConfig { base_url: "u".into(), api_key: "k".into() }.is_complete());
     }
 
+    #[tokio::test]
+    async fn authenticated_heartbeat_returns_the_stable_connection_id() {
+        let base_url = heartbeat_stub(
+            StatusCode::CREATED,
+            json!({
+                "connection": {
+                    "id": "f80d9a53-4d3e-4d6f-bec9-a9e997c7e30e",
+                    "desktopInstanceId": "desktop-stable"
+                }
+            }),
+        )
+        .await;
+        let client = FormLogicClient::new(&FormLogicConfig {
+            base_url,
+            api_key: "flk_test".into(),
+        })
+        .expect("complete client config");
+
+        let id = client
+            .upsert_desktop_connection(&json!({
+                "desktopInstanceId": "desktop-stable",
+                "deviceName": "Reception PC",
+                "capabilities": ["flows", "aokie"]
+            }))
+            .await
+            .expect("heartbeat succeeds");
+
+        assert_eq!(
+            id.as_deref(),
+            Some("f80d9a53-4d3e-4d6f-bec9-a9e997c7e30e")
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_404_remains_a_compatible_no_id_success() {
+        let base_url = heartbeat_stub(
+            StatusCode::NOT_FOUND,
+            json!({ "message": "route not available on this deployment" }),
+        )
+        .await;
+        let client = FormLogicClient::new(&FormLogicConfig {
+            base_url,
+            api_key: "flk_test".into(),
+        })
+        .expect("complete client config");
+
+        let id = client
+            .upsert_desktop_connection(&json!({ "desktopInstanceId": "desktop-stable" }))
+            .await
+            .expect("404 compatibility is non-fatal");
+
+        assert_eq!(id, None);
+    }
+
+    #[test]
+    fn heartbeat_success_requires_a_safe_connection_id() {
+        for response in [
+            Value::Null,
+            json!({ "connection": {} }),
+            json!({ "connection": { "id": "" } }),
+            json!({ "connection": { "id": "unsafe/id" } }),
+        ] {
+            assert!(parse_desktop_connection_id(201, &response).is_err());
+        }
+    }
+
     #[test]
     fn incomplete_config_yields_no_client() {
         assert!(FormLogicClient::new(&FormLogicConfig { base_url: "".into(), api_key: "".into() }).is_none());
@@ -645,12 +830,70 @@ mod tests {
     }
 
     #[test]
+    fn companion_admission_body_has_exact_public_holder_roster_and_no_secret() {
+        let endpoint_binding = json!({
+            "endpointPublicKey": {
+                "algorithm": "ed25519",
+                "publicKey": "desktop-public-key",
+                "thumbprint": "desktop-thumbprint"
+            },
+            "holderKeyThumbprint": "desktop-thumbprint",
+            "approvedPeerKeyThumbprints": ["mobile-thumbprint"],
+            "peerRosterRevision": 7,
+            "peerRosterHash": "roster-hash"
+        });
+
+        let body = aokie_companion_plugin_admission_body(
+            "app-a",
+            "aokie",
+            Some("  Aokie Desktop  "),
+            &endpoint_binding,
+        )
+        .expect("complete public endpoint binding should be accepted");
+
+        assert_eq!(
+            body,
+            json!({
+                "appId": "app-a",
+                "pluginId": "aokie",
+                "displayName": "Aokie Desktop",
+                "endpointPublicKey": {
+                    "algorithm": "ed25519",
+                    "publicKey": "desktop-public-key",
+                    "thumbprint": "desktop-thumbprint"
+                },
+                "holderKeyThumbprint": "desktop-thumbprint",
+                "approvedPeerKeyThumbprints": ["mobile-thumbprint"],
+                "peerRosterRevision": 7,
+                "peerRosterHash": "roster-hash"
+            })
+        );
+        let encoded = serde_json::to_string(&body).expect("admission body serializes");
+        assert!(!encoded.contains("privateKeySeed"));
+        assert!(!encoded.contains("accessToken"));
+
+        let incomplete = json!({
+            "endpointPublicKey": endpoint_binding["endpointPublicKey"],
+            "holderKeyThumbprint": "desktop-thumbprint",
+            "approvedPeerKeyThumbprints": ["mobile-thumbprint"],
+            "peerRosterRevision": 7
+        });
+        assert!(aokie_companion_plugin_admission_body(
+            "app-a",
+            "aokie",
+            None,
+            &incomplete
+        )
+        .is_err());
+    }
+
+    #[test]
     fn token_response_prefers_formlogic_api_key() {
         // The documented device-link body: formlogic_api_key == access_token.
         let v = json!({
             "access_token": "flk_abc",
             "token_type": "Bearer",
-            "scope": "flows:read flows:write responses:read responses:write responses:manage connector:relay",
+            "scope": "flows:read flows:write responses:read responses:write responses:manage connector:relay aokie:realtime",
             "formlogic_api_key": "flk_abc",
             "api_key_id": "key-1",
             "desktop_connection_id": "conn-1",
@@ -661,7 +904,9 @@ mod tests {
         assert_eq!(r.api_key_id.as_deref(), Some("key-1"));
         assert_eq!(r.desktop_connection_id.as_deref(), Some("conn-1"));
         assert_eq!(r.device_name.as_deref(), Some("FormLogic Desktop on Reception PC"));
-        assert!(r.scope.unwrap().contains("connector:relay"));
+        let scope = r.scope.unwrap();
+        assert!(scope.contains("connector:relay"));
+        assert!(scope.contains("aokie:realtime"));
     }
 
     #[test]

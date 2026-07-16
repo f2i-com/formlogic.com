@@ -12,6 +12,7 @@ import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { toast } from '../../../stores/toastStore';
 import { api } from '../../../lib/api';
 import { useAppRuntimeStore } from '../../../stores/appRuntimeStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { DesktopStatusPanel } from '../../desktop/DesktopStatusPanel';
 import { ConnectorError } from '../../../client-runtime/connectors/connectorTypes';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../../client-runtime/desktop/desktopDetection';
@@ -19,6 +20,7 @@ import { isDesktopPaired, subscribeDesktopPaired } from '../../../client-runtime
 import { performRelayCommand } from './aokieRelay';
 import { describeLastSeen } from './aokiePresence';
 import { useAokiePresence } from './useAokiePresence';
+import { AokieCompanionPanel } from './AokieCompanionPanel';
 
 interface DongleRow {
   id: string;
@@ -123,6 +125,12 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // status card below names that device instead of pushing a local install (§14).
   const presence = useAokiePresence();
   const appSlug = useAppRuntimeStore((s) => s.appSlug);
+  const appId = useAppRuntimeStore((s) => s.config?.app.id);
+  const isOwner = useAppRuntimeStore((s) => s.isOwner());
+  const companionPermissions = useAppRuntimeStore((s) => s.permissions?.appLevel);
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
+  const canManageCompanion = isOwner || (companionPermissions?.includes('manage_aokie_companion') ?? false);
+  const canAuditCompanion = canManageCompanion || (companionPermissions?.includes('aokie_companion_audit') ?? false);
   const remoteMode = presence.kind === 'remote';
   // Shared Demo account: everything on this screen is the simulated bridge
   // (the connector + presence layers already refuse the real desktop route),
@@ -131,6 +139,7 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // server's demo_readonly guard would refuse them anyway.
   const demoMode = api.isDemoMode();
   const [enumerationNote, setEnumerationNote] = useState<string | null>(null);
+  const [companionRefreshToken, setCompanionRefreshToken] = useState(0);
 
   // Clear the hardware-event log: delete EVERY row, not just the 8 shown.
   // New events may land mid-clear, so loop until the form reads empty
@@ -462,7 +471,10 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         </div>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => {
+            void load();
+            setCompanionRefreshToken((value) => value + 1);
+          }}
           disabled={refreshing}
           className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-45 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
@@ -512,6 +524,17 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
       ) : (
         <DesktopStatusPanel />
       )}
+
+      <AokieCompanionPanel
+        appId={appId}
+        appSlug={appSlug ?? undefined}
+        isOwner={isOwner}
+        canManage={canManageCompanion}
+        canAudit={canAuditCompanion}
+        currentUserId={currentUserId}
+        demoMode={demoMode}
+        refreshToken={companionRefreshToken}
+      />
 
       {error && (
         <div className="break-words rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">

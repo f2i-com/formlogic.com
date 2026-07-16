@@ -217,6 +217,8 @@ enum BindingRunOutcome {
 }
 
 /// The desktop flow runtime. Cheaply cloneable via `Arc`.
+pub type DesktopConnectionIdObserver = Arc<dyn Fn(&str) + Send + Sync + 'static>;
+
 pub struct FlowRuntime {
     host: Arc<PluginHost>,
     registry: Option<RegistryHandle>,
@@ -224,6 +226,9 @@ pub struct FlowRuntime {
     instance_id: String,
     device_name: String,
     inner: RwLock<Inner>,
+    /// GUI-only native persistence hook for the public Desktop connection id.
+    /// Headless installs leave this unset; API credentials never enter it.
+    desktop_connection_id_observer: RwLock<Option<DesktopConnectionIdObserver>>,
     status: Mutex<FlowRuntimeStatus>,
     /// Bounded, repeat-collapsing history behind the bare `errors` counter,
     /// so the operator can INSPECT what went wrong (and clear it) instead of
@@ -474,6 +479,7 @@ impl FlowRuntime {
             instance_id,
             device_name,
             inner: RwLock::new(Inner { config, client }),
+            desktop_connection_id_observer: RwLock::new(None),
             status: Mutex::new(FlowRuntimeStatus { linked, base_url, ..Default::default() }),
             recent_errors: Mutex::new(VecDeque::new()),
             snapshot: Mutex::new(None),
@@ -758,6 +764,49 @@ impl FlowRuntime {
 
     pub fn config(&self) -> FormLogicConfig {
         self.inner.read().map(|i| i.config.clone()).unwrap_or(FormLogicConfig { base_url: String::new(), api_key: String::new() })
+    }
+
+    /// Attach a native observer for the canonical public connection id returned
+    /// by authenticated heartbeats. The GUI uses this to reconcile its local
+    /// pairing metadata; the callback never receives the API key or any other
+    /// secret. Headless runtimes intentionally do not install an observer.
+    pub fn set_desktop_connection_id_observer(&self, observer: DesktopConnectionIdObserver) {
+        *self
+            .desktop_connection_id_observer
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(observer);
+    }
+
+    fn publish_desktop_connection_id(&self, id: &str) {
+        let observer = self
+            .desktop_connection_id_observer
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        if let Some(observer) = observer {
+            // Publish on every successful heartbeat rather than deduplicating
+            // in memory. If a prior disk write failed, a future heartbeat can
+            // retry and recover the GUI config automatically.
+            observer(id);
+        }
+    }
+
+    /// Perform one authenticated registry heartbeat and return the canonical
+    /// connection id selected by the server. OAuth may initially return a
+    /// disposable placeholder id; this stable-instance heartbeat is the source
+    /// of truth after the backend reattaches the key and sweeps that placeholder.
+    pub async fn sync_desktop_connection(&self) -> Result<Option<String>, FlError> {
+        let client = self.client().ok_or(FlError::NotConfigured)?;
+        let payload = json!({
+            "desktopInstanceId": self.instance_id,
+            "deviceName": self.device_name,
+            "capabilities": ["flows", "aokie"],
+        });
+        let connection_id = client.upsert_desktop_connection(&payload).await?;
+        if let Some(id) = connection_id.as_deref() {
+            self.publish_desktop_connection_id(id);
+        }
+        Ok(connection_id)
     }
 
     /// Reconfigure the linked account (SettingsPanel "Save"). Rebuilds the client
@@ -1617,7 +1666,7 @@ impl FlowRuntime {
         }
 
         let outcome = self
-            .execute_with_retry(&flow, &inputs, Some(event.clone()), app_ctx.clone(), binding_id_opt(binding), binding.get("timeoutMs").and_then(Value::as_u64), binding.get("retryPolicy"), client)
+            .execute_with_retry(&flow, &run_id, &inputs, Some(event.clone()), app_ctx.clone(), binding_id_opt(binding), binding.get("timeoutMs").and_then(Value::as_u64), binding.get("retryPolicy"), client)
             .await;
 
         // outputActions (browser parity) on success.
@@ -1629,7 +1678,12 @@ impl FlowRuntime {
                 let flow_slug_for_kv = flow.get("slug").and_then(Value::as_str).unwrap_or(&flow_slug).to_string();
                 for (action_idx, action) in actions.iter().enumerate() {
                     let ekey = Self::output_effect_key(Some(&event), &binding_id, action_idx);
-                    if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref()).await {
+                    let action_idx = action_idx.to_string();
+                    let request_id = crate::connectors::stable_request_id(
+                        "flow-output",
+                        &[&run_id, &binding_id, &action_idx],
+                    );
+                    if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref(), &request_id).await {
                         action_errors.push(e);
                     }
                 }
@@ -1645,7 +1699,7 @@ impl FlowRuntime {
         // Live-call (sync) bindings are ALWAYS dispatched through this event path (never the
         // claim loop below), so this is the only place fallbackPolicy needs to apply.
         if outcome.status != "done" || !action_errors.is_empty() {
-            self.apply_fallback(binding, event, &outcome, &action_errors).await;
+            self.apply_fallback(binding, event, &outcome, &action_errors, &run_id).await;
         }
 
         // Executed to a durable server-side run row (success OR flow-level
@@ -1675,7 +1729,14 @@ impl FlowRuntime {
     /// that: the failed/partial run is already durably recorded via `self.complete()` above —
     /// the run-history row IS the log, mirroring the browser comment ("already logged;
     /// nothing surfaces to the viewer").
-    async fn apply_fallback(&self, binding: &Value, event: &Value, outcome: &FlowOutcome, action_errors: &[String]) {
+    async fn apply_fallback(
+        &self,
+        binding: &Value,
+        event: &Value,
+        outcome: &FlowOutcome,
+        action_errors: &[String],
+        execution_id: &str,
+    ) {
         let binding_id = binding.get("id").and_then(Value::as_str).unwrap_or("?");
         let mode = binding.get("mode").and_then(Value::as_str).unwrap_or("");
         let policy = binding.get("fallbackPolicy");
@@ -1716,13 +1777,16 @@ impl FlowRuntime {
                                 payload["inResponseTo"] = json!(turn);
                             }
                         }
-                        let request_id = Self::output_effect_key(Some(event), binding_id, usize::MAX);
+                        let request_id = crate::connectors::stable_request_id(
+                            "flow-fallback",
+                            &[execution_id, binding_id],
+                        );
                         if let Err(e) = self
                             .connector(
                                 &connector_id,
                                 "call.operatorSpeak",
                                 Some(payload),
-                                request_id.as_deref(),
+                                Some(request_id.as_str()),
                             )
                             .await
                         {
@@ -1858,7 +1922,7 @@ impl FlowRuntime {
 
         let timeout = binding.as_ref().and_then(|b| b.get("timeoutMs").and_then(Value::as_u64));
         let retry = binding.as_ref().and_then(|b| b.get("retryPolicy"));
-        let outcome = self.execute_with_retry(&flow, &inputs, event.clone(), app_ctx.clone(), None, timeout, retry, client).await;
+        let outcome = self.execute_with_retry(&flow, run_id, &inputs, event.clone(), app_ctx.clone(), None, timeout, retry, client).await;
 
         let mut action_errors = Vec::new();
         if outcome.status == "done" {
@@ -1870,7 +1934,12 @@ impl FlowRuntime {
                     for (action_idx, action) in actions.iter().enumerate() {
                         let binding_id = b.get("id").and_then(Value::as_str).unwrap_or("binding");
                         let ekey = Self::output_effect_key(event.as_ref(), binding_id, action_idx);
-                        if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref()).await {
+                        let action_idx = action_idx.to_string();
+                        let request_id = crate::connectors::stable_request_id(
+                            "flow-output",
+                            &[run_id, binding_id, &action_idx],
+                        );
+                        if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref(), &request_id).await {
                             action_errors.push(e);
                         }
                     }
@@ -1886,6 +1955,7 @@ impl FlowRuntime {
     async fn execute_with_retry(
         self: &Arc<Self>,
         flow: &Value,
+        execution_id: &str,
         inputs: &Value,
         event: Option<Value>,
         app: Option<Value>,
@@ -1914,7 +1984,7 @@ impl FlowRuntime {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| format!("flowrun:{}", uuid::Uuid::new_v4().simple()));
+            .unwrap_or_else(|| execution_id.to_string());
         let opts = RunOptions {
             inputs: inputs.clone(),
             event,
@@ -2041,6 +2111,7 @@ impl FlowRuntime {
         app_id: Option<&str>,
         flow_slug: &str,
         effect_key: Option<&str>,
+        connector_request_id: &str,
     ) -> Result<(), String> {
         let ty = action.get("type").and_then(Value::as_str).unwrap_or("");
         let when = action.get("when").and_then(Value::as_str);
@@ -2080,7 +2151,10 @@ impl FlowRuntime {
                 let cid = action.get("connectorId").and_then(Value::as_str).ok_or("connector.request missing connectorId")?;
                 let cmd = action.get("command").and_then(Value::as_str).ok_or("connector.request missing command")?;
                 let payload = resolve_deep(action.get("payload").unwrap_or(&Value::Null), scope);
-                self.connector(cid, cmd, Some(payload), effect_key).await
+                let request_id = (cid == "aokie"
+                    && crate::connectors::aokie_command_requires_request_id(cmd))
+                    .then_some(connector_request_id);
+                self.connector(cid, cmd, Some(payload), request_id).await
             }
             "call.speak" => {
                 let msg = interpolate_template(action.get("message").and_then(Value::as_str).unwrap_or(""), &tctx);
@@ -2103,7 +2177,7 @@ impl FlowRuntime {
                     "aokie",
                     "call.operatorSpeak",
                     Some(payload),
-                    effect_key,
+                    Some(connector_request_id),
                 )
                 .await
             }
@@ -2182,7 +2256,7 @@ impl FlowRuntime {
         }
         let (run, _created) = client.reserve_run(&reserve).await.map_err(|e| e.to_string())?;
         let run_id = run.get("runId").or_else(|| run.get("id")).and_then(Value::as_str).unwrap_or_default().to_string();
-        let outcome = self.execute_with_retry(&flow, &reserve["inputSnapshot"], None, self.app_context(app_id.as_deref()), None, timeout_ms, None, &client).await;
+        let outcome = self.execute_with_retry(&flow, &run_id, &reserve["inputSnapshot"], None, self.app_context(app_id.as_deref()), None, timeout_ms, None, &client).await;
         self.complete(&client, &run_id, &outcome, &[]).await;
         Ok(self.outcome_body(&run_id, &outcome))
     }
@@ -2230,6 +2304,96 @@ impl FlowRuntime {
             Ok(body) => Ok(body),
             Err(e) => Err(RpcErrorObj { code: -32000, message: e, data: Some(json!({ "code": "node_failed" })) }),
         }
+    }
+
+    /// Broker one short-lived gateway admission for the installed Aokie
+    /// process. The long-lived FormLogic API key never leaves Desktop; only
+    /// this app/plugin-bound, single-socket bearer crosses the private stdio
+    /// pipe. The caller must request a fresh one before every reconnect.
+    async fn handle_companion_admission_rpc(
+        self: &Arc<Self>,
+        host_plugin_id: String,
+        params: Value,
+    ) -> Result<Value, RpcErrorObj> {
+        let invalid = |message: &str| RpcErrorObj {
+            code: -32602,
+            message: message.into(),
+            data: Some(json!({ "code": "invalid_admission_request" })),
+        };
+        if host_plugin_id != "aokie" {
+            return Err(RpcErrorObj {
+                code: -32000,
+                message: "Companion admissions are restricted to the installed Aokie plugin".into(),
+                data: Some(json!({ "code": "capability_denied" })),
+            });
+        }
+        let requested_app_id = match params.get("appId") {
+            Some(Value::String(value)) if safe_companion_id(value) => Some(value.clone()),
+            Some(_) => return Err(invalid("companion.admission appId must be a safe identifier")),
+            None => None,
+        };
+        // The plugin intentionally has no FormLogic account/app credential. On
+        // its first managed connection Desktop resolves the app from the same
+        // connector-assignment authority used for Aokie events. Once the first
+        // admission is returned, the plugin pins that appId on every refresh.
+        let app_id = requested_app_id
+            .or_else(|| self.assigned_app_id(&host_plugin_id))
+            .ok_or_else(|| invalid("companion.admission requires an unambiguous Aokie connector assignment"))?;
+        let plugin_id = params
+            .get("pluginId")
+            .and_then(Value::as_str)
+            .filter(|value| safe_companion_id(value))
+            .ok_or_else(|| invalid("companion.admission requires a safe pluginId"))?;
+        if plugin_id != host_plugin_id {
+            return Err(invalid("companion.admission pluginId must match the calling plugin"));
+        }
+        let display_name = params
+            .get("displayName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 120 && !value.chars().any(char::is_control));
+        let endpoint_binding = self
+            .host
+            .aokie_endpoint_identity
+            .admission_binding()
+            .map_err(|message| RpcErrorObj {
+                code: -32003,
+                message,
+                data: Some(json!({ "code": "pairing_required" })),
+            })?;
+        let client = self.client().ok_or_else(|| RpcErrorObj {
+            code: -32001,
+            message: "FormLogic account is not linked".into(),
+            data: Some(json!({ "code": "runner_unavailable" })),
+        })?;
+        let response = client
+            .aokie_companion_plugin_admission(
+                &app_id,
+                plugin_id,
+                display_name,
+                &endpoint_binding,
+            )
+            .await
+            .map_err(|error| RpcErrorObj {
+                code: -32002,
+                // This error never contains a response bearer; FormLogicClient
+                // reports only transport/status + the server's fixed message.
+                message: format!("Could not refresh the Aokie Companion admission: {error}"),
+                data: Some(json!({ "code": "admission_unavailable" })),
+            })?;
+        let Some(response) = project_companion_admission_response(
+            &response,
+            &app_id,
+            plugin_id,
+            &endpoint_binding,
+        ) else {
+            return Err(RpcErrorObj {
+                code: -32002,
+                message: "FormLogic returned an invalid Aokie Companion admission".into(),
+                data: Some(json!({ "code": "invalid_admission_response" })),
+            });
+        };
+        Ok(response)
     }
 
     /// Look up a cached run outcome (GET /api/flows/runs/{id}).
@@ -2291,6 +2455,26 @@ impl FlowRuntime {
             })
         })
         .flatten()
+    }
+
+    /// Resolve the one authoritative app for a connector. This uses the same
+    /// explicit-assignment/single-candidate rules as event routing and refuses
+    /// legacy-unrestricted or ambiguous states rather than minting a broadly
+    /// scoped Companion admission.
+    fn assigned_app_id(&self, connector_id: &str) -> Option<String> {
+        match self.route_for(Some(connector_id)) {
+            ConnectorRouting::App(app_id) => Some(app_id),
+            ConnectorRouting::Unrestricted
+            | ConnectorRouting::NoCandidates
+            | ConnectorRouting::Ambiguous(_) => None,
+        }
+    }
+
+    /// Public, non-secret defaults for the native Companion pairing UI. A
+    /// managed FormLogic link normally supplies its database connection id in
+    /// the request; custom/offline servers may use this stable per-install id.
+    pub fn aokie_pairing_context(&self) -> (Option<String>, String) {
+        (self.assigned_app_id("aokie"), self.instance_id.clone())
     }
 
     fn app_id_for_slug(&self, slug: &str) -> Option<String> {
@@ -2374,16 +2558,7 @@ impl FlowRuntime {
     }
 
     async fn heartbeat(&self) {
-        let client = match self.client() {
-            Some(c) => c,
-            None => return,
-        };
-        let payload = json!({
-            "desktopInstanceId": self.instance_id,
-            "deviceName": self.device_name,
-            "capabilities": ["flows", "aokie"],
-        });
-        if let Err(FlError::Unauthorized(e)) = client.upsert_desktop_connection(&payload).await {
+        if let Err(FlError::Unauthorized(e)) = self.sync_desktop_connection().await {
             self.note_error(format!("heartbeat: {e}"));
         }
     }
@@ -2456,7 +2631,9 @@ impl FlowRuntime {
     async fn handle_command(self: &Arc<Self>, client: &Arc<FormLogicClient>, command: &Value) {
         let instance = self.instance_id.clone();
         let host = self.host.clone();
-        let request_id = relay::command_id(command);
+        let relay_request_id = relay::command_id(command).map(|command_id| {
+            crate::connectors::stable_request_id("relay-command", &[&command_id])
+        });
         let disposition = relay::process_one(
             command,
             RELAY_COMPLETE_ATTEMPTS,
@@ -2467,8 +2644,12 @@ impl FlowRuntime {
             },
             |connector_id, cmd, payload| {
                 let host = host.clone();
-                let request_id = request_id.clone();
+                let relay_request_id = relay_request_id.clone();
                 async move {
+                    let request_id = (connector_id == "aokie"
+                        && crate::connectors::aokie_command_requires_request_id(&cmd))
+                        .then_some(relay_request_id)
+                        .flatten();
                     let body = crate::connectors::ConnectorRequestBody {
                         connector_id: Some(connector_id.clone()),
                         command: cmd,
@@ -2507,10 +2688,92 @@ impl FlowRuntime {
 struct RpcBridge(Arc<FlowRuntime>);
 
 impl PluginRpcHandler for RpcBridge {
-    fn handle(&self, plugin_id: String, _method: String, params: Value) -> PluginRpcFuture {
+    fn handle(&self, plugin_id: String, method: String, params: Value) -> PluginRpcFuture {
         let rt = self.0.clone();
-        Box::pin(async move { rt.handle_flow_run_rpc(plugin_id, params).await })
+        Box::pin(async move {
+            match method.as_str() {
+                "flow.run" => rt.handle_flow_run_rpc(plugin_id, params).await,
+                "companion.admission" => {
+                    rt.handle_companion_admission_rpc(plugin_id, params).await
+                }
+                _ => Err(RpcErrorObj {
+                    code: -32601,
+                    message: format!("method not found: {method}"),
+                    data: None,
+                }),
+            }
+        })
     }
+}
+
+/// Validate the cloud response's endpoint binding, then copy only the exact
+/// private wire contract consumed by Aokie's `AdmissionResponse`. The backend
+/// also returns Desktop/operator metadata (`desktopConnection` and
+/// `scopeCompatibility`); forwarding those fields into the plugin's strict
+/// `deny_unknown_fields` decoder makes an otherwise valid admission unusable.
+fn project_companion_admission_response(
+    response: &Value,
+    app_id: &str,
+    plugin_id: &str,
+    endpoint_binding: &Value,
+) -> Option<Value> {
+    const FIELDS: [&str; 18] = [
+        "accessToken",
+        "tokenType",
+        "expiresIn",
+        "expiresAt",
+        "gatewayUrl",
+        "appId",
+        "subjectId",
+        "role",
+        "scopes",
+        "device",
+        "iceServers",
+        "relayOnly",
+        "turnCredentialExpiresAt",
+        "endpointPublicKey",
+        "holderKeyThumbprint",
+        "approvedPeerKeyThumbprints",
+        "peerRosterRevision",
+        "peerRosterHash",
+    ];
+
+    let source = response.as_object()?;
+    let token_ok = source
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .is_some_and(|token| {
+            (16..=16 * 1024).contains(&token.len()) && !token.chars().any(char::is_control)
+        });
+    if !token_ok
+        || source.get("gatewayUrl").and_then(Value::as_str).is_none()
+        || source.get("appId").and_then(Value::as_str) != Some(app_id)
+        || source.get("subjectId").and_then(Value::as_str) != Some(plugin_id)
+        || source.get("role").and_then(Value::as_str) != Some("plugin")
+        || source.get("endpointPublicKey") != endpoint_binding.get("endpointPublicKey")
+        || source.get("holderKeyThumbprint")
+            != endpoint_binding.get("holderKeyThumbprint")
+        || source.get("approvedPeerKeyThumbprints")
+            != endpoint_binding.get("approvedPeerKeyThumbprints")
+        || source.get("peerRosterRevision") != endpoint_binding.get("peerRosterRevision")
+        || source.get("peerRosterHash") != endpoint_binding.get("peerRosterHash")
+    {
+        return None;
+    }
+
+    let mut projected = Map::with_capacity(FIELDS.len());
+    for field in FIELDS {
+        projected.insert(field.into(), source.get(field)?.clone());
+    }
+    Some(Value::Object(projected))
+}
+
+fn safe_companion_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
+        })
 }
 
 fn binding_id_opt(binding: &Value) -> Option<String> {
@@ -2562,6 +2825,92 @@ mod tests {
         let again = load_or_create_instance_id(&dir);
         assert_eq!(id, again);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn placeholder_connection_id_reconciles_and_future_heartbeats_can_recover() {
+        async fn stable_heartbeat_response() -> (axum::http::StatusCode, axum::Json<Value>) {
+            (
+                axum::http::StatusCode::CREATED,
+                axum::Json(json!({
+                    "connection": {
+                        "id": "f80d9a53-4d3e-4d6f-bec9-a9e997c7e30e",
+                        "desktopInstanceId": "desktop-stable"
+                    }
+                })),
+            )
+        }
+
+        let app = axum::Router::new().route(
+            "/api/v1/desktop-connections",
+            axum::routing::post(stable_heartbeat_response),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind heartbeat stub");
+        let base_url = format!("http://{}", listener.local_addr().expect("stub address"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let rt = runtime();
+        rt.reconfigure(FormLogicConfig {
+            base_url,
+            api_key: "flk_relinked".into(),
+        });
+        let persisted = Arc::new(Mutex::new(String::from(
+            "f91a-placeholder-oauth-connection",
+        )));
+        let writes = Arc::new(Mutex::new(0_u32));
+        let persisted_for_observer = persisted.clone();
+        let writes_for_observer = writes.clone();
+        rt.set_desktop_connection_id_observer(Arc::new(move |canonical_id| {
+            let mut current = persisted_for_observer
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if current.as_str() != canonical_id {
+                *current = canonical_id.to_string();
+                *writes_for_observer
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) += 1;
+            }
+        }));
+
+        let stable = "f80d9a53-4d3e-4d6f-bec9-a9e997c7e30e";
+        let returned = rt
+            .sync_desktop_connection()
+            .await
+            .expect("stable-instance heartbeat succeeds");
+        assert_eq!(returned.as_deref(), Some(stable));
+        assert_eq!(
+            persisted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_str(),
+            stable
+        );
+        assert_eq!(*writes.lock().unwrap_or_else(|error| error.into_inner()), 1);
+
+        // A no-op heartbeat does not rewrite disk, while a later heartbeat can
+        // still recover if external damage/a previous failed write leaves the
+        // stored value stale again. FlowRuntime deliberately republishes every
+        // successful canonical id rather than deduplicating it in memory.
+        rt.sync_desktop_connection()
+            .await
+            .expect("unchanged heartbeat succeeds");
+        assert_eq!(*writes.lock().unwrap_or_else(|error| error.into_inner()), 1);
+        *persisted.lock().unwrap_or_else(|error| error.into_inner()) = "stale-again".into();
+        rt.sync_desktop_connection()
+            .await
+            .expect("future recovery heartbeat succeeds");
+        assert_eq!(*writes.lock().unwrap_or_else(|error| error.into_inner()), 2);
+        assert_eq!(
+            persisted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_str(),
+            stable
+        );
     }
 
     // ── Crash-recovery candidate planning (audit FL-001) ────────────────────
@@ -2642,6 +2991,107 @@ mod tests {
             route_connector_event("printer", &HashMap::new(), &bundles),
             ConnectorRouting::NoCandidates
         );
+    }
+
+    #[test]
+    fn managed_companion_admission_uses_only_an_unambiguous_connector_app() {
+        let rt = runtime();
+        *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+            assignments: HashMap::new(),
+            flows: vec![],
+            bindings: vec![],
+            applogic: vec![bundle("app-a", Some(vec!["aokie"]))],
+            fetched_at: Instant::now(),
+        });
+        assert_eq!(rt.assigned_app_id("aokie").as_deref(), Some("app-a"));
+
+        rt.snapshot.lock().unwrap().as_mut().unwrap().applogic = vec![
+            bundle("app-a", Some(vec!["aokie"])),
+            bundle("app-b", Some(vec!["aokie"])),
+        ];
+        assert_eq!(
+            rt.assigned_app_id("aokie"),
+            None,
+            "two candidate apps must never receive an inferred media admission",
+        );
+
+        rt.snapshot
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .assignments
+            .insert("aokie".into(), "app-b".into());
+        assert_eq!(rt.assigned_app_id("aokie").as_deref(), Some("app-b"));
+    }
+
+    #[test]
+    fn companion_admission_projection_strips_backend_metadata_for_strict_plugin_shape() {
+        let endpoint_key = json!({
+            "algorithm": "ed25519",
+            "publicKey": "desktop-public-key",
+            "thumbprint": "desktop-thumbprint",
+        });
+        let binding = json!({
+            "endpointPublicKey": endpoint_key,
+            "holderKeyThumbprint": "desktop-thumbprint",
+            "approvedPeerKeyThumbprints": ["mobile-thumbprint"],
+            "peerRosterRevision": 2,
+            "peerRosterHash": "roster-hash",
+        });
+        let response = json!({
+            "accessToken": "aokie-adm-v2.test-token-value",
+            "tokenType": "Bearer",
+            "expiresIn": 90,
+            "expiresAt": 2_000_000_000,
+            "gatewayUrl": "wss://gateway.example.test/v2/realtime",
+            "appId": "app-a",
+            "subjectId": "aokie",
+            "role": "plugin",
+            "scopes": ["state_read"],
+            "device": {"id": "device-row"},
+            "iceServers": [],
+            "relayOnly": false,
+            "turnCredentialExpiresAt": null,
+            "endpointPublicKey": binding["endpointPublicKey"],
+            "holderKeyThumbprint": binding["holderKeyThumbprint"],
+            "approvedPeerKeyThumbprints": binding["approvedPeerKeyThumbprints"],
+            "peerRosterRevision": binding["peerRosterRevision"],
+            "peerRosterHash": binding["peerRosterHash"],
+            "desktopConnection": {"id": "desktop-row"},
+            "scopeCompatibility": null,
+        });
+
+        let projected =
+            project_companion_admission_response(&response, "app-a", "aokie", &binding)
+                .expect("valid admission");
+        assert_eq!(projected.as_object().unwrap().len(), 18);
+        assert!(projected.get("desktopConnection").is_none());
+        assert!(projected.get("scopeCompatibility").is_none());
+        assert_eq!(projected["turnCredentialExpiresAt"], Value::Null);
+
+        let mut missing_required = response.clone();
+        missing_required
+            .as_object_mut()
+            .unwrap()
+            .remove("iceServers");
+        assert!(project_companion_admission_response(
+            &missing_required,
+            "app-a",
+            "aokie",
+            &binding,
+        )
+        .is_none());
+
+        let mut wrong_binding = response;
+        wrong_binding["peerRosterHash"] = json!("different-roster");
+        assert!(project_companion_admission_response(
+            &wrong_binding,
+            "app-a",
+            "aokie",
+            &binding,
+        )
+        .is_none());
     }
 
     #[test]

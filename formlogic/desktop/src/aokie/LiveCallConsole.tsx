@@ -76,8 +76,16 @@ export function LiveCallConsole({ aiReceptionist }: { aiReceptionist: boolean })
     if (!call || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    // One id per operator action. If this request is ever retried, the caller
+    // retains this value so Aokie's durable receipt suppresses duplicate speech.
+    const requestId = `desktop-${crypto.randomUUID()}`;
     try {
-      await plugins.command('aokie', command, { callId: call.callId, ...payload });
+      await plugins.command(
+        'aokie',
+        command,
+        { callId: call.callId, ...payload },
+        requestId,
+      );
       await refresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

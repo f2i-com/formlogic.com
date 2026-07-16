@@ -77,7 +77,9 @@ function draftFromAnswers(a: Record<string, unknown>): Draft {
  * pack's Configure Receptionist flow (FLOW_AGENT_CONFIG), so "apply now" and
  * the per-call flow can never disagree about what the bot should run.
  */
-function buildAgentPayload(d: Draft): Record<string, unknown> {
+// Kept exported for the contract test that pins the UI and pack-flow payloads together.
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildAgentPayload(d: Draft): Record<string, unknown> {
   let persona = d.instructions.trim() || DEFAULT_PERSONA;
   const business = d.business_name.trim();
   if (business) persona = `You are the phone receptionist for ${business}.\n` + persona;

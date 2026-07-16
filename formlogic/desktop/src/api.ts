@@ -6,6 +6,8 @@
  * non-2xx as thrown errors with the body's `error` field when present.
  */
 
+import { aokieCommandRequestId } from './aokie/aokieRequestId';
+
 export const API_BASE = 'http://127.0.0.1:17872';
 
 async function request<T>(
@@ -487,11 +489,16 @@ export const plugins = {
       `/api/plugins/${encodeURIComponent(id)}/logs?tail=${tail}`,
     ),
   /** Admin/dev direct command — forwarded as a connector.request. */
-  command: (id: string, command: string, payload?: unknown) =>
-    request<{ ok: true; data?: unknown }>(
+  command: (id: string, command: string, payload?: unknown, requestId?: string) => {
+    // One id per direct operator action. Explicit ids (for caller-managed
+    // retries) win; Aokie's durable physical commands get a safe id even when
+    // an older UI call site omitted one.
+    const durableRequestId = aokieCommandRequestId(id, command, requestId);
+    return request<{ ok: true; data?: unknown }>(
       `/api/plugins/${encodeURIComponent(id)}/commands/${encodeURIComponent(command)}`,
-      { method: 'POST', body: JSON.stringify({ payload }) },
-    ),
+      { method: 'POST', body: JSON.stringify({ payload, requestId: durableRequestId }) },
+    );
+  },
   /**
    * CONSENT-001: issue a Desktop-SIGNED consent grant (the operator accepted
    * the wizard) and record it in the plugin. Only the Desktop window (or the
@@ -510,6 +517,104 @@ export const plugins = {
       `/api/plugins/${encodeURIComponent(id)}/consent`,
       { method: 'POST', body: JSON.stringify(body) },
     ),
+};
+
+// ----- Aokie Companion endpoint identity + owner-confirmed mobile pairing -----
+
+export interface AokieEndpointPublicKey {
+  algorithm: 'ed25519';
+  publicKey: string;
+  thumbprint: string;
+}
+
+export interface AokieApprovedMobile {
+  deviceId: string;
+  displayName: string;
+  endpointKey: AokieEndpointPublicKey;
+  approvedAt: string;
+}
+
+export interface AokiePendingMobileApproval {
+  id: string;
+  deviceId: string;
+  displayName: string;
+  endpointKey: AokieEndpointPublicKey;
+  thumbprint: string;
+  fingerprint: string;
+  receivedAt: string;
+}
+
+export interface AokieEndpointIdentityStatus {
+  available: boolean;
+  protection?: 'windows_credential_manager' | 'software_file';
+  protectionLabel?: string;
+  endpointKey?: AokieEndpointPublicKey;
+  rosterRevision: number;
+  rosterHash: string;
+  approvedMobiles: AokieApprovedMobile[];
+  pendingApprovals: AokiePendingMobileApproval[];
+  remoteAccessReady: boolean;
+  warning?: string;
+}
+
+export interface AokiePairingPayload {
+  kind: 'aokie_mobile_pairing';
+  schemaVersion: 2;
+  appId: string;
+  workspaceId?: string;
+  desktopConnectionId: string;
+  desktopEndpointKey: AokieEndpointPublicKey;
+  nonce: string;
+  jti: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export interface AokiePairingOffer {
+  requestId: string;
+  payload: AokiePairingPayload;
+  encodedPayload: string;
+  qrSvg: string;
+}
+
+export const aokieCompanionPairing = {
+  status: () =>
+    request<AokieEndpointIdentityStatus>('/api/aokie/companion/pairing'),
+  createOffer: (body: {
+    appId?: string;
+    workspaceId?: string;
+    desktopConnectionId?: string;
+  }) =>
+    request<AokiePairingOffer>('/api/aokie/companion/pairing/offers', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** Relay transport is untrusted: Rust validates the mobile signature and
+   * challenge binding, then creates a local owner-confirmation item only. */
+  receiveResponse: (response: unknown) =>
+    request<AokiePendingMobileApproval>('/api/aokie/companion/pairing/responses', {
+      method: 'POST',
+      body: JSON.stringify(response),
+    }),
+  approve: (id: string) =>
+    request<AokieApprovedMobile>(
+      `/api/aokie/companion/pairing/approvals/${encodeURIComponent(id)}/approve`,
+      { method: 'POST' },
+    ),
+  deny: (id: string) =>
+    request<void>(
+      `/api/aokie/companion/pairing/approvals/${encodeURIComponent(id)}/deny`,
+      { method: 'POST' },
+    ),
+  revoke: (thumbprint: string) =>
+    request<void>(
+      `/api/aokie/companion/mobiles/${encodeURIComponent(thumbprint)}`,
+      { method: 'DELETE' },
+    ),
+  rotateDesktopKey: () =>
+    request<AokieEndpointIdentityStatus>('/api/aokie/companion/identity/rotate', {
+      method: 'POST',
+    }),
 };
 
 // ----- connectors (exposed by running plugins) -----
@@ -793,6 +898,8 @@ export interface FormLogicConfigView {
   linked: boolean;
   /** Device label recorded by the OAuth link (null for a manually pasted key). */
   deviceName: string | null;
+  /** Public OAuth-managed Desktop binding id (never an API key/bearer). */
+  connectionId: string | null;
 }
 
 /** Live flow-runtime status (GET /api/desktop/info flowRuntime + Tauri command). */

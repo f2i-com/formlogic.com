@@ -27,6 +27,10 @@ class ApiKeyService
         // claims and completes connector commands a web member enqueued. Held by the flk_ key the
         // OAuth device-link flow mints.
         'connector:relay',
+        // Narrow bootstrap/activity/routing authority for the Aokie realtime
+        // plane. New Desktop links receive it explicitly; connector:relay alone
+        // is never silently treated as media admission authority.
+        'aokie:realtime',
     ];
 
     public function __construct(MySQLConnection $db)

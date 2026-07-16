@@ -31,8 +31,10 @@ use tokio::net::{TcpListener, TcpStream};
 // responses:read (list_responses + match-based updateResponse do a LIST), responses:write
 // (submit), responses:manage (updateResponse) — the headless runtime needs all three to apply an
 // app's onConnectorEvent record writes + flow output actions (verified by running it locally).
+// aokie:realtime is deliberately distinct from connector:relay: it authorizes only
+// the pinned Aokie plugin's short-lived Companion admission/activity/routing edge.
 pub const DESKTOP_SCOPES: &str =
-    "flows:read flows:write responses:read responses:write responses:manage connector:relay";
+    "flows:read flows:write responses:read responses:write responses:manage connector:relay aokie:realtime";
 /// The first-party PUBLIC client id (seeded server-side).
 pub const CLIENT_ID: &str = "formlogic-desktop";
 
@@ -573,12 +575,30 @@ mod tests {
         // Spaces are percent/plus-encoded, not literal.
         assert!(url.contains("scope=flows%3Aread"));
         assert!(url.contains("connector%3Arelay"));
+        assert!(url.contains("aokie%3Arealtime"));
+        // The same strict validator used immediately before the OS launcher
+        // accepts the complete multi-parameter URL. In particular, `&` is a
+        // query separator passed as argv data, not a shell metacharacter.
+        assert_eq!(
+            crate::external_url::validate_external_http_url(&url)
+                .expect("generated OAuth URL passes launcher validation")
+                .as_str(),
+            url
+        );
         assert!(url.contains("device=Reception+PC") || url.contains("device=Reception%20PC"));
         // /api base suffix is stripped by normalization.
         let u2 = build_authorize_url("https://x.test/api", "http://127.0.0.1:1/callback", "s", "c", "st", "d").unwrap();
         assert!(u2.starts_with("https://x.test/oauth/authorize?"));
         // Empty base rejected.
         assert!(build_authorize_url("   ", "r", "s", "c", "st", "d").is_err());
+    }
+
+    #[test]
+    fn desktop_scope_contract_includes_dedicated_aokie_realtime_authority() {
+        let scopes: Vec<_> = DESKTOP_SCOPES.split_ascii_whitespace().collect();
+        assert!(scopes.contains(&"connector:relay"));
+        assert!(scopes.contains(&"aokie:realtime"));
+        assert_ne!("connector:relay", "aokie:realtime");
     }
 
     #[test]

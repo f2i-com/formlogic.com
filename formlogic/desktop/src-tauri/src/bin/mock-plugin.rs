@@ -8,6 +8,8 @@
 //!   - `connector.request` for connector "mock":
 //!       `echo.ping` → `{ok:true, data:{echo:<payload>}}`
 //!       `echo.exit` → exits 3 WITHOUT responding (crash-path test hook)
+//!       `call.operatorSpeak` echoes its exact text + durable request id
+//!         (used by flow retry/idempotency integration tests)
 //!       anything else → JSON-RPC error with `data:{code:"command_failed"}`
 //!   - unknown methods → `-32601` (never crashes on them)
 //!   - in dev mode (`FORMLOGIC_DEV_MODE=1`) emits a `mock.tick` event every
@@ -128,6 +130,35 @@ fn main() {
                             result["requestId"] = json!(rid);
                         }
                         respond(&out, &id, result);
+                    }
+                    "call.operatorSpeak" => {
+                        let payload = params.get("payload").cloned().unwrap_or(Value::Null);
+                        let Some(request_id) = params.get("requestId").and_then(Value::as_str) else {
+                            respond_err(
+                                &out,
+                                &id,
+                                -32000,
+                                "requestId required",
+                                Some(json!({
+                                    "code": "command_failed",
+                                    "message": "call.operatorSpeak requires requestId for durable idempotency"
+                                })),
+                            );
+                            continue;
+                        };
+                        let text = payload
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        respond(
+                            &out,
+                            &id,
+                            json!({
+                                "ok": true,
+                                "requestId": request_id,
+                                "data": { "text": text, "payload": payload }
+                            }),
+                        );
                     }
                     // Crash-path hook: die mid-request, no response — the
                     // host must observe the exit and go crashed → restart.

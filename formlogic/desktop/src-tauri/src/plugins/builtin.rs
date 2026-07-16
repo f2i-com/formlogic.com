@@ -193,6 +193,8 @@ mod tests {
             "aokie.call.incoming",
             "aokie.call.turn.final",
             "aokie.call.ended",
+            "aokie.call.assistance.requested",
+            "aokie.call.assistance.resolved",
             "aokie.sms.received",
             "aokie.dongle.ready",
             // Live-radio events the plugin actually emits — undeclared, the

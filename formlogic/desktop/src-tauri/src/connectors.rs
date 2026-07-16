@@ -19,6 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,6 +62,50 @@ pub struct ConnectorRequestBody {
     pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub request_id: Option<String>,
+}
+
+/// Build a bounded request id from an operation namespace and stable execution
+/// identity. Length-prefixing the parts avoids ambiguous concatenations while
+/// hashing keeps caller text, phone numbers, and server ids out of logs/wire
+/// metadata. Callers must pass the same parts when retrying the same effect.
+pub fn stable_request_id(namespace: &str, parts: &[&str]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(namespace.len().to_be_bytes());
+    digest.update(namespace.as_bytes());
+    for part in parts {
+        digest.update(part.len().to_be_bytes());
+        digest.update(part.as_bytes());
+    }
+    let hex = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("fl-{namespace}-{hex}")
+}
+
+/// Aokie commands that can cause an observable phone/radio effect. The plugin
+/// durably journals this exact surface and refuses calls without requestId.
+/// Keeping the host aware of the contract lets every flow/relay caller derive
+/// a stable id before dispatch instead of learning through a runtime failure.
+pub fn aokie_command_requires_request_id(command: &str) -> bool {
+    matches!(
+        command,
+        "phone.startPairing"
+            | "phone.stopPairing"
+            | "phone.removePaired"
+            | "phone.disconnect"
+            | "phone.connect"
+            | "phone.confirmPairing"
+            | "call.activate"
+            | "call.answer"
+            | "call.reject"
+            | "call.hangup"
+            | "call.operatorSpeak"
+            | "call.configureAgent"
+            | "call.dial"
+            | "sms.send"
+    )
 }
 
 /// A typed gateway failure — becomes the `{ok:false, error:{code,message}}`
@@ -138,6 +183,17 @@ pub fn validate_request_body(
         if r.is_empty() || r.len() > 128 {
             return Err("requestId must be 1-128 chars".into());
         }
+    }
+    // Aokie's physical commands keep durable receipts keyed by requestId.
+    // Refuse unsafe callers here, before the request reaches the plugin.
+    if path_connector_id == "aokie"
+        && aokie_command_requires_request_id(&body.command)
+        && body.request_id.is_none()
+    {
+        return Err(format!(
+            "aokie {} requires requestId for durable idempotency",
+            body.command
+        ));
     }
     Ok(())
 }
@@ -404,5 +460,35 @@ mod tests {
             r#"{ "command": "echo.ping", "payloadd": {} }"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn aokie_physical_commands_require_a_bounded_stable_request_id() {
+        for command in [
+            "phone.connect",
+            "phone.startPairing",
+            "call.answer",
+            "sms.send",
+        ] {
+            let missing = body(&format!(r#"{{ "command": "{command}" }}"#));
+            let error = validate_request_body("aokie", &missing).unwrap_err();
+            assert!(error.contains(command));
+            assert!(error.contains("requires requestId"));
+        }
+
+        let read = body(r#"{ "command": "phone.status" }"#);
+        assert!(validate_request_body("aokie", &read).is_ok());
+
+        let stable_a = stable_request_id("flow-command", &["run-42", "connect"]);
+        let stable_b = stable_request_id("flow-command", &["run-42", "connect"]);
+        let other = stable_request_id("flow-command", &["run-43", "connect"]);
+        assert_eq!(stable_a, stable_b);
+        assert_ne!(stable_a, other);
+        assert!(stable_a.len() <= 128);
+
+        let accepted = body(&format!(
+            r#"{{ "command": "phone.connect", "payload": {{ "address": "00:11:22:33:44:55" }}, "requestId": "{stable_a}" }}"#
+        ));
+        assert!(validate_request_body("aokie", &accepted).is_ok());
     }
 }

@@ -7,11 +7,15 @@
 //! bus → capability_denied for an undeclared command → crash + auto-restart
 //! → graceful stop.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use formlogic_desktop_lib::connectors::{self, ConnectorRequestBody};
 use formlogic_desktop_lib::events::EventBus;
+use formlogic_desktop_lib::flows::runner::{
+    execute_flow, RunDeps, RunOptions, DEFAULT_TIMEOUT_MS,
+};
 use formlogic_desktop_lib::plugins::registry::{
     PluginHost, PluginHostHandle, PluginSnapshot, PluginState,
 };
@@ -31,6 +35,20 @@ const MOCK_MANIFEST: &str = r#"{
     { "id": "mock", "name": "Mock connector", "commands": ["echo.ping", "echo.exit"] }
   ],
   "events": ["mock.tick"]
+}"#;
+
+const SPEAKING_MOCK_MANIFEST: &str = r#"{
+  "schemaVersion": 1,
+  "id": "mock",
+  "name": "Speaking mock plugin",
+  "version": "0.1.0",
+  "pluginApiVersion": 1,
+  "entry": { "kind": "process", "command": "COMMAND" },
+  "capabilities": ["connector.aokie.call.operatorSpeak"],
+  "connectors": [
+    { "id": "aokie", "name": "Aokie test connector", "commands": ["call.operatorSpeak"] }
+  ],
+  "events": []
 }"#;
 
 fn temp_data_dir(tag: &str) -> PathBuf {
@@ -63,6 +81,23 @@ fn install_mock_plugin(data_dir: &Path) {
         MOCK_MANIFEST.replace("COMMAND", &exe_name),
     )
     .expect("write manifest");
+}
+
+fn install_speaking_mock_plugin(data_dir: &Path) {
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_mock-plugin"));
+    let exe_name = built
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("mock-plugin exe name")
+        .to_string();
+    let plugin_dir = data_dir.join("plugins").join("mock");
+    std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
+    std::fs::copy(&built, plugin_dir.join(&exe_name)).expect("copy mock-plugin");
+    std::fs::write(
+        plugin_dir.join("manifest.json"),
+        SPEAKING_MOCK_MANIFEST.replace("COMMAND", &exe_name),
+    )
+    .expect("write speaking manifest");
 }
 
 async fn wait_for(
@@ -245,6 +280,123 @@ async fn restart_cycles_the_process() {
     )
     .await;
     assert_ne!(second.pid, Some(first_pid), "a NEW process was spawned");
+
+    host.stop("mock").await.expect("stop");
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_if_active_cycles_only_an_active_plugin() {
+    let data = temp_data_dir("restart-if-active");
+    install_mock_plugin(&data);
+    let host = PluginHost::new(&data, false, EventBus::new());
+
+    assert!(!host
+        .restart_if_active("not-installed")
+        .await
+        .expect("unknown plugin is inactive"));
+    assert!(!host
+        .restart_if_active("mock")
+        .await
+        .expect("inactive check"));
+    assert_eq!(
+        host.get("mock").expect("known plugin").state,
+        PluginState::Installed,
+        "a roster refresh must not start an inactive plugin"
+    );
+
+    host.start("mock").expect("start");
+    let first = wait_for(&host, "mock", "running", Duration::from_secs(15), |s| {
+        s.state == PluginState::Running
+    })
+    .await;
+    let first_pid = first.pid.expect("first pid");
+
+    assert!(host
+        .restart_if_active("mock")
+        .await
+        .expect("active restart"));
+    let second = wait_for(
+        &host,
+        "mock",
+        "running after conditional restart",
+        Duration::from_secs(15),
+        |s| s.state == PluginState::Running && s.pid != Some(first_pid),
+    )
+    .await;
+    assert_ne!(second.pid, Some(first_pid));
+
+    host.stop("mock").await.expect("stop");
+    assert!(!host.restart_if_active("mock").await.expect("stopped check"));
+    assert_eq!(
+        host.get("mock").expect("known plugin").state,
+        PluginState::Stopped,
+        "conditional refresh must preserve an explicit stop"
+    );
+
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operator_speak_request_id_is_stable_across_retry_and_text_is_unchanged() {
+    let data = temp_data_dir("speak-idempotency");
+    install_speaking_mock_plugin(&data);
+    let host = PluginHost::new(&data, false, EventBus::new());
+    host.start("mock").expect("start");
+    wait_for(&host, "mock", "running", Duration::from_secs(15), |snapshot| {
+        snapshot.state == PluginState::Running
+    })
+    .await;
+
+    let caller_text = "Keep punctuation: \"yes\" & no — caller's text.\nSecond line";
+    let flow = serde_json::json!({
+        "nodes": [{
+            "id": "say",
+            "type": "aokie_speak",
+            "data": { "textFrom": "$inputs.callerText" }
+        }],
+        "edges": []
+    });
+    let deps = RunDeps {
+        client: None,
+        host: Some(host.clone()),
+        app_id: None,
+        http: reqwest::Client::new(),
+        llm_endpoint: None,
+        base_url: String::new(),
+        registry: None,
+        service_bases: HashMap::new(),
+    };
+    let mut opts = RunOptions {
+        inputs: serde_json::json!({ "callerText": caller_text }),
+        event: None,
+        app: None,
+        timeout_ms: DEFAULT_TIMEOUT_MS,
+        capabilities: vec!["connector.aokie.call.operatorSpeak".into()],
+        flow_slug: "retry-speech".into(),
+        request_id_seed: "logical-run-42".into(),
+    };
+
+    // Re-running with the same RunOptions is exactly what retryPolicy does.
+    // Both attempts must reach the real stdio plugin with one request id and
+    // the caller's text byte-for-byte unchanged.
+    let first = execute_flow(&flow, &deps, &opts).await;
+    let retry = execute_flow(&flow, &deps, &opts).await;
+    assert_eq!(first.status, "done", "first attempt: {first:?}");
+    assert_eq!(retry.status, "done", "retry attempt: {retry:?}");
+    let first = first.result.expect("first result");
+    let retry = retry.result.expect("retry result");
+    assert_eq!(first["requestId"], retry["requestId"]);
+    assert_eq!(first["data"]["text"], caller_text);
+    assert_eq!(retry["data"]["payload"]["text"], caller_text);
+
+    // A separate logical execution must not be deduped as the old speech.
+    opts.request_id_seed = "logical-run-43".into();
+    let next = execute_flow(&flow, &deps, &opts)
+        .await
+        .result
+        .expect("next result");
+    assert_ne!(first["requestId"], next["requestId"]);
 
     host.stop("mock").await.expect("stop");
     let _ = std::fs::remove_dir_all(&data);

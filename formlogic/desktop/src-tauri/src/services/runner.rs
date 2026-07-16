@@ -94,6 +94,9 @@ impl Runner {
         for (k, v) in cfg.env {
             cmd.env(k, v);
         }
+        // Aokie Companion admission is authority for this Desktop process
+        // only; configured services must never inherit or override it.
+        cmd.env_remove("AOKIE_COMPANION_DESKTOP_TOKEN");
         if let Some(d) = cfg.cwd {
             cmd.current_dir(d);
         }

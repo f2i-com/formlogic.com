@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Tray-resident desktop companion for formlogic-web. Manages local AI services + browser automation, exposes them to the web flow editor via a localhost API."
 authors = ["FormLogic"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.88"
 # The crate ships two binaries now (the GUI companion + the headless formlogic-server),
 # so `cargo run` / `tauri dev` would be ambiguous without naming the default.
 default-run = "formlogic-desktop"
@@ -84,6 +84,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # UI can show "1.2 GB / 4.7 GB · 38 MB/s" instead of a frozen bar.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "blocking"] }
 futures-util = "0.3"
+# Native outbound signalling for the optional Aokie Companion publisher. The
+# bearer credential stays in this Rust process; it is never handed to the
+# Tauri webview. Remote deployments require rustls-backed WSS.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 # Native python-build-standalone install: gunzip + untar the PBS release
 # in-process, so installing Python needs no PowerShell / tar.exe / .ps1.
@@ -119,6 +123,11 @@ chacha20poly1305 = "0.10"
 # and again before launch; tampered packages quarantine).
 ed25519-dalek = { version = "2", features = ["signature"] }
 base64 = "0.22"
+
+# Aokie Companion owner pairing payloads are rendered locally as QR SVGs.
+# The payload contains only public identity/binding material and a one-use
+# challenge; no admission/API bearer is ever encoded in the QR.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # DESK-SECRET-001: the OS credential store (Windows Credential Manager) for the
 # long-lived FormLogic API key + HuggingFace token, so they never sit in a

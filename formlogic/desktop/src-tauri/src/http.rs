@@ -1422,6 +1422,194 @@ async fn realtime_sse(State(st): State<DesktopState>) -> impl IntoResponse {
     )
 }
 
+// ---- Aokie Companion endpoint identity + mutual pairing ----
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AokiePairingOfferBody {
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    workspace_id: Option<String>,
+    #[serde(default)]
+    desktop_connection_id: Option<String>,
+}
+
+async fn aokie_pairing_status(State(st): State<DesktopState>) -> impl IntoResponse {
+    Json(st.host.aokie_endpoint_identity.status())
+}
+
+async fn create_aokie_pairing_offer(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+    Json(body): Json<AokiePairingOfferBody>,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "auth_required",
+            "Aokie endpoint pairing must be started in the Desktop window (or with the headless server token)",
+        );
+    }
+    let (assigned_app, instance_id) = st
+        .flow_runtime
+        .as_ref()
+        .map(|runtime| runtime.aokie_pairing_context())
+        .unwrap_or((None, "formlogic-desktop".into()));
+    let app_id = body
+        .app_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or(assigned_app);
+    let Some(app_id) = app_id else {
+        return desktop_err(
+            StatusCode::CONFLICT,
+            "app_assignment_required",
+            "Assign Aokie to exactly one app, or provide the custom server app id",
+        );
+    };
+    let desktop_connection_id = body
+        .desktop_connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&instance_id);
+    match st.host.aokie_endpoint_identity.create_pairing_offer(
+        &app_id,
+        body.workspace_id.as_deref(),
+        desktop_connection_id,
+    ) {
+        Ok(offer) => (StatusCode::CREATED, Json(offer)).into_response(),
+        Err(error) => desktop_err(StatusCode::BAD_REQUEST, "pairing_failed", &error),
+    }
+}
+
+/// Receive a cryptographically signed mobile response from FormLogic, a
+/// custom signalling service, or a co-located test client. The relay is not
+/// trusted and cannot approve the key; this handler only creates a local
+/// owner-confirmation item after possession/binding/replay checks pass.
+async fn receive_aokie_pairing_response(
+    State(st): State<DesktopState>,
+    Json(response): Json<crate::aokie_endpoint_identity::MobilePairingResponse>,
+) -> Response {
+    match st
+        .host
+        .aokie_endpoint_identity
+        .receive_mobile_response(response)
+    {
+        Ok(pending) => (StatusCode::ACCEPTED, Json(pending)).into_response(),
+        Err(error) => desktop_err(StatusCode::BAD_REQUEST, "pairing_proof_invalid", &error),
+    }
+}
+
+/// The approved peer roster is a private `plugin.init` input, so an active
+/// Aokie process must be cycled after every persisted roster/key mutation.
+/// Inactive plugins remain inactive and will receive the latest roster on their
+/// next explicit start.
+async fn refresh_running_aokie_private_bootstrap(st: &DesktopState) -> Result<bool, String> {
+    st.host.restart_if_active("aokie").await
+}
+
+fn aokie_roster_changed_but_refresh_failed(action: &str, error: &str) -> Response {
+    desktop_err(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "plugin_refresh_failed",
+        &format!(
+            "The Aokie Companion {action} was saved, but the running Aokie plugin could not be restarted with the new endpoint roster: {error}"
+        ),
+    )
+}
+
+async fn approve_aokie_mobile(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "auth_required",
+            "Aokie mobile approval requires the local Desktop owner",
+        );
+    }
+    match st.host.aokie_endpoint_identity.approve_mobile(&id) {
+        Ok(approved) => match refresh_running_aokie_private_bootstrap(&st).await {
+            Ok(_) => (StatusCode::OK, Json(approved)).into_response(),
+            Err(error) => aokie_roster_changed_but_refresh_failed("approval", &error),
+        },
+        Err(error) => desktop_err(StatusCode::BAD_REQUEST, "approval_failed", &error),
+    }
+}
+
+async fn deny_aokie_mobile(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "auth_required",
+            "Aokie mobile approval requires the local Desktop owner",
+        );
+    }
+    match st.host.aokie_endpoint_identity.deny_mobile(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => desktop_err(StatusCode::NOT_FOUND, "approval_failed", &error),
+    }
+}
+
+async fn revoke_aokie_mobile(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+    Path(thumbprint): Path<String>,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "auth_required",
+            "Aokie mobile revocation requires the local Desktop owner",
+        );
+    }
+    match st
+        .host
+        .aokie_endpoint_identity
+        .revoke_mobile(&thumbprint)
+    {
+        Ok(()) => match refresh_running_aokie_private_bootstrap(&st).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => aokie_roster_changed_but_refresh_failed("revocation", &error),
+        },
+        Err(error) => desktop_err(StatusCode::NOT_FOUND, "revoke_failed", &error),
+    }
+}
+
+async fn rotate_aokie_desktop_identity(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "auth_required",
+            "Aokie Desktop key rotation requires the local Desktop owner",
+        );
+    }
+    match st
+        .host
+        .aokie_endpoint_identity
+        .rotate_identity_and_require_fresh_pairing()
+    {
+        Ok(status) => match refresh_running_aokie_private_bootstrap(&st).await {
+            Ok(_) => (StatusCode::OK, Json(status)).into_response(),
+            Err(error) => aokie_roster_changed_but_refresh_failed("identity rotation", &error),
+        },
+        Err(error) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "rotation_failed", &error),
+    }
+}
+
 // ---- pairing ----
 
 #[derive(Deserialize)]
@@ -2151,6 +2339,34 @@ pub async fn serve(
         // phase. Under /api/plugins* so the SAME management-plane auth guard
         // applies (webview | server token | pairing token).
         .route("/api/plugins/realtime", get(realtime_sse))
+        .route(
+            "/api/aokie/companion/pairing",
+            get(aokie_pairing_status),
+        )
+        .route(
+            "/api/aokie/companion/pairing/offers",
+            post(create_aokie_pairing_offer),
+        )
+        .route(
+            "/api/aokie/companion/pairing/responses",
+            post(receive_aokie_pairing_response),
+        )
+        .route(
+            "/api/aokie/companion/pairing/approvals/:id/approve",
+            post(approve_aokie_mobile),
+        )
+        .route(
+            "/api/aokie/companion/pairing/approvals/:id/deny",
+            post(deny_aokie_mobile),
+        )
+        .route(
+            "/api/aokie/companion/mobiles/:thumbprint",
+            delete(revoke_aokie_mobile),
+        )
+        .route(
+            "/api/aokie/companion/identity/rotate",
+            post(rotate_aokie_desktop_identity),
+        )
         .route("/api/origins", get(list_origins))
         .route("/api/origins/:origin", delete(revoke_origin))
         // LIVE desktop flow runner (docs/FORMLOGIC_DESKTOP.md §2).

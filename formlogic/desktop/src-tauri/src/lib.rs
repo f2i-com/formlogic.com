@@ -6,8 +6,11 @@
 //! /api/services/* and stop everything cleanly on exit.
 
 pub mod connectors;
+pub mod aokie_endpoint_identity;
+pub mod aokie_companion_publisher;
 pub mod consent_signing;
 pub mod events;
+pub mod external_url;
 pub mod flows;
 pub mod formlogic_client;
 pub mod http;
@@ -154,31 +157,20 @@ fn open_path(path: String) -> Result<(), String> {
 /// schemes. Invoked from the header's formlogic.com link.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err("only http(s) URLs are allowed".into());
-    }
-    // Reject ASCII control chars and shell-dangerous metacharacters so the URL
-    // can't be used to inject commands into a launcher. '%' is intentionally
-    // allowed (valid percent-encoding).
-    if url
-        .chars()
-        .any(|c| c.is_ascii_control() || matches!(c, '"' | '&' | '^' | '|' | '<' | '>' | '`'))
-    {
-        return Err("URL contains disallowed characters".into());
-    }
+    let url = crate::external_url::validate_external_http_url(&url)?;
     #[cfg(target_os = "windows")]
     std::process::Command::new(resolved_system_exe("System32", "rundll32.exe", "rundll32"))
-        .args(["url.dll,FileProtocolHandler", &url])
+        .args(["url.dll,FileProtocolHandler", url.as_str()])
         .spawn()
         .map_err(|e| format!("open url failed: {e}"))?;
     #[cfg(target_os = "macos")]
     std::process::Command::new("open")
-        .arg(&url)
+        .arg(url.as_str())
         .spawn()
         .map_err(|e| format!("open url failed: {e}"))?;
     #[cfg(target_os = "linux")]
     std::process::Command::new("xdg-open")
-        .arg(&url)
+        .arg(url.as_str())
         .spawn()
         .map_err(|e| format!("open url failed: {e}"))?;
     Ok(())
@@ -1092,6 +1084,9 @@ struct FormLogicConfigView {
     /// when the key was obtained via the account-link flow. None for a manually
     /// pasted key.
     device_name: Option<String>,
+    /// Public database id of this OAuth-managed Desktop connection. Used only
+    /// to bind Companion pairing proofs; it is not a credential.
+    connection_id: Option<String>,
 }
 
 /// Tauri command: current FormLogic Cloud link config (base URL + whether a key
@@ -1106,6 +1101,7 @@ fn get_formlogic_config(
         has_key: has_api_key(&app),
         linked: runtime.status().linked,
         device_name: read_config_str(&app, "formlogicDeviceName"),
+        connection_id: read_config_str(&app, "formlogicConnectionId"),
     }
 }
 
@@ -1328,11 +1324,25 @@ async fn run_oauth_link(
     }
     let _ = write_config_str(&app, "formlogicConnectionId", token.desktop_connection_id.as_deref());
     let _ = write_config_str(&app, "formlogicDeviceName", token.device_name.as_deref());
-    runtime.reconfigure(FormLogicConfig { base_url: base, api_key: token.api_key });
+    runtime.reconfigure(FormLogicConfig {
+        base_url: base,
+        api_key: token.api_key,
+    });
+    // The token response names the OAuth placeholder row. Immediately heartbeat
+    // with this install's stable instance id so the backend can reattach the key
+    // to its durable row; the native observer persists the canonical id it
+    // returns. A transient/older-backend failure remains non-fatal and the
+    // regular heartbeat loop retries reconciliation later.
+    if let Err(error) = runtime.sync_desktop_connection().await {
+        eprintln!("[formlogic] post-link Desktop id reconciliation deferred: {error}");
+    }
     link.set_linked(token.device_name);
 }
 
 pub fn run() {
+    // Capture and scrub the optional Companion bearer before any managed
+    // service/plugin can inherit this process's environment.
+    crate::aokie_companion_publisher::capture_env();
     // DESK-PROC-001: put the desktop (and, by inheritance, every service /
     // plugin / model process it spawns) in a kill-on-close Job Object BEFORE
     // anything is spawned, so the whole tree dies with the desktop.
@@ -1499,6 +1509,30 @@ pub fn run() {
                 api_key: read_api_key(app.handle()).unwrap_or_default(),
             };
             let flow_runtime = FlowRuntime::new(plugin_host.clone(), Some(registry.clone()), fl_config);
+            // Reconcile only the public Desktop connection id into native config.
+            // The heartbeat's API key remains inside FormLogicClient and never
+            // crosses this callback or the renderer boundary. We compare against
+            // disk on every successful heartbeat so a prior write failure can be
+            // repaired by a later pass.
+            {
+                let app_handle = app.handle().clone();
+                flow_runtime.set_desktop_connection_id_observer(Arc::new(move |canonical_id| {
+                    if read_config_str(&app_handle, "formlogicConnectionId").as_deref()
+                        == Some(canonical_id)
+                    {
+                        return;
+                    }
+                    if let Err(error) = write_config_str(
+                        &app_handle,
+                        "formlogicConnectionId",
+                        Some(canonical_id),
+                    ) {
+                        eprintln!(
+                            "[formlogic] could not persist reconciled Desktop connection id: {error}"
+                        );
+                    }
+                }));
+            }
             // start() launches the flow event/claim/heartbeat loops via tokio::spawn, which needs an
             // ambient Tokio runtime. Unlike formlogic-server (#[tokio::main]), Tauri's setup hook runs
             // OUTSIDE the runtime, so run start() ON Tauri's async runtime (tokio) — otherwise
@@ -1514,6 +1548,15 @@ pub fn run() {
             {
                 let ph = plugin_host.clone();
                 tauri::async_runtime::spawn(async move { ph.autostart_installed(); });
+            }
+            // Optional outbound Aokie Companion publisher. This is a native,
+            // observation-only task: its admission token never enters Tauri
+            // state/the webview, and inbound commands are always rejected.
+            {
+                let ph = plugin_host.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::aokie_companion_publisher::run_from_env(ph).await;
+                });
             }
             // Launch FormLogic Desktop on login (one-time default-on so the flow runtime + connector
             // relay are always available for remote/web-driven control; the user can turn it off in

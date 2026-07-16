@@ -2297,3 +2297,259 @@ code {
   gap: 4px;
   min-width: 0;
 }
+
+/* ---------- Aokie Companion endpoint identity + mutual pairing ---------- */
+.aokie-companion-pairing {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-1);
+}
+
+.aokie-companion-pairing__head,
+.aokie-companion-rotate {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.aokie-companion-pairing__head h3,
+.aokie-companion-list h4,
+.aokie-companion-rotate strong {
+  margin: 4px 0 6px;
+}
+
+.aokie-companion-pairing__head p,
+.aokie-companion-rotate p,
+.aokie-companion-relay-test p {
+  margin: 0;
+  max-width: 760px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.aokie-companion-security-note,
+.aokie-companion-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.aokie-companion-security-note {
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--signal) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--signal) 22%, var(--line));
+}
+
+.aokie-companion-warning {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, var(--line));
+}
+
+.aokie-companion-identity-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.aokie-companion-identity-grid > span {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.aokie-companion-identity-grid small,
+.aokie-companion-identity-grid strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aokie-companion-identity-grid small,
+.aokie-companion-row small {
+  color: var(--ink-dim);
+  font-size: 11px;
+}
+
+.aokie-companion-identity-grid strong {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.aokie-companion-identity-grid__thumbprint code,
+.aokie-companion-full-thumbprint {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  user-select: text;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.aokie-companion-pairing__form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.aokie-companion-pairing__form label {
+  display: grid;
+  gap: 5px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.aokie-companion-pairing__form label small {
+  color: var(--ink-dim);
+}
+
+.aokie-companion-pairing__form input,
+.aokie-companion-relay-test textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.aokie-companion-pairing__form .desktop-button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.aokie-companion-offer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: #111827;
+}
+
+.aokie-companion-offer img {
+  width: 190px;
+  height: 190px;
+}
+
+.aokie-companion-offer p,
+.aokie-companion-offer code,
+.aokie-companion-offer button {
+  display: block;
+  margin-top: 8px;
+}
+
+.aokie-companion-offer small {
+  display: block;
+  margin-top: 10px;
+  color: #4b5563;
+}
+
+.aokie-companion-list {
+  display: grid;
+  gap: 8px;
+}
+
+.aokie-companion-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.aokie-companion-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.aokie-companion-row code {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.aokie-companion-row__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.aokie-companion-row__icon.is-ok {
+  color: var(--ok-text);
+}
+
+.aokie-companion-relay-test {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.aokie-companion-relay-test summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.aokie-companion-relay-test textarea {
+  min-height: 110px;
+  margin: 10px 0;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+
+.aokie-companion-rotate {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .aokie-companion-identity-grid,
+  .aokie-companion-pairing__form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .aokie-companion-pairing__head,
+  .aokie-companion-rotate,
+  .aokie-companion-offer,
+  .aokie-companion-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .aokie-companion-identity-grid,
+  .aokie-companion-pairing__form {
+    grid-template-columns: 1fr;
+  }
+
+  .aokie-companion-offer img {
+    width: min(100%, 280px);
+    height: auto;
+  }
+}

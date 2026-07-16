@@ -16,6 +16,10 @@
 //!   FORMLOGIC_LLAMACPP_MODEL  GGUF the llama-cpp service loads         [none]
 //!                       (the headless equivalent of the Model selector)
 //!   FORMLOGIC_OLLAMA_MODEL    model the ollama service uses (${ollamaModel}) [qwen2.5:0.5b]
+//!   AOKIE_COMPANION_GATEWAY_URL authenticated Companion gateway WSS URL    [disabled]
+//!   AOKIE_COMPANION_DESKTOP_TOKEN Desktop admission bearer token           [disabled]
+//!   AOKIE_COMPANION_APP_ID    gateway app/tenant identity                   [disabled]
+//!   AOKIE_COMPANION_DESKTOP_ID gateway Desktop endpoint identity            [disabled]
 //!
 //! With no FORMLOGIC_SERVER_TOKEN set, privileged routes (define service / install
 //! python / create venv / delete) are CLOSED: a headless server has no real
@@ -125,6 +129,9 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() {
+    // Capture and scrub the optional Companion bearer before any managed
+    // service/plugin can inherit this process's environment.
+    formlogic_desktop_lib::aokie_companion_publisher::capture_env();
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
 
@@ -254,6 +261,11 @@ async fn main() {
     // Autostart installed+enabled plugins (e.g. the Aokie phone bridge) so their connectors are live
     // for events + relayed connector commands without any UI. Runs in this tokio main context.
     plugin_host.autostart_installed();
+    // Optional outbound Companion publisher. Authentication remains in this
+    // native process; it publishes read-only state and refuses every command.
+    tokio::spawn(formlogic_desktop_lib::aokie_companion_publisher::run_from_env(
+        plugin_host.clone(),
+    ));
     // Headless has no separate config dir; pairing state sits in the data dir.
     // With no GUI to approve requests, pairing works only via the
     // FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN bypass — otherwise administer the

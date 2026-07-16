@@ -523,7 +523,30 @@ $container->set(\FormLogic\Controllers\McpOAuthController::class, function (Cont
         $c->get(LoggerInterface::class),
         // Desktop device-link: token exchange mints a scoped flk_ key tied to a desktop connection.
         $c->get(ApiKeyService::class),
-        $c->get(\FormLogic\Services\FlowService::class)
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(AppUserService::class)
+    );
+});
+$container->set(\FormLogic\Services\AokieCompanionAdmissionSigner::class, function () {
+    return \FormLogic\Services\AokieCompanionAdmissionSigner::fromEnvironment();
+});
+$container->set(\FormLogic\Services\AokieCompanionDeviceService::class, function (Container $c) {
+    return new \FormLogic\Services\AokieCompanionDeviceService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Services\AokieCompanionPushService::class, function (Container $c) {
+    return new \FormLogic\Services\AokieCompanionPushService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\AokieCompanionController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AokieCompanionController(
+        $c->get(\FormLogic\Services\McpTokenService::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AokieCompanionDeviceService::class),
+        $c->get(\FormLogic\Services\AokieCompanionAdmissionSigner::class),
+        $c->get(\FormLogic\Services\SigningService::class),
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\AokieCompanionPushService::class),
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\ResponseService::class),
     );
 });
 
@@ -1814,6 +1837,137 @@ $app->get('/.well-known/oauth-authorization-server', function ($request, $respon
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizationServerMetadata($request, $response);
 });
 
+// Aokie Companion deployment discovery. The app-specific URL is the setup/QR
+// surface; the well-known document supports managed deployment bootstrap.
+$aokieDiscoveryHandler = function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionController::class)->discovery($request, $response);
+};
+$app->get('/.well-known/aokie-companion', $aokieDiscoveryHandler);
+$app->get('/.well-known/aokie-companion.json', $aokieDiscoveryHandler);
+$app->get('/api/app/{slug}/aokie-discovery', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+        ->appDiscovery($request, $response, $getArgs($request));
+});
+
+// Native OAuth bearer -> one-use/short-lived v2 gateway admission. The
+// controller additionally binds client, resource, app and device; this bucket
+// fails closed because it mints a credential.
+$aokieAdmissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'aokie_companion_admission', false, true);
+$app->post('/api/aokie-companion/admission', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+        ->mobileAdmission($request, $response);
+})->add($aokieAdmissionRateLimiter);
+$app->post('/api/aokie-companion/activity', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+        ->mobileActivity($request, $response);
+})->add($aokieAdmissionRateLimiter);
+
+// Native Companion bootstrap/member APIs. These routes intentionally do not
+// accept browser-session authentication: the controller requires the distinct
+// app- and device-bound first-party OAuth bearer on every request.
+$aokieMobileRateLimiter = new RateLimitMiddleware($rateLimiter, 180, 60, 'aokie_companion_mobile', false, true);
+$app->group('/api/aokie-companion/mobile', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('/bootstrap', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileBootstrap($request, $response);
+    });
+    $group->get('/memberships', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileMemberships($request, $response);
+    });
+    $group->get('/history', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileHistory($request, $response);
+    });
+    $group->get('/routing', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileRouting($request, $response);
+    });
+    $group->get('/call-records', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileCallRecords($request, $response);
+    });
+    $group->get('/call-records/{recordId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileCallRecord($request, $response, $getArgs($request));
+    });
+    $group->get('/availability', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileGetAvailability($request, $response);
+    });
+    $group->put('/availability', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileSetAvailability($request, $response);
+    });
+    $group->put('/devices/{deviceId}/push-endpoints/{kind}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileRegisterPushEndpoint($request, $response, $getArgs($request));
+    });
+    $group->delete('/devices/{deviceId}/push-endpoints/{kind}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->mobileDeletePushEndpoint($request, $response, $getArgs($request));
+    });
+})->add($aokieMobileRateLimiter);
+
+// Owner endpoint registry. Revocation also invalidates the device's access and
+// refresh family; reapproval requires a fresh native OAuth ceremony.
+$aokieDeviceRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'aokie_companion_devices', true, true);
+$app->group('/api/aokie-companion/devices', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->listDevices($request, $response);
+    });
+    $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->revokeDevice($request, $response, $getArgs($request));
+    });
+    $group->post('/{id}/approve', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->approveDevice($request, $response, $getArgs($request));
+    });
+})->add($aokieDeviceRateLimiter)->add($authRequired);
+
+// App-scoped Companion administration/member presence. Role permissions are
+// enforced inside the controller because read/audit/manage/own-device differ.
+$app->group('/api/aokie-companion', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('/history', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->history($request, $response);
+    });
+    $group->get('/audit', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->auditHistory($request, $response);
+    });
+    $group->get('/policy', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->getPolicy($request, $response);
+    });
+    $group->put('/policy', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->updatePolicy($request, $response);
+    });
+    $group->get('/routing-groups', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->listRoutingGroups($request, $response);
+    });
+    $group->post('/routing-groups', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->createRoutingGroup($request, $response);
+    });
+    $group->put('/routing-groups/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->updateRoutingGroup($request, $response, $getArgs($request));
+    });
+    $group->delete('/routing-groups/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->deleteRoutingGroup($request, $response, $getArgs($request));
+    });
+    $group->put('/availability', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->setAvailability($request, $response);
+    });
+})->add($aokieDeviceRateLimiter)->add($authRequired);
+
 // RFC 7591 dynamic client registration: public by design (no auth), JSON body, tightly rate-limited.
 // CSRF does not apply (external clients send no auth cookie; the middleware skips cookieless POSTs).
 $oauthRegisterRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_register', false, true); // fail closed: credential issuance (RATE-001)
@@ -1828,10 +1982,16 @@ $app->post('/api/oauth/token', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->token($request, $response);
 })->add($oauthTokenRateLimiter);
 
-// Consent support for the SPA /oauth/authorize page: authorize-info validates the request and returns
-// what to display; approve (AUTHED FormLogic user + CSRF like every authed POST) mints the one-time
-// code and returns the redirect for the SPA to perform.
+// Consent support for the SPA /oauth/authorize page. On a split deployment the canonical API-host
+// authorization endpoint validates the request, then redirects only to APP_URL's fixed SPA route;
+// same-origin deployments continue to serve /oauth/authorize directly from the frontend fallback.
+// authorize-info returns what to display; approve (AUTHED FormLogic user + CSRF like every authed
+// POST) mints the one-time code and returns the client redirect for the SPA to perform.
 $oauthInfoRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'oauth_info');
+$app->get('/oauth/authorize', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)
+        ->authorizationPage($request, $response);
+})->add($oauthInfoRateLimiter);
 $app->get('/api/oauth/authorize-info', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizeInfo($request, $response);
 })->add($oauthInfoRateLimiter);
@@ -2020,6 +2180,28 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     // Remote command relay (connector:relay) — the desktop runtime long-polls for pending connector
     // commands its members enqueued, claims one (pending→claimed exactly-once) and completes it.
     $connectorRelayAuth = new ApiKeyMiddleware($apiKeyService, ['connector:relay'], $rateLimiter);
+    // The controller requires aokie:realtime and emits a relink diagnostic when
+    // an older key only has connector:relay. Authentication is still strict.
+    $aokieRealtimeAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+
+    // Private Desktop/plugin bootstrap. It returns a short-lived plugin-role
+    // gateway admission directly and never writes the token to desktop_commands.
+    $group->post('/aokie-companion/admission', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->pluginAdmission($request, $response);
+    })->add($aokieRealtimeAuth);
+    $group->post('/aokie-companion/activity', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->pluginActivity($request, $response);
+    })->add($aokieRealtimeAuth);
+    $group->post('/aokie-companion/routing-groups/{id}/resolve', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->pluginResolveRouting($request, $response, $getArgs($request));
+    })->add($aokieRealtimeAuth);
+    $group->post('/aokie-companion/routing-groups/{id}/offers', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
+            ->pluginQueueOffer($request, $response, $getArgs($request));
+    })->add($aokieRealtimeAuth);
 
     $group->get('/connector-commands/pending', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->pending($request, $response);

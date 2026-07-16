@@ -65,6 +65,39 @@ if (!$columnExists($pdo, $db, 'users', 'token_version')) {
     $applied[] = 'users.token_version already present';
 }
 
+// 3. Aokie v2 endpoint identity and peer-roster pinning.
+$aokieColumns = [
+    'holder_key_thumbprint' => 'ALTER TABLE `aokie_companion_devices` ADD COLUMN `holder_key_thumbprint` varchar(64) NULL AFTER `grants`',
+    'endpoint_public_key' => 'ALTER TABLE `aokie_companion_devices` ADD COLUMN `endpoint_public_key` json NULL AFTER `holder_key_thumbprint`',
+    'approved_peer_key_thumbprints' => 'ALTER TABLE `aokie_companion_devices` ADD COLUMN `approved_peer_key_thumbprints` json NULL AFTER `endpoint_public_key`',
+    'peer_roster_revision' => 'ALTER TABLE `aokie_companion_devices` ADD COLUMN `peer_roster_revision` bigint unsigned NULL AFTER `approved_peer_key_thumbprints`',
+    'peer_roster_hash' => 'ALTER TABLE `aokie_companion_devices` ADD COLUMN `peer_roster_hash` varchar(64) NULL AFTER `peer_roster_revision`',
+    'desktop_connection_id' => 'ALTER TABLE `aokie_companion_devices` ADD COLUMN `desktop_connection_id` varchar(36) NULL AFTER `peer_roster_hash`',
+];
+foreach ($aokieColumns as $column => $ddl) {
+    if (!$columnExists($pdo, $db, 'aokie_companion_devices', $column)) {
+        $pdo->exec($ddl);
+        $applied[] = "aokie_companion_devices.{$column} added";
+    } else {
+        $applied[] = "aokie_companion_devices.{$column} already present";
+    }
+}
+$index = $pdo->prepare(
+    'SELECT 1 FROM information_schema.statistics
+     WHERE table_schema = :db AND table_name = :t AND index_name = :i LIMIT 1'
+);
+$index->execute([
+    'db' => $db,
+    't' => 'aokie_companion_devices',
+    'i' => 'idx_aokie_companion_desktop',
+]);
+if ($index->fetchColumn() === false) {
+    $pdo->exec('ALTER TABLE `aokie_companion_devices` ADD INDEX `idx_aokie_companion_desktop` (`desktop_connection_id`)');
+    $applied[] = 'aokie_companion_devices desktop index added';
+} else {
+    $applied[] = 'aokie_companion_devices desktop index already present';
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";
