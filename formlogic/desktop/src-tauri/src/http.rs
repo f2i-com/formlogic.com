@@ -116,6 +116,8 @@ struct AppState {
     /// The flow runtime (headless flows + Aokie), so `/api/desktop/info` can
     /// report its status. `None` before an account/runtime is wired.
     flow_runtime: Option<Arc<FlowRuntime>>,
+    /// AI-401: the provider registry backing the AI gateway (`/api/ai/*`).
+    ai_providers: crate::ai::providers::ProviderRegistryHandle,
 }
 
 /// Current companion id, reported by `/api/health` + `/api/desktop/info`.
@@ -490,6 +492,185 @@ async fn ensure_service_by_port(
     match state.registry.lock() {
         Ok(mut reg) => (StatusCode::OK, Json(reg.ensure_by_port(req.port))).into_response(),
         Err(_) => err500("registry mutex poisoned"),
+    }
+}
+
+// ------- AI provider registry + gateway (AI-401..404) -------
+
+async fn list_ai_providers(State(state): State<AppState>) -> impl IntoResponse {
+    let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    Json(serde_json::json!({ "providers": reg.list(), "aliases": reg.aliases() })).into_response()
+}
+
+async fn upsert_ai_provider(
+    State(state): State<AppState>,
+    Json(profile): Json<crate::ai::providers::ProviderProfile>,
+) -> impl IntoResponse {
+    let mut reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.upsert(profile) {
+        Ok(id) => (StatusCode::OK, Json(serde_json::json!({ "id": id }))).into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
+async fn delete_ai_provider(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.delete(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetKeyBody {
+    /// The API key; null/empty clears it.
+    #[serde(default)]
+    key: Option<String>,
+}
+
+async fn set_ai_provider_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetKeyBody>,
+) -> impl IntoResponse {
+    let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.set_key(&id, body.key.as_deref()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
+async fn set_ai_alias(
+    State(state): State<AppState>,
+    Json(binding): Json<crate::ai::providers::AliasBinding>,
+) -> impl IntoResponse {
+    let mut reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.set_alias(binding) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
+async fn list_ai_aliases(State(state): State<AppState>) -> impl IntoResponse {
+    let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    Json(serde_json::json!({ "aliases": reg.aliases() })).into_response()
+}
+
+/// `POST /api/ai/providers/:id/test` — reachability + auth probe.
+async fn test_ai_provider(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let provider = {
+        let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+        reg.get(&id)
+    };
+    let Some(provider) = provider else {
+        return err400(&format!("unknown provider {id:?}"));
+    };
+    match crate::ai::gateway::test_provider(&state.ai_providers, &provider).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "ok": false, "error": { "code": e.code(), "message": e.message() } })),
+        )
+            .into_response(),
+    }
+}
+
+fn ai_gateway_error(e: crate::ai::gateway::GatewayError) -> Response {
+    let status = match e {
+        crate::ai::gateway::GatewayError::NoProvider(_) => StatusCode::NOT_FOUND,
+        crate::ai::gateway::GatewayError::BadRequest(_) => StatusCode::BAD_REQUEST,
+        crate::ai::gateway::GatewayError::Upstream(_) => StatusCode::BAD_GATEWAY,
+    };
+    desktop_err(status, e.code(), e.message())
+}
+
+async fn ai_gateway_models(State(state): State<AppState>) -> Response {
+    ai_models_impl(&state, None).await
+}
+
+async fn ai_gateway_models_for(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    ai_models_impl(&state, Some(&id)).await
+}
+
+async fn ai_models_impl(state: &AppState, provider_id: Option<&str>) -> Response {
+    use crate::ai::providers::Capability;
+    let provider = match crate::ai::gateway::resolve_provider(
+        &state.ai_providers,
+        provider_id,
+        None,
+        Capability::Chat,
+    ) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            // No external provider configured — report an empty list so the
+            // plugin's discovery probe treats it as "endpoint present, no
+            // models yet" rather than a 404 that trips its fallback.
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({ "object": "list", "data": [] })),
+            )
+                .into_response();
+        }
+        Err(e) => return ai_gateway_error(e),
+    };
+    match crate::ai::gateway::list_models(&state.ai_providers, &provider).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => ai_gateway_error(e),
+    }
+}
+
+async fn ai_gateway_chat(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    ai_chat_impl(&state, None, body).await
+}
+
+async fn ai_gateway_chat_for(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    ai_chat_impl(&state, Some(&id), body).await
+}
+
+async fn ai_chat_impl(state: &AppState, provider_id: Option<&str>, body: serde_json::Value) -> Response {
+    use crate::ai::providers::Capability;
+    // An optional `provider` field in the body is a capability alias.
+    let alias = body.get("provider").and_then(|v| v.as_str()).map(str::to_string);
+    let provider = match crate::ai::gateway::resolve_provider(
+        &state.ai_providers,
+        provider_id,
+        alias.as_deref(),
+        Capability::Chat,
+    ) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return desktop_err(
+                StatusCode::NOT_FOUND,
+                "no_provider",
+                "no AI provider is configured for chat — add one in the Services → AI Providers section",
+            )
+        }
+        Err(e) => return ai_gateway_error(e),
+    };
+    // Strip the non-OpenAI `provider` routing field before forwarding.
+    let mut body = body;
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("provider");
+    }
+    match crate::ai::gateway::chat_completions(&state.ai_providers, &provider, body).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => ai_gateway_error(e),
     }
 }
 
@@ -2149,12 +2330,22 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
                     | "/api/models/verify"
                     | "/api/python/venvs"
                     | "/api/python/install"
+                    // AI-403: provider config + key material is a mutation of
+                    // the machine's AI setup; a no-Origin native caller must
+                    // not reconfigure providers or set keys. (The gateway
+                    // INFERENCE routes below are NOT here — the plugin reaches
+                    // them over authenticated loopback.)
+                    | "/api/ai/providers"
+                    | "/api/ai/aliases"
             ) || (path.starts_with("/api/services/") && path.ends_with("/uninstall"))
+                || (path.starts_with("/api/ai/providers/")
+                    && (path.ends_with("/key") || path.ends_with("/test")))
         }
         Method::DELETE => {
             path.starts_with("/api/services/")
                 || path.starts_with("/api/models/")
                 || path.starts_with("/api/python/venvs/")
+                || path.starts_with("/api/ai/providers/")
         }
         _ => false,
     }
@@ -2353,6 +2544,8 @@ pub async fn serve(
     // The headless flow runtime (flows + Aokie). `None` disables the live
     // `/api/flows/*` routes (they report runner_unavailable).
     flow_runtime: Option<Arc<FlowRuntime>>,
+    // AI-401: the provider registry backing the `/api/ai/*` gateway.
+    ai_providers: crate::ai::providers::ProviderRegistryHandle,
 ) -> Result<(), BoxError> {
     // CORS stays permissive at the HTTP layer (the localhost bind keeps
     // non-local processes out, and `Authorization` must be readable from any
@@ -2391,6 +2584,7 @@ pub async fn serve(
         python,
         catalog,
         flow_runtime: flow_runtime.clone(),
+        ai_providers,
     };
 
     let desktop_state = DesktopState {
@@ -2451,6 +2645,21 @@ pub async fn serve(
         .route("/api/python/logs", get(python_logs))
         .route("/api/python/venvs", post(create_venv))
         .route("/api/python/venvs/:name", delete(delete_venv))
+        // AI-401..404: provider registry + gateway. Behind management_auth_guard
+        // (webview | server token | pairing token) — inference is NEVER
+        // anonymous (ADR-008); provider CONFIG + key routes are additionally in
+        // is_privileged_path so a no-Origin native caller cannot reconfigure
+        // providers or set keys.
+        .route("/api/ai/providers", get(list_ai_providers).post(upsert_ai_provider))
+        .route("/api/ai/providers/:id", delete(delete_ai_provider))
+        .route("/api/ai/providers/:id/key", post(set_ai_provider_key))
+        .route("/api/ai/providers/:id/test", post(test_ai_provider))
+        .route("/api/ai/aliases", get(list_ai_aliases).post(set_ai_alias))
+        // Gateway (default provider + named provider).
+        .route("/api/ai/v1/models", get(ai_gateway_models))
+        .route("/api/ai/v1/chat/completions", post(ai_gateway_chat))
+        .route("/api/ai/providers/:id/v1/models", get(ai_gateway_models_for))
+        .route("/api/ai/providers/:id/v1/chat/completions", post(ai_gateway_chat_for))
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
             management_auth_guard,

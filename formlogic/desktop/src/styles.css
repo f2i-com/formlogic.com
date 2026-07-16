@@ -2700,3 +2700,8 @@ code {
   cursor: pointer;
 }
 .plugin-purge-row input { cursor: pointer; }
+
+/* AI-407 — provider form capability checkboxes. */
+.cap-checks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.cap-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-dim); }
+.cap-check input { cursor: pointer; }

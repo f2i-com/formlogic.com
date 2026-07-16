@@ -9,6 +9,7 @@ import {
   type ServiceStatus,
   type ServiceTemplateInput,
 } from './api';
+import AiProvidersPanel from './AiProvidersPanel';
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, DownloadIcon, TrashIcon, UploadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
@@ -329,9 +330,12 @@ export default function ServicesPanel() {
           ))}
         </section>
       )}
+      {/* SRV-004/AI-407: local processes are grouped by category; external AI
+          endpoints are a semantically-distinct group (no pid/logs — health is
+          a reachability probe). Rendered below the local services. */}
       {grouped.map(([category, svcs]) => (
         <section key={category} className="service-section">
-          <h3 className="section-title">{category}</h3>
+          <h3 className="section-title">Local processes · {category}</h3>
           {svcs.map((svc) => (
             <ServiceCard
               key={svc.id}
@@ -393,6 +397,10 @@ export default function ServicesPanel() {
           ))}
         </section>
       ))}
+
+      {/* AI-407: external AI endpoints. Only render once the local-services
+          snapshot exists so a cold API failure doesn't show a half page. */}
+      {snapshot && <AiProvidersPanel />}
 
       <section className="service-section">
         {showAddForm ? (

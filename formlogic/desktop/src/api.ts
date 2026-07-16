@@ -217,6 +217,67 @@ export const services = {
     ),
 };
 
+// ----- AI providers (AI-401..404) -----
+
+export type AiCapability =
+  | 'chat'
+  | 'transcription'
+  | 'speech'
+  | 'embeddings'
+  | 'realtime';
+export type AiProtocol = 'openai' | 'anthropic' | 'custom';
+
+export interface AiProviderProfile {
+  id: string;
+  name: string;
+  protocol: AiProtocol;
+  baseUrl: string;
+  model?: string;
+  capabilities: AiCapability[];
+  headers: { name: string; value: string }[];
+  specs?: Record<string, { path?: string; requestTemplate?: string; responsePath?: string }>;
+  allowLocal: boolean;
+  enabled: boolean;
+}
+
+export interface AiProviderView extends AiProviderProfile {
+  /** True when an API key is stored for this provider (the key itself never leaves the desktop). */
+  hasKey: boolean;
+}
+
+export interface AiAliasBinding {
+  alias: string;
+  capability: AiCapability;
+  providerId: string;
+}
+
+export const aiProviders = {
+  list: () =>
+    request<{ providers: AiProviderView[]; aliases: AiAliasBinding[] }>('/api/ai/providers'),
+  upsert: (profile: AiProviderProfile) =>
+    request<{ id: string }>('/api/ai/providers', {
+      method: 'POST',
+      body: JSON.stringify(profile),
+    }),
+  remove: (id: string) =>
+    request<void>(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Set (or clear with null) a provider's API key — stored in the OS credential store. */
+  setKey: (id: string, key: string | null) =>
+    request<void>(`/api/ai/providers/${encodeURIComponent(id)}/key`, {
+      method: 'POST',
+      body: JSON.stringify({ key }),
+    }),
+  test: (id: string) =>
+    request<{ ok: boolean }>(`/api/ai/providers/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+    }),
+  setAlias: (binding: AiAliasBinding) =>
+    request<void>('/api/ai/aliases', {
+      method: 'POST',
+      body: JSON.stringify(binding),
+    }),
+};
+
 // ----- models / downloads -----
 
 export interface ModelFile {

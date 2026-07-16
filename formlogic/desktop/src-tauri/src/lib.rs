@@ -5,6 +5,7 @@
 //! Phase 2: load the service registry, manage child processes, expose
 //! /api/services/* and stop everything cleanly on exit.
 
+pub mod ai;
 pub mod connectors;
 pub mod aokie_endpoint_identity;
 pub mod aokie_companion_publisher;
@@ -1477,6 +1478,11 @@ pub fn run() {
             downloads.set_token(read_hf_token(app.handle()));
             let python: PythonHandle = Python::new(data_dir.clone()).into_handle();
             let catalog = CatalogHandle::new(data_dir.clone());
+            // AI-401: the provider registry backing the /api/ai/* gateway
+            // (config in <dataDir>/ai-providers.json; keys in the OS store).
+            let ai_providers: crate::ai::providers::ProviderRegistryHandle = std::sync::Arc::new(
+                std::sync::Mutex::new(crate::ai::providers::ProviderRegistry::load(&data_dir)),
+            );
 
             // FormLogic Desktop plugin host: scans <dataDir>/plugins/ and
             // supervises plugin processes. Dev mode (debug build or
@@ -1597,6 +1603,7 @@ pub fn run() {
             let plugin_host_for_http = plugin_host.clone();
             let pairing_for_http = pairing.clone();
             let flow_runtime_for_http = flow_runtime.clone();
+            let ai_providers_for_http = ai_providers.clone();
             let config_provider: Arc<dyn http::ConfigProvider> =
                 Arc::new(TauriConfigProvider { app: app_handle });
             tauri::async_runtime::spawn(async move {
@@ -1615,6 +1622,7 @@ pub fn run() {
                     plugin_host_for_http,
                     pairing_for_http,
                     Some(flow_runtime_for_http),
+                    ai_providers_for_http,
                 )
                 .await
                 {

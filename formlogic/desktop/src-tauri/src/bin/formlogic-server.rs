@@ -407,6 +407,12 @@ async fn main() {
         },
     );
 
+    // AI-401: the provider registry backing /api/ai/* (headless too).
+    let ai_providers: formlogic_desktop_lib::ai::providers::ProviderRegistryHandle =
+        std::sync::Arc::new(std::sync::Mutex::new(
+            formlogic_desktop_lib::ai::providers::ProviderRegistry::load(&data_dir),
+        ));
+
     // gui_mode = false: headless server is token-strict (no webview origin).
     if let Err(e) = http::serve(
         port,
@@ -420,6 +426,7 @@ async fn main() {
         plugin_host,
         pairing,
         Some(flow_runtime),
+        ai_providers,
     )
     .await
     {
