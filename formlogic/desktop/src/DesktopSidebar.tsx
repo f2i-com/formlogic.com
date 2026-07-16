@@ -9,6 +9,8 @@ import {
   ServerIcon,
   TerminalSquareIcon,
 } from './Icons';
+import { PluginIcon } from './PluginContributedUi';
+import { normalizeIcon, pluginSectionId, type PluginNavEntry } from './pluginContributions';
 
 /** The workspace sections of the redesigned shell (navigation, not tabs). */
 export type SectionId =
@@ -33,7 +35,8 @@ export const SECTION_META: Record<SectionId, { title: string; subtitle: string }
 };
 
 interface NavItem {
-  id: SectionId;
+  /** A core section id or a plugin section (`plugin:<id>:<navId>`). */
+  id: string;
   label: string;
   icon: (props: { size?: number }) => ReactElement;
   badge?: string;
@@ -50,9 +53,10 @@ export function DesktopSidebar({
   pendingPairing,
   cloudLabel,
   receptionistAvailable,
+  pluginNav = [],
 }: {
-  section: SectionId;
-  onChange: (s: SectionId) => void;
+  section: string;
+  onChange: (s: string) => void;
   /** Pending browser pairing requests — badges the Connections entry. */
   pendingPairing: number;
   /** e.g. the linked device/base host, or "Not linked". */
@@ -60,6 +64,8 @@ export function DesktopSidebar({
   /** The Aokie plugin is installed — its workspace is plugin UI, not core
    *  chrome, so the nav entry only exists while the plugin does. */
   receptionistAvailable: boolean;
+  /** PLG-203: nav entries contributed by installed v2 plugins. */
+  pluginNav?: PluginNavEntry[];
 }) {
   const groups: Array<{ label: string; items: NavItem[] }> = [
     {
@@ -69,6 +75,16 @@ export function DesktopSidebar({
         ...(receptionistAvailable
           ? [{ id: 'receptionist', label: 'AI Receptionist', icon: PhoneCallIcon, badge: 'New', badgeTone: 'accent' } as NavItem]
           : []),
+        // PLG-203: plugin-contributed nav entries (a v2 plugin's ui.nav).
+        ...pluginNav.map(
+          (n): NavItem => ({
+            id: pluginSectionId(n.pluginId, n.navId),
+            label: n.label,
+            icon: (props) => <PluginIcon name={normalizeIcon(n.icon)} size={props.size} />,
+            badge: n.badge,
+            badgeTone: 'accent',
+          }),
+        ),
       ],
     },
     {

@@ -2,6 +2,7 @@ import { formatBytes } from './api';
 import type { DesktopOverviewData } from './useDesktopOverview';
 import type { SectionId } from './DesktopSidebar';
 import { SectionCard } from './SectionCard';
+import { PluginOverviewCards } from './PluginContributedUi';
 import {
   ChevronRightIcon,
   CircleCheckIcon,
@@ -35,9 +36,12 @@ function rel(iso: string | null | undefined): string {
 export function DesktopOverview({
   data,
   onOpen,
+  onOpenPluginNav,
 }: {
   data: DesktopOverviewData;
   onOpen: (s: SectionId) => void;
+  /** PLG-203: open a plugin-contributed section from an Overview card CTA. */
+  onOpenPluginNav?: (pluginId: string, navId: string) => void;
 }) {
   const svc = data.services?.services ?? [];
   const running = svc.filter((s) => s.status === 'running').length;
@@ -145,6 +149,13 @@ export function DesktopOverview({
         </div>
       </section>
       )}
+
+      {/* PLG-203: cards contributed by installed v2 plugins (a plugin's
+          ui.overview) — rendered dynamically from the manifest. */}
+      <PluginOverviewCards
+        plugins={plg}
+        onOpenNav={(pid, nav) => onOpenPluginNav?.(pid, nav)}
+      />
 
       <div className="desktop-overview-grid">
         <SectionCard

@@ -235,6 +235,9 @@ pub struct ServiceSnapshot {
     pub autostart: AutostartPolicy,
     /// PROC-001: the last spontaneous exit's diagnostics, when one happened.
     pub last_exit: Option<ExitDiagnostics>,
+    /// PLG-206: the plugin that owns this service (installed with it), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 
 /// Result of `ensure_by_port` — surfaced to formlogic-web so it can tell the
@@ -1421,6 +1424,7 @@ impl Registry {
                     .copied()
                     .unwrap_or_default(),
                 last_exit: s.last_exit.clone(),
+                owner: s.template.owner.clone(),
                 node: s.template.node.as_ref().map(|n| {
                     // Resolve companion-side `${...}` placeholders (e.g.
                     // `${ollamaModel}`) in the node body BEFORE the web app sees
@@ -2517,10 +2521,13 @@ impl Registry {
     /// `templates/<id>.json` and refreshes the in-memory entry. Refuses
     /// to clobber a currently-Running service so the user doesn't lose
     /// the live runner reference.
-    pub fn add_template(&mut self, template: ServiceTemplate) -> Result<(), String> {
+    pub fn add_template(&mut self, mut template: ServiceTemplate) -> Result<(), String> {
         if !valid_service_id(&template.id) {
             return Err("service id must be lowercase letters/digits/dash/underscore (1–64 chars)".into());
         }
+        // PLG-206: only add_owned_template (a plugin install) stamps ownership.
+        // A user-facing add/import cannot claim to be plugin-owned, and cannot
+        // overwrite a template another plugin owns.
         if let Some(existing) = self.services.get(&template.id) {
             if existing.status == ServiceStatus::Running
                 || existing.status == ServiceStatus::Installing
@@ -2530,7 +2537,14 @@ impl Registry {
                     template.id, existing.status
                 ));
             }
+            if template.owner.is_none() && existing.template.owner.is_some() {
+                return Err(format!(
+                    "service {} is owned by a plugin and cannot be edited directly",
+                    template.id
+                ));
+            }
         }
+        let _ = &mut template; // owner is set only by add_owned_template (user path strips it)
         let path = self
             .data_dir
             .join("templates")
@@ -2676,13 +2690,20 @@ impl Registry {
         added
     }
 
-    /// Remove a template + its on-disk JSON. Refuses if Running.
+    /// Remove a template + its on-disk JSON. Refuses if Running, or if the
+    /// template is plugin-owned (PLG-206 — the owning plugin manages it; remove
+    /// the plugin instead).
     pub fn delete_template(&mut self, id: &str) -> Result<(), String> {
         if let Some(svc) = self.services.get(id) {
             if svc.status == ServiceStatus::Running
                 || svc.status == ServiceStatus::Installing
             {
                 return Err(format!("service {id} is {:?}; stop it first", svc.status));
+            }
+            if let Some(owner) = &svc.template.owner {
+                return Err(format!(
+                    "service {id} is owned by plugin {owner:?} — uninstall the plugin to remove it"
+                ));
             }
         } else {
             return Err("unknown service".into());
@@ -2699,6 +2720,65 @@ impl Registry {
         self.templates_fp = templates_fingerprint(&self.data_dir.join("templates"));
         self.touch();
         Ok(())
+    }
+
+    /// PLG-206: install a service template OWNED by a plugin. The template's
+    /// `owner` is host-stamped (a plugin can't forge ownership); a same-id
+    /// template not owned by this plugin is refused (no cross-plugin takeover).
+    /// Same on-disk shape as `add_template`, so it survives restarts.
+    pub fn add_owned_template(
+        &mut self,
+        mut template: ServiceTemplate,
+        owner: &str,
+    ) -> Result<(), String> {
+        if let Some(existing) = self.services.get(&template.id) {
+            match &existing.template.owner {
+                Some(o) if o == owner => {} // our own — an update
+                Some(o) => {
+                    return Err(format!(
+                        "service {:?} is owned by plugin {o:?}, not {owner:?}",
+                        template.id
+                    ))
+                }
+                None => {
+                    return Err(format!(
+                        "service {:?} already exists and is not plugin-owned",
+                        template.id
+                    ))
+                }
+            }
+        }
+        template.owner = Some(owner.to_string());
+        self.add_template(template)
+    }
+
+    /// PLG-206: remove every service template owned by `plugin_id` (called when
+    /// the plugin is uninstalled). Stops a running owned service first. Returns
+    /// the ids removed.
+    pub fn remove_owned_by(&mut self, plugin_id: &str) -> Vec<String> {
+        let owned: Vec<String> = self
+            .services
+            .values()
+            .filter(|s| s.template.owner.as_deref() == Some(plugin_id))
+            .map(|s| s.template.id.clone())
+            .collect();
+        for id in &owned {
+            // Stop it if running (owned services shouldn't outlive the plugin).
+            if let Some(svc) = self.services.get(id) {
+                if matches!(svc.status, ServiceStatus::Running | ServiceStatus::Starting) {
+                    let _ = self.stop(id);
+                }
+            }
+            let path = self.data_dir.join("templates").join(format!("{id}.json"));
+            let _ = std::fs::remove_file(&path);
+            self.services.remove(id);
+            self.installed_cache.remove(id);
+        }
+        if !owned.is_empty() {
+            self.templates_fp = templates_fingerprint(&self.data_dir.join("templates"));
+            self.touch();
+        }
+        owned
     }
 }
 
@@ -3145,6 +3225,50 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// PLG-206: owned templates are stamped with the owner, refuse cross-plugin
+    /// takeover + direct user delete, and remove_owned_by clears them.
+    #[test]
+    fn owned_service_templates_lifecycle() {
+        let data = std::env::temp_dir().join(format!("fl-owned-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(data.join("templates")).unwrap();
+        std::fs::create_dir_all(data.join("scripts")).unwrap();
+        let mut reg = super::Registry::empty(data.clone(), data.join("models"));
+
+        let tmpl = |id: &str| -> super::ServiceTemplate {
+            serde_json::from_str(&format!(
+                r#"{{"id":"{id}","name":"{id}","description":"","category":"Speech",
+                    "defaultPort":9100,"run":{{"command":"x.exe","args":[]}}}}"#
+            ))
+            .unwrap()
+        };
+
+        // Install owned by "aokie".
+        reg.add_owned_template(tmpl("aokie-voice"), "aokie").unwrap();
+        let snap = reg.snapshot();
+        let s = snap.services.iter().find(|s| s.id == "aokie-voice").unwrap();
+        assert_eq!(s.owner.as_deref(), Some("aokie"));
+
+        // A DIFFERENT plugin can't take over the same id.
+        assert!(reg.add_owned_template(tmpl("aokie-voice"), "evil").is_err());
+        // The same plugin CAN update it.
+        reg.add_owned_template(tmpl("aokie-voice"), "aokie").unwrap();
+        // A user delete is refused (owned).
+        assert!(reg.delete_template("aokie-voice").unwrap_err().contains("owned by plugin"));
+        // A user add can't overwrite an owned template (owner stripped → None).
+        let mut user = tmpl("aokie-voice");
+        user.owner = None;
+        assert!(reg.add_template(user).is_err());
+
+        // remove_owned_by clears it.
+        let removed = reg.remove_owned_by("aokie");
+        assert_eq!(removed, vec!["aokie-voice"]);
+        assert!(reg.snapshot().services.iter().all(|s| s.id != "aokie-voice"));
+        assert!(!data.join("templates").join("aokie-voice.json").exists());
+
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]

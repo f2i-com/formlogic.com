@@ -22,6 +22,7 @@
 //! `builtin` bundles first-party plugin TEMPLATES (e.g. the Aokie phone
 //! bridge manifest) that materialise into the plugins dir on user install.
 
+pub mod bindings;
 pub mod builtin;
 pub mod install;
 pub mod receipts;

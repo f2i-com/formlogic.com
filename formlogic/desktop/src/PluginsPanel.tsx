@@ -273,10 +273,20 @@ export default function PluginsPanel() {
               }, p.id)
             }
             onRemove={async ({ purge }) => {
+              // PLG-107: when the plugin declares external data, list it in the
+              // purge confirm so the user knows what is NOT auto-deleted.
+              const externalList =
+                purge && (p.externalData?.length ?? 0) > 0
+                  ? ' This plugin also stores data outside FormLogic that is NOT removed automatically: ' +
+                    p.externalData!.map((d) => d.label).join('; ') +
+                    ' — see the plugin\'s docs to remove it.'
+                  : '';
               const ok = await confirm({
                 title: `Remove the ${p.name} plugin?`,
                 body: purge
-                  ? 'The plugin is stopped and its folder AND its data (settings, journals, outbox) are deleted. This cannot be undone. Data the plugin stores outside FormLogic (its own folders, credential-manager entries, drivers) is not touched — see the plugin\'s docs to remove that.'
+                  ? 'The plugin is stopped and its folder AND its data (settings, journals, outbox) are deleted. This cannot be undone.' +
+                    (externalList ||
+                      ' Data the plugin stores outside FormLogic (its own folders, credential-manager entries, drivers) is not touched — see the plugin\'s docs to remove that.')
                   : 'The plugin is stopped and its folder (manifest + binary) is deleted. ' +
                     'Its data (settings, journals) is kept, so reinstalling picks up where it left off.' +
                     (snapshot.builtins.some((b) => b.id === p.id)

@@ -275,7 +275,61 @@ impl PluginHost {
             map.remove(&manifest.id);
         }
         self.scan();
+        // 7. PLG-206: install the plugin's manifest-declared service templates,
+        //    stamped with this plugin as owner. A bad template file is logged
+        //    and skipped — it never fails the install.
+        self.install_owned_services(&manifest.id, &manifest, &plugins_root.join(&manifest.id));
         Ok(manifest.id)
+    }
+
+    /// PLG-206: load + install the service templates a plugin's manifest
+    /// declares (`services[].templateFile`, package-relative), stamped owned by
+    /// the plugin. Best-effort per template.
+    fn install_owned_services(
+        self: &Arc<Self>,
+        plugin_id: &str,
+        manifest: &crate::plugins::manifest::PluginManifest,
+        plugin_dir: &std::path::Path,
+    ) {
+        if manifest.services.is_empty() {
+            return;
+        }
+        let Some(services) = self.services_registry() else {
+            log::warn!("plugin {plugin_id}: declares services but no services registry is wired");
+            return;
+        };
+        for svc_ref in &manifest.services {
+            // The template path is validated package-relative at manifest parse;
+            // resolve it under the plugin dir and refuse anything that escapes.
+            let path = plugin_dir.join(&svc_ref.template_file);
+            if !path.starts_with(plugin_dir) {
+                log::warn!(
+                    "plugin {plugin_id}: service template {:?} escapes the plugin dir — skipped",
+                    svc_ref.template_file
+                );
+                continue;
+            }
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("plugin {plugin_id}: cannot read service template {}: {e}", path.display());
+                    continue;
+                }
+            };
+            let template: crate::services::template::ServiceTemplate =
+                match serde_json::from_str(&raw) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        log::warn!("plugin {plugin_id}: bad service template {}: {e}", path.display());
+                        continue;
+                    }
+                };
+            let mut reg = services.lock().unwrap_or_else(|e| e.into_inner());
+            match reg.add_owned_template(template, plugin_id) {
+                Ok(()) => log::info!("plugin {plugin_id}: installed owned service template"),
+                Err(e) => log::warn!("plugin {plugin_id}: owned service refused: {e}"),
+            }
+        }
     }
 
     /// Uninstall a plugin (`DELETE /api/plugins/{id}`): stop it if active,
@@ -302,6 +356,23 @@ impl PluginHost {
             slot.dir.clone()
         };
         self.stop(id).await?;
+        // PLG-205: drop this plugin's connector→app bindings.
+        self.bindings()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .forget_plugin(id);
+        // PLG-206: remove any service templates this plugin owned (stopping a
+        // running one first) BEFORE deleting the plugin dir, so an owned
+        // service never outlives its plugin as a dead card.
+        if let Some(services) = self.services_registry() {
+            let removed = services
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove_owned_by(id);
+            if !removed.is_empty() {
+                log::info!("plugin {id}: removed {} owned service(s)", removed.len());
+            }
+        }
         // Defense in depth: never remove anything outside the plugins root.
         if !dir.starts_with(self.plugins_root()) {
             return Err(format!(

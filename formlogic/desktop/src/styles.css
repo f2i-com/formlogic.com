@@ -2705,3 +2705,21 @@ code {
 .cap-checks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .cap-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-dim); }
 .cap-check input { cursor: pointer; }
+
+/* PLG-203 — plugin-contributed UI (Overview cards + contributed screen). */
+.plugin-overview-card { display: flex; flex-direction: column; gap: 8px; }
+.plugin-overview-card--hero {
+  border-left: 3px solid var(--signal);
+  box-shadow: var(--shadow-card), -10px 0 22px -18px var(--signal);
+}
+.plugin-overview-card__head { display: flex; align-items: center; gap: 8px; }
+.plugin-overview-card__head h3 { margin: 0; font-size: 14px; }
+.plugin-overview-card__headline { margin: 0; font-weight: 600; }
+.plugin-overview-card__body { margin: 0; font-size: 12px; color: var(--ink-dim); }
+.plugin-overview-card .btn { align-self: flex-start; }
+
+.plugin-status-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; }
+.plugin-status-field { display: contents; }
+.plugin-status-field dt { color: var(--ink-dim); font-size: 12px; }
+.plugin-status-field dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.plugin-action-row { display: flex; flex-wrap: wrap; gap: 8px; }

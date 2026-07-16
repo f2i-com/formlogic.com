@@ -50,7 +50,7 @@ pub const VALID_ERROR_CODES: [&str; 9] = [
 /// (`connector-request.schema.json`). `connectorId` is required by the schema
 /// but redundant with the URL — we accept its absence and fill it from the
 /// path; a MISMATCH is an error.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectorRequestBody {
     #[serde(default)]
@@ -62,6 +62,16 @@ pub struct ConnectorRequestBody {
     pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub request_id: Option<String>,
+    /// PLG-205 (additive, non-breaking): the app this request is on behalf of.
+    /// Absent on today's relay/direct-command paths → binding enforcement is a
+    /// no-op, so the live connector keeps working with zero bindings. Present →
+    /// dispatch verifies it matches the connector's active AppBinding.
+    #[serde(default)]
+    pub app_id: Option<String>,
+    /// PLG-205: the binding epoch the caller believes is current; a stale epoch
+    /// fails closed.
+    #[serde(default)]
+    pub binding_epoch: Option<u64>,
 }
 
 /// Build a bounded request id from an operation namespace and stable execution
@@ -266,6 +276,24 @@ pub async fn dispatch(
 
     if let Err(m) = target.manifest.command_allowed(connector_id, &body.command) {
         return Err(ConnectorFailure::new("capability_denied", m));
+    }
+
+    // PLG-205: consult the AppBinding (non-breaking). A request with NO app_id
+    // (relay + direct-command paths) is always allowed; a request that names an
+    // app must match the connector's active binding + epoch.
+    if let Some(app_id) = &body.app_id {
+        let check = host
+            .bindings()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .check_dispatch(
+                &target.plugin_id,
+                connector_id,
+                Some((app_id.as_str(), body.binding_epoch)),
+            );
+        if let Err(m) = check {
+            return Err(ConnectorFailure::new("bound_elsewhere", m));
+        }
     }
 
     let timeout_ms = body

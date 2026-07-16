@@ -505,6 +505,43 @@ export interface PluginSnapshot {
   packageDetail?: string;
   /** PROC-001: last crash exit diagnostics. */
   lastExit?: { code: number | null; at: string; stderrTail: string[] } | null;
+  /** PLG-201: manifest schemaVersion (1 or 2). */
+  schemaVersion?: number;
+  /** PLG-203: declarative UI contributions (v2 plugins). */
+  ui?: PluginUiContributions;
+  /** PLG-107: external data the plugin declares (shown on purge). */
+  externalData?: { path?: string; credential?: string; label: string }[];
+  /** PLG-202: commands the plugin marks journalled (durable requestId minted). */
+  journalledCommands?: string[];
+}
+
+/** PLG-203 — a plugin's declarative UI contributions. */
+export interface PluginUiContributions {
+  nav?: { id: string; label: string; icon?: string; badge?: string }[];
+  overview?: {
+    id: string;
+    kind: string;
+    title: string;
+    icon?: string;
+    bind?: {
+      headline?: string;
+      body?: string;
+      cta?: { label: string; nav: string };
+    };
+  }[];
+  statusCards?: {
+    id: string;
+    title: string;
+    poll: { command: string; intervalMs?: number };
+    fields: { label: string; path: string }[];
+  }[];
+  actions?: {
+    id: string;
+    label: string;
+    command: string;
+    confirm?: string;
+    devOnly?: boolean;
+  }[];
 }
 
 /** A bundled first-party plugin TEMPLATE (e.g. Aokie) offered for install. */

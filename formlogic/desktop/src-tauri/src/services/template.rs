@@ -58,6 +58,13 @@ pub struct ServiceTemplate {
     #[serde(default)]
     pub installed_marker: Option<String>,
 
+    /// PLG-206: the plugin that owns this service template (installed WITH the
+    /// plugin, removed when it's uninstalled). Host-stamped on install — a
+    /// user-imported or built-in template leaves this None. A user cannot
+    /// delete an owned template directly (the owning plugin manages it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+
     /// How to run the service.
     pub run: RunSpec,
 

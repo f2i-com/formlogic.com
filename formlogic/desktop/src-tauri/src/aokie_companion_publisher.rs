@@ -574,6 +574,7 @@ async fn poll_authoritative(host: &PluginHostHandle) -> Result<AuthoritativeObse
             payload: None,
             timeout_ms: Some(3_000),
             request_id: None,
+            ..Default::default()
         },
     )
     .await
@@ -587,6 +588,7 @@ async fn poll_authoritative(host: &PluginHostHandle) -> Result<AuthoritativeObse
             payload: None,
             timeout_ms: Some(3_000),
             request_id: None,
+            ..Default::default()
         },
     )
     .await

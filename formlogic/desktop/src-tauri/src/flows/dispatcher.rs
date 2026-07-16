@@ -2198,6 +2198,7 @@ impl FlowRuntime {
             payload,
             timeout_ms: None,
             request_id: request_id.map(str::to_string),
+            ..Default::default()
         };
         crate::connectors::dispatch(&self.host, connector_id, &body).await.map(|_| ()).map_err(|f| f.message)
     }
@@ -2656,6 +2657,7 @@ impl FlowRuntime {
                         payload: if payload.is_null() { None } else { Some(payload) },
                         timeout_ms: None,
                         request_id,
+                        ..Default::default()
                     };
                     crate::connectors::dispatch(&host, &connector_id, &body)
                         .await

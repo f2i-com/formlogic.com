@@ -418,6 +418,122 @@ async fn install_from_folder_then_disable_enable_and_purge() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+/// Phase 2 exit gate (PLG-201/203/205/206) — a v2 plugin dynamically
+/// contributes UI, owns a service, binds to a test app, and disappears cleanly
+/// when disabled. Exercised through the real install pipeline with the SAMPLE
+/// echo plugin (never live Aokie).
+#[tokio::test(flavor = "multi_thread")]
+async fn v2_plugin_contributes_ui_owns_service_binds_and_disables_cleanly() {
+    use formlogic_desktop_lib::services::registry::{Registry, RegistryHandle};
+    use std::sync::{Arc, Mutex};
+
+    let data = temp_data_dir("v2-contrib");
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_mock-plugin"));
+    let exe_name = built.file_name().and_then(|n| n.to_str()).unwrap().to_string();
+
+    // Build a source folder: mock exe + a v2 manifest with ui + an owned
+    // service template file.
+    let src = data.join("src");
+    std::fs::create_dir_all(src.join("services")).unwrap();
+    std::fs::copy(&built, src.join(&exe_name)).unwrap();
+    std::fs::write(
+        src.join("services").join("mock-svc.json"),
+        r#"{"id":"mock-svc","name":"Mock Service","description":"","category":"Speech",
+            "defaultPort":19191,"run":{"command":"nonexistent.exe","args":[]}}"#,
+    )
+    .unwrap();
+    let manifest = format!(
+        r#"{{
+          "schemaVersion": 2, "id": "mock", "name": "Mock", "version": "1.0.0",
+          "entry": {{ "kind": "process", "command": "{exe_name}" }},
+          "capabilities": ["connector.mock.echo.*"],
+          "connectors": [{{ "id": "mock", "name": "Mock", "commands": ["echo.ping"] }}],
+          "events": ["mock.tick"],
+          "ui": {{
+            "nav": [{{ "id": "home", "label": "Mock", "icon": "phone" }}],
+            "overview": [{{ "id": "hero", "kind": "hero", "title": "Mock",
+              "bind": {{ "headline": "$health.status", "cta": {{ "label": "Open", "nav": "home" }} }} }}],
+            "statusCards": [{{ "id": "st", "title": "Echo",
+              "poll": {{ "command": "echo.ping" }}, "fields": [{{ "label": "H", "path": "echo.hello" }}] }}]
+          }},
+          "services": [{{ "templateFile": "services/mock-svc.json" }}],
+          "commands": {{ "journalled": ["echo.ping"] }},
+          "data": {{ "externalInventory": [{{ "path": "%APPDATA%/mock", "label": "Mock data" }}] }}
+        }}"#
+    );
+    std::fs::write(src.join("manifest.json"), manifest).unwrap();
+
+    // Wire a real services registry (Registry::init seeds templates/scripts
+    // dirs) so owned templates install.
+    let services: RegistryHandle = Arc::new(Mutex::new(
+        Registry::init(data.clone(), data.join("models"), vec![]).unwrap(),
+    ));
+
+    let host = PluginHost::new(&data, false, EventBus::new());
+    host.set_services_registry(services.clone());
+
+    // Install from the folder.
+    let id = host
+        .install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(
+            src.clone(),
+        ))
+        .expect("install v2");
+    assert_eq!(id, "mock");
+
+    // PLG-203: the snapshot carries the UI contributions.
+    let snap = host.get("mock").expect("installed");
+    assert_eq!(snap.schema_version, 2);
+    let ui = snap.ui.expect("ui contributions");
+    assert_eq!(ui.nav.len(), 1);
+    assert_eq!(ui.nav[0].id, "home");
+    assert_eq!(ui.overview[0].kind, "hero");
+    assert_eq!(snap.external_data.len(), 1, "external-data inventory surfaced");
+
+    // PLG-206: the owned service is installed + stamped.
+    {
+        let reg = services.lock().unwrap();
+        let s = reg.snapshot().services.into_iter().find(|s| s.id == "mock-svc");
+        let s = s.expect("owned service installed");
+        assert_eq!(s.owner.as_deref(), Some("mock"));
+    }
+
+    // PLG-205: bind the connector to a test app; check_dispatch enforces it.
+    let bindings = host.bindings();
+    {
+        let mut b = bindings.lock().unwrap();
+        let binding = b.bind("mock", "mock", "test-app", None, None, "t0");
+        assert_eq!(binding.epoch, 1);
+        // Matching app allowed; a different app is refused.
+        assert!(b.check_dispatch("mock", "mock", Some(("test-app", Some(1)))).is_ok());
+        assert!(b.check_dispatch("mock", "mock", Some(("other-app", None))).is_err());
+        // No app context (legacy relay) → always allowed.
+        assert!(b.check_dispatch("mock", "mock", None).is_ok());
+    }
+
+    // PLG-205/206: DISABLE removes UI contributions + stops owned services.
+    host.set_enabled("mock", false).await.expect("disable");
+    let snap = host.get("mock").expect("still known");
+    assert_eq!(snap.state, PluginState::Disabled);
+    {
+        // The owned service is still installed but not running (disable stops it).
+        let reg = services.lock().unwrap();
+        let s = reg.snapshot().services.into_iter().find(|s| s.id == "mock-svc").unwrap();
+        assert_ne!(s.status, formlogic_desktop_lib::services::registry::ServiceStatus::Running);
+    }
+
+    // Re-enable, then uninstall — owned service + binding are removed.
+    host.set_enabled("mock", true).await.expect("enable");
+    host.uninstall("mock", false).await.expect("uninstall");
+    assert!(host.get("mock").is_none());
+    {
+        let reg = services.lock().unwrap();
+        assert!(reg.snapshot().services.iter().all(|s| s.id != "mock-svc"), "owned service removed");
+    }
+    assert!(bindings.lock().unwrap().list().is_empty(), "bindings forgotten");
+
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 /// PLG-104 — install refuses a plugin whose connector id collides with an
 /// already-installed plugin (deterministic first-match routing would otherwise
 /// be ambiguous). Exercised through the real install pipeline.

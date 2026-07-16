@@ -411,8 +411,11 @@ async fn service_logs(
 /// ServiceTemplate JSON itself (same shape on-disk + over the wire).
 async fn add_service(
     State(state): State<AppState>,
-    Json(template): Json<ServiceTemplate>,
+    Json(mut template): Json<ServiceTemplate>,
 ) -> impl IntoResponse {
+    // PLG-206: a user-imported/added template can never claim plugin ownership;
+    // only add_owned_template (a plugin install) stamps `owner`.
+    template.owner = None;
     let result = state
         .registry
         .lock()
@@ -1158,6 +1161,102 @@ async fn uninstall_plugin(
     }
 }
 
+/// PLG-205: `GET /api/plugins/bindings` — the host-authoritative connector→app
+/// bindings. Read-only; any paired caller may list.
+async fn list_plugin_bindings(State(st): State<DesktopState>) -> impl IntoResponse {
+    let bindings = st
+        .host
+        .bindings()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .list();
+    Json(serde_json::json!({ "bindings": bindings })).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BindBody {
+    plugin_id: String,
+    connector_id: String,
+    app_id: String,
+    #[serde(default)]
+    deployment_id: Option<String>,
+    #[serde(default)]
+    desktop_connection_id: Option<String>,
+}
+
+/// `POST /api/plugins/bindings` — bind a connector instance to an app. The host
+/// stamps all identities; webview/server-token only. One physical connector has
+/// one active owning app (an existing owner is deactivated). Ownership may only
+/// switch while the connector's line is idle — refused if a call is active.
+async fn bind_plugin_connector(
+    State(st): State<DesktopState>,
+    headers: HeaderMap,
+    Json(body): Json<BindBody>,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return lifecycle_admin_denied();
+    }
+    // The connector must actually be provided by the named plugin.
+    match st.host.get(&body.plugin_id) {
+        Some(p) if p.connectors.iter().any(|c| c.id == body.connector_id) => {}
+        Some(_) => {
+            return desktop_err(
+                StatusCode::BAD_REQUEST,
+                "command_failed",
+                &format!(
+                    "plugin {:?} does not provide connector {:?}",
+                    body.plugin_id, body.connector_id
+                ),
+            )
+        }
+        None => {
+            return desktop_err(
+                StatusCode::NOT_FOUND,
+                "command_failed",
+                &format!("unknown plugin {:?}", body.plugin_id),
+            )
+        }
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let binding = st
+        .host
+        .bindings()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .bind(
+            &body.plugin_id,
+            &body.connector_id,
+            &body.app_id,
+            body.deployment_id,
+            body.desktop_connection_id,
+            &now,
+        );
+    (StatusCode::OK, Json(binding)).into_response()
+}
+
+/// `DELETE /api/plugins/bindings/:id` — revoke a binding (webview/server-token).
+async fn revoke_plugin_binding(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !pairing_admin_ok(&st.auth, &headers) {
+        return lifecycle_admin_denied();
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    match st
+        .host
+        .bindings()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .revoke(&id, &now)
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    }
+}
+
 /// Shared 403 for the webview/server-token-only lifecycle routes.
 fn lifecycle_admin_denied() -> Response {
     desktop_err(
@@ -1370,6 +1469,7 @@ async fn plugin_command(
         // Mint one at this boundary so plugins can durably journal physical
         // effects; preserve an explicit key when a diagnostic caller supplies it.
         request_id: Some(direct_command_request_id(parsed.request_id)),
+        ..Default::default()
     };
     match connectors::dispatch(&st.host, &connector_id, &req).await {
         Ok(body) => (StatusCode::OK, Json(body)).into_response(),
@@ -1678,6 +1778,7 @@ async fn issue_plugin_consent(
         payload: Some(serde_json::json!({ "envelope": envelope })),
         timeout_ms: None,
         request_id: None,
+        ..Default::default()
     };
     match connectors::dispatch(&st.host, &id, &req).await {
         Ok(success) => (StatusCode::OK, Json(success)).into_response(),
@@ -2673,6 +2774,12 @@ pub async fn serve(
         // Registered before the `:id` routes so `install` is not captured as an
         // id (axum prefers a static segment, but keep the ordering explicit).
         .route("/api/plugins/install", post(install_plugin_from_source))
+        // PLG-205: connector→app bindings (static segments before `:id`).
+        .route(
+            "/api/plugins/bindings",
+            get(list_plugin_bindings).post(bind_plugin_connector),
+        )
+        .route("/api/plugins/bindings/:id", delete(revoke_plugin_binding))
         .route("/api/plugins/:id", get(get_plugin).delete(uninstall_plugin))
         .route("/api/plugins/:id/install", post(install_builtin_plugin))
         .route("/api/plugins/:id/enable", post(enable_plugin))

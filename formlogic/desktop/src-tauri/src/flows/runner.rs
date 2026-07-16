@@ -1170,6 +1170,7 @@ async fn connector_request_allowing(
         payload,
         timeout_ms: None,
         request_id,
+        ..Default::default()
     };
     match connectors::dispatch(host, connector_id, &body).await {
         Ok(v) => Ok(v),

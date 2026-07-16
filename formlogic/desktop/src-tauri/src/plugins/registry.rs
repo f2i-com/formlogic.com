@@ -177,6 +177,21 @@ pub struct PluginSnapshot {
     /// Publisher key id + bundle version for a verified package.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub package_detail: Option<String>,
+    /// PLG-201: the manifest schemaVersion (1 or 2).
+    pub schema_version: u32,
+    /// PLG-203: declarative UI contributions (nav/overview/status cards/actions).
+    /// Absent for a v1 plugin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui: Option<crate::plugins::manifest::UiContributions>,
+    /// PLG-107: external data the plugin declares (shown on purge, never
+    /// auto-deleted).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub external_data: Vec<crate::plugins::manifest::ExternalDataItem>,
+    /// PLG-202: commands the plugin marks as journalled (a durable requestId is
+    /// minted for them). Replaces the hardcoded client-side mirror for v2
+    /// plugins.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub journalled_commands: Vec<String>,
 }
 
 /// Persisted per-plugin entry in `registry.json`.
@@ -239,6 +254,14 @@ pub struct PluginHost {
     /// private seed never enters registry snapshots or the public HTTP API.
     pub(crate) aokie_endpoint_identity:
         crate::aokie_endpoint_identity::AokieEndpointIdentityHandle,
+    /// PLG-206: the services registry, so a plugin's manifest-declared service
+    /// templates are installed with the plugin and removed on uninstall. Set
+    /// after construction via [`set_services_registry`] (both handles exist by
+    /// then); `None` = no owned-service management (e.g. early tests).
+    pub(crate) services_registry:
+        Mutex<Option<crate::services::registry::RegistryHandle>>,
+    /// PLG-205: host-authoritative connector→app bindings.
+    pub(crate) bindings: crate::plugins::bindings::BindingStoreHandle,
 }
 
 impl PluginHost {
@@ -256,6 +279,10 @@ impl PluginHost {
                 plugin_data_root.join("aokie-companion-identity"),
             );
         let registry_path = plugins_root.join("registry.json");
+        // PLG-205: the binding store lives in the plugin-data root (host-level).
+        let bindings = Arc::new(Mutex::new(
+            crate::plugins::bindings::BindingStore::load(&plugin_data_root),
+        ));
         let host = Arc::new(Self {
             plugins_root,
             plugin_data_root,
@@ -267,9 +294,31 @@ impl PluginHost {
             receipts_guard: Mutex::new(None),
             realtime: tokio::sync::broadcast::channel(256).0,
             aokie_endpoint_identity,
+            services_registry: Mutex::new(None),
+            bindings,
         });
         host.scan();
         host
+    }
+
+    /// PLG-205: the host-authoritative connector→app binding store.
+    pub fn bindings(&self) -> crate::plugins::bindings::BindingStoreHandle {
+        self.bindings.clone()
+    }
+
+    /// PLG-206: wire the services registry so plugin-owned service templates are
+    /// installed/removed with the plugin. Called once after both handles exist.
+    pub fn set_services_registry(&self, reg: crate::services::registry::RegistryHandle) {
+        *self.services_registry.lock().unwrap_or_else(|e| e.into_inner()) = Some(reg);
+    }
+
+    pub(crate) fn services_registry(
+        &self,
+    ) -> Option<crate::services::registry::RegistryHandle> {
+        self.services_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Register the receipt accountability guard (WORK-DUR-001) and apply it
@@ -585,6 +634,21 @@ impl PluginHost {
             // Stop first (idempotent), THEN flip the durable flag so a running
             // process is torn down before it's marked disabled.
             self.stop(id).await?;
+            // PLG-205/206: disabling stops the plugin's owned services too, so a
+            // disabled plugin leaves nothing of its runtime running.
+            if let Some(services) = self.services_registry() {
+                let mut reg = services.lock().unwrap_or_else(|e| e.into_inner());
+                let owned: Vec<String> = reg
+                    .snapshot()
+                    .services
+                    .into_iter()
+                    .filter(|s| s.owner.as_deref() == Some(id))
+                    .map(|s| s.id)
+                    .collect();
+                for sid in owned {
+                    let _ = reg.stop(&sid);
+                }
+            }
         }
         {
             let mut map = self.lock_plugins();
@@ -822,6 +886,16 @@ fn snapshot_of(id: &str, slot: &PluginSlot) -> PluginSnapshot {
             }
             _ => None,
         },
+        schema_version: m.map(|m| m.schema_version).unwrap_or(1),
+        ui: m.and_then(|m| m.ui.clone()),
+        external_data: m
+            .and_then(|m| m.data.as_ref())
+            .map(|d| d.external_inventory.clone())
+            .unwrap_or_default(),
+        journalled_commands: m
+            .and_then(|m| m.commands.as_ref())
+            .map(|c| c.journalled.clone())
+            .unwrap_or_default(),
     }
 }
 

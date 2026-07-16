@@ -12,6 +12,8 @@ import { DesktopOverview } from './DesktopOverview';
 import { DesktopSidebar, SECTION_META, type SectionId } from './DesktopSidebar';
 import { useDesktopOverview } from './useDesktopOverview';
 import { ExternalLinkIcon, MoonIcon, SunIcon } from './Icons';
+import { PluginContributedScreen } from './PluginContributedUi';
+import { parsePluginSection, pluginNavEntries } from './pluginContributions';
 
 /**
  * FormLogic Desktop top-level UI (workspace-shell redesign, 2026-07):
@@ -41,20 +43,38 @@ interface HealthResponse {
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [section, setSection] = useState<SectionId>('overview');
+  // Section is a core SectionId OR a plugin section (`plugin:<id>:<navId>`).
+  const [section, setSection] = useState<string>('overview');
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
   const overview = useDesktopOverview();
+  const pluginList = overview.plugins?.plugins ?? [];
+  const devMode = overview.plugins?.devMode ?? false;
 
   // The AI Receptionist workspace is the Aokie PLUGIN's UI, not core chrome:
   // it exists only while the plugin is installed (uninstalled → nav entry and
   // panel disappear; the Plugins page still offers the bundled template).
-  const aokieInstalled = (overview.plugins?.plugins ?? []).some((p) => p.id === 'aokie');
+  const aokieInstalled = pluginList.some((p) => p.id === 'aokie');
   const receptionistAvailable = !overview.loaded || aokieInstalled;
+  // PLG-203: nav entries contributed by installed v2 plugins.
+  const pluginNav = pluginNavEntries(pluginList);
+  // The plugin section (if any) currently selected, resolved to its snapshot.
+  const activePluginSection = parsePluginSection(section);
+  const activePlugin = activePluginSection
+    ? pluginList.find((p) => p.id === activePluginSection.pluginId)
+    : undefined;
   useEffect(() => {
     if (section === 'receptionist' && overview.loaded && !aokieInstalled) {
       setSection('overview');
     }
-  }, [section, overview.loaded, aokieInstalled]);
+    // A plugin section whose plugin vanished (uninstalled/disabled) → Overview.
+    if (
+      activePluginSection &&
+      overview.loaded &&
+      !pluginList.some((p) => p.id === activePluginSection.pluginId && p.ui)
+    ) {
+      setSection('overview');
+    }
+  }, [section, overview.loaded, aokieInstalled, activePluginSection, pluginList]);
 
   const toggleTheme = () => {
     const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
@@ -105,7 +125,18 @@ export default function App() {
     };
   }, []);
 
-  const meta = SECTION_META[section];
+  // A plugin section has no SECTION_META entry — synthesize a header from the
+  // plugin's contributed nav label.
+  const meta =
+    SECTION_META[section as SectionId] ??
+    (activePlugin && activePluginSection
+      ? {
+          title:
+            activePlugin.ui?.nav?.find((n) => n.id === activePluginSection.navId)?.label ??
+            activePlugin.name,
+          subtitle: `Contributed by the ${activePlugin.name} plugin`,
+        }
+      : { title: 'FormLogic Desktop', subtitle: '' });
   const cloudLabel = overview.runtime?.linked
     ? (() => {
         const url = overview.runtime?.baseUrl ?? overview.cloud?.baseUrl ?? '';
@@ -125,6 +156,7 @@ export default function App() {
         pendingPairing={overview.pendingPairing?.length ?? 0}
         cloudLabel={cloudLabel}
         receptionistAvailable={receptionistAvailable}
+        pluginNav={pluginNav}
       />
 
       <div className="desktop-workspace">
@@ -180,7 +212,9 @@ export default function App() {
         </header>
 
         <main className="desktop-workspace__body">
-          {section === 'overview' && <DesktopOverview data={overview} onOpen={setSection} />}
+          {section === 'overview' && (
+            <DesktopOverview data={overview} onOpen={setSection} onOpenPluginNav={(pid, nav) => setSection(`plugin:${pid}:${nav}`)} />
+          )}
           {section === 'receptionist' && receptionistAvailable && <ReceptionistPanel />}
           {section === 'services' && <ServicesPanel />}
           {section === 'models' && <ModelsPanel />}
@@ -188,6 +222,14 @@ export default function App() {
           {section === 'python' && <PythonPanel />}
           {section === 'connections' && <ConnectionsPanel />}
           {section === 'settings' && <SettingsPanel />}
+          {/* PLG-203: a plugin-contributed screen (its declared status cards + actions). */}
+          {activePlugin && activePluginSection && (
+            <PluginContributedScreen
+              plugin={activePlugin}
+              navId={activePluginSection.navId}
+              devMode={devMode}
+            />
+          )}
         </main>
       </div>
     </div>

@@ -1492,6 +1492,9 @@ pub fn run() {
                 || std::env::var("FORMLOGIC_DEV_MODE").is_ok_and(|v| v == "1");
             let plugin_host: PluginHostHandle =
                 PluginHost::new(&data_dir, dev_mode, EventBus::new());
+            // PLG-206: let the plugin host install/remove plugin-owned service
+            // templates with the plugin.
+            plugin_host.set_services_registry(registry.clone());
             // Pairing tokens live in the FIXED config dir (like the data-dir
             // pointer) so they survive a data-folder move.
             let pairing_path = app
