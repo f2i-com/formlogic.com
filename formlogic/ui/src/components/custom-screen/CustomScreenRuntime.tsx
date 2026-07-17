@@ -6,6 +6,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { SCREEN_CSP, createSdkRateLimiter, isScreenSdkActionAllowed } from './sdkRuntime';
 import type { ScreenBridge } from './screenBridge';
 import { subscribeDesktopEvents } from '../../client-runtime/desktop/desktopEvents';
+import { subscribeDesktopStatus } from '../../client-runtime/desktop/desktopDetection';
 import { startRealtimeCaptions } from './aokie/realtimeCaptions';
 import {
   CAPTIONS_PUSH_BUDGET,
@@ -138,6 +139,10 @@ const SDK_SHIM = `
       /** Navigate the surrounding app to another of its screens. target = a real form id or
        *  the pack's stable form key (settings.packFormId). Rejects for unknown targets. */
       openScreen: function(target){ return call('openScreen', { target: String(target == null ? '' : target) }); },
+      /** Open one record's detail view: openRecord(formTarget, recordId). formTarget resolves
+       *  like openScreen (form key / id / display name). Server-side view permission applies —
+       *  a record you can't view shows the app's own permission message. Rejects an unknown form. */
+      openRecord: function(target, recordId){ return call('openRecord', { target: String(target == null ? '' : target), recordId: String(recordId == null ? '' : recordId) }); },
       /** Ask the host to run a NAMED ceremony ('connect-desktop' = the desktop pairing
        *  flow, approved on the desktop; 'start-fresh' = whole-app record reset behind the
        *  host's own confirm dialog). Resolves { status: 'done'|'failed'|'denied'|
@@ -167,6 +172,7 @@ export function CustomScreenRuntime({
   fetchRelated,
   bridge,
   onOpenScreen,
+  onOpenRecord,
   onCeremony,
 }: {
   screen: CustomScreen;
@@ -195,6 +201,10 @@ export function CustomScreenRuntime({
    *  (form id or pack form key) and switch the app shell to it. Return false for an unknown
    *  target — the SDK call then rejects honestly. */
   onOpenScreen?: (target: string) => boolean | Promise<boolean>;
+  /** Host navigation for FormLogic.host.openRecord (app runtime only): resolve the target form
+   *  and open that record's detail view. Return false for an unknown form — the SDK call then
+   *  rejects. Server-side view permission still governs what the record page shows. */
+  onOpenRecord?: (target: string, recordId: string) => boolean | Promise<boolean>;
   /** Named host ceremonies for FormLogic.host.ceremony (app runtime only): run the host's
    *  own flow (with its own consent UI) and resolve the outcome. Return null for an
    *  unknown ceremony name — the SDK call then rejects honestly. */
@@ -256,7 +266,13 @@ export function CustomScreenRuntime({
       + `<script>var __flGen=${genRef.current};${SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${palette}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
-  }, [assets, accentColor]);
+    // Depend on the CONTENT strings, not the `assets` object identity: the
+    // async asset-resolve replaces `assets` with an equal-valued object on
+    // mount, and recomputing srcDoc there would bump the gen stamp and mutate
+    // the live iframe's srcdoc — which adds a browser history entry (the
+    // "press Back twice" bug). Identical content ⇒ same deps ⇒ no rebuild.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets.html, assets.css, assets.js, accentColor]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -267,6 +283,16 @@ export function CustomScreenRuntime({
   // subIds — stop the old feeds rather than pushing frames nobody hears.
   // The same cleanup covers unmount.
   useEffect(() => () => subsRef.current?.clear(), [srcDoc]);
+
+  // Keep desktop detection warm for a bridge screen's lifetime. Detection is
+  // demand-driven (subscribeDesktopStatus starts it), and the bridge's
+  // presence()/live lanes read its snapshot — without a subscriber a screen
+  // navigated to before detection ran would read "no desktop" until a full
+  // reload. A no-op listener is enough; the screen re-polls presence() itself.
+  useEffect(() => {
+    if (!bridge) return;
+    return subscribeDesktopStatus(() => {});
+  }, [bridge]);
 
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
@@ -414,6 +440,16 @@ export function CustomScreenRuntime({
             result = true;
             break;
           }
+          case 'openRecord': {
+            if (!onOpenRecord) throw new Error('host.openRecord() is not available on this screen.');
+            const target = String(m.payload?.target || '');
+            const recordId = String(m.payload?.recordId || '');
+            if (!target || !recordId) throw new Error('host.openRecord() needs a form target and a recordId.');
+            const ok = await onOpenRecord(target, recordId);
+            if (!ok) throw new Error(`Unknown screen: ${target}`);
+            result = true;
+            break;
+          }
           case 'can': {
             if (!bridge) throw new Error('can() is not available on this screen.');
             result = bridge.can(String(m.payload?.permission || ''));
@@ -509,7 +545,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onCeremony, screen._trust]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onOpenRecord, onCeremony, screen._trust]);
 
   return (
     <iframe

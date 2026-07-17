@@ -1183,6 +1183,14 @@ export function AppFormView() {
               navigate(`/app/${appSlug}/form/${resolved}`);
               return true;
             }}
+            onOpenRecord={(target, recordId) => {
+              // Open a specific record's detail view. The record page enforces
+              // its own view permission — this only resolves the target form.
+              const resolved = resolveScreenTarget(target);
+              if (!resolved || !recordId) return false;
+              navigate(`/app/${appSlug}/form/${resolved}/responses/${recordId}`);
+              return true;
+            }}
             onCeremony={screenCeremony}
             className="w-full h-full border-0 rounded-lg"
           />

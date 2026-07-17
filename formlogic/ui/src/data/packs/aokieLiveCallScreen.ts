@@ -143,8 +143,10 @@ body { color: var(--fl-text); }
 #lc .send[disabled] { opacity: .45; cursor: not-allowed; }
 
 #lc ul.calls { list-style: none; margin: 0; padding: 0; }
-#lc ul.calls li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0; border-top: 1px solid var(--fl-border); }
+#lc ul.calls li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 6px; margin: 0 -6px; border-top: 1px solid var(--fl-border); border-radius: 8px; cursor: pointer; }
 #lc ul.calls li:first-child { border-top: 0; }
+#lc ul.calls li:hover { background: var(--fl-surface-2); }
+#lc ul.calls li:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: -2px; }
 #lc .cstat { border-radius: 999px; padding: 2px 9px; font-size: 10px; font-weight: 600; text-transform: capitalize; color: var(--fl-muted); background: var(--fl-surface-2); }
 #lc .cstat.ok { color: var(--fl-good); }
 #lc .cstat.bad { color: var(--fl-bad); }
@@ -358,7 +360,7 @@ const JS = `
         var a = rec(rows[i].answers), phone = String(a.caller_phone || ''), status = String(a.status || '');
         var sc = (status === 'missed' || status === 'failed' || status === 'rejected') ? 'cstat bad'
           : (status === 'completed' || status === 'answered') ? 'cstat ok' : 'cstat';
-        html += '<li><div style="min-width:0">'
+        html += '<li data-act="open" data-id="' + esc(rows[i].id) + '" role="button" tabindex="0"><div style="min-width:0">'
           + '<span style="font-weight:500">' + esc(String(a.caller_name || phone || 'Unknown caller')) + '</span>'
           + (phone ? ' <span class="mono faint">' + esc(phone) + '</span>' : '') + '</div>'
           + '<span class="' + sc + '">' + esc(status || 'unknown') + '</span></li>';
@@ -476,7 +478,8 @@ const JS = `
   }
 
   function attachLiveLanes() {
-    if (state.presence.kind !== 'local') return Promise.resolve();
+    // Idempotent: only the LOCAL bridge carries live feeds, and never subscribe twice.
+    if (state.presence.kind !== 'local' || caps.unsubEvents) return Promise.resolve();
     var evP = FL.events.subscribe({ connectorId: 'aokie' }, onEvent).then(function (h) {
       caps.unsubEvents = h.unsubscribe; state.liveEvents = true;
     }).catch(function () { state.liveEvents = false; });
@@ -486,6 +489,11 @@ const JS = `
     }).then(function (h) { caps.capHandle = h; }).catch(function () {});
     // Tombstone the visible partial when a durable caller turn lands (final wins).
     return Promise.all([evP, capP]);
+  }
+  function detachLiveLanes() {
+    if (caps.unsubEvents) { try { caps.unsubEvents(); } catch (e) {} caps.unsubEvents = null; }
+    if (caps.capHandle && caps.capHandle.unsubscribe) { try { caps.capHandle.unsubscribe(); } catch (e) {} caps.capHandle = null; }
+    state.liveEvents = false; state.captions = null;
   }
   var prevCallerTurns = 0;
   function maybeTombstone() {
@@ -536,7 +544,16 @@ const JS = `
       FL.host.ceremony('simulate-call').catch(function (err) { FL.toast.error(err && err.message ? err.message : 'Could not start the demo call'); })
         .then(function () { state.simulating = false; paintStandby(); });
     }
-    else if (act === 'viewall') { FL.host.openScreen('calls').catch(function () {}); }
+    else if (act === 'viewall') {
+      // The attached form's own records table (NOT host.openScreen('calls'),
+      // which would re-open this console). openRecords() is gated on the
+      // viewer being able to see the records.
+      FL.openRecords().catch(function (e) { FL.toast.error(e && e.message ? e.message : 'Records are not available.'); });
+    }
+    else if (act === 'open') {
+      var id = t.getAttribute('data-id');
+      if (id) FL.host.openRecord('calls', id).catch(function () {});
+    }
   });
 
   // ── grants + boot ─────────────────────────────────────────────────────────────
@@ -549,11 +566,18 @@ const JS = `
   }
 
   function tick() {
-    // Poll cadence: call state + (when not on the live event lane) the stored
-    // transcript; recent list; customers less often via refreshAll.
-    return refreshCall().then(function () {
-      return state.liveEvents ? Promise.resolve() : refreshStoredTurns();
-    }).then(function () { maybeTombstone(); paintAll(); });
+    // Re-resolve presence every tick: detection is demand-driven and may only
+    // finish AFTER this screen mounts (navigating in from another page), so a
+    // late-connecting desktop self-heals here instead of needing a full reload.
+    return FL.presence().then(function (p) {
+      var prev = state.presence.kind;
+      state.presence = p || { kind: 'none' };
+      if (state.presence.kind === 'local' && prev !== 'local') return attachLiveLanes();
+      if (prev === 'local' && state.presence.kind !== 'local') detachLiveLanes();
+    }).catch(function () {})
+      .then(refreshCall)
+      .then(function () { return state.liveEvents ? Promise.resolve() : refreshStoredTurns(); })
+      .then(function () { maybeTombstone(); paintAll(); });
   }
 
   function loadAll() {
@@ -565,6 +589,17 @@ const JS = `
       .then(function () { return state.liveEvents ? Promise.resolve() : refreshStoredTurns(); })
       .then(function () { maybeTombstone(); paintAll(); });
   }
+
+  // Keyboard: Enter/Space on a focused recent-call row opens its record.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var t = e.target;
+    if (t && t.getAttribute && t.getAttribute('data-act') === 'open') {
+      e.preventDefault();
+      var id = t.getAttribute('data-id');
+      if (id) FL.host.openRecord('calls', id).catch(function () {});
+    }
+  });
 
   function wire() {
     void loadAll();

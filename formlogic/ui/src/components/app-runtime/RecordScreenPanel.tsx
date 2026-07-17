@@ -74,6 +74,12 @@ export function RecordScreenPanel({
             navigate(`/app/${appSlug}/form/${resolved}`);
             return true;
           }}
+          onOpenRecord={(target, recordId) => {
+            const resolved = resolveScreenTarget(target);
+            if (!resolved || !recordId) return false;
+            navigate(`/app/${appSlug}/form/${resolved}/responses/${recordId}`);
+            return true;
+          }}
           fetchRelated={async () => {
             const res = await api.getRelatedRecords(appSlug, formId, responseId);
             if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Failed to load related records');

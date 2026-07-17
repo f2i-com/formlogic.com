@@ -9,7 +9,7 @@ describe('custom-screen SDK trust boundary', () => {
       // service ops, host navigation, named ceremonies and grant introspection
       // are never available to imported code.
       'connector', 'updateRecord', 'deleteRecords', 'queryRecords', 'presence',
-      'eventsSubscribe', 'captionsSubscribe', 'service', 'openScreen',
+      'eventsSubscribe', 'captionsSubscribe', 'service', 'openScreen', 'openRecord',
       'ceremony', 'can',
     ]) {
       expect(isScreenSdkActionAllowed('untrusted', action), action).toBe(false);
