@@ -687,6 +687,16 @@ $container->set(\FormLogic\Controllers\ConnectorCommandController::class, functi
         $c->get(\FormLogic\Database\MySQLConnection::class)
     );
 });
+// Typed service.invoke for pack-owned sandboxed screens (plan §8.3, APP-503):
+// server-registered read-only operations only, never a generic passthrough.
+$container->set(\FormLogic\Controllers\ServiceInvokeController::class, function (Container $c) {
+    return new \FormLogic\Controllers\ServiceInvokeController(
+        $c->get(AppService::class),
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\AokieCompanionDeviceService::class)
+    );
+});
 // Flow KV storage: small persistent key/value state for flows (owner + runtime surfaces).
 $container->set(\FormLogic\Services\FlowKvService::class, function (Container $c) {
     return new \FormLogic\Services\FlowKvService($c->get(MySQLConnection::class));
@@ -2637,6 +2647,13 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // member's local connector commands — local and relay enforce ONE grant model.
     $group->post('/connector-capability', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->mintCapability($request, $response, $getArgs($request));
+    })->add($connectorRelayRateLimiter)->add($authRequired);
+
+    // Typed service.invoke for pack-owned sandboxed screens (plan §8.3, APP-503):
+    // only operations named in the controller's registry exist; each declares its
+    // permission, connector binding, input cap and projection. Read-only in v1.
+    $group->post('/service-invoke/{operationId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ServiceInvokeController::class)->invoke($request, $response, $getArgs($request));
     })->add($connectorRelayRateLimiter)->add($authRequired);
 
     // File upload for app forms — gated on the form owner's cloud access.

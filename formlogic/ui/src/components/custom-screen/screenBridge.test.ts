@@ -55,6 +55,9 @@ function deps(over: Partial<ScreenBridgeDeps> = {}): ScreenBridgeDeps {
     })),
     deleteResponse: vi.fn(async () => ({ ok: true })),
     resolvePresence: vi.fn(async () => ({ kind: 'local' as const })),
+    invokeService: vi.fn(async (_slug: string, operationId: string) => ({
+      data: { operationId, result: { ok: true } },
+    })),
     demoMode: () => false,
     relayOptions: fastRelay,
     ...over,
@@ -341,5 +344,86 @@ describe('updateRecord / presence', () => {
       deviceName: 'DESKTOP-HOME',
       lastSeenAt: '2026-07-17 00:00:00',
     });
+  });
+});
+
+describe('serviceInvoke — typed service.invoke (plan §8.3, APP-503)', () => {
+  it('resolves done with the server projection', async () => {
+    const d = deps({
+      invokeService: vi.fn(async (_slug: string, operationId: string) => ({
+        data: { operationId, result: { connections: [{ id: 'dc-1', deviceName: 'DESKTOP-HOME' }] } },
+      })),
+    });
+    const bridge = createScreenBridge(d);
+    const out = await bridge.serviceInvoke('desktop.connections.list');
+    expect(out).toEqual({
+      status: 'done',
+      result: { connections: [{ id: 'dc-1', deviceName: 'DESKTOP-HOME' }] },
+    });
+    expect(d.invokeService).toHaveBeenCalledWith('my-app', 'desktop.connections.list', {});
+  });
+
+  it('an operation-level refusal RESOLVES as failed (one handling path in pack code)', async () => {
+    const d = deps({ invokeService: vi.fn(async () => ({ error: 'You do not have permission to run this service operation' })) });
+    const bridge = createScreenBridge(d);
+    const out = await bridge.serviceInvoke('aokie.companion.devices.list');
+    expect(out.status).toBe('failed');
+    expect((out.error as { message: string }).message).toContain('permission');
+  });
+
+  it('a transport exception also resolves as failed — serviceInvoke never throws for op failures', async () => {
+    const d = deps({ invokeService: vi.fn(async () => { throw new Error('network down'); }) });
+    const bridge = createScreenBridge(d);
+    await expect(bridge.serviceInvoke('aokie.companion.policy.get')).resolves.toMatchObject({
+      status: 'failed',
+      error: { message: 'network down' },
+    });
+  });
+
+  it('rejects misuse BEFORE any transport: path-shaped / empty ids and oversized input', async () => {
+    const d = deps();
+    const bridge = createScreenBridge(d);
+    await expect(bridge.serviceInvoke('')).rejects.toThrow('operation id');
+    await expect(bridge.serviceInvoke('../admin/users')).rejects.toThrow('operation id');
+    await expect(bridge.serviceInvoke('a/b')).rejects.toThrow('operation id');
+    await expect(bridge.serviceInvoke('Desktop.Connections')).rejects.toThrow('operation id');
+    await expect(
+      bridge.serviceInvoke('aokie.companion.policy.get', { blob: 'x'.repeat(17_000) }),
+    ).rejects.toThrow('too large');
+    expect(d.invokeService).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveScreenTarget — host.openScreen resolution', () => {
+  it('resolves pack form key first, then form id, then display name; unknown → null', async () => {
+    const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
+    const { resolveScreenTarget } = await import('./screenBridge');
+    useAppRuntimeStore.setState({
+      config: {
+        forms: [
+          { formId: 'uuid-calls', packFormId: 'calls', displayName: 'Calls' },
+          { formId: 'uuid-setup', packFormId: 'device-setup', displayName: 'Device Setup' },
+          // A pathological alias: another form whose DISPLAY NAME equals a
+          // sibling's pack key — the stable pack alias must win.
+          { formId: 'uuid-decoy', packFormId: 'decoy', displayName: 'calls' },
+        ],
+      } as never,
+    });
+    try {
+      expect(resolveScreenTarget('calls')).toBe('uuid-calls');
+      expect(resolveScreenTarget('uuid-decoy')).toBe('uuid-decoy');
+      expect(resolveScreenTarget('Device Setup')).toBe('uuid-setup');
+      expect(resolveScreenTarget('nope')).toBeNull();
+      expect(resolveScreenTarget('')).toBeNull();
+    } finally {
+      useAppRuntimeStore.setState({ config: null } as never);
+    }
+  });
+
+  it('returns null outside an app context (no config) — the SDK call rejects honestly', async () => {
+    const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
+    const { resolveScreenTarget } = await import('./screenBridge');
+    useAppRuntimeStore.setState({ config: null } as never);
+    expect(resolveScreenTarget('calls')).toBeNull();
   });
 });

@@ -3,7 +3,13 @@ import { SCREEN_CSP, isScreenSdkActionAllowed } from './sdkRuntime';
 
 describe('custom-screen SDK trust boundary', () => {
   it('makes untrusted imported code visual-only', () => {
-    for (const action of ['submit', 'records', 'currentUser', 'record', 'related', 'navigate', 'openForm', 'openRecords']) {
+    for (const action of [
+      'submit', 'records', 'currentUser', 'record', 'related', 'navigate', 'openForm', 'openRecords',
+      // Bridge v1 (all three slices): hardware/data commands, live feeds, typed
+      // service ops and host navigation are never available to imported code.
+      'connector', 'updateRecord', 'deleteRecords', 'presence',
+      'eventsSubscribe', 'captionsSubscribe', 'service', 'openScreen',
+    ]) {
       expect(isScreenSdkActionAllowed('untrusted', action), action).toBe(false);
     }
     expect(isScreenSdkActionAllowed('untrusted', 'context')).toBe(true);

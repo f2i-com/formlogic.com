@@ -207,6 +207,20 @@ set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`):
   (the hub connects once the desktop pairs). `captions.subscribe` resolves
   `{ unsubscribe, tombstone }` (call `tombstone()` when a durable caller turn lands, final-wins);
   max 4 live subscriptions, 1 captions, per screen.
+- `service(operationId, input?)` — typed service.invoke (plan §8.3, APP-503). Only operations the
+  SERVER registry names exist (`ServiceInvokeController::OPERATIONS` — an unregistered id is a 404,
+  so the lane structurally cannot become a generic backend fetch); each declares its permission
+  (`owner` / `member` / companion-audit), a connector binding (the caller's role must hold some
+  `connector.<id>` grant), an input byte cap, and an explicit response projection (key material,
+  api-key ids and instance ids never reach the sandbox). Resolves an outcome
+  `{ status: 'done'|'failed', result?, error? }` — operation refusals resolve as `failed`; only
+  bridge misuse (path-shaped id, oversized input) rejects. v1 registered ops (all read-only):
+  `aokie.companion.devices.list`, `aokie.companion.policy.get`, `desktop.connections.list`.
+- `host.openScreen(target)` — host-mediated navigation to another of the app's screens. `target`
+  is the pack's stable form key (`app_forms.settings.packFormId` — wins), a real form id, or the
+  display name; unknown targets reject (strict — never a raw route passthrough). This is the
+  sanctioned shape for reaching host-owned ceremony surfaces (pairing, driver setup, typed resets):
+  the pack screen asks the host to OPEN its surface; the ceremony itself stays host-owned.
 
 Outside a matching app context (builder previews, public links) these actions reject with an honest
 "not available on this screen". Deliberately NOT exposed (plan §8.3): raw backend fetch, arbitrary

@@ -39,6 +39,10 @@ const TRUSTED_ONLY_ACTIONS = new Set([
   'captionsSubscribe',
   'eventsUnsubscribe',
   'captionsTombstone',
+  // Third slice (plan §8.3): typed service.invoke reaches owner infrastructure;
+  // host.openScreen drives the surrounding app shell.
+  'service',
+  'openScreen',
 ]);
 
 /** Imported community code remains visual-only even if its iframe executes. */
@@ -71,6 +75,10 @@ export function createSdkRateLimiter() {
     captionsSubscribe: 10,
     eventsUnsubscribe: 40,
     captionsTombstone: 120,
+    // service.invoke hits the app API (the server registry re-gates each op);
+    // openScreen is user-visible navigation — spamming it would fight the user.
+    service: 30,
+    openScreen: 10,
   };
   return (action: string): boolean => {
     const cap = caps[action] ?? 120;

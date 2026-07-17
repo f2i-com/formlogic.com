@@ -1,8 +1,9 @@
 import { LayoutTemplate } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { getSdkScreen } from '../custom-screen/sdkScreenRegistry';
-import { useScreenBridge } from '../custom-screen/screenBridge';
+import { useScreenBridge, resolveScreenTarget } from '../custom-screen/screenBridge';
 import { api } from '../../lib/api';
 import type { RecordScreen } from '../../types/form';
 
@@ -40,6 +41,7 @@ export function RecordScreenPanel({
   // Resolves undefined when the app-runtime store isn't initialized for THIS
   // app (e.g. the builder's record view) — the actions then reject honestly.
   const bridge = useScreenBridge(formId, appSlug);
+  const navigate = useNavigate();
   let body: React.ReactNode = null;
   if (screen.kind === 'sdk') {
     // An unregistered id renders nothing rather than a broken card (old client, renamed screen).
@@ -63,6 +65,15 @@ export function RecordScreenPanel({
           accentColor={accentColor}
           record={record}
           bridge={bridge}
+          onOpenScreen={(target) => {
+            // resolveScreenTarget reads the live app store — null outside a
+            // matching app context (builder record views), so the SDK call
+            // rejects honestly there.
+            const resolved = resolveScreenTarget(target);
+            if (!resolved) return false;
+            navigate(`/app/${appSlug}/form/${resolved}`);
+            return true;
+          }}
           fetchRelated={async () => {
             const res = await api.getRelatedRecords(appSlug, formId, responseId);
             if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Failed to load related records');

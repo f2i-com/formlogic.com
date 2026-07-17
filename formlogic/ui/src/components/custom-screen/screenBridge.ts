@@ -59,6 +59,14 @@ export interface ScreenBridge {
   updateRecord: (responseId: string, answers: Record<string, unknown>) => Promise<unknown>;
   deleteRecords: (responseIds: string[]) => Promise<{ deleted: string[]; failed: Array<{ id: string; error: string }> }>;
   presence: () => Promise<AokiePresence>;
+  /** Typed service.invoke (plan §8.3, APP-503): run a SERVER-REGISTERED
+   *  operation. Resolves an outcome ({status done|failed, result?, error?}) —
+   *  operation-level refusals (unknown op, forbidden, unavailable) resolve as
+   *  failed; only bridge misuse (bad id shape, oversized input) rejects. */
+  serviceInvoke: (
+    operationId: string,
+    input?: Record<string, unknown>
+  ) => Promise<{ status: 'done' | 'failed'; result?: unknown; error?: Record<string, unknown> | null }>;
   /** The observe gate for the events/captions subscription lane: true when
    *  the app DECLARES any grant string targeting this connector — i.e. a
    *  permission whose second segment names the connector or is a wildcard
@@ -103,6 +111,12 @@ export interface ScreenBridgeDeps {
   deleteResponse: (formId: string, responseId: string) => Promise<{ ok: boolean; error?: string }>;
   /** One-shot presence resolution (injectable for tests). */
   resolvePresence: () => Promise<AokiePresence>;
+  /** Typed service.invoke transport (api.invokeAppService — injectable for tests). */
+  invokeService: (
+    slug: string,
+    operationId: string,
+    input: Record<string, unknown>
+  ) => Promise<{ data?: { operationId: string; result: unknown }; error?: unknown }>;
   /** True in the shared demo session (live feeds are then refused). */
   demoMode: () => boolean;
   /** Test seam for the relay's poll cadence/clock. */
@@ -116,6 +130,15 @@ const UPDATE_ANSWERS_MAX = 262_144;
 /** deleteRecords batch bound (plan §8.3: explicit IDs, SMALL max batch —
  *  deliberately never a records.clearAll). */
 const DELETE_BATCH_MAX = 25;
+
+/** service.invoke input byte budget (the server registry enforces its own,
+ *  usually tighter, per-operation cap). */
+const SERVICE_INPUT_MAX = 16_384;
+
+/** Operation ids are dot-separated slugs ('aokie.companion.devices.list') —
+ *  never paths, so the lane structurally can't become a generic
+ *  backend.fetch (the §8.3 rejection). */
+const SERVICE_OPERATION_ID = /^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)*$/;
 
 /** Local refusals that are PROVABLY pre-transport (no connector code ran
  *  anywhere), and therefore safe to retry via the relay when no local bridge
@@ -230,6 +253,34 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
 
     presence: () => deps.resolvePresence(),
 
+    serviceInvoke: async (operationId, input) => {
+      const op = String(operationId || '');
+      if (!SERVICE_OPERATION_ID.test(op) || op.length > 96) {
+        throw new Error('service() needs a valid operation id (e.g. "aokie.companion.devices.list").');
+      }
+      const body = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      if (JSON.stringify(body).length > SERVICE_INPUT_MAX) {
+        throw new Error('Service operation input is too large.');
+      }
+      try {
+        const res = await deps.invokeService(deps.appSlug, op, body);
+        if (res.error || !res.data) {
+          // Unknown op / forbidden / unavailable — an OUTCOME, not an
+          // exception, so pack code keeps one handling path.
+          return {
+            status: 'failed',
+            error: { message: typeof res.error === 'string' ? res.error : 'Service operation failed' },
+          };
+        }
+        return { status: 'done', result: res.data.result };
+      } catch (err) {
+        return {
+          status: 'failed',
+          error: { message: err instanceof Error ? err.message : 'Service operation failed' },
+        };
+      }
+    },
+
     canObserveConnector: (connectorId) => {
       const cid = String(connectorId || '');
       if (!cid) return false;
@@ -265,6 +316,24 @@ export async function resolveScreenPresence(appId?: string): Promise<AokiePresen
 }
 
 /**
+ * Resolve a FormLogic.host.openScreen target against the app's form list:
+ * the pack's stable form key (settings.packFormId) wins, then a real form id,
+ * then the display name (same precedence as app-logic's resolveFormKey).
+ * STRICT — unknown targets return null (never a raw passthrough), so the
+ * host only ever navigates to a screen the app actually has.
+ */
+export function resolveScreenTarget(target: string): string | null {
+  const t = String(target || '');
+  if (!t) return null;
+  const forms = useAppRuntimeStore.getState().config?.forms ?? [];
+  const hit =
+    forms.find((f) => f.packFormId === t) ??
+    forms.find((f) => f.formId === t) ??
+    forms.find((f) => f.displayName === t);
+  return hit?.formId ?? null;
+}
+
+/**
  * The live ScreenBridge for an app-runtime code screen, or undefined outside a
  * matching app context (builder previews, public links — the bridge actions
  * then reject with "not available on this screen").
@@ -297,6 +366,7 @@ export function useScreenBridge(formId: string, appSlug?: string): ScreenBridge 
           : { ok: true };
       },
       resolvePresence: () => resolveScreenPresence(appId),
+      invokeService: (slug, operationId, input) => api.invokeAppService(slug, operationId, input),
       demoMode: () => api.isDemoMode(),
     });
   }, [formId, appSlug, storeSlug, config, updateResponse]);

@@ -2484,6 +2484,22 @@ class ApiClient {
     return this.request(`/app/${encodeURIComponent(slug)}/connector-commands/${encodeURIComponent(commandId)}`);
   }
 
+  /**
+   * Typed service.invoke for pack-owned sandboxed screens (plan §8.3, APP-503).
+   * Only operations the SERVER registry names exist (404 otherwise); each is
+   * permission-gated + connector-bound server-side and returns a projection.
+   */
+  async invokeAppService(
+    slug: string,
+    operationId: string,
+    input?: Record<string, unknown>
+  ): Promise<ApiResponse<{ operationId: string; result: unknown }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/service-invoke/${encodeURIComponent(operationId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ input: input ?? {} }),
+    });
+  }
+
   // ── FormLogic Flows — workspace scope (docs/FORMLOGIC_FLOWS.md §8) ────────────────────────
   // App-independent flows owned by the signed-in user (/api/flows, /api/flow-runs); slug is
   // unique per owner across the workspace scope (enforced server-side).

@@ -26,7 +26,7 @@ import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
-import { useScreenBridge } from '../custom-screen/screenBridge';
+import { useScreenBridge, resolveScreenTarget } from '../custom-screen/screenBridge';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
 import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
@@ -1170,6 +1170,15 @@ export function AppFormView() {
             onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
             onOpenRecords={(canViewOwn(formId) || canViewAll(formId)) ? () => navigate(`/app/${appSlug}/form/${formId}/responses`) : undefined}
             bridge={screenBridge}
+            onOpenScreen={(target) => {
+              // Strict: only screens this app actually has (pack form key /
+              // form id / display name) — the destination view still applies
+              // its own permission refusals.
+              const resolved = resolveScreenTarget(target);
+              if (!resolved) return false;
+              navigate(`/app/${appSlug}/form/${resolved}`);
+              return true;
+            }}
             className="w-full h-full border-0 rounded-lg"
           />
           {allowNew && !hasOwnOpen && (

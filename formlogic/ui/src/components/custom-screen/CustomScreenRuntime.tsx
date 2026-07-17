@@ -118,6 +118,17 @@ const SDK_SHIM = `
         });
       },
     },
+    /** Run a SERVER-REGISTERED typed service operation (plan §8.3). Resolves an OUTCOME
+     *  { status: 'done'|'failed', result?, error? } — operation refusals (unknown op, no
+     *  permission) resolve as failed; only misuse (bad id, oversized input) rejects. */
+    service: function(operationId, input){ return call('service', { operationId: operationId, input: input || {} }); },
+    /** Host-mediated surfaces (ceremonies stay HOST-owned — a pack screen can only ask the
+     *  host to open one of its own screens, never run the ceremony itself). */
+    host: {
+      /** Navigate the surrounding app to another of its screens. target = a real form id or
+       *  the pack's stable form key (settings.packFormId). Rejects for unknown targets. */
+      openScreen: function(target){ return call('openScreen', { target: String(target == null ? '' : target) }); },
+    },
     /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
     escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
   };
@@ -140,6 +151,7 @@ export function CustomScreenRuntime({
   record,
   fetchRelated,
   bridge,
+  onOpenScreen,
 }: {
   screen: CustomScreen;
   formId: string;
@@ -163,6 +175,10 @@ export function CustomScreenRuntime({
   /** Bridge v1 (app runtime only): connector()/updateRecord()/presence(). Absent on builder
    *  previews and public links — those actions then reject with an honest message. */
   bridge?: ScreenBridge;
+  /** Host navigation for FormLogic.host.openScreen (app runtime only): resolve the target
+   *  (form id or pack form key) and switch the app shell to it. Return false for an unknown
+   *  target — the SDK call then rejects honestly. */
+  onOpenScreen?: (target: string) => boolean | Promise<boolean>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
@@ -351,6 +367,25 @@ export function CustomScreenRuntime({
             result = await bridge.presence();
             break;
           }
+          case 'service': {
+            if (!bridge) throw new Error('service() is not available on this screen.');
+            result = await bridge.serviceInvoke(
+              String(m.payload?.operationId || ''),
+              (m.payload?.input && typeof m.payload.input === 'object'
+                ? m.payload.input
+                : {}) as Record<string, unknown>
+            );
+            break;
+          }
+          case 'openScreen': {
+            if (!onOpenScreen) throw new Error('host.openScreen() is not available on this screen.');
+            const target = String(m.payload?.target || '');
+            if (!target) throw new Error('host.openScreen() needs a target screen.');
+            const ok = await onOpenScreen(target);
+            if (!ok) throw new Error(`Unknown screen: ${target}`);
+            result = true;
+            break;
+          }
           case 'eventsSubscribe': {
             if (!bridge) throw new Error('events.subscribe() is not available on this screen.');
             // The live feed comes from the OPERATOR's real desktop — the
@@ -432,7 +467,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, screen._trust]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, screen._trust]);
 
   return (
     <iframe
