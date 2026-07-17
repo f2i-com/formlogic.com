@@ -328,7 +328,15 @@ class DefaultConnectorClient implements ConnectorClient {
     }
     const connector = BROWSER_CONNECTORS[connectorId];
     if (!connector) {
-      throw new Error(`Connector "${connectorId}" is not available in this environment.`);
+      // Typed pre-flight refusal (nothing was executed anywhere): a connector
+      // with no browser implementation and no native bridge. The screen
+      // bridge keys its relay fallback on this code — a bare Error here made
+      // the generic connector() relay path unreachable for plugin-owned
+      // connectors (review 2026-07-17).
+      throw new ConnectorError(
+        'connector_missing',
+        `Connector "${connectorId}" is not available in this environment.`
+      );
     }
     return connector.request(command, payload);
   }

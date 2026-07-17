@@ -167,6 +167,51 @@ The existing *sandboxed* custom-screen SDK (postMessage bridge, iframe = the bou
 This SDK is for **host-rendered** React screens that run in the trusted app shell. Both expose the
 same capabilities; pick by whether your screen is sandboxed code or trusted React.
 
+#### Sandboxed bridge v1 (pack-owned screens)
+
+App-runtime `code` screens (owner/verified trust ONLY — every bridge action below is
+TRUSTED_ONLY in `sdkRuntime.ts`, including the subscription lifecycle actions) get typed,
+bounded bridge methods on `window.FormLogic` beyond the original submit/records/record/related
+set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`):
+
+- `connector(connectorId, command, payload?)` — invokes a connector command the app has **declared**
+  (`connector.<id>.<command>` grant, the same gate as `useConnector`). Routing is **transparent**:
+  with a local desktop bridge present the local transport is authoritative (its failures never
+  retry remotely — a lost-response transport failure may have executed); without one, the local
+  client is tried (in-browser connectors, demo simulator) and the typed pre-transport
+  `connector_unavailable` falls back to the owner's command relay — so exactly one transport ever
+  executes. Resolves an outcome
+  `{ status: 'done'|'failed'|'expired'|'uncertain', result, error, via, handledBy? }` — command
+  failures resolve (check `status`), and `uncertain` means a desktop claimed the command but hadn't
+  reported back (the hardware may have acted — never treat it as a clean failure).
+- `updateRecord(responseId, answers)` — updates one of this form's records through the app API
+  (server-side edit permission is authoritative; payload bounded). Record screens may pass `null`
+  to update the record being viewed.
+- `deleteRecords(responseIds)` — deletes SPECIFIC records of this form by explicit id (max 25 per
+  call, 10 calls/min; there is deliberately no clear-all). Each row is server-authorized
+  individually; resolves `{ deleted: [ids], failed: [{id, error}] }` and a refused row never
+  aborts the rest.
+- `presence()` — one-shot desktop-presence snapshot
+  `{ kind: 'local'|'remote'|'none', deviceName?, lastSeenAt? }` (demo mode is always `'none'`).
+- `events.subscribe({connectorId, names?}, handler)` / `captions.subscribe(handler)` — LIVE feeds
+  relayed from the host's desktop event hub and the volatile captions lane (LOCAL bridge only —
+  remote mode stays records-polling; check `presence()`; refused outright in the shared demo,
+  which must never attach to the operator's real desktop). Gated on the app declaring any grant
+  targeting the connector (`connector.<id>...` / wildcard forms). Handlers receive
+  `{ kind, seq, data }` push frames with a per-subscription monotonic `seq`; over-budget pushes
+  are shed with a single `kind: 'dropped'` signal. The feed is LOSSY with no replay — the hub has
+  no cursor and an SSE reconnect gap is invisible to the sandbox — so treat it as a live overlay:
+  re-read records on `'dropped'` and on your own cadence; the durable plane is the source of
+  truth. `captions.subscribe` additionally REQUIRES the local bridge at subscribe time (its
+  reader would otherwise retry a dead loopback fetch forever); `events.subscribe` may late-bind
+  (the hub connects once the desktop pairs). `captions.subscribe` resolves
+  `{ unsubscribe, tombstone }` (call `tombstone()` when a durable caller turn lands, final-wins);
+  max 4 live subscriptions, 1 captions, per screen.
+
+Outside a matching app context (builder previews, public links) these actions reject with an honest
+"not available on this screen". Deliberately NOT exposed (plan §8.3): raw backend fetch, arbitrary
+connector commands without grants, `records.clearAll`, pack-initiated pairing-token minting.
+
 ### Trust boundary: host-rendered React is first-party only
 
 Host-rendered SDK screens run as **trusted React inside the app shell** — there is no sandbox around

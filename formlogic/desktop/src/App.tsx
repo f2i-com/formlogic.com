@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { API_BASE, openExternal } from './api';
 import { applyTheme, initialTheme, watchSystemTheme, type ThemeMode } from './theme';
 import ServicesPanel from './ServicesPanel';
@@ -16,6 +16,15 @@ import { PluginContributedScreen } from './PluginContributedUi';
 import { parsePluginSection, pluginNavEntries } from './pluginContributions';
 import { getAokieUiSource } from './aokieUiSource';
 import { prefetchPanelData } from './panelCache';
+// Explicit extension: on a case-insensitive filesystem the bare './SetupWizard'
+// specifier would resolve to setupWizard.ts (the logic module) first.
+import SetupWizard from './SetupWizard.tsx';
+import {
+  getSetupGuideState,
+  isSetupGuideFirstRun,
+  subscribeSetupGuideOpen,
+  type SetupGuideState,
+} from './setupWizard';
 
 /**
  * FormLogic Desktop top-level UI (workspace-shell redesign, 2026-07):
@@ -59,6 +68,17 @@ export default function App() {
   // True while the new panel is still being prepared — dims the stale body.
   const sectionPending = deferredSection !== section;
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
+  // First-run setup guide: auto-open ONCE (no localStorage record yet); from
+  // then on the unobtrusive header pill / Settings re-open it while it stays
+  // 'pending'. 'done' / 'dismissed' retire both the auto-open and the pill.
+  const [setupGuideState, setSetupGuideState] = useState<SetupGuideState>(() =>
+    getSetupGuideState(),
+  );
+  const [setupOpen, setSetupOpen] = useState<boolean>(() => isSetupGuideFirstRun());
+  // Gentle context highlight after a wizard hand-off: the target section's
+  // body gets a one-shot fading glow (no arrows, no tour) for ~2.5 s.
+  const [setupHighlight, setSetupHighlight] = useState<string | null>(null);
+  const setupHighlightTimer = useRef<number | null>(null);
   const overview = useDesktopOverview();
   const pluginList = overview.plugins?.plugins ?? [];
   const devMode = overview.plugins?.devMode ?? false;
@@ -133,6 +153,45 @@ export default function App() {
   };
 
   useEffect(() => watchSystemTheme(setThemeState), []);
+
+  // Settings' "Show the setup guide" button (a tiny module event — the wizard
+  // state lives here, SettingsPanel takes no props).
+  useEffect(
+    () =>
+      subscribeSetupGuideOpen(() => {
+        setSetupGuideState(getSetupGuideState());
+        setSetupOpen(true);
+      }),
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (setupHighlightTimer.current !== null) {
+        window.clearTimeout(setupHighlightTimer.current);
+      }
+    },
+    [],
+  );
+
+  const closeSetupGuide = useCallback(() => {
+    setSetupOpen(false);
+    // The wizard persists 'pending'/'done'/'dismissed' itself — re-sync.
+    setSetupGuideState(getSetupGuideState());
+  }, []);
+
+  const navigateFromSetup = useCallback((target: string) => {
+    setSetupOpen(false);
+    setSetupGuideState(getSetupGuideState());
+    setSection(target);
+    setSetupHighlight(target);
+    if (setupHighlightTimer.current !== null) {
+      window.clearTimeout(setupHighlightTimer.current);
+    }
+    setupHighlightTimer.current = window.setTimeout(() => {
+      setSetupHighlight(null);
+      setupHighlightTimer.current = null;
+    }, 2500);
+  }, []);
 
   // Warm the slow section endpoints (models disk scan, python venvs, plugin
   // list) once at startup so the first visit to those sections paints with
@@ -228,6 +287,16 @@ export default function App() {
             <p>{meta.subtitle}</p>
           </div>
           <div className="desktop-workspace-header__actions">
+            {setupGuideState === 'pending' && !setupOpen && (
+              <button
+                type="button"
+                className="desktop-setup-pill"
+                onClick={() => setSetupOpen(true)}
+                title="Finish setting up FormLogic Desktop"
+              >
+                Setup guide
+              </button>
+            )}
             {health ? (
               <span className="desktop-status-pill is-ok">
                 <i />
@@ -274,7 +343,11 @@ export default function App() {
         </header>
 
         <main
-          className={`desktop-workspace__body${sectionPending ? ' is-section-pending' : ''}`}
+          className={`desktop-workspace__body${sectionPending ? ' is-section-pending' : ''}${
+            setupHighlight !== null && setupHighlight === deferredSection
+              ? ' setup-highlight'
+              : ''
+          }`}
         >
           {/* The body renders from the DEFERRED section (see changeSection):
               the sidebar/header answered the click already; the heavy panel
@@ -316,6 +389,14 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {setupOpen && (
+        <SetupWizard
+          overview={overview}
+          onNavigate={navigateFromSetup}
+          onClose={closeSetupGuide}
+        />
+      )}
     </div>
   );
 }

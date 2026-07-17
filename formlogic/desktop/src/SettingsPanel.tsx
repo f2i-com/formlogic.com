@@ -15,6 +15,7 @@ import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, CheckIcon } from './Icons';
 import { useToast } from './Toasts';
 import { getAokieUiSource, setAokieUiSource, type AokieUiSource } from './aokieUiSource';
+import { reopenSetupGuide } from './setupWizard';
 
 /**
  * Settings panel — the data + models folders, additional model scan dirs,
@@ -897,6 +898,20 @@ export default function SettingsPanel() {
             )}
           </div>
         </form>
+      </section>
+
+      <section className="model-section">
+        <h3 className="section-title">Setup guide</h3>
+        <p className="form-hint" style={{ marginBottom: 12 }}>
+          The first-run checklist — local vs cloud AI, the llama.cpp service, a
+          model, and the optional receptionist and account link. It shows live
+          ticks, so it's also a quick health check.
+        </p>
+        <div className="form-actions">
+          <button className="btn btn-secondary" onClick={() => reopenSetupGuide()}>
+            Show the setup guide
+          </button>
+        </div>
       </section>
 
       {aokieInstalled && (

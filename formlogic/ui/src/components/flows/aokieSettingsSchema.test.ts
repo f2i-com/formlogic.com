@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   AOKIE_SETTINGS_DEFAULTS,
+  DEFAULT_ENGINES,
   settingsPatch,
   withAokieDefaults,
 } from '../../../../desktop/src/aokie/aokieSettings';
@@ -64,6 +65,25 @@ describe('aokie settings schema conformance', () => {
       expect(def, `${key} default ${def} within [${s.min}, ${s.max}]`).toBeGreaterThanOrEqual(s.min!);
       expect(def).toBeLessThanOrEqual(s.max!);
     }
+  });
+
+  it('the engine-aware voice keys exist and the panel defaults are accepted values', () => {
+    // The panel's engine select statically writes '' (pocket) and 'sherpa'
+    // (catalog-reported ids come from the plugin itself); both plus 'pocket'
+    // must be plugin-accepted enum values.
+    const engine = spec('ttsEngine');
+    expect(engine?.type).toBe('enum');
+    for (const v of ['', 'pocket', 'sherpa']) expect(engine?.options).toContain(v);
+    // Every fallback engine the panel can OFFER writes a plugin-accepted value
+    // (the select stores '' for pocket, the raw id otherwise) — adding an
+    // engine to DEFAULT_ENGINES without the plugin enum knowing it must fail.
+    for (const e of DEFAULT_ENGINES) {
+      const written = e.id === 'pocket' ? '' : e.id;
+      expect(engine?.options, `DEFAULT_ENGINES offers '${e.id}'`).toContain(written);
+    }
+    expect(spec('ttsModelDir')?.type).toBe('string');
+    expect(AOKIE_SETTINGS_DEFAULTS.ttsEngine).toBe('');
+    expect(AOKIE_SETTINGS_DEFAULTS.ttsModelDir).toBe('');
   });
 });
 

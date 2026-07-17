@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { aokieReceptionistPack as pack, DEFAULT_PERSONA } from './aokieReceptionistPack';
+import { AOKIE_CALL_TRANSCRIPT_SCREEN, compareTurns } from './aokieCallTranscriptScreen';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { packCatalog } from './index';
 import {
@@ -259,6 +260,72 @@ describe('aokieReceptionistPack — app', () => {
     for (const id of used) {
       expect(registered.has(id), `SDK screen '${id}' is not registered`).toBe(true);
     }
+  });
+});
+
+describe('aokieReceptionistPack — pack-owned Calls transcript record screen (plan APP-505 PoC)', () => {
+  const calls = pack.forms.find((f) => f.packFormId === 'calls');
+  const rs = calls?.customScreen?.recordScreen;
+
+  it('ships the transcript as pack-owned CODE, not a compiled-registry reference', () => {
+    expect(rs?.kind).toBe('code');
+    // No registry coupling left: the source travels with the pack.
+    expect(rs?.screenId).toBeUndefined();
+    expect(typeof rs?.js).toBe('string');
+    expect((rs?.js ?? '').length).toBeGreaterThan(0);
+    expect(rs?.js).toBe(AOKIE_CALL_TRANSCRIPT_SCREEN.js);
+    // The generic related panel keeps hiding the group this widget renders itself —
+    // packFormId-qualified because follow-up-tasks also link via a call_link field.
+    expect(rs?.consumesRelated).toEqual(['transcript-turns.call_link']);
+  });
+
+  it('the sandboxed source parses, escapes record data, and marks audio-model corrections', () => {
+    const js = rs?.js ?? '';
+    // Same syntax gate check-pack-screens runs for recordScreen code.
+    expect(() => new Function(js)).not.toThrow();
+    // Stored-XSS guard: every record value goes through the bridge's escapeHtml
+    // (bound to `esc`) before touching innerHTML.
+    expect(js).toContain('FormLogic.escapeHtml');
+    expect(js).toContain('esc(t.text)');
+    // Corrected-turn affordance: rows the audio model re-heard carry the tooltip.
+    expect(js).toContain("f.source === 'audio_model'");
+    expect(js).toContain('Corrected by the audio model');
+    // The embedded comparator IS the exported (unit-tested) helper — one source of truth.
+    expect(js).toContain(compareTurns.toString());
+    // Data path: record screens read the record's related groups via the bridge.
+    expect(js).toContain('FL.related()');
+  });
+
+  it('the related columns feed the screen what it renders (timestamp for ordering, source for corrections)', () => {
+    const turns = pack.forms.find((f) => f.packFormId === 'transcript-turns');
+    const link = turns?.fields.find((f) => f.id === 'call_link');
+    expect(link?.properties?.relatedColumnFieldIds).toEqual(['speaker', 'text', 'turn_index', 'timestamp', 'source']);
+  });
+
+  it('orders turns by speech-start stamp, then turn number, then commit time', () => {
+    const t = (spokenAt: string | null, turnIndex: number | null, submittedAt: string, id: string) =>
+      ({ spokenAt, turnIndex, submittedAt, id });
+    // A caller line spoken OVER a bot reply (back-dated spokenAt, committed AFTER it)
+    // must sort where it was SAID — the exact overlap case the stamp exists for.
+    const bot = t('2026-07-17T00:00:05Z', 4, '2026-07-17T00:00:06Z', 'bot');
+    const overlap = t('2026-07-17T00:00:03Z', 5, '2026-07-17T00:00:09Z', 'overlap');
+    expect([bot, overlap].sort(compareTurns).map((x) => x.id)).toEqual(['overlap', 'bot']);
+    // Stamp-less rows (older plugins) fall back to the turn number…
+    const a = t(null, 2, '2026-07-17T00:00:01Z', 'a');
+    const b = t(null, 1, '2026-07-17T00:00:02Z', 'b');
+    expect([a, b].sort(compareTurns).map((x) => x.id)).toEqual(['b', 'a']);
+    // …a stamped row against a stamp-less one also uses the turn number…
+    const c = t('2026-07-17T00:00:01Z', 3, '2026-07-17T00:00:01Z', 'c');
+    const d = t(null, 2, '2026-07-17T00:00:05Z', 'd');
+    expect([c, d].sort(compareTurns).map((x) => x.id)).toEqual(['d', 'c']);
+    // …and submittedAt breaks the remaining ties.
+    const e = t(null, null, '2026-07-17T00:00:02Z', 'e');
+    const f = t(null, null, '2026-07-17T00:00:01Z', 'f');
+    expect([e, f].sort(compareTurns).map((x) => x.id)).toEqual(['f', 'e']);
+    // Equal stamps defer to the turn number (two lines in the same second).
+    const g = t('2026-07-17T00:00:01Z', 2, '2026-07-17T00:00:04Z', 'g');
+    const h = t('2026-07-17T00:00:01Z', 1, '2026-07-17T00:00:03Z', 'h');
+    expect([g, h].sort(compareTurns).map((x) => x.id)).toEqual(['h', 'g']);
   });
 });
 

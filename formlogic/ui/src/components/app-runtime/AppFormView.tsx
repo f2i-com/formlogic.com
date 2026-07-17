@@ -26,6 +26,7 @@ import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
+import { useScreenBridge } from '../custom-screen/screenBridge';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
 import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
@@ -696,6 +697,9 @@ export function AppFormView() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
   const { config, createResponse, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
+  // Bridge v1 for sandboxed code screens: connector()/updateRecord()/presence()
+  // (undefined until the store is initialized for THIS app).
+  const screenBridge = useScreenBridge(formId || '', appSlug);
   const reduceMotion = useReducedMotion();
   // Fires the per-step focus/scroll once per navigation (init 0 = skip mount).
   const lastFocusedStepRef = useRef(0);
@@ -1165,6 +1169,7 @@ export function AppFormView() {
             accentColor={config.app.theme?.primaryColor}
             onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
             onOpenRecords={(canViewOwn(formId) || canViewAll(formId)) ? () => navigate(`/app/${appSlug}/form/${formId}/responses`) : undefined}
+            bridge={screenBridge}
             className="w-full h-full border-0 rounded-lg"
           />
           {allowNew && !hasOwnOpen && (

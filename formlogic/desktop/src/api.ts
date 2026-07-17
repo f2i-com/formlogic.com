@@ -303,6 +303,37 @@ export const aiProviders = {
     }),
 };
 
+/**
+ * SRC-202: one entry of the union model/voice source listing —
+ * GET /api/ai/sources (http.rs list_ai_sources). Local service instances
+ * carry live status + loopback url; configured AI providers carry key /
+ * capability state (never secrets). NOTE: an EMPTY provider `capabilities`
+ * array means "all" (legacy profiles) — treat [] as unrestricted.
+ */
+export interface AiSourceEntry {
+  /** 'service:<id>' | 'provider:<id>' */
+  id: string;
+  kind: 'service' | 'provider';
+  serviceId?: string;
+  providerId?: string;
+  name: string;
+  category?: string;
+  status?: ServiceStatus;
+  installed?: boolean;
+  port?: number;
+  /** Loopback base URL for services (http://127.0.0.1:<port>). */
+  url?: string;
+  model?: string | null;
+  capabilities: string[];
+  hasKey?: boolean;
+  enabled?: boolean;
+  protocol?: string;
+}
+
+export const aiSources = {
+  list: () => request<{ sources: AiSourceEntry[] }>('/api/ai/sources'),
+};
+
 // ----- models / downloads -----
 
 export interface ModelFile {

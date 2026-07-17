@@ -27,6 +27,18 @@ const TRUSTED_ONLY_ACTIONS = new Set([
   'navigate',
   'openForm',
   'openRecords',
+  // Bridge v1 (plan §8.3): connector commands, record writes/deletes and the
+  // desktop-presence snapshot are all data/hardware surface — imported
+  // community code stays visual-only.
+  'connector',
+  'updateRecord',
+  'deleteRecords',
+  'presence',
+  // Subscription lane: live event/caption feeds carry call data.
+  'eventsSubscribe',
+  'captionsSubscribe',
+  'eventsUnsubscribe',
+  'captionsTombstone',
 ]);
 
 /** Imported community code remains visual-only even if its iframe executes. */
@@ -41,7 +53,25 @@ export function isScreenSdkActionAllowed(trust: ScreenTrust, action: string): bo
  */
 export function createSdkRateLimiter() {
   const calls: Record<string, number[]> = {};
-  const caps: Record<string, number> = { submit: 30, records: 60, toast: 20 };
+  const caps: Record<string, number> = {
+    submit: 30,
+    records: 60,
+    toast: 20,
+    // Bridge v1: connector commands can reach real hardware and the relay
+    // (which polls up to ~65s per command); updates hit the write API.
+    connector: 30,
+    updateRecord: 30,
+    // Each call is itself batch-bounded (25 ids) — 10/min keeps a bounded
+    // clear usable without opening a delete firehose.
+    deleteRecords: 10,
+    presence: 30,
+    // Subscription lifecycle is churn-bounded; the PUSH volume is budgeted
+    // separately per subscription (screenSubscriptions.ts).
+    eventsSubscribe: 20,
+    captionsSubscribe: 10,
+    eventsUnsubscribe: 40,
+    captionsTombstone: 120,
+  };
   return (action: string): boolean => {
     const cap = caps[action] ?? 120;
     const now = Date.now();

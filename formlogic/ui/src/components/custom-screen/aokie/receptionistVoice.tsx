@@ -158,12 +158,16 @@ export function bundleSelectionUpdate(
   return { engine: { modelDir: value, customDir: false }, voice: name };
 }
 
-const DEFAULT_ENGINES: TtsCatalogEngine[] = [
+/** Engine choices when the plugin doesn't report a catalog (older builds).
+ *  Exported for the desktop-panel parity lock (the desktop's aokieSettings.ts
+ *  carries the same list — a drift here must fail receptionistVoice.test.tsx). */
+export const DEFAULT_ENGINES: TtsCatalogEngine[] = [
   { id: 'pocket', label: 'Pocket-TTS' },
   { id: 'sherpa', label: 'Sherpa (Piper/VITS/Kokoro)' },
 ];
 
-function engineOptionLabel(engine: TtsCatalogEngine): string {
+/** Display label for an engine option (parity-locked with the desktop panel). */
+export function engineOptionLabel(engine: TtsCatalogEngine): string {
   if (engine.id === 'pocket') return 'Pocket-TTS (default)';
   if (engine.id === 'sherpa') return 'Sherpa — Piper/VITS voices (fast)';
   return engine.label;

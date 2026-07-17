@@ -706,6 +706,7 @@ export function AppResponseDetail() {
       {appSlug && formId && responseId && !editing && recordScreen && (
         <RecordScreenPanel
           screen={recordScreen}
+          trust={runtimeForm?.customScreen?._trust}
           appSlug={appSlug}
           formId={formId}
           responseId={responseId}

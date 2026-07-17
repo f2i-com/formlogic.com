@@ -65,6 +65,9 @@ export interface RunRelayOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Injectable clock (tests advance it to exercise the timeout branch). */
   now?: () => number;
+  /** Which connector the enqueued command targets. Defaults to 'aokie' (this
+   *  module's original caller); the generic screen bridge passes its own. */
+  connectorId?: string;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -98,7 +101,24 @@ export async function runRelayCommand(
   // 2026-07-14; a refresh 'fixed' it because the silent re-pair had finished
   // and the LOCAL connector path took over).
   const idempotencyKey = `ui-${command}-${generateId()}`;
-  const enq = await api.enqueueConnectorCommand(slug, { connectorId: 'aokie', command, payload, idempotencyKey });
+  const enqueueBody = {
+    connectorId: options.connectorId ?? 'aokie',
+    command,
+    payload,
+    idempotencyKey,
+  };
+  let enq = await api.enqueueConnectorCommand(slug, enqueueBody);
+  if (enq.error || !enq.data) {
+    // ONE same-key retry (INT-005 truthfulness): api.request never throws, so
+    // a POST that was DELIVERED but lost its response is indistinguishable
+    // from one that never left — yet the command exists server-side and a
+    // desktop will execute it. Re-sending the SAME idempotencyKey either
+    // dedupes into that command (we then poll its real outcome instead of
+    // reporting a false clean 'failed') or fails again identically (a real
+    // refusal like demo read-only just repeats). This is what makes the
+    // "any transport-level retry dedupes server-side" intent above true.
+    enq = await api.enqueueConnectorCommand(slug, enqueueBody);
+  }
   if (enq.error || !enq.data) {
     throw new Error(enq.error || 'Failed to reach the desktop runtime');
   }

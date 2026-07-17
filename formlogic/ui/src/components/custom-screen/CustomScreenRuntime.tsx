@@ -4,6 +4,17 @@ import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { SCREEN_CSP, createSdkRateLimiter, isScreenSdkActionAllowed } from './sdkRuntime';
+import type { ScreenBridge } from './screenBridge';
+import { subscribeDesktopEvents } from '../../client-runtime/desktop/desktopEvents';
+import { startRealtimeCaptions } from './aokie/realtimeCaptions';
+import {
+  CAPTIONS_PUSH_BUDGET,
+  EVENTS_PUSH_BUDGET,
+  createScreenSubscriptions,
+  envelopeMatchesFilter,
+  sanitizeEventFilter,
+  type ScreenSubscriptions,
+} from './screenSubscriptions';
 import { screenPaletteCss, SCREEN_THEME_SHIM } from './screenTheme';
 import { readableForegroundColor } from '../../lib/color';
 import { resolveScreenAssets } from '../../lib/screenCompile';
@@ -22,15 +33,22 @@ import { resolveScreenAssets } from '../../lib/screenCompile';
 // Injected into the iframe — exposes window.FormLogic as a postMessage RPC bridge to the parent.
 const SDK_SHIM = `
 (function(){
-  var pending = {}, seq = 0;
+  var pending = {}, seq = 0, pushSubs = {};
   function call(action, payload){
     return new Promise(function(resolve, reject){
       var id = ++seq; pending[id] = { resolve: resolve, reject: reject };
-      parent.postMessage({ __fl: true, id: id, action: action, payload: payload || {} }, '*');
+      // gen identifies THIS document instance (stamped by the host into the
+      // srcDoc) — a reloaded screen's stale predecessor must not act.
+      parent.postMessage({ __fl: true, gen: window.__flGen, id: id, action: action, payload: payload || {} }, '*');
     });
   }
   window.addEventListener('message', function(e){
     var m = e.data;
+    if (m && m.__flPush) {
+      var h = pushSubs[m.subId];
+      if (h) { try { h({ kind: m.kind, seq: m.seq, data: m.data }); } catch (err) {} }
+      return;
+    }
     if (!m || !m.__flReply || !pending[m.id]) return;
     var p = pending[m.id]; delete pending[m.id];
     if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
@@ -56,6 +74,50 @@ const SDK_SHIM = `
     record: function(){ return call('record'); },
     /** Record screens only: this record's related-record groups (same shape as the related API). */
     related: function(){ return call('related'); },
+    /** Invoke a GRANTED connector command (e.g. 'aokie', 'settings.get'). Routes to the local
+     *  desktop or the owner's command relay automatically and resolves an OUTCOME object
+     *  { status: 'done'|'failed'|'expired'|'uncertain', result, error, via, handledBy? } —
+     *  command failures RESOLVE (check status), only bridge misuse rejects. 'uncertain' means a
+     *  desktop claimed the command but hasn't reported back: the hardware may have acted. */
+    connector: function(connectorId, command, payload){ return call('connector', { connectorId: connectorId, command: command, payload: payload || {} }); },
+    /** Update one of this form's records: updateRecord(responseId, answers). Record screens may
+     *  pass null to update the record being viewed. Server-side edit permission applies. */
+    updateRecord: function(responseId, answers){ return call('updateRecord', { responseId: responseId, answers: answers || {} }); },
+    /** Delete SPECIFIC records of this form by id (max 25 per call; there is deliberately no
+     *  clear-all). Resolves { deleted: [ids], failed: [{id, error}] } — a refused row never
+     *  aborts the rest. Server-side delete permission applies per row. */
+    deleteRecords: function(responseIds){ return call('deleteRecords', { responseIds: responseIds || [] }); },
+    /** Where the app's connector hardware runtime is right now:
+     *  { kind: 'local'|'remote'|'none', deviceName?, lastSeenAt? }. */
+    presence: function(){ return call('presence'); },
+    /** Live connector events (LOCAL desktop bridge only — nothing flows in remote mode; poll
+     *  records instead, presence() tells you which). filter: { connectorId, names? }. The
+     *  handler receives { kind, seq, data }: kind 'event' carries the event envelope in data;
+     *  kind 'dropped' means pushes were rate-shed — re-read records (there is no replay).
+     *  Resolves { unsubscribe }. */
+    events: {
+      subscribe: function(filter, handler){
+        return call('eventsSubscribe', { filter: filter || {} }).then(function(r){
+          pushSubs[r.subId] = handler;
+          return { unsubscribe: function(){ delete pushSubs[r.subId]; return call('eventsUnsubscribe', { subId: r.subId }); } };
+        });
+      },
+    },
+    /** Live caption state for the active call (LOCAL bridge only; volatile lane — droppable by
+     *  design). handler({ kind: 'captions'|'dropped', seq, data: captionState }). Resolves
+     *  { unsubscribe, tombstone } — call tombstone() when a durable caller turn lands so late
+     *  partials stay dead (final wins). One captions subscription per screen. */
+    captions: {
+      subscribe: function(handler){
+        return call('captionsSubscribe', {}).then(function(r){
+          pushSubs[r.subId] = handler;
+          return {
+            unsubscribe: function(){ delete pushSubs[r.subId]; return call('eventsUnsubscribe', { subId: r.subId }); },
+            tombstone: function(){ return call('captionsTombstone', { subId: r.subId }); },
+          };
+        });
+      },
+    },
     /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
     escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
   };
@@ -77,6 +139,7 @@ export function CustomScreenRuntime({
   onOpenRecords,
   record,
   fetchRelated,
+  bridge,
 }: {
   screen: CustomScreen;
   formId: string;
@@ -97,9 +160,31 @@ export function CustomScreenRuntime({
   record?: { id: string; answers: Record<string, unknown>; submittedAt?: string; status?: string };
   /** Record screens: fetch this record's related groups — exposed via FormLogic.related(). */
   fetchRelated?: () => Promise<unknown>;
+  /** Bridge v1 (app runtime only): connector()/updateRecord()/presence(). Absent on builder
+   *  previews and public links — those actions then reject with an honest message. */
+  bridge?: ScreenBridge;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
+  // Document generation: bumped whenever the srcDoc rebuilds and stamped
+  // into the shim (window.__flGen). The iframe element — and so its
+  // WindowProxy — survives a srcdoc update, and the OLD document keeps
+  // draining its task queue briefly after React commits the new one; its
+  // messages must be refused or a stale subscribe could start an ownerless
+  // feed AFTER the reload cleanup ran (review 2026-07-17).
+  const genRef = useRef(0);
+  // Live subscription relay (events/captions): host-owned feeds pushed into
+  // the iframe as __flPush frames. A ref so re-renders never drop active
+  // subscriptions; cleared when the iframe reloads and on unmount.
+  const subsRef = useRef<ScreenSubscriptions | null>(null);
+  const subscriptions = () => {
+    if (!subsRef.current) {
+      subsRef.current = createScreenSubscriptions((frame) => {
+        iframeRef.current?.contentWindow?.postMessage(frame, '*');
+      });
+    }
+    return subsRef.current;
+  };
   const user = useAuthStore((s) => s.user);
   // Drive the screen's light/dark from the viewer's theme (same contract as the app-home runtime).
   const colorScheme = useUIStore((s) => s.theme);
@@ -125,12 +210,14 @@ export function CustomScreenRuntime({
     const dark = schemeRef.current === 'dark';
     const accent = accentColor || '#6366f1';
     const palette = screenPaletteCss(accent, readableForegroundColor(accent));
+    // Each rebuilt document gets a fresh generation stamp (see genRef).
+    genRef.current += 1;
     // SDK shim goes in <head> so window.FormLogic exists before any user script (inline or block) runs.
     return `<!doctype html><html class="${dark ? 'fl-dark' : ''}"><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<meta name="color-scheme" content="light dark">`
-      + `<script>${SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
+      + `<script>var __flGen=${genRef.current};${SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${palette}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
   }, [assets, accentColor]);
@@ -140,11 +227,27 @@ export function CustomScreenRuntime({
     iframeRef.current?.contentWindow?.postMessage({ __flTheme: colorScheme }, '*');
   }, [colorScheme]);
 
+  // A reloaded iframe (srcDoc change) boots a fresh shim with no known
+  // subIds — stop the old feeds rather than pushing frames nobody hears.
+  // The same cleanup covers unmount.
+  useEffect(() => () => subsRef.current?.clear(), [srcDoc]);
+
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
       const m = e.data;
       // Only accept SDK messages from OUR sandboxed iframe.
       if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      // …and only from the CURRENT document generation: the WindowProxy
+      // survives a srcdoc reload, so the dying predecessor can still post —
+      // acting on it could start an ownerless subscription after the reload
+      // cleanup already ran. Refuse with an honest error instead.
+      if (typeof m.gen === 'number' && m.gen !== genRef.current) {
+        iframeRef.current.contentWindow?.postMessage(
+          { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
+          '*'
+        );
+        return;
+      }
       let result: unknown;
       let error: string | undefined;
       if (!rateRef.current(String(m.action))) {
@@ -214,6 +317,111 @@ export function CustomScreenRuntime({
             result = await fetchRelated();
             break;
           }
+          case 'connector': {
+            if (!bridge) throw new Error('connector() is not available on this screen.');
+            result = await bridge.connectorInvoke(
+              String(m.payload?.connectorId || ''),
+              String(m.payload?.command || ''),
+              (m.payload?.payload && typeof m.payload.payload === 'object'
+                ? m.payload.payload
+                : {}) as Record<string, unknown>
+            );
+            break;
+          }
+          case 'updateRecord': {
+            if (!bridge) throw new Error('updateRecord() is not available on this screen.');
+            // Record screens may omit the id to update the record being viewed.
+            const responseId = String(m.payload?.responseId || '') || record?.id || '';
+            const answers = (m.payload?.answers && typeof m.payload.answers === 'object'
+              ? m.payload.answers
+              : {}) as Record<string, unknown>;
+            result = await bridge.updateRecord(responseId, answers);
+            break;
+          }
+          case 'deleteRecords': {
+            if (!bridge) throw new Error('deleteRecords() is not available on this screen.');
+            const responseIds = Array.isArray(m.payload?.responseIds)
+              ? (m.payload.responseIds as unknown[]).map((v) => String(v ?? ''))
+              : [];
+            result = await bridge.deleteRecords(responseIds);
+            break;
+          }
+          case 'presence': {
+            if (!bridge) throw new Error('presence() is not available on this screen.');
+            result = await bridge.presence();
+            break;
+          }
+          case 'eventsSubscribe': {
+            if (!bridge) throw new Error('events.subscribe() is not available on this screen.');
+            // The live feed comes from the OPERATOR's real desktop — the
+            // shared demo must never attach to it (a demo tab can hold a
+            // pairing token when the operator used the real app first).
+            if (!bridge.liveFeedsAllowed()) {
+              throw new Error('Live subscriptions are not available in the shared demo.');
+            }
+            const filter = sanitizeEventFilter(m.payload?.filter);
+            if (!filter) throw new Error('events.subscribe() needs a filter with a connectorId.');
+            if (!bridge.canObserveConnector(filter.connectorId)) {
+              throw new Error(
+                `This app has no "connector.${filter.connectorId}.*" grants to observe events for.`
+              );
+            }
+            const subId = subscriptions().add(
+              'events',
+              (emit) => ({
+                stop: subscribeDesktopEvents((envelope) => {
+                  if (envelopeMatchesFilter(envelope, filter)) emit('event', envelope);
+                }),
+              }),
+              EVENTS_PUSH_BUDGET
+            );
+            if (subId == null) throw new Error('Too many live subscriptions on this screen.');
+            result = { subId };
+            break;
+          }
+          case 'captionsSubscribe': {
+            if (!bridge) throw new Error('captions.subscribe() is not available on this screen.');
+            if (!bridge.liveFeedsAllowed()) {
+              throw new Error('Live subscriptions are not available in the shared demo.');
+            }
+            // Enforce the documented LOCAL-only contract at subscribe time:
+            // the captions reader retries its loopback fetch forever, so
+            // starting it with no local bridge would just burn a failing
+            // request every ≤15s for the subscription's life (the events
+            // hub self-gates on detection+pairing, so events may late-bind).
+            if (!bridge.localBridgeAvailable()) {
+              throw new Error(
+                'captions.subscribe() needs the local desktop bridge — check presence(); remote mode polls records instead.'
+              );
+            }
+            // The volatile lane is the aokie realtime feed — same observe
+            // gate as its events.
+            if (!bridge.canObserveConnector('aokie')) {
+              throw new Error('This app has no "connector.aokie.*" grants to observe captions for.');
+            }
+            if (subscriptions().hasKind('captions')) {
+              throw new Error('This screen already subscribes to captions.');
+            }
+            const subId = subscriptions().add(
+              'captions',
+              (emit) => {
+                const handle = startRealtimeCaptions((state) => emit('captions', state));
+                return { stop: handle.stop, tombstone: handle.tombstone };
+              },
+              CAPTIONS_PUSH_BUDGET
+            );
+            if (subId == null) throw new Error('Too many live subscriptions on this screen.');
+            result = { subId };
+            break;
+          }
+          case 'eventsUnsubscribe': {
+            result = subsRef.current?.remove(Number(m.payload?.subId)) ?? false;
+            break;
+          }
+          case 'captionsTombstone': {
+            result = subsRef.current?.tombstone(Number(m.payload?.subId)) ?? false;
+            break;
+          }
           default:
             error = `Unknown action: ${m.action}`;
         }
@@ -224,7 +432,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, screen._trust]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, screen._trust]);
 
   return (
     <iframe

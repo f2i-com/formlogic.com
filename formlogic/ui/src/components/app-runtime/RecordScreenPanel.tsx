@@ -2,6 +2,7 @@ import { LayoutTemplate } from 'lucide-react';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { getSdkScreen } from '../custom-screen/sdkScreenRegistry';
+import { useScreenBridge } from '../custom-screen/screenBridge';
 import { api } from '../../lib/api';
 import type { RecordScreen } from '../../types/form';
 
@@ -15,6 +16,7 @@ import type { RecordScreen } from '../../types/form';
  */
 export function RecordScreenPanel({
   screen,
+  trust,
   appSlug,
   formId,
   responseId,
@@ -23,6 +25,10 @@ export function RecordScreenPanel({
   accentColor,
 }: {
   screen: RecordScreen;
+  /** Server-derived custom_screen_trust of the PARENT customScreen blob (the recordScreen is
+   *  part of the same owner-saved blob, so it shares the form's trust level). Gates the code
+   *  screen's TRUSTED_ONLY bridge actions — record()/related() need owner/verified. */
+  trust?: 'owner' | 'verified' | 'untrusted';
   appSlug: string;
   formId: string;
   responseId: string;
@@ -30,6 +36,10 @@ export function RecordScreenPanel({
   fields: Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>;
   accentColor?: string;
 }) {
+  // Bridge v1 for code record screens: connector()/updateRecord()/presence().
+  // Resolves undefined when the app-runtime store isn't initialized for THIS
+  // app (e.g. the builder's record view) — the actions then reject honestly.
+  const bridge = useScreenBridge(formId, appSlug);
   let body: React.ReactNode = null;
   if (screen.kind === 'sdk') {
     // An unregistered id renders nothing rather than a broken card (old client, renamed screen).
@@ -46,12 +56,13 @@ export function RecordScreenPanel({
     body = (
       <div style={{ height }}>
         <CustomScreenRuntime
-          screen={{ html: screen.html, css: screen.css, js: screen.js, ts: screen.ts, files: screen.files, entry: screen.entry }}
+          screen={{ html: screen.html, css: screen.css, js: screen.js, ts: screen.ts, files: screen.files, entry: screen.entry, _trust: trust }}
           formId={formId}
           appSlug={appSlug}
           fields={fields.map((f) => ({ id: f.id, label: f.label, type: f.type, options: f.properties?.options as Array<{ label: string; value: string }> | undefined }))}
           accentColor={accentColor}
           record={record}
+          bridge={bridge}
           fetchRelated={async () => {
             const res = await api.getRelatedRecords(appSlug, formId, responseId);
             if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Failed to load related records');

@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { plugins } from '../api';
+import { aiSources, plugins, type AiSourceEntry } from '../api';
 import { AlertTriangleIcon, CheckIcon } from '../Icons';
 import { useConfirm } from '../ConfirmDialog';
 import { useToast } from '../Toasts';
+import { PANEL_CACHE_KEYS, getPanelCache, primePanelCache } from '../panelCache';
 import { ConsentSection } from './ConsentWizard';
 import { DongleSetupWizard } from './DongleSetupWizard';
 import { AOKIE_LINK_EVENTS, useAokieEvents } from './useAokieEvents';
 import {
   AOKIE_SETTINGS_DEFAULTS,
+  CUSTOM_BUNDLE_DIR,
+  DEFAULT_ENGINES,
+  bundleSelectionUpdate,
+  composeLaneUrl,
+  engineOptionLabel,
+  inferLaneSource,
+  parseTtsVoiceCatalog,
+  pocketVoiceOptions,
+  prettifyBundleName,
   settingsPatch,
   withAokieDefaults,
   type AokieConnectorSettings,
+  type AokieLane,
+  type TtsCatalogEngine,
 } from './aokieSettings';
 
 /**
@@ -54,27 +66,98 @@ interface AokieSimulateResult {
   events?: string[];
 }
 
-/** `settings.get` / `settings.set` response data shape: the whole live config bag. */
+/** `settings.get` / `settings.set` response data shape: the whole live config
+ *  bag, plus the OPTIONAL installed-voice catalog side key (older plugins
+ *  never return it — the voice picker degrades to a hardcoded list). */
 interface AokieSettingsResponse {
   settings?: Record<string, unknown>;
+  ttsVoiceCatalog?: unknown;
 }
 
-const AOKIE_VOICE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Default' },
-  { value: 'alba', label: 'Alba' },
-  { value: 'cosette', label: 'Cosette' },
-  { value: 'eponine', label: 'Eponine' },
-  { value: 'fantine', label: 'Fantine' },
-  { value: 'javert', label: 'Javert' },
-  { value: 'jean', label: 'Jean' },
-  { value: 'marius', label: 'Marius' },
-];
 
 const AOKIE_CODEC_OPTIONS: Array<{ value: AokieConnectorSettings['hfpCodec']; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: 'cvsd', label: 'CVSD (8kHz)' },
   { value: 'wbs', label: 'mSBC (16kHz, wideband)' },
 ];
+
+// ----- endpoint source lanes (CON-301 desktop side) ------------------------
+
+/** Which /api/ai/sources capability a lane's service must declare. */
+const LANE_CAPABILITY: Record<AokieLane, string> = {
+  llm: 'chat',
+  stt: 'transcription',
+  tts: 'speech',
+};
+
+/** Aokie's own split speech service per lane — listed FIRST (it hosts the
+ *  plugin's default engines). The LLM lane has no dedicated default. */
+const LANE_DEFAULT_SERVICE: Record<AokieLane, string | null> = {
+  llm: null,
+  stt: 'aokie-stt',
+  tts: 'aokie-tts',
+};
+
+const LANE_SETTING_KEY: Record<AokieLane, 'aiEndpoint' | 'sttEndpoint' | 'ttsEndpoint'> = {
+  llm: 'aiEndpoint',
+  stt: 'sttEndpoint',
+  tts: 'ttsEndpoint',
+};
+
+const LANE_LABEL: Record<AokieLane, string> = {
+  llm: 'LLM source',
+  stt: 'Speech-to-text source',
+  tts: 'Text-to-speech source',
+};
+
+/**
+ * The option list for one lane's source select: the Aokie default speech
+ * service first (STT/TTS), then the other capability-matching local services
+ * ('(stopped)' suffix when not running), AI providers on the LLM lane ONLY
+ * (the gateway serves no audio routes yet; empty provider capabilities =
+ * all), then Custom URL… and Automatic (built-in) = ''.
+ */
+function laneSourceOptions(
+  lane: AokieLane,
+  sources: AiSourceEntry[],
+): Array<{ value: string; label: string }> {
+  const cap = LANE_CAPABILITY[lane];
+  const def = LANE_DEFAULT_SERVICE[lane];
+  const services = sources.filter(
+    (s) => s.kind === 'service' && (s.capabilities ?? []).includes(cap),
+  );
+  const ordered = [
+    ...services.filter((s) => s.serviceId === def),
+    ...services.filter((s) => s.serviceId !== def),
+  ];
+  const opts = ordered.map((s) => ({
+    value: s.id,
+    label: `This computer: ${s.name}${s.status === 'running' ? '' : ' (stopped)'}`,
+  }));
+  if (lane === 'llm') {
+    for (const p of sources) {
+      if (p.kind !== 'provider') continue;
+      const caps = p.capabilities ?? [];
+      if (caps.length > 0 && !caps.includes(cap)) continue; // [] = all (legacy)
+      opts.push({ value: p.id, label: `Provider: ${p.name}` });
+    }
+  }
+  opts.push({ value: 'custom', label: 'Custom URL…' });
+  opts.push({ value: '', label: 'Automatic (built-in)' });
+  return opts;
+}
+
+/**
+ * Seed one lane's select from the saved endpoint URL: inferLaneSource, but
+ * anything the lane's option list can't represent (e.g. a gateway URL saved
+ * on a speech lane, or a service that vanished) degrades to 'custom' so the
+ * raw URL stays visible and editable — the pick is never silently lost.
+ */
+function seedLaneSource(saved: string, lane: AokieLane, sources: AiSourceEntry[]): string {
+  const inferred = inferLaneSource(saved, lane, sources);
+  if (inferred === '' || inferred === 'custom') return inferred;
+  return laneSourceOptions(lane, sources).some((o) => o.value === inferred) ? inferred : 'custom';
+}
 
 /** Poll cadence while a pairing window is open (countdown + bond detection). */
 const PAIRING_POLL_MS = 2000;
@@ -595,6 +678,18 @@ function AokieSettingsForm({ running }: { running: boolean }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AokieConnectorSettings>(AOKIE_SETTINGS_DEFAULTS);
+  // The union source listing (local services + AI providers) behind the
+  // endpoint lane dropdowns. Empty = listing unavailable (the selects still
+  // offer Custom URL… / Automatic).
+  const [sources, setSources] = useState<AiSourceEntry[]>([]);
+  // Per-lane source pick: '' (automatic) | 'service:<id>' | 'provider:<id>' | 'custom'.
+  const [laneSel, setLaneSel] = useState<Record<AokieLane, string>>({ llm: '', stt: '', tts: '' });
+  // Installed voices/bundles reported by the plugin (settings.get side key);
+  // null = older plugin → the voice picker degrades to the hardcoded list.
+  const [catalog, setCatalog] = useState<TtsCatalogEngine[] | null>(null);
+  // UI-only: the operator explicitly chose "Custom folder…" in the sherpa
+  // bundle picker (a stored folder outside the catalog also renders as it).
+  const [customDir, setCustomDir] = useState(false);
   // The bag as last loaded/saved — the diff base for dirty-field saves.
   const baseline = useRef<AokieConnectorSettings>(AOKIE_SETTINGS_DEFAULTS);
   const toast = useToast();
@@ -603,11 +698,28 @@ function AokieSettingsForm({ running }: { running: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await plugins.command('aokie', 'settings.get');
+      const [res, srcRes] = await Promise.all([
+        plugins.command('aokie', 'settings.get'),
+        // Source listing is best-effort (panelCache-coalesced with the
+        // app-start prefetch) — a failure must not block the settings form.
+        primePanelCache(PANEL_CACHE_KEYS.aiSources, () => aiSources.list()),
+      ]);
       const data = (res.data ?? {}) as AokieSettingsResponse;
       const merged = withAokieDefaults(data.settings);
+      const srcs =
+        srcRes?.sources ??
+        getPanelCache<{ sources: AiSourceEntry[] }>(PANEL_CACHE_KEYS.aiSources)?.sources ??
+        [];
       baseline.current = merged;
       setSettings(merged);
+      setSources(srcs);
+      setCatalog(parseTtsVoiceCatalog(data.ttsVoiceCatalog));
+      setCustomDir(false);
+      setLaneSel({
+        llm: seedLaneSource(merged.aiEndpoint, 'llm', srcs),
+        stt: seedLaneSource(merged.sttEndpoint, 'stt', srcs),
+        tts: seedLaneSource(merged.ttsEndpoint, 'tts', srcs),
+      });
       setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -623,7 +735,18 @@ function AokieSettingsForm({ running }: { running: boolean }) {
   };
 
   const save = async () => {
-    const patch = settingsPatch(baseline.current, settings);
+    // Endpoint lanes save the COMPOSED URL (the plugin settings bag stores
+    // URLs, not source ids): a running-service pick composes url + lane
+    // path, a provider pick composes the gateway URL (LLM lane only), and a
+    // stopped/vanished service composes '' — the plugin's built-in default —
+    // with an honest toast below.
+    const current: AokieConnectorSettings = {
+      ...settings,
+      aiEndpoint: composeLaneUrl(laneSel.llm, settings.aiEndpoint, 'llm', sources),
+      sttEndpoint: composeLaneUrl(laneSel.stt, settings.sttEndpoint, 'stt', sources),
+      ttsEndpoint: composeLaneUrl(laneSel.tts, settings.ttsEndpoint, 'tts', sources),
+    };
+    const patch = settingsPatch(baseline.current, current);
     if (Object.keys(patch).length === 0) {
       toast.push({ kind: 'success', title: 'No changes to save' });
       return;
@@ -636,6 +759,31 @@ function AokieSettingsForm({ running }: { running: boolean }) {
       const merged = withAokieDefaults(data.settings);
       baseline.current = merged;
       setSettings(merged);
+      // The set response may not carry the catalog side key — keep the one
+      // from the last settings.get rather than dropping to the fallback UI.
+      const cat = parseTtsVoiceCatalog(data.ttsVoiceCatalog);
+      if (cat) setCatalog(cat);
+      setLaneSel({
+        llm: seedLaneSource(merged.aiEndpoint, 'llm', sources),
+        stt: seedLaneSource(merged.sttEndpoint, 'stt', sources),
+        tts: seedLaneSource(merged.ttsEndpoint, 'tts', sources),
+      });
+      const stoppedPicks = (['llm', 'stt', 'tts'] as const).filter(
+        (lane) => laneSel[lane].startsWith('service:') && current[LANE_SETTING_KEY[lane]] === '',
+      );
+      if (stoppedPicks.length > 0) {
+        const names = stoppedPicks
+          .map((lane) => {
+            const src = sources.find((s) => s.id === laneSel[lane]);
+            return src ? src.name : laneSel[lane].slice(8);
+          })
+          .join(', ');
+        toast.push({
+          kind: 'info',
+          title: 'Selected service is not running',
+          body: `${names}: saved as Automatic (built-in) — pick it again once the service is running.`,
+        });
+      }
       toast.push({
         kind: 'success',
         title: 'Receptionist settings saved',
@@ -658,6 +806,30 @@ function AokieSettingsForm({ running }: { running: boolean }) {
     if (Number.isNaN(n)) return;
     setSettings((s) => ({ ...s, [key]: n }));
   };
+
+  // ----- engine-aware voice picker (mirrors the console's Voice card) ------
+  // The voice option set follows the selected TTS engine: pocket voices are a
+  // flat name list, sherpa voices are installed model-bundle folders (kokoro
+  // bundles additionally take a numeric speaker id via ttsVoice).
+  const ttsEngines = catalog && catalog.length > 0 ? catalog : DEFAULT_ENGINES;
+  const isSherpa = settings.ttsEngine === 'sherpa';
+  // Stored '' and 'pocket' both mean Pocket-TTS — the select's pocket option
+  // keeps the legacy '' value so save semantics never change.
+  const engineValue = settings.ttsEngine === 'pocket' ? '' : settings.ttsEngine;
+  const bundles = catalog?.find((e) => e.id === 'sherpa')?.bundles ?? [];
+  const voiceOptions = pocketVoiceOptions(catalog);
+  const unlistedVoice = settings.ttsVoice !== '' && !voiceOptions.includes(settings.ttsVoice);
+  const matchedBundle = bundles.find((b) => b.dir === settings.ttsModelDir);
+  // A stored folder outside the catalog renders as the Custom choice with the
+  // input pre-filled — never silently discarded.
+  const bundleValue =
+    customDir || (settings.ttsModelDir !== '' && !matchedBundle)
+      ? CUSTOM_BUNDLE_DIR
+      : matchedBundle
+        ? matchedBundle.dir
+        : '';
+  const showCustomDir = isSherpa && (bundles.length === 0 || bundleValue === CUSTOM_BUNDLE_DIR);
+  const isKokoro = isSherpa && matchedBundle?.kind === 'kokoro';
 
   if (!running) return null;
 
@@ -739,19 +911,122 @@ function AokieSettingsForm({ running }: { running: boolean }) {
                 Blank = the built-in receptionist script (greet, ask the caller's name and
                 reason, capture details, book or take a message).
               </p>
+              {/* Engine-first voice picker: the voice options follow the
+                  selected TTS engine, fed by the plugin's installed-voice
+                  catalog (mirrors the console's Voice & replies card). */}
               <label className="form-row" style={{ marginTop: 8 }}>
-                <span>Voice</span>
+                <span>Speech engine</span>
                 <select
-                  value={settings.ttsVoice}
-                  onChange={(e) => setSettings((s) => ({ ...s, ttsVoice: e.target.value }))}
+                  value={engineValue}
+                  onChange={(e) => setSettings((s) => ({ ...s, ttsEngine: e.target.value }))}
                 >
-                  {AOKIE_VOICE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
+                  {ttsEngines.map((eng) => (
+                    <option key={eng.id} value={eng.id === 'pocket' ? '' : eng.id}>
+                      {engineOptionLabel(eng)}
                     </option>
                   ))}
+                  {!ttsEngines.some((eng) => (eng.id === 'pocket' ? '' : eng.id) === engineValue) && (
+                    <option value={engineValue}>{engineValue}</option>
+                  )}
                 </select>
               </label>
+              <p className="form-hint">
+                Applies live. Sherpa speaks Piper/VITS/Kokoro voice bundles (much faster than
+                Pocket-TTS); each engine has its own voice list below.
+              </p>
+              {!isSherpa && (
+                <>
+                  <label className="form-row" style={{ marginTop: 8 }}>
+                    <span>Voice</span>
+                    <select
+                      value={settings.ttsVoice}
+                      onChange={(e) => setSettings((s) => ({ ...s, ttsVoice: e.target.value }))}
+                    >
+                      {voiceOptions.map((v) => (
+                        <option key={v || 'default'} value={v}>
+                          {v === '' ? 'Default' : v.charAt(0).toUpperCase() + v.slice(1)}
+                        </option>
+                      ))}
+                      {unlistedVoice && (
+                        <option value={settings.ttsVoice}>{settings.ttsVoice} (current)</option>
+                      )}
+                    </select>
+                  </label>
+                  <p className="form-hint">
+                    {catalog
+                      ? 'Pocket-TTS voices installed on this machine.'
+                      : 'Pocket-TTS voice — the plugin reports its installed list once it runs.'}
+                  </p>
+                </>
+              )}
+              {isSherpa && bundles.length > 0 && (
+                <>
+                  <label className="form-row" style={{ marginTop: 8 }}>
+                    <span>Voice</span>
+                    <select
+                      value={bundleValue}
+                      onChange={(e) => {
+                        const u = bundleSelectionUpdate(e.target.value, bundles);
+                        setCustomDir(u.engine.customDir ?? false);
+                        setSettings((s) => ({
+                          ...s,
+                          ...(u.engine.modelDir !== undefined ? { ttsModelDir: u.engine.modelDir } : {}),
+                          ...(u.voice !== undefined ? { ttsVoice: u.voice } : {}),
+                        }));
+                      }}
+                    >
+                      <option value="">Automatic (first installed voice)</option>
+                      {bundles.map((b) => (
+                        <option key={b.dir} value={b.dir}>
+                          {prettifyBundleName(b.name)}
+                        </option>
+                      ))}
+                      <option value={CUSTOM_BUNDLE_DIR}>Custom folder…</option>
+                    </select>
+                  </label>
+                  <p className="form-hint">
+                    Installed sherpa voice bundles — a pick sets the live voice and the in-process
+                    fallback engine's model folder together.
+                  </p>
+                </>
+              )}
+              {showCustomDir && (
+                <>
+                  <label className="form-row" style={{ marginTop: 8 }}>
+                    <span>Voice model folder</span>
+                    <input
+                      type="text"
+                      placeholder={'blank = first voice under models\\tts'}
+                      value={settings.ttsModelDir}
+                      onChange={(e) => {
+                        setCustomDir(true);
+                        setSettings((s) => ({ ...s, ttsModelDir: e.target.value }));
+                      }}
+                    />
+                  </label>
+                  <p className="form-hint">
+                    A sherpa voice bundle folder on this machine (the voice's .onnx + tokens.txt,
+                    e.g. vits-piper-en_US-lessac-medium).
+                  </p>
+                </>
+              )}
+              {isKokoro && (
+                <>
+                  <label className="form-row" style={{ marginTop: 8 }}>
+                    <span>Speaker id</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="e.g. 0"
+                      value={settings.ttsVoice}
+                      onChange={(e) => setSettings((s) => ({ ...s, ttsVoice: e.target.value }))}
+                    />
+                  </label>
+                  <p className="form-hint">
+                    Kokoro bundles hold many speakers — the numeric id picks one.
+                  </p>
+                </>
+              )}
               <label className="form-row" style={{ marginTop: 8 }}>
                 <span>LLM model</span>
                 <input
@@ -765,37 +1040,50 @@ function AokieSettingsForm({ running }: { running: boolean }) {
                 e.g. llama3.1:8b or qwen2.5:7b — leave blank to use whatever the desktop's
                 running LLM service has loaded.
               </p>
-              <label className="form-row" style={{ marginTop: 8 }}>
-                <span>LLM endpoint</span>
-                <input
-                  type="text"
-                  placeholder="blank = auto-detect (tries :8080 then :11434)"
-                  value={settings.aiEndpoint}
-                  onChange={(e) => setSettings((s) => ({ ...s, aiEndpoint: e.target.value }))}
-                />
-              </label>
-              <label className="form-row">
-                <span>Speech-to-text endpoint</span>
-                <input
-                  type="text"
-                  placeholder="blank = built-in engine"
-                  value={settings.sttEndpoint}
-                  onChange={(e) => setSettings((s) => ({ ...s, sttEndpoint: e.target.value }))}
-                />
-              </label>
-              <label className="form-row">
-                <span>Text-to-speech endpoint</span>
-                <input
-                  type="text"
-                  placeholder="blank = built-in engine"
-                  value={settings.ttsEndpoint}
-                  onChange={(e) => setSettings((s) => ({ ...s, ttsEndpoint: e.target.value }))}
-                />
-              </label>
+              {(['llm', 'stt', 'tts'] as const).map((lane) => {
+                const key = LANE_SETTING_KEY[lane];
+                return (
+                  <div key={lane}>
+                    <label className="form-row" style={{ marginTop: 8 }}>
+                      <span>{LANE_LABEL[lane]}</span>
+                      <select
+                        value={laneSel[lane]}
+                        onChange={(e) =>
+                          setLaneSel((v) => ({ ...v, [lane]: e.target.value }))
+                        }
+                      >
+                        {laneSourceOptions(lane, sources).map((o) => (
+                          <option key={o.value || 'auto'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {laneSel[lane] === 'custom' && (
+                      <label className="form-row" style={{ marginTop: 8 }}>
+                        <span>Custom URL</span>
+                        <input
+                          type="text"
+                          placeholder={
+                            lane === 'llm'
+                              ? 'e.g. http://127.0.0.1:8080/v1/chat/completions'
+                              : `e.g. http://127.0.0.1:17920${
+                                  lane === 'stt' ? '/v1/audio/transcriptions' : '/v1/audio/speech'
+                                }`
+                          }
+                          value={settings[key]}
+                          onChange={(e) =>
+                            setSettings((s) => ({ ...s, [key]: e.target.value }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
               <p className="form-hint">
-                Optional OpenAI-compatible speech endpoints (e.g. the Aokie Voice service:
-                http://127.0.0.1:17920/v1/audio/transcriptions and /v1/audio/speech). Blank uses the
-                plugin's built-in engines; on endpoint failure it falls back automatically.
+                Composed from the selected service now; if the FormLogic receptionist app is
+                connected, its per-call settings take precedence.
               </p>
             </div>
 

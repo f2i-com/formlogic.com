@@ -22,6 +22,7 @@
 //    Messages rows for texts the SMS follow-up loop itself sends), so nothing is
 //    double-written.
 import type { PackData } from './financeOsPack';
+import { AOKIE_CALL_TRANSCRIPT_SCREEN } from './aokieCallTranscriptScreen';
 
 // ── Shared defaults ─────────────────────────────────────────────────────────
 
@@ -2600,7 +2601,15 @@ export const aokieReceptionistPack: PackData = {
         // the call_link related group so the raw Transcript Turns grid isn't shown twice.
         // consumesRelated is packFormId-qualified: follow-up-tasks ALSO link here through a
         // field named call_link, and that group must stay visible in the related panel.
-        recordScreen: { kind: 'sdk', screenId: 'aokie-call-transcript', title: 'Transcript', consumesRelated: ['transcript-turns.call_link'] },
+        // PACK-OWNED CODE (plan APP-505 PoC): the transcript widget ships as sandboxed
+        // HTML/CSS/JS inside the pack (aokieCallTranscriptScreen.ts) instead of referencing
+        // the compiled registry screen — the app is self-contained and the operator can read
+        // and fork the source in the Studio editor. Its record()/related() bridge actions are
+        // TRUSTED_ONLY: the form's custom_screen_trust must be owner/verified (fresh owner
+        // imports stamp 'owner'). Rollback = the previous sdk reference:
+        //   { kind: 'sdk', screenId: 'aokie-call-transcript', title: 'Transcript',
+        //     consumesRelated: ['transcript-turns.call_link'] }
+        recordScreen: AOKIE_CALL_TRANSCRIPT_SCREEN,
       },
     },
 
@@ -2616,7 +2625,10 @@ export const aokieReceptionistPack: PackData = {
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
         // matchField: turns are written by app logic that never knows the Calls row id, so the
         // relationship joins on the shared call_id key (read-side; see RelatedRecords helper).
-        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, relatedColumnFieldIds: ['speaker', 'text', 'turn_index'] } },
+        // relatedColumnFieldIds also decides which fields ride each related RECORD's `fields`
+        // map — the transcript record screen needs `timestamp` (true speech order) and
+        // `source` (audio-model correction marker) on top of the visible columns.
+        { id: 'call_link', type: 'linked_record', label: 'Call', required: false, properties: { targetFormId: '@pack:calls', matchField: 'call_id', targetMatchField: 'call_id', relatedPageSize: 20, relatedAllowAdd: false, relatedColumnFieldIds: ['speaker', 'text', 'turn_index', 'timestamp', 'source'] } },
         { id: 'turn_index', type: 'number', label: 'Turn', required: false, properties: { min: 0, step: 1 } },
         // audioTranscript: the correction event finds its row by this key
         // (updateResponse match is single-field, so call_id + turn ride one

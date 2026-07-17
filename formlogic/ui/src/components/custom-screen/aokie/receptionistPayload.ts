@@ -62,7 +62,9 @@ export interface SourceService {
 /** The desktop AI gateway's FIXED loopback port — `provider:<id>` picks compose
  *  `http://127.0.0.1:17872/api/ai/providers/<id>/v1/...` against it (the
  *  per-provider OpenAI-protocol routes in the desktop's http.rs). Must match
- *  the same literal inside the pack's FLOW_AGENT_CONFIG. */
+ *  the same literal inside the pack's FLOW_AGENT_CONFIG AND the desktop
+ *  panel's AI_GATEWAY_BASE (formlogic/desktop/src/aokie/aokieSettings.ts) —
+ *  keep all three in lock-step. */
 export const AI_GATEWAY_BASE = 'http://127.0.0.1:17872/api/ai/providers/';
 
 /**

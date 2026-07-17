@@ -1,4 +1,4 @@
-import { aiProviders, models, plugins, python } from './api';
+import { aiProviders, aiSources, models, plugins, python } from './api';
 
 /**
  * Module-level panel data cache (the servicesStore idea, generalized).
@@ -53,6 +53,7 @@ export const PANEL_CACHE_KEYS = {
   pythonStatus: 'python.status',
   pluginsList: 'plugins.list',
   aiProviders: 'ai.providers',
+  aiSources: 'ai.sources',
 } as const;
 
 /** Warm the slow section endpoints once at app start (fire-and-forget). */
@@ -62,4 +63,5 @@ export function prefetchPanelData(): void {
   void primePanelCache(PANEL_CACHE_KEYS.pythonStatus, () => python.status());
   void primePanelCache(PANEL_CACHE_KEYS.pluginsList, () => plugins.list());
   void primePanelCache(PANEL_CACHE_KEYS.aiProviders, () => aiProviders.list());
+  void primePanelCache(PANEL_CACHE_KEYS.aiSources, () => aiSources.list());
 }

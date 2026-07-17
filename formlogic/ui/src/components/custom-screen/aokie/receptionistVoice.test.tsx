@@ -3,15 +3,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CUSTOM_BUNDLE_DIR,
+  DEFAULT_ENGINES,
   FALLBACK_POCKET_VOICES,
   VoiceEngineSection,
   bundleSelectionUpdate,
+  engineOptionLabel,
   parseTtsVoiceCatalog,
   pocketVoiceOptions,
   prettifyBundleName,
   type EngineCfg,
   type TtsCatalogEngine,
 } from './receptionistVoice';
+import * as desktopVoice from '../../../../../desktop/src/aokie/aokieSettings';
 
 // Engine-first voice selection for the Receptionist Settings console: the
 // pickers render from the plugin's settings.get `ttsVoiceCatalog` side key
@@ -224,5 +227,53 @@ describe('VoiceEngineSection', () => {
     expect(html).not.toContain('rs-ttsengine');
     expect(html).not.toContain('Save speech engine');
     expect(html).toContain('rs-voice');
+  });
+});
+
+// The desktop Configure-receptionist panel (formlogic/desktop AokieCard)
+// carries a COPY of these pure helpers in aokieSettings.ts so its voice
+// section renders the same engine-aware options — the two must stay in
+// lock-step (same catalog contract, same option sets, same write targets).
+describe('desktop panel parity (formlogic/desktop aokieSettings)', () => {
+  it('fallback voice list and Custom sentinel are identical', () => {
+    expect(desktopVoice.FALLBACK_POCKET_VOICES).toEqual(FALLBACK_POCKET_VOICES);
+    expect(desktopVoice.CUSTOM_BUNDLE_DIR).toBe(CUSTOM_BUNDLE_DIR);
+  });
+
+  it('fallback engine lists and option labels are identical', () => {
+    expect(desktopVoice.DEFAULT_ENGINES).toEqual(DEFAULT_ENGINES);
+    for (const engine of [...DEFAULT_ENGINES, { id: 'future-engine', label: 'Future Engine' }]) {
+      expect(desktopVoice.engineOptionLabel(engine)).toBe(engineOptionLabel(engine));
+    }
+  });
+
+  it('parseTtsVoiceCatalog agrees on well-formed and malformed payloads', () => {
+    expect(desktopVoice.parseTtsVoiceCatalog(CATALOG_RAW)).toEqual(parseTtsVoiceCatalog(CATALOG_RAW));
+    for (const bad of [undefined, null, 'nope', {}, { engines: 'nope' }, { engines: [] }, { engines: [{ label: 'x' }] }]) {
+      expect(desktopVoice.parseTtsVoiceCatalog(bad)).toEqual(parseTtsVoiceCatalog(bad));
+    }
+    const partial = { engines: [{ id: 'sherpa', bundles: [{ name: 'no-dir' }, { dir: 'D:/v' }] }] };
+    expect(desktopVoice.parseTtsVoiceCatalog(partial)).toEqual(parseTtsVoiceCatalog(partial));
+  });
+
+  it('pocketVoiceOptions and prettifyBundleName agree', () => {
+    expect(desktopVoice.pocketVoiceOptions(catalog)).toEqual(pocketVoiceOptions(catalog));
+    expect(desktopVoice.pocketVoiceOptions(null)).toEqual(pocketVoiceOptions(null));
+    for (const name of [
+      'vits-piper-en_GB-jenny_dioco-medium',
+      'vits-piper-en_US-lessac-high',
+      'kokoro-en-v0_19',
+      'myvoice',
+      'vits',
+    ]) {
+      expect(desktopVoice.prettifyBundleName(name)).toBe(prettifyBundleName(name));
+    }
+  });
+
+  it('bundleSelectionUpdate agrees on every pick shape', () => {
+    const bundles = catalog[1].bundles!;
+    for (const value of [bundles[0].dir, bundles[1].dir, 'E:\\models\\piper\\lessac', '', CUSTOM_BUNDLE_DIR]) {
+      expect(desktopVoice.bundleSelectionUpdate(value, bundles)).toEqual(bundleSelectionUpdate(value, bundles));
+    }
   });
 });
