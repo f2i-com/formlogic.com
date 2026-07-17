@@ -163,6 +163,24 @@ describe('runRelayCommand — enqueue → poll → terminal', () => {
     const { api } = scriptedApi({ enqueueError: 'forbidden' });
     await expect(runRelayCommand(api, 'slug', 'call.answer', undefined, { sleep: immediateSleep })).rejects.toThrow('forbidden');
   });
+
+  // An empty-object payload must NOT reach the relay as {} — PHP round-trips
+  // {} to [] (json_decode assoc), and the plugin rejects an array payload
+  // ("payload must be an object, got array"). It breaks no-arg Device Setup
+  // connector calls whenever the browser uses the relay. Send no payload.
+  it('omits an empty-object payload so PHP never turns {} into []', async () => {
+    const { api, enqueue } = scriptedApi({ enqueueStatus: 'done' });
+    await runRelayCommand(api, 'slug', 'phone.status', {}, { sleep: immediateSleep });
+    const body = enqueue.mock.calls[0][1] as { payload?: unknown };
+    expect(body.payload).toBeUndefined();
+  });
+
+  it('passes a non-empty payload through unchanged (it round-trips faithfully)', async () => {
+    const { api, enqueue } = scriptedApi({ enqueueStatus: 'done' });
+    await runRelayCommand(api, 'slug', 'phone.confirmPairing', { address: 'AA:BB', accept: true }, { sleep: immediateSleep });
+    const body = enqueue.mock.calls[0][1] as { payload?: unknown };
+    expect(body.payload).toEqual({ address: 'AA:BB', accept: true });
+  });
 });
 
 describe('performRelayCommand — optimistic overlay', () => {

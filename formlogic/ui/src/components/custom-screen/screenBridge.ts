@@ -180,6 +180,29 @@ const SERVICE_OPERATION_ID = /^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)*$/;
  *  owner's desktop). Everything else stays local-final. */
 const RELAY_ELIGIBLE_CODES = new Set(['connector_unavailable', 'connector_missing']);
 
+/**
+ * Normalize a connector result to the command's DATA payload. The desktop
+ * gateway's success body is the envelope `{ ok: true, data: X }` (connectors.rs
+ * "the JSON-RPC result IS the success body"). The LOCAL path already unwraps it
+ * to X (desktopClient.connectors.request → `res.data.data`), but the RELAY
+ * stores the raw envelope, so `runRelayCommand` returns `{ ok:true, data:X }`.
+ * Without this, pack screens (which read `result.devices`, `result.connected`,
+ * `result.settings`, …) get empty results on the relay path — e.g. Device Setup
+ * showing "no dongles / no phones" while the plugin has both. Defensive: only
+ * unwraps the exact `{ ok:true, data }` envelope, so an already-unwrapped local
+ * result (which has no `ok` field) passes through untouched.
+ */
+function unwrapConnectorResult(result: unknown): unknown {
+  if (
+    result && typeof result === 'object' && !Array.isArray(result)
+    && (result as { ok?: unknown }).ok === true
+    && 'data' in (result as object)
+  ) {
+    return (result as { data: unknown }).data;
+  }
+  return result;
+}
+
 export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
   return {
     connectorInvoke: async (connectorId, command, payload) => {
@@ -205,7 +228,7 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
       const localAuthoritative = deps.localBridgeAvailable();
       try {
         const result = await deps.localRequest(cid, cmd, body);
-        return { status: 'done', result, via: 'local' };
+        return { status: 'done', result: unwrapConnectorResult(result), via: 'local' };
       } catch (err) {
         const typed = parseConnectorError(err);
         if (localAuthoritative || !typed || !RELAY_ELIGIBLE_CODES.has(typed.code)) {
@@ -234,7 +257,7 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
         });
         return {
           status: outcome.status,
-          result: outcome.result ?? undefined,
+          result: unwrapConnectorResult(outcome.result ?? undefined),
           error: outcome.error ?? null,
           via: 'relay',
           ...(outcome.handledBy ? { handledBy: outcome.handledBy } : {}),

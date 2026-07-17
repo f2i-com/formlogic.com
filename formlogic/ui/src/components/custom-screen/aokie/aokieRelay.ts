@@ -101,10 +101,24 @@ export async function runRelayCommand(
   // 2026-07-14; a refresh 'fixed' it because the silent re-pair had finished
   // and the LOCAL connector path took over).
   const idempotencyKey = `ui-${command}-${generateId()}`;
+  // PHP cannot represent an empty object: json_decode('{}', true) yields [],
+  // and the relay parses the whole request body that way — so a `{}` payload
+  // reaches the desktop (and the plugin) as an ARRAY, which the plugin's
+  // connector payload validator rejects ("payload must be an object, got
+  // array"). This broke every Device Setup pack-screen connector call (which
+  // send `{}` for no-arg commands) whenever the browser used the relay instead
+  // of a paired local desktop, e.g. right after a restart. Omit an empty
+  // payload entirely so the relay carries no payload (== "no payload" → the
+  // plugin's empty map) rather than a {} that round-trips to []. A non-empty
+  // object round-trips faithfully, so only the empty case needs this.
+  const wirePayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload) && Object.keys(payload).length === 0
+      ? undefined
+      : payload;
   const enqueueBody = {
     connectorId: options.connectorId ?? 'aokie',
     command,
-    payload,
+    payload: wirePayload,
     idempotencyKey,
   };
   let enq = await api.enqueueConnectorCommand(slug, enqueueBody);

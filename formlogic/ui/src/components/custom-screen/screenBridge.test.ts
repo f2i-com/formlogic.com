@@ -302,6 +302,37 @@ describe('updateRecord / presence', () => {
     ]);
   });
 
+  it('relay: unwraps the {ok:true,data} gateway envelope to the command data', async () => {
+    // The relay stores the raw desktop-gateway envelope; the bridge must
+    // deliver the command DATA (matching the local path) so pack screens'
+    // result.devices / result.connected read correctly (Device Setup bug).
+    const relayApi = {
+      enqueueConnectorCommand: vi.fn(async () => ({ data: { commandId: 'c', status: 'queued' as const } })),
+      getConnectorCommand: vi.fn(async () => ({
+        data: { command: { status: 'done', result: { ok: true, data: { devices: [{ address: 'AA:BB' }] } }, error: null } as never },
+      })),
+    };
+    const wideConfig = { app: { customLogic: { permissions: ['connector.aokie.*'] } }, forms: [] } as unknown as GrantSource;
+    const d = deps({
+      config: wideConfig,
+      localRequest: vi.fn(async () => { throw new ConnectorError('connector_unavailable', 'no desktop'); }),
+      relayApi,
+    });
+    const out = await createScreenBridge(d).connectorInvoke('aokie', 'phone.listPaired', {});
+    expect(out).toMatchObject({ status: 'done', via: 'relay', result: { devices: [{ address: 'AA:BB' }] } });
+  });
+
+  it('local: a raw (already-unwrapped) result passes through untouched', async () => {
+    const wideConfig = { app: { customLogic: { permissions: ['connector.aokie.*'] } }, forms: [] } as unknown as GrantSource;
+    const d = deps({
+      config: wideConfig,
+      localBridgeAvailable: () => true,
+      localRequest: vi.fn(async () => ({ connected: [{ vid: 2652, pid: 8684 }], dongles: [] })),
+    });
+    const out = await createScreenBridge(d).connectorInvoke('aokie', 'dongle.list', {});
+    expect(out).toEqual({ status: 'done', via: 'local', result: { connected: [{ vid: 2652, pid: 8684 }], dongles: [] } });
+  });
+
   it('canObserveConnector: any grant TARGETING the connector opens the observe gate', () => {
     const bridge = createScreenBridge(deps());
     // CONFIG grants aokie commands (app level) — observing aokie is allowed.
