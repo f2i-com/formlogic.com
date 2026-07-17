@@ -313,6 +313,9 @@ class PackController
         return $this->jsonResponse($response, [
             'trust' => $trust,
             'capabilities' => PackCapabilities::describe($pack),
+            // APP-502: the embedded vendor-signing verdict so the install
+            // review can show which screens carry verified vendor trust.
+            'vendorSigning' => $this->packService->describeSigning($pack),
         ]);
     }
 
@@ -334,6 +337,17 @@ class PackController
         // state and update checks).
         $catalogId = isset($body['catalogId']) && is_string($body['catalogId']) ? $body['catalogId'] : null;
         $versionId = isset($body['versionId']) && is_string($body['versionId']) ? $body['versionId'] : null;
+        // APP-502: the connector grants the importer approved in the review. An
+        // ARRAY (even empty) means a review was performed → only these connector
+        // grants activate; absent/non-array = no review = every requested grant
+        // activates (backward compatible with older clients).
+        $approvedConnectorGrants = null;
+        if (isset($body['approvedConnectorGrants']) && is_array($body['approvedConnectorGrants'])) {
+            $approvedConnectorGrants = array_values(array_filter(
+                $body['approvedConnectorGrants'],
+                'is_string'
+            ));
+        }
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
@@ -360,7 +374,7 @@ class PackController
         }
 
         try {
-            $result = $this->packService->importPack($packData, $userId, $catalogId, $versionId);
+            $result = $this->packService->importPack($packData, $userId, $catalogId, $versionId, null, $approvedConnectorGrants);
 
             // Audit the import
             if ($this->auditService) {
@@ -375,6 +389,7 @@ class PackController
                         'installationId' => $result['installationId'],
                         'formsCreated' => count($result['forms']),
                         'appsCreated' => count($result['apps']),
+                        'withheldGrants' => $result['withheldGrants'] ?? [],
                     ]
                 );
             }
@@ -389,6 +404,7 @@ class PackController
                 'installationId' => $result['installationId'],
                 'forms' => $result['forms'],
                 'apps' => $result['apps'],
+                'withheldGrants' => $result['withheldGrants'] ?? [],
             ], 201);
 
         } catch (\RuntimeException $e) {

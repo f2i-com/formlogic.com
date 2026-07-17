@@ -21,32 +21,48 @@ class PackCapabilities
 
         $permissions = [];
         $connectors = [];
+        // APP-502: connectorGrants is the REVIEWABLE subset — connector grants
+        // carried by app/form customLogic + app roles, i.e. exactly the
+        // carriers importPack's grant review can strip. Flow-declared connector
+        // grants (structural to the flow) go into `permissions`/`connectors`
+        // but NOT here, so the install UI never offers a decline control it
+        // cannot enforce. Any 'connector.'-prefixed string counts (the loose
+        // rule the runtime gate honors, incl. wildcards).
+        $connectorGrants = [];
         $logicScripts = 0;
         $hasScreens = false;
 
-        $collect = function ($bundle) use (&$permissions, &$connectors, &$logicScripts): void {
+        $noteConnector = function (string $p) use (&$connectors): void {
+            $rest = substr($p, 10);
+            $dot = strpos($rest, '.');
+            $id = $dot !== false ? substr($rest, 0, $dot) : $rest;
+            if ($id !== '' && $id !== '*') {
+                $connectors[$id] = true;
+            }
+        };
+
+        $collect = function ($bundle) use (&$permissions, &$connectorGrants, &$logicScripts, $noteConnector): void {
             if (!is_array($bundle)) {
                 return;
             }
-            foreach (($bundle['permissions'] ?? []) as $p) {
-                if (is_string($p)) {
-                    $permissions[$p] = true;
-                    if (strncmp($p, 'connector.', 10) === 0) {
-                        $rest = substr($p, 10);
-                        $dot = strpos($rest, '.');
-                        if ($dot !== false) {
-                            $connectors[substr($rest, 0, $dot)] = true;
-                        }
-                    }
+            $take = function ($p) use (&$permissions, &$connectorGrants, $noteConnector): void {
+                if (!is_string($p)) {
+                    return;
                 }
+                $permissions[$p] = true;
+                if (strncmp($p, 'connector.', 10) === 0) {
+                    $connectorGrants[$p] = true;
+                    $noteConnector($p);
+                }
+            };
+            foreach (($bundle['permissions'] ?? []) as $p) {
+                $take($p);
             }
             foreach (($bundle['scripts'] ?? []) as $s) {
                 if (is_array($s)) {
                     $logicScripts++;
                     foreach (($s['permissions'] ?? []) as $p) {
-                        if (is_string($p)) {
-                            $permissions[$p] = true;
-                        }
+                        $take($p);
                     }
                 }
             }
@@ -65,6 +81,17 @@ class PackCapabilities
                 $collect($a['customLogic'] ?? null);
                 if (!empty($a['customScreen'])) {
                     $hasScreens = true;
+                }
+                // App roles are the OTHER filterable connector-grant carrier.
+                foreach ((is_array($a['roles'] ?? null) ? $a['roles'] : []) as $role) {
+                    foreach ((is_array($role['permissions'] ?? null) ? $role['permissions'] : []) as $perm) {
+                        $ps = is_array($perm) ? ($perm['permission'] ?? null) : $perm;
+                        if (is_string($ps) && strncmp($ps, 'connector.', 10) === 0) {
+                            $permissions[$ps] = true;
+                            $connectorGrants[$ps] = true;
+                            $noteConnector($ps);
+                        }
+                    }
                 }
             }
         }
@@ -109,6 +136,8 @@ class PackCapabilities
             }
         }
 
+        $grantList = array_keys($connectorGrants);
+        sort($grantList, SORT_STRING);
         return [
             'forms' => count($forms),
             'apps' => count($apps),
@@ -119,6 +148,8 @@ class PackCapabilities
             'flowBindings' => count($flowBindings),
             'connectors' => array_values(array_keys($connectors)),
             'permissions' => array_values(array_keys($permissions)),
+            // APP-502: the connector grants the install review may approve/deny.
+            'connectorGrants' => $grantList,
         ];
     }
 }

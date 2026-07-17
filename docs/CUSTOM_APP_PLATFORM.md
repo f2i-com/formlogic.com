@@ -237,6 +237,23 @@ signed-archive path keeps its own verdict. The digest is a length-delimited stri
 deliberately NOT canonical JSON — and `PackVendorSigningTest` recomputes every emitted marketplace
 pack in PHP, locking the Node/PHP recipes together in CI.
 
+### Grant review at import (APP-502)
+
+Before a marketplace pack installs, the capability-review panel lets the user approve or decline the
+pack's **connector grants** (`connector.<id>.<command>`). `POST /api/packs/describe` returns
+`capabilities.connectorGrants` — the REVIEWABLE subset: connector grants declared in app/form
+customLogic (bundle + scripts) and app roles, i.e. exactly the carriers `PackService::importPack`
+can strip. Flow-declared connector access (from flow node capabilities / binding output actions) is
+surfaced in `capabilities.connectors`/`permissions` as informational but is NOT declinable — it is
+structural to the flow, so the review never offers a control it can't enforce. `describe` also
+returns `vendorSigning` (the APP-501 per-component verdict) so the panel can show verified-vendor
+trust. On install the client sends `approvedConnectorGrants`; `importPack` activates only those and
+strips the rest from both carriers (customLogic permissions AND `app_role_permissions` connector
+rows), returning `withheldGrants`. A connector grant is "reviewable" by the loose `connector.`
+prefix (matching what the runtime gate honors, including wildcards like `connector.*`) — not the
+strict `AppPermissions::isConnectorGrant` validator — so a declined wildcard is actually stripped.
+`approvedConnectorGrants` absent = no review = every requested grant activates (backward compatible).
+
 ### Deferred
 An npm-published `@formlogic/sdk`; SDK version negotiation in the client manifest.
 (`FormView`/`ResponseDetail`/`AppButton` — previously listed here — are now implemented; see

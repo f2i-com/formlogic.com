@@ -2731,10 +2731,20 @@ class ApiClient {
 
   // Pack management. catalogId/versionId (from downloadPack) link the install to
   // its marketplace entry so "Installed" state and update checks work.
-  async importPack(pack: PackData, opts?: { catalogId?: string; versionId?: string }): Promise<ApiResponse<PackImportResult>> {
+  async importPack(
+    pack: PackData,
+    opts?: { catalogId?: string; versionId?: string; approvedConnectorGrants?: string[] },
+  ): Promise<ApiResponse<PackImportResult>> {
     return this.request('/packs/import', {
       method: 'POST',
-      body: JSON.stringify({ pack, catalogId: opts?.catalogId, versionId: opts?.versionId }),
+      body: JSON.stringify({
+        pack,
+        catalogId: opts?.catalogId,
+        versionId: opts?.versionId,
+        // Only send when a review was performed (an array — even empty — means
+        // "only these connector grants"; omitted = no review = all grants).
+        ...(opts?.approvedConnectorGrants ? { approvedConnectorGrants: opts.approvedConnectorGrants } : {}),
+      }),
     });
   }
 
@@ -3580,6 +3590,9 @@ interface PackImportResult {
   installationId: string;
   forms: Array<{ id: string; title: string }>;
   apps: Array<{ id: string; name: string }>;
+  /** APP-502: connector grants the pack requested that the importer did not
+   *  approve (empty when no review ran / everything was approved). */
+  withheldGrants?: string[];
 }
 
 /** Server-derived capability summary for a pack / application package (capability review, spec §30.1). */
@@ -3591,12 +3604,30 @@ interface PackCapabilitySummary {
   logicScripts: number;
   connectors: string[];
   permissions: string[];
+  /** APP-502: the connector grants the install review may approve/deny — the
+   *  subset importPack can actually strip (app customLogic + role carriers;
+   *  flow-declared connector access is structural and not listed here).
+   *  Absent from older servers. */
+  connectorGrants?: string[];
+}
+
+/** APP-502: the embedded vendor-signing verdict, for the install review. */
+export interface PackVendorSigning {
+  signed: boolean;
+  keyId?: string;
+  publisher?: string;
+  /** Component keys ('form:<id>' / 'app:<id>') whose bytes match the vendor signature. */
+  verified?: string[];
+  /** Component keys present but NOT matching (edited after signing). */
+  modified?: string[];
 }
 
 interface PackDescribeResult {
   /** official | verified | local-only | community | unverified — computed server-side, never trusted from a client. */
   trust: string;
   capabilities: PackCapabilitySummary;
+  /** APP-502: embedded vendor-signing verdict (absent from older servers). */
+  vendorSigning?: PackVendorSigning;
 }
 
 /** Result of importing a full Application Package (archive or signed envelope) — importPack + a trust stamp. */

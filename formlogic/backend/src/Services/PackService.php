@@ -36,12 +36,21 @@ class PackService
      * @param string $userId   Authenticated user importing the pack
      * @return array { installationId, forms: [{id, title}], apps: [{id, name}] }
      */
+    /**
+     * @param list<string>|null $approvedConnectorGrants APP-502: when non-null,
+     *   the ONLY connector.<id>.<command> grants that may become active — every
+     *   requested connector grant not in this set is stripped from BOTH carriers
+     *   (app customLogic permissions AND role connector grants) before persist.
+     *   null = no review (every requested grant is activated — backward compat).
+     *   Non-connector permissions always pass through.
+     */
     public function importPack(
         array $packData,
         string $userId,
         ?string $catalogId = null,
         ?string $versionId = null,
-        ?string $verifiedScreenTrust = null
+        ?string $verifiedScreenTrust = null,
+        ?array $approvedConnectorGrants = null
     ): array
     {
         // Validate structure
@@ -49,6 +58,20 @@ class PackService
 
         $createdFormIds = [];
         $createdAppIds = [];
+
+        // APP-502 grant review: normalize the approved-grant allow-list (null =
+        // no review). $withheldGrants accumulates every connector grant the pack
+        // requested but the importer did NOT approve, surfaced in the result.
+        $approvedSet = null;
+        if (is_array($approvedConnectorGrants)) {
+            $approvedSet = [];
+            foreach ($approvedConnectorGrants as $g) {
+                if (is_string($g) && $g !== '') {
+                    $approvedSet[$g] = true;
+                }
+            }
+        }
+        $withheldGrants = [];
 
         // Prevent duplicate imports of the same pack. A plain SELECT does not lock a
         // not-yet-existing row, so a named lock (per user+pack) serializes concurrent
@@ -172,7 +195,12 @@ class PackService
                     'customScreen' => $this->resolveCustomScreen($packApp['customScreen'] ?? null, $formIdMap),
                     // Sandboxed QuickJS app-logic bundle. References fields by their stable ids (not @pack:
                     // remapped) and is bounded by the client sandbox + permission model at runtime.
-                    'customLogic' => is_array($packApp['customLogic'] ?? null) ? $packApp['customLogic'] : null,
+                    // APP-502: unapproved connector grants are stripped here before persist.
+                    'customLogic' => $this->reviewCustomLogicGrants(
+                        is_array($packApp['customLogic'] ?? null) ? $packApp['customLogic'] : null,
+                        $approvedSet,
+                        $withheldGrants
+                    ),
                 ];
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
@@ -244,6 +272,22 @@ class PackService
                     }
                     if (!empty($permissions) && !$hasExecuteFlows) {
                         $permissions[] = ['formId' => null, 'permission' => \FormLogic\Constants\AppPermissions::EXECUTE_FLOWS];
+                    }
+
+                    // APP-502: strip unapproved connector grants from the role's
+                    // permission set — this feeds BOTH setRolePermissions and
+                    // setConnectorGrants, so a withheld grant persists in neither.
+                    if ($approvedSet !== null) {
+                        $kept = [];
+                        foreach ($permissions as $p) {
+                            $perm = (string) ($p['permission'] ?? '');
+                            if (!$this->isReviewableConnectorGrant($perm) || isset($approvedSet[$perm])) {
+                                $kept[] = $p;
+                            } else {
+                                $withheldGrants[$perm] = true;
+                            }
+                        }
+                        $permissions = $kept;
                     }
 
                     if (!empty($packRole['system'])) {
@@ -328,10 +372,15 @@ class PackService
             $this->mysql->commit();
             $this->releaseInstallLock($installLock);
 
+            $withheld = array_keys($withheldGrants);
+            sort($withheld, SORT_STRING);
             return [
                 'installationId' => $installationId,
                 'forms' => $formSummary,
                 'apps' => $appSummary,
+                // APP-502: connector grants the pack requested that the importer
+                // did not approve (empty when no review ran / all approved).
+                'withheldGrants' => $withheld,
             ];
 
         } catch (\Exception $e) {
@@ -2281,6 +2330,126 @@ class PackService
             'keyId' => $signing['keyId'],
             'component' => $componentKey,
         ]];
+    }
+
+    /**
+     * APP-502: filter an app customLogic bundle so only APPROVED connector
+     * grants survive (bundle-level + per-script permissions). Non-connector
+     * permissions and the scripts themselves are untouched — permissions are a
+     * pure grant declaration scripts never reference, so a withheld grant just
+     * denies that effect/command at runtime. $approvedSet null = no review.
+     *
+     * @param array<string,mixed>|null $customLogic
+     * @param array<string,bool>|null  $approvedSet  perm-string => true
+     * @param array<string,bool>       $withheld     accumulator (by reference)
+     * @return array<string,mixed>|null
+     */
+    private function reviewCustomLogicGrants(?array $customLogic, ?array $approvedSet, array &$withheld): ?array
+    {
+        if ($customLogic === null || $approvedSet === null) {
+            return $customLogic;
+        }
+        if (isset($customLogic['permissions']) && is_array($customLogic['permissions'])) {
+            $customLogic['permissions'] = $this->filterGrantList($customLogic['permissions'], $approvedSet, $withheld);
+        }
+        if (isset($customLogic['scripts']) && is_array($customLogic['scripts'])) {
+            foreach ($customLogic['scripts'] as &$script) {
+                if (is_array($script) && isset($script['permissions']) && is_array($script['permissions'])) {
+                    $script['permissions'] = $this->filterGrantList($script['permissions'], $approvedSet, $withheld);
+                }
+            }
+            unset($script);
+        }
+        return $customLogic;
+    }
+
+    /**
+     * Keep every non-connector permission and every connector grant present in
+     * $approvedSet; drop the rest (recording them in $withheld). Non-string
+     * entries pass through untouched (the sanitizer owns their validation).
+     *
+     * @param array<int,mixed>   $perms
+     * @param array<string,bool> $approvedSet
+     * @param array<string,bool> $withheld
+     * @return list<mixed>
+     */
+    private function filterGrantList(array $perms, array $approvedSet, array &$withheld): array
+    {
+        $out = [];
+        foreach ($perms as $p) {
+            // Strip (withhold) a reviewable connector grant that was not
+            // approved; keep everything else (non-connector perms, non-strings,
+            // and approved grants). The is_string checks here narrow $p to a
+            // string for the $withheld key.
+            if (is_string($p) && $this->isReviewableConnectorGrant($p) && !isset($approvedSet[$p])) {
+                $withheld[$p] = true;
+            } else {
+                $out[] = $p;
+            }
+        }
+        return array_values($out);
+    }
+
+    /**
+     * A reviewable connector grant for APP-502: ANY 'connector.'-prefixed
+     * string. Deliberately looser than AppPermissions::isConnectorGrant (which
+     * VALIDATES what may persist as a role grant): the runtime client gate
+     * honors wildcard grants like 'connector.*' as covering every command, and
+     * the review UI presents every 'connector.'-prefixed permission as
+     * declinable — so the strip filter must govern that same set, or a declined
+     * wildcard/malformed grant would survive (review 2026-07-17).
+     */
+    private function isReviewableConnectorGrant(mixed $p): bool
+    {
+        return is_string($p) && strncmp($p, 'connector.', 10) === 0;
+    }
+
+    /**
+     * APP-502 describe support: the embedded vendor-signing verdict for the
+     * install review UI — whether the pack is vendor-signed by a PINNED
+     * publisher, and which screen components verify vs. read as modified. Pure
+     * (no writes); mirrors the per-component judgement importPack applies.
+     *
+     * @param array<string,mixed> $packData
+     * @return array{signed:bool,keyId?:string,publisher?:string,verified?:list<string>,modified?:list<string>}
+     */
+    public function describeSigning(array $packData): array
+    {
+        $signing = $this->verifyPackSigning($packData);
+        if ($signing === null) {
+            return ['signed' => false];
+        }
+        $verified = [];
+        $modified = [];
+        $classify = function (string $key, $screen) use ($signing, &$verified, &$modified): void {
+            if (!is_array($screen) || $screen === []) {
+                return;
+            }
+            $expected = $signing['digests'][$key] ?? null;
+            if ($expected === null) {
+                // Not covered by the vendor signature — no vendor claim either
+                // way (matches componentScreenTrust: base trust unchanged).
+                return;
+            }
+            if (hash_equals($expected, $this->customScreenDigest($screen))) {
+                $verified[] = $key;
+            } else {
+                $modified[] = $key;
+            }
+        };
+        foreach ($packData['forms'] ?? [] as $form) {
+            $classify('form:' . (string) ($form['packFormId'] ?? ''), $form['customScreen'] ?? null);
+        }
+        foreach ($packData['apps'] ?? [] as $app) {
+            $classify('app:' . (string) ($app['packAppId'] ?? ''), $app['customScreen'] ?? null);
+        }
+        return [
+            'signed' => true,
+            'keyId' => $signing['keyId'],
+            'publisher' => $signing['publisher'],
+            'verified' => $verified,
+            'modified' => $modified,
+        ];
     }
 
     /**

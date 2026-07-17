@@ -42,6 +42,8 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   // Pre-install capability review: the downloaded pack + its server-computed trust/capabilities,
   // held so the user can review what will be installed BEFORE committing.
   const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null } | null>(null);
+  // APP-502: the connector grants the user has ticked to approve in the review.
+  const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
 
   // Ratings
   const [ratings, setRatings] = useState<PackRatingEntry[]>([]);
@@ -126,16 +128,19 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   }, [slug]);
 
   // Import the already-downloaded pack (shared by the direct + consent-confirmed paths).
-  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string) => {
+  // `approvedConnectorGrants` is set ONLY from the review panel (undefined = no review = all grants).
+  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants?: string[]) => {
     setInstalling(true);
     try {
-      const importResult = await api.importPack(dl, { catalogId, versionId });
+      const importResult = await api.importPack(dl, { catalogId, versionId, approvedConnectorGrants });
       if (importResult.data) {
         setInstalled(true);
         setConsent(null);
+        const withheld = importResult.data.withheldGrants ?? [];
         toast.success(
           'Pack installed',
           `Imported ${importResult.data.forms.length} form(s) and ${importResult.data.apps.length} app(s).`
+            + (withheld.length > 0 ? ` ${withheld.length} connector grant(s) were not approved.` : '')
         );
         await Promise.all([refreshForms(), fetchApps()]);
         onInstalled?.();
@@ -168,6 +173,11 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
       const needsReview = packHasCodeScreen(dl) || packHasLogicScript(dl)
         || (!!caps && (caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic));
       if (needsReview) {
+        // Default: every REVIEWABLE connector grant pre-approved (the user
+        // unticks to reduce). The reviewable set is the server's connectorGrants
+        // — exactly what import can strip — not flow-declared connector access.
+        const grants = caps?.connectorGrants ?? (caps?.permissions ?? []).filter((p) => p.startsWith('connector.'));
+        setApprovedGrants(new Set(grants));
         setConsent({ dl, catalogId: dlResult.data.catalogId, versionId: dlResult.data.versionId, review });
         setInstalling(false); // wait for the user to confirm from the panel
         return;
@@ -302,13 +312,43 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
             <ShieldAlert className="h-4 w-4 flex-shrink-0 mt-0.5" />
             <span>Review what this package can do before installing. {(packHasCodeScreen(consent.dl) || packHasLogicScript(consent.dl)) && 'It includes code (custom screens and/or backend scripts) that runs with access to data you are permitted to see.'}</span>
           </div>
-          {consent.review && (
-            <CapabilityReview caps={consent.review.capabilities} trust={consent.review.trust} />
-          )}
+          {consent.review && (() => {
+            const connectorGrants = consent.review.capabilities.connectorGrants
+              ?? consent.review.capabilities.permissions.filter((p) => p.startsWith('connector.'));
+            return (
+              <CapabilityReview
+                caps={consent.review.capabilities}
+                trust={consent.review.trust}
+                vendorSigning={consent.review.vendorSigning}
+                selectedGrants={connectorGrants.length > 0 ? approvedGrants : undefined}
+                onToggleGrant={connectorGrants.length > 0 ? (grant, next) => {
+                  setApprovedGrants((prev) => {
+                    const nextSet = new Set(prev);
+                    if (next) nextSet.add(grant); else nextSet.delete(grant);
+                    return nextSet;
+                  });
+                } : undefined}
+              />
+            );
+          })()}
           <div className="flex items-center gap-2">
-            <Button variant="primary" size="sm" onClick={() => doImport(consent.dl, consent.catalogId, consent.versionId)} isLoading={installing}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                const connectorGrants = consent.review?.capabilities.connectorGrants
+                  ?? (consent.review?.capabilities.permissions ?? []).filter((p) => p.startsWith('connector.'));
+                doImport(
+                  consent.dl,
+                  consent.catalogId,
+                  consent.versionId,
+                  connectorGrants.length > 0 ? [...approvedGrants] : undefined,
+                );
+              }}
+              isLoading={installing}
+            >
               {!installing && <Package className="h-4 w-4 mr-1.5" />}
-              {installing ? 'Installing...' : 'Install anyway'}
+              {installing ? 'Installing...' : 'Install'}
             </Button>
             <Button variant="outline" size="sm" onClick={() => setConsent(null)} disabled={installing}>Cancel</Button>
           </div>
