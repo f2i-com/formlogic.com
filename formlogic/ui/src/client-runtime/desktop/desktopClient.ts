@@ -164,6 +164,31 @@ export interface DesktopServiceSnapshot {
   node?: DesktopServiceNodeSpec | null;
 }
 
+/**
+ * One row of GET /api/ai/sources (SRC-202) — the union of everything a
+ * model/voice lane picker can point at: local service instances (live status,
+ * port, configured model) and configured AI providers (key/capability state,
+ * never secrets). `id` is already prefixed (`service:<id>` / `provider:<id>`).
+ */
+export interface DesktopAiSource {
+  id: string;
+  kind: 'service' | 'provider';
+  serviceId?: string;
+  providerId?: string;
+  name?: string;
+  category?: string;
+  status?: string;
+  installed?: boolean;
+  port?: number;
+  url?: string;
+  model?: string | null;
+  /** NOTE: an EMPTY provider capability set means "all" (legacy profiles). */
+  capabilities?: string[];
+  protocol?: string;
+  hasKey?: boolean;
+  enabled?: boolean;
+}
+
 // ── Connector capabilities (audit SEC-001/C-08) ─────────────────────────────
 // A LINKED desktop refuses browser connector commands without a server-minted,
 // role-derived capability, so origin pairing alone no longer authorises the
@@ -247,6 +272,13 @@ export const desktopClient = {
     /** GET /api/services — local AI/tool services managed by Desktop ({services:[...], dataDir}). */
     list(): Promise<DesktopClientResult<DesktopServiceSnapshot[]>> {
       return desktopFetch<unknown>('/api/services').then((r) => mapList<DesktopServiceSnapshot>(r, 'services'));
+    },
+  },
+
+  ai: {
+    /** GET /api/ai/sources — union of service instances + AI providers ({sources:[...]}, SRC-202). */
+    sources(): Promise<DesktopClientResult<DesktopAiSource[]>> {
+      return desktopFetch<unknown>('/api/ai/sources').then((r) => mapList<DesktopAiSource>(r, 'sources'));
     },
   },
 

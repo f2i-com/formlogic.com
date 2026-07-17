@@ -8,59 +8,33 @@
 // a "Save & apply now" that pushes the exact same settings.set payload the
 // Configure Receptionist flow sends on every incoming call. So the answer to
 // "is the bot using my settings?" is always on screen, not a matter of faith.
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageSquareText, Mic, RefreshCw, Save, Settings2, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageSquareText, Mic, Plug, RefreshCw, Save, Settings2, Sparkles } from 'lucide-react';
 import { useConnector, useConnectorPermission, useResponses } from '../../../sdk';
 import { toast } from '../../../stores/toastStore';
 import { api } from '../../../lib/api';
 import { useAppRuntimeStore } from '../../../stores/appRuntimeStore';
 import { performRelayCommand } from './aokieRelay';
 import { useAokiePresence } from './useAokiePresence';
-import { DEFAULT_PERSONA } from '../../../data/packs/aokieReceptionistPack';
-import { listDesktopServices } from '../../../client-runtime/flows/desktopService';
+import {
+  listAiSources,
+  listDesktopServices,
+  type AiSourceListing,
+} from '../../../client-runtime/flows/desktopService';
+// Payload composition lives in receptionistPayload.ts (no React/SDK imports)
+// so the pack contract test can pin the console↔flow mirror byte-for-byte.
+import { buildAgentPayload, EMPTY_DRAFT, type Draft, type SourceService } from './receptionistPayload';
+import {
+  parseTtsVoiceCatalog,
+  VoiceEngineSection,
+  type TtsCatalogEngine,
+} from './receptionistVoice';
 
 const card = 'bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60';
 const inputCls =
   'w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800/60 dark:text-white dark:placeholder:text-slate-500';
 const labelCls = 'mb-1 block text-xs font-medium text-gray-600 dark:text-slate-300';
 const hintCls = 'mt-1 text-[11px] leading-snug text-gray-400 dark:text-slate-500';
-
-/** The pack's voice options (pocket-tts voices shipped with Aokie Voice). */
-const VOICES = ['', 'alba', 'cosette', 'eponine', 'fantine', 'javert', 'jean', 'marius'];
-
-interface Draft {
-  business_name: string;
-  instructions: string;
-  business_info: string;
-  greeting: string;
-  model: string;
-  llm_endpoint: string;
-  stt_endpoint: string;
-  tts_endpoint: string;
-  llm_source: string;
-  stt_source: string;
-  tts_source: string;
-  voice: string;
-  reply_mode: string;
-  active: string;
-}
-
-const EMPTY_DRAFT: Draft = {
-  business_name: '',
-  instructions: '',
-  business_info: '',
-  greeting: '',
-  model: '',
-  llm_endpoint: '',
-  stt_endpoint: '',
-  tts_endpoint: '',
-  llm_source: '',
-  stt_source: '',
-  tts_source: '',
-  voice: '',
-  reply_mode: 'agent',
-  active: 'yes',
-};
 
 function draftFromAnswers(a: Record<string, unknown>): Draft {
   const s = (k: string) => (typeof a[k] === 'string' ? (a[k] as string) : '');
@@ -82,86 +56,6 @@ function draftFromAnswers(a: Record<string, unknown>): Draft {
   };
 }
 
-/** The lane shape buildAgentPayload resolves `service:<id>` picks against —
- *  the flow node's listing (id + loopback url while running). */
-export interface SourceService {
-  id: string;
-  name: string;
-  category: string;
-  status: string;
-  url: string;
-}
-
-/**
- * Resolve one lane's endpoint — the SAME rule as the pack flow's laneUrl
- * (FLOW_AGENT_CONFIG): 'service:<id>' → the running service's URL + the
- * lane's conventional path ('' while stopped — the plugin falls back to its
- * default); blank/'custom' → the legacy custom-endpoint field. `undefined`
- * services (no Desktop list available, e.g. a remote console) → undefined:
- * the caller OMITS the key and lets the per-call flow (which can resolve)
- * own it.
- */
-function laneUrl(
-  source: string,
-  custom: string,
-  path: string,
-  services: SourceService[] | undefined,
-): string | undefined {
-  const src = source.trim();
-  const url = custom.trim();
-  if (!src || src === 'custom') return url;
-  if (src.startsWith('service:')) {
-    if (!services) return undefined;
-    const sid = src.slice(8);
-    const svc = services.find((x) => x.id === sid && x.url);
-    return svc ? svc.url + path : '';
-  }
-  return url;
-}
-
-/**
- * The settings.set payload for a draft — the SAME composition rule as the
- * pack's Configure Receptionist flow (FLOW_AGENT_CONFIG), so "apply now" and
- * the per-call flow can never disagree about what the bot should run.
- */
-// Kept exported for the contract test that pins the UI and pack-flow payloads together.
-// eslint-disable-next-line react-refresh/only-export-components
-export function buildAgentPayload(d: Draft, services?: SourceService[]): Record<string, unknown> {
-  let persona = d.instructions.trim() || DEFAULT_PERSONA;
-  const business = d.business_name.trim();
-  if (business) persona = `You are the phone receptionist for ${business}.\n` + persona;
-  // BUSINESS INFO grounding — SAME composition as the pack flows
-  // (BUSINESS_INFO_BLOCK_JS in aokieReceptionistPack.ts); keep in lock-step.
-  const info = d.business_info.trim().slice(0, 4000);
-  if (info) {
-    persona +=
-      '\n\nBUSINESS INFO - the ONLY facts about the business you may share:\n' + info +
-      '\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';
-  }
-  let greeting = d.greeting.trim();
-  if (!greeting) {
-    greeting = business
-      ? `Thank you for calling ${business}! How can I help you today?`
-      : 'Thanks for calling! How can I help you today?';
-  }
-  const payload: Record<string, unknown> = {
-    persona,
-    greeting,
-    ttsVoice: d.voice.trim(),
-    aiModel: d.model.trim(),
-    aiEndpoint: laneUrl(d.llm_source, d.llm_endpoint, '/v1/chat/completions', services),
-    sttEndpoint: laneUrl(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', services),
-    ttsEndpoint: laneUrl(d.tts_source, d.tts_endpoint, '/v1/audio/speech', services),
-    aiReceptionist: d.reply_mode !== 'flow',
-  };
-  // An unresolvable service pick (no Desktop list here — remote console)
-  // omits its key: the per-call Configure flow resolves it on the desktop.
-  for (const k of ['aiEndpoint', 'sttEndpoint', 'ttsEndpoint']) {
-    if (payload[k] === undefined) delete payload[k];
-  }
-  return payload;
-}
-
 interface RunningConfig {
   greeting?: string;
   persona?: string;
@@ -171,35 +65,96 @@ interface RunningConfig {
   configVersion?: number;
 }
 
+// ── Connected services: per-lane source options (CON-303 / SRC-203) ──────────
+type LaneKind = 'llm' | 'stt' | 'tts';
+
+/** The capability tag each lane needs (matches the desktop's /api/ai/sources tags). */
+const LANE_CAPABILITY: Record<LaneKind, string> = {
+  llm: 'chat',
+  stt: 'transcription',
+  tts: 'speech',
+};
+
+/** The Aokie speech services that act as each lane's DEFAULT when present. */
+const LANE_AOKIE_DEFAULT: Partial<Record<LaneKind, string>> = {
+  stt: 'aokie-stt',
+  tts: 'aokie-tts',
+};
+
+interface LaneOption {
+  value: string;
+  label: string;
+}
+
 /**
- * One lane's source picker (CON-303): Automatic / a FormLogic Desktop service
- * (resolved to its live URL per call) / Custom URL. A saved `service:` pick
- * that isn't in the current listing (desktop away, service removed) stays
- * selectable so the record never silently changes just by opening the page.
+ * Option list for one lane's select, ordered: the Aokie default service first
+ * (STT/TTS lanes), then capability-matching desktop services (running or
+ * stopped — a stopped pick still resolves per call once started), then — LLM
+ * lane only — configured AI providers (routed through the desktop AI gateway),
+ * then Custom URL…, then the plugin's built-in fallback ('').
+ */
+function laneOptionsFor(lane: LaneKind, sources: AiSourceListing[] | null): LaneOption[] {
+  const cap = LANE_CAPABILITY[lane];
+  const defaultId = LANE_AOKIE_DEFAULT[lane];
+  const all = sources ?? [];
+  const services = all.filter((s) => s.kind === 'service' && s.capabilities.includes(cap));
+  const options: LaneOption[] = [];
+  const withStatus = (s: AiSourceListing) => (s.status === 'running' ? '' : ` (${s.status})`);
+  const def = defaultId ? services.find((s) => s.refId === defaultId) : undefined;
+  if (def) options.push({ value: def.id, label: `Aokie default — ${def.name}${withStatus(def)}` });
+  for (const s of services) {
+    if (def && s.refId === def.refId) continue;
+    options.push({ value: s.id, label: `This computer: ${s.name}${withStatus(s)}` });
+  }
+  if (lane === 'llm') {
+    // Providers: capability 'chat' or EMPTY = unrestricted ("all", legacy profiles).
+    for (const p of all) {
+      if (p.kind !== 'provider' || !p.enabled) continue;
+      if (p.capabilities.length > 0 && !p.capabilities.includes('chat')) continue;
+      options.push({ value: p.id, label: `Provider: ${p.name}` });
+    }
+  }
+  options.push({ value: 'custom', label: 'Custom URL…' });
+  options.push({ value: '', label: 'Built-in (plugin fallback)' });
+  return options;
+}
+
+/**
+ * One lane's source picker (CON-303): the Aokie default / a FormLogic Desktop
+ * service (resolved to its live URL per call) / an AI provider via the desktop
+ * gateway (LLM lane) / Custom URL / the plugin's built-in fallback. A saved
+ * `service:`/`provider:` pick that isn't in the current listing (desktop away,
+ * service removed) stays selectable so the record never silently changes just
+ * by opening the page.
  */
 function SourceLane({
   label,
+  hint,
   idPrefix,
+  lane,
   source,
   endpoint,
-  services,
-  listed,
+  sources,
   placeholder,
   onSource,
   onEndpoint,
 }: {
   label: string;
+  hint?: string;
   idPrefix: string;
+  lane: LaneKind;
   source: string;
   endpoint: string;
-  services: SourceService[];
-  listed: boolean;
+  sources: AiSourceListing[] | null;
   placeholder: string;
   onSource: (v: string) => void;
   onEndpoint: (v: string) => void;
 }) {
-  const savedServiceId = source.startsWith('service:') ? source.slice(8) : null;
-  const savedMissing = savedServiceId !== null && !services.some((s) => s.id === savedServiceId);
+  const listed = sources !== null;
+  const options = laneOptionsFor(lane, sources);
+  const savedMissing =
+    (source.startsWith('service:') || source.startsWith('provider:')) &&
+    !options.some((o) => o.value === source);
   const showUrl = source === 'custom' || (source === '' && endpoint.trim() !== '');
   return (
     <div>
@@ -210,24 +165,22 @@ function SourceLane({
         onChange={(e) => onSource(e.target.value)}
         className={inputCls + ' cursor-pointer'}
       >
-        <option value="">Automatic (plugin default{endpoint.trim() ? ' — custom URL below wins' : ''})</option>
-        {services.map((s) => (
-          <option key={s.id} value={`service:${s.id}`}>
-            This computer: {s.name}
-            {s.status === 'running' ? '' : ` (${s.status})`}
-          </option>
-        ))}
         {savedMissing && (
           <option value={source}>
-            Desktop service: {savedServiceId}
+            {source.startsWith('provider:') ? 'AI provider' : 'Desktop service'}: {source.replace(/^(service|provider):/, '')}
             {listed ? ' (not found)' : ' (saved)'}
           </option>
         )}
-        <option value="custom">Custom URL…</option>
+        {options.map((o) => (
+          <option key={o.value || 'builtin'} value={o.value}>
+            {o.value === '' && endpoint.trim() && source === '' ? `${o.label} — custom URL set below wins` : o.label}
+          </option>
+        ))}
       </select>
       {savedMissing && listed && (
         <p className={hintCls}>
-          This service isn't on the connected desktop — calls fall back to the plugin default until it exists again.
+          This {source.startsWith('provider:') ? 'provider' : 'service'} isn't on the connected desktop — calls fall
+          back to the plugin default until it exists again.
         </p>
       )}
       {showUrl && (
@@ -240,6 +193,7 @@ function SourceLane({
           className={inputCls + ' mt-2 font-mono text-xs'}
         />
       )}
+      {hint && <p className={hintCls}>{hint}</p>}
     </div>
   );
 }
@@ -360,8 +314,12 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               loaded: true,
               engine: typeof settings.ttsEngine === 'string' ? settings.ttsEngine : '',
               modelDir: typeof settings.ttsModelDir === 'string' ? settings.ttsModelDir : '',
+              customDir: false,
             }
       );
+      // ttsVoiceCatalog: what's actually installed on the desktop (whole-object
+      // gets only; absent on older plugins → the pickers degrade to hardcoded).
+      setVoiceCatalog(parseTtsVoiceCatalog(res.ttsVoiceCatalog));
       setRunning({
         greeting: typeof settings.greeting === 'string' ? settings.greeting : undefined,
         persona: typeof settings.persona === 'string' ? settings.persona : undefined,
@@ -398,39 +356,93 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     }
   }, [formId, draft, recordId, updateResponse, createResponse, records]);
 
-  // ── Desktop services for the source pickers ──
-  // The same listing the per-call flow's `desktop_services` node reads, so the
-  // picker and the flow resolve identically. null = no local Desktop listing
-  // here (remote console / demo / unpaired): pickers still save source ids —
-  // resolution then happens per call on the desktop runner.
-  const [sources, setSources] = useState<SourceService[] | null>(null);
+  // ── AI sources for the Connected-services pickers ──
+  // GET /api/ai/sources: the union of desktop services (capability-tagged) and
+  // configured AI providers — the SAME listing the per-call flow's
+  // `desktop_services` node resolves service: picks against, so the picker and
+  // the flow agree. Older desktops without the route degrade to the plain
+  // /api/services list with category-derived capabilities (the desktop's own
+  // fallback rule). null = no local Desktop listing here (remote console /
+  // demo / unpaired): pickers still save source ids — resolution then happens
+  // per call on the desktop runner.
+  const [aiSources, setAiSources] = useState<AiSourceListing[] | null>(null);
   useEffect(() => {
     let alive = true;
-    listDesktopServices()
-      .then((list) => {
-        if (alive) setSources(list.length > 0 ? list : null);
-      })
-      .catch(() => {
-        /* unavailable — pickers fall back to saved ids */
-      });
+    (async () => {
+      let list = await listAiSources().catch(() => [] as AiSourceListing[]);
+      if (list.length === 0) {
+        // Pre-SRC-202 desktop: derive capabilities from the service category,
+        // mirroring the desktop's service_source_capabilities() defaults.
+        const svcs = await listDesktopServices().catch(() => []);
+        list = svcs.map((s) => {
+          const c = s.category.toLowerCase();
+          const capabilities = c.includes('llm')
+            ? ['chat']
+            : c.includes('speech') || c.includes('voice')
+              ? ['transcription', 'speech']
+              : c.includes('image')
+                ? ['image']
+                : [];
+          return {
+            id: `service:${s.id}`,
+            kind: 'service' as const,
+            refId: s.id,
+            name: s.name,
+            category: s.category,
+            status: s.status,
+            capabilities,
+            url: s.url,
+            model: '',
+            enabled: true,
+          };
+        });
+      }
+      if (alive) setAiSources(list.length > 0 ? list : null);
+    })().catch(() => {
+      /* unavailable — pickers fall back to saved ids */
+    });
     return () => {
       alive = false;
     };
   }, []);
-  const laneServices = useCallback(
-    (want: 'chat' | 'speech') =>
-      (sources ?? []).filter((s) => {
-        const c = s.category.toLowerCase();
-        return want === 'chat' ? c.includes('llm') : c.includes('speech') || c.includes('voice');
-      }),
-    [sources],
+  // The service-shaped subset buildAgentPayload resolves `service:` picks
+  // against (same shape the flow's desktop_services node yields).
+  const sources: SourceService[] | null = useMemo(
+    () =>
+      aiSources === null
+        ? null
+        : aiSources
+            .filter((s) => s.kind === 'service')
+            .map((s) => ({ id: s.refId, name: s.name, category: s.category, status: s.status, url: s.url })),
+    [aiSources],
   );
+
+  // ── Aokie speech defaults (SRC-203): a record with NO stt/tts source saved
+  // (new records, or blank) defaults its select to the Aokie speech services
+  // when this desktop has them — and Saving writes that pick explicitly. A
+  // blank source WITH a legacy custom URL keeps its meaning (the URL wins), so
+  // it is never overridden. LLM lane keeps '' (the plugin's own aiEndpoint).
+  const speechDefaultsApplied = useRef(false);
+  useEffect(() => {
+    if (speechDefaultsApplied.current || draft === null || aiSources === null) return;
+    speechDefaultsApplied.current = true;
+    const hasSvc = (sid: string) => aiSources.some((s) => s.kind === 'service' && s.refId === sid);
+    setDraft((d) => {
+      if (!d) return d;
+      const patch: Partial<Draft> = {};
+      if (!d.stt_source.trim() && !d.stt_endpoint.trim() && hasSvc('aokie-stt')) patch.stt_source = 'service:aokie-stt';
+      if (!d.tts_source.trim() && !d.tts_endpoint.trim() && hasSvc('aokie-tts')) patch.tts_source = 'service:aokie-tts';
+      return Object.keys(patch).length > 0 ? { ...d, ...patch } : d;
+    });
+  }, [draft, aiSources]);
 
   // ── Speech engine (plugin settings — which in-process TTS speaks) ──
   // ttsEngine: '' / 'pocket' = Pocket-TTS; 'sherpa' = sherpa-onnx running a
   // Piper/VITS (or Kokoro) voice bundle from ttsModelDir. Applies LIVE (the
-  // plugin reloads its synth engine on save).
-  const [engineCfg, setEngineCfg] = useState({ loaded: false, engine: '', modelDir: '' });
+  // plugin reloads its synth engine on save). voiceCatalog = the plugin's
+  // reported on-disk voice inventory (null on older plugins / read failure).
+  const [engineCfg, setEngineCfg] = useState({ loaded: false, engine: '', modelDir: '', customDir: false });
+  const [voiceCatalog, setVoiceCatalog] = useState<TtsCatalogEngine[] | null>(null);
   const [savingEngine, setSavingEngine] = useState(false);
   const handleSaveEngine = useCallback(async () => {
     setSavingEngine(true);
@@ -845,15 +857,20 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           <Mic className="h-4 w-4 text-gray-400 dark:text-slate-500" />
           <h2 className="text-sm font-medium text-gray-900 dark:text-white">Voice &amp; replies</h2>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label className={labelCls} htmlFor="rs-voice">Voice</label>
-            <select id="rs-voice" value={draft.voice} onChange={(e) => set({ voice: e.target.value })} className={inputCls + ' cursor-pointer'}>
-              {VOICES.map((v) => (
-                <option key={v || 'default'} value={v}>{v === '' ? 'Default' : v.charAt(0).toUpperCase() + v.slice(1)}</option>
-              ))}
-            </select>
-          </div>
+        {/* ── Engine-first voice selection: the speech engine (a live plugin
+            setting) leads; the voice control below it adapts — pocket voices
+            from the catalog, sherpa voice bundles, kokoro speaker id. ── */}
+        <VoiceEngineSection
+          engineCfg={engineCfg}
+          onEngineCfg={(patch) => setEngineCfg((p) => ({ ...p, ...patch }))}
+          voice={draft.voice}
+          onVoice={(v) => set({ voice: v })}
+          catalog={voiceCatalog}
+          canManageEngine={can('settings.set')}
+          savingEngine={savingEngine}
+          onSaveEngine={() => void handleSaveEngine()}
+        />
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-gray-100 pt-4 dark:border-slate-800 sm:grid-cols-2">
           <div>
             <label className={labelCls} htmlFor="rs-active">Active</label>
             <select id="rs-active" value={draft.active} onChange={(e) => set({ active: e.target.value })} className={inputCls + ' cursor-pointer'}>
@@ -873,60 +890,57 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
             </p>
           </div>
         </div>
-        {/* ── Speech engine (plugin setting, not part of the persona record) ── */}
-        {can('settings.set') && (
-          <div className="mt-4 border-t border-gray-100 pt-4 dark:border-slate-800">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
-              Speech engine
-            </h3>
-            <p className={hintCls}>
-              Which on-device engine speaks. Sherpa (Piper voices) synthesises many times faster than
-              Pocket-TTS; the Voice picker above applies to Pocket-TTS only — Sherpa voices come from the
-              voice-model folder. Saving applies immediately.
-            </p>
-            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className={labelCls} htmlFor="rs-ttsengine">Engine</label>
-                <select
-                  id="rs-ttsengine"
-                  value={engineCfg.engine}
-                  onChange={(e) => setEngineCfg((p) => ({ ...p, engine: e.target.value }))}
-                  className={inputCls + ' cursor-pointer'}
-                >
-                  <option value="">Pocket-TTS (default)</option>
-                  <option value="sherpa">Sherpa — Piper/VITS voices (fast)</option>
-                </select>
-              </div>
-              {engineCfg.engine === 'sherpa' && (
-                <div>
-                  <label className={labelCls} htmlFor="rs-ttsmodeldir">Voice model folder (blank = auto)</label>
-                  <input
-                    id="rs-ttsmodeldir"
-                    value={engineCfg.modelDir}
-                    onChange={(e) => setEngineCfg((p) => ({ ...p, modelDir: e.target.value }))}
-                    className={inputCls}
-                    placeholder="blank = first voice under models\tts"
-                  />
-                  <p className={hintCls}>
-                    A sherpa voice bundle folder on the desktop machine (the voice's .onnx + tokens.txt,
-                    e.g. vits-piper-en_US-lessac-medium).
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={handleSaveEngine}
-                disabled={savingEngine || !engineCfg.loaded}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-              >
-                {savingEngine ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Save speech engine
-              </button>
-            </div>
-          </div>
-        )}
+      </div>
+
+      {/* ── Connected services (SRC-203): WHERE each lane runs ── */}
+      <div className={`${card} p-4 sm:p-5`}>
+        <div className="mb-3 flex items-center gap-2">
+          <Plug className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Connected services</h2>
+        </div>
+        <p className={hintCls + ' mb-3 mt-0'}>
+          Which engine answers, hears and speaks. Picks resolve to the service's live address on
+          every call — a port change heals itself; a stopped service falls back to the plugin's
+          built-in engine until it runs again. AI providers route through the desktop's AI gateway.
+          {aiSources === null &&
+            ' Connect FormLogic Desktop on this machine to pick services by name — saved picks still resolve per call on the desktop.'}
+        </p>
+        <div className="grid grid-cols-1 gap-3">
+          <SourceLane
+            label="Reply model (LLM)"
+            idPrefix="rs-llm"
+            lane="llm"
+            source={draft.llm_source}
+            endpoint={draft.llm_endpoint}
+            sources={aiSources}
+            placeholder="e.g. http://127.0.0.1:8080/v1/chat/completions"
+            onSource={(v) => set({ llm_source: v })}
+            onEndpoint={(v) => set({ llm_endpoint: v })}
+            hint="Built-in = the plugin's configured endpoint (auto-detects a local llama.cpp/Ollama)."
+          />
+          <SourceLane
+            label="Speech to text"
+            idPrefix="rs-stt"
+            lane="stt"
+            source={draft.stt_source}
+            endpoint={draft.stt_endpoint}
+            sources={aiSources}
+            placeholder="e.g. http://127.0.0.1:17921/v1/audio/transcriptions"
+            onSource={(v) => set({ stt_source: v })}
+            onEndpoint={(v) => set({ stt_endpoint: v })}
+          />
+          <SourceLane
+            label="Text to speech"
+            idPrefix="rs-tts"
+            lane="tts"
+            source={draft.tts_source}
+            endpoint={draft.tts_endpoint}
+            sources={aiSources}
+            placeholder="e.g. http://127.0.0.1:17922/v1/audio/speech"
+            onSource={(v) => set({ tts_source: v })}
+            onEndpoint={(v) => set({ tts_endpoint: v })}
+          />
+        </div>
       </div>
 
       {/* ── Audio understanding (plugin-level; needs an audio-capable model) ── */}
@@ -1331,50 +1345,47 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         {showAdvanced && (
           <div className="mt-3 grid grid-cols-1 gap-3">
             <p className={hintCls}>
-              Each lane picks WHERE it runs: Automatic uses the plugin's default (with the custom URL
-              below winning when set); a FormLogic Desktop service resolves to that service's live
-              address on every call — so a port change heals itself; Custom URL uses your address
-              verbatim.
-              {sources === null &&
-                ' Connect FormLogic Desktop on this machine to pick services by name — saved picks still resolve per call on the desktop.'}
+              The raw AI plumbing behind the Connected services card above. The custom URL fields are
+              used when a lane is set to Custom URL… (or left on Built-in with a URL entered — the
+              legacy behaviour, where the URL wins).
             </p>
-            <SourceLane
-              label="Answers (LLM)"
-              idPrefix="rs-llm"
-              source={draft.llm_source}
-              endpoint={draft.llm_endpoint}
-              services={laneServices('chat')}
-              listed={sources !== null}
-              placeholder="e.g. http://127.0.0.1:8080/v1/chat/completions"
-              onSource={(v) => set({ llm_source: v })}
-              onEndpoint={(v) => set({ llm_endpoint: v })}
-            />
             <div>
               <label className={labelCls} htmlFor="rs-model">LLM model</label>
               <input id="rs-model" type="text" value={draft.model} onChange={(e) => set({ model: e.target.value })} placeholder="e.g. llama3.1:8b (blank = auto)" className={inputCls} />
             </div>
-            <SourceLane
-              label="Speech-to-text"
-              idPrefix="rs-stt"
-              source={draft.stt_source}
-              endpoint={draft.stt_endpoint}
-              services={laneServices('speech')}
-              listed={sources !== null}
-              placeholder="e.g. http://127.0.0.1:17920/v1/audio/transcriptions"
-              onSource={(v) => set({ stt_source: v })}
-              onEndpoint={(v) => set({ stt_endpoint: v })}
-            />
-            <SourceLane
-              label="Text-to-speech"
-              idPrefix="rs-tts"
-              source={draft.tts_source}
-              endpoint={draft.tts_endpoint}
-              services={laneServices('speech')}
-              listed={sources !== null}
-              placeholder="e.g. http://127.0.0.1:17920/v1/audio/speech"
-              onSource={(v) => set({ tts_source: v })}
-              onEndpoint={(v) => set({ tts_endpoint: v })}
-            />
+            <div>
+              <label className={labelCls} htmlFor="rs-llm-url">Custom LLM endpoint URL</label>
+              <input
+                id="rs-llm-url"
+                type="text"
+                value={draft.llm_endpoint}
+                onChange={(e) => set({ llm_endpoint: e.target.value })}
+                placeholder="e.g. http://127.0.0.1:8080/v1/chat/completions"
+                className={inputCls + ' font-mono text-xs'}
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="rs-stt-url">Custom speech-to-text URL</label>
+              <input
+                id="rs-stt-url"
+                type="text"
+                value={draft.stt_endpoint}
+                onChange={(e) => set({ stt_endpoint: e.target.value })}
+                placeholder="e.g. http://127.0.0.1:17921/v1/audio/transcriptions"
+                className={inputCls + ' font-mono text-xs'}
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="rs-tts-url">Custom text-to-speech URL</label>
+              <input
+                id="rs-tts-url"
+                type="text"
+                value={draft.tts_endpoint}
+                onChange={(e) => set({ tts_endpoint: e.target.value })}
+                placeholder="e.g. http://127.0.0.1:17922/v1/audio/speech"
+                className={inputCls + ' font-mono text-xs'}
+              />
+            </div>
           </div>
         )}
       </div>

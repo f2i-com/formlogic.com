@@ -1,0 +1,18 @@
+{
+  "id": "aokie-tts",
+  "name": "Aokie Text to Speech",
+  "description": "Dedicated text-to-speech service backed by the Aokie voice stack (aokie-voice-server.exe --mode tts) — synthesis only, exposed as an OpenAI-compatible HTTP endpoint (POST /v1/audio/speech) on a loopback port for FormLogic Flows' Speak text step and the receptionist's TTS source picker. The server binary ships with the Aokie plugin (aokie-voice-server.exe next to aokie-plugin.exe); install the Aokie plugin in the Plugins tab first. Default engine is pocket-tts ONNX; swap engines without editing this template via the card's Extra args — e.g. \"--tts-engine sherpa\" for fast Piper/VITS voices (or \"--tts-engine pocket\"), plus \"--tts-model-dir DIR\" pointing at a Piper/VITS voice folder (one .onnx + tokens.txt). The model loads lazily on first request (~200 MB RAM).",
+  "category": "Text-to-Speech",
+  "defaultPort": 17922,
+  "capabilities": ["speech"],
+  "run": {
+    "command": "${dataDir}/plugins/aokie/aokie-voice-server.exe",
+    "args": ["--mode", "tts", "--port", "${port}"],
+    "cwd": "${dataDir}/plugins/aokie"
+  },
+  "health": {
+    "url": "http://127.0.0.1:${port}/health",
+    "timeoutSecs": 10
+  },
+  "docsUrl": "https://github.com/f2i-com/aokie.com"
+}

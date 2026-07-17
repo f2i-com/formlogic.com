@@ -529,10 +529,18 @@ async fn list_ai_providers(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({ "providers": reg.list(), "aliases": reg.aliases() })).into_response()
 }
 
-/// Capability hint per service category — which AI lanes a local service can
-/// serve. Services with no AI capability (browser automation, …) are left out
-/// of the sources union entirely.
-fn service_source_capabilities(category: &str) -> Vec<&'static str> {
+/// Capability hint per service — which AI lanes a local service can serve.
+/// A template-DECLARED capability list (non-empty) is authoritative; else the
+/// legacy category-substring heuristic applies UNCHANGED (existing templates
+/// keep their exact behavior). The declared field exists precisely because the
+/// heuristic can't express split services: category "Speech-to-Text" contains
+/// "speech", so the heuristic would wrongly grant transcription + speech to an
+/// STT-only service. Services with no AI capability (browser automation, …)
+/// are left out of the sources union entirely.
+fn service_source_capabilities<'a>(declared: &'a [String], category: &str) -> Vec<&'a str> {
+    if !declared.is_empty() {
+        return declared.iter().map(String::as_str).collect();
+    }
     let c = category.to_ascii_lowercase();
     if c.contains("llm") {
         vec!["chat"]
@@ -563,7 +571,7 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
     };
     let mut sources: Vec<serde_json::Value> = Vec::new();
     for s in &snap.services {
-        let capabilities = service_source_capabilities(&s.category);
+        let capabilities = service_source_capabilities(&s.capabilities, &s.category);
         if capabilities.is_empty() {
             continue;
         }
@@ -769,10 +777,65 @@ async fn ai_chat_impl(state: &AppState, provider_id: Option<&str>, body: serde_j
     if let Some(obj) = body.as_object_mut() {
         obj.remove("provider");
     }
+    // AI-405: `stream:true` — proxy the upstream SSE bytes through
+    // incrementally when the provider's wire dialect is OpenAI-compatible;
+    // refuse honestly (never a mangled translation) when it isn't. The
+    // non-stream path below is byte-for-byte unchanged.
+    let wants_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    if wants_stream {
+        if !crate::ai::gateway::protocol_streamable(&provider) {
+            return desktop_err(
+                StatusCode::BAD_REQUEST,
+                "streaming_unsupported",
+                &format!(
+                    "provider {:?} ({:?} protocol) cannot stream — its responses need translation; retry without \"stream\": true",
+                    provider.id, provider.protocol
+                ),
+            );
+        }
+        return match crate::ai::gateway::chat_completions_stream(&state.ai_providers, &provider, body)
+            .await
+        {
+            Ok(upstream) => stream_passthrough_response(upstream),
+            Err(e) => ai_gateway_error(e),
+        };
+    }
     match crate::ai::gateway::chat_completions(&state.ai_providers, &provider, body).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => ai_gateway_error(e),
     }
+}
+
+/// Pipe an upstream streaming response (SSE chat completions) through to the
+/// client chunk-by-chunk — no buffering — keeping the upstream content type
+/// and enforcing the gateway's response-size cap on the way past (a runaway
+/// upstream terminates the stream instead of filling memory or disk).
+fn stream_passthrough_response(upstream: reqwest::Response) -> Response {
+    use futures_util::StreamExt;
+    let content_type = upstream
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/event-stream")
+        .to_string();
+    let mut total: u64 = 0;
+    let stream = upstream.bytes_stream().map(move |chunk| match chunk {
+        Ok(c) => {
+            total += c.len() as u64;
+            if total > crate::ai::gateway::MAX_RESPONSE_BYTES {
+                Err(std::io::Error::other("upstream stream exceeded the size cap"))
+            } else {
+                Ok(c)
+            }
+        }
+        Err(e) => Err(std::io::Error::other(format!("upstream read failed: {e}"))),
+    });
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .header(axum::http::header::CACHE_CONTROL, "no-cache")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap_or_else(|e| err500(&format!("stream response build failed: {e}")))
 }
 
 // ------- models -------
@@ -2550,6 +2613,28 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
     }
 }
 
+/// AI-405: the AI-gateway INFERENCE paths — the ONLY routes the per-install
+/// plugin gateway token (`FORMLOGIC_AI_GATEWAY_TOKEN`) unlocks:
+/// `/api/ai/v1/*` (default provider) and `/api/ai/providers/:id/v1/*`
+/// (named provider). Segment-matched, NOT substring-matched — a provider
+/// literally named `v1` must not drag `/api/ai/providers/v1/key` into the
+/// inference tier; provider config, key material and aliases stay
+/// management-plane only.
+fn is_ai_inference_path(path: &str) -> bool {
+    if let Some(rest) = path.strip_prefix("/api/ai/v1/") {
+        return !rest.is_empty();
+    }
+    if let Some(rest) = path.strip_prefix("/api/ai/providers/") {
+        // rest = "<id>/..." — the segment AFTER the id must be `v1`.
+        let mut segs = rest.splitn(2, '/');
+        let _id = segs.next();
+        if let Some(tail) = segs.next() {
+            return tail.starts_with("v1/") && tail.len() > 3;
+        }
+    }
+    false
+}
+
 /// The companion's OWN webview — the only browser-ish origin trusted WITHOUT a
 /// pairing token (it's the desktop app's own UI; a web page can never carry a
 /// tauri origin). Loopback origins are allowed in debug builds (the dev UI is
@@ -2629,6 +2714,10 @@ struct AuthConfig {
 fn management_auth_decision(
     server_token_ok: bool,
     gui_webview_ok: bool,
+    // AI-405: the caller presented the per-install PLUGIN gateway token AND is
+    // hitting an AI-gateway INFERENCE path (`is_ai_inference_path` — computed
+    // by the guard, so this can never be true for provider-config/key routes).
+    plugin_gateway_ok: bool,
     gui_mode: bool,
     has_server_token: bool,
     privileged: bool,
@@ -2636,7 +2725,7 @@ fn management_auth_decision(
     origin_present: bool,
     pairing: Option<TokenCheck>,
 ) -> Result<(), (StatusCode, &'static str, &'static str)> {
-    if server_token_ok || gui_webview_ok {
+    if server_token_ok || gui_webview_ok || plugin_gateway_ok {
         return Ok(());
     }
     if origin_present {
@@ -2710,9 +2799,18 @@ async fn management_auth_guard(
     let pairing = bearer_token(&req)
         .as_deref()
         .map(|t| st.pairing.check(t, origin.as_deref()));
+    // AI-405: the per-install PLUGIN gateway token unlocks the AI-gateway
+    // INFERENCE routes only (never provider config/key management — those
+    // paths fail `is_ai_inference_path`). Constant-time compare (`token_eq`).
+    let plugin_gateway_ok = is_ai_inference_path(req.uri().path())
+        && matches!(
+            (crate::ai::gateway_token::token(), bearer_token(&req)),
+            (Some(want), Some(got)) if token_eq(&want, &got)
+        );
     match management_auth_decision(
         server_token_ok,
         gui_webview_ok,
+        plugin_gateway_ok,
         st.auth.gui_mode,
         st.auth.token.is_some(),
         is_privileged_path(&m, req.uri().path()),
@@ -2992,12 +3090,51 @@ pub async fn serve(
 mod tests {
     use super::{
         connector_failure_status, desktop_auth_decision, desktop_info_body,
-        direct_command_request_id, grant_covers_capability, health_body, is_gui_webview_origin,
-        is_privileged_path, management_auth_decision, offline_grace_grants,
-        OFFLINE_GRACE_MAX_AGE,
+        direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
+        is_gui_webview_origin, is_privileged_path, management_auth_decision, offline_grace_grants,
+        service_source_capabilities, OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::{Method, StatusCode};
+
+    #[test]
+    fn declared_capabilities_win_over_the_category_heuristic() {
+        // Empty declaration → the legacy category-substring heuristic, unchanged.
+        let none: Vec<String> = Vec::new();
+        assert_eq!(service_source_capabilities(&none, "LLM"), vec!["chat"]);
+        assert_eq!(
+            service_source_capabilities(&none, "Speech"),
+            vec!["transcription", "speech"]
+        );
+        assert_eq!(service_source_capabilities(&none, "Image Generation"), vec!["image"]);
+        assert!(service_source_capabilities(&none, "Browser").is_empty());
+        // ⚠️ The substring trap the declared field exists for: without a
+        // declaration, "Speech-to-Text" would be granted BOTH lanes.
+        assert_eq!(
+            service_source_capabilities(&none, "Speech-to-Text"),
+            vec!["transcription", "speech"]
+        );
+
+        // The new split templates declare exactly one lane each — the
+        // declaration must win over their trap-prone categories.
+        for (json, category, expected) in [
+            (
+                include_str!("../resources/templates/aokie-stt.json"),
+                "Speech-to-Text",
+                vec!["transcription"],
+            ),
+            (
+                include_str!("../resources/templates/aokie-tts.json"),
+                "Text-to-Speech",
+                vec!["speech"],
+            ),
+        ] {
+            let t: crate::services::template::ServiceTemplate =
+                serde_json::from_str(json).expect("split template deserializes");
+            assert_eq!(t.category, category);
+            assert_eq!(service_source_capabilities(&t.capabilities, &t.category), expected);
+        }
+    }
 
     #[test]
     fn direct_plugin_commands_always_have_a_safe_request_id() {
@@ -3126,7 +3263,7 @@ mod tests {
 
     /// Shorthand: management decision for a browser caller (Origin present).
     fn browser(pairing: Option<TokenCheck>) -> Result<(), (StatusCode, &'static str, &'static str)> {
-        management_auth_decision(false, false, true, false, false, true, true, pairing)
+        management_auth_decision(false, false, false, true, false, false, true, true, pairing)
     }
 
     #[test]
@@ -3145,8 +3282,66 @@ mod tests {
         assert_eq!((s, c), (StatusCode::FORBIDDEN, "origin_denied"), "cross-origin replay → 403");
 
         // The desktop's own webview and the server token still administer.
-        assert!(management_auth_decision(true, false, false, true, true, true, true, None).is_ok());
-        assert!(management_auth_decision(false, true, true, false, true, true, true, None).is_ok());
+        assert!(management_auth_decision(true, false, false, false, true, true, true, true, None).is_ok());
+        assert!(management_auth_decision(false, true, false, true, false, true, true, true, None).is_ok());
+    }
+
+    /// AI-405: the plugin gateway token — the guard-computed `plugin_gateway_ok`
+    /// admits the request regardless of origin/pairing posture (accept), and a
+    /// caller WITHOUT it on the same posture is refused (reject). The guard
+    /// only ever sets the flag for `is_ai_inference_path` routes, tested below.
+    #[test]
+    fn plugin_gateway_token_admits_inference_and_nothing_else() {
+        // Accept: a native plugin (no Origin) presenting the token.
+        assert!(
+            management_auth_decision(false, false, true, false, true, false, true, false, None)
+                .is_ok(),
+            "plugin token admits the inference route"
+        );
+        // Reject: the SAME posture without the token (headless + server token
+        // configured → every mutation needs a bearer).
+        let (s, c, _) =
+            management_auth_decision(false, false, false, false, true, false, true, false, None)
+                .unwrap_err();
+        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"));
+        // Reject: a browser origin with a wrong/absent pairing token does not
+        // ride along just because a gateway token exists somewhere.
+        let (s, c, _) =
+            management_auth_decision(false, false, false, false, true, false, true, true, None)
+                .unwrap_err();
+        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"));
+    }
+
+    /// AI-405: exactly the gateway INFERENCE routes — provider config, key
+    /// material and alias management must NEVER match (the plugin token is an
+    /// inference credential, not a management credential).
+    #[test]
+    fn ai_inference_paths_are_only_the_v1_routes() {
+        for p in [
+            "/api/ai/v1/models",
+            "/api/ai/v1/chat/completions",
+            "/api/ai/providers/openai/v1/models",
+            "/api/ai/providers/my-llama/v1/chat/completions",
+        ] {
+            assert!(is_ai_inference_path(p), "{p} is an inference route");
+        }
+        for p in [
+            "/api/ai/providers",
+            "/api/ai/providers/openai",
+            "/api/ai/providers/openai/key",
+            "/api/ai/providers/openai/test",
+            "/api/ai/aliases",
+            "/api/ai/sources",
+            "/api/ai/v1/",
+            // A provider literally named `v1` must not smuggle its config
+            // routes into the inference tier (segment match, not substring).
+            "/api/ai/providers/v1/key",
+            "/api/ai/providers/v1/test",
+            "/api/services",
+            "/api/plugins",
+        ] {
+            assert!(!is_ai_inference_path(p), "{p} is NOT an inference route");
+        }
     }
 
     #[test]
@@ -3154,25 +3349,25 @@ mod tests {
         // Native callers (no Origin header — curl, scripts, the CLI) keep their
         // legacy posture on a GUI / no-token box…
         assert!(
-            management_auth_decision(false, false, true, false, false, false, false, None).is_ok(),
+            management_auth_decision(false, false, false, true, false, false, false, false, None).is_ok(),
             "GUI box: native read/mutation passes"
         );
         assert!(
-            management_auth_decision(false, false, false, false, false, true, false, None).is_ok(),
+            management_auth_decision(false, false, false, false, false, false, true, false, None).is_ok(),
             "headless no-token: native non-privileged mutation passes"
         );
         // …but the exec surface (define/install code, destroy data) stays
         // CLOSED without the server token, exactly as before.
         let (s, c, _) =
-            management_auth_decision(false, false, true, false, true, true, false, None).unwrap_err();
+            management_auth_decision(false, false, false, true, false, true, true, false, None).unwrap_err();
         assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "privileged native → token only");
         // Headless WITH a token: every mutation requires the token (a native
         // caller could otherwise forge/omit Origin to sidestep the lockdown).
         let (s, c, _) =
-            management_auth_decision(false, false, false, true, false, true, false, None).unwrap_err();
+            management_auth_decision(false, false, false, false, true, false, true, false, None).unwrap_err();
         assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"));
         // Headless+token GETs stay open to native callers (local diagnosis).
-        assert!(management_auth_decision(false, false, false, true, false, false, false, None).is_ok());
+        assert!(management_auth_decision(false, false, false, false, true, false, false, false, None).is_ok());
     }
 
     #[test]

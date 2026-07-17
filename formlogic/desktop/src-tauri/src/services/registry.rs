@@ -34,8 +34,12 @@ const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../resources/templates/krea2.json"),
     ),
     (
-        "aokie-voice.json",
-        include_str!("../../resources/templates/aokie-voice.json"),
+        "aokie-stt.json",
+        include_str!("../../resources/templates/aokie-stt.json"),
+    ),
+    (
+        "aokie-tts.json",
+        include_str!("../../resources/templates/aokie-tts.json"),
     ),
 ];
 
@@ -79,9 +83,12 @@ const BUILTIN_SCRIPTS: &[(&str, &str)] = &[
 ];
 
 /// Former built-in templates that no longer ship (f2i-era video/image
-/// services). init() deletes a seeded on-disk copy ONLY when it still matches
-/// its `.seed` snapshot — a hand-edited copy is the user's now and stays.
-const RETIRED_TEMPLATES: &[&str] = &["ltx2-video.json", "lance.json"];
+/// services; the combined `aokie-voice` speech service, replaced by the
+/// dedicated `aokie-stt` / `aokie-tts` split). init() deletes a seeded
+/// on-disk copy ONLY when it still matches its `.seed` snapshot — a
+/// hand-edited copy is the user's now and stays (and the flow runner's
+/// `aokie-voice` fallback keeps working against it).
+const RETIRED_TEMPLATES: &[&str] = &["ltx2-video.json", "lance.json", "aokie-voice.json"];
 
 /// Scripts that only existed to serve the retired templates above.
 const RETIRED_SCRIPTS: &[&str] = &[
@@ -210,6 +217,12 @@ pub struct ServiceSnapshot {
     pub name: String,
     pub description: String,
     pub category: String,
+    /// AI lanes the template DECLARES this service serves (e.g.
+    /// ["transcription"]). Non-empty ⇒ authoritative (wins over the
+    /// category-substring heuristic in `/api/ai/sources` + the UI chips);
+    /// empty ⇒ legacy heuristic. Absent from the JSON when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
     pub status: ServiceStatus,
     pub error: Option<String>,
     pub port: u16,
@@ -1147,6 +1160,16 @@ impl Registry {
         self.services.get(id).map(|s| s.port)
     }
 
+    /// True iff the service exists AND is currently Running — used by the flow
+    /// runner's default-speech-service preference (prefer a RUNNING dedicated
+    /// aokie-stt / aokie-tts over the combined aokie-voice, never auto-starting
+    /// the dedicated one just because its template exists).
+    pub fn service_running(&self, id: &str) -> bool {
+        self.services
+            .get(id)
+            .is_some_and(|s| s.status == ServiceStatus::Running)
+    }
+
     /// Port of a RUNNING LLM-category service, so a flow reuses whatever model
     /// the desktop currently has loaded (e.g. llama.cpp with the user's gguf,
     /// or a running Ollama). Prefers llama-cpp, then ollama, then any other
@@ -1438,6 +1461,7 @@ impl Registry {
                 name: s.template.name.clone(),
                 description: s.template.description.clone(),
                 category: s.template.category.clone(),
+                capabilities: s.template.capabilities.clone(),
                 status: s.status,
                 error: s.error.clone(),
                 port: s.port,
@@ -3215,28 +3239,43 @@ mod tests {
         );
     }
 
+    /// The combined `aokie-voice` service is RETIRED in favour of the
+    /// dedicated aokie-stt / aokie-tts split: it must no longer ship as a
+    /// built-in AND must be in the pristine-seed sweep list, so existing
+    /// installs lose the auto-seeded copy (a hand-edited copy stays the
+    /// user's and keeps working via the flow runner's aokie-voice fallback).
     #[test]
-    fn aokie_voice_is_a_speech_service_riding_the_plugin_install() {
-        let (_, body) = super::BUILTIN_TEMPLATES
-            .iter()
-            .find(|(n, _)| *n == "aokie-voice.json")
-            .expect("aokie-voice.json builtin");
-        let t: super::ServiceTemplate = serde_json::from_str(body).expect("aokie-voice deserializes");
-        assert_eq!(t.id, "aokie-voice");
-        assert_eq!(t.category, "Speech");
-        // The server binary ships WITH the Aokie plugin (dropped next to
-        // aokie-plugin.exe) — no install spec of its own; `installed` derives
-        // from the run exe existing under the plugin dir.
+    fn aokie_voice_is_retired_and_split_services_ride_the_plugin_install() {
         assert!(
-            matches!(t.install, super::InstallSpec::None),
-            "aokie-voice must not declare its own installer"
+            !super::BUILTIN_TEMPLATES.iter().any(|(n, _)| *n == "aokie-voice.json"),
+            "aokie-voice.json must no longer ship as a built-in"
         );
         assert!(
-            t.run.command.starts_with("${dataDir}/plugins/aokie/"),
-            "run command should live in the aokie plugin dir, got {}",
-            t.run.command
+            super::RETIRED_TEMPLATES.contains(&"aokie-voice.json"),
+            "aokie-voice.json must be swept off existing installs (pristine seeds only)"
         );
-        assert!(t.health.is_some(), "aokie-voice should declare a health check");
+        for (name, id) in [("aokie-stt.json", "aokie-stt"), ("aokie-tts.json", "aokie-tts")] {
+            let (_, body) = super::BUILTIN_TEMPLATES
+                .iter()
+                .find(|(n, _)| *n == name)
+                .unwrap_or_else(|| panic!("{name} builtin"));
+            let t: super::ServiceTemplate =
+                serde_json::from_str(body).unwrap_or_else(|e| panic!("{name} deserializes: {e}"));
+            assert_eq!(t.id, id);
+            // The server binary ships WITH the Aokie plugin (dropped next to
+            // aokie-plugin.exe) — no install spec of its own; `installed`
+            // derives from the run exe existing under the plugin dir.
+            assert!(
+                matches!(t.install, super::InstallSpec::None),
+                "{id} must not declare its own installer"
+            );
+            assert!(
+                t.run.command.starts_with("${dataDir}/plugins/aokie/"),
+                "{id} run command should live in the aokie plugin dir, got {}",
+                t.run.command
+            );
+            assert!(t.health.is_some(), "{id} should declare a health check");
+        }
     }
 
     #[test]

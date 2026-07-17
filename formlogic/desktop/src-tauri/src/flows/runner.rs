@@ -1508,6 +1508,32 @@ const BROWSER_HUMAN: &str = "Playwright Browser";
 const IMAGE_SERVICE: &str = "krea2";
 const IMAGE_HUMAN: &str = "Krea-2 Turbo (Text-to-Image)";
 const SPEECH_SERVICE: &str = "aokie-voice";
+const SPEECH_STT_SERVICE: &str = "aokie-stt";
+const SPEECH_TTS_SERVICE: &str = "aokie-tts";
+
+/// Default speech-service base for stt/tts when the node names NO endpoint and
+/// NO service: prefer the dedicated split service (aokie-stt / aokie-tts) when
+/// it's ALREADY RUNNING (or explicitly overridden via `service_bases`) — never
+/// auto-started just because its template exists — else the combined
+/// 'aokie-voice' service. The combined template is RETIRED (no longer seeded;
+/// pristine copies are swept), so this fallback only fires for a user's
+/// hand-edited copy — with neither present the caller gets the actionable
+/// `desktop_service_unavailable` failure, never a silent substitution.
+/// Mirrored in the browser executor (ui/src/client-runtime/flows/nodes.ts).
+fn resolve_default_speech_base(deps: &RunDeps, preferred: &str) -> Option<String> {
+    let preferred_available = deps.service_bases.contains_key(preferred)
+        || deps
+            .registry
+            .as_ref()
+            .and_then(|reg| reg.lock().ok().map(|r| r.service_running(preferred)))
+            .unwrap_or(false);
+    if preferred_available {
+        if let Some(base) = resolve_service_base(deps, preferred) {
+            return Some(base);
+        }
+    }
+    resolve_service_base(deps, SPEECH_SERVICE)
+}
 
 /// Resolve the browser service BASE: node `endpoint` override (allow-listed) or the registry.
 fn resolve_browser_base(node: &GraphNode, deps: &RunDeps) -> Result<String, FlowError> {
@@ -1679,9 +1705,10 @@ async fn run_image_gen(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) 
 }
 
 /// Resolve an OpenAI-compatible endpoint for stt/tts: node `endpoint` (allow-listed), a
-/// `service` id resolved on the registry + `default_path`, else the bundled 'aokie-voice'
-/// speech service. No candidate → actionable failure.
-fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &str, human: &str) -> Result<String, FlowError> {
+/// `service` id resolved on the registry + `default_path`, else the default speech service —
+/// a RUNNING dedicated split service (`preferred`: aokie-stt / aokie-tts) ahead of the
+/// bundled combined 'aokie-voice'. No candidate → actionable failure.
+fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &str, human: &str, preferred: &str) -> Result<String, FlowError> {
     let data = node_data(node);
     if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
         if !is_allowed_flow_url(ep, &deps.base_url) && !is_loopback_url(ep) {
@@ -1697,12 +1724,14 @@ fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &
         if let Some(base) = resolve_service_base(deps, service) {
             return Ok(format!("{base}{default_path}"));
         }
-    } else if let Some(base) = resolve_service_base(deps, SPEECH_SERVICE) {
-        // No endpoint/service configured: fall back to the bundled 'aokie-voice'
-        // speech service — the same default-service pattern as browser_action
-        // (playwright-browser) / image_gen (krea2). Mirrored in the browser
-        // executor (ui/src/client-runtime/flows/nodes.ts). An explicitly named
-        // service that fails to resolve still errors (no silent substitution).
+    } else if let Some(base) = resolve_default_speech_base(deps, preferred) {
+        // No endpoint/service configured: prefer the RUNNING dedicated split
+        // service (aokie-stt / aokie-tts), else fall back to the bundled
+        // 'aokie-voice' speech service — the same default-service pattern as
+        // browser_action (playwright-browser) / image_gen (krea2). Mirrored in
+        // the browser executor (ui/src/client-runtime/flows/nodes.ts). An
+        // explicitly named service that fails to resolve still errors (no
+        // silent substitution).
         return Ok(format!("{base}{default_path}"));
     }
     Err(desktop_service_unavailable(node, human, false))
@@ -1711,7 +1740,7 @@ fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &
 /// stt_transcribe — speech → text via a configured OpenAI-compatible transcription endpoint.
 async fn run_stt_transcribe(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node).clone();
-    let endpoint = resolve_configured_endpoint(node, deps, "/v1/audio/transcriptions", "speech-to-text")?;
+    let endpoint = resolve_configured_endpoint(node, deps, "/v1/audio/transcriptions", "speech-to-text", SPEECH_STT_SERVICE)?;
     let audio_ref = resolve_selector(data.get("audio").unwrap_or(&Value::Null), scope);
     let audio = audio_ref.as_str().filter(|s| !s.is_empty()).ok_or_else(|| {
         FlowError::new(FlowErrorCode::InvalidFlow, format!("Node '{}' stt_transcribe needs 'audio' (a data URL / URL / base64)", node.id), Some(node.id.clone()))
@@ -1728,7 +1757,7 @@ async fn run_stt_transcribe(node: &GraphNode, scope: &SelectorScope, deps: &RunD
 /// tts_speak — text → speech via a configured OpenAI-compatible endpoint (audio bytes → data URL).
 async fn run_tts_speak(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node).clone();
-    let endpoint = resolve_configured_endpoint(node, deps, "/v1/audio/speech", "text-to-speech")?;
+    let endpoint = resolve_configured_endpoint(node, deps, "/v1/audio/speech", "text-to-speech", SPEECH_TTS_SERVICE)?;
     let input = interpolate_template(&require_string(node, &["text", "input"])?, &scope_to_context(scope));
     let mut body = json!({ "input": input });
     if let Some(model) = data.get("model").and_then(Value::as_str).filter(|s| !s.is_empty()) {

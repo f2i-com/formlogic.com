@@ -1024,18 +1024,24 @@ async function runImageGen(ctx: FlowNodeContext): Promise<unknown> {
   throw new FlowExecError('node_failed', `Node '${node.id}': image_gen response had no image (expected imageUrl or data[].url / data[].b64_json)`, node.id);
 }
 
-/** The bundled Desktop speech service (Parakeet STT + pocket-tts TTS) — stt/tts's default. */
+/** The bundled Desktop speech service (Parakeet STT + pocket-tts TTS) — stt/tts's fallback default. */
 const SPEECH_SERVICE = 'aokie-voice';
+/** The dedicated split STT service — preferred over aokie-voice when RUNNING. */
+const SPEECH_STT_SERVICE = 'aokie-stt';
+/** The dedicated split TTS service — preferred over aokie-voice when RUNNING. */
+const SPEECH_TTS_SERVICE = 'aokie-tts';
 
 /**
  * Resolve an OpenAI-compatible endpoint for stt/tts: the node's own data.endpoint
  * (allow-listed), a data.service resolved on the paired Desktop + defaultPath, else the
- * bundled 'aokie-voice' speech service — the same default-service pattern as
- * browser_action/image_gen, mirrored in the desktop runner (flows/runner.rs). An explicitly
- * named service that fails to resolve still errors (no silent substitution).
- * No candidate → the actionable node_failed (unbundled service).
+ * default speech service — the RUNNING dedicated split service (preferredService:
+ * aokie-stt / aokie-tts; resolveDesktopServiceBase only resolves RUNNING services, so a
+ * stopped split service never shadows the combined one) ahead of the bundled 'aokie-voice'
+ * — the same default-service pattern as browser_action/image_gen, mirrored in the desktop
+ * runner (flows/runner.rs). An explicitly named service that fails to resolve still errors
+ * (no silent substitution). No candidate → the actionable node_failed (unbundled service).
  */
-async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: string, humanName: string): Promise<string> {
+async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: string, humanName: string, preferredService: string): Promise<string> {
   const { node, deps } = ctx;
   const data = nodeData(node);
   if (typeof data.endpoint === 'string' && data.endpoint.trim() !== '') {
@@ -1047,14 +1053,16 @@ async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: stri
   }
   const explicitService = typeof data.service === 'string' && data.service !== '' ? data.service : null;
   if (deps.resolveDesktopServiceBase) {
-    const serviceId = explicitService ?? SPEECH_SERVICE;
-    let base: string | null = null;
-    try {
-      base = await deps.resolveDesktopServiceBase(serviceId);
-    } catch {
-      base = null;
+    const candidates = explicitService ? [explicitService] : [preferredService, SPEECH_SERVICE];
+    for (const serviceId of candidates) {
+      let base: string | null = null;
+      try {
+        base = await deps.resolveDesktopServiceBase(serviceId);
+      } catch {
+        base = null;
+      }
+      if (base && isLoopbackUrl(base)) return `${base.replace(/\/+$/, '')}${defaultPath}`;
     }
-    if (base && isLoopbackUrl(base)) return `${base.replace(/\/+$/, '')}${defaultPath}`;
   }
   throw desktopServiceUnavailable(node, humanName, false);
 }
@@ -1068,7 +1076,7 @@ async function runSttTranscribe(ctx: FlowNodeContext): Promise<unknown> {
   const { node, scope } = ctx;
   const data = nodeData(node);
   const provider = await resolveNodeAiProvider(ctx, 'transcription');
-  const endpoint = provider?.url ?? await resolveConfiguredEndpoint(ctx, '/v1/audio/transcriptions', 'speech-to-text');
+  const endpoint = provider?.url ?? await resolveConfiguredEndpoint(ctx, '/v1/audio/transcriptions', 'speech-to-text', SPEECH_STT_SERVICE);
   const audioRef = resolveSelector(data.audio, scope);
   const audio = typeof audioRef === 'string' ? audioRef : '';
   if (audio === '') throw new FlowExecError('invalid_flow', `Node '${node.id}' stt_transcribe needs 'audio' (a data URL / URL / base64)`, node.id);
@@ -1091,7 +1099,7 @@ async function runTtsSpeak(ctx: FlowNodeContext): Promise<unknown> {
   const { node, scope } = ctx;
   const data = nodeData(node);
   const provider = await resolveNodeAiProvider(ctx, 'speech');
-  const endpoint = provider?.url ?? await resolveConfiguredEndpoint(ctx, '/v1/audio/speech', 'text-to-speech');
+  const endpoint = provider?.url ?? await resolveConfiguredEndpoint(ctx, '/v1/audio/speech', 'text-to-speech', SPEECH_TTS_SERVICE);
   const input = interpolateTemplate(requireString(node, data, ['text', 'input']), scopeToContext(scope));
   const body: Record<string, unknown> = { input };
   if (typeof data.model === 'string' && data.model !== '') body.model = data.model;

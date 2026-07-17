@@ -36,6 +36,16 @@ pub struct ServiceTemplate {
     /// "LLM", "Image Generation", "Video Generation", "Speech", "Browser".
     pub category: String,
 
+    /// AI lanes this service serves, declared explicitly by the template
+    /// (e.g. ["transcription"], ["speech"], ["chat"], ["image"]). When
+    /// non-empty this WINS over the category-substring heuristic that
+    /// `/api/ai/sources` otherwise applies — required for split services
+    /// whose category would match more lanes than they serve (category
+    /// "Speech-to-Text" contains "speech", which the heuristic reads as
+    /// transcription + speech). Empty ⇒ legacy heuristic, unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+
     /// Default TCP port the service listens on. Used in placeholder
     /// substitution. Users can override per-run in Phase 3.
     pub default_port: u16,

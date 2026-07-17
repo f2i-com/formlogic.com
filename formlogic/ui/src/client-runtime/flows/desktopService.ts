@@ -7,7 +7,7 @@
 // own loopback ports, so the resolved base is loopback-only by construction; nodes.ts re-checks
 // isLoopbackUrl() before trusting it. No Desktop / not paired / service not running → null, and the
 // node fails with an actionable "install & start the service in FormLogic Desktop" message.
-import { desktopClient } from '../desktop/desktopClient';
+import { desktopClient, type DesktopAiSource } from '../desktop/desktopClient';
 import { getDesktopInfo } from '../desktop/desktopDetection';
 import { getDesktopToken } from '../desktop/desktopPairing';
 
@@ -64,4 +64,64 @@ export async function listDesktopServices(): Promise<DesktopServiceListing[]> {
       url: s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
     };
   });
+}
+
+/**
+ * One entry of the desktop's `/api/ai/sources` union (SRC-202), normalised for
+ * lane pickers: local service instances AND configured AI providers.
+ */
+export interface AiSourceListing {
+  /** The lane-picker value: `service:<id>` or `provider:<id>`. */
+  id: string;
+  kind: 'service' | 'provider';
+  /** The bare service/provider id (what follows the prefix in `id`). */
+  refId: string;
+  name: string;
+  category: string;
+  /** Service run state ('running'/'stopped'/…); the literal 'provider' for providers. */
+  status: string;
+  /** Capability tags ('chat' | 'transcription' | 'speech' | 'image'); an EMPTY
+   *  set on a PROVIDER means unrestricted ("all") — legacy profiles. */
+  capabilities: string[];
+  /** Loopback base URL while a service is RUNNING (`http://127.0.0.1:<port>`), '' otherwise. */
+  url: string;
+  model: string;
+  /** Providers can be disabled without deletion; services are always true. */
+  enabled: boolean;
+}
+
+/**
+ * List everything a receptionist lane picker can point at — the SAME union the
+ * desktop's AI-gateway serves (GET /api/ai/sources): managed services with
+ * capability tags + configured AI providers. Desktop undetected / unpaired /
+ * unreachable / pre-SRC-202 build → [] (callers degrade to listDesktopServices
+ * or saved ids). Never throws.
+ */
+export async function listAiSources(): Promise<AiSourceListing[]> {
+  if (!getDesktopInfo().available || !getDesktopToken()) return [];
+  const res = await desktopClient.ai.sources();
+  if (!res.ok) return [];
+  return res.data
+    .filter((s): s is DesktopAiSource => !!s && typeof s.id === 'string')
+    .map((s) => {
+      const kind: 'service' | 'provider' = s.kind === 'provider' ? 'provider' : 'service';
+      const refId =
+        (kind === 'service' ? s.serviceId : s.providerId) ??
+        s.id.replace(/^(service|provider):/, '');
+      const port = s.port ?? 0;
+      return {
+        id: s.id,
+        kind,
+        refId,
+        name: typeof s.name === 'string' && s.name ? s.name : refId,
+        category: s.category ?? '',
+        status: kind === 'provider' ? 'provider' : (s.status ?? ''),
+        capabilities: Array.isArray(s.capabilities) ? s.capabilities.filter((c) => typeof c === 'string') : [],
+        // Same running-only rule as listDesktopServices — a stopped service
+        // must never hand a picker a dead URL.
+        url: kind === 'service' && s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
+        model: typeof s.model === 'string' ? s.model : '',
+        enabled: kind === 'provider' ? s.enabled !== false : true,
+      };
+    });
 }

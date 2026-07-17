@@ -7,6 +7,12 @@ import { describe, expect, it } from 'vitest';
 import { aokieReceptionistPack as pack, DEFAULT_PERSONA } from './aokieReceptionistPack';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { packCatalog } from './index';
+import {
+  buildAgentPayload,
+  EMPTY_DRAFT,
+  type Draft,
+  type SourceService,
+} from '../../components/custom-screen/aokie/receptionistPayload';
 
 describe('aokieReceptionistPack — shared persona (audit CROSS-SCHEMA-001)', () => {
   it("matches the cross-repo persona fixture the plugin's DEFAULT_AGENT_PERSONA is locked to", () => {
@@ -432,6 +438,90 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     );
     expect(c.sttEndpoint).toBe('http://127.0.0.1:17920/v1/audio/transcriptions');
     expect(runAgentConfig({}, RUNNING_SVCS).aiEndpoint).toBe('');
+  });
+
+  // ── provider: picks (SRC-203): the desktop AI gateway's per-provider OpenAI base ──
+  it('provider: pick on the LLM lane composes the FIXED desktop AI-gateway URL — even with no services listed', () => {
+    // Must match the desktop's gateway routes exactly:
+    //   POST /api/ai/providers/:id/v1/chat/completions (and GET .../v1/models,
+    //   which the plugin's LlmClient derives by replacing /chat/completions).
+    const url = 'http://127.0.0.1:17872/api/ai/providers/my-openai/v1/chat/completions';
+    expect(runAgentConfig({ llm_source: 'provider:my-openai' }, RUNNING_SVCS).aiEndpoint).toBe(url);
+    // The gateway port is fixed — no desktop_services lookup is needed, so the
+    // URL is emitted even when the svc node lists nothing / is absent.
+    expect(runAgentConfig({ llm_source: 'provider:my-openai' }, []).aiEndpoint).toBe(url);
+    expect(runAgentConfig({ llm_source: 'provider:my-openai' }).aiEndpoint).toBe(url);
+  });
+
+  it('provider: picks on the STT/TTS lanes are GATED to blank (no gateway audio routes yet)', () => {
+    const r = runAgentConfig(
+      { stt_source: 'provider:my-openai', stt_endpoint: 'http://x/legacy', tts_source: 'provider:my-openai' },
+      RUNNING_SVCS,
+    );
+    expect(r.sttEndpoint).toBe('');
+    expect(r.ttsEndpoint).toBe('');
+  });
+
+  it('blank stt/tts source semantics are UNCHANGED — the aokie-stt/aokie-tts default is a CONSOLE-side record write', () => {
+    const svcs = [
+      ...RUNNING_SVCS,
+      { id: 'aokie-stt', name: 'Aokie Speech-to-Text', status: 'running', port: 17921, url: 'http://127.0.0.1:17921' },
+      { id: 'aokie-tts', name: 'Aokie Text-to-Speech', status: 'running', port: 17922, url: 'http://127.0.0.1:17922' },
+    ];
+    // Blank stays "plugin default" in the flow even when the Aokie services run…
+    const blank = runAgentConfig({}, svcs);
+    expect(blank.sttEndpoint).toBe('');
+    expect(blank.ttsEndpoint).toBe('');
+    // …the console defaults NEW/blank records by WRITING the pick explicitly.
+    const picked = runAgentConfig({ stt_source: 'service:aokie-stt', tts_source: 'service:aokie-tts' }, svcs);
+    expect(picked.sttEndpoint).toBe('http://127.0.0.1:17921/v1/audio/transcriptions');
+    expect(picked.ttsEndpoint).toBe('http://127.0.0.1:17922/v1/audio/speech');
+  });
+
+  // ── Console mirror parity: buildAgentPayload must compose the SAME endpoints
+  // as this flow for every source-pick shape ("Save & apply now" and the
+  // per-call Configure flow can never disagree).
+  describe('console mirror (buildAgentPayload) parity', () => {
+    const draftFor = (over: Partial<Draft>): Draft => ({ ...EMPTY_DRAFT, ...over });
+    const asSourceServices = (svcs: Array<Record<string, unknown>>): SourceService[] =>
+      svcs.map((s) => ({
+        id: String(s.id),
+        name: String(s.name ?? s.id),
+        category: String(s.category ?? ''),
+        status: String(s.status ?? ''),
+        url: String(s.url ?? ''),
+      }));
+
+    const CASES: Array<[string, Partial<Draft>]> = [
+      ['running service pick', { llm_source: 'service:llama-cpp' }],
+      ['stopped service pick', { tts_source: 'service:aokie-voice', tts_endpoint: 'http://x/legacy' }],
+      ['provider pick (LLM lane)', { llm_source: 'provider:my-openai' }],
+      ['provider pick with chars needing encoding', { llm_source: 'provider:acme corp' }],
+      ['provider pick gated on speech lanes', { stt_source: 'provider:my-openai', tts_source: 'provider:my-openai' }],
+      ['custom URLs', { llm_source: 'custom', llm_endpoint: 'http://127.0.0.1:9999/v1/chat/completions' }],
+      ['blank + legacy endpoint field', { stt_endpoint: 'http://127.0.0.1:17920/v1/audio/transcriptions' }],
+      ['all blank', {}],
+    ];
+
+    it.each(CASES)('%s', (_name, over) => {
+      const flow = runAgentConfig(over as Record<string, unknown>, RUNNING_SVCS);
+      const ui = buildAgentPayload(draftFor(over), asSourceServices(RUNNING_SVCS));
+      expect(ui.aiEndpoint).toBe(flow.aiEndpoint);
+      expect(ui.sttEndpoint).toBe(flow.sttEndpoint);
+      expect(ui.ttsEndpoint).toBe(flow.ttsEndpoint);
+    });
+
+    it('provider: composes identically with NO listing at all (remote console ↔ empty svc node)', () => {
+      const ui = buildAgentPayload(draftFor({ llm_source: 'provider:my-openai' }));
+      const flow = runAgentConfig({ llm_source: 'provider:my-openai' });
+      expect(ui.aiEndpoint).toBe(flow.aiEndpoint);
+      expect(ui.aiEndpoint).toBe('http://127.0.0.1:17872/api/ai/providers/my-openai/v1/chat/completions');
+    });
+
+    it('unresolvable service picks are OMITTED by the console (undefined services) so the per-call flow owns them', () => {
+      const ui = buildAgentPayload(draftFor({ llm_source: 'service:llama-cpp' }));
+      expect('aiEndpoint' in ui).toBe(false);
+    });
   });
 });
 

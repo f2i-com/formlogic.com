@@ -349,6 +349,40 @@ describe('mock contract parity', () => {
     expect('deviceName' in res).toBe(false);
   });
 
+  it('settings.get whole-object carries the ttsVoiceCatalog side key; settings.set round-trips', async () => {
+    const res = (await mockAokieConnector.request('settings.get')) as {
+      settings: Record<string, unknown>;
+      configVersion: number;
+      managerPinSet: boolean;
+      ttsVoiceCatalog: { engines: Array<Record<string, unknown>> };
+    };
+    expect(res.settings).toMatchObject({ aiReceptionist: true });
+    expect(res.managerPinSet).toBe(false);
+    // Engine-first console parity: pocket voices + one sherpa bundle.
+    const ids = res.ttsVoiceCatalog.engines.map((e) => e.id);
+    expect(ids).toEqual(['pocket', 'sherpa']);
+    expect(res.ttsVoiceCatalog.engines[0].voices).toContain('alba');
+    const bundles = res.ttsVoiceCatalog.engines[1].bundles as Array<Record<string, unknown>>;
+    expect(bundles[0]).toMatchObject({ name: 'vits-piper-en_US-lessac-medium', kind: 'vits' });
+
+    const set = (await mockAokieConnector.request('settings.set', {
+      ttsEngine: 'sherpa',
+      ttsModelDir: 'C:/aokie/models/tts/vits-piper-en_US-lessac-medium',
+    })) as { configVersion: number };
+    expect(set.configVersion).toBe(res.configVersion + 1);
+    const after = (await mockAokieConnector.request('settings.get')) as { settings: Record<string, unknown> };
+    expect(after.settings.ttsEngine).toBe('sherpa');
+
+    // managerPin stays write-only — reflected only as managerPinSet.
+    await mockAokieConnector.request('settings.set', { managerPin: '123456' });
+    const pinned = (await mockAokieConnector.request('settings.get')) as {
+      settings: Record<string, unknown>;
+      managerPinSet: boolean;
+    };
+    expect(pinned.managerPinSet).toBe(true);
+    expect('managerPin' in pinned.settings).toBe(false);
+  });
+
   it('call controls honour callId: stale ids are refused, the current id operates the call', async () => {
     setFetch(vi.fn(() => Promise.reject(new Error('offline'))));
     const names: string[] = [];

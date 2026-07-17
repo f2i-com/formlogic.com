@@ -14,6 +14,13 @@ import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, DownloadIcon, TrashIcon, UploadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { refreshServices, useServicesStore } from './servicesStore';
+import {
+  composeEngineArgs,
+  parseEngineArgs,
+  STT_ENGINE_FLAGS,
+  TTS_ENGINE_FLAGS,
+  type EngineFlagSpec,
+} from './speechEngineArgs';
 import { useToast } from './Toasts';
 
 /**
@@ -757,6 +764,136 @@ function ExtraArgsEditor({ service }: { service: ServiceSnapshot }) {
   );
 }
 
+/** Engine choices per split speech service (value '' = the service default —
+ *  the flag is removed from the extra args entirely). */
+const SPEECH_ENGINE_OPTIONS: Record<
+  string,
+  { spec: EngineFlagSpec; dirLabel: string; options: { value: string; label: string }[] }
+> = {
+  'aokie-stt': {
+    spec: STT_ENGINE_FLAGS,
+    dirLabel: 'Model folder (optional)',
+    options: [
+      { value: '', label: 'Default (Parakeet)' },
+      { value: 'parakeet', label: 'Parakeet — NVIDIA ONNX (accurate)' },
+      { value: 'moonshine', label: 'Moonshine — small & fast' },
+      { value: 'qwen3-asr', label: 'Qwen3-ASR' },
+    ],
+  },
+  'aokie-tts': {
+    spec: TTS_ENGINE_FLAGS,
+    dirLabel: 'Voice model folder (optional)',
+    options: [
+      { value: '', label: 'Default (Pocket-TTS)' },
+      { value: 'pocket', label: 'Pocket-TTS — expressive (slower)' },
+      { value: 'sherpa', label: 'Sherpa — Piper/VITS voices (fast)' },
+    ],
+  },
+};
+
+/**
+ * Structured engine config for the split speech services (aokie-stt /
+ * aokie-tts): an Engine select + model-folder input that COMPOSE the same
+ * saved extra-args array the raw editor below edits (`--stt-engine X
+ * --stt-model-dir DIR` resp. `--tts-*`) — one persistence lane, two views.
+ * Any other user tokens in the extra args are preserved verbatim.
+ */
+function SpeechEngineConfig({ service }: { service: ServiceSnapshot }) {
+  const conf = SPEECH_ENGINE_OPTIONS[service.id];
+  const toast = useToast();
+  const saved = useMemo(
+    () => parseEngineArgs(service.extraArgs ?? [], conf.spec),
+    [service.extraArgs, conf.spec],
+  );
+  const [engine, setEngine] = useState(saved.engine);
+  const [modelDir, setModelDir] = useState(saved.modelDir);
+  const [base, setBase] = useState({ engine: saved.engine, modelDir: saved.modelDir });
+  const [pending, setPending] = useState(false);
+  // Re-seed when another window/session changed the persisted args — but never
+  // while the user is mid-edit (their draft differs from OUR baseline).
+  useEffect(() => {
+    setBase((prev) => {
+      if (saved.engine !== prev.engine || saved.modelDir !== prev.modelDir) {
+        setEngine((e) => (e === prev.engine ? saved.engine : e));
+        setModelDir((d) => (d === prev.modelDir ? saved.modelDir : d));
+        return { engine: saved.engine, modelDir: saved.modelDir };
+      }
+      return prev;
+    });
+  }, [saved.engine, saved.modelDir]);
+  const dirty = engine !== base.engine || modelDir.trim() !== base.modelDir.trim();
+  // A hand-typed engine we don't list (raw extra-args lane) still renders as a
+  // matching option so the controlled select doesn't silently misreport it.
+  const unknownEngine =
+    engine !== '' && !conf.options.some((o) => o.value === engine) ? engine : null;
+  const apply = async () => {
+    setPending(true);
+    try {
+      const args = composeEngineArgs(service.extraArgs ?? [], conf.spec, engine, modelDir);
+      await services.setExtraArgs(service.id, args);
+      const next = parseEngineArgs(args, conf.spec);
+      setBase({ engine: next.engine, modelDir: next.modelDir });
+      setEngine(next.engine);
+      setModelDir(next.modelDir);
+      await refreshServices();
+      toast.push({
+        kind: 'success',
+        title: `${service.name}: engine settings saved`,
+        body:
+          service.status === 'running' || service.status === 'starting'
+            ? 'Applies on the next start — restart the service to pick them up.'
+            : 'Applies on the next start.',
+      });
+    } catch (e) {
+      toast.push({
+        kind: 'error',
+        title: 'Could not save engine settings',
+        body: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <>
+      <div className="service-config-row">
+        <span className="service-config-label">Engine</span>
+        <select
+          className="service-config-control"
+          value={engine}
+          disabled={pending}
+          onChange={(e) => setEngine(e.target.value)}
+        >
+          {conf.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+          {unknownEngine && <option value={unknownEngine}>{unknownEngine} (custom)</option>}
+        </select>
+        <span className="service-config-note">applies on next start</span>
+      </div>
+      <div className="service-config-row">
+        <span className="service-config-label">{conf.dirLabel}</span>
+        <input
+          className="service-config-control-wide"
+          type="text"
+          spellCheck={false}
+          value={modelDir}
+          disabled={pending}
+          onChange={(e) => setModelDir(e.target.value)}
+          placeholder="blank = the bundled/default model location"
+        />
+        {dirty && (
+          <button className="btn btn-ghost" onClick={apply} disabled={pending}>
+            {pending ? 'Saving…' : 'Save'}
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 /**
  * Per-service GPU picker. Pins the service to a CUDA GPU (CUDA_VISIBLE_DEVICES) so heavy
  * services don't all default to GPU 0 and exhaust its VRAM — e.g. put llama.cpp on GPU 1 so
@@ -1186,10 +1323,24 @@ function OllamaModelSelector() {
   );
 }
 
-/** Which AI lanes a service can serve, from its category — mirrors the
- *  desktop's /api/ai/sources mapping so the chips and the source pickers
- *  agree on what e.g. the Speech service is for. */
-function serviceCapabilityChips(category: string): string[] {
+/** Chip label per declared capability name (the /api/ai/sources vocabulary). */
+const CAPABILITY_CHIP_LABELS: Record<string, string> = {
+  chat: 'chat',
+  transcription: 'speech-to-text',
+  speech: 'text-to-speech',
+  image: 'image',
+};
+
+/** Which AI lanes a service can serve — template-DECLARED capabilities when
+ *  present (authoritative: a split service like aokie-stt declares exactly one
+ *  lane, where its "Speech-to-Text" category would heuristically match both),
+ *  else the legacy category heuristic — mirroring the desktop's
+ *  /api/ai/sources mapping so the chips and the source pickers agree on what
+ *  e.g. the Speech service is for. */
+function serviceCapabilityChips(category: string, declared?: string[]): string[] {
+  if (declared && declared.length > 0) {
+    return declared.map((cap) => CAPABILITY_CHIP_LABELS[cap] ?? cap);
+  }
   const c = category.toLowerCase();
   if (c.includes('llm')) return ['chat'];
   if (c.includes('speech') || c.includes('voice')) return ['speech-to-text', 'text-to-speech'];
@@ -1219,7 +1370,7 @@ function ServiceCard({
   // MOUNT in React, so the model pickers used to fire their disk scans
   // (listGgufModels over the whole model library) on every Services visit.
   const [configOpen, setConfigOpen] = useState(false);
-  const capChips = serviceCapabilityChips(service.category);
+  const capChips = serviceCapabilityChips(service.category, service.capabilities);
 
   return (
     <div className={`service-card service-card-${service.status}`}>
@@ -1322,6 +1473,10 @@ function ServiceCard({
                   />
                 )}
                 {service.id === 'ollama' && <OllamaModelSelector />}
+                {/* Split speech services: structured engine/model-folder pickers
+                    that compose the SAME extra-args array the raw editor below
+                    edits (advanced escape hatch stays visible). */}
+                {SPEECH_ENGINE_OPTIONS[service.id] && <SpeechEngineConfig service={service} />}
                 <GpuSelector serviceId={service.id} currentGpu={service.gpu} />
                 <ExtraArgsEditor service={service} />
                 {/* PROC-001: explicit per-service boot policy. Auto = restore whatever

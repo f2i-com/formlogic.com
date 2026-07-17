@@ -1461,7 +1461,7 @@ pub fn run() {
                 // desktop last exited (model selection + GPU pins are applied
                 // above, so they spawn with the right env). With the kill-on-
                 // close job reaping children on ANY desktop exit, this is what
-                // brings llama-cpp / aokie-voice back without manual Start.
+                // brings llama-cpp / aokie-stt / aokie-tts back without manual Start.
                 let restored = r.autostart_remembered();
                 if !restored.is_empty() {
                     log::info!("restored {} service(s) from the previous session: {}",

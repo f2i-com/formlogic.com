@@ -164,6 +164,46 @@ const MOCK_DONGLES = [
   },
 ];
 
+// Simulator plugin settings — enough surface for the Receptionist Settings
+// console (settings.get whole-object + typed-ish settings.set). managerPin is
+// write-only parity: never stored back into the readable map.
+let mockConfigVersion = 7;
+let mockManagerPinSet = false;
+const mockSettings: Record<string, unknown> = {
+  autoAnswer: true,
+  aiReceptionist: true,
+  greeting: 'Thanks for calling! How can I help you today?',
+  ttsVoice: '',
+  aiModel: '',
+  ttsEngine: '',
+  ttsModelDir: '',
+};
+
+// Mock twin of the plugin's ttsVoiceCatalog side key (whole-object
+// settings.get only — AOKIE_PLUGIN_CONTRACT.md §2): a plausible on-disk voice
+// inventory so the demo console exercises the engine-first pickers.
+const MOCK_TTS_VOICE_CATALOG = {
+  engines: [
+    {
+      id: 'pocket',
+      label: 'Pocket-TTS',
+      voices: ['alba', 'cosette', 'eponine', 'fantine', 'javert', 'jean', 'marius'],
+    },
+    {
+      id: 'sherpa',
+      label: 'Sherpa (Piper/VITS/Kokoro)',
+      bundles: [
+        {
+          dir: 'C:/aokie/models/tts/vits-piper-en_US-lessac-medium',
+          name: 'vits-piper-en_US-lessac-medium',
+          kind: 'vits',
+        },
+      ],
+      scanRoot: 'C:/aokie/models/tts',
+    },
+  ],
+};
+
 const MOCK_THREADS = [
   {
     threadId: 'thr_demo_1',
@@ -348,6 +388,43 @@ export const mockAokieConnector: BrowserConnector = {
         }
         const call = requireMockCall('call.configureAgent', payload, ['ringing', 'active']);
         return { accepted: true, mock: true, callId: call.callId };
+      }
+      case 'settings.get': {
+        const p = (payload ?? {}) as { key?: unknown };
+        if (typeof p.key === 'string' && p.key) {
+          // Single-key form (contract parity: managerPin is never revealed).
+          if (p.key === 'managerPin') return { key: p.key, value: null, set: mockManagerPinSet };
+          return { key: p.key, value: mockSettings[p.key] ?? null };
+        }
+        // Whole-object form: settings + side keys, incl. the ttsVoiceCatalog
+        // voice inventory the console's engine-first pickers render from.
+        return {
+          settings: { ...mockSettings },
+          configVersion: mockConfigVersion,
+          configQuarantined: false,
+          managerPinSet: mockManagerPinSet,
+          ttsVoiceCatalog: MOCK_TTS_VOICE_CATALOG,
+        };
+      }
+      case 'settings.set': {
+        const p = (payload ?? {}) as Record<string, unknown>;
+        const keys = Object.keys(p);
+        if (keys.length === 0) {
+          throw new ConnectorError('command_failed', 'settings.set requires at least one key.');
+        }
+        for (const [k, v] of Object.entries(p)) {
+          if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) {
+            throw new ConnectorError('command_failed', `settings.set: "${k}" must be a scalar value.`);
+          }
+          if (k === 'managerPin') {
+            // Write-only (AOK-304A): remember only that one is (un)set.
+            mockManagerPinSet = typeof v === 'string' && v.trim() !== '';
+            continue;
+          }
+          mockSettings[k] = v;
+        }
+        mockConfigVersion += 1;
+        return { updated: true, configVersion: mockConfigVersion, managerPinSet: mockManagerPinSet };
       }
       case 'sms.threads':
         return { threads: MOCK_THREADS };

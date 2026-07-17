@@ -69,6 +69,10 @@ export interface ServiceSnapshot {
   name: string;
   description: string;
   category: string;
+  /** AI lanes the template DECLARES this service serves (e.g. ["transcription"]).
+   *  Non-empty ⇒ authoritative (wins over the category heuristic in the
+   *  capability chips + /api/ai/sources); absent/empty ⇒ legacy heuristic. */
+  capabilities?: string[];
   status: ServiceStatus;
   error: string | null;
   port: number;

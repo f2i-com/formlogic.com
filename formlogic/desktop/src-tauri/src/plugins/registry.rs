@@ -274,6 +274,10 @@ impl PluginHost {
         // CONSENT-001: the consent-signing key must exist BEFORE any plugin
         // spawns so the verify key rides in every child's environment.
         crate::consent_signing::init(&plugin_data_root);
+        // AI-405: same rule for the per-install AI-gateway token
+        // (FORMLOGIC_AI_GATEWAY_TOKEN — plugins-only access to the gateway's
+        // inference routes).
+        crate::ai::gateway_token::init(&plugin_data_root);
         let aokie_endpoint_identity =
             crate::aokie_endpoint_identity::AokieEndpointIdentity::new(
                 plugin_data_root.join("aokie-companion-identity"),

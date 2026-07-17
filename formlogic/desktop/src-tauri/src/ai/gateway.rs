@@ -23,7 +23,9 @@ use super::egress;
 use super::providers::{Capability, ProviderProfile, ProviderRegistryHandle, Protocol};
 
 const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(120);
-const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+/// Size cap on an upstream response — enforced by `read_capped` for buffered
+/// bodies and by the HTTP layer's passthrough adapter for streamed ones.
+pub const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum GatewayError {
@@ -187,6 +189,74 @@ pub async fn chat_completions(
         Protocol::Anthropic => Ok(wrap_text_as_openai_chat(extract_anthropic_text(&value))),
         Protocol::OpenAi => Ok(value),
     }
+}
+
+/// AI-405: can `stream:true` be honestly proxied for this provider? Only a
+/// provider whose wire dialect IS OpenAI chat-completions can stream — the
+/// upstream SSE bytes pass through unaltered, so any protocol we'd have to
+/// TRANSLATE per-chunk (the Anthropic mapping, a Custom request template or
+/// response path) is refused rather than mangled.
+pub fn protocol_streamable(provider: &ProviderProfile) -> bool {
+    match provider.protocol {
+        Protocol::OpenAi => true,
+        Protocol::Anthropic => false,
+        Protocol::Custom => {
+            // A Custom provider with NEITHER a request template NOR a response
+            // path is an OpenAI-shaped endpoint at a custom path — pass-through
+            // works. Either mapping present ⇒ the response needs translation.
+            let spec = provider
+                .specs
+                .get(super::providers::capability_key(Capability::Chat));
+            spec.map(|s| s.request_template.is_none() && s.response_path.is_none())
+                .unwrap_or(true)
+        }
+    }
+}
+
+/// AI-405: forward a `stream:true` chat-completions request and hand back the
+/// upstream `reqwest::Response` for incremental byte passthrough (the HTTP
+/// layer pipes `bytes_stream()` straight to the client — no buffering).
+/// SAME egress hardening as the buffered path: validated + address-pinned
+/// client, redirects disabled, headers applied server-side. Callers must
+/// gate on [`protocol_streamable`] first. A non-2xx upstream is read (capped)
+/// and surfaced as a normal `GatewayError::Upstream` so error bodies never
+/// masquerade as an event stream.
+pub async fn chat_completions_stream(
+    reg: &ProviderRegistryHandle,
+    provider: &ProviderProfile,
+    mut body: serde_json::Value,
+) -> Result<reqwest::Response, GatewayError> {
+    let cap = Capability::Chat;
+    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
+    let access = provider.local_access();
+    let path = provider.path_for(cap);
+    let target = egress::validate(&provider.base_url, &path, access)
+        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
+
+    // Default the model from the profile when the caller didn't set one.
+    if body.get("model").is_none() {
+        if let Some(m) = &provider.model {
+            body["model"] = serde_json::Value::String(m.clone());
+        }
+    }
+
+    let client = client_for(&target)?;
+    let rb = client.post(target.url.clone()).json(&body);
+    let rb = apply_headers(rb, provider, key.as_deref());
+    let resp = rb
+        .send()
+        .await
+        .map_err(|e| GatewayError::Upstream(format!("request failed: {e}")))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let bytes = read_capped(resp).await.unwrap_or_default();
+        let detail = String::from_utf8_lossy(&bytes);
+        return Err(GatewayError::Upstream(format!(
+            "upstream {status}: {}",
+            detail.chars().take(500).collect::<String>()
+        )));
+    }
+    Ok(resp)
 }
 
 /// List models from a resolved provider (`GET <base>/v1/models`) or, for a
@@ -422,6 +492,55 @@ mod tests {
         assert_eq!(body["m"], "m1");
         let resp = serde_json::json!({ "result": { "text": "done" } });
         assert_eq!(extract_custom_text(&provider, Capability::Chat, &resp), "done");
+    }
+
+    /// AI-405 decision table: which protocols may proxy `stream:true` SSE.
+    /// OpenAI-dialect providers pass bytes through; anything the gateway
+    /// would have to translate per-chunk is refused (streaming_unsupported).
+    #[test]
+    fn streamable_decision_follows_the_wire_dialect() {
+        let base = |protocol: Protocol, specs: std::collections::HashMap<String, super::super::providers::CapabilitySpec>| ProviderProfile {
+            id: "p".into(),
+            name: "p".into(),
+            protocol,
+            base_url: "https://example.com".into(),
+            model: None,
+            capabilities: vec![],
+            headers: vec![],
+            specs,
+            allow_local: false,
+            enabled: true,
+        };
+        // OpenAI dialect (openai / ollama / lmstudio presets) → streamable.
+        assert!(protocol_streamable(&base(Protocol::OpenAi, Default::default())));
+        // Anthropic needs per-chunk translation → refused.
+        assert!(!protocol_streamable(&base(Protocol::Anthropic, Default::default())));
+        // Custom with no chat mapping = OpenAI-shaped at a custom base → streamable.
+        assert!(protocol_streamable(&base(Protocol::Custom, Default::default())));
+        // Custom with ONLY a path override is still OpenAI-shaped.
+        let mut path_only = std::collections::HashMap::new();
+        path_only.insert(
+            "chat".to_string(),
+            super::super::providers::CapabilitySpec {
+                path: Some("/api/chat".into()),
+                request_template: None,
+                response_path: None,
+            },
+        );
+        assert!(protocol_streamable(&base(Protocol::Custom, path_only)));
+        // A request template or response path ⇒ translated responses ⇒ refused.
+        for (tpl, rp) in [(Some(r#"{"q":"{{prompt}}"}"#.to_string()), None), (None, Some("result.text".to_string()))] {
+            let mut specs = std::collections::HashMap::new();
+            specs.insert(
+                "chat".to_string(),
+                super::super::providers::CapabilitySpec {
+                    path: None,
+                    request_template: tpl,
+                    response_path: rp,
+                },
+            );
+            assert!(!protocol_streamable(&base(Protocol::Custom, specs)));
+        }
     }
 
     #[test]

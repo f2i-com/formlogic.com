@@ -1101,16 +1101,26 @@ ${BUSINESS_INFO_BLOCK_JS}
       : 'Thanks for calling! How can I help you today?';
   }
   var replyMode = String(cfg.reply_mode || '').trim();
-  // Source picks (CON-302): resolve per call, against the LIVE desktop
-  // services list (nodes.svc), so a port change self-heals on the next call.
+  // Source picks (CON-302 / SRC-203): resolve per call, against the LIVE
+  // desktop services list (nodes.svc), so a port change self-heals on the
+  // next call.
   // 'service:<id>' -> the running service's loopback URL + the lane's
   // conventional path ('' when not running: the plugin then falls back to
   // auto-detect / its built-in engine, which is where a dead URL would have
-  // ended up anyway, minus the timeout). 'custom' or blank -> the legacy
-  // endpoint field (blank field = plugin default).
+  // ended up anyway, minus the timeout).
+  // 'provider:<id>' (LLM lane only) -> the desktop AI gateway's per-provider
+  // OpenAI base (http://127.0.0.1:17872/api/ai/providers/<id> + the lane
+  // path — the gateway's routes are /api/ai/providers/:id/v1/chat/completions
+  // and .../v1/models, which is exactly what the plugin's LlmClient derives
+  // from a chat URL). The gateway port is FIXED, so this composes with NO
+  // service lookup — emitted even when the desktop_services node lists
+  // nothing. On the STT/TTS lanes provider: picks resolve to '' (plugin
+  // default): the gateway has no audio routes yet — un-gate when it does.
+  // 'custom' or blank -> the legacy endpoint field (blank field = plugin
+  // default).
   var svcNode = nodes.svc || {};
   var svcList = svcNode.services || [];
-  function laneUrl(source, customUrl, path) {
+  function laneUrl(source, customUrl, path, providerOk) {
     source = String(source || '').trim();
     var custom = String(customUrl || '').trim();
     if (!source || source === 'custom') return custom;
@@ -1121,6 +1131,10 @@ ${BUSINESS_INFO_BLOCK_JS}
       }
       return '';
     }
+    if (source.indexOf('provider:') === 0) {
+      if (!providerOk) return '';
+      return 'http://127.0.0.1:17872/api/ai/providers/' + encodeURIComponent(source.slice(9)) + path;
+    }
     return custom;
   }
   return {
@@ -1130,9 +1144,9 @@ ${BUSINESS_INFO_BLOCK_JS}
     model: String(cfg.model || '').trim(),
     // AI plumbing, all flow-configurable: blank = the plugin's default behaviour
     // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).
-    aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions'),
-    sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions'),
-    ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech'),
+    aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true),
+    sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false),
+    ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false),
     aiReceptionist: replyMode !== 'flow'
   };
 })()`;
@@ -3204,31 +3218,34 @@ export const aokieReceptionistPack: PackData = {
           properties: { placeholder: 'e.g. +61' },
         },
         { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
-        // Source picks (CON-301): '' = automatic (legacy custom-endpoint field
-        // wins when set, else the plugin default), 'service:<id>' = a FormLogic
-        // Desktop service resolved to its live loopback URL at CONFIGURE time
-        // (per call, so a port change self-heals on the next call),
-        // 'custom' = use the matching *_endpoint field verbatim.
+        // Source picks (CON-301 / SRC-203): '' = automatic (legacy
+        // custom-endpoint field wins when set, else the plugin default),
+        // 'service:<id>' = a FormLogic Desktop service resolved to its live
+        // loopback URL at CONFIGURE time (per call, so a port change
+        // self-heals on the next call), 'provider:<id>' (LLM lane only) = a
+        // configured AI provider routed through the desktop AI gateway's
+        // fixed per-provider OpenAI base, 'custom' = use the matching
+        // *_endpoint field verbatim.
         {
           id: 'llm_source',
           type: 'short_text',
           label: 'LLM source (blank = automatic)',
           required: false,
-          properties: { placeholder: "e.g. service:llama-cpp, custom" },
+          properties: { placeholder: "e.g. service:llama-cpp, provider:openai, custom" },
         },
         {
           id: 'stt_source',
           type: 'short_text',
           label: 'Speech-to-text source (blank = automatic)',
           required: false,
-          properties: { placeholder: 'e.g. service:aokie-voice, custom' },
+          properties: { placeholder: 'e.g. service:aokie-stt, custom' },
         },
         {
           id: 'tts_source',
           type: 'short_text',
           label: 'Text-to-speech source (blank = automatic)',
           required: false,
-          properties: { placeholder: 'e.g. service:aokie-voice, custom' },
+          properties: { placeholder: 'e.g. service:aokie-tts, custom' },
         },
       ],
       // The section IS the settings console (SDK screen): grouped cards, a

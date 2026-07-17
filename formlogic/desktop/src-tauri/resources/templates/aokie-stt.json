@@ -1,0 +1,18 @@
+{
+  "id": "aokie-stt",
+  "name": "Aokie Speech to Text",
+  "description": "Dedicated speech-to-text service backed by the Aokie voice stack (aokie-voice-server.exe --mode stt) — transcription only, exposed as an OpenAI-compatible HTTP endpoint (POST /v1/audio/transcriptions) on a loopback port for FormLogic Flows' Transcribe audio step and the receptionist's STT source picker. The server binary ships with the Aokie plugin (aokie-voice-server.exe next to aokie-plugin.exe); install the Aokie plugin in the Plugins tab first. Default engine is NVIDIA Parakeet ONNX; swap engines without editing this template via the card's Extra args — e.g. \"--stt-engine moonshine\" or \"--stt-engine qwen3-asr\", plus \"--stt-model-dir DIR\" to point at a specific model folder. The model loads lazily on first request (~600 MB RAM).",
+  "category": "Speech-to-Text",
+  "defaultPort": 17921,
+  "capabilities": ["transcription"],
+  "run": {
+    "command": "${dataDir}/plugins/aokie/aokie-voice-server.exe",
+    "args": ["--mode", "stt", "--port", "${port}"],
+    "cwd": "${dataDir}/plugins/aokie"
+  },
+  "health": {
+    "url": "http://127.0.0.1:${port}/health",
+    "timeoutSecs": 10
+  },
+  "docsUrl": "https://github.com/f2i-com/aokie.com"
+}

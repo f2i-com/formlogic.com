@@ -990,15 +990,32 @@ describe('stt_transcribe', () => {
     await expect(executeNode(ctxFor(node, fakeDeps(), { scope: { inputs: { rec: 'x' } } }))).rejects.toBeInstanceOf(FlowExecError);
   });
 
-  it("defaults to the Desktop 'aokie-voice' speech service when no endpoint/service is set (parity with flows/runner.rs)", async () => {
+  it("defaults to the Desktop 'aokie-voice' speech service when no endpoint/service is set and no split STT service is running (parity with flows/runner.rs)", async () => {
     const fetchFn = routedFetch({ '/v1/audio/transcriptions': { text: 'default service transcript' } });
-    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:17920');
+    // aokie-stt exists as a template but isn't RUNNING → resolves null → aokie-voice wins.
+    const resolveDesktopServiceBase = vi.fn(async (id: string) => (id === 'aokie-voice' ? 'http://127.0.0.1:17920' : null));
     const node: WorkflowGraphNode = { id: 'stt', type: 'stt_transcribe', data: { audio: '$inputs.rec' } };
     const out = (await executeNode(
       ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase }), { scope: { inputs: { rec: 'data:audio/wav;base64,AA' } } })
     )) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-stt');
     expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-voice');
     expect(out.text).toBe('default service transcript');
+  });
+
+  it("prefers a RUNNING dedicated 'aokie-stt' service over 'aokie-voice' for the default endpoint", async () => {
+    const fetchFn = routedFetch({ '/v1/audio/transcriptions': { text: 'split service transcript' } });
+    const resolveDesktopServiceBase = vi.fn(async (id: string) =>
+      id === 'aokie-stt' ? 'http://127.0.0.1:17921' : id === 'aokie-voice' ? 'http://127.0.0.1:17920' : null
+    );
+    const node: WorkflowGraphNode = { id: 'stt', type: 'stt_transcribe', data: { audio: '$inputs.rec' } };
+    const out = (await executeNode(
+      ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase }), { scope: { inputs: { rec: 'data:audio/wav;base64,AA' } } })
+    )) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-stt');
+    expect(resolveDesktopServiceBase).not.toHaveBeenCalledWith('aokie-voice');
+    expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:17921/v1/audio/transcriptions', expect.anything());
+    expect(out.text).toBe('split service transcript');
   });
 
   it('an explicitly named service that fails to resolve still errors — never silently substitutes the default', async () => {
@@ -1071,13 +1088,28 @@ describe('tts_speak', () => {
     await expect(executeNode(ctxFor(node, fakeDeps()))).rejects.toBeInstanceOf(FlowExecError);
   });
 
-  it("defaults to the Desktop 'aokie-voice' speech service when no endpoint/service is set (parity with flows/runner.rs)", async () => {
+  it("defaults to the Desktop 'aokie-voice' speech service when no endpoint/service is set and no split TTS service is running (parity with flows/runner.rs)", async () => {
     const fetchFn = vi.fn(async () => new Response(new Uint8Array([65, 66, 67]), { status: 200, headers: { 'Content-Type': 'audio/wav' } })) as unknown as typeof fetch;
-    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:17920');
+    // aokie-tts exists as a template but isn't RUNNING → resolves null → aokie-voice wins.
+    const resolveDesktopServiceBase = vi.fn(async (id: string) => (id === 'aokie-voice' ? 'http://127.0.0.1:17920' : null));
     const node: WorkflowGraphNode = { id: 'tts', type: 'tts_speak', data: { text: 'hi' } };
     const out = (await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase })))) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-tts');
     expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-voice');
     expect(out.audioUrl).toBe('data:audio/wav;base64,QUJD');
     expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:17920/v1/audio/speech', expect.anything());
+  });
+
+  it("prefers a RUNNING dedicated 'aokie-tts' service over 'aokie-voice' for the default endpoint", async () => {
+    const fetchFn = vi.fn(async () => new Response(new Uint8Array([65, 66, 67]), { status: 200, headers: { 'Content-Type': 'audio/wav' } })) as unknown as typeof fetch;
+    const resolveDesktopServiceBase = vi.fn(async (id: string) =>
+      id === 'aokie-tts' ? 'http://127.0.0.1:17922' : id === 'aokie-voice' ? 'http://127.0.0.1:17920' : null
+    );
+    const node: WorkflowGraphNode = { id: 'tts', type: 'tts_speak', data: { text: 'hi' } };
+    const out = (await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase })))) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('aokie-tts');
+    expect(resolveDesktopServiceBase).not.toHaveBeenCalledWith('aokie-voice');
+    expect(out.audioUrl).toBe('data:audio/wav;base64,QUJD');
+    expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:17922/v1/audio/speech', expect.anything());
   });
 });
