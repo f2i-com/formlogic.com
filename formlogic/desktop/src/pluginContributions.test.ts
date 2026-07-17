@@ -10,6 +10,7 @@ import {
   pluginSectionId,
   resolvePath,
   snapshotBindingSource,
+  statusTone,
 } from './pluginContributions.ts';
 
 function snap(overrides: Partial<PluginSnapshot> = {}): PluginSnapshot {
@@ -75,6 +76,16 @@ test('display value bounds strings/objects and shows an em-dash for null', () =>
   assert.equal(displayValue('hi'), 'hi');
   assert.equal(displayValue(42), '42');
   assert.equal(displayValue('a'.repeat(300)).endsWith('…'), true);
+});
+
+test('status tone maps status-like strings and rejects free text', () => {
+  assert.equal(statusTone('ok'), 'is-ok');
+  assert.equal(statusTone(' Degraded '), 'is-warn');
+  assert.equal(statusTone('ERROR'), 'is-live');
+  assert.equal(statusTone('unknown'), 'is-neutral');
+  assert.equal(statusTone('All systems nominal'), null);
+  assert.equal(statusTone(42), null);
+  assert.equal(statusTone(null), null);
 });
 
 test('icon normalizes to the allowlist and clamps poll interval', () => {

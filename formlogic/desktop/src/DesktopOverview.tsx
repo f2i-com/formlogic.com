@@ -37,11 +37,16 @@ export function DesktopOverview({
   data,
   onOpen,
   onOpenPluginNav,
+  suppressAokieHero = false,
 }: {
   data: DesktopOverviewData;
   onOpen: (s: SectionId) => void;
   /** PLG-203: open a plugin-contributed section from an Overview card CTA. */
   onOpenPluginNav?: (pluginId: string, navId: string) => void;
+  /** AOK-305: in Aokie manifest mode, hide the compiled hero (the manifest's
+   *  Overview card renders it) — and, conversely, in compiled mode Aokie is
+   *  filtered out of the generic PluginOverviewCards so it never double-renders. */
+  suppressAokieHero?: boolean;
 }) {
   const svc = data.services?.services ?? [];
   const running = svc.filter((s) => s.status === 'running').length;
@@ -93,8 +98,9 @@ export function DesktopOverview({
 
       {/* The receptionist hero is the Aokie PLUGIN's surface — it renders only
           while the plugin is installed (or the first fetch is still loading),
-          so removing the plugin removes its chrome too. */}
-      {(!data.loaded || aokieInstalled) && (
+          so removing the plugin removes its chrome too. AOK-305: hidden in
+          manifest mode (the manifest's Overview card renders instead). */}
+      {(!data.loaded || aokieInstalled) && !suppressAokieHero && (
       <section className="desktop-aokie-card">
         <div className="desktop-aokie-card__accent" aria-hidden="true" />
         <div className="desktop-aokie-card__main">
@@ -151,9 +157,12 @@ export function DesktopOverview({
       )}
 
       {/* PLG-203: cards contributed by installed v2 plugins (a plugin's
-          ui.overview) — rendered dynamically from the manifest. */}
+          ui.overview) — rendered dynamically from the manifest. AOK-305: in
+          compiled mode Aokie's manifest hero is filtered out (the compiled hero
+          above stands in); in manifest mode it renders here and the compiled
+          hero is suppressed — so the Aokie hero shows exactly once either way. */}
       <PluginOverviewCards
-        plugins={plg}
+        plugins={suppressAokieHero ? plg : plg.filter((p) => p.id !== 'aokie')}
         onOpenNav={(pid, nav) => onOpenPluginNav?.(pid, nav)}
       />
 

@@ -2705,18 +2705,147 @@ code {
 .cap-checks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .cap-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-dim); }
 .cap-check input { cursor: pointer; }
-
-/* PLG-203 — plugin-contributed UI (Overview cards + contributed screen). */
-.plugin-overview-card { display: flex; flex-direction: column; gap: 8px; }
-.plugin-overview-card--hero {
-  border-left: 3px solid var(--signal);
-  box-shadow: var(--shadow-card), -10px 0 22px -18px var(--signal);
+/* Stacked variant: one capability per line with a description under the name. */
+.cap-checks--stacked { flex-direction: column; gap: 7px; }
+.cap-checks--stacked .cap-check { align-items: flex-start; }
+.cap-checks--stacked .cap-check input { margin-top: 2px; }
+.cap-check__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* .form-row span styles every span as a mono field label — these content
+   spans (capability names/descriptions, hint lines) need to win it back. */
+.form-row .cap-check__name {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  letter-spacing: normal;
+  color: var(--ink);
 }
-.plugin-overview-card__head { display: flex; align-items: center; gap: 8px; }
-.plugin-overview-card__head h3 { margin: 0; font-size: 14px; }
-.plugin-overview-card__headline { margin: 0; font-weight: 600; }
-.plugin-overview-card__body { margin: 0; font-size: 12px; color: var(--ink-dim); }
-.plugin-overview-card .btn { align-self: flex-start; }
+.form-row .cap-check__desc {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+  color: var(--ink-faint);
+}
+.input-with-action { display: flex; align-items: center; gap: 8px; }
+.input-with-action input { flex: 1; min-width: 0; }
+.form-row .form-hint {
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: normal;
+  color: var(--ink-faint);
+}
+.form-hint.warn, .form-row .form-hint.warn { color: var(--warn); }
+.custom-mapping {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+}
+.custom-mapping > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--ink-dim);
+}
+.custom-mapping[open] > summary { margin-bottom: 8px; }
+.custom-mapping textarea {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+
+/* Panel manual-refresh affordance. */
+.panel-refresh-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.panel-refresh-btn { display: inline-flex; align-items: center; gap: 6px; }
+.spinner-inline { width: 12px; height: 12px; border-width: 2px; }
+
+/* PLG-203 — plugin-contributed UI (Overview cards + contributed screen).
+   Overview cards share the compiled hero's design language (accent bar,
+   gradient icon tile, eyebrow, status pill) so a manifest-contributed banner
+   is indistinguishable in polish from a built-in one. */
+.plugin-overview-card {
+  position: relative;
+  /* .desktop-overview has no flow gap — without this the card sits flush
+     against the compiled hero above it and against sibling cards. */
+  margin-top: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 15px;
+  overflow: hidden;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-card);
+}
+.plugin-overview-card--hero {
+  background:
+    radial-gradient(circle at 0 30%, var(--signal-soft), transparent 40%),
+    var(--surface-1);
+}
+.plugin-overview-card__accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(var(--signal), var(--ok));
+}
+.plugin-overview-card__main {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+.plugin-overview-card--hero .plugin-overview-card__main { padding: 20px 22px; }
+.plugin-overview-card__icon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 13px;
+  background: linear-gradient(145deg, var(--signal), var(--signal-deep));
+  color: var(--signal-ink);
+}
+.plugin-overview-card--hero .plugin-overview-card__icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  box-shadow: 0 13px 29px -16px var(--signal);
+}
+.plugin-overview-card__copy { min-width: 0; flex: 1; }
+.plugin-overview-card__copy .desktop-card-eyebrow { text-transform: uppercase; }
+.plugin-overview-card__copy h3 {
+  margin: 5px 0 4px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: -0.03em;
+}
+.plugin-overview-card--hero .plugin-overview-card__copy h3 { font-size: 16.5px; }
+.plugin-overview-card__headline {
+  margin: 0 0 3px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.plugin-overview-card__body {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.plugin-overview-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.plugin-overview-card__pill {
+  flex: 0 0 auto;
+  text-transform: capitalize;
+}
 
 .plugin-status-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; }
 .plugin-status-field { display: contents; }

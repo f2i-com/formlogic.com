@@ -352,6 +352,11 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   // the customer lookup through a ref to avoid a stale (empty) closure.
   const customerLookupRef = useRef(customerNameForPhone);
   useEffect(() => { customerLookupRef.current = customerNameForPhone; }, [customerNameForPhone]);
+  // Mirror of `call` for the event handler (same pattern as reloadRef): the
+  // caller_id case needs to know whether the number is NEWLY learned without
+  // re-subscribing on every call-state change.
+  const callRef = useRef(call);
+  useEffect(() => { callRef.current = call; }, [call]);
   const turnsReloadRef = useRef(storedTurns.reload);
   useEffect(() => { turnsReloadRef.current = storedTurns.reload; }, [storedTurns.reload]);
 
@@ -384,6 +389,23 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
         case 'aokie.call.answered':
           setCall((prev) => (prev ? { ...prev, state: 'active' } : callFromEventData(callId, data, 'active')));
           break;
+        case 'aokie.call.caller_id': {
+          // On post-answer-id phones (the live Pixel: CLCC) the number only
+          // becomes known ~1s AFTER pickup via this event — without this case
+          // the card said "Unknown caller" until the next call.current poll.
+          const from = typeof data.from === 'string' ? data.from : '';
+          if (!from) break;
+          // Only when the number is NEWLY learned: +CLIP-during-ring phones
+          // already carried it on call.incoming — no second toast there.
+          const prev = callRef.current;
+          const newlyLearned = !!prev && prev.callId === callId && !prev.from;
+          setCall((p) => (p && p.callId === callId && !p.from ? { ...p, from } : p));
+          if (newlyLearned) {
+            const known = customerLookupRef.current(from);
+            if (known) toast.info('Caller identified', `${known} · ${from}`);
+          }
+          break;
+        }
         case 'aokie.call.turn.final':
           setTurns((prev) => [
             ...prev.slice(-49),

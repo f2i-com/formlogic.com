@@ -87,6 +87,39 @@ export function snapshotBindingSource(p: PluginSnapshot): Record<string, unknown
   };
 }
 
+/**
+ * Map a status-like bound string ("ok", "degraded", "error"…) to a
+ * desktop-status-pill tone. Non-status strings return null and render as a
+ * plain headline instead of a pill.
+ */
+export type StatusTone = 'is-ok' | 'is-warn' | 'is-live' | 'is-neutral';
+
+const STATUS_TONES: Record<string, StatusTone> = {
+  ok: 'is-ok',
+  ready: 'is-ok',
+  running: 'is-ok',
+  healthy: 'is-ok',
+  connected: 'is-ok',
+  online: 'is-ok',
+  degraded: 'is-warn',
+  warning: 'is-warn',
+  unhealthy: 'is-warn',
+  starting: 'is-warn',
+  reconnecting: 'is-warn',
+  error: 'is-live',
+  failed: 'is-live',
+  offline: 'is-live',
+  stopped: 'is-neutral',
+  disabled: 'is-neutral',
+  installed: 'is-neutral',
+  unknown: 'is-neutral',
+};
+
+export function statusTone(value: unknown): StatusTone | null {
+  if (typeof value !== 'string') return null;
+  return STATUS_TONES[value.trim().toLowerCase()] ?? null;
+}
+
 /** Stringify a resolved binding value for display (safe, bounded). */
 export function displayValue(v: unknown): string {
   if (v == null) return '—';

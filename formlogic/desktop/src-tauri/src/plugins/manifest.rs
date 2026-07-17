@@ -570,6 +570,9 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
                 return Err(format!("ui.nav[{i}].label must be 1-60 chars"));
             }
         }
+        if ui.overview.len() > 16 {
+            return Err(format!("ui.overview has {} entries (max 16)", ui.overview.len()));
+        }
         for (i, c) in ui.overview.iter().enumerate() {
             if !is_valid_contrib_id(&c.id) {
                 return Err(format!("ui.overview[{i}].id {:?} is invalid", c.id));
@@ -583,14 +586,33 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
             if c.title.is_empty() || c.title.len() > 120 {
                 return Err(format!("ui.overview[{i}].title must be 1-120 chars"));
             }
-            if let Some(cta) = c.bind.as_ref().and_then(|b| b.cta.as_ref()) {
-                if !ui.nav.iter().any(|n| n.id == cta.nav) {
-                    return Err(format!(
-                        "ui.overview[{i}].bind.cta.nav {:?} does not match any ui.nav id",
-                        cta.nav
-                    ));
+            if let Some(bind) = c.bind.as_ref() {
+                // headline/body are pointer paths resolved by the host — the
+                // same safe-path rule the status-card fields already obey.
+                for (name, p) in [("headline", &bind.headline), ("body", &bind.body)] {
+                    if let Some(p) = p {
+                        if !is_safe_pointer(p) {
+                            return Err(format!(
+                                "ui.overview[{i}].bind.{name} {p:?} is not a safe field path"
+                            ));
+                        }
+                    }
+                }
+                if let Some(cta) = bind.cta.as_ref() {
+                    if !ui.nav.iter().any(|n| n.id == cta.nav) {
+                        return Err(format!(
+                            "ui.overview[{i}].bind.cta.nav {:?} does not match any ui.nav id",
+                            cta.nav
+                        ));
+                    }
                 }
             }
+        }
+        if ui.status_cards.len() > 16 {
+            return Err(format!(
+                "ui.statusCards has {} entries (max 16)",
+                ui.status_cards.len()
+            ));
         }
         for (i, card) in ui.status_cards.iter().enumerate() {
             if !is_valid_contrib_id(&card.id) {
@@ -602,6 +624,12 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
                     card.poll.command
                 ));
             }
+            if card.fields.len() > 16 {
+                return Err(format!(
+                    "ui.statusCards[{i}] has {} fields (max 16)",
+                    card.fields.len()
+                ));
+            }
             for (j, f) in card.fields.iter().enumerate() {
                 if !is_safe_pointer(&f.path) {
                     return Err(format!(
@@ -610,6 +638,9 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
                     ));
                 }
             }
+        }
+        if ui.actions.len() > 16 {
+            return Err(format!("ui.actions has {} entries (max 16)", ui.actions.len()));
         }
         for (i, a) in ui.actions.iter().enumerate() {
             if !is_valid_contrib_id(&a.id) {
@@ -872,6 +903,50 @@ mod tests {
                 "fields": [{ "label": "x", "path": "a.b();evil" }] }]
         });
         assert!(parse(v).unwrap_err().contains("not a safe field path"));
+
+        // An unsafe overview bind pointer is refused (same rule as fields).
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "overview": [{ "id": "c", "kind": "hero", "title": "T",
+                "bind": { "headline": "$health.status; drop()" } }]
+        });
+        assert!(parse(v).unwrap_err().contains("not a safe field path"));
+    }
+
+    /// Every ui array is bounded — a hostile manifest can't bloat the snapshot
+    /// (nav was already capped at 16; overview/statusCards/actions/fields match).
+    #[test]
+    fn v2_ui_arrays_are_capped() {
+        let card = |i: usize| {
+            serde_json::json!({ "id": format!("c{i}"), "kind": "status", "title": "T" })
+        };
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({ "overview": (0..17).map(card).collect::<Vec<_>>() });
+        assert!(parse(v).unwrap_err().contains("max 16"));
+
+        let status = |i: usize| {
+            serde_json::json!({ "id": format!("s{i}"), "title": "S",
+                "poll": { "command": "echo.ping" }, "fields": [] })
+        };
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({ "statusCards": (0..17).map(status).collect::<Vec<_>>() });
+        assert!(parse(v).unwrap_err().contains("max 16"));
+
+        let field = |i: usize| serde_json::json!({ "label": format!("f{i}"), "path": "a.b" });
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "statusCards": [{ "id": "st", "title": "S",
+                "poll": { "command": "echo.ping" },
+                "fields": (0..17).map(field).collect::<Vec<_>>() }]
+        });
+        assert!(parse(v).unwrap_err().contains("max 16"));
+
+        let action = |i: usize| {
+            serde_json::json!({ "id": format!("a{i}"), "label": "A", "command": "echo.ping" })
+        };
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({ "actions": (0..17).map(action).collect::<Vec<_>>() });
+        assert!(parse(v).unwrap_err().contains("max 16"));
     }
 
     #[test]

@@ -497,6 +497,12 @@ impl PluginHost {
 
 /// The manifest capability that gates the inbound `flow.run` RPC.
 pub const FLOW_RUN_CAPABILITY: &str = "flow.run";
+/// AOK-302: the generic host admission/identity broker capability. Any plugin
+/// the host is willing to broker for (see [`admission_eligible`]) declares
+/// this to reach the credential-minting `host.admission` RPC.
+pub const HOST_ADMISSION_CAPABILITY: &str = "host.admission";
+/// Legacy alias kept so the deployed Aokie plugin — which declares and calls
+/// `companion.admission` — keeps working unchanged during the migration.
 pub const COMPANION_ADMISSION_CAPABILITY: &str = "companion.admission";
 
 /// True when a manifest declares the `flow.run` capability (bare or `flow.*`).
@@ -507,8 +513,29 @@ pub fn declares_flow_run(manifest: &crate::plugins::manifest::PluginManifest) ->
         .any(|c| c == FLOW_RUN_CAPABILITY || c == "flow.*")
 }
 
-/// The admission broker is intentionally a separate, exact capability. A
+/// AOK-302: which plugins the host will broker admission for. A generic
+/// capability NAME does not widen this set — the host remains the security
+/// authority. Today only the (package-verified, account-linked) Aokie plugin;
+/// AOK-303 (supervised) generalizes the broker + identity migration before any
+/// other plugin is added here. Kept as a single seam so the pin is a stated
+/// policy, not string equality scattered through the request path.
+pub fn admission_eligible(plugin_id: &str) -> bool {
+    matches!(plugin_id, "aokie")
+}
+
+/// The admission broker is intentionally a separate, exact capability — a
 /// generic `flow.*` grant must never expose a credential-minting host method.
+/// A plugin declares eligibility via EITHER the generic `host.admission`
+/// capability or the legacy `companion.admission` alias.
+pub fn declares_admission(manifest: &crate::plugins::manifest::PluginManifest) -> bool {
+    manifest
+        .capabilities
+        .iter()
+        .any(|c| c == HOST_ADMISSION_CAPABILITY || c == COMPANION_ADMISSION_CAPABILITY)
+}
+
+/// Legacy exact check retained for tests/back-compat: only the `companion.admission`
+/// alias (not the generic capability). Prefer [`declares_admission`].
 pub fn declares_companion_admission(
     manifest: &crate::plugins::manifest::PluginManifest,
 ) -> bool {
@@ -538,18 +565,21 @@ async fn handle_inbound_plugin_request(
                 data: Some(json!({ "code": "capability_denied" })),
             });
         }
-        "companion.admission"
-            if plugin_id != "aokie"
-                || !package_verified
-                || !declares_companion_admission(manifest) =>
+        // AOK-302: the generic host admission broker + its legacy alias. The
+        // host stays the security authority — package-verified, account-linked
+        // (checked below), and only brokered for `admission_eligible` plugins.
+        "host.admission" | "companion.admission"
+            if !package_verified
+                || !admission_eligible(plugin_id)
+                || !declares_admission(manifest) =>
         {
             return Err(RpcErrorObj {
                 code: -32000,
-                message: "capability 'companion.admission' is not available to this plugin".into(),
+                message: format!("capability '{method}' is not available to this plugin"),
                 data: Some(json!({ "code": "capability_denied" })),
             });
         }
-        "flow.run" | "companion.admission" => {}
+        "flow.run" | "host.admission" | "companion.admission" => {}
         _ => {
             return Err(RpcErrorObj {
                 code: -32601,
@@ -1138,6 +1168,26 @@ mod tests {
         )));
     }
 
+    /// AOK-302: admission is declared by EITHER the generic capability or the
+    /// legacy alias — but never by a wildcard grant.
+    #[test]
+    fn declares_admission_accepts_generic_or_legacy_but_not_wildcards() {
+        assert!(declares_admission(&manifest("\"host.admission\"")));
+        assert!(declares_admission(&manifest("\"companion.admission\"")));
+        assert!(!declares_admission(&manifest("\"flow.*\"")));
+        assert!(!declares_admission(&manifest("\"host.*\"")));
+        assert!(!declares_admission(&manifest("\"companion.*\"")));
+    }
+
+    /// AOK-302: a generic capability name does NOT widen who the host brokers
+    /// for — only `admission_eligible` plugins qualify.
+    #[test]
+    fn admission_eligibility_is_a_stated_policy_not_a_generic_open_door() {
+        assert!(admission_eligible("aokie"));
+        assert!(!admission_eligible("not-aokie"));
+        assert!(!admission_eligible("some-other-plugin"));
+    }
+
     #[test]
     fn identity_only_private_bootstrap_names_the_plugin_for_brokered_admission() {
         let identity = json!({
@@ -1205,6 +1255,59 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(unlinked.data.unwrap()["code"], "runner_unavailable");
+    }
+
+    /// AOK-302: the generic `host.admission` method is gated by the SAME
+    /// security authority as the legacy alias — eligible plugin, package
+    /// verified, account linked — and a plugin declaring only the generic
+    /// capability reaches the broker (unlinked → runner_unavailable proves it
+    /// passed the capability gate).
+    #[tokio::test]
+    async fn host_admission_is_generic_but_keeps_the_security_authority() {
+        let h = host();
+        let generic = manifest("\"host.admission\"");
+
+        // Not eligible → denied even with the generic capability + verified pkg.
+        let wrong_plugin =
+            handle_inbound_plugin_request(&h, &generic, "not-aokie", true, "host.admission", json!({}))
+                .await
+                .unwrap_err();
+        assert_eq!(wrong_plugin.data.unwrap()["code"], "capability_denied");
+
+        // Eligible but unsigned → denied.
+        let unsigned =
+            handle_inbound_plugin_request(&h, &generic, "aokie", false, "host.admission", json!({}))
+                .await
+                .unwrap_err();
+        assert_eq!(unsigned.data.unwrap()["code"], "capability_denied");
+
+        // Eligible + verified + declares the generic capability → past the gate,
+        // into the broker (no linked handler in the test host).
+        let unlinked = handle_inbound_plugin_request(
+            &h,
+            &generic,
+            "aokie",
+            true,
+            "host.admission",
+            json!({ "appId": "app_1", "pluginId": "plugin_1" }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unlinked.data.unwrap()["code"], "runner_unavailable");
+
+        // The legacy alias still works when only the generic capability is
+        // declared — either method name is accepted under either capability.
+        let alias_ok = handle_inbound_plugin_request(
+            &h,
+            &generic,
+            "aokie",
+            true,
+            "companion.admission",
+            json!({ "appId": "app_1", "pluginId": "plugin_1" }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(alias_ok.data.unwrap()["code"], "runner_unavailable");
     }
 
     #[tokio::test]

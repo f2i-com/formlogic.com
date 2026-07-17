@@ -13,6 +13,8 @@ import { AlertTriangleIcon, CheckIcon, DownloadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
 import { AokieCard } from './aokie/AokieCard';
 import { useConfirm } from './ConfirmDialog';
+import { PANEL_CACHE_KEYS, getPanelCache, setPanelCache } from './panelCache';
+import { PanelRefresh } from './PanelRefresh';
 import { useToast } from './Toasts';
 
 /**
@@ -31,7 +33,11 @@ import { useToast } from './Toasts';
  * a "Simulate incoming call" button (dongle.diagnostics {simulate:"call"}).
  */
 export default function PluginsPanel() {
-  const [snapshot, setSnapshot] = useState<PluginsListResponse | null>(null);
+  // Seed from the module-level cache (app-start prefetch / last visit) so the
+  // section paints instantly; the mount-time refresh revalidates right away.
+  const [snapshot, setSnapshot] = useState<PluginsListResponse | null>(
+    () => getPanelCache<PluginsListResponse>(PANEL_CACHE_KEYS.pluginsList) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -79,6 +85,7 @@ export default function PluginsPanel() {
         seen.set(p.id, p.state);
       }
       firstPollRef.current = false;
+      setPanelCache(PANEL_CACHE_KEYS.pluginsList, next);
       setSnapshot(next);
       setError(null);
     } catch (e) {
@@ -159,6 +166,7 @@ export default function PluginsPanel() {
 
   return (
     <div className="panel">
+      <PanelRefresh onRefresh={refresh} />
       {error && (
         <div className="banner banner-err">
           Couldn't reach the FormLogic Desktop API: {error}
@@ -246,7 +254,12 @@ export default function PluginsPanel() {
           register one.
         </div>
       )}
-      {!snapshot && !error && <div className="empty-state">Loading plugins…</div>}
+      {!snapshot && !error && (
+        <div className="section-loading" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" />
+          Loading plugins…
+        </div>
+      )}
 
       <section className="service-section">
         {snapshot?.plugins.map((p) => (

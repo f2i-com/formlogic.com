@@ -5,6 +5,7 @@ import {
   isTauri,
   journals,
   openInExplorer,
+  plugins,
   type CompanionConfig,
   type JournalsSnapshot,
   type MigratePlan,
@@ -13,6 +14,7 @@ import {
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, CheckIcon } from './Icons';
 import { useToast } from './Toasts';
+import { getAokieUiSource, setAokieUiSource, type AokieUiSource } from './aokieUiSource';
 
 /**
  * Settings panel — the data + models folders, additional model scan dirs,
@@ -55,6 +57,10 @@ export default function SettingsPanel() {
   // Local operational journals (DATA-PRIV-001): the Clear-history preview.
   const [journalsInfo, setJournalsInfo] = useState<JournalsSnapshot | null>(null);
   const [journalsBusy, setJournalsBusy] = useState(false);
+  // AOK-305: the Aokie UI-source rollback lever, shown only while the Aokie
+  // plugin is installed (a migration bridge — see aokieUiSource.ts).
+  const [aokieInstalled, setAokieInstalled] = useState(false);
+  const [aokieUi, setAokieUi] = useState<AokieUiSource>(getAokieUiSource());
   const toast = useToast();
   const { confirm: requestConfirm } = useConfirm();
 
@@ -158,6 +164,43 @@ export default function SettingsPanel() {
       .then(setHfTokenSet)
       .catch(() => setHfTokenSet(false));
   }, []);
+
+  // AOK-305: is the Aokie plugin installed (so the UI-source lever is relevant)?
+  useEffect(() => {
+    let cancelled = false;
+    plugins
+      .list()
+      .then((r) => {
+        if (!cancelled) setAokieInstalled(r.plugins.some((p) => p.id === 'aokie'));
+      })
+      .catch(() => {
+        if (!cancelled) setAokieInstalled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const switchAokieUi = useCallback(
+    async (next: AokieUiSource) => {
+      if (next === aokieUi) return;
+      const ok = await requestConfirm({
+        title: next === 'manifest' ? 'Use the manifest-driven Aokie UI?' : 'Use the built-in Aokie UI?',
+        body:
+          next === 'manifest'
+            ? "The AI Receptionist nav entry and Overview banner will be driven by the plugin's manifest. The interactive screens (pairing, live call, consent) stay the same. Reloads the window to apply."
+            : 'Restores the built-in AI Receptionist nav entry and Overview banner. Reloads the window to apply.',
+        confirmLabel: 'Switch & reload',
+      });
+      if (!ok) return;
+      setAokieUiSource(next);
+      setAokieUi(next);
+      // The source is read once at App render; reload so the whole shell
+      // recomputes nav + Overview from the new source.
+      window.location.reload();
+    },
+    [aokieUi, requestConfirm],
+  );
 
   const saveHfToken = useCallback(
     async (value: string) => {
@@ -855,6 +898,46 @@ export default function SettingsPanel() {
           </div>
         </form>
       </section>
+
+      {aokieInstalled && (
+        <section className="model-section">
+          <h3 className="section-title">Aokie receptionist — interface</h3>
+          <p className="form-hint" style={{ marginBottom: 12 }}>
+            Choose where the AI Receptionist's nav entry and Overview banner come
+            from. <strong>Built-in</strong> is the proven desktop interface.{' '}
+            <strong>From the plugin manifest</strong> trials the plugin's own
+            declarative nav + banner (the interactive screens are unchanged
+            either way). This is a local switch — no plugin reinstall — so you can
+            flip back instantly.
+          </p>
+          <div className="settings-row" style={{ marginBottom: 10 }}>
+            <span className="settings-label">Interface source</span>
+            <span>
+              {aokieUi === 'manifest' ? (
+                <span className="badge badge-ok">from the plugin manifest</span>
+              ) : (
+                <span className="badge badge-neutral">built-in (default)</span>
+              )}
+            </span>
+          </div>
+          <div className="form-actions">
+            <button
+              className={`btn ${aokieUi === 'compiled' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => switchAokieUi('compiled')}
+              disabled={aokieUi === 'compiled'}
+            >
+              Use built-in
+            </button>
+            <button
+              className={`btn ${aokieUi === 'manifest' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => switchAokieUi('manifest')}
+              disabled={aokieUi === 'manifest'}
+            >
+              Use plugin manifest
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="model-section">
         <h3 className="section-title">Privacy — local call &amp; SMS history</h3>

@@ -6,9 +6,11 @@ import {
   normalizeIcon,
   resolvePath,
   snapshotBindingSource,
+  statusTone,
   type PluginIconName,
 } from './pluginContributions';
 import {
+  ChevronRightIcon,
   DatabaseIcon,
   GearIcon,
   LayoutGridIcon,
@@ -209,28 +211,55 @@ export function PluginOverviewCards({
     <>
       {cards.map(({ plugin, card }) => {
         const src = snapshotBindingSource(plugin);
-        const headline = card.bind?.headline ? displayValue(resolvePath(src, card.bind.headline)) : undefined;
-        const body = card.bind?.body ? displayValue(resolvePath(src, card.bind.body)) : undefined;
+        const headlineRaw = card.bind?.headline ? resolvePath(src, card.bind.headline) : undefined;
+        const bodyRaw = card.bind?.body ? resolvePath(src, card.bind.body) : undefined;
+        const headline = headlineRaw == null ? undefined : displayValue(headlineRaw);
+        const body = bodyRaw == null ? undefined : displayValue(bodyRaw);
+        // A status-shaped headline ("ok"/"degraded"/…) renders as a status
+        // pill; anything else stays a plain headline line.
+        const tone = statusTone(headlineRaw);
         const hero = card.kind === 'hero';
         return (
           <section
             key={`${plugin.id}:${card.id}`}
-            className={`desktop-panel-card plugin-overview-card${hero ? ' plugin-overview-card--hero' : ''}`}
+            className={`plugin-overview-card${hero ? ' plugin-overview-card--hero' : ''}`}
           >
-            <div className="plugin-overview-card__head">
-              <PluginIcon name={normalizeIcon(card.icon)} size={hero ? 20 : 16} />
-              <h3>{card.title}</h3>
+            {hero && <div className="plugin-overview-card__accent" aria-hidden="true" />}
+            <div className="plugin-overview-card__main">
+              <span className="plugin-overview-card__icon">
+                <PluginIcon name={normalizeIcon(card.icon)} size={hero ? 24 : 19} />
+              </span>
+              <div className="plugin-overview-card__copy">
+                <span className="desktop-card-eyebrow">{plugin.name}</span>
+                <h3>{card.title}</h3>
+                {headline && !tone && <p className="plugin-overview-card__headline">{headline}</p>}
+                {body && (
+                  <p
+                    className="plugin-overview-card__body"
+                    title={typeof bodyRaw === 'string' ? bodyRaw : undefined}
+                  >
+                    {body}
+                  </p>
+                )}
+                {card.bind?.cta && (
+                  <div className="plugin-overview-card__actions">
+                    <button
+                      type="button"
+                      className="desktop-button is-primary"
+                      onClick={() => onOpenNav(plugin.id, card.bind!.cta!.nav)}
+                    >
+                      {card.bind.cta.label} <ChevronRightIcon size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+              {headline && tone && (
+                <span className={`desktop-status-pill plugin-overview-card__pill ${tone}`}>
+                  <i />
+                  {headline}
+                </span>
+              )}
             </div>
-            {headline && <p className="plugin-overview-card__headline">{headline}</p>}
-            {body && <p className="plugin-overview-card__body">{body}</p>}
-            {card.bind?.cta && (
-              <button
-                className="btn btn-primary"
-                onClick={() => onOpenNav(plugin.id, card.bind!.cta!.nav)}
-              >
-                {card.bind.cta.label}
-              </button>
-            )}
           </section>
         );
       })}

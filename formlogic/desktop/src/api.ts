@@ -271,6 +271,11 @@ export const aiProviders = {
     request<{ ok: boolean }>(`/api/ai/providers/${encodeURIComponent(id)}/test`, {
       method: 'POST',
     }),
+  /** OpenAI-shaped model listing for one saved provider, proxied through the gateway. */
+  modelsFor: (id: string) =>
+    request<{ object: string; data: { id: string }[] }>(
+      `/api/ai/providers/${encodeURIComponent(id)}/v1/models`,
+    ),
   setAlias: (binding: AiAliasBinding) =>
     request<void>('/api/ai/aliases', {
       method: 'POST',

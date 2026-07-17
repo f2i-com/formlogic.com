@@ -1463,9 +1463,9 @@ const FLOW_MANAGER_PLAN = `(function () {
   var data = {};
   try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
   var action = String(data.action || 'none').toLowerCase();
-  if (['confirm', 'cancel', 'move', 'block', 'none'].indexOf(action) === -1) action = 'none';
+  if (['confirm', 'cancel', 'move', 'block', 'query', 'none'].indexOf(action) === -1) action = 'none';
   if (action === 'none') {
-    out.spoken = 'I could not map that to a change. You can confirm, move or cancel a booking, or block a number - say it again with the full date?';
+    out.spoken = 'I could not map that to a change or a calendar question. You can ask what is booked, confirm, move or cancel a booking, or block a number - say it again with the full date?';
     return out;
   }
   if (action === 'block') {
@@ -1509,6 +1509,41 @@ const FLOW_MANAGER_PLAN = `(function () {
   function apptLabel(ap) {
     return ap.service + ' on ' + dayLabel(ap.date) + (ap.time && t12(ap.time) ? ' at ' + t12(ap.time) : '') + (ap.name ? ' for ' + ap.name : '');
   }
+  var appts = Array.isArray(c.appts) ? c.appts : [];
+  // QUERY (manager read, 2026-07-17 - live call 085ce239: 'look up what
+  // appointments I have booked' hit the change-only refusal): a PIN-verified
+  // manager asking what is booked gets the upcoming list, names included,
+  // composed FROM RECORDS - never model prose. target_date narrows to a day.
+  if (action === 'query') {
+    var qd = String(data.target_date || '').trim().slice(0, 10);
+    var qDay = realIso(qd);
+    var rows = [];
+    for (var qr = 0; qr < appts.length; qr++) {
+      if (String(appts[qr].status || '') === 'cancelled') continue;
+      if (qDay && String(appts[qr].date || '') !== qd) continue;
+      rows.push(appts[qr]);
+    }
+    rows.sort(function (x, y) {
+      var a = String(x.date || '') + ' ' + String(x.time || '');
+      var b = String(y.date || '') + ' ' + String(y.time || '');
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    out.ok = true;
+    if (!rows.length) {
+      out.spoken = qDay ? 'Nothing is booked on ' + dayLabel(qd) + '.' : 'There are no upcoming bookings on the calendar.';
+      return out;
+    }
+    var MAXQ = 8;
+    var parts = [];
+    for (var qp = 0; qp < rows.length && qp < MAXQ; qp++) {
+      parts.push(apptLabel(rows[qp]) + ' (' + String(rows[qp].status || 'requested') + ')');
+    }
+    var head = qDay
+      ? dayLabel(qd) + ' has ' + rows.length + ' booking' + (rows.length === 1 ? '' : 's') + ': '
+      : (rows.length === 1 ? 'There is 1 upcoming booking: ' : 'There are ' + rows.length + ' upcoming bookings: ');
+    out.spoken = head + parts.join('; ') + (rows.length > MAXQ ? '; and ' + (rows.length - MAXQ) + ' more.' : '.');
+    return out;
+  }
   // Which booking? The date is REQUIRED (the model is told to fill it from
   // the list); time and name only narrow when the day has several.
   var targetDate = String(data.target_date || '').trim().slice(0, 10);
@@ -1518,7 +1553,6 @@ const FLOW_MANAGER_PLAN = `(function () {
     out.spoken = 'Which date is that booking on? Say the change again with the full date.';
     return out;
   }
-  var appts = Array.isArray(c.appts) ? c.appts : [];
   var cands = [];
   for (var q = 0; q < appts.length; q++) {
     if (String(appts[q].date || '') === targetDate) cands.push(appts[q]);
@@ -1736,7 +1770,20 @@ ${BUSINESS_INFO_BLOCK_JS}
   var occBlock = '\\n\\nCALENDAR OCCUPANCY (next 7 days, ALL customers; these times are already TAKEN):\\n'
     + (occLines.length ? occLines.join('\\n') : '- no bookings in the next 7 days')
     + '\\nDays not listed IN THIS 7-DAY WINDOW have no bookings yet. This list covers ONLY the next 7 days: for ANY date beyond it, run a live lookup ([[LOOKUP: ...]]) instead of guessing or deferring to the team. NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
-  if (!hit) return { found: false, name: '', reject: reject, rejectReason: rejectReason, persona: persona + calBlock + occBlock, greeting: greeting };
+  // Calls-row backfill (2026-07-17): caller_name had been write-orphaned since
+  // the 'Unknown caller' literal was removed - the plugin never emits a name
+  // and no flow wrote one, so lists and record headers showed only the raw
+  // number (or the call id). This flow ALREADY matches the customer; hand the
+  // Calls row id + name to the binding's output action. The row exists: the
+  // per-call serial queue processed the incoming write before caller_id.
+  var callRows2 = (nodes.calls && nodes.calls.responses) || [];
+  var callRow = null;
+  for (var cr = 0; cr < callRows2.length; cr++) {
+    var cra = (callRows2[cr] && callRows2[cr].answers) || {};
+    if (String(cra.call_id || '') === String(inputs.callId || '')) { callRow = callRows2[cr]; break; }
+  }
+  var callResponseId = callRow ? callRow.id : null;
+  if (!hit) return { found: false, name: '', callResponseId: callResponseId, hasCallName: false, callNameUpdate: {}, reject: reject, rejectReason: rejectReason, persona: persona + calBlock + occBlock, greeting: greeting };
   var ca = (hit.answers || {});
   var name = String(ca.name || '').trim();
   var first = name.split(/\\s+/)[0] || name;
@@ -1762,7 +1809,7 @@ ${BUSINESS_INFO_BLOCK_JS}
             ? 'Hi ' + first + '! Thanks for calling ' + business + '. How can I help you today?'
             : 'Hi ' + first + '! How can I help you today?'))
     : greeting;
-  return { found: true, name: name, reject: reject, rejectReason: rejectReason, persona: persona + known + calBlock + occBlock, greeting: g };
+  return { found: true, name: name, callResponseId: callResponseId, hasCallName: !!(callResponseId && name), callNameUpdate: { caller_name: name }, reject: reject, rejectReason: rejectReason, persona: persona + known + calBlock + occBlock, greeting: g };
 })()`;
 
 // SMS follow-up conversation context (feature 2026-07-13): an inbound text is
@@ -2401,11 +2448,15 @@ export const aokieReceptionistPack: PackData = {
       settings: { ...defaultSettings, retentionDays: 90 },
       theme: { ...defaultTheme },
       fields: [
-        { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
+        // caller_name FIRST (2026-07-17): the record page titles a row with its
+        // first non-empty short_text answer — a named call reads as the person,
+        // an unnamed one falls through to the call id below. The name is
+        // backfilled by the personalize-caller binding on a Customers match.
+        { id: 'caller_name', type: 'short_text', label: 'Caller Name', required: false, properties: {} },
         // NOT required (audit §8): a private/withheld caller id is a valid call —
         // a required phone-format field silently loses the whole Calls row.
         { id: 'caller_phone', type: 'phone', label: 'Caller Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
-        { id: 'caller_name', type: 'short_text', label: 'Caller Name', required: false, properties: {} },
+        { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
         // matchField: a customer's record page also lists calls whose caller phone equals the
         // customer's phone (on top of the explicit link the caller-lookup flow writes) — so call
         // history is browsable per customer, each row opening the call + its transcript.
@@ -3533,6 +3584,14 @@ export const aokieReceptionistPack: PackData = {
             data: { form: '@pack:appointments', return: 'all', limit: 200 },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          {
+            id: 'calls',
+            type: 'formlogic_list_responses',
+            // The Calls row LOGIC_CALL_INCOMING minted for this call — the
+            // binding's output action backfills caller_name onto it when the
+            // customer matched (the row otherwise never gets a name).
+            data: { form: '@pack:calls', return: 'all', limit: 1, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] },
+          },
           { id: 'make', type: 'logic_block', data: { expr: FLOW_PERSONALIZE_CALLER } },
           // PHASE 0.5: blocked customer / not-on-whitelist → reject the call
           // instead of configuring the agent for it. Exclusive branches: a
@@ -3563,14 +3622,15 @@ export const aokieReceptionistPack: PackData = {
               payload: { callId: '$inputs.callId', persona: '$nodes.make.persona', greeting: '$nodes.make.greeting' },
             },
           },
-          { id: 'out', type: 'output', data: { value: { found: '$nodes.make.found', name: '$nodes.make.name', greeting: '$nodes.make.greeting', reject: '$nodes.make.reject', rejectReason: '$nodes.make.rejectReason' } } },
+          { id: 'out', type: 'output', data: { value: { found: '$nodes.make.found', name: '$nodes.make.name', greeting: '$nodes.make.greeting', reject: '$nodes.make.reject', rejectReason: '$nodes.make.rejectReason', callResponseId: '$nodes.make.callResponseId', hasCallName: '$nodes.make.hasCallName', callNameUpdate: '$nodes.make.callNameUpdate' } } },
         ],
         edges: [
           { source: 'in', target: 'customers' },
           { source: 'customers', target: 'appointments' },
           { source: 'appointments', target: 'allappts' },
           { source: 'allappts', target: 'settings' },
-          { source: 'settings', target: 'make' },
+          { source: 'settings', target: 'calls' },
+          { source: 'calls', target: 'make' },
           { source: 'make', target: 'gate' },
           { source: 'gate', target: 'reject', sourceHandle: 'true' },
           { source: 'gate', target: 'push', sourceHandle: 'false' },
@@ -3713,7 +3773,7 @@ export const aokieReceptionistPack: PackData = {
               system:
                 'You structure a business manager\'s spoken request about their own booking calendar. Reply with ONLY one JSON object - no prose, no markdown fences.',
               prompt:
-                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "cancel" | "move" | "block" | "none", "target_date": "YYYY-MM-DD" or null, "target_time": "HH:MM" or null, "target_name": string or null, "new_date": "YYYY-MM-DD" or null, "new_time": "HH:MM" or null, "block_number": string or null}\n\nRules: "confirm" / "cancel" / "move" act on ONE existing booking from the list - set "target_date" to that booking\'s EXISTING date (resolve relative wording like "Friday" or "tomorrow" from today\'s date), and fill "target_time"/"target_name" only when the manager said them; for "move", "new_date"/"new_time" are the NEW slot in YYYY-MM-DD / 24-hour HH:MM (only the parts the manager gave); "block" is for blocking a phone number - put the digits they said in "block_number"; anything that is not one of these changes (questions, greetings, unclear speech) is "none". Use null when unsure - never guess.',
+                'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "cancel" | "move" | "block" | "query" | "none", "target_date": "YYYY-MM-DD" or null, "target_time": "HH:MM" or null, "target_name": string or null, "new_date": "YYYY-MM-DD" or null, "new_time": "HH:MM" or null, "block_number": string or null}\n\nRules: "confirm" / "cancel" / "move" act on ONE existing booking from the list - set "target_date" to that booking\'s EXISTING date (resolve relative wording like "Friday" or "tomorrow" from today\'s date), and fill "target_time"/"target_name" only when the manager said them; for "move", "new_date"/"new_time" are the NEW slot in YYYY-MM-DD / 24-hour HH:MM (only the parts the manager gave); "block" is for blocking a phone number - put the digits they said in "block_number"; "query" is the manager ASKING what is booked (list the appointments, who is booked in, what do I have) - set "target_date" ONLY when they asked about one specific day; anything else (greetings, unclear speech) is "none". Use null when unsure - never guess.',
               model: '{{nodes.ctx.model}}',
               maxTokens: 250,
               temperature: 0,
@@ -4350,6 +4410,12 @@ export const aokieReceptionistPack: PackData = {
       mode: 'sync',
       timeoutMs: 3000,
       inputMap: { callId: '$event.data.callId', from: '$event.data.from' },
+      // Backfill the matched customer's name onto the Calls row (2026-07-17):
+      // caller_name was write-orphaned after the 'Unknown caller' literal was
+      // removed — no path populated it, so calls displayed as bare numbers.
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCallName', responseId: '$result.callResponseId', answers: '$result.callNameUpdate' },
+      ],
       // §9.7: sync live-call bindings carry a spoken fallback. If the
       // personalization stalls, the caller hears the generic greeting the
       // Configure Receptionist flow already set — never silence.

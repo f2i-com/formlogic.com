@@ -13,6 +13,8 @@ import {
 } from './api';
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, CheckIcon, XIcon } from './Icons';
+import { PANEL_CACHE_KEYS, getPanelCache, setPanelCache } from './panelCache';
+import { PanelRefresh } from './PanelRefresh';
 import { useToast } from './Toasts';
 
 /**
@@ -25,9 +27,15 @@ import { useToast } from './Toasts';
  * Polls both lists every 1.5s so progress bars tick smoothly.
  */
 export default function ModelsPanel() {
-  const [snapshot, setSnapshot] = useState<ModelsSnapshot | null>(null);
+  // Seed from the module-level cache (app-start prefetch / last visit) so the
+  // section paints instantly; the mount-time refresh revalidates right away.
+  const [snapshot, setSnapshot] = useState<ModelsSnapshot | null>(
+    () => getPanelCache<ModelsSnapshot>(PANEL_CACHE_KEYS.modelsList) ?? null,
+  );
   const [downloads, setDownloads] = useState<DownloadProgress[]>([]);
-  const [catalog, setCatalog] = useState<CatalogSnapshot | null>(null);
+  const [catalog, setCatalog] = useState<CatalogSnapshot | null>(
+    () => getPanelCache<CatalogSnapshot>(PANEL_CACHE_KEYS.modelsCatalog) ?? null,
+  );
   const [catalogFailed, setCatalogFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,7 +61,10 @@ export default function ModelsPanel() {
   useEffect(() => {
     models
       .catalog()
-      .then(setCatalog)
+      .then((cat) => {
+        setPanelCache(PANEL_CACHE_KEYS.modelsCatalog, cat);
+        setCatalog(cat);
+      })
       .catch(() => {
         // Non-fatal — Quick add stays hidden if companion is offline; the
         // flag stops the section spinner from spinning forever.
@@ -111,6 +122,7 @@ export default function ModelsPanel() {
     try {
       const snap = await models.list();
       if (seq !== reqSeqRef.current) return; // superseded by a newer refresh
+      setPanelCache(PANEL_CACHE_KEYS.modelsList, snap);
       setSnapshot(snap);
       setError(null);
     } catch (e) {
@@ -234,6 +246,7 @@ export default function ModelsPanel() {
 
   return (
     <div className="panel">
+      <PanelRefresh onRefresh={refresh} />
       {error && (
         <div className="banner banner-err">
           Couldn't reach the FormLogic Desktop API: {error}

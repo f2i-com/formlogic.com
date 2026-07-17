@@ -190,6 +190,10 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               loaded: true,
               sendAudio: settings.sendAudio === true || settings.sendAudio === 'true',
               audioTranscript: settings.audioTranscript === true || settings.audioTranscript === 'true',
+              transcriptEndpoint:
+                typeof settings.audioTranscriptEndpoint === 'string' ? settings.audioTranscriptEndpoint : '',
+              transcriptModel:
+                typeof settings.audioTranscriptModel === 'string' ? settings.audioTranscriptModel : '',
             }
       );
       setWaitingCfg((prev) =>
@@ -200,6 +204,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               holdAndCallWaiting:
                 settings.holdAndCallWaiting === true || settings.holdAndCallWaiting === 'true',
               autoHoldQueue: settings.autoHoldQueue === true || settings.autoHoldQueue === 'true',
+              // Defaults ON — absent means enabled.
+              autoConnectPhone:
+                settings.autoConnectPhone !== false && settings.autoConnectPhone !== 'false',
             }
       );
       setScreening((prev) =>
@@ -215,7 +222,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               blockedMessage: typeof settings.blockedMessage === 'string' ? settings.blockedMessage : '',
               autoBlockAbuse: !(settings.autoBlockAbuse === false || settings.autoBlockAbuse === 'false'),
               managerNumbers: typeof settings.managerNumbers === 'string' ? settings.managerNumbers : '',
-              managerPin: typeof settings.managerPin === 'string' ? settings.managerPin : '',
+              // AOK-304A: the PIN is never returned; only whether one is set.
+              managerPin: '',
+              managerPinSet: res.managerPinSet === true,
             }
       );
       setRunning({
@@ -259,7 +268,15 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
   // audioTranscript additionally has the model CORRECT each turn's transcript
   // from that audio (a small detached request — replies never wait on it).
   // Both read once at radio start, so saves apply at the next reconnect.
-  const [audioCfg, setAudioCfg] = useState({ loaded: false, sendAudio: false, audioTranscript: false });
+  const [audioCfg, setAudioCfg] = useState({
+    loaded: false,
+    sendAudio: false,
+    audioTranscript: false,
+    // Correction-lane overrides: an optional separate endpoint and/or lighter
+    // audio model for the transcript corrections (blank = the main model).
+    transcriptEndpoint: '',
+    transcriptModel: '',
+  });
   const [audioSaving, setAudioSaving] = useState(false);
   const handleSaveAudio = useCallback(async () => {
     setAudioSaving(true);
@@ -268,6 +285,8 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       await runCommand('settings.set', {
         sendAudio: audioCfg.sendAudio,
         audioTranscript: audioCfg.audioTranscript,
+        audioTranscriptEndpoint: audioCfg.transcriptEndpoint.trim(),
+        audioTranscriptModel: audioCfg.transcriptModel.trim(),
       });
       try {
         const res = await runCommand('settings.get');
@@ -276,6 +295,8 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           ...prev,
           sendAudio: s.sendAudio === true || s.sendAudio === 'true',
           audioTranscript: s.audioTranscript === true || s.audioTranscript === 'true',
+          transcriptEndpoint: typeof s.audioTranscriptEndpoint === 'string' ? s.audioTranscriptEndpoint : '',
+          transcriptModel: typeof s.audioTranscriptModel === 'string' ? s.audioTranscriptModel : '',
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -298,6 +319,8 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     loaded: false,
     holdAndCallWaiting: false,
     autoHoldQueue: false,
+    // Auto-connect the last phone when the receptionist starts. Default ON.
+    autoConnectPhone: true,
   });
   const [waitingSaving, setWaitingSaving] = useState(false);
   const handleSaveWaiting = useCallback(async () => {
@@ -307,6 +330,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       await runCommand('settings.set', {
         holdAndCallWaiting: waitingCfg.holdAndCallWaiting,
         autoHoldQueue: waitingCfg.autoHoldQueue,
+        autoConnectPhone: waitingCfg.autoConnectPhone,
       });
       try {
         const res = await runCommand('settings.get');
@@ -315,6 +339,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           ...prev,
           holdAndCallWaiting: s.holdAndCallWaiting === true || s.holdAndCallWaiting === 'true',
           autoHoldQueue: s.autoHoldQueue === true || s.autoHoldQueue === 'true',
+          autoConnectPhone: s.autoConnectPhone !== false && s.autoConnectPhone !== 'false',
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -347,7 +372,11 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     // persona + name-inclusive lookups; with a PIN set they can also make
     // booking changes by voice (spoken PIN checked in the plugin).
     managerNumbers: '',
+    // AOK-304A: the PIN is WRITE-ONLY — the plugin never returns it. `managerPin`
+    // is only the NEW PIN being entered (blank = leave the stored one unchanged);
+    // `managerPinSet` reflects whether one is stored (from settings.managerPinSet).
     managerPin: '',
+    managerPinSet: false,
     whitelistOnly: false,
     defaultCountryCode: '',
   });
@@ -386,7 +415,12 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     setScreeningSaving(true);
     setError(null);
     try {
-      await runCommand('settings.set', {
+      // AOK-304A: managerPin is write-only. Send it ONLY when the operator typed
+      // a new one — a blank field means "leave the stored PIN unchanged", NOT
+      // clear it (the old plaintext round-trip is gone, so an always-included
+      // blank would silently wipe a set PIN). Removing a PIN has its own button.
+      const newPin = screening.managerPin.trim();
+      const payload: Record<string, unknown> = {
         blockedNumbers: screening.blockedNumbers.trim(),
         acceptPattern: screening.acceptPattern.trim(),
         rejectPrivate: screening.rejectPrivate,
@@ -394,8 +428,9 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         blockedMessage: screening.blockedMessage.trim(),
         autoBlockAbuse: screening.autoBlockAbuse,
         managerNumbers: screening.managerNumbers.trim(),
-        managerPin: screening.managerPin.trim(),
-      });
+      };
+      if (newPin) payload.managerPin = newPin;
+      await runCommand('settings.set', payload);
       // Whitelist mode + country code live on the settings RECORD (the flows
       // read them per call). Patch just these two keys — the API merges, so
       // the persona draft in the cards above is never touched.
@@ -426,7 +461,10 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           blockedMessage: typeof s.blockedMessage === 'string' ? s.blockedMessage : prev.blockedMessage,
           autoBlockAbuse: !(s.autoBlockAbuse === false || s.autoBlockAbuse === 'false'),
           managerNumbers: typeof s.managerNumbers === 'string' ? s.managerNumbers : prev.managerNumbers,
-          managerPin: typeof s.managerPin === 'string' ? s.managerPin : prev.managerPin,
+          // AOK-304A: the PIN is never read back — clear the entry field and
+          // reflect only whether one is now stored.
+          managerPin: '',
+          managerPinSet: res.managerPinSet === true,
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -438,6 +476,23 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
       setScreeningSaving(false);
     }
   }, [runCommand, screening, formId, recordId, updateResponse, createResponse, records]);
+
+  // AOK-304A: removing the PIN is a distinct action (blank-on-save now means
+  // "keep"). Pushes an empty managerPin, which the plugin treats as a
+  // read-only manager line.
+  const handleRemoveManagerPin = useCallback(async () => {
+    setScreeningSaving(true);
+    setError(null);
+    try {
+      await runCommand('settings.set', { managerPin: '' });
+      setScreening((prev) => ({ ...prev, managerPin: '', managerPinSet: false }));
+      toast.success('Manager PIN removed', 'The manager line is read-only until a new PIN is set.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScreeningSaving(false);
+    }
+  }, [runCommand, toast]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -677,6 +732,40 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
                 </span>
               </span>
             </label>
+            {audioCfg.audioTranscript && audioCfg.sendAudio && (
+              <div className="grid grid-cols-1 gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-gray-700 dark:text-slate-300">
+                  Correction endpoint (optional)
+                  <input
+                    type="text"
+                    value={audioCfg.transcriptEndpoint}
+                    onChange={(e) => setAudioCfg((a) => ({ ...a, transcriptEndpoint: e.target.value }))}
+                    placeholder="blank = same server as replies"
+                    spellCheck={false}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                  />
+                  <span className="mt-1 block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                    A separate OpenAI-compatible /v1/chat/completions URL just for corrections, so they never
+                    compete with live replies.
+                  </span>
+                </label>
+                <label className="block text-xs font-medium text-gray-700 dark:text-slate-300">
+                  Correction model (optional)
+                  <input
+                    type="text"
+                    value={audioCfg.transcriptModel}
+                    onChange={(e) => setAudioCfg((a) => ({ ...a, transcriptModel: e.target.value }))}
+                    placeholder="blank = same model as replies"
+                    spellCheck={false}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                  />
+                  <span className="mt-1 block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                    A lighter audio-capable model for quicker corrections (must be served by the endpoint
+                    above, or the main server if blank).
+                  </span>
+                </label>
+              </div>
+            )}
             <div>
               <button
                 type="button"
@@ -694,15 +783,31 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         </div>
       )}
 
-      {/* ── Call waiting & hold queue (plugin-level) ── */}
+      {/* ── Phone connection & call waiting (plugin-level) ── */}
       {can('settings.set') && (
         <div className={`${card} p-4 sm:p-5`}>
-          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Call waiting & hold queue</h2>
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Phone connection &amp; call waiting</h2>
           <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
-            How a second caller is handled while the receptionist is already on a call. Both apply
-            the next time the receptionist reconnects, and need a phone plan with call waiting.
+            How the receptionist links to the phone and handles a second caller. All apply the next
+            time the receptionist reconnects; call waiting needs a phone plan that supports it.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3">
+            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={waitingCfg.autoConnectPhone}
+                onChange={(e) => setWaitingCfg((c) => ({ ...c, autoConnectPhone: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
+              />
+              <span>
+                Connect the phone automatically on startup
+                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
+                  When the receptionist starts, it pages the last connected phone itself, so the
+                  line comes up without pressing Reconnect. If the phone is busy reconnecting it
+                  retries a few times, then leaves Reconnect for you.
+                </span>
+              </span>
+            </label>
             <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
               <input
                 type="checkbox"
@@ -904,22 +1009,42 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               </p>
             </div>
             <div>
-              <label className={labelCls} htmlFor="rs-mgrpin">Manager PIN (spoken)</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className={labelCls} htmlFor="rs-mgrpin">Manager PIN (spoken)</label>
+                {screening.managerPinSet ? (
+                  <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">PIN set</span>
+                ) : (
+                  <span className="text-[11px] text-gray-400 dark:text-slate-500">no PIN — read-only line</span>
+                )}
+              </div>
               <input
                 id="rs-mgrpin"
-                type="text"
+                type="password"
                 inputMode="numeric"
                 autoComplete="off"
                 value={screening.managerPin}
                 onChange={(e) => setScreening((sc) => ({ ...sc, managerPin: e.target.value }))}
-                placeholder="4–8 digits — blank = manager line stays read-only"
+                placeholder={screening.managerPinSet ? 'Enter a new PIN to replace it — blank keeps the current one' : 'Set a 6–8 digit PIN — blank = manager line stays read-only'}
                 className={inputCls + ' font-mono text-xs'}
               />
               <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
                 Caller ID can be spoofed, so booking changes by voice (confirm, move, cancel, block a number)
                 need this PIN spoken once per call. Aokie asks for it, checks it exactly (digits or words —
-                "one two three four"), and the PIN never appears in transcripts. Blank keeps the manager line
-                read-only.
+                "one two three four"), and the PIN never appears in transcripts. For your security the saved
+                PIN is never shown back — leave this blank to keep the current one.
+                {screening.managerPinSet && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveManagerPin()}
+                      disabled={screeningSaving}
+                      className="font-medium text-rose-600 underline hover:no-underline disabled:opacity-50 dark:text-rose-400"
+                    >
+                      Remove PIN
+                    </button>
+                  </>
+                )}
               </p>
             </div>
             <div>

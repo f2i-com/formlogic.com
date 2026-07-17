@@ -164,6 +164,39 @@ mod tests {
         }
     }
 
+    /// AOK-301: the bundled aokie manifest is v2 and its declarative UI
+    /// contributions (nav + Overview hero + status cards) are internally valid —
+    /// every status card polls a declared command and the CTA resolves to a nav
+    /// entry (all enforced by validate_v2_sections, exercised here on the REAL
+    /// manifest so the deliverable is provably well-formed before deploy).
+    #[test]
+    fn aokie_manifest_is_v2_with_valid_ui_contributions() {
+        let m = parse_manifest(template("aokie").unwrap().manifest_json).unwrap();
+        assert_eq!(m.schema_version, 2, "aokie manifest is schemaVersion 2");
+        let ui = m.ui.as_ref().expect("aokie declares ui contributions");
+        assert!(ui.nav.iter().any(|n| n.id == "receptionist"), "receptionist nav entry");
+        assert!(ui.overview.iter().any(|c| c.kind == "hero"), "an Overview hero card");
+        // Every status card polls a declared command (validate_v2_sections
+        // guarantees this, but assert the intent explicitly).
+        for card in &ui.status_cards {
+            assert!(
+                m.declares_command("aokie", &card.poll.command),
+                "status card polls a declared command: {}",
+                card.poll.command
+            );
+        }
+        // commands.journalled matches the plugin's physical-side-effect set.
+        let journalled = m.commands.as_ref().expect("commands").journalled.clone();
+        for cmd in ["call.answer", "call.hangup", "sms.send", "call.dial"] {
+            assert!(journalled.contains(&cmd.to_string()), "journalled must include {cmd}");
+        }
+        // External-data inventory (shown on purge) is non-empty.
+        assert!(
+            !m.data.as_ref().expect("data").external_inventory.is_empty(),
+            "external-data inventory present"
+        );
+    }
+
     /// The real aokie manifest's declared surface is self-consistent: every
     /// connector command is covered by a capability (else the gateway would
     /// deny commands the contract promises), and the contract's MVP command

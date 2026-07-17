@@ -9,6 +9,8 @@ import {
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
+import { PANEL_CACHE_KEYS, getPanelCache, setPanelCache } from './panelCache';
+import { PanelRefresh } from './PanelRefresh';
 import { useToast } from './Toasts';
 
 /**
@@ -22,7 +24,11 @@ import { useToast } from './Toasts';
  * vs each service installing its own copy.
  */
 export default function PythonPanel() {
-  const [snapshot, setSnapshot] = useState<PythonSnapshot | null>(null);
+  // Seed from the module-level cache (app-start prefetch / last visit) so the
+  // section paints instantly; the mount-time refresh revalidates right away.
+  const [snapshot, setSnapshot] = useState<PythonSnapshot | null>(
+    () => getPanelCache<PythonSnapshot>(PANEL_CACHE_KEYS.pythonStatus) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
@@ -66,6 +72,7 @@ export default function PythonPanel() {
           });
         }
       }
+      setPanelCache(PANEL_CACHE_KEYS.pythonStatus, next);
       setSnapshot(next);
       setError(null);
     } catch (e) {
@@ -132,7 +139,10 @@ export default function PythonPanel() {
         {error ? (
           <div className="banner banner-err">{error}</div>
         ) : (
-          <div className="empty-state">Loading…</div>
+          <div className="section-loading" role="status" aria-live="polite">
+            <span className="spinner" aria-hidden="true" />
+            Loading the Python runtime…
+          </div>
         )}
       </div>
     );
@@ -142,6 +152,7 @@ export default function PythonPanel() {
 
   return (
     <div className="panel">
+      <PanelRefresh onRefresh={refresh} />
       {error && (
         <div className="banner banner-err">
           <span>

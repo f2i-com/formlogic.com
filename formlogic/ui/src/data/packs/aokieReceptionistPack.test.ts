@@ -1378,6 +1378,27 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
           expect(dayMove.update.time).toBe('14:00');
         });
 
+        it("query (2026-07-17, live call 085ce239): lists upcoming bookings with names from records, cancelled dropped, never a write", () => {
+          const r = planFor('what appointments do I have booked', { action: 'query' });
+          expect(r.ok).toBe(true);
+          expect(r.hasUpdate).toBe(false);
+          expect(r.hasBlock).toBe(false);
+          expect(r.spoken).toContain('2 upcoming bookings');
+          expect(r.spoken).toContain('Haircut');
+          expect(r.spoken).toContain('Lance Baker');
+          expect(r.spoken).toContain('Dinner');
+          expect(r.spoken).not.toContain('Ghost');
+        });
+
+        it('query with a day narrows to that date; an empty day reads as nothing booked', () => {
+          const day = planFor('what is booked that day', { action: 'query', target_date: futureIso });
+          expect(day.ok).toBe(true);
+          expect(day.spoken).toContain('has 2 bookings');
+          const none = planFor('what about next week', { action: 'query', target_date: day2Iso });
+          expect(none.ok).toBe(true);
+          expect(none.spoken).toContain('Nothing is booked');
+        });
+
         it('block: digits pass through; a too-short number is refused, never half-blocked', () => {
           const r = planFor('block that last caller', { action: 'block', block_number: '+61 499 999 999' });
           expect(r.ok).toBe(true);
@@ -1530,6 +1551,64 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       const value = (out.data as { value: Record<string, string> }).value;
       expect(value.reject).toBe('$nodes.make.reject');
       expect(value.rejectReason).toBe('$nodes.make.rejectReason');
+    });
+  });
+
+  describe('personalize-caller: Calls-row caller_name backfill (2026-07-17)', () => {
+    // caller_name was write-orphaned after the 'Unknown caller' literal was
+    // removed — nothing populated it. The flow now hands the matched name +
+    // the call's Calls-row id to the binding's output action.
+    const makeExpr = nodeExpr('personalize-caller', 'make');
+    const run = (customers: Array<Record<string, unknown>>, calls: Array<Record<string, unknown>>) =>
+      evalExpr(makeExpr, {
+        inputs: { callId: 'call_abc', from: '+61400000000' },
+        nodes: {
+          customers: { responses: customers },
+          appointments: { responses: [] },
+          allappts: { responses: [] },
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes' } }] },
+          calls: { responses: calls },
+        },
+      });
+    const lance = { id: 'c1', answers: { name: 'Lance Baker', phone: '+61400000000', status: 'active' } };
+
+    it('matched customer + Calls row → hasCallName with the update payload', () => {
+      const r = run([lance], [{ id: 'call-resp-1', answers: { call_id: 'call_abc' } }]);
+      expect(r.hasCallName).toBe(true);
+      expect(r.callResponseId).toBe('call-resp-1');
+      expect(r.callNameUpdate).toEqual({ caller_name: 'Lance Baker' });
+    });
+
+    it('no customer match → hasCallName false (nothing written)', () => {
+      const r = run([], [{ id: 'call-resp-1', answers: { call_id: 'call_abc' } }]);
+      expect(r.hasCallName).toBe(false);
+    });
+
+    it('missing Calls row (raced) → hasCallName false even with a match', () => {
+      const r = run([lance], []);
+      expect(r.hasCallName).toBe(false);
+      expect(r.callResponseId).toBe(null);
+    });
+
+    it("another call's row is never claimed (call_id must match)", () => {
+      const r = run([lance], [{ id: 'other', answers: { call_id: 'call_OTHER' } }]);
+      expect(r.hasCallName).toBe(false);
+    });
+
+    it('the output node + binding output action carry the backfill end-to-end', () => {
+      const out = flowBySlug('personalize-caller').flowJson.nodes.find((n) => n.type === 'output')!;
+      const value = (out.data as { value: Record<string, string> }).value;
+      expect(value.callResponseId).toBe('$nodes.make.callResponseId');
+      expect(value.hasCallName).toBe('$nodes.make.hasCallName');
+      expect(value.callNameUpdate).toBe('$nodes.make.callNameUpdate');
+      const binding = (pack.flowBindings ?? []).find((b) => b.flow === 'personalize-caller')!;
+      expect(binding.outputActions).toContainEqual({
+        type: 'formlogic.updateResponse',
+        form: '@pack:calls',
+        when: '$result.hasCallName',
+        responseId: '$result.callResponseId',
+        answers: '$result.callNameUpdate',
+      });
     });
   });
 

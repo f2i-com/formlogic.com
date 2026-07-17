@@ -24,6 +24,20 @@ import { useToast } from './Toasts';
 
 const CAPS: AiCapability[] = ['chat', 'transcription', 'speech', 'embeddings', 'realtime'];
 
+/**
+ * What each capability means to the GATEWAY (it routes a request to the first
+ * enabled provider whose capability set matches). Only chat (+ model listing)
+ * has routes today — the rest are persisted and light up when the streaming/
+ * audio routes land (AI-405/406), so they're shown but marked dormant.
+ */
+const CAP_INFO: Record<AiCapability, { label: string; desc: string; served: boolean }> = {
+  chat: { label: 'Chat', desc: 'Text generation — flows and receptionist replies.', served: true },
+  transcription: { label: 'Transcription', desc: 'Speech-to-text.', served: false },
+  speech: { label: 'Speech', desc: 'Text-to-speech.', served: false },
+  embeddings: { label: 'Embeddings', desc: 'Vector embeddings.', served: false },
+  realtime: { label: 'Realtime', desc: 'Realtime voice sessions.', served: false },
+};
+
 const PRESETS: Record<string, Partial<AiProviderProfile>> = {
   openai: {
     name: 'OpenAI',
@@ -56,7 +70,7 @@ const PRESETS: Record<string, Partial<AiProviderProfile>> = {
   custom: {
     name: 'Custom HTTP',
     protocol: 'custom',
-    baseUrl: 'https://',
+    baseUrl: '',
     capabilities: ['chat'],
     allowLocal: false,
   },
@@ -85,13 +99,23 @@ export default function AiProvidersPanel() {
   }, [refresh]);
 
   const onTest = useCallback(
-    async (id: string) => {
+    async (id: string, protocol: AiProtocol) => {
       setTesting(id);
       try {
         const r = await aiProviders.test(id);
+        // Honest copy per protocol: only the OpenAI-protocol test actually
+        // contacts the server (it lists models); Anthropic/Custom tests
+        // validate the URL against the egress policy without a request.
         toast.push(
           r.ok
-            ? { kind: 'success', title: `"${id}" reachable`, body: 'Endpoint answered and the key (if set) is accepted.' }
+            ? {
+                kind: 'success',
+                title: `"${id}" looks good`,
+                body:
+                  protocol === 'openai'
+                    ? 'Endpoint answered and the key (if set) is accepted.'
+                    : "URL and egress policy check out — this protocol's test doesn't contact the server.",
+              }
             : { kind: 'error', title: `"${id}" test failed` },
         );
       } catch (e) {
@@ -123,8 +147,14 @@ export default function AiProvidersPanel() {
       )}
       {editing && (
         <ProviderForm
+          // Keyed on the edited provider so switching Edit targets REMOUNTS the
+          // form (useState initializers re-run) — without this, form state from
+          // provider A stays on screen while the id-bearing handlers (Remove
+          // stored key, Fetch models, Save) act on provider B.
+          key={editing.id || 'new'}
           initial={editing}
           onCancel={() => setEditing(null)}
+          onKeyRemoved={() => void refresh()}
           onSaved={() => {
             setEditing(null);
             void refresh();
@@ -157,14 +187,15 @@ export default function AiProvidersPanel() {
               <div className="service-meta">
                 {p.baseUrl}
                 {p.model && <> · model {p.model}</>}
-                {p.capabilities.length > 0 && <> · {p.capabilities.join(', ')}</>}
+                {/* An empty capability set matches EVERY request (legacy rule) — say so. */}
+                <> · {p.capabilities.length > 0 ? p.capabilities.join(', ') : 'all capabilities'}</>
               </div>
             </div>
             <div className="service-actions">
               <button
                 className="btn btn-secondary"
                 disabled={testing === p.id}
-                onClick={() => void onTest(p.id)}
+                onClick={() => void onTest(p.id, p.protocol)}
               >
                 {testing === p.id ? 'Testing…' : 'Test'}
               </button>
@@ -218,18 +249,36 @@ function blankProfile(): AiProviderProfile {
 function ProviderForm({
   initial,
   onCancel,
+  onKeyRemoved,
   onSaved,
 }: {
   initial: AiProviderProfile;
   onCancel: () => void;
+  onKeyRemoved: () => void;
   onSaved: () => void;
 }) {
   const isNew = !initial.id;
-  const [p, setP] = useState<AiProviderProfile>({ ...initial });
+  // Editing an existing provider passes the AiProviderView through, so hasKey
+  // is available; a new profile never has a stored key.
+  const [hasStoredKey, setHasStoredKey] = useState(
+    (initial as Partial<AiProviderView>).hasKey === true,
+  );
+  // A legacy provider saved with an EMPTY capability set matches everything
+  // (supports() rule) — seed the form with the explicit equivalent so the
+  // ≥1-capability guard can't force a silent narrowing on re-save.
+  const [p, setP] = useState<AiProviderProfile>({
+    ...initial,
+    capabilities: initial.capabilities.length > 0 ? initial.capabilities : [...CAPS],
+  });
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Models discovered through the gateway's per-provider /v1/models proxy —
+  // offered as datalist suggestions so the model doesn't have to be typed blind.
+  const [modelOptions, setModelOptions] = useState<string[] | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
   const toast = useToast();
+  const { confirm } = useConfirm();
 
   const applyPreset = (preset: string) => {
     const base = PRESETS[preset];
@@ -249,6 +298,69 @@ function ProviderForm({
         ? cur.capabilities.filter((x) => x !== c)
         : [...cur.capabilities, c],
     }));
+
+  const spec = p.specs?.chat ?? {};
+  const setSpec = (patch: Partial<{ path: string; requestTemplate: string; responsePath: string }>) =>
+    setP((cur) => {
+      const next = { ...(cur.specs?.chat ?? {}), ...patch };
+      // Drop empty fields; an all-empty mapping means "use the defaults".
+      const cleaned = Object.fromEntries(
+        Object.entries(next).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
+      );
+      const specs = { ...(cur.specs ?? {}) };
+      if (Object.keys(cleaned).length === 0) {
+        delete specs.chat;
+      } else {
+        specs.chat = cleaned;
+      }
+      return { ...cur, specs: Object.keys(specs).length > 0 ? specs : undefined };
+    });
+
+  const onFetchModels = async () => {
+    if (fetchingModels) return;
+    setFetchingModels(true);
+    try {
+      const res = await aiProviders.modelsFor(initial.id);
+      const ids = (res.data ?? []).map((m) => m.id).filter(Boolean);
+      setModelOptions(ids);
+      toast.push(
+        ids.length > 0
+          ? { kind: 'success', title: `${ids.length} model(s) found`, body: 'Pick one from the model field suggestions.' }
+          : { kind: 'error', title: 'The endpoint listed no models' },
+      );
+    } catch (e) {
+      toast.push({ kind: 'error', title: 'Model listing failed', body: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const onRemoveKey = async () => {
+    const ok = await confirm({
+      title: 'Remove the stored API key?',
+      body: 'Requests to this provider will be sent without a key until a new one is saved.',
+      confirmLabel: 'Remove key',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await aiProviders.setKey(initial.id, null);
+      setHasStoredKey(false);
+      setKey('');
+      // The list renders hasKey from the parent's providers array — refresh it
+      // now so the "key set" badge doesn't keep lying if the form is cancelled.
+      onKeyRemoved();
+      toast.push({ kind: 'success', title: 'Stored key removed' });
+    } catch (e) {
+      toast.push({ kind: 'error', title: 'Remove key failed', body: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  // The gateway treats an EMPTY capability set as "supports everything"
+  // (legacy rule) — the inverse of what an all-unchecked form implies, so the
+  // form requires at least one explicit pick.
+  const noCaps = p.capabilities.length === 0;
+  const plainHttpWarning = !p.allowLocal && p.baseUrl.trim().toLowerCase().startsWith('http://');
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -308,20 +420,41 @@ function ProviderForm({
           <input type="text" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} placeholder="OpenAI" />
         </label>
       </div>
-      <div className="form-row-pair">
-        <label className="form-row">
-          <span>Protocol</span>
-          <select value={p.protocol} onChange={(e) => setP({ ...p, protocol: e.target.value as AiProtocol })}>
-            <option value="openai">OpenAI-compatible</option>
-            <option value="anthropic">Anthropic Messages</option>
-            <option value="custom">Custom HTTP</option>
-          </select>
-        </label>
-        <label className="form-row">
-          <span>Default model</span>
-          <input type="text" value={p.model ?? ''} onChange={(e) => setP({ ...p, model: e.target.value })} placeholder="gpt-4o-mini" />
-        </label>
-      </div>
+      <label className="form-row">
+        <span>Protocol</span>
+        <select value={p.protocol} onChange={(e) => setP({ ...p, protocol: e.target.value as AiProtocol })}>
+          <option value="openai">OpenAI-compatible</option>
+          <option value="anthropic">Anthropic Messages</option>
+          <option value="custom">Custom HTTP</option>
+        </select>
+      </label>
+      <label className="form-row">
+        <span>Default model (optional)</span>
+        <div className="input-with-action">
+          <input
+            type="text"
+            value={p.model ?? ''}
+            onChange={(e) => setP({ ...p, model: e.target.value })}
+            list={!isNew && modelOptions ? `ai-models-${initial.id}` : undefined}
+          />
+          {!isNew && p.protocol === 'openai' && (
+            <button type="button" className="btn-tiny" onClick={() => void onFetchModels()} disabled={fetchingModels}>
+              {fetchingModels ? 'Fetching…' : 'Fetch models'}
+            </button>
+          )}
+        </div>
+        {!isNew && modelOptions && (
+          <datalist id={`ai-models-${initial.id}`}>
+            {modelOptions.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        )}
+        <span className="form-hint">
+          Used only when a request doesn't name a model — leave blank to let each request choose.
+          {!isNew && p.protocol === 'openai' && ' Fetch models asks the endpoint what it serves.'}
+        </span>
+      </label>
       <label className="form-row">
         <span>Base URL</span>
         <input
@@ -329,32 +462,100 @@ function ProviderForm({
           spellCheck={false}
           value={p.baseUrl}
           onChange={(e) => setP({ ...p, baseUrl: e.target.value })}
-          placeholder="https://api.openai.com"
+          placeholder="https://…"
           required
         />
+        {plainHttpWarning && (
+          <span className="form-hint warn">
+            Public endpoints must use https — tick "local endpoint" below for loopback / private hosts.
+          </span>
+        )}
       </label>
       <label className="form-row">
-        <span>API key {initial.id && '(leave blank to keep the stored key)'}</span>
-        <input
-          type="password"
-          spellCheck={false}
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={initial.id ? '•••••• (unchanged)' : 'sk-…'}
-          autoComplete="off"
-        />
+        <span>API key {hasStoredKey && '(leave blank to keep the stored key)'}</span>
+        <div className="input-with-action">
+          <input
+            type="password"
+            spellCheck={false}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder={hasStoredKey ? '•••••• (unchanged)' : 'sk-…'}
+            autoComplete="off"
+          />
+          {hasStoredKey && (
+            <button type="button" className="btn-tiny btn-danger" onClick={() => void onRemoveKey()}>
+              Remove stored key
+            </button>
+          )}
+        </div>
       </label>
       <div className="form-row">
         <span>Capabilities</span>
-        <div className="cap-checks">
-          {CAPS.map((c) => (
-            <label key={c} className="cap-check">
-              <input type="checkbox" checked={p.capabilities.includes(c)} onChange={() => toggleCap(c)} />
-              {c}
-            </label>
-          ))}
+        <div className="cap-checks cap-checks--stacked">
+          {CAPS.map((c) => {
+            const info = CAP_INFO[c];
+            return (
+              <label key={c} className="cap-check">
+                <input type="checkbox" checked={p.capabilities.includes(c)} onChange={() => toggleCap(c)} />
+                <span className="cap-check__text">
+                  <span className="cap-check__name">{info.label}</span>
+                  <span className="cap-check__desc">
+                    {info.desc}
+                    {!info.served && ' Not yet served by the desktop gateway.'}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
         </div>
+        {noCaps && (
+          <span className="form-hint warn">
+            Pick at least one capability — an empty set would match every request.
+          </span>
+        )}
       </div>
+      {p.protocol === 'custom' && (
+        <details className="custom-mapping">
+          <summary>Request mapping (advanced)</summary>
+          <label className="form-row">
+            <span>Chat endpoint path</span>
+            <input
+              type="text"
+              spellCheck={false}
+              value={spec.path ?? ''}
+              onChange={(e) => setSpec({ path: e.target.value })}
+              placeholder="/v1/chat/completions"
+            />
+          </label>
+          <label className="form-row">
+            <span>Request template (JSON)</span>
+            <textarea
+              rows={4}
+              spellCheck={false}
+              value={spec.requestTemplate ?? ''}
+              onChange={(e) => setSpec({ requestTemplate: e.target.value })}
+              placeholder={'{"model":"{{model}}","messages":{{messages}}}'}
+            />
+            <span className="form-hint">
+              Tokens: {'{{model}}'}, {'{{messages}}'}, {'{{prompt}}'}, {'{{input}}'}, {'{{apiKey}}'}. Leave
+              blank to send the OpenAI-compatible body unchanged.
+            </span>
+          </label>
+          <label className="form-row">
+            <span>Response path</span>
+            <input
+              type="text"
+              spellCheck={false}
+              value={spec.responsePath ?? ''}
+              onChange={(e) => setSpec({ responsePath: e.target.value })}
+              placeholder="choices.0.message.content"
+            />
+            <span className="form-hint">
+              Dotted path to the reply text in the endpoint's JSON response.
+            </span>
+          </label>
+        </details>
+      )}
       <label className="cap-check">
         <input type="checkbox" checked={p.allowLocal} onChange={(e) => setP({ ...p, allowLocal: e.target.checked })} />
         This is a local endpoint (allow loopback / private / plaintext http)
@@ -370,7 +571,11 @@ function ProviderForm({
         </div>
       )}
       <div className="form-actions">
-        <button type="submit" className="btn btn-primary" disabled={busy || !p.id.trim() || !p.baseUrl.trim()}>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={busy || !p.id.trim() || !p.baseUrl.trim() || noCaps}
+        >
           {busy ? 'Saving…' : 'Save provider'}
         </button>
       </div>

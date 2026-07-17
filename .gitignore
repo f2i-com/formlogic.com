@@ -12,6 +12,7 @@ dist-package/
 
 # Session resume notes (local only — full status for picking up in a new session)
 CLAUDE.md
+AGENTS.md
 
 # Root-level node_modules (stray tool installs land here; the real one lives in formlogic/ui)
 node_modules/

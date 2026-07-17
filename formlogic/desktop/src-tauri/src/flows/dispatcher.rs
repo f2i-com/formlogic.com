@@ -1671,6 +1671,13 @@ impl FlowRuntime {
 
         // outputActions (browser parity) on success.
         let mut action_errors: Vec<String> = Vec::new();
+        // Only a failed REPLY-CARRYING action (call.speak / connector.request) can
+        // leave the caller reply-less. A failed record write (updateResponse /
+        // submitResponse / store) must never make a sync binding SPEAK its
+        // fallbackReply over a reply the flow already delivered — e.g. the
+        // personalize-caller binding's caller_name backfill failing would
+        // otherwise inject a second, generic greeting into the live call.
+        let mut reply_action_failed = false;
         if outcome.status == "done" {
             let result = outcome.result.clone().unwrap_or(Value::Null);
             let scope = SelectorScope { event: Some(event.clone()), app: app_ctx.clone(), result: Some(result), inputs: Some(inputs.clone()), ..Default::default() };
@@ -1684,6 +1691,12 @@ impl FlowRuntime {
                         &[&run_id, &binding_id, &action_idx],
                     );
                     if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref(), &request_id).await {
+                        if matches!(
+                            action.get("type").and_then(Value::as_str).unwrap_or(""),
+                            "call.speak" | "connector.request"
+                        ) {
+                            reply_action_failed = true;
+                        }
                         action_errors.push(e);
                     }
                 }
@@ -1698,8 +1711,18 @@ impl FlowRuntime {
         // purely in-memory follow-up decision, same as the browser dispatcher's runBinding.
         // Live-call (sync) bindings are ALWAYS dispatched through this event path (never the
         // claim loop below), so this is the only place fallbackPolicy needs to apply.
+        // The SPOKEN half of the fallback additionally requires the failure to be
+        // reply-relevant (flow failed, or a reply-carrying action failed).
         if outcome.status != "done" || !action_errors.is_empty() {
-            self.apply_fallback(binding, event, &outcome, &action_errors, &run_id).await;
+            self.apply_fallback(
+                binding,
+                event,
+                &outcome,
+                &action_errors,
+                &run_id,
+                outcome.status != "done" || reply_action_failed,
+            )
+            .await;
         }
 
         // Executed to a durable server-side run row (success OR flow-level
@@ -1729,6 +1752,10 @@ impl FlowRuntime {
     /// that: the failed/partial run is already durably recorded via `self.complete()` above —
     /// the run-history row IS the log, mirroring the browser comment ("already logged;
     /// nothing surfaces to the viewer").
+    /// `speak_fallback` is false when the ONLY failures were record-write output
+    /// actions (updateResponse/submitResponse/store): those never leave the caller
+    /// reply-less, so the spoken branch is skipped and only the `onError` surfacing
+    /// below applies.
     async fn apply_fallback(
         &self,
         binding: &Value,
@@ -1736,6 +1763,7 @@ impl FlowRuntime {
         outcome: &FlowOutcome,
         action_errors: &[String],
         execution_id: &str,
+        speak_fallback: bool,
     ) {
         let binding_id = binding.get("id").and_then(Value::as_str).unwrap_or("?");
         let mode = binding.get("mode").and_then(Value::as_str).unwrap_or("");
@@ -1745,7 +1773,7 @@ impl FlowRuntime {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty());
 
-        if mode == "sync" {
+        if mode == "sync" && speak_fallback {
             if let Some(reply) = fallback_reply {
                 match Self::fallback_connector_id(binding, event) {
                     Some(connector_id) => {
@@ -2321,6 +2349,11 @@ impl FlowRuntime {
             message: message.into(),
             data: Some(json!({ "code": "invalid_admission_request" })),
         };
+        // AOK-302: the broker MINTS Aokie-specific admission (endpoint identity,
+        // roster, app binding), so it stays aokie-scoped as defense-in-depth even
+        // though the RPC now accepts the generic `host.admission` name. AOK-303
+        // (supervised) generalizes the broker itself + the identity migration
+        // before any other plugin is served here.
         if host_plugin_id != "aokie" {
             return Err(RpcErrorObj {
                 code: -32000,
@@ -2695,7 +2728,10 @@ impl PluginRpcHandler for RpcBridge {
         Box::pin(async move {
             match method.as_str() {
                 "flow.run" => rt.handle_flow_run_rpc(plugin_id, params).await,
-                "companion.admission" => {
+                // AOK-302: `host.admission` is the generic name for the same
+                // credential broker; `companion.admission` is the retained
+                // legacy alias the deployed Aokie plugin still calls.
+                "host.admission" | "companion.admission" => {
                     rt.handle_companion_admission_rpc(plugin_id, params).await
                 }
                 _ => Err(RpcErrorObj {
@@ -3397,6 +3433,41 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("binding b-live-call fallback speak via aokie"));
+        }
+
+        /// A failed RECORD-WRITE output action must NOT speak the fallback: the flow
+        /// succeeded (its reply/personalization was delivered), so speaking the generic
+        /// fallbackReply would inject a second utterance into the live call. The failure
+        /// still lands in outputActionErrors (durably, via complete), it just isn't
+        /// reply-relevant. (2026-07-17 — found when personalize-caller gained a
+        /// caller_name updateResponse output action on its sync caller_id binding.)
+        #[tokio::test]
+        async fn record_write_action_failure_does_not_speak_the_fallback() {
+            let (rt, client, stub) = harness(passthrough_flow()).await;
+            let binding = json!({
+                "id": "b-record-write",
+                "flow": "echo",
+                "mode": "sync",
+                // responseId resolves to nothing → the action fails without any connector involvement.
+                "outputActions": [ { "type": "formlogic.updateResponse", "form": "f1", "responseId": "$result.missing", "answers": { "caller_name": "x" } } ],
+                "fallbackPolicy": { "onError": "log_and_continue", "fallbackReply": "One moment please." },
+            });
+
+            rt.run_binding(&binding, &call_event(), &client, &ConnectorRouting::Unrestricted).await;
+
+            // The run persists 'done' with the action error recorded…
+            {
+                let completed = stub.completed.lock().unwrap();
+                assert_eq!(completed.len(), 1);
+                assert_eq!(completed[0]["status"], "done");
+                let action_errors = completed[0]["result"]["outputActionErrors"].as_array().cloned().unwrap_or_default();
+                assert_eq!(action_errors.len(), 1);
+                assert!(action_errors[0].as_str().unwrap().contains("responseId did not resolve"));
+            }
+
+            // …but NO fallback speak was attempted (a speak attempt would note_error
+            // 'fallback speak via aokie' — the connector is plugin-less in this harness).
+            assert_eq!(rt.status().errors, 0);
         }
 
         /// Trigger path 2: the flow graph itself fails outright, never reaching outputActions.

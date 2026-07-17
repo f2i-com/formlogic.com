@@ -27,9 +27,11 @@ use crate::services::runner::LogLine;
 /// remainder up to the next newline is discarded so the stream stays in sync.
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
 
-/// Plugin log ring buffer — last ~500 stdout/stderr lines. Same `LogLine`
+/// Plugin log ring buffer — last ~2000 stdout/stderr lines. Same `LogLine`
 /// shape the services LogsViewer already renders, so the UI reuses it as-is.
-pub const PLUGIN_LOG_LINES: usize = 500;
+/// (Raised 500→2000, LAT-001: a live call's SCO chatter wrapped 500 lines in
+/// under a minute, so post-call latency forensics always read "logs wrapped".)
+pub const PLUGIN_LOG_LINES: usize = 2000;
 
 /// `log.emit` messages over this many bytes are truncated (contract: ≤ 2 KiB).
 pub const MAX_LOG_EMIT_BYTES: usize = 2048;
@@ -686,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn log_ring_caps_at_500() {
+    fn log_ring_caps_at_capacity() {
         let ring = LogRing::new();
         for i in 0..(PLUGIN_LOG_LINES + 20) {
             ring.push("stdout", format!("line {i}"));
