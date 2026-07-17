@@ -2635,6 +2635,23 @@ describe('aokieReceptionistPack — pack-owned Live Call section screen (plan §
     // Captions tombstone when a durable caller turn lands (final wins).
     expect(js).toContain('tombstone');
   });
+
+  it('offers the demo Simulate ONLY when there is no real runtime — never in remote mode', () => {
+    // A REAL desktop reachable over the relay (presence 'remote') must show a
+    // mirror note, NOT the scripted "Simulate incoming call" button — that was
+    // the "connected but shows Simulate" bug. Structural lock: the remote
+    // branch renders the mirror text, and the simulate button lives in a
+    // SEPARATE else-if (non-local) branch that comes after it.
+    const js = String(cs?.js ?? '');
+    const remoteIdx = js.indexOf('mirrors its calls and relays your controls');
+    const simIdx = js.indexOf('data-act="simulate"');
+    expect(remoteIdx).toBeGreaterThan(-1);
+    expect(simIdx).toBeGreaterThan(remoteIdx);
+    // The remote branch closes into an else-if before the simulate button —
+    // i.e. the mirror (remote) branch does NOT contain the simulate affordance.
+    expect(js.slice(remoteIdx, simIdx)).toContain("else if (state.presence.kind !== 'local')");
+    expect(js).toContain("state.presence.kind === 'remote'");
+  });
 });
 
 

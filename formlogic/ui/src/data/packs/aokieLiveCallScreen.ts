@@ -235,12 +235,20 @@ const JS = `
     var last = state.recent[0];
     var when = last ? hhmm(rec(last.answers).started_at || last.submittedAt) : null;
     $('standby').textContent = remoteMode() ? 'Updates every 10s' : (when ? 'Last call ' + when : 'Waiting for the next call');
-    // Offer the demo simulate when there is no real local bridge.
-    if (state.presence.kind !== 'local') {
+    // Standby panel by presence:
+    //  - remote: a REAL desktop is running (reachable via the relay). Show a
+    //    mirror note only - NEVER the demo simulate (a scripted call must never
+    //    be offered when real hardware is live; that's the "connected but shows
+    //    Simulate" bug).
+    //  - none / demo: no real runtime at all - offer the scripted demo call.
+    //  - local: direct bridge, no panel.
+    if (state.presence.kind === 'remote') {
+      $('setup').innerHTML = '<div class="card"><p class="muted" style="margin:0;font-size:13px">'
+        + 'The receptionist runs on ' + esc(state.presence.deviceName || 'another machine')
+        + '. This console mirrors its calls and relays your controls.</p></div>';
+    } else if (state.presence.kind !== 'local') {
       $('setup').innerHTML = '<div class="card"><p class="muted" style="margin:0 0 10px;font-size:13px">'
-        + (state.presence.kind === 'remote'
-            ? 'The receptionist runs on ' + esc(state.presence.deviceName || 'another machine') + '. This console mirrors its calls and relays your controls.'
-            : 'Install FormLogic Desktop (Device Setup) to take real calls. Until then, run a scripted demo call to explore the flow.')
+        + 'Install FormLogic Desktop (Device Setup) to take real calls. Until then, run a scripted demo call to explore the flow.'
         + '</p><button type="button" class="btn" data-act="simulate"' + (state.simulating ? ' disabled' : '') + '>'
         + (state.simulating ? 'Simulating...' : 'Simulate incoming call') + '</button></div>';
     } else {
