@@ -24,6 +24,7 @@
 import type { PackData } from './financeOsPack';
 import { AOKIE_CALL_TRANSCRIPT_SCREEN } from './aokieCallTranscriptScreen';
 import { AOKIE_DEVICE_SETUP_SCREEN } from './aokieDeviceSetupScreen';
+import { AOKIE_LIVE_CALL_SCREEN } from './aokieLiveCallScreen';
 
 // ── Shared defaults ─────────────────────────────────────────────────────────
 
@@ -2589,27 +2590,22 @@ export const aokieReceptionistPack: PackData = {
           properties: { options: [{ id: 'yes', label: 'Follow-up required', value: 'yes' }] },
         },
       ],
-      // The Calls section IS the Live Call operator screen (trusted host-rendered SDK
-      // screen): current call card, live transcript, answer/hangup/speak, call history.
-      // No "New Call" button: call records are written exclusively by the flow/app
-      // logic from live call events — a hand-typed call row would just be wrong data.
+      // The Calls SECTION is the Live Call operator console: current call card, live
+      // transcript, answer/reject/hangup/speak, call history. No "New Call" button:
+      // call records are written exclusively by the flow/app logic from live call
+      // events — a hand-typed call row would just be wrong data.
+      // PACK-OWNED CODE (plan §8.4 port #6): the console ships as sandboxed HTML/CSS/JS
+      // inside the pack (aokieLiveCallScreen.ts) driving the full bridge —
+      // connector()/events.subscribe()/captions.subscribe()/queryRecords()/records()/
+      // host.ceremony('simulate-call'). Its actions are TRUSTED_ONLY: the form's
+      // custom_screen_trust must be owner/verified. Rollback = the previous sdk section
+      // reference: { enabled, allowNewResponses:false, kind:'sdk',
+      //   sdkScreen: { screenId: 'aokie-live-call', title: 'Live Call' }, recordScreen }.
+      // The record SCREEN (per-call transcript widget) is a separate pack-owned blob and
+      // is unaffected by the section port; consumesRelated stays packFormId-qualified
+      // because follow-up-tasks ALSO link Calls through a call_link field.
       customScreen: {
-        enabled: true,
-        allowNewResponses: false,
-        kind: 'sdk',
-        sdkScreen: { screenId: 'aokie-live-call', title: 'Live Call' },
-        // Individual call records render their transcript as chat bubbles; the widget consumes
-        // the call_link related group so the raw Transcript Turns grid isn't shown twice.
-        // consumesRelated is packFormId-qualified: follow-up-tasks ALSO link here through a
-        // field named call_link, and that group must stay visible in the related panel.
-        // PACK-OWNED CODE (plan APP-505 PoC): the transcript widget ships as sandboxed
-        // HTML/CSS/JS inside the pack (aokieCallTranscriptScreen.ts) instead of referencing
-        // the compiled registry screen — the app is self-contained and the operator can read
-        // and fork the source in the Studio editor. Its record()/related() bridge actions are
-        // TRUSTED_ONLY: the form's custom_screen_trust must be owner/verified (fresh owner
-        // imports stamp 'owner'). Rollback = the previous sdk reference:
-        //   { kind: 'sdk', screenId: 'aokie-call-transcript', title: 'Transcript',
-        //     consumesRelated: ['transcript-turns.call_link'] }
+        ...AOKIE_LIVE_CALL_SCREEN,
         recordScreen: AOKIE_CALL_TRANSCRIPT_SCREEN,
       },
     },

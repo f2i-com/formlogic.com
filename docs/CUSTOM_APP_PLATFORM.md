@@ -191,6 +191,13 @@ set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`):
   call, 10 calls/min; there is deliberately no clear-all). Each row is server-authorized
   individually; resolves `{ deleted: [ids], failed: [{id, error}] }` and a refused row never
   aborts the rest.
+- `queryRecords(formTarget, { limit })` — read records of ANOTHER form in this app (§8.3
+  records.query). `formTarget` resolves to a sibling form by pack key / form id / display name;
+  the SERVER enforces the member's per-form view permission (the same boundary `related()`
+  already crosses), so a screen can only read what the member could read by navigating there.
+  Resolves projected rows, or `[]` for an unknown/forbidden form (never throws for authz). Use it
+  for cross-form lookups — e.g. the Live Call console reads Customers for the known-caller name
+  and Transcript Turns for the stored transcript in remote mode.
 - `presence()` — one-shot desktop-presence snapshot
   `{ kind: 'local'|'remote'|'none', deviceName?, lastSeenAt? }` (demo mode is always `'none'`).
 - `events.subscribe({connectorId, names?}, handler)` / `captions.subscribe(handler)` — LIVE feeds
@@ -225,10 +232,12 @@ set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`):
   runs its own flow with its own consent surface and resolves
   `{ status: 'done'|'failed'|'denied'|'unavailable', message?, … }` (only an unknown name
   rejects). v1 names: `'connect-desktop'` (the desktop pairing flow — approval happens ON the
-  desktop, and the pack never mints or sees a token) and `'start-fresh'` (the whole-app record
+  desktop, and the pack never mints or sees a token), `'start-fresh'` (the whole-app record
   reset behind the HOST's confirm dialog — the bridge deliberately has no cross-form or clear-all
   delete, so pack code structurally cannot wipe records without the operator confirming in host
-  UI). Both refuse in the shared demo.
+  UI), and `'simulate-call'` (drive the contract's scripted demo call through the mock connector
+  so the Live Call screen is explorable with zero hardware). `connect-desktop`/`start-fresh`
+  refuse in the shared demo.
 - `can(permission)` — ADVISORY grant introspection (§8.3 permissions.can): true when the app
   declares the permission for this screen's scope — the exact gate `connector()` applies — so a
   screen can grey out buttons instead of collecting rejects. Never a trust boundary.

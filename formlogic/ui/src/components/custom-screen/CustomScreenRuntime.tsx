@@ -87,6 +87,11 @@ const SDK_SHIM = `
      *  clear-all). Resolves { deleted: [ids], failed: [{id, error}] } — a refused row never
      *  aborts the rest. Server-side delete permission applies per row. */
     deleteRecords: function(responseIds){ return call('deleteRecords', { responseIds: responseIds || [] }); },
+    /** Read records of ANOTHER form in this app: queryRecords(formTarget, { limit }). The
+     *  target is a pack form key, form id, or display name; the server enforces YOUR view
+     *  permission on that form (same as navigating to it). Resolves projected rows, or [] for
+     *  an unknown/forbidden form. */
+    queryRecords: function(formTarget, opts){ return call('queryRecords', { formTarget: String(formTarget == null ? '' : formTarget), opts: opts || {} }); },
     /** Where the app's connector hardware runtime is right now:
      *  { kind: 'local'|'remote'|'none', deviceName?, lastSeenAt? }. */
     presence: function(){ return call('presence'); },
@@ -375,6 +380,14 @@ export function CustomScreenRuntime({
               ? (m.payload.responseIds as unknown[]).map((v) => String(v ?? ''))
               : [];
             result = await bridge.deleteRecords(responseIds);
+            break;
+          }
+          case 'queryRecords': {
+            if (!bridge) throw new Error('queryRecords() is not available on this screen.');
+            result = await bridge.queryRecords(
+              String(m.payload?.formTarget || ''),
+              m.payload?.opts && typeof m.payload.opts === 'object' ? m.payload.opts : {}
+            );
             break;
           }
           case 'presence': {

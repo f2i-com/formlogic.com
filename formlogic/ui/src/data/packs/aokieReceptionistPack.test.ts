@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { aokieReceptionistPack as pack, DEFAULT_PERSONA } from './aokieReceptionistPack';
 import { AOKIE_CALL_TRANSCRIPT_SCREEN, compareTurns } from './aokieCallTranscriptScreen';
 import { AOKIE_DEVICE_SETUP_SCREEN } from './aokieDeviceSetupScreen';
+import { AOKIE_LIVE_CALL_SCREEN } from './aokieLiveCallScreen';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { packCatalog } from './index';
 import {
@@ -257,9 +258,10 @@ describe('aokieReceptionistPack â€” app', () => {
       const cs = form.customScreen;
       if (cs?.kind === 'sdk' && cs.sdkScreen?.screenId) used.push(cs.sdkScreen.screenId);
     }
-    // Device Setup ('aokie-pairing') is pack-owned CODE now (plan §8.4 port #4);
-    // the remaining compiled references are the last two rungs of the ladder.
-    expect(used.sort()).toEqual(['aokie-live-call', 'aokie-receptionist-settings']);
+    // Device Setup ('aokie-pairing') and Live Call ('aokie-live-call') are pack-owned
+    // CODE now (plan §8.4 ports #4 + #6); receptionist-settings is the last compiled
+    // section reference (its port is gated on the supervised AOK-304 settings split).
+    expect(used.sort()).toEqual(['aokie-receptionist-settings']);
     for (const id of used) {
       expect(registered.has(id), `SDK screen '${id}' is not registered`).toBe(true);
     }
@@ -2520,3 +2522,52 @@ describe('aokieReceptionistPack â€” pack-owned Device Setup section screen 
   });
 });
 
+
+
+describe('aokieReceptionistPack — pack-owned Live Call section screen (plan §8.4 port #6)', () => {
+  const calls = pack.forms.find((f) => f.packFormId === 'calls');
+  const cs = calls?.customScreen as Record<string, unknown> | undefined;
+
+  it('ships the Calls SECTION as pack-owned CODE while KEEPING the record transcript', () => {
+    expect(cs?.kind).toBe('code');
+    expect(cs?.sdkScreen).toBeUndefined();
+    expect(cs?.allowNewResponses).toBe(false);
+    expect(cs?.js).toBe(AOKIE_LIVE_CALL_SCREEN.js);
+    // The per-record transcript widget is a separate blob and must survive the section port.
+    const rs = (cs?.recordScreen as Record<string, unknown> | undefined);
+    expect(rs?.kind).toBe('code');
+    expect(rs?.consumesRelated).toEqual(['transcript-turns.call_link']);
+  });
+
+  it('the sandboxed source parses and escapes rendered values, regex-free', () => {
+    const js = String(cs?.js ?? '');
+    expect(() => new Function(js)).not.toThrow();
+    // Bound once as `esc` and applied to every interpolated value.
+    expect(js).toContain('var esc = FL.escapeHtml');
+    expect(js).toContain('esc(');
+    expect(js).not.toContain('.match(');
+    expect(js).not.toContain('.replace(/');
+  });
+
+  it('drives the subscription lanes + the full bridge — commands go through connector()', () => {
+    const js = String(cs?.js ?? '');
+    for (const needle of [
+      "FL.connector('aokie', 'call.current'",
+      "FL.connector('aokie', command",       // answer/reject/hangup/operatorSpeak
+      "FL.events.subscribe({ connectorId: 'aokie' }",
+      'FL.captions.subscribe(',
+      "FL.queryRecords('customers'",
+      "FL.queryRecords('transcript-turns'",
+      'FL.records(',
+      'FL.presence()',
+      "FL.host.ceremony('simulate-call')",
+      "FL.can('connector.aokie.'",
+    ]) {
+      expect(js, needle).toContain(needle);
+    }
+    // The correction event patches the live bubble (converges with stored surfaces).
+    expect(js).toContain('aokie.call.turn.corrected');
+    // Captions tombstone when a durable caller turn lands (final wins).
+    expect(js).toContain('tombstone');
+  });
+});

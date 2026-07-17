@@ -58,6 +58,13 @@ export interface ScreenBridge {
   ) => Promise<ConnectorInvokeOutcome>;
   updateRecord: (responseId: string, answers: Record<string, unknown>) => Promise<unknown>;
   deleteRecords: (responseIds: string[]) => Promise<{ deleted: string[]; failed: Array<{ id: string; error: string }> }>;
+  /** Read records of ANOTHER form in THIS app (plan §8.3 records.query). The
+   *  target is resolved to a sibling form by pack key / form id / display
+   *  name; the SERVER enforces the member's per-form view permission (the same
+   *  boundary related() already crosses), so a screen can only read what the
+   *  member could read by navigating there. Returns projected rows; resolves
+   *  [] for an unknown/forbidden form (never throws for authz). */
+  queryRecords: (formTarget: string, opts?: { limit?: number }) => Promise<Array<Record<string, unknown>>>;
   presence: () => Promise<AokiePresence>;
   /** Typed service.invoke (plan §8.3, APP-503): run a SERVER-REGISTERED
    *  operation. Resolves an outcome ({status done|failed, result?, error?}) —
@@ -115,6 +122,13 @@ export interface ScreenBridgeDeps {
   /** Per-record delete (server enforces delete permission). Resolves — never
    *  throws — so one refused row can't abort the rest of a batch. */
   deleteResponse: (formId: string, responseId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Resolve a sibling-form target ('pack key' / form id / display name) to a
+   *  real form id in THIS app, or null. Cross-form reads can target ONLY forms
+   *  the app actually has. */
+  resolveForm: (formTarget: string) => string | null;
+  /** Read another form's records (server enforces the member's view permission).
+   *  Resolves [] on any refusal so pack code has one path. */
+  queryResponses: (formId: string, limit: number) => Promise<Array<Record<string, unknown>>>;
   /** One-shot presence resolution (injectable for tests). */
   resolvePresence: () => Promise<AokiePresence>;
   /** Typed service.invoke transport (api.invokeAppService — injectable for tests). */
@@ -257,6 +271,17 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
       return { deleted, failed };
     },
 
+    queryRecords: async (formTarget, opts) => {
+      const target = String(formTarget || '');
+      if (!target) throw new Error('queryRecords() needs a form target.');
+      const resolved = deps.resolveForm(target);
+      // A form this app doesn't have, or the screen's own form (use records()
+      // for that) — resolve empty rather than reach anywhere unexpected.
+      if (!resolved || resolved === deps.formId) return [];
+      const limit = Math.min(500, Math.max(1, Number(opts?.limit) || 100));
+      return deps.queryResponses(resolved, limit);
+    },
+
     presence: () => deps.resolvePresence(),
 
     serviceInvoke: async (operationId, input) => {
@@ -377,6 +402,14 @@ export function useScreenBridge(formId: string, appSlug?: string): ScreenBridge 
         return res.error
           ? { ok: false, error: typeof res.error === 'string' ? res.error : 'Delete failed' }
           : { ok: true };
+      },
+      resolveForm: (formTarget) => resolveScreenTarget(formTarget),
+      queryResponses: async (fId, limit) => {
+        // Same app API + per-form permission gate the app's own records views
+        // use — a refusal (no view permission) resolves to [] here.
+        const res = await api.getAppResponses(storeSlug, fId, { limit });
+        const rows = (res.data?.responses ?? []) as Array<Record<string, unknown>>;
+        return rows.map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt, status: r.status, tags: r.tags }));
       },
       resolvePresence: () => resolveScreenPresence(appId),
       invokeService: (slug, operationId, input) => api.invokeAppService(slug, operationId, input),

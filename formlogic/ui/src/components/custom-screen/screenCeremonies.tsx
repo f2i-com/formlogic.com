@@ -15,6 +15,12 @@
 //    delete). The HOST confirms with its own dialog before touching
 //    anything, so pack code structurally cannot wipe records silently; the
 //    Receptionist Settings singleton (config, not data) always survives.
+//  - 'simulate-call': drive the contract's scripted demo call sequence
+//    (AOKIE_PLUGIN_CONTRACT.md §4) through the mock connector's local event
+//    hub, so the Live Call screen is explorable with zero hardware. Host-owned
+//    because it reaches the client-runtime mock; a no-op with a real desktop
+//    (real calls arrive on their own). Refused only when a real bridge would
+//    make it meaningless is NOT enforced — it's a dev/demo affordance.
 //
 // Both are refused in the shared demo (the demo must never pair with a real
 // desktop, and its records are managed server-side — demo_readonly would
@@ -33,6 +39,7 @@ import {
   requestPairing,
 } from '../../client-runtime/desktop/desktopPairing';
 import { desktopClient } from '../../client-runtime/desktop/desktopClient';
+import { simulateIncomingCall } from '../../client-runtime/connectors/aokieConnector';
 
 /** What FormLogic.host.ceremony() resolves. 'denied' = the user (or the
  *  desktop) declined; 'unavailable' = this context can't run it (demo, no
@@ -165,6 +172,11 @@ export function useScreenCeremonies(): {
           return runConnectDesktop();
         case 'start-fresh':
           return runStartFresh();
+        case 'simulate-call':
+          // Drives the mock connector's scripted lifecycle into the local
+          // event hub; the screen's events.subscribe lane then receives it.
+          await simulateIncomingCall();
+          return { status: 'done' };
         default:
           return null; // unknown → the SDK call rejects
       }

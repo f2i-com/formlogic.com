@@ -54,6 +54,10 @@ function deps(over: Partial<ScreenBridgeDeps> = {}): ScreenBridgeDeps {
       secretServerField: 'never',
     })),
     deleteResponse: vi.fn(async () => ({ ok: true })),
+    resolveForm: vi.fn((t: string) => (t === 'customers' ? 'form-customers' : t === 'form-1' ? 'form-1' : null)),
+    queryResponses: vi.fn(async () => [
+      { id: 'c1', answers: { name: 'Lance', phone: '0491570156' }, submittedAt: '2026-07-17T00:00:00Z', status: 'submitted', tags: [] },
+    ]),
     resolvePresence: vi.fn(async () => ({ kind: 'local' as const })),
     invokeService: vi.fn(async (_slug: string, operationId: string) => ({
       data: { operationId, result: { ok: true } },
@@ -344,6 +348,34 @@ describe('updateRecord / presence', () => {
       deviceName: 'DESKTOP-HOME',
       lastSeenAt: '2026-07-17 00:00:00',
     });
+  });
+});
+
+describe('queryRecords — cross-form reads (plan §8.3 records.query)', () => {
+  it('resolves a sibling form and returns projected rows', async () => {
+    const d = deps();
+    const bridge = createScreenBridge(d);
+    const rows = await bridge.queryRecords('customers', { limit: 50 });
+    expect(d.resolveForm).toHaveBeenCalledWith('customers');
+    expect(d.queryResponses).toHaveBeenCalledWith('form-customers', 50);
+    expect(rows).toEqual([
+      { id: 'c1', answers: { name: 'Lance', phone: '0491570156' }, submittedAt: '2026-07-17T00:00:00Z', status: 'submitted', tags: [] },
+    ]);
+  });
+
+  it('returns [] for an unknown form and never reaches the API', async () => {
+    const d = deps();
+    const bridge = createScreenBridge(d);
+    await expect(bridge.queryRecords('no-such-form')).resolves.toEqual([]);
+    expect(d.queryResponses).not.toHaveBeenCalled();
+  });
+
+  it('returns [] for the screen\'s OWN form (records() is for that) and rejects an empty target', async () => {
+    const d = deps({ formId: 'form-1' });
+    const bridge = createScreenBridge(d);
+    await expect(bridge.queryRecords('form-1')).resolves.toEqual([]);
+    expect(d.queryResponses).not.toHaveBeenCalled();
+    await expect(bridge.queryRecords('')).rejects.toThrow('form target');
   });
 });
 

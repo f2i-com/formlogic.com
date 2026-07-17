@@ -33,6 +33,7 @@ const TRUSTED_ONLY_ACTIONS = new Set([
   'connector',
   'updateRecord',
   'deleteRecords',
+  'queryRecords',
   'presence',
   // Subscription lane: live event/caption feeds carry call data.
   'eventsSubscribe',
@@ -73,6 +74,9 @@ export function createSdkRateLimiter() {
     // Each call is itself batch-bounded (25 ids) — 10/min keeps a bounded
     // clear usable without opening a delete firehose.
     deleteRecords: 10,
+    // Cross-form reads hit the app API; a live screen re-queries sibling forms
+    // on a poll, so keep the same generous read budget as records().
+    queryRecords: 60,
     presence: 30,
     // Subscription lifecycle is churn-bounded; the PUSH volume is budgeted
     // separately per subscription (screenSubscriptions.ts).
