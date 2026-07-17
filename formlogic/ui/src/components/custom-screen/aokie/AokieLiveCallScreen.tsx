@@ -82,6 +82,13 @@ interface TranscriptTurn {
   speaker: string;
   text: string;
   occurredAt: string;
+  /** Which call + turn number this bubble is — the correction event's match
+   *  key (aokie.call.turn.corrected rewrites the STORED row 2-11s after the
+   *  final; without patching here the live/last-call view kept showing the
+   *  raw STT while every stored surface showed the corrected text). */
+  callId?: string;
+  turn?: number;
+  corrected?: boolean;
 }
 
 /** The minimal shape both LiveCall (local) and RemoteCallSnapshot (remote) satisfy — all the
@@ -414,9 +421,27 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
               speaker: typeof data.speaker === 'string' ? data.speaker : 'caller',
               text: typeof data.text === 'string' ? data.text : '',
               occurredAt: envelope.occurredAt,
+              callId,
+              turn: typeof data.turn === 'number' ? data.turn : Number(data.turn) || undefined,
             },
           ]);
           break;
+        case 'aokie.call.turn.corrected': {
+          // The audio model re-heard this turn (source=audio_model in the
+          // stored row). Patch the in-memory bubble so the live/last-call
+          // view converges with every stored surface — this was the "caller
+          // text differs when clicking into the record" report. No-op when
+          // the turn isn't on screen (mirrors the app-logic update-only rule).
+          const turnNo = typeof data.turn === 'number' ? data.turn : Number(data.turn);
+          const fixed = typeof data.text === 'string' ? data.text : '';
+          if (!fixed || !Number.isFinite(turnNo)) break;
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.callId === callId && t.turn === turnNo ? { ...t, text: fixed, corrected: true } : t,
+            ),
+          );
+          break;
+        }
         case 'aokie.call.rejected':
         case 'aokie.call.ended':
           setCall((prev) => (prev && prev.callId === callId ? { ...prev, state: 'ended' } : prev));
@@ -850,7 +875,10 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                           <span className={`text-[11px] font-semibold ${speaker.className}`}>{speaker.label}</span>
                           {time && <span className="font-mono text-[10px] tabular-nums text-gray-400 dark:text-[#69748a]">{time}</span>}
                         </div>
-                        <p className={`mt-1 border border-gray-200/60 px-3 py-2 text-sm leading-relaxed text-gray-700 dark:border-white/[0.06] dark:text-[#cbd1dd] ${bubble.bubble}`}>
+                        <p
+                          className={`mt-1 border border-gray-200/60 px-3 py-2 text-sm leading-relaxed text-gray-700 dark:border-white/[0.06] dark:text-[#cbd1dd] ${bubble.bubble}`}
+                          title={t.corrected ? 'Corrected by the audio model' : undefined}
+                        >
                           {t.text}
                         </p>
                       </div>

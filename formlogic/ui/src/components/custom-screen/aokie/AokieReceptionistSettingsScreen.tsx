@@ -23,7 +23,13 @@ import {
 } from '../../../client-runtime/flows/desktopService';
 // Payload composition lives in receptionistPayload.ts (no React/SDK imports)
 // so the pack contract test can pin the console↔flow mirror byte-for-byte.
-import { buildAgentPayload, EMPTY_DRAFT, type Draft, type SourceService } from './receptionistPayload';
+import {
+  buildAgentPayload,
+  EMPTY_DRAFT,
+  resolveCorrectionEndpoint,
+  type Draft,
+  type SourceService,
+} from './receptionistPayload';
 import {
   parseTtsVoiceCatalog,
   VoiceEngineSection,
@@ -50,6 +56,8 @@ function draftFromAnswers(a: Record<string, unknown>): Draft {
     llm_source: s('llm_source'),
     stt_source: s('stt_source'),
     tts_source: s('tts_source'),
+    correction_source: s('correction_source'),
+    correction_endpoint: s('correction_endpoint'),
     voice: s('voice'),
     reply_mode: s('reply_mode') || 'agent',
     active: s('active') || 'yes',
@@ -270,10 +278,6 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
               loaded: true,
               sendAudio: settings.sendAudio === true || settings.sendAudio === 'true',
               audioTranscript: settings.audioTranscript === true || settings.audioTranscript === 'true',
-              transcriptEndpoint:
-                typeof settings.audioTranscriptEndpoint === 'string' ? settings.audioTranscriptEndpoint : '',
-              transcriptModel:
-                typeof settings.audioTranscriptModel === 'string' ? settings.audioTranscriptModel : '',
             }
       );
       setWaitingCfg((prev) =>
@@ -459,31 +463,57 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     }
   }, [engineCfg, runCommand]);
 
-  // ── Audio understanding (plugin settings — audio-capable models only) ──
-  // sendAudio ships the caller-turn audio to the LLM alongside the STT text;
-  // audioTranscript additionally has the model CORRECT each turn's transcript
-  // from that audio (a small detached request — replies never wait on it).
-  // Both read once at radio start, so saves apply at the next reconnect.
+  // ── Audio understanding (plugin settings — the caller-audio MODE) ──
+  // sendAudio and audioTranscript are INDEPENDENT: sendAudio ships the
+  // caller-turn audio with the reply request (needs an audio-capable reply
+  // model); audioTranscript side-runs a small correction request per caller
+  // turn against the correction source (works with a text-only reply model —
+  // the plugin decouples the lanes). The card exposes them as one 4-way mode
+  // select; both keys are pushed explicitly on every save. Read once at radio
+  // start, so saves apply at the next reconnect.
   const [audioCfg, setAudioCfg] = useState({
     loaded: false,
     sendAudio: false,
     audioTranscript: false,
-    // Correction-lane overrides: an optional separate endpoint and/or lighter
-    // audio model for the transcript corrections (blank = the main model).
-    transcriptEndpoint: '',
-    transcriptModel: '',
   });
   const [audioSaving, setAudioSaving] = useState(false);
   const handleSaveAudio = useCallback(async () => {
+    if (!draft) return;
     setAudioSaving(true);
     setError(null);
     try {
-      await runCommand('settings.set', {
+      const payload: Record<string, unknown> = {
         sendAudio: audioCfg.sendAudio,
         audioTranscript: audioCfg.audioTranscript,
-        audioTranscriptEndpoint: audioCfg.transcriptEndpoint.trim(),
-        audioTranscriptModel: audioCfg.transcriptModel.trim(),
-      });
+      };
+      // Push the resolved correction endpoint the way "Save & apply now"
+      // would (the SAME laneUrl rule as the per-call flow). Unresolvable here
+      // (service pick with no local Desktop listing — remote console) → omit:
+      // the per-call flow owns it. The model key is never pushed — the chosen
+      // service owns its model.
+      const correctionUrl = resolveCorrectionEndpoint(
+        draft.correction_source,
+        draft.correction_endpoint,
+        sources ?? undefined,
+      );
+      if (correctionUrl !== undefined) payload.audioTranscriptEndpoint = correctionUrl;
+      await runCommand('settings.set', payload);
+      // The correction SOURCE lives on the settings RECORD (the per-call
+      // Configure flow re-resolves it every call). Patch just those keys —
+      // the API merges, so the persona draft above is never touched.
+      if (formId) {
+        const answers = {
+          correction_source: draft.correction_source.trim(),
+          correction_endpoint: draft.correction_endpoint.trim(),
+        };
+        if (recordId) {
+          await updateResponse(formId, recordId, { answers });
+        } else {
+          const created = (await createResponse(formId, answers)) as { id?: string } | undefined;
+          if (created && typeof created.id === 'string') setRecordId(created.id);
+        }
+        records.reload();
+      }
       try {
         const res = await runCommand('settings.get');
         const s = (res.settings && typeof res.settings === 'object' ? res.settings : {}) as Record<string, unknown>;
@@ -491,8 +521,6 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
           ...prev,
           sendAudio: s.sendAudio === true || s.sendAudio === 'true',
           audioTranscript: s.audioTranscript === true || s.audioTranscript === 'true',
-          transcriptEndpoint: typeof s.audioTranscriptEndpoint === 'string' ? s.audioTranscriptEndpoint : '',
-          transcriptModel: typeof s.audioTranscriptModel === 'string' ? s.audioTranscriptModel : '',
         }));
       } catch {
         // Read-back is confirmation only — the save above already succeeded.
@@ -503,7 +531,7 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
     } finally {
       setAudioSaving(false);
     }
-  }, [runCommand, audioCfg]);
+  }, [runCommand, audioCfg, draft, sources, formId, recordId, updateResponse, createResponse, records]);
 
   // ── Call waiting & hold queue (plugin settings) ──
   // holdAndCallWaiting negotiates the phone capability (a second caller
@@ -943,79 +971,104 @@ export function AokieReceptionistSettingsScreen({ params }: { params?: Record<st
         </div>
       </div>
 
-      {/* ── Audio understanding (plugin-level; needs an audio-capable model) ── */}
+      {/* ── Audio understanding (plugin-level caller-audio mode) ── */}
       {can('settings.set') && (
         <div className={`${card} p-4 sm:p-5`}>
           <h2 className="text-sm font-medium text-gray-900 dark:text-white">Audio understanding</h2>
           <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
-            For audio-capable AI models (like Gemma with audio input). Both apply the next time the
+            What happens with the caller's actual audio each turn. Applies the next time the
             receptionist reconnects.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3">
-            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
-              <input
-                type="checkbox"
-                checked={audioCfg.sendAudio}
-                onChange={(e) => setAudioCfg((a) => ({ ...a, sendAudio: e.target.checked }))}
-                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 dark:border-slate-600"
-              />
-              <span>
-                Send caller audio to the AI model
-                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
-                  Each caller turn's audio rides along with the transcript, so the model hears tone and
-                  wording directly. Text-only models ignore it — leave off unless your model supports audio.
-                </span>
-              </span>
-            </label>
-            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
-              <input
-                type="checkbox"
-                checked={audioCfg.audioTranscript}
-                disabled={!audioCfg.sendAudio}
-                onChange={(e) => setAudioCfg((a) => ({ ...a, audioTranscript: e.target.checked }))}
-                className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600"
-              />
-              <span className={audioCfg.sendAudio ? '' : 'opacity-50'}>
-                Audio-corrected transcripts
-                <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500">
-                  After each caller turn, the audio model quietly corrects the speech-to-text transcript from
-                  the actual audio — replies never wait on it, and the raw recognizer text is kept alongside.
-                  Needs "Send caller audio" on.
-                </span>
-              </span>
-            </label>
-            {audioCfg.audioTranscript && audioCfg.sendAudio && (
-              <div className="grid grid-cols-1 gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700 sm:grid-cols-2">
-                <label className="block text-xs font-medium text-gray-700 dark:text-slate-300">
-                  Correction endpoint (optional)
-                  <input
-                    type="text"
-                    value={audioCfg.transcriptEndpoint}
-                    onChange={(e) => setAudioCfg((a) => ({ ...a, transcriptEndpoint: e.target.value }))}
-                    placeholder="blank = same server as replies"
-                    spellCheck={false}
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800"
-                  />
-                  <span className="mt-1 block text-[11px] font-normal text-gray-400 dark:text-slate-500">
-                    A separate OpenAI-compatible /v1/chat/completions URL just for corrections, so they never
-                    compete with live replies.
-                  </span>
-                </label>
-                <label className="block text-xs font-medium text-gray-700 dark:text-slate-300">
-                  Correction model (optional)
-                  <input
-                    type="text"
-                    value={audioCfg.transcriptModel}
-                    onChange={(e) => setAudioCfg((a) => ({ ...a, transcriptModel: e.target.value }))}
-                    placeholder="blank = same model as replies"
-                    spellCheck={false}
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800"
-                  />
-                  <span className="mt-1 block text-[11px] font-normal text-gray-400 dark:text-slate-500">
-                    A lighter audio-capable model for quicker corrections (must be served by the endpoint
-                    above, or the main server if blank).
-                  </span>
-                </label>
+            <div>
+              <label className={labelCls} htmlFor="rs-audiomode">Caller audio</label>
+              <select
+                id="rs-audiomode"
+                value={
+                  audioCfg.sendAudio && audioCfg.audioTranscript
+                    ? 'both'
+                    : audioCfg.sendAudio
+                      ? 'direct'
+                      : audioCfg.audioTranscript
+                        ? 'corrections'
+                        : 'off'
+                }
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAudioCfg((a) => ({
+                    ...a,
+                    sendAudio: v === 'direct' || v === 'both',
+                    audioTranscript: v === 'corrections' || v === 'both',
+                  }));
+                }}
+                className={inputCls + ' cursor-pointer'}
+              >
+                <option value="off">Text only</option>
+                <option value="direct">Send audio to the reply model (direct)</option>
+                <option value="corrections">Side-run transcript corrections</option>
+                <option value="both">Both</option>
+              </select>
+              <p className={hintCls}>
+                {audioCfg.sendAudio && audioCfg.audioTranscript
+                  ? 'The reply model hears the caller directly AND a small side request per caller turn fixes the stored transcript and the reply history from the audio.'
+                  : audioCfg.sendAudio
+                    ? "Each caller turn's audio rides along with the reply request — needs an audio-capable reply model (e.g. Gemma with a projector); no extra side run."
+                    : audioCfg.audioTranscript
+                      ? 'For text-only reply models: a small extra request per caller turn corrects the stored transcript and the reply history from the actual audio — replies never wait on it.'
+                      : 'Replies use the on-device speech-to-text transcript only — no audio leaves the plugin.'}
+              </p>
+            </div>
+            {audioCfg.audioTranscript && (
+              <div className="grid grid-cols-1 gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+                <div>
+                  <label className={labelCls} htmlFor="rs-correction-source">Correction source</label>
+                  <select
+                    id="rs-correction-source"
+                    value={draft.correction_source}
+                    onChange={(e) => set({ correction_source: e.target.value })}
+                    className={inputCls + ' cursor-pointer'}
+                  >
+                    {draft.correction_source.startsWith('service:') &&
+                      !(aiSources ?? []).some(
+                        (s) =>
+                          s.id === draft.correction_source &&
+                          s.kind === 'service' &&
+                          s.capabilities.includes('chat'),
+                      ) && (
+                        <option value={draft.correction_source}>
+                          Desktop service: {draft.correction_source.slice(8)}
+                          {aiSources !== null ? ' (not found)' : ' (saved)'}
+                        </option>
+                      )}
+                    <option value="">Automatic (main reply model)</option>
+                    {(aiSources ?? [])
+                      .filter((s) => s.kind === 'service' && s.capabilities.includes('chat'))
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          This computer: {s.name}
+                          {s.model ? ` — ${s.model}` : ''}
+                          {s.status === 'running' ? '' : ` (${s.status})`}
+                        </option>
+                      ))}
+                    <option value="custom">Custom URL…</option>
+                  </select>
+                  {draft.correction_source === 'custom' && (
+                    <input
+                      id="rs-correction-url"
+                      type="text"
+                      value={draft.correction_endpoint}
+                      onChange={(e) => set({ correction_endpoint: e.target.value })}
+                      placeholder="e.g. http://127.0.0.1:8081/v1/chat/completions"
+                      spellCheck={false}
+                      className={inputCls + ' mt-2 font-mono text-xs'}
+                    />
+                  )}
+                  <p className={hintCls}>
+                    Which model runs the corrections — a separate chat service keeps them from competing
+                    with live replies. The model comes from the chosen service itself (pick it on the
+                    desktop's service card). Resolved per call, like the Connected-services lanes.
+                  </p>
+                </div>
               </div>
             )}
             <div>

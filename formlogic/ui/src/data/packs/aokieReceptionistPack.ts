@@ -1147,6 +1147,12 @@ ${BUSINESS_INFO_BLOCK_JS}
     aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true),
     sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false),
     ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false),
+    // Correction lane (audioTranscript side runs): the plugin's correction
+    // client is the SAME LlmClient as the reply lane, so it wants a full
+    // /v1/chat/completions URL. Blank source resolves '' = corrections use
+    // the main reply model; audioTranscriptModel is never pushed (the chosen
+    // service owns its model).
+    audioTranscriptEndpoint: laneUrl(cfg.correction_source, cfg.correction_endpoint, '/v1/chat/completions', true),
     aiReceptionist: replyMode !== 'flow'
   };
 })()`;
@@ -3156,20 +3162,18 @@ export const aokieReceptionistPack: PackData = {
         },
         {
           id: 'voice',
-          type: 'dropdown',
+          // Engine-specific voice id, OPEN vocabulary — a fixed dropdown here
+          // fails server-side dropdown validation ('Invalid selection') the
+          // moment the console's engine-first picker writes anything beyond
+          // the original 8 pocket presets (installed pocket voices, sherpa
+          // bundle folder names, 'bundle:speaker', kokoro speaker ids). The
+          // Receptionist console renders the real picker from the plugin's
+          // ttsVoiceCatalog; this raw field stays free text.
+          type: 'short_text',
           label: 'Voice (blank = default)',
           required: false,
           properties: {
-            options: [
-              { id: 'default', label: 'Default', value: '' },
-              { id: 'alba', label: 'Alba', value: 'alba' },
-              { id: 'cosette', label: 'Cosette', value: 'cosette' },
-              { id: 'eponine', label: 'Eponine', value: 'eponine' },
-              { id: 'fantine', label: 'Fantine', value: 'fantine' },
-              { id: 'javert', label: 'Javert', value: 'javert' },
-              { id: 'jean', label: 'Jean', value: 'jean' },
-              { id: 'marius', label: 'Marius', value: 'marius' },
-            ],
+            placeholder: 'e.g. alba, vits-piper-en_GB-jenny_dioco-medium',
           },
         },
         {
@@ -3246,6 +3250,26 @@ export const aokieReceptionistPack: PackData = {
           label: 'Text-to-speech source (blank = automatic)',
           required: false,
           properties: { placeholder: 'e.g. service:aokie-tts, custom' },
+        },
+        // Correction lane (audioTranscript side runs) — APPENDED AT THE TAIL
+        // like the *_source trio above (live retrofits insert per-form sqlite
+        // fields at pack order, so new fields must never reorder existing
+        // ones). '' = the main reply model; 'service:<id>' = a chat-capable
+        // Desktop service resolved per call; 'custom' = correction_endpoint.
+        // The model is NOT configurable here — the chosen service owns it.
+        {
+          id: 'correction_source',
+          type: 'short_text',
+          label: 'Transcript-correction source (blank = main reply model)',
+          required: false,
+          properties: { placeholder: 'e.g. service:llama-cpp, custom' },
+        },
+        {
+          id: 'correction_endpoint',
+          type: 'short_text',
+          label: 'Transcript-correction endpoint (custom URL)',
+          required: false,
+          properties: { placeholder: 'e.g. http://127.0.0.1:8081/v1/chat/completions' },
         },
       ],
       // The section IS the settings console (SDK screen): grouped cards, a
@@ -3605,6 +3629,10 @@ export const aokieReceptionistPack: PackData = {
                 aiEndpoint: '$nodes.cfg.aiEndpoint',
                 sttEndpoint: '$nodes.cfg.sttEndpoint',
                 ttsEndpoint: '$nodes.cfg.ttsEndpoint',
+                // Where the audioTranscript correction side runs go: a chat
+                // URL resolved from the record's correction_source per call
+                // ('' = the main reply model).
+                audioTranscriptEndpoint: '$nodes.cfg.audioTranscriptEndpoint',
                 aiReceptionist: '$nodes.cfg.aiReceptionist',
               },
             },

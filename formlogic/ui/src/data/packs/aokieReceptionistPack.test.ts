@@ -367,6 +367,11 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(payload.greeting).toBe('$nodes.cfg.greeting');
     expect(payload.ttsVoice).toBe('$nodes.cfg.voice');
     expect(payload.aiModel).toBe('$nodes.cfg.model');
+    // Correction lane: the flow resolves the record's correction_source into
+    // the plugin's audioTranscriptEndpoint per call. The MODEL key is retired
+    // from the console — the flow must never push audioTranscriptModel.
+    expect(payload.audioTranscriptEndpoint).toBe('$nodes.cfg.audioTranscriptEndpoint');
+    expect('audioTranscriptModel' in payload).toBe(false);
   });
 
   it('declares connector.aokie.settings.set — the same command, so no capability change is needed for the richer payload', () => {
@@ -383,7 +388,13 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
   function runAgentConfig(
     answers: Record<string, unknown> | null,
     services?: Array<Record<string, unknown>>,
-  ): { aiReceptionist: boolean; aiEndpoint: string; sttEndpoint: string; ttsEndpoint: string } {
+  ): {
+    aiReceptionist: boolean;
+    aiEndpoint: string;
+    sttEndpoint: string;
+    ttsEndpoint: string;
+    audioTranscriptEndpoint: string;
+  } {
     const cfgNode = configureFlow.flowJson.nodes.find((n) => n.id === 'cfg')!;
     const expr = (cfgNode.data as { expr: string }).expr;
     const nodes = {
@@ -462,6 +473,32 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(r.ttsEndpoint).toBe('');
   });
 
+  // ── Correction lane (audioTranscript side runs): correction_source →
+  // audioTranscriptEndpoint, the SAME laneUrl rule with the CHAT path (the
+  // plugin's correction client is LlmClient — a full /v1/chat/completions URL).
+  it('correction_source service pick resolves to the running service URL + the CHAT path', () => {
+    const r = runAgentConfig({ correction_source: 'service:llama-cpp' }, RUNNING_SVCS);
+    expect(r.audioTranscriptEndpoint).toBe('http://127.0.0.1:8080/v1/chat/completions');
+  });
+
+  it('correction_source of a STOPPED service resolves to blank (main reply model), never a dead URL', () => {
+    const r = runAgentConfig(
+      { correction_source: 'service:aokie-voice', correction_endpoint: 'http://x/legacy' },
+      RUNNING_SVCS,
+    );
+    expect(r.audioTranscriptEndpoint).toBe('');
+  });
+
+  it('correction_source custom uses the correction_endpoint field; blank pushes "" (clears = main model)', () => {
+    const c = runAgentConfig(
+      { correction_source: 'custom', correction_endpoint: 'http://127.0.0.1:8081/v1/chat/completions' },
+      RUNNING_SVCS,
+    );
+    expect(c.audioTranscriptEndpoint).toBe('http://127.0.0.1:8081/v1/chat/completions');
+    expect(runAgentConfig({}, RUNNING_SVCS).audioTranscriptEndpoint).toBe('');
+    expect(runAgentConfig(null).audioTranscriptEndpoint).toBe('');
+  });
+
   it('blank stt/tts source semantics are UNCHANGED — the aokie-stt/aokie-tts default is a CONSOLE-side record write', () => {
     const svcs = [
       ...RUNNING_SVCS,
@@ -500,6 +537,9 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
       ['provider pick gated on speech lanes', { stt_source: 'provider:my-openai', tts_source: 'provider:my-openai' }],
       ['custom URLs', { llm_source: 'custom', llm_endpoint: 'http://127.0.0.1:9999/v1/chat/completions' }],
       ['blank + legacy endpoint field', { stt_endpoint: 'http://127.0.0.1:17920/v1/audio/transcriptions' }],
+      ['correction service pick', { correction_source: 'service:llama-cpp' }],
+      ['correction stopped service pick', { correction_source: 'service:aokie-voice', correction_endpoint: 'http://x/legacy' }],
+      ['correction custom URL', { correction_source: 'custom', correction_endpoint: 'http://127.0.0.1:8081/v1/chat/completions' }],
       ['all blank', {}],
     ];
 
@@ -509,6 +549,7 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
       expect(ui.aiEndpoint).toBe(flow.aiEndpoint);
       expect(ui.sttEndpoint).toBe(flow.sttEndpoint);
       expect(ui.ttsEndpoint).toBe(flow.ttsEndpoint);
+      expect(ui.audioTranscriptEndpoint).toBe(flow.audioTranscriptEndpoint);
     });
 
     it('provider: composes identically with NO listing at all (remote console ↔ empty svc node)', () => {
@@ -519,8 +560,15 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     });
 
     it('unresolvable service picks are OMITTED by the console (undefined services) so the per-call flow owns them', () => {
-      const ui = buildAgentPayload(draftFor({ llm_source: 'service:llama-cpp' }));
+      const ui = buildAgentPayload(draftFor({ llm_source: 'service:llama-cpp', correction_source: 'service:llama-cpp' }));
       expect('aiEndpoint' in ui).toBe(false);
+      expect('audioTranscriptEndpoint' in ui).toBe(false);
+    });
+
+    it('the console never pushes audioTranscriptModel — the chosen correction service owns its model', () => {
+      const ui = buildAgentPayload(draftFor({ correction_source: 'service:llama-cpp' }), asSourceServices(RUNNING_SVCS));
+      expect('audioTranscriptModel' in ui).toBe(false);
+      expect(ui.audioTranscriptEndpoint).toBe('http://127.0.0.1:8080/v1/chat/completions');
     });
   });
 });

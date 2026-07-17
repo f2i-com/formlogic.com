@@ -189,6 +189,10 @@ export interface RemoteTurn {
   speaker: string;
   text: string;
   occurredAt: string;
+  /** Remote rows come from storage, which the correction lane already
+   *  updated in place — set when the row's source says audio_model so the
+   *  UI can share one turn shape with the local live view. */
+  corrected?: boolean;
 }
 
 /** Stored Transcript Turns rows for one call, oldest turn first (turn_index order). */
@@ -203,6 +207,7 @@ export function selectTurnsForCall(rows: ResponseRowLike[], callId: string | und
         speaker: String(r.answers?.speaker || 'caller'),
         text: String(r.answers?.text || ''),
         occurredAt: String(r.answers?.timestamp || r.submittedAt || ''),
+        corrected: String(r.answers?.source || '') === 'audio_model',
       },
     }))
     .sort((a, b) => a.index - b.index)

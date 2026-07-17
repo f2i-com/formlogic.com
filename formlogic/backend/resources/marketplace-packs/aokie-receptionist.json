@@ -2499,52 +2499,11 @@
           },
           {
             "id": "voice",
-            "type": "dropdown",
+            "type": "short_text",
             "label": "Voice (blank = default)",
             "required": false,
             "properties": {
-              "options": [
-                {
-                  "id": "default",
-                  "label": "Default",
-                  "value": ""
-                },
-                {
-                  "id": "alba",
-                  "label": "Alba",
-                  "value": "alba"
-                },
-                {
-                  "id": "cosette",
-                  "label": "Cosette",
-                  "value": "cosette"
-                },
-                {
-                  "id": "eponine",
-                  "label": "Eponine",
-                  "value": "eponine"
-                },
-                {
-                  "id": "fantine",
-                  "label": "Fantine",
-                  "value": "fantine"
-                },
-                {
-                  "id": "javert",
-                  "label": "Javert",
-                  "value": "javert"
-                },
-                {
-                  "id": "jean",
-                  "label": "Jean",
-                  "value": "jean"
-                },
-                {
-                  "id": "marius",
-                  "label": "Marius",
-                  "value": "marius"
-                }
-              ]
+              "placeholder": "e.g. alba, vits-piper-en_GB-jenny_dioco-medium"
             }
           },
           {
@@ -2644,6 +2603,24 @@
             "required": false,
             "properties": {
               "placeholder": "e.g. service:aokie-tts, custom"
+            }
+          },
+          {
+            "id": "correction_source",
+            "type": "short_text",
+            "label": "Transcript-correction source (blank = main reply model)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. service:llama-cpp, custom"
+            }
+          },
+          {
+            "id": "correction_endpoint",
+            "type": "short_text",
+            "label": "Transcript-correction endpoint (custom URL)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. http://127.0.0.1:8081/v1/chat/completions"
             }
           }
         ],
@@ -3652,7 +3629,7 @@
               "id": "cfg",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  // formlogic_list_responses returns the array directly on the desktop f2i runner\n  // (nodes.settings) but {responses:[...]} in the TS executor — handle both.\n  var node = nodes.settings;\n  var rows = node && node.responses ? node.responses : (Array.isArray(node) ? node : []);\n  var cfg = {};\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n\n  var info = String(cfg.business_info || '').trim().slice(0, 4000);\n  if (info) {\n    persona += '\\n\\nBUSINESS INFO - the ONLY facts about the business you may share:\\n' + info\n      + '\\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';\n  }\n  var greeting = String(cfg.greeting || '').trim();\n  if (!greeting) {\n    greeting = business\n      ? 'Thank you for calling ' + business + '! How can I help you today?'\n      : 'Thanks for calling! How can I help you today?';\n  }\n  var replyMode = String(cfg.reply_mode || '').trim();\n  // Source picks (CON-302 / SRC-203): resolve per call, against the LIVE\n  // desktop services list (nodes.svc), so a port change self-heals on the\n  // next call.\n  // 'service:<id>' -> the running service's loopback URL + the lane's\n  // conventional path ('' when not running: the plugin then falls back to\n  // auto-detect / its built-in engine, which is where a dead URL would have\n  // ended up anyway, minus the timeout).\n  // 'provider:<id>' (LLM lane only) -> the desktop AI gateway's per-provider\n  // OpenAI base (http://127.0.0.1:17872/api/ai/providers/<id> + the lane\n  // path — the gateway's routes are /api/ai/providers/:id/v1/chat/completions\n  // and .../v1/models, which is exactly what the plugin's LlmClient derives\n  // from a chat URL). The gateway port is FIXED, so this composes with NO\n  // service lookup — emitted even when the desktop_services node lists\n  // nothing. On the STT/TTS lanes provider: picks resolve to '' (plugin\n  // default): the gateway has no audio routes yet — un-gate when it does.\n  // 'custom' or blank -> the legacy endpoint field (blank field = plugin\n  // default).\n  var svcNode = nodes.svc || {};\n  var svcList = svcNode.services || [];\n  function laneUrl(source, customUrl, path, providerOk) {\n    source = String(source || '').trim();\n    var custom = String(customUrl || '').trim();\n    if (!source || source === 'custom') return custom;\n    if (source.indexOf('service:') === 0) {\n      var sid = source.slice(8);\n      for (var i = 0; i < svcList.length; i++) {\n        if (svcList[i] && svcList[i].id === sid && svcList[i].url) return svcList[i].url + path;\n      }\n      return '';\n    }\n    if (source.indexOf('provider:') === 0) {\n      if (!providerOk) return '';\n      return 'http://127.0.0.1:17872/api/ai/providers/' + encodeURIComponent(source.slice(9)) + path;\n    }\n    return custom;\n  }\n  return {\n    persona: persona,\n    greeting: greeting,\n    voice: String(cfg.voice || '').trim(),\n    model: String(cfg.model || '').trim(),\n    // AI plumbing, all flow-configurable: blank = the plugin's default behaviour\n    // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).\n    aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true),\n    sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false),\n    ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false),\n    aiReceptionist: replyMode !== 'flow'\n  };\n})()"
+                "expr": "(function () {\n  // formlogic_list_responses returns the array directly on the desktop f2i runner\n  // (nodes.settings) but {responses:[...]} in the TS executor — handle both.\n  var node = nodes.settings;\n  var rows = node && node.responses ? node.responses : (Array.isArray(node) ? node : []);\n  var cfg = {};\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n\n  var info = String(cfg.business_info || '').trim().slice(0, 4000);\n  if (info) {\n    persona += '\\n\\nBUSINESS INFO - the ONLY facts about the business you may share:\\n' + info\n      + '\\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';\n  }\n  var greeting = String(cfg.greeting || '').trim();\n  if (!greeting) {\n    greeting = business\n      ? 'Thank you for calling ' + business + '! How can I help you today?'\n      : 'Thanks for calling! How can I help you today?';\n  }\n  var replyMode = String(cfg.reply_mode || '').trim();\n  // Source picks (CON-302 / SRC-203): resolve per call, against the LIVE\n  // desktop services list (nodes.svc), so a port change self-heals on the\n  // next call.\n  // 'service:<id>' -> the running service's loopback URL + the lane's\n  // conventional path ('' when not running: the plugin then falls back to\n  // auto-detect / its built-in engine, which is where a dead URL would have\n  // ended up anyway, minus the timeout).\n  // 'provider:<id>' (LLM lane only) -> the desktop AI gateway's per-provider\n  // OpenAI base (http://127.0.0.1:17872/api/ai/providers/<id> + the lane\n  // path — the gateway's routes are /api/ai/providers/:id/v1/chat/completions\n  // and .../v1/models, which is exactly what the plugin's LlmClient derives\n  // from a chat URL). The gateway port is FIXED, so this composes with NO\n  // service lookup — emitted even when the desktop_services node lists\n  // nothing. On the STT/TTS lanes provider: picks resolve to '' (plugin\n  // default): the gateway has no audio routes yet — un-gate when it does.\n  // 'custom' or blank -> the legacy endpoint field (blank field = plugin\n  // default).\n  var svcNode = nodes.svc || {};\n  var svcList = svcNode.services || [];\n  function laneUrl(source, customUrl, path, providerOk) {\n    source = String(source || '').trim();\n    var custom = String(customUrl || '').trim();\n    if (!source || source === 'custom') return custom;\n    if (source.indexOf('service:') === 0) {\n      var sid = source.slice(8);\n      for (var i = 0; i < svcList.length; i++) {\n        if (svcList[i] && svcList[i].id === sid && svcList[i].url) return svcList[i].url + path;\n      }\n      return '';\n    }\n    if (source.indexOf('provider:') === 0) {\n      if (!providerOk) return '';\n      return 'http://127.0.0.1:17872/api/ai/providers/' + encodeURIComponent(source.slice(9)) + path;\n    }\n    return custom;\n  }\n  return {\n    persona: persona,\n    greeting: greeting,\n    voice: String(cfg.voice || '').trim(),\n    model: String(cfg.model || '').trim(),\n    // AI plumbing, all flow-configurable: blank = the plugin's default behaviour\n    // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).\n    aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true),\n    sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false),\n    ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false),\n    // Correction lane (audioTranscript side runs): the plugin's correction\n    // client is the SAME LlmClient as the reply lane, so it wants a full\n    // /v1/chat/completions URL. Blank source resolves '' = corrections use\n    // the main reply model; audioTranscriptModel is never pushed (the chosen\n    // service owns its model).\n    audioTranscriptEndpoint: laneUrl(cfg.correction_source, cfg.correction_endpoint, '/v1/chat/completions', true),\n    aiReceptionist: replyMode !== 'flow'\n  };\n})()"
               }
             },
             {
@@ -3669,6 +3646,7 @@
                   "aiEndpoint": "$nodes.cfg.aiEndpoint",
                   "sttEndpoint": "$nodes.cfg.sttEndpoint",
                   "ttsEndpoint": "$nodes.cfg.ttsEndpoint",
+                  "audioTranscriptEndpoint": "$nodes.cfg.audioTranscriptEndpoint",
                   "aiReceptionist": "$nodes.cfg.aiReceptionist"
                 }
               }

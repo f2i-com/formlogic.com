@@ -135,13 +135,27 @@ export interface EngineCfg {
 }
 
 /**
- * State patch for a bundle-picker selection: a bundle dir (or '' = Automatic)
- * writes ttsModelDir directly; the Custom sentinel just reveals the free-text
- * folder input without touching the stored dir.
+ * State update for a bundle-picker selection. Two write targets, because the
+ * AUDIBLE voice now comes from the aokie-tts SERVICE per call (the record's
+ * `voice` → the ttsVoice push — the service accepts a bundle folder NAME,
+ * 'bundle:speaker' or a bare speaker id), while `ttsModelDir` remains the
+ * in-process FALLBACK engine's bundle:
+ *  - a bundle pick writes ttsModelDir (fallback) AND voice = the bundle's
+ *    folder NAME (per-call service voice);
+ *  - '' (Automatic) clears both;
+ *  - the Custom sentinel only reveals the free-text folder input — the folder
+ *    typed there sets ttsModelDir only (voice untouched: `voice` stays
+ *    undefined here so callers leave the record field alone).
  */
-export function bundleSelectionPatch(value: string): Partial<EngineCfg> {
-  if (value === CUSTOM_BUNDLE_DIR) return { customDir: true };
-  return { modelDir: value, customDir: false };
+export function bundleSelectionUpdate(
+  value: string,
+  bundles: TtsCatalogBundle[],
+): { engine: Partial<EngineCfg>; voice?: string } {
+  if (value === CUSTOM_BUNDLE_DIR) return { engine: { customDir: true } };
+  if (value === '') return { engine: { modelDir: '', customDir: false }, voice: '' };
+  const matched = bundles.find((b) => b.dir === value);
+  const name = matched?.name ?? value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+  return { engine: { modelDir: value, customDir: false }, voice: name };
 }
 
 const DEFAULT_ENGINES: TtsCatalogEngine[] = [
@@ -206,9 +220,9 @@ export function VoiceEngineSection({
   return (
     <div>
       <p className={hintCls + ' mt-0'}>
-        The speech engine and voice folder are live plugin settings — saving them below applies to the
-        very next reply. The voice picked for Pocket-TTS (or a Kokoro speaker id) is saved with this
-        record and applied per call.
+        The voice pick is saved with this record and applies per call (it rides the ttsVoice push to
+        the speech service). The speech engine and voice model folder are live plugin settings — the
+        folder sets the in-process fallback engine's voice for when the speech service isn't running.
       </p>
       <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {canManageEngine && (
@@ -252,7 +266,11 @@ export function VoiceEngineSection({
             <select
               id="rs-ttsbundle"
               value={bundleValue}
-              onChange={(e) => onEngineCfg(bundleSelectionPatch(e.target.value))}
+              onChange={(e) => {
+                const u = bundleSelectionUpdate(e.target.value, bundles);
+                onEngineCfg(u.engine);
+                if (u.voice !== undefined) onVoice(u.voice);
+              }}
               className={inputCls + ' cursor-pointer'}
             >
               <option value="">Automatic (first installed voice)</option>
@@ -263,7 +281,10 @@ export function VoiceEngineSection({
               ))}
               <option value={CUSTOM_BUNDLE_DIR}>Custom folder…</option>
             </select>
-            <p className={hintCls}>Installed sherpa voice bundles found on the desktop machine.</p>
+            <p className={hintCls}>
+              Installed sherpa voice bundles on the desktop machine. The pick applies per call (it's
+              saved as this record's voice); the same folder becomes the fallback engine's voice.
+            </p>
           </div>
         )}
         {showCustomDir && (
@@ -278,7 +299,8 @@ export function VoiceEngineSection({
             />
             <p className={hintCls}>
               A sherpa voice bundle folder on the desktop machine (the voice's .onnx + tokens.txt,
-              e.g. vits-piper-en_US-lessac-medium).
+              e.g. vits-piper-en_US-lessac-medium). Sets the in-process FALLBACK engine's voice — the
+              per-call voice is the record's voice field (the bundle picks above write both).
             </p>
           </div>
         )}

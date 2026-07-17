@@ -20,6 +20,11 @@ export interface Draft {
   llm_source: string;
   stt_source: string;
   tts_source: string;
+  /** Correction lane (audioTranscript side runs): '' = the main reply model,
+   *  'service:<id>' = a chat-capable Desktop service, 'custom' = the
+   *  correction_endpoint URL. Composed into `audioTranscriptEndpoint`. */
+  correction_source: string;
+  correction_endpoint: string;
   voice: string;
   reply_mode: string;
   active: string;
@@ -37,6 +42,8 @@ export const EMPTY_DRAFT: Draft = {
   llm_source: '',
   stt_source: '',
   tts_source: '',
+  correction_source: '',
+  correction_endpoint: '',
   voice: '',
   reply_mode: 'agent',
   active: 'yes',
@@ -98,6 +105,23 @@ function laneUrl(
 }
 
 /**
+ * The correction lane (audioTranscript side runs) resolved to the plugin's
+ * `audioTranscriptEndpoint` setting — the plugin's correction client is the
+ * SAME LlmClient as the reply lane, so it wants a full `/v1/chat/completions`
+ * URL (agent.rs `LlmClient::new`). '' = blank = the main reply model; the
+ * console never pushes `audioTranscriptModel` (the chosen service owns its
+ * model — desktop service cards pick it). Exported so the console's audio
+ * card can push the exact value the per-call flow would compose.
+ */
+export function resolveCorrectionEndpoint(
+  source: string,
+  custom: string,
+  services?: SourceService[],
+): string | undefined {
+  return laneUrl(source, custom, '/v1/chat/completions', services, true);
+}
+
+/**
  * The settings.set payload for a draft — the SAME composition rule as the
  * pack's Configure Receptionist flow (FLOW_AGENT_CONFIG), so "apply now" and
  * the per-call flow can never disagree about what the bot should run.
@@ -130,11 +154,16 @@ export function buildAgentPayload(d: Draft, services?: SourceService[]): Record<
     // gateway serves no audio routes yet; they resolve to '' (plugin default).
     sttEndpoint: laneUrl(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', services, false),
     ttsEndpoint: laneUrl(d.tts_source, d.tts_endpoint, '/v1/audio/speech', services, false),
+    // Correction lane (audioTranscript): a CHAT endpoint, so it composes with
+    // the LLM lane's path. Blank source → '' (clears = corrections use the
+    // main reply model). audioTranscriptModel is deliberately NOT pushed —
+    // the chosen service owns its model.
+    audioTranscriptEndpoint: resolveCorrectionEndpoint(d.correction_source, d.correction_endpoint, services),
     aiReceptionist: d.reply_mode !== 'flow',
   };
   // An unresolvable service pick (no Desktop list here — remote console)
   // omits its key: the per-call Configure flow resolves it on the desktop.
-  for (const k of ['aiEndpoint', 'sttEndpoint', 'ttsEndpoint']) {
+  for (const k of ['aiEndpoint', 'sttEndpoint', 'ttsEndpoint', 'audioTranscriptEndpoint']) {
     if (payload[k] === undefined) delete payload[k];
   }
   return payload;

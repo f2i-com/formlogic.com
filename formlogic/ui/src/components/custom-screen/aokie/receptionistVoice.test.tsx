@@ -5,7 +5,7 @@ import {
   CUSTOM_BUNDLE_DIR,
   FALLBACK_POCKET_VOICES,
   VoiceEngineSection,
-  bundleSelectionPatch,
+  bundleSelectionUpdate,
   parseTtsVoiceCatalog,
   pocketVoiceOptions,
   prettifyBundleName,
@@ -115,15 +115,40 @@ describe('pocketVoiceOptions', () => {
   });
 });
 
-describe('bundleSelectionPatch (sherpa bundle picker → ttsModelDir)', () => {
-  it('a bundle pick writes ttsModelDir directly', () => {
-    const dir = catalog[1].bundles![0].dir;
-    expect(bundleSelectionPatch(dir)).toEqual({ modelDir: dir, customDir: false });
+describe('bundleSelectionUpdate (sherpa bundle picker → ttsModelDir + per-call voice)', () => {
+  const bundles = catalog[1].bundles!;
+
+  it('a bundle pick writes ttsModelDir (fallback) AND voice = the bundle folder NAME (per-call)', () => {
+    const jenny = bundles[0];
+    expect(bundleSelectionUpdate(jenny.dir, bundles)).toEqual({
+      engine: { modelDir: jenny.dir, customDir: false },
+      // The audible voice comes from the aokie-tts SERVICE per call — the
+      // record's voice rides the ttsVoice push as the bundle's folder name.
+      voice: 'vits-piper-en_GB-jenny_dioco-medium',
+    });
   });
 
-  it('Automatic clears ttsModelDir; Custom only reveals the folder input', () => {
-    expect(bundleSelectionPatch('')).toEqual({ modelDir: '', customDir: false });
-    expect(bundleSelectionPatch(CUSTOM_BUNDLE_DIR)).toEqual({ customDir: true });
+  it('a kokoro bundle pick writes its folder name too (speaker id typed after overrides it)', () => {
+    const kokoro = bundles[1];
+    expect(bundleSelectionUpdate(kokoro.dir, bundles)).toEqual({
+      engine: { modelDir: kokoro.dir, customDir: false },
+      voice: 'kokoro-en-v0_19',
+    });
+  });
+
+  it('a dir with no catalog entry falls back to its basename as the voice', () => {
+    expect(bundleSelectionUpdate('E:\\models\\piper\\vits-piper-en_US-lessac-medium', bundles)).toEqual({
+      engine: { modelDir: 'E:\\models\\piper\\vits-piper-en_US-lessac-medium', customDir: false },
+      voice: 'vits-piper-en_US-lessac-medium',
+    });
+  });
+
+  it('Automatic clears both; Custom only reveals the folder input (voice untouched)', () => {
+    expect(bundleSelectionUpdate('', bundles)).toEqual({
+      engine: { modelDir: '', customDir: false },
+      voice: '',
+    });
+    expect(bundleSelectionUpdate(CUSTOM_BUNDLE_DIR, bundles)).toEqual({ engine: { customDir: true } });
   });
 });
 

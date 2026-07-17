@@ -309,9 +309,9 @@ describe('remote record derivation (stored rows replace the hub feed)', () => {
       { id: 't2', answers: { call_id: 'c-9', turn_index: 1, speaker: 'caller', text: 'Booking please', timestamp: 'ts2' }, submittedAt: 's2' },
     ];
     expect(selectTurnsForCall(rows, 'c-9')).toEqual([
-      { key: 't1', speaker: 'caller', text: 'Hi', occurredAt: 'ts1' },
-      { key: 't2', speaker: 'caller', text: 'Booking please', occurredAt: 'ts2' },
-      { key: 't3', speaker: 'aokie', text: 'How can I help?', occurredAt: 'ts3' },
+      { key: 't1', speaker: 'caller', text: 'Hi', occurredAt: 'ts1', corrected: false },
+      { key: 't2', speaker: 'caller', text: 'Booking please', occurredAt: 'ts2', corrected: false },
+      { key: 't3', speaker: 'aokie', text: 'How can I help?', occurredAt: 'ts3', corrected: false },
     ]);
     expect(selectTurnsForCall(rows, undefined)).toEqual([]);
   });
