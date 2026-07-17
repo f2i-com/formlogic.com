@@ -2479,6 +2479,22 @@
           }
         ]
       }
-    ]
+    ],
+    "signing": {
+      "format": "formlogic-pack-vendor/1",
+      "alg": "ed25519",
+      "keyId": "fl-packs-2026a",
+      "publisherKeyB64": "eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=",
+      "components": {
+        "form:space": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:client": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:booking": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:setup-requirement": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:incident": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:payment": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "app:venueops": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
+      },
+      "signature": "oXejqDwwXxJ8jsrGcIr23UMZxERzm5wikEgH2Uajf73xZRmTFMphUEXQRTroa967eKjHnXcSgrVWGAZKeOvGAQ=="
+    }
   }
 }

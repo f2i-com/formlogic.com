@@ -1886,6 +1886,21 @@
           }
         ]
       }
-    ]
+    ],
+    "signing": {
+      "format": "formlogic-pack-vendor/1",
+      "alg": "ed25519",
+      "keyId": "fl-packs-2026a",
+      "publisherKeyB64": "eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=",
+      "components": {
+        "form:customer": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:vehicle": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:job-card": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:parts-used": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:invoice": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "app:workshop": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
+      },
+      "signature": "s4RaFhdP+I1qqdxPRt3DeEvWfU/fVEjOo+hR7g1nfAXJ1q1sO3yIFEwd78G6Pl8XALR7gHzp+W96T7iZZ21bCw=="
+    }
   }
 }

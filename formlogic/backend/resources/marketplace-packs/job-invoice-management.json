@@ -1746,6 +1746,21 @@
           }
         }
       }
-    ]
+    ],
+    "signing": {
+      "format": "formlogic-pack-vendor/1",
+      "alg": "ed25519",
+      "keyId": "fl-packs-2026a",
+      "publisherKeyB64": "eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=",
+      "components": {
+        "form:client": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:job": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:quote": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:invoice": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:payment": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "app:billing-pipeline": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
+      },
+      "signature": "aHaONUme4R5LMfs7sTj4lXOND04fE2JhZ8fP3Za7dDtNyi+T4Hqce5qPugdw6Fp/ZtEXjX4fK2wbNdqdhHtXAQ=="
+    }
   }
 }

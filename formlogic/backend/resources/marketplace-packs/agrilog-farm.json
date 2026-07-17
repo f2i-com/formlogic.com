@@ -2256,6 +2256,22 @@
           }
         ]
       }
-    ]
+    ],
+    "signing": {
+      "format": "formlogic-pack-vendor/1",
+      "alg": "ed25519",
+      "keyId": "fl-packs-2026a",
+      "publisherKeyB64": "eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=",
+      "components": {
+        "form:paddock": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:farm-job": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:harvest-log": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:chemical-application": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:machinery": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:maintenance-log": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "app:agrilog": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
+      },
+      "signature": "B3h9dBmh3TEkhOsM6RIKq6NZQHDTUC+lLIjj7fbO1zHBFCa5asyaRUerlKYmptormZnEjbR3552KxP+wgGcADQ=="
+    }
   }
 }

@@ -1623,6 +1623,21 @@
           }
         ]
       }
-    ]
+    ],
+    "signing": {
+      "format": "formlogic-pack-vendor/1",
+      "alg": "ed25519",
+      "keyId": "fl-packs-2026a",
+      "publisherKeyB64": "eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=",
+      "components": {
+        "form:patient": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:provider": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:appointment": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:intake-form": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:follow-up": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "app:front-desk": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
+      },
+      "signature": "8IL2Qww7oGG8OzhXrpItc+WnyyhyaPvkJfHAkMtkI2I1+AD7riLupiS8EG+QGG/8jliZveThWuMuoEfelW3pDA=="
+    }
   }
 }

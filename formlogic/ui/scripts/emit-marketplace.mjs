@@ -5,6 +5,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build } from 'esbuild';
+import { buildPackSigning, loadVendorKey } from './packSigning.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -23,16 +24,26 @@ const { packCatalog } = await import('data:text/javascript;base64,' + Buffer.fro
 const outDir = join(here, '..', '..', 'backend', 'resources', 'marketplace-packs');
 mkdirSync(outDir, { recursive: true });
 
+// Vendor signing (APP-501): per-component screen digests signed with the
+// first-party Ed25519 key when this machine holds it — a direct JSON import
+// of an unmodified pack then stamps custom_screen_trust 'verified' instead
+// of 'untrusted'. No key = unsigned packs (imports stay untrusted, honestly).
+const vendorKey = loadVendorKey();
+if (!vendorKey) console.warn('⚠️  no vendor key at ~/.formlogic-signing/formlogic-packs-2026a.json — emitting UNSIGNED packs');
+
 for (const entry of packCatalog) {
   // Store the full catalog entry (id, name, description, tags, icon) alongside the pack payload,
   // so the provisioner has the marketplace metadata plus the installable pack in one file.
+  const signing = buildPackSigning(entry.pack, vendorKey);
   const record = {
     id: entry.id,
     name: entry.name,
     description: entry.description,
     tags: entry.tags,
     icon: entry.icon,
-    pack: entry.pack,
+    // `signing` travels INSIDE the pack so it survives every install path
+    // (catalog download, direct JSON import, backup round trip).
+    pack: signing ? { ...entry.pack, signing } : entry.pack,
   };
   writeFileSync(join(outDir, entry.id + '.json'), JSON.stringify(record, null, 2));
   const apps = entry.pack.apps || [];

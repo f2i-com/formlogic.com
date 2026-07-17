@@ -223,6 +223,20 @@ distributed or otherwise untrusted package needs custom UI, it must ship a **san
 React in the trusted shell — would require **signed-package trust *and* an isolation mechanism**, and is
 out of scope until both exist.
 
+### Pack vendor signing (APP-501 first slice)
+
+A pack may embed `pack.signing`: per-component sha256 digests of every form/app `customScreen`'s
+EXECUTABLE surfaces (keyed `form:<packFormId>` / `app:<packAppId>`) plus an Ed25519 signature by a
+vendor key (`ui/scripts/packSigning.mjs` signs at emit time; `PackService::packSigningVerdicts`
+verifies at import). The embedded key proves nothing alone — it must be PINNED (first-party
+constant in `PackService`, extendable per deployment via `FORMLOGIC_TRUSTED_PACK_PUBLISHERS`).
+Effect: a DIRECT JSON import of an unmodified vendor pack stamps `custom_screen_trust='verified'`
+(provenance `vendor-signed`) instead of `untrusted`; a tampered component stays `untrusted` with
+provenance `verdict: 'vendor_modified'`; signing never downgrades catalog/owner trust, and the
+signed-archive path keeps its own verdict. The digest is a length-delimited string recipe —
+deliberately NOT canonical JSON — and `PackVendorSigningTest` recomputes every emitted marketplace
+pack in PHP, locking the Node/PHP recipes together in CI.
+
 ### Deferred
 An npm-published `@formlogic/sdk`; SDK version negotiation in the client manifest.
 (`FormView`/`ResponseDetail`/`AppButton` — previously listed here — are now implemented; see

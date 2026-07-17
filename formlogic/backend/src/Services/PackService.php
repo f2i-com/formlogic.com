@@ -62,6 +62,12 @@ class PackService
         [$screenTrust, $screenProvenance] = $verifiedScreenTrust !== null
             ? [$verifiedScreenTrust, ['source' => 'signed-package', 'trust' => $verifiedScreenTrust]]
             : $this->screenTrustForImport($catalogId, $versionId, $userId);
+        // APP-501: a pack may embed a vendor signature over its screen-
+        // component digests — a verified component on an otherwise-untrusted
+        // DIRECT import stamps 'verified' honestly (signed-package archives
+        // carry their own verdict, so the block is ignored there). Each
+        // component is judged by its OWN bytes at stamp time.
+        $packSigning = $verifiedScreenTrust !== null ? null : $this->verifyPackSigning($packData);
 
         $this->mysql->beginTransaction();
 
@@ -114,7 +120,14 @@ class PackService
 
                 $this->formService->createForm($formData);
                 if (!empty($formData['customScreen'])) {
-                    $this->formService->setCustomScreenTrust($newFormId, $screenTrust, $screenProvenance);
+                    [$formScreenTrust, $formScreenProv] = $this->componentScreenTrust(
+                        'form:' . (string) $packForm['packFormId'],
+                        $packSigning,
+                        $formData['customScreen'],
+                        $screenTrust,
+                        $screenProvenance
+                    );
+                    $this->formService->setCustomScreenTrust($newFormId, $formScreenTrust, $formScreenProv);
                 }
                 $createdFormIds[] = $newFormId;
                 $formSummary[] = ['id' => $newFormId, 'title' => $packForm['title']];
@@ -164,7 +177,14 @@ class PackService
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
                 if (!empty($appData['customScreen'])) {
-                    $this->appService->setCustomScreenTrust($appId, $screenTrust, $screenProvenance);
+                    [$appScreenTrust, $appScreenProv] = $this->componentScreenTrust(
+                        'app:' . (string) $packApp['packAppId'],
+                        $packSigning,
+                        $appData['customScreen'],
+                        $screenTrust,
+                        $screenProvenance
+                    );
+                    $this->appService->setCustomScreenTrust($appId, $appScreenTrust, $appScreenProv);
                 }
                 $createdAppIds[] = $appId;
                 $appIdByPackId[(string) $packApp['packAppId']] = $appId;
@@ -1682,10 +1702,19 @@ class PackService
             $seenFormIds[$form['packFormId']] = true;
         }
 
+        $seenAppIds = [];
         foreach ($packData['apps'] ?? [] as $i => $app) {
             if (!isset($app['packAppId']) || $app['packAppId'] === '') {
                 throw new \RuntimeException("App at index {$i} is missing packAppId");
             }
+            // Duplicate packAppId is malformed AND a trust-confusion vector:
+            // component signing keys on packAppId, so two apps sharing an id
+            // must never coexist (each app becomes its own record — mirror the
+            // packFormId guard above).
+            if (isset($seenAppIds[$app['packAppId']])) {
+                throw new \RuntimeException("Duplicate packAppId: '{$app['packAppId']}'");
+            }
+            $seenAppIds[$app['packAppId']] = true;
             if (empty($app['name'])) {
                 throw new \RuntimeException("App '{$app['packAppId']}' is missing name");
             }
@@ -2073,6 +2102,185 @@ class PackService
             $cs['dashboard'] = $this->resolvePackDashboard($cs['dashboard'], $formIdMap);
         }
         return $cs;
+    }
+
+    /** First-party vendor keys whose pack signatures may upgrade screen trust
+     *  (base64 raw Ed25519 public keys). Deployments extend the set via
+     *  FORMLOGIC_TRUSTED_PACK_PUBLISHERS (comma-separated base64 keys). */
+    private const TRUSTED_PACK_PUBLISHER_KEYS = [
+        'eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=', // fl-packs-2026a
+    ];
+
+    private const PACK_SIGNING_FORMAT = 'formlogic-pack-vendor/1';
+
+    /** Netstring framing `<byte-length>:<value>,` — INJECTIVE (a value that
+     *  contains the delimiter or a NUL can never be read as a field boundary).
+     *  strlen() is a byte count and matches JS Buffer.byteLength(…,'utf8'). */
+    private function frameToken(string $s): string
+    {
+        return strlen($s) . ':' . $s . ',';
+    }
+
+    /**
+     * sha256 hex over a customScreen's EXECUTABLE surfaces (top-level +
+     * recordScreen: kind/entry/html/css/js/ts + files) — byte-for-byte the
+     * recipe in formlogic/ui/scripts/packSigning.mjs (netstring-framed tokens).
+     * Keep the two in lock-step: PackVendorSigningTest recomputes every emitted
+     * marketplace pack's digests here and fails on any drift. Deliberately NOT
+     * canonical-JSON — a self-delimiting token stream has no cross-language
+     * serialization surface to rot.
+     */
+    private function customScreenDigest(array $screen): string
+    {
+        $tokens = [];
+        $scopes = [['', $screen]];
+        $record = $screen['recordScreen'] ?? null;
+        if (is_array($record)) {
+            $scopes[] = ['record.', $record];
+        }
+        foreach ($scopes as [$prefix, $scope]) {
+            foreach (['kind', 'entry', 'html', 'css', 'js', 'ts'] as $k) {
+                if (is_string($scope[$k] ?? null)) {
+                    $tokens[] = $prefix . $k;
+                    $tokens[] = $scope[$k];
+                }
+            }
+            // ONLY a LIST of {path,content} string entries contributes — a
+            // json_decode'd JSON object is an array in PHP, so array_is_list
+            // + the string guards keep parity with JS's Array.isArray/typeof.
+            $files = $scope['files'] ?? null;
+            if (is_array($files) && array_is_list($files)) {
+                foreach ($files as $f) {
+                    if (is_array($f) && is_string($f['path'] ?? null) && is_string($f['content'] ?? null)) {
+                        $tokens[] = $prefix . 'file';
+                        $tokens[] = $f['path'];
+                        $tokens[] = $f['content'];
+                    }
+                }
+            }
+        }
+        return hash('sha256', implode('', array_map([$this, 'frameToken'], $tokens)));
+    }
+
+    /** The signed bytes for a pack's component-digest manifest (mirrors
+     *  packSigning.mjs signingMessage — netstring-framed, byte-sorted keys). */
+    private function packSigningMessage(string $packId, string $version, array $components): string
+    {
+        $tokens = [self::PACK_SIGNING_FORMAT, $packId, $version];
+        $keys = array_keys($components);
+        sort($keys, SORT_STRING);
+        foreach ($keys as $k) {
+            $tokens[] = (string) $k;
+            $tokens[] = (string) $components[$k];
+        }
+        return implode('', array_map([$this, 'frameToken'], $tokens));
+    }
+
+    /**
+     * Verify a pack's embedded vendor-signing block (APP-501). Returns the
+     * TRUSTED signed component-digest map + signing identity, or null when the
+     * pack is unsigned, malformed, signed by an UNPINNED publisher, or the
+     * signature fails — the import then behaves exactly as an unsigned one.
+     *
+     * The per-component VERDICT is deliberately NOT decided here: each created
+     * form/app is judged against this map at stamp time by its OWN screen
+     * bytes (componentScreenTrust), so a duplicate pack id can never let a
+     * malicious component inherit a sibling's match.
+     *
+     * @return array{keyId:string,publisher:string,digests:array<string,string>}|null
+     */
+    private function verifyPackSigning(array $packData): ?array
+    {
+        $signing = $packData['signing'] ?? null;
+        if (!is_array($signing)
+            || ($signing['format'] ?? '') !== self::PACK_SIGNING_FORMAT
+            || ($signing['alg'] ?? '') !== 'ed25519'
+            || !function_exists('sodium_crypto_sign_verify_detached')) {
+            return null;
+        }
+        $components = is_array($signing['components'] ?? null) ? $signing['components'] : [];
+        $pub = base64_decode((string) ($signing['publisherKeyB64'] ?? ''), true);
+        $sig = base64_decode((string) ($signing['signature'] ?? ''), true);
+        if ($components === [] || $pub === false || $sig === false
+            || strlen($pub) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES
+            || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES) {
+            return null;
+        }
+        // Only string→string digest entries are trusted (a non-string value
+        // must never be treated as an expected digest).
+        foreach ($components as $k => $v) {
+            if (!is_string($k) || !is_string($v)) {
+                return null;
+            }
+        }
+        // The embedded key proves nothing by itself — it must be PINNED
+        // (first-party constant, or deployment-extended via env).
+        $trusted = self::TRUSTED_PACK_PUBLISHER_KEYS;
+        $extra = (string) ($_ENV['FORMLOGIC_TRUSTED_PACK_PUBLISHERS'] ?? (getenv('FORMLOGIC_TRUSTED_PACK_PUBLISHERS') ?: ''));
+        foreach (array_filter(array_map('trim', explode(',', $extra))) as $k) {
+            $trusted[] = $k;
+        }
+        if (!in_array(base64_encode($pub), $trusted, true)) {
+            return null;
+        }
+        $meta = is_array($packData['packMeta'] ?? null) ? $packData['packMeta'] : [];
+        $message = $this->packSigningMessage(
+            (string) ($meta['id'] ?? ''),
+            (string) ($meta['version'] ?? ''),
+            $components
+        );
+        if (!sodium_crypto_sign_verify_detached($sig, $message, $pub)) {
+            return null;
+        }
+        return [
+            'keyId' => (string) ($signing['keyId'] ?? ''),
+            'publisher' => base64_encode($pub),
+            'digests' => $components,
+        ];
+    }
+
+    /**
+     * Effective trust for ONE screen component. Vendor signing may only ever
+     * UPGRADE an otherwise-untrusted import to 'verified' — and ONLY when THIS
+     * component's own bytes hash to the signed digest for its key. A signed
+     * pack whose component was edited (or a duplicate-id sibling) stays
+     * untrusted with 'vendor_modified' provenance; signing never downgrades
+     * catalog/owner-derived trust, and a component absent from the manifest
+     * carries no vendor claim.
+     *
+     * @param array{keyId:string,publisher:string,digests:array<string,string>}|null $signing
+     * @param array<string,mixed> $screen The ACTUAL customScreen being stamped.
+     * @return array{0:string,1:array<string,mixed>}
+     */
+    private function componentScreenTrust(
+        string $componentKey,
+        ?array $signing,
+        array $screen,
+        string $baseTrust,
+        array $baseProvenance
+    ): array {
+        if ($signing === null || $baseTrust !== 'untrusted') {
+            return [$baseTrust, $baseProvenance];
+        }
+        $expected = $signing['digests'][$componentKey] ?? null;
+        if ($expected === null) {
+            // Not covered by the vendor signature — no vendor claim.
+            return [$baseTrust, $baseProvenance];
+        }
+        if (hash_equals($expected, $this->customScreenDigest($screen))) {
+            return ['verified', [
+                'source' => 'vendor-signed',
+                'keyId' => $signing['keyId'],
+                'publisher' => $signing['publisher'],
+                'component' => $componentKey,
+            ]];
+        }
+        return ['untrusted', [
+            'source' => 'vendor-signed',
+            'verdict' => 'vendor_modified',
+            'keyId' => $signing['keyId'],
+            'component' => $componentKey,
+        ]];
     }
 
     /**

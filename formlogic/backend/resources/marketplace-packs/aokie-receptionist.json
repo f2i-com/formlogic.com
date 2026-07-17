@@ -6248,6 +6248,26 @@
         },
         "sortOrder": 6
       }
-    ]
+    ],
+    "signing": {
+      "format": "formlogic-pack-vendor/1",
+      "alg": "ed25519",
+      "keyId": "fl-packs-2026a",
+      "publisherKeyB64": "eamh+xP/gXSntFtyIW3NajOAZHID9co9rMxZljWCXKw=",
+      "components": {
+        "form:customers": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:calls": "10dbf66b9b611aab984e46b829fec33e03d847d9429a72bab604aba91ff12a14",
+        "form:transcript-turns": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:sms-threads": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:sms-messages": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:appointments": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:orders": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:follow-up-tasks": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6",
+        "form:hardware-events": "b0c8815dad92fecc5d14457b2cce002f6e5ed8009aa7b2759f1a77484ad34b12",
+        "form:receptionist-settings": "b0c8815dad92fecc5d14457b2cce002f6e5ed8009aa7b2759f1a77484ad34b12",
+        "app:aokie-receptionist": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
+      },
+      "signature": "uRIBp7BW45iEf+8NzOhyYk7kM1LojyGK0fAuvjvdXfx9NBft0Bmq9+POpqvOWVjIrjrCHm1dbFqmMTnLzSTIAA=="
+    }
   }
 }
