@@ -44,7 +44,8 @@ aokie_speak {text|textFrom}               (sugar for connector_request aokie cal
 browser_action      (drive the local Playwright Browser service — goto/click/type/extract/screenshot/evaluate),
 image_gen           (text-to-image via the local Krea-2 service, or a configured OpenAI-compatible images endpoint),
 stt_transcribe      (speech → text via a configured OpenAI-compatible transcription endpoint),
-tts_speak           (text → speech via a configured OpenAI-compatible speech endpoint)
+tts_speak           (text → speech via a configured OpenAI-compatible speech endpoint),
+desktop_services    (read-only list of FormLogic Desktop's managed services — id/status/port + loopback url while running)
 ```
 
 The last four are **desktop-service-backed** (docs §4.3): they drive a LOCAL FormLogic Desktop service over its loopback HTTP API. Both the browser runner AND the desktop Rust runner implement them identically; when the local service can't be reached the node fails with an ACTIONABLE `node_failed` ("install & start the service in FormLogic Desktop → Services") — never "coming soon".
@@ -100,6 +101,7 @@ Every node reads the **run scope** (`$inputs.*`, `$event.*`, `$app.*`, and prior
 | `image_gen` **(Desktop)** | `prompt`, `width?`, `height?`, `steps?`, `model?`, `service?`, `endpoint?` | Text-to-image via the local **Krea-2** service (`/generate`) or a configured OpenAI-compatible images endpoint. | `{imageUrl}` or `{dataUrl}` → `$nodes.<id>.imageUrl` |
 | `stt_transcribe` **(Desktop)** | `endpoint`, `model?`, `audio` (selector → data URL/URL/base64), `service?` | Speech → text via a configured OpenAI-compatible `/v1/audio/transcriptions`. | `{text}` → `$nodes.<id>.text` |
 | `tts_speak` **(Desktop)** | `endpoint`, `model?`, `voice?`, `text`, `service?` | Text → speech via a configured OpenAI-compatible `/v1/audio/speech` (audio bytes → data URL). | `{audioUrl}` or `{dataUrl}` → `$nodes.<id>.audioUrl` |
+| `desktop_services` **(Desktop)** | — | Read-only listing of Desktop's managed services, so a logic block can resolve a picked `service:<id>` to a live loopback endpoint at run time. No Desktop → `{services: []}`, never an error. | `{services: [{id, name, category, status, port, url}]}` → `$nodes.<id>.services` (`url` set only while running) |
 
 **`formlogic_list_responses` (Find records) — FROZEN CONTRACT** (the browser executor and the desktop Rust runner behave identically). The 2026-07 clarity redesign renamed the node to **Find records** and reworked its editor UI, but the node **type, data shape and output are unchanged**:
 

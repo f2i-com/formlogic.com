@@ -338,6 +338,30 @@ async fn set_service_autostart(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct ExtraArgsBody {
+    args: Vec<String>,
+}
+
+/// Set a service's persisted extra launch arguments (appended after the
+/// template args at spawn — e.g. `-t 16 --parallel 2` on llama-cpp). Empty
+/// list clears. Applies on the next start.
+async fn set_service_extra_args(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ExtraArgsBody>,
+) -> impl IntoResponse {
+    let result = state
+        .registry
+        .lock()
+        .map_err(|_| "registry mutex poisoned".to_string())
+        .and_then(|mut reg| reg.set_extra_args(&id, body.args));
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err400(&e),
+    }
+}
+
 async fn stop_service(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -503,6 +527,80 @@ async fn ensure_service_by_port(
 async fn list_ai_providers(State(state): State<AppState>) -> impl IntoResponse {
     let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
     Json(serde_json::json!({ "providers": reg.list(), "aliases": reg.aliases() })).into_response()
+}
+
+/// Capability hint per service category — which AI lanes a local service can
+/// serve. Services with no AI capability (browser automation, …) are left out
+/// of the sources union entirely.
+fn service_source_capabilities(category: &str) -> Vec<&'static str> {
+    let c = category.to_ascii_lowercase();
+    if c.contains("llm") {
+        vec!["chat"]
+    } else if c.contains("speech") || c.contains("voice") {
+        vec!["transcription", "speech"]
+    } else if c.contains("image") {
+        vec!["image"]
+    } else {
+        Vec::new()
+    }
+}
+
+/// SRC-202 (voice/model-sources plan Phase 2): ONE union list of everything a
+/// model/voice lane picker can point at — local service instances (live
+/// status, port, the model they're configured to load) and configured AI
+/// providers (key/capability state, no secrets). Read-only; management-plane
+/// guarded like /api/services, so the web console's Receptionist pickers can
+/// consume it with their existing pairing token.
+async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
+    let registry = state.registry.clone();
+    let snap = match tokio::task::spawn_blocking(move || {
+        registry.lock().map(|reg| reg.snapshot()).map_err(|_| ())
+    })
+    .await
+    {
+        Ok(Ok(snap)) => snap,
+        _ => return err500("registry mutex poisoned"),
+    };
+    let mut sources: Vec<serde_json::Value> = Vec::new();
+    for s in &snap.services {
+        let capabilities = service_source_capabilities(&s.category);
+        if capabilities.is_empty() {
+            continue;
+        }
+        sources.push(serde_json::json!({
+            "id": format!("service:{}", s.id),
+            "kind": "service",
+            "serviceId": s.id,
+            "name": s.name,
+            "category": s.category,
+            "status": s.status,
+            "installed": s.installed,
+            "port": s.port,
+            "url": format!("http://127.0.0.1:{}", s.port),
+            "model": s.model,
+            "capabilities": capabilities,
+        }));
+    }
+    {
+        let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+        for view in reg.list() {
+            let v = serde_json::to_value(&view).unwrap_or_default();
+            sources.push(serde_json::json!({
+                "id": format!("provider:{}", v["id"].as_str().unwrap_or_default()),
+                "kind": "provider",
+                "providerId": v["id"],
+                "name": v["name"],
+                "protocol": v["protocol"],
+                // NOTE: an empty provider capability set means "all" (legacy
+                // profiles); consumers must treat [] as unrestricted.
+                "capabilities": v["capabilities"],
+                "hasKey": v["hasKey"],
+                "enabled": v["enabled"],
+                "model": v["model"],
+            }));
+        }
+    }
+    Json(serde_json::json!({ "sources": sources })).into_response()
 }
 
 async fn upsert_ai_provider(
@@ -2722,6 +2820,7 @@ pub async fn serve(
         .route("/api/services/:id/stop", post(stop_service))
         .route("/api/services/:id/repair", post(repair_service))
         .route("/api/services/:id/autostart", post(set_service_autostart))
+        .route("/api/services/:id/args", post(set_service_extra_args))
         .route("/api/services/:id/install", post(install_service))
         .route("/api/services/:id/uninstall", post(uninstall_service))
         .route(
@@ -2751,6 +2850,7 @@ pub async fn serve(
         // anonymous (ADR-008); provider CONFIG + key routes are additionally in
         // is_privileged_path so a no-Origin native caller cannot reconfigure
         // providers or set keys.
+        .route("/api/ai/sources", get(list_ai_sources))
         .route("/api/ai/providers", get(list_ai_providers).post(upsert_ai_provider))
         .route("/api/ai/providers/:id", delete(delete_ai_provider))
         .route("/api/ai/providers/:id/key", post(set_ai_provider_key))

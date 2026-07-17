@@ -671,6 +671,92 @@ function useGpus(): GpuInfo[] {
   return gpus;
 }
 
+/** Split an args line into spawn-vector entries: whitespace-separated, with
+ *  double-quote grouping so paths with spaces survive
+ *  (`--model "C:\models with spaces\x.gguf"`). */
+function splitArgsLine(line: string): string[] {
+  const out: string[] = [];
+  const re = /"([^"]*)"|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line))) out.push(m[1] ?? m[2]);
+  return out;
+}
+
+/**
+ * Extra launch arguments — the generic per-service tuning lever: `-t 16
+ * --parallel 2 -ngl 99` on llama-cpp, any flag on a custom service — WITHOUT
+ * editing the template JSON (a hand-edited template opts itself out of future
+ * built-in template updates). Appended after the template args at spawn;
+ * applies on the next start.
+ */
+function ExtraArgsEditor({ service }: { service: ServiceSnapshot }) {
+  const toast = useToast();
+  const saved = (service.extraArgs ?? []).join(' ');
+  const [value, setValue] = useState(saved);
+  const [savedBase, setSavedBase] = useState(saved);
+  const [pending, setPending] = useState(false);
+  // Re-seed when another window/session changed the persisted value — but
+  // never while the user is mid-edit (their draft differs from OUR baseline).
+  useEffect(() => {
+    setSavedBase((prevBase) => {
+      if (saved !== prevBase) {
+        setValue((v) => (v === prevBase ? saved : v));
+        return saved;
+      }
+      return prevBase;
+    });
+  }, [saved]);
+  const dirty = value.trim() !== savedBase.trim();
+  const apply = async () => {
+    setPending(true);
+    try {
+      const args = splitArgsLine(value.trim());
+      await services.setExtraArgs(service.id, args);
+      setSavedBase(args.join(' '));
+      setValue(args.join(' '));
+      await refreshServices();
+      toast.push({
+        kind: 'success',
+        title: `${service.name}: extra arguments saved`,
+        body:
+          service.status === 'running' || service.status === 'starting'
+            ? 'Applies on the next start — restart the service to pick them up.'
+            : 'Applies on the next start.',
+      });
+    } catch (e) {
+      toast.push({
+        kind: 'error',
+        title: 'Could not save extra arguments',
+        body: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="service-config-row">
+      <span className="service-config-label">Extra args</span>
+      <input
+        className="service-config-control-wide"
+        value={value}
+        disabled={pending}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={
+          service.id === 'llama-cpp'
+            ? 'e.g. -t 16 --parallel 2 -ngl 99'
+            : 'extra launch arguments (optional)'
+        }
+      />
+      {dirty && (
+        <button className="btn btn-ghost" onClick={apply} disabled={pending}>
+          {pending ? 'Saving…' : 'Save'}
+        </button>
+      )}
+      <span className="service-config-note">appended at launch · applies on next start</span>
+    </div>
+  );
+}
+
 /**
  * Per-service GPU picker. Pins the service to a CUDA GPU (CUDA_VISIBLE_DEVICES) so heavy
  * services don't all default to GPU 0 and exhaust its VRAM — e.g. put llama.cpp on GPU 1 so
@@ -1100,6 +1186,17 @@ function OllamaModelSelector() {
   );
 }
 
+/** Which AI lanes a service can serve, from its category — mirrors the
+ *  desktop's /api/ai/sources mapping so the chips and the source pickers
+ *  agree on what e.g. the Speech service is for. */
+function serviceCapabilityChips(category: string): string[] {
+  const c = category.toLowerCase();
+  if (c.includes('llm')) return ['chat'];
+  if (c.includes('speech') || c.includes('voice')) return ['speech-to-text', 'text-to-speech'];
+  if (c.includes('image')) return ['image'];
+  return [];
+}
+
 function ServiceCard({
   service,
   logsOpen,
@@ -1118,6 +1215,11 @@ function ServiceCard({
   // llama-cpp refuses to start without a model — surface that on the card
   // header (the picker itself lives behind Configure).
   const needsModelHint = service.id === 'llama-cpp';
+  // Lazy-mount the Configure content: children of a CLOSED <details> still
+  // MOUNT in React, so the model pickers used to fire their disk scans
+  // (listGgufModels over the whole model library) on every Services visit.
+  const [configOpen, setConfigOpen] = useState(false);
+  const capChips = serviceCapabilityChips(service.category);
 
   return (
     <div className={`service-card service-card-${service.status}`}>
@@ -1129,10 +1231,26 @@ function ServiceCard({
             {!service.installed && service.installable && service.status === 'stopped' && (
               <span className="badge badge-neutral">not installed</span>
             )}
+            {/* Which AI lanes this service serves (chat / STT / TTS / image) —
+                the same mapping the Receptionist source pickers use. */}
+            {capChips.map((c) => (
+              <span key={c} className="badge badge-neutral">
+                {c}
+              </span>
+            ))}
           </div>
           <div className="service-meta">
             port {service.port}
             {service.pid != null && <> · pid {service.pid}</>}
+            {service.model && (
+              <>
+                {' '}
+                · model{' '}
+                <span title={service.model}>
+                  {service.model.split(/[\\/]/).pop()}
+                </span>
+              </>
+            )}
             {service.startedAt && (
               <> · up since {new Date(service.startedAt).toLocaleTimeString()}</>
             )}
@@ -1183,32 +1301,45 @@ function ServiceCard({
           {/* SRV-004: configuration (model/projector/GPU/autostart pickers)
               lives behind an expander — the card header stays status-first
               and the list stops shifting as pickers load. */}
-          <details className="service-config">
+          <details
+            className="service-config"
+            onToggle={(e) => setConfigOpen((e.target as HTMLDetailsElement).open)}
+          >
             <summary>
               Configure
               {needsModelHint && <span className="service-config-hint"> · model & GPU</span>}
+              {(service.extraArgs?.length ?? 0) > 0 && (
+                <span className="service-config-hint"> · custom args</span>
+              )}
             </summary>
-            {service.id === 'llama-cpp' && (
-              <LlamaModelSelector
-                running={service.status === 'running' || service.status === 'starting'}
-              />
+            {/* Content mounts only while open — the pickers' disk scans used
+                to run for every card on every Services visit. */}
+            {configOpen && (
+              <>
+                {service.id === 'llama-cpp' && (
+                  <LlamaModelSelector
+                    running={service.status === 'running' || service.status === 'starting'}
+                  />
+                )}
+                {service.id === 'ollama' && <OllamaModelSelector />}
+                <GpuSelector serviceId={service.id} currentGpu={service.gpu} />
+                <ExtraArgsEditor service={service} />
+                {/* PROC-001: explicit per-service boot policy. Auto = restore whatever
+                    was running last session (the default); Always/Never override it. */}
+                <label className="service-config-row service-meta">
+                  Start at launch:
+                  <select
+                    value={service.autostart}
+                    disabled={pending}
+                    onChange={(e) => onAutostart(e.target.value as 'auto' | 'always' | 'never')}
+                  >
+                    <option value="auto">Auto (restore last session)</option>
+                    <option value="always">Always</option>
+                    <option value="never">Never</option>
+                  </select>
+                </label>
+              </>
             )}
-            {service.id === 'ollama' && <OllamaModelSelector />}
-            <GpuSelector serviceId={service.id} currentGpu={service.gpu} />
-            {/* PROC-001: explicit per-service boot policy. Auto = restore whatever
-                was running last session (the default); Always/Never override it. */}
-            <label className="service-config-row service-meta">
-              Start at launch:
-              <select
-                value={service.autostart}
-                disabled={pending}
-                onChange={(e) => onAutostart(e.target.value as 'auto' | 'always' | 'never')}
-              >
-                <option value="auto">Auto (restore last session)</option>
-                <option value="always">Always</option>
-                <option value="never">Never</option>
-              </select>
-            </label>
           </details>
         </div>
         <div className="service-actions">

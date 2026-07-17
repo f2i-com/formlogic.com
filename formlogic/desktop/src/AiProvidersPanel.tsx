@@ -6,6 +6,7 @@ import {
   type AiProviderView,
   type AiProtocol,
 } from './api';
+import { PANEL_CACHE_KEYS, getPanelCache, setPanelCache } from './panelCache';
 import { AlertTriangleIcon, CheckIcon, TrashIcon } from './Icons';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from './Toasts';
@@ -77,7 +78,13 @@ const PRESETS: Record<string, Partial<AiProviderProfile>> = {
 };
 
 export default function AiProvidersPanel() {
-  const [providers, setProviders] = useState<AiProviderView[] | null>(null);
+  // Seed from the module-level cache (app-start prefetch / last visit) so the
+  // section paints instantly instead of popping in on every Services visit.
+  const [providers, setProviders] = useState<AiProviderView[] | null>(
+    () =>
+      getPanelCache<{ providers: AiProviderView[] }>(PANEL_CACHE_KEYS.aiProviders)?.providers ??
+      null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AiProviderProfile | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
@@ -86,8 +93,9 @@ export default function AiProvidersPanel() {
 
   const refresh = useCallback(async () => {
     try {
-      const { providers } = await aiProviders.list();
-      setProviders(providers);
+      const res = await aiProviders.list();
+      setPanelCache(PANEL_CACHE_KEYS.aiProviders, res);
+      setProviders(res.providers);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -34,6 +34,7 @@ import {
   Volume2,
   Image,
   MousePointerClick,
+  Server,
   type LucideIcon,
 } from 'lucide-react';
 import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
@@ -852,6 +853,21 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'text', label: 'Text', type: 'textarea', required: true, placeholder: 'Hello {{inputs.name}} ({{...}} ok)', help: 'The text to speak.', referenceSyntax: 'template' },
       { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from; blank can use the default aokie-voice speech service.' },
     ],
+  },
+  {
+    type: 'desktop_services',
+    label: 'Desktop services',
+    category: 'ai',
+    description:
+      "List FormLogic Desktop's managed services (id, status, port, loopback URL when running) — lets a logic block resolve a picked service to a live endpoint at run time. No Desktop → an empty list, never an error.",
+    icon: Server,
+    accent: 'slate',
+    executable: true,
+    output:
+      'Object { services: [{ id, name, category, status, port, url }] } — url is set only while the service is running. Reference as $nodes.<id>.services.',
+    inputs: IN,
+    outputs: OUT,
+    properties: [],
   },
 ];
 

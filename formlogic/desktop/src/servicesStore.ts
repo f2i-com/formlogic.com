@@ -59,29 +59,50 @@ function setState(patch: Partial<ServicesStoreState>) {
   emit();
 }
 
-/** One coalesced fetch; concurrent callers share the same promise. */
+/**
+ * One coalesced fetch; concurrent callers share the same promise.
+ *
+ * NOTIFY DISCIPLINE (2026-07-17 jank fix): React de-opts a transition to a
+ * fully SYNCHRONOUS render when a useSyncExternalStore store mutates during
+ * it — and this store used to emit twice per 2 s poll cycle (fetch-start flip
+ * + snapshot install), which is exactly why startTransition'd section
+ * switches into Services still froze. The backend's `revision` is a change
+ * key ("equal revisions are byte-identical responses"), so the store now
+ * notifies ONLY when the data actually changed; bookkeeping fields
+ * (`refreshing`, `lastFetchedAt`) update IN PLACE on the same state object —
+ * no new reference, no notify, no re-render for identical data.
+ */
 export function refreshServices(): Promise<void> {
   if (inFlight) return inFlight;
   const mySeq = ++seq;
-  setState({ refreshing: true });
+  state.refreshing = true;
   inFlight = services
     .list()
     .then((snap) => {
       if (mySeq !== seq) return; // superseded
-      setState({
-        snapshot: snap,
-        error: null,
-        refreshing: false,
-        lastFetchedAt: Date.now(),
-      });
+      const changed =
+        !state.snapshot || state.snapshot.revision !== snap.revision || state.error !== null;
+      if (changed) {
+        setState({
+          snapshot: snap,
+          error: null,
+          refreshing: false,
+          lastFetchedAt: Date.now(),
+        });
+      } else {
+        state.refreshing = false;
+        state.lastFetchedAt = Date.now();
+      }
     })
     .catch((e) => {
       if (mySeq !== seq) return;
       // Keep the stale snapshot renderable; surface the error alongside it.
-      setState({
-        error: e instanceof Error ? e.message : String(e),
-        refreshing: false,
-      });
+      const message = e instanceof Error ? e.message : String(e);
+      if (state.error !== message) {
+        setState({ error: message, refreshing: false });
+      } else {
+        state.refreshing = false;
+      }
     })
     .finally(() => {
       inFlight = null;
@@ -93,10 +114,15 @@ export function refreshServices(): Promise<void> {
  * Feed a snapshot fetched elsewhere (the Overview aggregate poll) into the
  * cache, so switching to the Services section paints with it instantly.
  * Ignored while a direct fetch is in flight (it will land momentarily and
- * is at least as fresh).
+ * is at least as fresh), and — same notify discipline as refreshServices —
+ * ignored when the revision hasn't moved.
  */
 export function primeServicesStore(snapshot: RegistrySnapshot) {
   if (inFlight) return;
+  if (state.snapshot && state.snapshot.revision === snapshot.revision && !state.error) {
+    state.lastFetchedAt = Date.now();
+    return;
+  }
   setState({ snapshot, error: null, lastFetchedAt: Date.now() });
 }
 

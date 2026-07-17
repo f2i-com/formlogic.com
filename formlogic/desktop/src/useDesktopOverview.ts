@@ -74,18 +74,26 @@ export function useDesktopOverview(): DesktopOverviewData {
       // SRV-002: feed the services snapshot into the shared store so a
       // navigation Overview → Services paints instantly with fresh data.
       if (svc.status === 'fulfilled') primeServicesStore(svc.value);
-      setData((prev) => ({
-        loaded: true,
-        services: svc.status === 'fulfilled' ? svc.value : prev.services,
-        models: mdl.status === 'fulfilled' ? mdl.value : prev.models,
-        downloads: dl.status === 'fulfilled' ? dl.value : prev.downloads,
-        python: py.status === 'fulfilled' ? py.value : prev.python,
-        plugins: plg.status === 'fulfilled' ? plg.value : prev.plugins,
-        cloud: cloud.status === 'fulfilled' ? cloud.value : prev.cloud,
-        runtime: runtime.status === 'fulfilled' ? runtime.value : prev.runtime,
-        pendingPairing: pend.status === 'fulfilled' ? pend.value : prev.pendingPairing,
-        origins: orig.status === 'fulfilled' ? orig.value : prev.origins,
-      }));
+      setData((prev) => {
+        const next: DesktopOverviewData = {
+          loaded: true,
+          services: svc.status === 'fulfilled' ? svc.value : prev.services,
+          models: mdl.status === 'fulfilled' ? mdl.value : prev.models,
+          downloads: dl.status === 'fulfilled' ? dl.value : prev.downloads,
+          python: py.status === 'fulfilled' ? py.value : prev.python,
+          plugins: plg.status === 'fulfilled' ? plg.value : prev.plugins,
+          cloud: cloud.status === 'fulfilled' ? cloud.value : prev.cloud,
+          runtime: runtime.status === 'fulfilled' ? runtime.value : prev.runtime,
+          pendingPairing: pend.status === 'fulfilled' ? pend.value : prev.pendingPairing,
+          origins: orig.status === 'fulfilled' ? orig.value : prev.origins,
+        };
+        // Identical aggregate keeps the previous object so React bails out:
+        // this hook lives at the App root, so an unconditional new object
+        // re-rendered the ENTIRE tree (whichever panel was mounted included)
+        // every 5 s and could restart an in-flight section transition. The
+        // stringify costs a few ms; the avoided tree render cost far more.
+        return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+      });
     };
 
     const start = () => {

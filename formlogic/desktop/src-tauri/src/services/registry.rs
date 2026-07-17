@@ -238,6 +238,15 @@ pub struct ServiceSnapshot {
     /// PLG-206: the plugin that owns this service (installed with it), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Operator-supplied extra launch arguments (appended after the template
+    /// args at spawn). Additive — absent when none are set.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub extra_args: Vec<String>,
+    /// The model this service is configured to load, when the template
+    /// references one (`${llamaModel}` / `${ollamaModel}`) and it's set —
+    /// so the UI and `/api/ai/sources` can show WHAT a running LLM serves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Result of `ensure_by_port` — surfaced to formlogic-web so it can tell the
@@ -527,6 +536,12 @@ pub struct Registry {
     /// service's own default (e.g. krea2 keeps DIT on GPU 0 + encoder on GPU 1). Set live
     /// from the GPU picker; takes effect on the next start.
     service_gpus: HashMap<String, u32>,
+    /// Operator-supplied extra launch arguments per service (e.g. `-t 16
+    /// --parallel 2` for llama-server), appended AFTER the template args at
+    /// spawn — tuning without editing the template JSON, which would opt it
+    /// out of future built-in updates. Persisted to
+    /// `<dataDir>/services-args.json`; takes effect on the next start.
+    extra_args: HashMap<String, Vec<String>>,
     /// DESK-PROC-001: ids of the services the operator has running, persisted
     /// to `<dataDir>/services-running.json` so a desktop relaunch (or a crash
     /// followed by the kill-on-close job reaping the children) restores them
@@ -607,6 +622,27 @@ fn load_autostart_policies(path: &Path) -> HashMap<String, AutostartPolicy> {
         .ok()
         .and_then(|s| serde_json::from_str::<HashMap<String, AutostartPolicy>>(&s).ok())
         .unwrap_or_default()
+}
+
+/// Extra-launch-args map on disk (`{"id": ["-t", "16"]}`). Missing/corrupt
+/// collapses to empty = no extra args, exactly the pre-feature behaviour.
+fn load_extra_args(path: &Path) -> HashMap<String, Vec<String>> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, Vec<String>>>(&s).ok())
+        .unwrap_or_default()
+}
+
+fn persist_extra_args(path: &Path, args: &HashMap<String, Vec<String>>) {
+    let sorted: std::collections::BTreeMap<&String, &Vec<String>> = args.iter().collect();
+    match serde_json::to_string_pretty(&sorted) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                log::warn!("could not persist the extra-args map: {e}");
+            }
+        }
+        Err(e) => log::warn!("could not serialize the extra-args map: {e}"),
+    }
 }
 
 fn persist_autostart_policies(path: &Path, policies: &HashMap<String, AutostartPolicy>) {
@@ -950,6 +986,7 @@ impl Registry {
         let model_dirs = combine_model_dirs(&models_dir, extra_model_dirs);
         let remembered_running = load_remembered_running(&data_dir.join("services-running.json"));
         let autostart_policies = load_autostart_policies(&data_dir.join("services-autostart.json"));
+        let extra_args = load_extra_args(&data_dir.join("services-args.json"));
         let mut reg = Self {
             services,
             data_dir,
@@ -959,6 +996,7 @@ impl Registry {
             llama_mmproj: None,
             ollama_model: None,
             service_gpus: HashMap::new(),
+            extra_args,
             remembered_running,
             autostart_policies,
             revision: 1,
@@ -989,6 +1027,7 @@ impl Registry {
             llama_mmproj: None,
             ollama_model: None,
             service_gpus: HashMap::new(),
+            extra_args: HashMap::new(),
             remembered_running: std::collections::HashSet::new(),
             autostart_policies: HashMap::new(),
             revision: 1,
@@ -1425,6 +1464,24 @@ impl Registry {
                     .unwrap_or_default(),
                 last_exit: s.last_exit.clone(),
                 owner: s.template.owner.clone(),
+                extra_args: self
+                    .extra_args
+                    .get(&s.template.id)
+                    .cloned()
+                    .unwrap_or_default(),
+                model: {
+                    let refs = |ph: &str| {
+                        s.template.run.args.iter().any(|a| a.contains(ph))
+                            || s.template.run.command.contains(ph)
+                    };
+                    if refs("${llamaModel}") {
+                        self.llama_model.clone()
+                    } else if refs("${ollamaModel}") {
+                        self.ollama_model.clone()
+                    } else {
+                        None
+                    }
+                },
                 node: s.template.node.as_ref().map(|n| {
                     // Resolve companion-side `${...}` placeholders (e.g.
                     // `${ollamaModel}`) in the node body BEFORE the web app sees
@@ -1743,6 +1800,15 @@ impl Registry {
                 args.push(os_fix_path(mm));
             }
         }
+        // Operator-supplied extra launch args (Configure → Extra arguments):
+        // appended AFTER the template args so e.g. `-t 16 --parallel 2` tunes
+        // llama-server without editing the template JSON (which would opt it
+        // out of future built-in template updates). Placeholders substitute
+        // exactly like template args, and the ${llamaModel} refusal below
+        // covers these too.
+        if let Some(extra) = self.extra_args.get(id) {
+            args.extend(extra.iter().map(|a| os_fix_path(substitute(a, &ctx))));
+        }
         let mut env: HashMap<String, String> = run_spec
             .env
             .iter()
@@ -1913,6 +1979,42 @@ impl Registry {
             &self.data_dir.join("services-autostart.json"),
             &self.autostart_policies,
         );
+        self.touch();
+        Ok(())
+    }
+
+    /// Set the operator's extra launch arguments for a service (empty list
+    /// clears). Bounded so a bad client can't persist garbage: ≤32 args of
+    /// ≤200 chars each, no control characters. Args are spawn-vector entries
+    /// (never a shell string), so no quoting/injection surface beyond what
+    /// the operator already controls locally. Applies on the next start.
+    pub fn set_extra_args(&mut self, id: &str, args: Vec<String>) -> Result<(), String> {
+        if !self.services.contains_key(id) {
+            return Err("unknown service".to_string());
+        }
+        let cleaned: Vec<String> = args
+            .into_iter()
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect();
+        if cleaned.len() > 32 {
+            return Err("too many extra arguments (max 32)".to_string());
+        }
+        if let Some(bad) = cleaned
+            .iter()
+            .find(|a| a.len() > 200 || a.chars().any(char::is_control))
+        {
+            return Err(format!(
+                "extra argument {:?} is too long or holds control characters",
+                bad.chars().take(40).collect::<String>()
+            ));
+        }
+        if cleaned.is_empty() {
+            self.extra_args.remove(id);
+        } else {
+            self.extra_args.insert(id.to_string(), cleaned);
+        }
+        persist_extra_args(&self.data_dir.join("services-args.json"), &self.extra_args);
         self.touch();
         Ok(())
     }
@@ -3267,6 +3369,55 @@ mod tests {
         assert_eq!(removed, vec!["aokie-voice"]);
         assert!(reg.snapshot().services.iter().all(|s| s.id != "aokie-voice"));
         assert!(!data.join("templates").join("aokie-voice.json").exists());
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// Extra launch args: bounded validation, persistence round trip, and the
+    /// additive snapshot field (absent when unset, present when set).
+    #[test]
+    fn extra_args_validate_persist_and_surface_in_the_snapshot() {
+        let data = std::env::temp_dir().join(format!("fl-extraargs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(data.join("templates")).unwrap();
+        let mut reg = super::Registry::empty(data.clone(), data.join("models"));
+        let tmpl: super::ServiceTemplate = serde_json::from_str(
+            r#"{"id":"llama-cpp","name":"llama","description":"","category":"LLM",
+                "defaultPort":8080,"run":{"command":"x.exe","args":["-m","${llamaModel}"]}}"#,
+        )
+        .unwrap();
+        reg.add_template(tmpl).unwrap();
+
+        // Unknown service refused; garbage bounded out.
+        assert!(reg.set_extra_args("nope", vec!["-t".into()]).is_err());
+        assert!(reg
+            .set_extra_args("llama-cpp", vec!["a".repeat(201)])
+            .is_err());
+        assert!(reg
+            .set_extra_args("llama-cpp", vec!["bad\u{0007}arg".into()])
+            .is_err());
+        assert!(reg
+            .set_extra_args("llama-cpp", (0..33).map(|i| format!("-x{i}")).collect())
+            .is_err());
+
+        // Valid set persists + surfaces additively in the snapshot.
+        reg.set_extra_args(
+            "llama-cpp",
+            vec!["-t".into(), "16".into(), " ".into(), "--parallel".into(), "2".into()],
+        )
+        .unwrap();
+        let snap = reg.snapshot();
+        let s = snap.services.iter().find(|s| s.id == "llama-cpp").unwrap();
+        assert_eq!(s.extra_args, vec!["-t", "16", "--parallel", "2"]);
+        let on_disk = super::load_extra_args(&data.join("services-args.json"));
+        assert_eq!(on_disk.get("llama-cpp").unwrap().len(), 4);
+
+        // Empty list clears (map entry removed, snapshot field back to empty).
+        reg.set_extra_args("llama-cpp", Vec::new()).unwrap();
+        assert!(super::load_extra_args(&data.join("services-args.json")).is_empty());
+        let snap = reg.snapshot();
+        let s = snap.services.iter().find(|s| s.id == "llama-cpp").unwrap();
+        assert!(s.extra_args.is_empty());
 
         let _ = std::fs::remove_dir_all(&data);
     }

@@ -1297,6 +1297,7 @@ NODE TYPES (type → config → output):
 - storage_get / storage_set — small persistent KV: data.key, (set) data.value or data.valueFrom, data.scope? (default flow:<slug>).
 - aokie_speak — data.text ({{…}} ok) or data.textFrom (selector) — speak on the live call (needs the aokie connector).
 - browser_action / image_gen / stt_transcribe / tts_speak — advanced nodes backed by local FormLogic Desktop services.
+- desktop_services — read-only list of FormLogic Desktop's managed services ({services: [{id, status, port, url}]}); lets a logic block resolve a service to a live loopback endpoint.
 
 nodeCapabilities (on create_flow/update_flow) must declare what the nodes use, or the runtime refuses:
 formlogic.responses.read (find records), formlogic.responses.write (submit/update records), formlogic.kv.write (storage_set), model.llm.local (llm_chat), connector.<id>.<command> per connector command (e.g. connector.aokie.call.operatorSpeak, or the wildcard connector.aokie.*).

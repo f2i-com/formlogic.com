@@ -51,6 +51,10 @@ export const EXECUTABLE_NODE_TYPES = [
   'image_gen',
   'stt_transcribe',
   'tts_speak',
+  // Read-only listing of the Desktop's managed services (id/status/port/url) —
+  // lets a logic block resolve `service:<id>` source picks to live loopback
+  // URLs at configure time. Desktop absent → { services: [] }, never an error.
+  'desktop_services',
 ] as const;
 
 export type ExecutableNodeType = (typeof EXECUTABLE_NODE_TYPES)[number];
@@ -171,6 +175,15 @@ export interface FlowExecutorDeps {
    * actionable "install & start the service in FormLogic Desktop" message.
    */
   resolveDesktopServiceBase?(serviceId: string): Promise<string | null>;
+  /**
+   * List the paired Desktop's managed services (id/name/category/status/port +
+   * loopback url when running) for the `desktop_services` node. Absent desktop
+   * / unpaired → [] — the node result is then { services: [] } and flows fall
+   * back to their legacy custom-endpoint fields.
+   */
+  listDesktopServices?(): Promise<
+    Array<{ id: string; name: string; category: string; status: string; port: number; url: string }>
+  >;
 }
 
 /** Everything one node execution can see. */
@@ -1379,6 +1392,20 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
 
     case 'tts_speak':
       return await runTtsSpeak(ctx);
+
+    case 'desktop_services': {
+      // Read-only service listing for source resolution (loopback metadata
+      // only — no capability gate, matching the implicit service resolution
+      // the other desktop-service nodes already perform). Never throws: an
+      // absent/unpaired Desktop reads as an empty list so consumers fall
+      // back to their legacy custom-endpoint fields.
+      if (!deps.listDesktopServices) return { services: [] };
+      try {
+        return { services: await deps.listDesktopServices() };
+      } catch {
+        return { services: [] };
+      }
+    }
 
     default:
       // Docs §4: unsupported node types fail the run loudly, never silently.

@@ -56,6 +56,9 @@ const V0_NODE_TYPES = new Set([
   'formlogic_update_response',
   'connector_request',
   'aokie_speak',
+  // Read-only Desktop services listing — resolves `service:<id>` source picks
+  // to live loopback URLs at configure time (implemented in BOTH runners).
+  'desktop_services',
 ]);
 
 // MVP event names the Aokie plugin emits (docs/AOKIE_PLUGIN_CONTRACT.md §3).
@@ -371,10 +374,16 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
   // FLOW_AGENT_CONFIG is an inline (unexported) logic_block expression string; evaluate it
   // exactly as the executor does — as a plain JS expression with `nodes` in scope — rather
   // than re-deriving its logic, so this test exercises the real shipped source.
-  function runAgentConfig(answers: Record<string, unknown> | null): { aiReceptionist: boolean } {
+  function runAgentConfig(
+    answers: Record<string, unknown> | null,
+    services?: Array<Record<string, unknown>>,
+  ): { aiReceptionist: boolean; aiEndpoint: string; sttEndpoint: string; ttsEndpoint: string } {
     const cfgNode = configureFlow.flowJson.nodes.find((n) => n.id === 'cfg')!;
     const expr = (cfgNode.data as { expr: string }).expr;
-    const nodes = { settings: { responses: answers ? [{ answers }] : [] } };
+    const nodes = {
+      settings: { responses: answers ? [{ answers }] : [] },
+      svc: services ? { services } : undefined,
+    };
     const fn = new Function('nodes', `return ${expr};`);
     return fn(nodes);
   }
@@ -391,6 +400,38 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(runAgentConfig({}).aiReceptionist).toBe(true);
     expect(runAgentConfig({ reply_mode: '' }).aiReceptionist).toBe(true);
     expect(runAgentConfig(null).aiReceptionist).toBe(true); // no settings record at all yet
+  });
+
+  // ── Source picks (CON-301/302): laneUrl resolution inside FLOW_AGENT_CONFIG ──
+  const RUNNING_SVCS = [
+    { id: 'llama-cpp', name: 'llama.cpp server', status: 'running', port: 8080, url: 'http://127.0.0.1:8080' },
+    { id: 'aokie-voice', name: 'Aokie Voice', status: 'stopped', port: 17920, url: '' },
+  ];
+
+  it('service: pick resolves to the RUNNING service URL + the lane path', () => {
+    const r = runAgentConfig({ llm_source: 'service:llama-cpp' }, RUNNING_SVCS);
+    expect(r.aiEndpoint).toBe('http://127.0.0.1:8080/v1/chat/completions');
+  });
+
+  it('service: pick of a STOPPED service resolves to blank (plugin default), never a dead URL', () => {
+    const r = runAgentConfig({ tts_source: 'service:aokie-voice', tts_endpoint: 'http://x/legacy' }, RUNNING_SVCS);
+    expect(r.ttsEndpoint).toBe('');
+  });
+
+  it('service: pick with NO desktop listing (svc node empty/absent) resolves blank', () => {
+    expect(runAgentConfig({ llm_source: 'service:llama-cpp' }).aiEndpoint).toBe('');
+    expect(runAgentConfig({ llm_source: 'service:llama-cpp' }, []).aiEndpoint).toBe('');
+  });
+
+  it('blank/custom source keeps the legacy endpoint-field behaviour byte-for-byte', () => {
+    const r = runAgentConfig({ llm_endpoint: ' http://127.0.0.1:9999/v1/chat/completions ' }, RUNNING_SVCS);
+    expect(r.aiEndpoint).toBe('http://127.0.0.1:9999/v1/chat/completions');
+    const c = runAgentConfig(
+      { stt_source: 'custom', stt_endpoint: 'http://127.0.0.1:17920/v1/audio/transcriptions' },
+      RUNNING_SVCS,
+    );
+    expect(c.sttEndpoint).toBe('http://127.0.0.1:17920/v1/audio/transcriptions');
+    expect(runAgentConfig({}, RUNNING_SVCS).aiEndpoint).toBe('');
   });
 });
 

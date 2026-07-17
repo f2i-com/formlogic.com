@@ -29,3 +29,39 @@ export async function resolveDesktopServiceBase(serviceId: string): Promise<stri
   }
   return null;
 }
+
+/** One Desktop service, shaped for flow logic (the `desktop_services` node). */
+export interface DesktopServiceListing {
+  id: string;
+  name: string;
+  category: string;
+  status: string;
+  port: number;
+  /** Loopback base URL when RUNNING (`http://127.0.0.1:<port>`), '' otherwise —
+   *  so a logic block can compose endpoints only against live services. */
+  url: string;
+}
+
+/**
+ * List the paired Desktop's managed services for flow logic (the
+ * `desktop_services` node — source pickers resolve `service:<id>` records to
+ * live loopback URLs at CONFIGURE time through this). Desktop undetected /
+ * unpaired / unreachable → [] (the flow falls back to its legacy fields).
+ * Never throws.
+ */
+export async function listDesktopServices(): Promise<DesktopServiceListing[]> {
+  if (!getDesktopInfo().available || !getDesktopToken()) return [];
+  const res = await desktopClient.services.list();
+  if (!res.ok) return [];
+  return res.data.map((s) => {
+    const port = s.port || s.defaultPort || 0;
+    return {
+      id: s.id,
+      name: s.name,
+      category: s.category ?? '',
+      status: s.status,
+      port,
+      url: s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
+    };
+  });
+}

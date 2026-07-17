@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useState } from 'react';
 import { API_BASE, openExternal } from './api';
 import { applyTheme, initialTheme, watchSystemTheme, type ThemeMode } from './theme';
 import ServicesPanel from './ServicesPanel';
@@ -48,12 +48,16 @@ export default function App() {
   // Section is a core SectionId OR a plugin section (`plugin:<id>:<navId>`).
   const [section, setSection] = useState<string>('overview');
   // Section switches render a freshly-mounted panel — a heavy first render
-  // used to FREEZE the click for up to a second. startTransition keeps the
-  // current UI interactive while React prepares the new panel.
-  const changeSection = useCallback(
-    (s: string) => startTransition(() => setSection(s)),
-    [],
-  );
+  // used to FREEZE the click for up to a second. The split here: `section`
+  // updates URGENTLY (sidebar highlight + header title change the instant the
+  // click lands — the earlier startTransition wrapped BOTH, so nothing on
+  // screen moved until the heavy panel committed and the click FELT frozen),
+  // while the panel body renders from the DEFERRED value, so React prepares
+  // the heavy tree at transition priority in the background.
+  const changeSection = useCallback((s: string) => setSection(s), []);
+  const deferredSection = useDeferredValue(section);
+  // True while the new panel is still being prepared — dims the stale body.
+  const sectionPending = deferredSection !== section;
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
   const overview = useDesktopOverview();
   const pluginList = overview.plugins?.plugins ?? [];
@@ -90,6 +94,12 @@ export default function App() {
   const activePluginSection = parsePluginSection(section);
   const activePlugin = activePluginSection
     ? pluginList.find((p) => p.id === activePluginSection.pluginId)
+    : undefined;
+  // Body-side twins derived from the DEFERRED section (the header/effects use
+  // the urgent `section`; the panel body must agree with what it renders).
+  const bodyPluginSection = parsePluginSection(deferredSection);
+  const bodyPlugin = bodyPluginSection
+    ? pluginList.find((p) => p.id === bodyPluginSection.pluginId)
     : undefined;
   useEffect(() => {
     if (section === 'receptionist' && overview.loaded && !aokieInstalled) {
@@ -135,7 +145,14 @@ export default function App() {
       try {
         const resp = await fetch(`${API_BASE}/api/health`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        setHealth(await resp.json());
+        const next: HealthResponse = await resp.json();
+        // Identical payload keeps the previous object so React bails out —
+        // this poll used to re-render the ENTIRE tree (including whichever
+        // panel was mounted) every 3 s for no visible change, and could
+        // restart an in-flight section transition.
+        setHealth((prev) =>
+          prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
+        );
         setHealthError(null);
       } catch (e) {
         setHealthError(e instanceof Error ? e.message : String(e));
@@ -256,8 +273,13 @@ export default function App() {
           </div>
         </header>
 
-        <main className="desktop-workspace__body">
-          {section === 'overview' && (
+        <main
+          className={`desktop-workspace__body${sectionPending ? ' is-section-pending' : ''}`}
+        >
+          {/* The body renders from the DEFERRED section (see changeSection):
+              the sidebar/header answered the click already; the heavy panel
+              tree mounts at transition priority. */}
+          {deferredSection === 'overview' && (
             <DesktopOverview
               data={overview}
               onOpen={changeSection}
@@ -269,24 +291,26 @@ export default function App() {
               installed — even in manifest mode (where only the NAV entry is
               manifest-owned), so a section selected before the mode resolved
               never strands a blank body. */}
-          {section === 'receptionist' && (!overview.loaded || aokieInstalled) && <ReceptionistPanel />}
-          {section === 'services' && <ServicesPanel />}
-          {section === 'models' && <ModelsPanel />}
-          {section === 'plugins' && <PluginsPanel />}
-          {section === 'python' && <PythonPanel />}
-          {section === 'connections' && <ConnectionsPanel />}
-          {section === 'settings' && <SettingsPanel />}
+          {deferredSection === 'receptionist' && (!overview.loaded || aokieInstalled) && (
+            <ReceptionistPanel />
+          )}
+          {deferredSection === 'services' && <ServicesPanel />}
+          {deferredSection === 'models' && <ModelsPanel />}
+          {deferredSection === 'plugins' && <PluginsPanel />}
+          {deferredSection === 'python' && <PythonPanel />}
+          {deferredSection === 'connections' && <ConnectionsPanel />}
+          {deferredSection === 'settings' && <SettingsPanel />}
           {/* AOK-305: in manifest mode, an Aokie plugin nav opens the COMPILED
               interactive ReceptionistPanel (the manifest supplies the nav entry
               + Overview banner declaratively; the interactive content — pairing,
               live call, consent, dongle wizard — stays compiled). */}
-          {activePluginSection?.pluginId === 'aokie' && aokieManifestMode && <ReceptionistPanel />}
+          {bodyPluginSection?.pluginId === 'aokie' && aokieManifestMode && <ReceptionistPanel />}
           {/* PLG-203: a plugin-contributed screen (declarative status cards +
               actions) for any OTHER plugin. */}
-          {activePlugin && activePluginSection && activePluginSection.pluginId !== 'aokie' && (
+          {bodyPlugin && bodyPluginSection && bodyPluginSection.pluginId !== 'aokie' && (
             <PluginContributedScreen
-              plugin={activePlugin}
-              navId={activePluginSection.navId}
+              plugin={bodyPlugin}
+              navId={bodyPluginSection.navId}
               devMode={devMode}
             />
           )}

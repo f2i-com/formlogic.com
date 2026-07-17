@@ -1,5 +1,12 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { isTauri, plugins, formlogic, type PluginSnapshot } from '../api';
+import {
+  isTauri,
+  plugins,
+  formlogic,
+  type PluginSnapshot,
+  type PluginsListResponse,
+} from '../api';
+import { PANEL_CACHE_KEYS, getPanelCache } from '../panelCache';
 import {
   CircleCheckIcon,
   AlertTriangleIcon,
@@ -43,7 +50,14 @@ interface ReadinessItem {
  * Plugins page uses (src/aokie/AokieCard.tsx).
  */
 export default function ReceptionistPanel() {
-  const [plugin, setPlugin] = useState<PluginSnapshot | null | undefined>(undefined);
+  // Seed from the shared plugins cache (app-start prefetch / Plugins visits)
+  // so the section doesn't open on a "Checking Aokie…" hero every time; the
+  // 5 s tick below revalidates immediately.
+  const [plugin, setPlugin] = useState<PluginSnapshot | null | undefined>(() => {
+    const cached = getPanelCache<PluginsListResponse>(PANEL_CACHE_KEYS.pluginsList);
+    if (!cached) return undefined;
+    return cached.plugins.find((p) => p.id === 'aokie') ?? null;
+  });
   const [devMode, setDevMode] = useState(false);
   const [phone, setPhone] = useState<PhoneStatus | null>(null);
   const [cloudLinked, setCloudLinked] = useState<boolean | null>(null);

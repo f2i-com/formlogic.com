@@ -94,6 +94,14 @@ export interface ServiceSnapshot {
     at: string;
     stderrTail: string[];
   } | null;
+  /** PLG-206: the plugin that owns this service (installed with it), if any. */
+  owner?: string;
+  /** Operator-supplied extra launch arguments (appended after the template
+   *  args at spawn). Absent when none are set. */
+  extraArgs?: string[];
+  /** The model this service is configured to load (llama/ollama pickers),
+   *  when the template references one and it's set. */
+  model?: string;
 }
 
 /** A CUDA GPU present on the machine (from nvidia-smi). */
@@ -196,6 +204,14 @@ export const services = {
     request<void>(`/api/services/${encodeURIComponent(id)}/autostart`, {
       method: 'POST',
       body: JSON.stringify({ policy }),
+    }),
+  /** Persist extra launch arguments (appended after the template args at
+   *  spawn — e.g. `-t 16 --parallel 2` on llama-cpp). Empty list clears;
+   *  applies on the next start. */
+  setExtraArgs: (id: string, args: string[]) =>
+    request<void>(`/api/services/${encodeURIComponent(id)}/args`, {
+      method: 'POST',
+      body: JSON.stringify({ args }),
     }),
   install: (id: string) =>
     request<void>(`/api/services/${encodeURIComponent(id)}/install`, {

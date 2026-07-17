@@ -20,8 +20,16 @@ interface Props {
   onClose?: () => void;
 }
 
+/** A log line with its timestamp pre-formatted ONCE at arrival — the render
+ *  used to run `new Date(...).toLocaleTimeString()` per line per 1.5 s tick
+ *  (Intl formatting is expensive × a 200-line tail, worse now the plugin ring
+ *  holds 2000). */
+interface RenderLine extends LogLine {
+  time: string;
+}
+
 export default function LogsViewer({ load, title, onClose }: Props) {
-  const [lines, setLines] = useState<LogLine[]>([]);
+  const [lines, setLines] = useState<RenderLine[]>([]);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -35,7 +43,23 @@ export default function LogsViewer({ load, title, onClose }: Props) {
       try {
         const next = await load();
         if (!cancelled) {
-          setLines(next);
+          setLines((prev) => {
+            // Unchanged tail keeps the previous array (React bails out) —
+            // idle logs used to re-render + force a layout every tick.
+            if (
+              prev.length === next.length &&
+              (next.length === 0 ||
+                (prev[prev.length - 1].timestamp === next[next.length - 1].timestamp &&
+                  prev[prev.length - 1].text === next[next.length - 1].text &&
+                  prev[0].timestamp === next[0].timestamp))
+            ) {
+              return prev;
+            }
+            return next.map((l) => ({
+              ...l,
+              time: new Date(l.timestamp).toLocaleTimeString(),
+            }));
+          });
           setError(null);
         }
       } catch (e) {
@@ -116,9 +140,7 @@ export default function LogsViewer({ load, title, onClose }: Props) {
             key={`${line.timestamp}-${i}`}
             className={`logs-line logs-line-${line.stream}`}
           >
-            <span className="logs-time">
-              {new Date(line.timestamp).toLocaleTimeString()}
-            </span>
+            <span className="logs-time">{line.time}</span>
             <span className="logs-text">{line.text}</span>
           </div>
         ))}

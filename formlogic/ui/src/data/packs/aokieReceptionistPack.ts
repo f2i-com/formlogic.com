@@ -1101,6 +1101,28 @@ ${BUSINESS_INFO_BLOCK_JS}
       : 'Thanks for calling! How can I help you today?';
   }
   var replyMode = String(cfg.reply_mode || '').trim();
+  // Source picks (CON-302): resolve per call, against the LIVE desktop
+  // services list (nodes.svc), so a port change self-heals on the next call.
+  // 'service:<id>' -> the running service's loopback URL + the lane's
+  // conventional path ('' when not running: the plugin then falls back to
+  // auto-detect / its built-in engine, which is where a dead URL would have
+  // ended up anyway, minus the timeout). 'custom' or blank -> the legacy
+  // endpoint field (blank field = plugin default).
+  var svcNode = nodes.svc || {};
+  var svcList = svcNode.services || [];
+  function laneUrl(source, customUrl, path) {
+    source = String(source || '').trim();
+    var custom = String(customUrl || '').trim();
+    if (!source || source === 'custom') return custom;
+    if (source.indexOf('service:') === 0) {
+      var sid = source.slice(8);
+      for (var i = 0; i < svcList.length; i++) {
+        if (svcList[i] && svcList[i].id === sid && svcList[i].url) return svcList[i].url + path;
+      }
+      return '';
+    }
+    return custom;
+  }
   return {
     persona: persona,
     greeting: greeting,
@@ -1108,9 +1130,9 @@ ${BUSINESS_INFO_BLOCK_JS}
     model: String(cfg.model || '').trim(),
     // AI plumbing, all flow-configurable: blank = the plugin's default behaviour
     // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).
-    aiEndpoint: String(cfg.llm_endpoint || '').trim(),
-    sttEndpoint: String(cfg.stt_endpoint || '').trim(),
-    ttsEndpoint: String(cfg.tts_endpoint || '').trim(),
+    aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions'),
+    sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions'),
+    ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech'),
     aiReceptionist: replyMode !== 'flow'
   };
 })()`;
@@ -3182,6 +3204,32 @@ export const aokieReceptionistPack: PackData = {
           properties: { placeholder: 'e.g. +61' },
         },
         { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
+        // Source picks (CON-301): '' = automatic (legacy custom-endpoint field
+        // wins when set, else the plugin default), 'service:<id>' = a FormLogic
+        // Desktop service resolved to its live loopback URL at CONFIGURE time
+        // (per call, so a port change self-heals on the next call),
+        // 'custom' = use the matching *_endpoint field verbatim.
+        {
+          id: 'llm_source',
+          type: 'short_text',
+          label: 'LLM source (blank = automatic)',
+          required: false,
+          properties: { placeholder: "e.g. service:llama-cpp, custom" },
+        },
+        {
+          id: 'stt_source',
+          type: 'short_text',
+          label: 'Speech-to-text source (blank = automatic)',
+          required: false,
+          properties: { placeholder: 'e.g. service:aokie-voice, custom' },
+        },
+        {
+          id: 'tts_source',
+          type: 'short_text',
+          label: 'Text-to-speech source (blank = automatic)',
+          required: false,
+          properties: { placeholder: 'e.g. service:aokie-voice, custom' },
+        },
       ],
       // The section IS the settings console (SDK screen): grouped cards, a
       // live "what the receptionist is running now" readout (settings.get)
@@ -3514,6 +3562,9 @@ export const aokieReceptionistPack: PackData = {
         nodes: [
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          // Live desktop services (id/status/port/url) — the cfg block resolves
+          // 'service:<id>' source picks against this, per call (CON-302).
+          { id: 'svc', type: 'desktop_services', data: {} },
           { id: 'cfg', type: 'logic_block', data: { expr: FLOW_AGENT_CONFIG } },
           {
             id: 'push',
@@ -3545,7 +3596,8 @@ export const aokieReceptionistPack: PackData = {
         ],
         edges: [
           { source: 'in', target: 'settings' },
-          { source: 'settings', target: 'cfg' },
+          { source: 'settings', target: 'svc' },
+          { source: 'svc', target: 'cfg' },
           { source: 'cfg', target: 'push' },
           { source: 'push', target: 'out' },
         ],

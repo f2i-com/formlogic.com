@@ -33,7 +33,7 @@ import { subscribeDesktopEvents } from '../desktop/desktopEvents';
 import type { DesktopEventEnvelope } from '../desktop/desktopTypes';
 import { resolveProviderRequest } from './aiProviders';
 import { resolveDesktopLlmEndpoint } from './desktopLlm';
-import { resolveDesktopServiceBase } from './desktopService';
+import { listDesktopServices, resolveDesktopServiceBase } from './desktopService';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
 import type { FlowExecutorDeps } from './nodes';
 import {
@@ -241,6 +241,7 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
       return typeof v === 'string' && v !== '' ? v : null;
     },
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
+    listDesktopServices: () => listDesktopServices(),
   };
 }
 
@@ -312,6 +313,7 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     resolveAiProvider: (capability, providerId) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId),
     getAppAiBase: () => null,
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
+    listDesktopServices: () => listDesktopServices(),
   };
 }
 

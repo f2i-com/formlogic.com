@@ -926,6 +926,36 @@ async fn execute_node(
 
         "tts_speak" => run_tts_speak(node, scope, deps).await,
 
+        "desktop_services" => {
+            // Read-only listing of the managed services (id/status/port +
+            // loopback url when running) — lets a logic block resolve a
+            // `service:<id>` source pick to a live endpoint at configure
+            // time. Mirrors the browser executor: no registry → an empty
+            // list, never an error (flows fall back to their legacy
+            // custom-endpoint fields).
+            let mut services: Vec<Value> = Vec::new();
+            if let Some(reg) = deps.registry.as_ref() {
+                if let Ok(reg) = reg.lock() {
+                    for s in reg.snapshot().services {
+                        let running = s.status == crate::services::registry::ServiceStatus::Running;
+                        services.push(serde_json::json!({
+                            "id": s.id,
+                            "name": s.name,
+                            "category": s.category,
+                            "status": s.status,
+                            "port": s.port,
+                            "url": if running && s.port > 0 {
+                                format!("http://127.0.0.1:{}", s.port)
+                            } else {
+                                String::new()
+                            },
+                        }));
+                    }
+                }
+            }
+            Ok(serde_json::json!({ "services": services }))
+        }
+
         "formlogic_list_responses" => {
             // FROZEN CONTRACT (docs §4): resolve the form (invalid_flow when missing),
             // fetch up to a clamped `limit`, normalize, apply ANDed filters client-side,

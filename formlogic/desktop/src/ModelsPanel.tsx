@@ -105,7 +105,12 @@ export default function ModelsPanel() {
         seen.set(d.id, d.status);
       }
       firstPollRef.current = false;
-      setDownloads(dls);
+      // Identical list keeps the previous array so React bails out — this
+      // 1.5 s poll used to install a fresh [] every tick and re-reconcile the
+      // whole panel (including the 1000+-row on-disk list) for no change.
+      setDownloads((prev) =>
+        JSON.stringify(prev) === JSON.stringify(dls) ? prev : dls,
+      );
       setError(null);
       return finishedOne;
     } catch (e) {
@@ -123,7 +128,11 @@ export default function ModelsPanel() {
       const snap = await models.list();
       if (seq !== reqSeqRef.current) return; // superseded by a newer refresh
       setPanelCache(PANEL_CACHE_KEYS.modelsList, snap);
-      setSnapshot(snap);
+      // Unchanged scan keeps the previous snapshot object (React bails out)
+      // instead of re-rendering the full on-disk list every 8 s.
+      setSnapshot((prev) =>
+        prev && JSON.stringify(prev) === JSON.stringify(snap) ? prev : snap,
+      );
       setError(null);
     } catch (e) {
       if (seq !== reqSeqRef.current) return;
@@ -226,6 +235,27 @@ export default function ModelsPanel() {
     },
     [refresh],
   );
+
+  // The on-disk library can hold 1000+ files; committing that many rows in
+  // one block IS the section-switch freeze on big libraries, so render a
+  // preview slice and expand on demand.
+  const [showAllModels, setShowAllModels] = useState(false);
+  const MODEL_PREVIEW_ROWS = 60;
+  const visibleModels = useMemo(() => {
+    const all = snapshot?.models ?? [];
+    return showAllModels ? all : all.slice(0, MODEL_PREVIEW_ROWS);
+  }, [snapshot, showAllModels]);
+
+  // Basename set for the catalog's "On disk" check — the per-card
+  // `models.some(split…)` scan was ~8k string splits per render.
+  const onDiskBasenames = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of snapshot?.models ?? []) {
+      const base = f.name.split(/[\\/]/).pop();
+      if (base) set.add(base);
+    }
+    return set;
+  }, [snapshot]);
 
   // Partition: active/queued/paused at top, completed below, failures
   // surface in their group so the user notices.
@@ -388,9 +418,7 @@ export default function ModelsPanel() {
               <div className="catalog-cat-desc">{cat.description}</div>
               <div className="catalog-grid">
                 {cat.models.map((m) => {
-                  const onDisk = snapshot?.models.some(
-                    (f) => f.name.split(/[\\/]/).pop() === m.filename,
-                  );
+                  const onDisk = onDiskBasenames.has(m.filename);
                   const active = downloads.find(
                     (d) =>
                       d.url === m.url &&
@@ -499,7 +527,7 @@ export default function ModelsPanel() {
         {snapshot?.models.length === 0 && (
           <div className="empty-state">No models downloaded yet.</div>
         )}
-        {snapshot?.models.map((m) => (
+        {visibleModels.map((m) => (
           <div key={m.path} className="model-row">
             <div className="model-info">
               <div className="model-name">
@@ -542,6 +570,19 @@ export default function ModelsPanel() {
             </div>
           </div>
         ))}
+        {snapshot && snapshot.models.length > visibleModels.length && (
+          <button
+            className="btn btn-ghost"
+            onClick={() => setShowAllModels(true)}
+          >
+            Show all {snapshot.models.length} models
+          </button>
+        )}
+        {showAllModels && snapshot && snapshot.models.length > MODEL_PREVIEW_ROWS && (
+          <button className="btn btn-ghost" onClick={() => setShowAllModels(false)}>
+            Show fewer
+          </button>
+        )}
       </section>
 
       {finished.length > 0 && (
