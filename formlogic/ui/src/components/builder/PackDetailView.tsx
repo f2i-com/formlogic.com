@@ -21,7 +21,7 @@ import { PackIcon } from '../ui/PackIcon';
 import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry, type PackData, type PackDescribeResult } from '../../lib/api';
 import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
 import { PackScreenshots } from './PackScreenshots';
-import { TrustBadge, CapabilityReview } from './TrustBadge';
+import { TrustBadge, CapabilityReview, reviewableConnectorGrants } from './TrustBadge';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
@@ -176,8 +176,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         // Default: every REVIEWABLE connector grant pre-approved (the user
         // unticks to reduce). The reviewable set is the server's connectorGrants
         // — exactly what import can strip — not flow-declared connector access.
-        const grants = caps?.connectorGrants ?? (caps?.permissions ?? []).filter((p) => p.startsWith('connector.'));
-        setApprovedGrants(new Set(grants));
+        setApprovedGrants(new Set(caps ? reviewableConnectorGrants(caps) : []));
         setConsent({ dl, catalogId: dlResult.data.catalogId, versionId: dlResult.data.versionId, review });
         setInstalling(false); // wait for the user to confirm from the panel
         return;
@@ -313,8 +312,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
             <span>Review what this package can do before installing. {(packHasCodeScreen(consent.dl) || packHasLogicScript(consent.dl)) && 'It includes code (custom screens and/or backend scripts) that runs with access to data you are permitted to see.'}</span>
           </div>
           {consent.review && (() => {
-            const connectorGrants = consent.review.capabilities.connectorGrants
-              ?? consent.review.capabilities.permissions.filter((p) => p.startsWith('connector.'));
+            const connectorGrants = reviewableConnectorGrants(consent.review.capabilities);
             return (
               <CapabilityReview
                 caps={consent.review.capabilities}
@@ -336,8 +334,9 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
               variant="primary"
               size="sm"
               onClick={() => {
-                const connectorGrants = consent.review?.capabilities.connectorGrants
-                  ?? (consent.review?.capabilities.permissions ?? []).filter((p) => p.startsWith('connector.'));
+                const connectorGrants = consent.review
+                  ? reviewableConnectorGrants(consent.review.capabilities)
+                  : [];
                 doImport(
                   consent.dl,
                   consent.catalogId,

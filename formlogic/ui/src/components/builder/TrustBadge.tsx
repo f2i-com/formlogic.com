@@ -9,6 +9,17 @@ export function isConnectorGrant(p: string): boolean {
 }
 
 /**
+ * The REVIEWABLE connector grants for a pack — the set importPack can actually
+ * strip (APP-502): the server's connectorGrants field, with a connector-prefixed
+ * permissions fallback for an older server that doesn't send it. Every install
+ * surface (builder pack browser, marketplace page) must derive its checklist +
+ * approved set from THIS so the UI never offers a decline import can't honor.
+ */
+export function reviewableConnectorGrants(caps: PackCapabilitySummary): string[] {
+  return caps.connectorGrants ?? caps.permissions.filter(isConnectorGrant);
+}
+
+/**
  * Trust badge for a marketplace listing / application package. `trust` is ALWAYS server-computed
  * (spec §30.1) — the UI only renders it, it never derives or asserts trust itself.
  */
@@ -60,10 +71,7 @@ export function CapabilityReview({
       {label}
     </span>
   );
-  // The REVIEWABLE connector grants (what import can actually strip) come from
-  // the server's connectorGrants field; fall back to the connector-prefixed
-  // permissions for an older server that doesn't send it.
-  const connectorGrants = caps.connectorGrants ?? caps.permissions.filter(isConnectorGrant);
+  const connectorGrants = reviewableConnectorGrants(caps);
   const otherPerms = caps.permissions.filter((p) => !isConnectorGrant(p));
   const interactive = !!selectedGrants && !!onToggleGrant;
   return (
