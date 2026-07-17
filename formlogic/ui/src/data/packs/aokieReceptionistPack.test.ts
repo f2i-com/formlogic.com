@@ -8,6 +8,7 @@ import { aokieReceptionistPack as pack, DEFAULT_PERSONA } from './aokieReception
 import { AOKIE_CALL_TRANSCRIPT_SCREEN, compareTurns } from './aokieCallTranscriptScreen';
 import { AOKIE_DEVICE_SETUP_SCREEN } from './aokieDeviceSetupScreen';
 import { AOKIE_LIVE_CALL_SCREEN } from './aokieLiveCallScreen';
+import { AOKIE_RECEPTIONIST_SETTINGS_SCREEN } from './aokieReceptionistSettingsScreen';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { packCatalog } from './index';
 import {
@@ -258,10 +259,11 @@ describe('aokieReceptionistPack â€” app', () => {
       const cs = form.customScreen;
       if (cs?.kind === 'sdk' && cs.sdkScreen?.screenId) used.push(cs.sdkScreen.screenId);
     }
-    // Device Setup ('aokie-pairing') and Live Call ('aokie-live-call') are pack-owned
-    // CODE now (plan §8.4 ports #4 + #6); receptionist-settings is the last compiled
-    // section reference (its port is gated on the supervised AOK-304 settings split).
-    expect(used.sort()).toEqual(['aokie-receptionist-settings']);
+    // ALL three aokie section screens are pack-owned CODE now (plan §8.4 ports
+    // #3/#4/#6): transcript, Device Setup, Live Call, and Receptionist Settings.
+    // No compiled sdk section reference remains — the epic's screens are
+    // self-contained. (The compiled screens stay in the registry for rollback.)
+    expect(used.sort()).toEqual([]);
     for (const id of used) {
       expect(registered.has(id), `SDK screen '${id}' is not registered`).toBe(true);
     }
@@ -641,6 +643,69 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
       const ui = buildAgentPayload(draftFor({ correction_source: 'service:llama-cpp' }), asSourceServices(RUNNING_SVCS));
       expect('audioTranscriptModel' in ui).toBe(false);
       expect(ui.audioTranscriptEndpoint).toBe('http://127.0.0.1:8080/v1/chat/completions');
+    });
+
+    // PERSONA + GREETING parity flow↔console (review 2026-07-18: the endpoint
+    // cases above don't cover persona/greeting composition — the business prefix,
+    // BUSINESS INFO block and default-greeting must also never drift).
+    it.each([
+      ['default persona + default greeting', {}],
+      ['business prefix + custom greeting', { business_name: 'Bright Smile Dental', greeting: 'Gday!' }],
+      ['custom instructions + business info + default greeting', { business_name: 'Acme', instructions: 'Be brief.', business_info: 'Open 9-5. Checkup $90.' }],
+    ] as Array<[string, Partial<Draft>]>)('persona/greeting: %s', (_name, over) => {
+      const flow = runAgentConfig(over as Record<string, unknown>) as unknown as { persona: string; greeting: string };
+      const ui = buildAgentPayload(draftFor(over));
+      expect(ui.persona).toBe(flow.persona);
+      expect(ui.greeting).toBe(flow.greeting);
+    });
+
+    // ── The pack-owned settings screen embeds composeAgentPayload via toString().
+    // This is the THIRD lock-step surface (flow ≡ buildAgentPayload ≡ embedded
+    // copy). Evaluate the embedded copy exactly as the sandbox does and deep-equal
+    // the WHOLE payload — persona/greeting/ttsVoice/aiModel/aiReceptionist AND the
+    // four endpoints — so persona/business-info/greeting composition can't drift.
+    describe('sandbox embed (composeAgentPayload) parity', () => {
+      // The screen's js begins with the PAYLOAD_EMBED block (var AI_GATEWAY_BASE
+      // = …; var DEFAULT_PERSONA = …; var composeAgentPayload = <fn>;) BEFORE the
+      // IIFE. Eval just that block, then call the embedded copy.
+      const embed = AOKIE_RECEPTIONIST_SETTINGS_SCREEN.js.split('(function ()')[0];
+      const embedded = new Function(
+        'draft',
+        'svcs',
+        `${embed}\nreturn composeAgentPayload(draft, svcs, DEFAULT_PERSONA, AI_GATEWAY_BASE);`,
+      ) as (draft: Draft, svcs: SourceService[] | undefined) => Record<string, unknown>;
+
+      it('the embed block actually defines composeAgentPayload (guards a bad split)', () => {
+        expect(embed).toContain('composeAgentPayload');
+        expect(embed).toContain('AI_GATEWAY_BASE');
+        expect(embed).toContain('DEFAULT_PERSONA');
+      });
+
+      it.each(CASES)('whole-payload deep-equal vs buildAgentPayload: %s', (_name, over) => {
+        const draft = draftFor(over);
+        const svcs = asSourceServices(RUNNING_SVCS);
+        expect(embedded(draft, svcs)).toEqual(buildAgentPayload(draft, svcs));
+      });
+
+      it('matches for a rich draft (persona prefix + business info + greeting default + voice/model/mode)', () => {
+        const draft = draftFor({
+          business_name: 'Bright Smile Dental',
+          instructions: 'Be warm. Book Mon-Fri 9-5.',
+          business_info: 'Checkup $90. Open 9-5.',
+          voice: 'amy',
+          model: 'llama3.1:8b',
+          reply_mode: 'flow',
+        });
+        expect(embedded(draft, undefined)).toEqual(buildAgentPayload(draft, undefined));
+      });
+
+      it('omits unresolvable service picks in the embed too (remote console → per-call flow owns them)', () => {
+        const draft = draftFor({ llm_source: 'service:llama-cpp', correction_source: 'service:llama-cpp' });
+        const p = embedded(draft, undefined);
+        expect('aiEndpoint' in p).toBe(false);
+        expect('audioTranscriptEndpoint' in p).toBe(false);
+        expect(p).toEqual(buildAgentPayload(draft, undefined));
+      });
     });
   });
 });
@@ -2569,5 +2634,80 @@ describe('aokieReceptionistPack — pack-owned Live Call section screen (plan §
     expect(js).toContain('aokie.call.turn.corrected');
     // Captions tombstone when a durable caller turn lands (final wins).
     expect(js).toContain('tombstone');
+  });
+});
+
+
+describe('aokieReceptionistPack — pack-owned Receptionist Settings section screen (plan §8.4 port #3)', () => {
+  const rsForm = pack.forms.find((f) => f.packFormId === 'receptionist-settings');
+  const cs = rsForm?.customScreen as Record<string, unknown> | undefined;
+
+  it('ships the section as pack-owned CODE, not a compiled-registry reference', () => {
+    expect(cs?.kind).toBe('code');
+    expect(cs?.sdkScreen).toBeUndefined();
+    expect(cs?.allowNewResponses).toBe(false);
+    expect(cs?.js).toBe(AOKIE_RECEPTIONIST_SETTINGS_SCREEN.js);
+  });
+
+  it('the sandboxed source parses and escapes rendered values, regex-free', () => {
+    const js = String(cs?.js ?? '');
+    expect(() => new Function(js)).not.toThrow();
+    expect(js).toContain('var esc = FL.escapeHtml');
+    // No regex literals — the block-list split / bundle prettify / basename are char scans.
+    expect(js).not.toContain('.match(');
+    expect(js).not.toContain('.replace(/');
+    expect(js).not.toContain('.split(/');
+  });
+
+  it('drives ONLY sanctioned bridge surfaces (settings via connector, record via submit/updateRecord)', () => {
+    const js = String(cs?.js ?? '');
+    for (const needle of [
+      "FL.connector('aokie', 'settings.get'",
+      "FL.connector('aokie', 'settings.set'",
+      'FL.records(',
+      'FL.submit(',
+      'FL.updateRecord(',
+      'FL.aiSources()',
+      'FL.presence()',
+      "FL.can('connector.aokie.settings.get')",
+      "FL.can('connector.aokie.settings.set')",
+      'composeAgentPayload(',
+    ]) {
+      expect(js, needle).toContain(needle);
+    }
+  });
+
+  it('manager-PIN guardrails: write-only, blank-means-keep, explicit remove', () => {
+    const js = String(cs?.js ?? '');
+    // The PIN key is sent ONLY when a new value was typed (blank keeps the stored PIN).
+    expect(js).toContain('if (newPin) payload.managerPin = newPin;');
+    // A dedicated Remove PIN action sends an explicit empty PIN.
+    expect(js).toContain("settingsSet({ managerPin: '' })");
+    // The PIN is never seeded from settings.get (write-only) — only managerPinSet is read.
+    expect(js).toContain('res.managerPinSet === true');
+    expect(js).toContain("state.screening.managerPin = ''");
+    // The field renders as a password input, never plain text.
+    expect(js).toContain('type="password"');
+  });
+
+  it('partial saves never clobber the whole dirty baseline (review 2026-07-18 HIGH)', () => {
+    const js = String(cs?.js ?? '');
+    // A save handler must not unconditionally re-clone the entire draft into the
+    // saved baseline — that would mark unrelated pending edits as saved + lose
+    // them. Partial saves reflect ONLY their own keys (audio patches correction;
+    // screening writes no draft keys) unless it was the first-ever create.
+    expect(js).toContain('var wasCreate = !state.recordId;');
+    expect(js).toContain('state.saved.correction_source = state.draft.correction_source;');
+    // The full-clone is gated behind wasCreate, not run on every partial save.
+    expect(js).not.toContain('.then(function () { state.saved = JSON.parse(JSON.stringify(state.draft)); return settingsGet(); })');
+  });
+
+  it('a shared in-flight guard prevents duplicate singleton records (review 2026-07-18 MEDIUM)', () => {
+    const js = String(cs?.js ?? '');
+    // Concurrent first-saves must not each FL.submit and duplicate the singleton.
+    expect(js).toContain('var createInFlight = null;');
+    expect(js).toContain('if (createInFlight) return createInFlight.then(');
+    // The create sends the FULL draft (create validates required fields, no merge).
+    expect(js).toContain('for (var j in answers) full[j] = answers[j];');
   });
 });

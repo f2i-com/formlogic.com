@@ -33,6 +33,7 @@ import { getDesktopInfo } from '../../client-runtime/desktop/desktopDetection';
 import { isDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
 import { runRelayCommand, type RelayApi, type RunRelayOptions } from './aokie/aokieRelay';
 import { resolveRemoteRuntime, type AokiePresence } from './aokie/aokiePresence';
+import { listAiSources, listDesktopServices, type AiSourceListing } from '../../client-runtime/flows/desktopService';
 
 /** What FormLogic.connector() resolves inside the sandbox. Mirrors the relay's
  *  RelayOutcome semantics with the transport named — `uncertain` means a
@@ -65,6 +66,14 @@ export interface ScreenBridge {
    *  member could read by navigating there. Returns projected rows; resolves
    *  [] for an unknown/forbidden form (never throws for authz). */
   queryRecords: (formTarget: string, opts?: { limit?: number }) => Promise<Array<Record<string, unknown>>>;
+  /** The paired local desktop's AI-sources listing (capability-tagged managed
+   *  services + configured providers — the SAME union GET /api/ai/sources
+   *  serves), host-resolved because the sandbox has no network of its own.
+   *  Read-only, no secrets (service/provider metadata only). null when there's
+   *  no local desktop (remote console / demo / unpaired) — the caller then
+   *  composes lane endpoints without a listing and lets the per-call flow
+   *  resolve `service:` picks. */
+  aiSources: () => Promise<AiSourceListing[] | null>;
   presence: () => Promise<AokiePresence>;
   /** Typed service.invoke (plan §8.3, APP-503): run a SERVER-REGISTERED
    *  operation. Resolves an outcome ({status done|failed, result?, error?}) —
@@ -131,6 +140,9 @@ export interface ScreenBridgeDeps {
   queryResponses: (formId: string, limit: number) => Promise<Array<Record<string, unknown>>>;
   /** One-shot presence resolution (injectable for tests). */
   resolvePresence: () => Promise<AokiePresence>;
+  /** Resolve the local desktop's AI-sources listing (injectable for tests);
+   *  null when no local desktop is available. */
+  resolveAiSources: () => Promise<AiSourceListing[] | null>;
   /** Typed service.invoke transport (api.invokeAppService — injectable for tests). */
   invokeService: (
     slug: string,
@@ -284,6 +296,8 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
 
     presence: () => deps.resolvePresence(),
 
+    aiSources: () => deps.resolveAiSources(),
+
     serviceInvoke: async (operationId, input) => {
       const op = String(operationId || '');
       if (!SERVICE_OPERATION_ID.test(op) || op.length > 96) {
@@ -372,6 +386,45 @@ export function resolveScreenTarget(target: string): string | null {
 }
 
 /**
+ * The AI-sources listing for a code screen's lane pickers, with the compiled
+ * console's exact degrade path: the desktop's /api/ai/sources union first, then
+ * a category-derived fallback over the plain /api/services list (older desktops),
+ * else null (no local desktop — the caller composes without a listing and the
+ * per-call flow resolves `service:` picks). The shared demo never attaches to a
+ * real desktop, so it always returns null.
+ */
+export async function resolveScreenAiSources(): Promise<AiSourceListing[] | null> {
+  if (api.isDemoMode()) return null;
+  let list = await listAiSources().catch(() => [] as AiSourceListing[]);
+  if (list.length === 0) {
+    const svcs = await listDesktopServices().catch(() => []);
+    list = svcs.map((s) => {
+      const c = s.category.toLowerCase();
+      const capabilities = c.includes('llm')
+        ? ['chat']
+        : c.includes('speech') || c.includes('voice')
+          ? ['transcription', 'speech']
+          : c.includes('image')
+            ? ['image']
+            : [];
+      return {
+        id: `service:${s.id}`,
+        kind: 'service' as const,
+        refId: s.id,
+        name: s.name,
+        category: s.category,
+        status: s.status,
+        capabilities,
+        url: s.url,
+        model: '',
+        enabled: true,
+      };
+    });
+  }
+  return list.length > 0 ? list : null;
+}
+
+/**
  * The live ScreenBridge for an app-runtime code screen, or undefined outside a
  * matching app context (builder previews, public links — the bridge actions
  * then reject with "not available on this screen").
@@ -412,6 +465,7 @@ export function useScreenBridge(formId: string, appSlug?: string): ScreenBridge 
         return rows.map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt, status: r.status, tags: r.tags }));
       },
       resolvePresence: () => resolveScreenPresence(appId),
+      resolveAiSources: () => resolveScreenAiSources(),
       invokeService: (slug, operationId, input) => api.invokeAppService(slug, operationId, input),
       demoMode: () => api.isDemoMode(),
     });

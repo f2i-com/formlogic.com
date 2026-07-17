@@ -25,6 +25,12 @@ import type { PackData } from './financeOsPack';
 import { AOKIE_CALL_TRANSCRIPT_SCREEN } from './aokieCallTranscriptScreen';
 import { AOKIE_DEVICE_SETUP_SCREEN } from './aokieDeviceSetupScreen';
 import { AOKIE_LIVE_CALL_SCREEN } from './aokieLiveCallScreen';
+import { AOKIE_RECEPTIONIST_SETTINGS_SCREEN } from './aokieReceptionistSettingsScreen';
+// DEFAULT_PERSONA lives in a LEAF module (no imports) so the pack, the console
+// payload composer, and the pack-owned settings screen can all import it without
+// forming a cycle. Re-exported here so existing `from './aokieReceptionistPack'`
+// importers keep working.
+import { DEFAULT_PERSONA } from './aokieReceptionistPersona';
 
 // ── Shared defaults ─────────────────────────────────────────────────────────
 
@@ -1013,12 +1019,10 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
 // appended from the input in case its Transcript Turns row hasn't landed yet
 // (the app-logic writer and this flow both fire on the same turn.final event).
 // Kept in lockstep with the plugin's DEFAULT_AGENT_PERSONA (aokie.com radio.rs).
-// The "only promise what actually happens" clause is audit AK-009/C-16: the
-// agent once told a live caller it would text a confirmation — nothing sends
-// SMS, so the receptionist must describe bookings as requests a person
-// confirms, never claim to send anything itself.
-export const DEFAULT_PERSONA =
-  'You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.';
+// DEFAULT_PERSONA is defined in the leaf module ./aokieReceptionistPersona (see
+// the import at the top of this file) and re-exported so existing importers of
+// `DEFAULT_PERSONA` from this pack module keep working unchanged.
+export { DEFAULT_PERSONA };
 
 // BUSINESS INFO grounding (live report 2026-07-13: the agent invented an
 // entire menu — "shark steaks, barnacle burgers, spicy krill sauce").
@@ -3282,17 +3286,18 @@ export const aokieReceptionistPack: PackData = {
           properties: { placeholder: 'e.g. http://127.0.0.1:8081/v1/chat/completions' },
         },
       ],
-      // The section IS the settings console (SDK screen): grouped cards, a
-      // live "what the receptionist is running now" readout (settings.get)
-      // and Save & apply now (settings.set, same payload as the Configure
-      // Receptionist flow). The screen manages the singleton record itself,
-      // so the generic New-record chrome stays off.
-      customScreen: {
-        enabled: true,
-        allowNewResponses: false,
-        kind: 'sdk',
-        sdkScreen: { screenId: 'aokie-receptionist-settings', title: 'Receptionist Settings' },
-      },
+      // The section IS the settings console: grouped cards, a live "what the
+      // receptionist is running now" readout (settings.get) and Save & apply now
+      // (settings.set, same payload as the Configure Receptionist flow). The
+      // screen manages the singleton record itself, so New-record chrome stays off.
+      // PACK-OWNED CODE (plan §8.4 port #3, the LAST screen): the console ships as
+      // sandboxed HTML/CSS/JS inside the pack (aokieReceptionistSettingsScreen.ts)
+      // driving connector('aokie','settings.get'/'.set') + records()/submit()/
+      // updateRecord() + aiSources() + the EMBEDDED composeAgentPayload. Its
+      // actions are TRUSTED_ONLY: custom_screen_trust must be owner/verified.
+      // Rollback = the previous sdk reference: { enabled, allowNewResponses:false,
+      //   kind:'sdk', sdkScreen: { screenId:'aokie-receptionist-settings', ... } }.
+      customScreen: AOKIE_RECEPTIONIST_SETTINGS_SCREEN,
     },
   ],
 

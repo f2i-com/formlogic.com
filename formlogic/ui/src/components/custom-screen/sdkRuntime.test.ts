@@ -8,7 +8,7 @@ describe('custom-screen SDK trust boundary', () => {
       // Bridge v1 (all four slices): hardware/data commands, live feeds, typed
       // service ops, host navigation, named ceremonies and grant introspection
       // are never available to imported code.
-      'connector', 'updateRecord', 'deleteRecords', 'queryRecords', 'presence',
+      'connector', 'updateRecord', 'deleteRecords', 'queryRecords', 'presence', 'aiSources',
       'eventsSubscribe', 'captionsSubscribe', 'service', 'openScreen', 'openRecord',
       'ceremony', 'can',
     ]) {

@@ -59,6 +59,9 @@ function deps(over: Partial<ScreenBridgeDeps> = {}): ScreenBridgeDeps {
       { id: 'c1', answers: { name: 'Lance', phone: '0491570156' }, submittedAt: '2026-07-17T00:00:00Z', status: 'submitted', tags: [] },
     ]),
     resolvePresence: vi.fn(async () => ({ kind: 'local' as const })),
+    resolveAiSources: vi.fn(async () => [
+      { id: 'service:aokie-tts', kind: 'service' as const, refId: 'aokie-tts', name: 'Aokie TTS', category: 'Text-to-Speech', status: 'running', capabilities: ['speech'], url: 'http://127.0.0.1:17922', model: '', enabled: true },
+    ]),
     invokeService: vi.fn(async (_slug: string, operationId: string) => ({
       data: { operationId, result: { ok: true } },
     })),
@@ -376,6 +379,21 @@ describe('queryRecords — cross-form reads (plan §8.3 records.query)', () => {
     await expect(bridge.queryRecords('form-1')).resolves.toEqual([]);
     expect(d.queryResponses).not.toHaveBeenCalled();
     await expect(bridge.queryRecords('')).rejects.toThrow('form target');
+  });
+});
+
+describe('aiSources — host-resolved AI sources listing', () => {
+  it('passes the host-resolved listing through', async () => {
+    const bridge = createScreenBridge(deps());
+    const list = await bridge.aiSources();
+    expect(list).toEqual([
+      { id: 'service:aokie-tts', kind: 'service', refId: 'aokie-tts', name: 'Aokie TTS', category: 'Text-to-Speech', status: 'running', capabilities: ['speech'], url: 'http://127.0.0.1:17922', model: '', enabled: true },
+    ]);
+  });
+
+  it('resolves null when the host has no local desktop', async () => {
+    const bridge = createScreenBridge(deps({ resolveAiSources: vi.fn(async () => null) }));
+    await expect(bridge.aiSources()).resolves.toBeNull();
   });
 });
 

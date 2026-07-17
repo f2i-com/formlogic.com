@@ -35,6 +35,7 @@ const TRUSTED_ONLY_ACTIONS = new Set([
   'deleteRecords',
   'queryRecords',
   'presence',
+  'aiSources',
   // Subscription lane: live event/caption feeds carry call data.
   'eventsSubscribe',
   'captionsSubscribe',
@@ -79,6 +80,7 @@ export function createSdkRateLimiter() {
     // on a poll, so keep the same generous read budget as records().
     queryRecords: 60,
     presence: 30,
+    aiSources: 30,
     // Subscription lifecycle is churn-bounded; the PUSH volume is budgeted
     // separately per subscription (screenSubscriptions.ts).
     eventsSubscribe: 20,

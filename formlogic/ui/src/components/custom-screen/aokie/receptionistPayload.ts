@@ -5,7 +5,9 @@
 // per-call Configure Receptionist flow would push, so the two can never
 // disagree about what the bot should run. Kept in its own module (no React,
 // no SDK imports) so the pack contract test can pin the parity byte-for-byte.
-import { DEFAULT_PERSONA } from '../../../data/packs/aokieReceptionistPack';
+// DEFAULT_PERSONA comes from the LEAF module (not the pack) so this file never
+// imports the pack — keeping `pack → settingsScreen → receptionistPayload` acyclic.
+import { DEFAULT_PERSONA } from '../../../data/packs/aokieReceptionistPersona';
 
 /** The Receptionist Settings record fields the console edits. */
 export interface Draft {
@@ -124,15 +126,49 @@ export function resolveCorrectionEndpoint(
 }
 
 /**
- * The settings.set payload for a draft — the SAME composition rule as the
- * pack's Configure Receptionist flow (FLOW_AGENT_CONFIG), so "apply now" and
- * the per-call flow can never disagree about what the bot should run.
+ * SELF-CONTAINED payload composer — the ONE source of truth for
+ * buildAgentPayload AND the pack-owned Receptionist Settings screen's embedded
+ * copy. It has NO cross-scope free identifiers: `laneUrl` is an inner function,
+ * and the two constants it needs (the default persona and the AI-gateway base)
+ * arrive as PARAMETERS. That makes `composeAgentPayload.toString()` safe to
+ * embed into a sandboxed code screen even against a production-MINIFIED bundle
+ * (a minifier renaming a module-scope helper can't desync the embed, because
+ * there are no module-scope references to rename) — the same structural
+ * guarantee the transcript screen's self-contained `compareTurns` embed relies
+ * on. The composition rule mirrors the pack's Configure Receptionist flow
+ * (FLOW_AGENT_CONFIG in aokieReceptionistPack.ts): keep all three in lock-step;
+ * the parity tests pin flow ≡ buildAgentPayload ≡ embedded copy.
  */
-export function buildAgentPayload(d: Draft, services?: SourceService[]): Record<string, unknown> {
-  let persona = d.instructions.trim() || DEFAULT_PERSONA;
+export function composeAgentPayload(
+  d: Draft,
+  services: SourceService[] | undefined,
+  defaultPersona: string,
+  gatewayBase: string,
+): Record<string, unknown> {
+  // Inner lane resolver - same rule as the module laneUrl, but services and
+  // gatewayBase are closed-over params (no free identifiers). ASCII-only: this
+  // function is embedded verbatim into the sandbox screen via toString(), and
+  // the check-pack-screens gate rejects non-ASCII arrows/dashes in screen code.
+  function lane(source: string, custom: string, path: string, providerOk: boolean): string | undefined {
+    const src = source.trim();
+    const url = custom.trim();
+    if (!src || src === 'custom') return url;
+    if (src.indexOf('service:') === 0) {
+      if (!services) return undefined;
+      const sid = src.slice(8);
+      const svc = services.find((x) => x.id === sid && x.url);
+      return svc ? svc.url + path : '';
+    }
+    if (src.indexOf('provider:') === 0) {
+      if (!providerOk) return '';
+      return gatewayBase + encodeURIComponent(src.slice(9)) + path;
+    }
+    return url;
+  }
+  let persona = d.instructions.trim() || defaultPersona;
   const business = d.business_name.trim();
-  if (business) persona = `You are the phone receptionist for ${business}.\n` + persona;
-  // BUSINESS INFO grounding — SAME composition as the pack flows
+  if (business) persona = 'You are the phone receptionist for ' + business + '.\n' + persona;
+  // BUSINESS INFO grounding - SAME composition as the pack flows
   // (BUSINESS_INFO_BLOCK_JS in aokieReceptionistPack.ts); keep in lock-step.
   const info = d.business_info.trim().slice(0, 4000);
   if (info) {
@@ -143,7 +179,7 @@ export function buildAgentPayload(d: Draft, services?: SourceService[]): Record<
   let greeting = d.greeting.trim();
   if (!greeting) {
     greeting = business
-      ? `Thank you for calling ${business}! How can I help you today?`
+      ? 'Thank you for calling ' + business + '! How can I help you today?'
       : 'Thanks for calling! How can I help you today?';
   }
   const payload: Record<string, unknown> = {
@@ -151,22 +187,31 @@ export function buildAgentPayload(d: Draft, services?: SourceService[]): Record<
     greeting,
     ttsVoice: d.voice.trim(),
     aiModel: d.model.trim(),
-    aiEndpoint: laneUrl(d.llm_source, d.llm_endpoint, '/v1/chat/completions', services, true),
-    // provider: picks are GATED off the speech lanes (providerOk=false) — the
+    aiEndpoint: lane(d.llm_source, d.llm_endpoint, '/v1/chat/completions', true),
+    // provider: picks are GATED off the speech lanes (providerOk=false) - the
     // gateway serves no audio routes yet; they resolve to '' (plugin default).
-    sttEndpoint: laneUrl(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', services, false),
-    ttsEndpoint: laneUrl(d.tts_source, d.tts_endpoint, '/v1/audio/speech', services, false),
+    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', false),
+    ttsEndpoint: lane(d.tts_source, d.tts_endpoint, '/v1/audio/speech', false),
     // Correction lane (audioTranscript): a CHAT endpoint, so it composes with
-    // the LLM lane's path. Blank source → '' (clears = corrections use the
-    // main reply model). audioTranscriptModel is deliberately NOT pushed —
+    // the LLM lane's path. Blank source resolves to '' (corrections use the
+    // main reply model). audioTranscriptModel is deliberately NOT pushed -
     // the chosen service owns its model.
-    audioTranscriptEndpoint: resolveCorrectionEndpoint(d.correction_source, d.correction_endpoint, services),
+    audioTranscriptEndpoint: lane(d.correction_source, d.correction_endpoint, '/v1/chat/completions', true),
     aiReceptionist: d.reply_mode !== 'flow',
   };
-  // An unresolvable service pick (no Desktop list here — remote console)
+  // An unresolvable service pick (no Desktop list here - remote console)
   // omits its key: the per-call Configure flow resolves it on the desktop.
   for (const k of ['aiEndpoint', 'sttEndpoint', 'ttsEndpoint', 'audioTranscriptEndpoint']) {
     if (payload[k] === undefined) delete payload[k];
   }
   return payload;
+}
+
+/**
+ * The settings.set payload for a draft — a thin wrapper over the self-contained
+ * composeAgentPayload with the first-party constants bound. The console screen
+ * and the existing parity test call THIS; the sandbox embeds composeAgentPayload.
+ */
+export function buildAgentPayload(d: Draft, services?: SourceService[]): Record<string, unknown> {
+  return composeAgentPayload(d, services, DEFAULT_PERSONA, AI_GATEWAY_BASE);
 }

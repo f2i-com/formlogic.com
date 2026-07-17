@@ -96,6 +96,11 @@ const SDK_SHIM = `
     /** Where the app's connector hardware runtime is right now:
      *  { kind: 'local'|'remote'|'none', deviceName?, lastSeenAt? }. */
     presence: function(){ return call('presence'); },
+    /** The paired local desktop's AI-sources listing (managed services +
+     *  configured providers, capability-tagged) for lane pickers. Resolves an
+     *  array, or null when there is no local desktop (remote/demo — compose
+     *  lane endpoints without it and let the per-call flow resolve picks). */
+    aiSources: function(){ return call('aiSources'); },
     /** Live connector events (LOCAL desktop bridge only — nothing flows in remote mode; poll
      *  records instead, presence() tells you which). filter: { connectorId, names? }. The
      *  handler receives { kind, seq, data }: kind 'event' carries the event envelope in data;
@@ -419,6 +424,11 @@ export function CustomScreenRuntime({
           case 'presence': {
             if (!bridge) throw new Error('presence() is not available on this screen.');
             result = await bridge.presence();
+            break;
+          }
+          case 'aiSources': {
+            if (!bridge) throw new Error('aiSources() is not available on this screen.');
+            result = await bridge.aiSources();
             break;
           }
           case 'service': {
