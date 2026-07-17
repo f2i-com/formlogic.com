@@ -36,6 +36,53 @@ interface FlFormSdk {
 }
 declare const FormLogic: FlFormSdk;
 `;
+// Minimal typings for the sandbox's embedded modules (bundled from Preact; 'react' is an alias) so
+// TSX screens edit without red squiggles. esbuild never type-checks, so pragmatic `any`s are fine.
+const VENDOR_DTS = `
+declare namespace JSX {
+  interface Element {}
+  interface ElementClass {}
+  interface IntrinsicElements { [name: string]: any; }
+  interface IntrinsicAttributes { key?: any; }
+}
+declare module 'react' {
+  export function useState<T>(initial: T | (() => T)): [T, (next: T | ((prev: T) => T)) => void];
+  export function useEffect(effect: () => void | (() => void), deps?: any[]): void;
+  export function useMemo<T>(fn: () => T, deps?: any[]): T;
+  export function useCallback<T extends (...args: any[]) => any>(fn: T, deps?: any[]): T;
+  export function useRef<T = any>(initial?: T): { current: T };
+  export function useReducer(reducer: any, initial: any, init?: any): [any, (action: any) => void];
+  export function useContext(ctx: any): any;
+  export function createContext<T = any>(value?: T): any;
+  export function createElement(...args: any[]): any;
+  export const Fragment: any;
+  export type ReactNode = any;
+  const React: any;
+  export default React;
+}
+declare module 'react-dom' {
+  export function render(vnode: any, parent: Element | null): void;
+  const ReactDOM: any;
+  export default ReactDOM;
+}
+declare module 'react-dom/client' {
+  export function createRoot(container: Element | null): { render(children: any): void; unmount(): void };
+  export function hydrateRoot(container: Element | null, children: any): { render(children: any): void; unmount(): void };
+}
+declare module 'preact' {
+  export function render(vnode: any, parent: Element | null): void;
+  export function hydrate(vnode: any, parent: Element | null): void;
+  export function h(type: any, props?: any, ...children: any[]): any;
+  export const Fragment: any;
+  export class Component<P = any, S = any> { props: P; state: S; setState(next: Partial<S>): void; render(): any; }
+  export type ComponentChildren = any;
+}
+declare module 'preact/hooks' { export * from 'react'; }
+declare module 'preact/compat' { export * from 'react'; }
+declare module 'preact/jsx-runtime' { export const jsx: any, jsxs: any, jsxDEV: any, Fragment: any; }
+declare module 'react/jsx-runtime' { export const jsx: any, jsxs: any, jsxDEV: any, Fragment: any; }
+`;
+
 const APP_SDK_DTS = COMMON + `
 interface FlFormRef { formId: string; displayName: string; fields: FlField[]; }
 interface FlAppSdk {
@@ -60,7 +107,7 @@ declare const FormLogic: FlAppSdk;
 
 let compilerConfigured = false;
 
-export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height, onMount: onMountProp }: CodeEditorProps) {
+export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height, path, onMount: onMountProp }: CodeEditorProps) {
   const onMount: OnMount = useCallback((editor, m) => {
     const ts = m.languages.typescript;
     if (!compilerConfigured) {
@@ -70,12 +117,17 @@ export default function MonacoEditorImpl({ value, onChange, language = 'typescri
         allowNonTsExtensions: true,
         noEmit: true,
         strict: false,
+        // TSX screens: JSX parses in .tsx models (needs the `path` prop so the model uri carries the
+        // extension) with the same automatic-runtime shape the screen bundler compiles with.
+        jsx: ts.JsxEmit.ReactJSX,
+        jsxImportSource: 'preact',
       });
       // The screen is a top-level script, not a module — don't flag missing exports/top-level await etc.
       ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false, diagnosticCodesToIgnore: [1375, 1378] });
       compilerConfigured = true;
     }
     ts.typescriptDefaults.addExtraLib(sdk === 'app' ? APP_SDK_DTS : FORM_SDK_DTS, 'ts:formlogic-sdk.d.ts');
+    ts.typescriptDefaults.addExtraLib(VENDOR_DTS, 'ts:formlogic-screen-vendor.d.ts');
     onMountProp?.(editor);
   }, [sdk, onMountProp]);
 
@@ -85,6 +137,7 @@ export default function MonacoEditorImpl({ value, onChange, language = 'typescri
     <Editor
       height={height ?? '100%'}
       language={language}
+      path={path}
       theme={dark ? 'vs-dark' : 'light'}
       value={value}
       onChange={(v) => onChange(v ?? '')}

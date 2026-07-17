@@ -208,7 +208,7 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
       </div>
       <div className="flex-1 min-h-0">
         {activeFile ? (
-          <CodeEditor key={activeFile.path} value={activeFile.content} onChange={(v) => setContent(activeFile.path, v)} language={langOf(activeFile.path)} sdk={sdk} />
+          <CodeEditor key={activeFile.path} value={activeFile.content} onChange={(v) => setContent(activeFile.path, v)} language={langOf(activeFile.path)} path={activeFile.path} sdk={sdk} />
         ) : (
           <div className="h-full flex items-center justify-center text-sm text-gray-400 dark:text-slate-500">No file selected</div>
         )}

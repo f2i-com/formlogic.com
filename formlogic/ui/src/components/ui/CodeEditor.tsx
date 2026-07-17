@@ -5,6 +5,8 @@ export interface CodeEditorProps {
   onChange: (value: string) => void;
   /** Monaco language id. Defaults to 'typescript'. Use 'html' / 'css' for the markup/style tabs. */
   language?: string;
+  /** Model path (e.g. 'index.tsx') — the extension tells the TS worker to parse JSX in .tsx files. */
+  path?: string;
   /** Which FormLogic SDK type defs to surface for autocomplete (only meaningful for the code tab). */
   sdk?: 'form' | 'app';
   height?: string | number;

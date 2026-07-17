@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp } from 'lucide-react';
+import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -18,6 +18,39 @@ const STARTER: ScreenFile[] = [
   { path: 'index.html', content: '<div id="app"></div>' },
   { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }' },
   { path: 'index.ts', content: '// window.FormLogic is the SDK: submit(answers), records(), currentUser(), context().\n// Import other files with relative paths, e.g. import { greet } from "./util";\nconst app = document.getElementById("app")!;\napp.innerHTML = "<h1>Hello from TypeScript</h1>";\n' },
+];
+
+// React-style components — no index.html needed (the bundler mounts into a default <div id="root">).
+// 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual.
+const STARTER_TSX: ScreenFile[] = [
+  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n' },
+  {
+    path: 'index.tsx',
+    content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact).
+// window.FormLogic is the SDK: submit(answers), records(), currentUser(), context().
+import { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+
+function App() {
+  const [title, setTitle] = useState('');
+  const [records, setRecords] = useState<FlRecord[]>([]);
+
+  useEffect(() => {
+    FormLogic.context().then((ctx) => setTitle(ctx.title));
+    FormLogic.records({ limit: 20 }).then(setRecords);
+  }, []);
+
+  return (
+    <main>
+      <h1>{title || 'My screen'}</h1>
+      <p>{records.length} record{records.length === 1 ? '' : 's'} so far.</p>
+    </main>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<App />);
+`,
+  },
 ];
 
 const BLANK: ScreenFile[] = [
@@ -182,7 +215,7 @@ export default function CustomScreenStudio() {
             <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
           </div>
           <p className="text-[11px] leading-tight text-gray-400 dark:text-slate-500 truncate hidden sm:block">
-            {title ? `A coded frontend for “${title}”` : 'A coded frontend for this form'} — HTML, CSS &amp; TypeScript over the FormLogic SDK
+            {title ? `A coded frontend for “${title}”` : 'A coded frontend for this form'} — HTML, CSS &amp; TypeScript/TSX over the FormLogic SDK
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -300,24 +333,29 @@ export default function CustomScreenStudio() {
                 </div>
                 <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">No custom code yet</h2>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Replace the standard form page with your own HTML, CSS &amp; TypeScript frontend — it reads
-                  and submits this form&apos;s data through the FormLogic SDK.
+                  Replace the standard form page with your own HTML, CSS &amp; TypeScript frontend — including
+                  React-style TSX components — reading and submitting this form&apos;s data through the FormLogic SDK.
                 </p>
-                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+                <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                  <button type="button" onClick={() => startWith(STARTER_TSX.map((f) => ({ ...f })))} className={START_CARD}>
+                    <Atom className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">React-style TSX</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Components with hooks — <code>import</code> from &lsquo;react&rsquo;, rendered by Preact. No index.html needed.</span>
+                  </button>
+                  <button type="button" onClick={() => startWith(STARTER.map((f) => ({ ...f })))} className={START_CARD}>
+                    <LayoutTemplate className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">HTML + TypeScript</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">A tiny HTML + CSS + TypeScript scaffold wired to the SDK.</span>
+                  </button>
                   <button type="button" onClick={() => startWith(BLANK.map((f) => ({ ...f })))} className={START_CARD}>
                     <FilePlus2 className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
                     <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Start blank</span>
                     <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">An empty index.html — build everything yourself.</span>
                   </button>
-                  <button type="button" onClick={() => startWith(STARTER.map((f) => ({ ...f })))} className={START_CARD}>
-                    <LayoutTemplate className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
-                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Use starter template</span>
-                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">A tiny HTML + CSS + TypeScript scaffold wired to the SDK.</span>
-                  </button>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className={START_CARD}>
                     <FolderUp className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
                     <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Upload files or folder</span>
-                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Import existing .html / .css / .ts files.</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Import existing .html / .css / .ts / .tsx files.</span>
                   </button>
                 </div>
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5">

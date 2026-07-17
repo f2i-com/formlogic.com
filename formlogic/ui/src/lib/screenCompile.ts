@@ -1,17 +1,33 @@
-// Compiles a custom-screen's TypeScript source to runnable JS for the sandboxed iframe.
+// Compiles a custom-screen's TypeScript/TSX source to runnable JS for the sandboxed iframe.
 //
 // esbuild-wasm is lazy-loaded (a separate chunk + the wasm fetched on first use) so it never weighs on
 // the public form pages — those run the already-compiled `js`. We only compile here: (1) in the Studio on
-// save, and (2) at render time as a fallback when a screen has `ts` but no precompiled `js` (e.g. one an AI
-// wrote over MCP). Plain JavaScript is valid input too (TS is a superset), so this also handles JS screens.
+// save, and (2) at render time as a fallback when a screen has `ts`/`files` but no precompiled `js`
+// (e.g. one an AI wrote over MCP). Plain JavaScript is valid input too (TS is a superset).
+//
+// TSX/JSX: components run on PREACT, bundled into the output from an embedded module table
+// (screenVendorModules — lazy chunk). 'react' / 'react-dom/client' alias to preact/compat, so normal
+// React-style code (`import { useState } from 'react'` + `createRoot(...)`) works unchanged inside the
+// sandbox. JSX uses the automatic runtime (jsxImportSource: 'preact') — no pragma needed.
 
 import wasmURL from 'esbuild-wasm/esbuild.wasm?url'; // just a URL string — the wasm is fetched on demand
+import type { Plugin } from 'esbuild-wasm';
 
 type Esbuild = typeof import('esbuild-wasm');
+/** The slice of the esbuild API the bundler needs — lets tests inject the native `esbuild` package. */
+export type EsbuildLike = Pick<Esbuild, 'build'>;
+type Vendors = typeof import('./screenVendorModules');
 
 let initPromise: Promise<Esbuild> | null = null;
+let esbuildOverride: EsbuildLike | null = null;
 
-function ensureEsbuild(): Promise<Esbuild> {
+/** Tests only: inject the native `esbuild` package so bundling runs without the wasm loader. */
+export function __setEsbuildForTests(impl: EsbuildLike | null): void {
+  esbuildOverride = impl;
+}
+
+function ensureEsbuild(): Promise<EsbuildLike> {
+  if (esbuildOverride) return Promise.resolve(esbuildOverride);
   if (!initPromise) {
     initPromise = (async () => {
       const mod = await import('esbuild-wasm');
@@ -23,6 +39,14 @@ function ensureEsbuild(): Promise<Esbuild> {
     });
   }
   return initPromise;
+}
+
+let vendorsPromise: Promise<Vendors> | null = null;
+
+/** The embedded preact/react module table — its ~30KB of sources load lazily with the compiler. */
+function ensureVendors(): Promise<Vendors> {
+  if (!vendorsPromise) vendorsPromise = import('./screenVendorModules');
+  return vendorsPromise;
 }
 
 export interface CompileResult {
@@ -61,10 +85,76 @@ function resolveRelative(importer: string, spec: string, map: Map<string, string
 
 const ENTRY_CANDIDATES = ['index.tsx', 'index.ts', 'main.tsx', 'main.ts', 'app.tsx', 'app.ts'];
 
+/** The virtual-filesystem + embedded-vendor resolver shared by every screen bundle. */
+function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
+  return {
+    name: 'formlogic-vfs',
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => {
+        if (args.kind === 'entry-point') return { path: normalizePath(args.path), namespace: 'vfs' };
+        // Imports INSIDE an embedded vendor module (e.g. compat → 'preact') stay in the table.
+        if (args.namespace === 'vendor') {
+          const id = vendors.resolveVendorId(args.path);
+          return id
+            ? { path: id, namespace: 'vendor' }
+            : { errors: [{ text: `Unresolvable built-in import '${args.path}'` }] };
+        }
+        if (args.path.startsWith('.')) {
+          const resolved = resolveRelative(args.importer, args.path, map);
+          return resolved ? { path: resolved, namespace: 'vfs' } : { errors: [{ text: `Cannot find module '${args.path}' (imported by ${args.importer})` }] };
+        }
+        const id = vendors.resolveVendorId(args.path);
+        if (id) return { path: id, namespace: 'vendor' };
+        return { errors: [{ text: `npm imports aren't supported here: '${args.path}'. Built-ins: ${vendors.VENDOR_IMPORT_HINT} (JSX components run on Preact). Use relative imports for your own files.` }] };
+      });
+      build.onLoad({ filter: /.*/, namespace: 'vendor' }, (args) => ({
+        contents: vendors.VENDOR_MODULES[args.path] ?? '',
+        loader: 'js',
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'vfs' }, (args) => {
+        const contents = map.get(args.path);
+        if (contents === undefined) return { errors: [{ text: `Missing file: ${args.path}` }] };
+        const ext = args.path.slice(args.path.lastIndexOf('.') + 1);
+        const loader = ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : 'js';
+        return { contents, loader };
+      });
+    },
+  };
+}
+
+/** Bundle one entry against a virtual file map. All screen compilation funnels through here. */
+async function runBundle(map: Map<string, string>, entryPath: string): Promise<{ js: string; error?: string }> {
+  try {
+    const [esbuild, vendors] = await Promise.all([ensureEsbuild(), ensureVendors()]);
+    const result = await esbuild.build({
+      entryPoints: [entryPath],
+      bundle: true,
+      write: false,
+      format: 'iife',
+      target: 'es2020',
+      logLevel: 'silent',
+      // TSX/JSX → the automatic runtime on preact (aliased from react too). No effect on .ts/.js files.
+      jsx: 'automatic',
+      jsxImportSource: 'preact',
+      plugins: [screenVfsPlugin(map, vendors)],
+    });
+    // esbuild-wasm names the in-memory output '<stdout>', so match .js OR fall back to the first output.
+    const jsOut = result.outputFiles?.find((o) => o.path.endsWith('.js')) ?? result.outputFiles?.[0];
+    return { js: jsOut?.text ?? '' };
+  } catch (e) {
+    const err = e as { errors?: Array<{ text: string; location?: { line: number } | null }> };
+    if (err?.errors?.length) {
+      const f = err.errors[0];
+      return { js: '', error: `${f.text}${f.location ? ` (line ${f.location.line})` : ''}` };
+    }
+    return { js: '', error: e instanceof Error ? e.message : 'Bundle failed' };
+  }
+}
+
 /**
- * Bundle a multi-file screen project (TypeScript/JS with relative imports) into one runnable JS via
+ * Bundle a multi-file screen project (TypeScript/TSX/JS with relative imports) into one runnable JS via
  * esbuild-wasm + a virtual filesystem. Returns the shell html, concatenated css, and the bundled js.
- * npm/bare imports are not supported (the sandbox has no network) — only relative imports between files.
+ * npm imports resolve only against the embedded built-ins (react/preact) — the sandbox has no network.
  */
 export async function bundleScreenFiles(files: ScreenFile[], entry?: string): Promise<{ html: string; css: string; js: string; error?: string }> {
   const map = new Map(files.map((f) => [normalizePath(f.path), f.content]));
@@ -75,47 +165,8 @@ export async function bundleScreenFiles(files: ScreenFile[], entry?: string): Pr
   if (!entryPath) {
     return { html, css, js: '', error: 'No entry file — add an index.ts (or index.tsx).' };
   }
-  try {
-    const esbuild = await ensureEsbuild();
-    const result = await esbuild.build({
-      entryPoints: [entryPath],
-      bundle: true,
-      write: false,
-      format: 'iife',
-      target: 'es2020',
-      logLevel: 'silent',
-      plugins: [{
-        name: 'formlogic-vfs',
-        setup(build) {
-          build.onResolve({ filter: /.*/ }, (args) => {
-            if (args.kind === 'entry-point') return { path: normalizePath(args.path), namespace: 'vfs' };
-            if (args.path.startsWith('.')) {
-              const resolved = resolveRelative(args.importer, args.path, map);
-              return resolved ? { path: resolved, namespace: 'vfs' } : { errors: [{ text: `Cannot find module '${args.path}' (imported by ${args.importer})` }] };
-            }
-            return { errors: [{ text: `Bare/npm imports aren't supported here: '${args.path}'. Use relative imports between your files.` }] };
-          });
-          build.onLoad({ filter: /.*/, namespace: 'vfs' }, (args) => {
-            const contents = map.get(args.path);
-            if (contents === undefined) return { errors: [{ text: `Missing file: ${args.path}` }] };
-            const ext = args.path.slice(args.path.lastIndexOf('.') + 1);
-            const loader = ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : 'js';
-            return { contents, loader };
-          });
-        },
-      }],
-    });
-    // esbuild-wasm names the in-memory output '<stdout>', so match .js OR fall back to the first output.
-    const jsOut = result.outputFiles.find((o) => o.path.endsWith('.js')) ?? result.outputFiles[0];
-    return { html, css, js: jsOut?.text ?? '' };
-  } catch (e) {
-    const err = e as { errors?: Array<{ text: string; location?: { line: number } | null }> };
-    if (err?.errors?.length) {
-      const f = err.errors[0];
-      return { html, css, js: '', error: `${f.text}${f.location ? ` (line ${f.location.line})` : ''}` };
-    }
-    return { html, css, js: '', error: e instanceof Error ? e.message : 'Bundle failed' };
-  }
+  const r = await runBundle(map, entryPath);
+  return { html, css, js: r.js, error: r.error };
 }
 
 /**
@@ -139,31 +190,19 @@ export async function resolveScreenAssets(screen: { html?: string; css?: string;
 }
 
 /**
- * Transpile TypeScript (or JS) custom-screen source to ES2020 JS. Strips types and downlevels syntax;
- * a single self-contained file (no bundling/imports resolution). Never throws — returns { js, error }.
+ * Compile single-file TypeScript/TSX (or JS) custom-screen source to ES2020 JS. Runs through the
+ * bundler so JSX and the embedded react/preact built-ins work in single-file screens too. Tries the
+ * TSX dialect first (it parses plain TS identically, apart from angle-bracket type assertions —
+ * `<Foo>value` — which fall back to a plain-TS pass). Never throws — returns { js, error }.
  */
 export async function compileScreenCode(source: string): Promise<CompileResult> {
   const src = source ?? '';
   if (src.trim() === '') {
     return { js: '' };
   }
-  try {
-    const esbuild = await ensureEsbuild();
-    const out = await esbuild.transform(src, {
-      loader: 'ts',
-      target: 'es2020',
-      format: 'iife',
-      logLevel: 'silent',
-    });
-    return { js: out.code };
-  } catch (e) {
-    // esbuild errors carry a structured `errors` array; surface the first message + location.
-    const err = e as { errors?: Array<{ text: string; location?: { line: number; column: number } }> };
-    if (err?.errors?.length) {
-      const first = err.errors[0];
-      const loc = first.location ? ` (line ${first.location.line})` : '';
-      return { js: '', error: `${first.text}${loc}` };
-    }
-    return { js: '', error: e instanceof Error ? e.message : 'Compile failed' };
-  }
+  const tsx = await runBundle(new Map([['index.tsx', src]]), 'index.tsx');
+  if (!tsx.error) return { js: tsx.js };
+  const ts = await runBundle(new Map([['index.ts', src]]), 'index.ts');
+  if (!ts.error) return { js: ts.js };
+  return { js: '', error: tsx.error };
 }

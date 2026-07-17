@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Wand2, Loader2, Save, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp } from 'lucide-react';
+import { ArrowLeft, Wand2, Loader2, Save, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -19,6 +19,44 @@ const STARTER: ScreenFile[] = [
   { path: 'index.html', content: '<div id="app"></div>' },
   { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }' },
   { path: 'index.ts', content: '// window.FormLogic (app SDK): context(), forms(), submit(formId, answers), records(formId), navigate(formId).\n// Import other files with relative paths, e.g. import { Card } from "./components/Card";\nconst app = document.getElementById("app")!;\nFormLogic.context().then((ctx) => {\n  app.innerHTML = "<h1>" + ctx.appName + "</h1>";\n});\n' },
+];
+
+// React-style components — no index.html needed (the bundler mounts into a default <div id="root">).
+// 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual.
+const STARTER_TSX: ScreenFile[] = [
+  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n' },
+  {
+    path: 'index.tsx',
+    content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact).
+// window.FormLogic (app SDK): context(), forms(), submit(formId, answers), records(formId), navigate(formId).
+import { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+
+function App() {
+  const [ctx, setCtx] = useState<{ appName: string; forms: FlFormRef[] } | null>(null);
+
+  useEffect(() => {
+    FormLogic.context().then(setCtx);
+  }, []);
+
+  if (!ctx) return <p>Loading…</p>;
+  return (
+    <main>
+      <h1>{ctx.appName}</h1>
+      <ul>
+        {ctx.forms.map((f) => (
+          <li key={f.formId}>
+            <button onClick={() => FormLogic.navigate(f.formId)}>{f.displayName}</button>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<App />);
+`,
+  },
 ];
 
 const BLANK: ScreenFile[] = [
@@ -261,24 +299,30 @@ export default function AppHomeStudio() {
                 </div>
                 <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">No custom code yet</h2>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Replace the app&apos;s home screen with your own HTML, CSS &amp; TypeScript frontend — it can
-                  read, submit and navigate across all of this app&apos;s forms through the FormLogic SDK.
+                  Replace the app&apos;s home screen with your own HTML, CSS &amp; TypeScript frontend —
+                  including React-style TSX components — reading, submitting and navigating across all of
+                  this app&apos;s forms through the FormLogic SDK.
                 </p>
-                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+                <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                  <button type="button" onClick={() => startWith(STARTER_TSX.map((f) => ({ ...f })))} className={START_CARD}>
+                    <Atom className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">React-style TSX</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Components with hooks — <code>import</code> from &lsquo;react&rsquo;, rendered by Preact. No index.html needed.</span>
+                  </button>
+                  <button type="button" onClick={() => startWith(STARTER.map((f) => ({ ...f })))} className={START_CARD}>
+                    <LayoutTemplate className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">HTML + TypeScript</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">A tiny HTML + CSS + TypeScript scaffold wired to the app SDK.</span>
+                  </button>
                   <button type="button" onClick={() => startWith(BLANK.map((f) => ({ ...f })))} className={START_CARD}>
                     <FilePlus2 className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
                     <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Start blank</span>
                     <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">An empty index.html — build everything yourself.</span>
                   </button>
-                  <button type="button" onClick={() => startWith(STARTER.map((f) => ({ ...f })))} className={START_CARD}>
-                    <LayoutTemplate className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
-                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Use starter template</span>
-                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">A tiny HTML + CSS + TypeScript scaffold wired to the app SDK.</span>
-                  </button>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className={START_CARD}>
                     <FolderUp className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
                     <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Upload files or folder</span>
-                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Import existing .html / .css / .ts files.</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Import existing .html / .css / .ts / .tsx files.</span>
                   </button>
                 </div>
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5">
