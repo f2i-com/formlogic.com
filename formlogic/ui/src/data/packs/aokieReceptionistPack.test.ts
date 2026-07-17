@@ -1,4 +1,4 @@
-// Structural validation for the Aokie Receptionist pack — the pack is data, so a broken
+﻿// Structural validation for the Aokie Receptionist pack â€” the pack is data, so a broken
 // cross-reference (@pack: form ref, flow slug, logic form key, SDK screen id) would only
 // surface at import/run time. These tests pin every reference the importer/runtime resolves.
 import { readFileSync, readdirSync } from 'node:fs';
@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { aokieReceptionistPack as pack, DEFAULT_PERSONA } from './aokieReceptionistPack';
 import { AOKIE_CALL_TRANSCRIPT_SCREEN, compareTurns } from './aokieCallTranscriptScreen';
+import { AOKIE_DEVICE_SETUP_SCREEN } from './aokieDeviceSetupScreen';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { packCatalog } from './index';
 import {
@@ -15,7 +16,7 @@ import {
   type SourceService,
 } from '../../components/custom-screen/aokie/receptionistPayload';
 
-describe('aokieReceptionistPack — shared persona (audit CROSS-SCHEMA-001)', () => {
+describe('aokieReceptionistPack â€” shared persona (audit CROSS-SCHEMA-001)', () => {
   it("matches the cross-repo persona fixture the plugin's DEFAULT_AGENT_PERSONA is locked to", () => {
     const fixture = JSON.parse(
       readFileSync(join(__dirname, '../../../../../docs/contracts/aokie-persona.v1.json'), 'utf8')
@@ -48,7 +49,7 @@ function collectPackRefs(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
-// The v0 executor's node set (docs/FORMLOGIC_FLOWS.md §4) — a pack flow using anything
+// The v0 executor's node set (docs/FORMLOGIC_FLOWS.md Â§4) â€” a pack flow using anything
 // else would fail every run with invalid_flow.
 const V0_NODE_TYPES = new Set([
   'input',
@@ -63,12 +64,12 @@ const V0_NODE_TYPES = new Set([
   'formlogic_update_response',
   'connector_request',
   'aokie_speak',
-  // Read-only Desktop services listing — resolves `service:<id>` source picks
+  // Read-only Desktop services listing â€” resolves `service:<id>` source picks
   // to live loopback URLs at configure time (implemented in BOTH runners).
   'desktop_services',
 ]);
 
-// MVP event names the Aokie plugin emits (docs/AOKIE_PLUGIN_CONTRACT.md §3).
+// MVP event names the Aokie plugin emits (docs/AOKIE_PLUGIN_CONTRACT.md Â§3).
 const AOKIE_EVENTS = new Set([
   'aokie.dongle.detected', 'aokie.dongle.driver_required', 'aokie.dongle.ready', 'aokie.dongle.error',
   'aokie.phone.pairing_started', 'aokie.phone.paired', 'aokie.phone.disconnected',
@@ -79,8 +80,8 @@ const AOKIE_EVENTS = new Set([
   'aokie.hardware.error',
 ]);
 
-describe('aokieReceptionistPack — forms', () => {
-  it('ships the plan §12.2 record set', () => {
+describe('aokieReceptionistPack â€” forms', () => {
+  it('ships the plan Â§12.2 record set', () => {
     for (const key of [
       'customers', 'calls', 'transcript-turns', 'sms-threads', 'sms-messages',
       'appointments', 'orders', 'follow-up-tasks', 'hardware-events',
@@ -95,7 +96,7 @@ describe('aokieReceptionistPack — forms', () => {
         if (field.type !== 'linked_record') continue;
         const target = String(field.properties.targetFormId ?? '');
         expect(target.startsWith('@pack:'), `${form.packFormId}.${field.id} must use @pack:`).toBe(true);
-        expect(FORM_IDS.has(target.slice(6)), `${form.packFormId}.${field.id} → ${target}`).toBe(true);
+        expect(FORM_IDS.has(target.slice(6)), `${form.packFormId}.${field.id} â†’ ${target}`).toBe(true);
       }
     }
   });
@@ -112,7 +113,7 @@ describe('aokieReceptionistPack — forms', () => {
     }
   });
 
-  it('correlation keys are WRITABLE fields — hidden would be stripped server-side (anti-tamper)', () => {
+  it('correlation keys are WRITABLE fields â€” hidden would be stripped server-side (anti-tamper)', () => {
     // The platform treats `hidden` as server-authoritative: client-submitted values are
     // dropped on submit. App-logic-written correlation keys must therefore be plain fields,
     // or call.answered/call.ended can never match their row (verified live on formlogic.local).
@@ -133,7 +134,7 @@ describe('aokieReceptionistPack — forms', () => {
   });
 });
 
-describe('aokieReceptionistPack — app', () => {
+describe('aokieReceptionistPack â€” app', () => {
   it('app membership + roles reference declared forms only', () => {
     for (const f of app.forms) {
       expect(FORM_IDS.has(f.packFormId), `app form '${f.packFormId}'`).toBe(true);
@@ -141,7 +142,7 @@ describe('aokieReceptionistPack — app', () => {
     for (const role of app.roles) {
       for (const perm of role.permissions) {
         if (perm.packFormId === null) continue; // app-level declarative grants
-        expect(FORM_IDS.has(perm.packFormId), `${role.name} → '${perm.packFormId}'`).toBe(true);
+        expect(FORM_IDS.has(perm.packFormId), `${role.name} â†’ '${perm.packFormId}'`).toBe(true);
       }
     }
   });
@@ -158,7 +159,7 @@ describe('aokieReceptionistPack — app', () => {
     expect(rPerms).not.toContain('connector.aokie.dongle.installDriver');
   });
 
-  it('logic scripts reference forms by stable packFormIds — never rename-able labels (audit FL-007)', () => {
+  it('logic scripts reference forms by stable packFormIds â€” never rename-able labels (audit FL-007)', () => {
     const packFormIds = new Set(app.forms.map((f) => f.packFormId));
     const sources = (app.customLogic?.scripts ?? []).map((s) => s.source).join('\n');
     const keys = [...sources.matchAll(/formKey:\s*'([^']+)'/g)].map((m) => m[1]);
@@ -236,7 +237,7 @@ describe('aokieReceptionistPack — app', () => {
   });
 
   it('SDK screens referenced by the pack are registered in sdkScreenRegistry', () => {
-    // Node env — read the registration calls from source instead of importing React modules.
+    // Node env â€” read the registration calls from source instead of importing React modules.
     const dir = join(__dirname, '..', '..', 'components', 'custom-screen');
     const registered = new Set<string>();
     const walk = (d: string) => {
@@ -256,14 +257,16 @@ describe('aokieReceptionistPack — app', () => {
       const cs = form.customScreen;
       if (cs?.kind === 'sdk' && cs.sdkScreen?.screenId) used.push(cs.sdkScreen.screenId);
     }
-    expect(used.sort()).toEqual(['aokie-live-call', 'aokie-pairing', 'aokie-receptionist-settings']);
+    // Device Setup ('aokie-pairing') is pack-owned CODE now (plan §8.4 port #4);
+    // the remaining compiled references are the last two rungs of the ladder.
+    expect(used.sort()).toEqual(['aokie-live-call', 'aokie-receptionist-settings']);
     for (const id of used) {
       expect(registered.has(id), `SDK screen '${id}' is not registered`).toBe(true);
     }
   });
 });
 
-describe('aokieReceptionistPack — pack-owned Calls transcript record screen (plan APP-505 PoC)', () => {
+describe('aokieReceptionistPack â€” pack-owned Calls transcript record screen (plan APP-505 PoC)', () => {
   const calls = pack.forms.find((f) => f.packFormId === 'calls');
   const rs = calls?.customScreen?.recordScreen;
 
@@ -274,7 +277,7 @@ describe('aokieReceptionistPack — pack-owned Calls transcript record screen (p
     expect(typeof rs?.js).toBe('string');
     expect((rs?.js ?? '').length).toBeGreaterThan(0);
     expect(rs?.js).toBe(AOKIE_CALL_TRANSCRIPT_SCREEN.js);
-    // The generic related panel keeps hiding the group this widget renders itself —
+    // The generic related panel keeps hiding the group this widget renders itself â€”
     // packFormId-qualified because follow-up-tasks also link via a call_link field.
     expect(rs?.consumesRelated).toEqual(['transcript-turns.call_link']);
   });
@@ -290,7 +293,7 @@ describe('aokieReceptionistPack — pack-owned Calls transcript record screen (p
     // Corrected-turn affordance: rows the audio model re-heard carry the tooltip.
     expect(js).toContain("f.source === 'audio_model'");
     expect(js).toContain('Corrected by the audio model');
-    // The embedded comparator IS the exported (unit-tested) helper — one source of truth.
+    // The embedded comparator IS the exported (unit-tested) helper â€” one source of truth.
     expect(js).toContain(compareTurns.toString());
     // Data path: record screens read the record's related groups via the bridge.
     expect(js).toContain('FL.related()');
@@ -306,19 +309,19 @@ describe('aokieReceptionistPack — pack-owned Calls transcript record screen (p
     const t = (spokenAt: string | null, turnIndex: number | null, submittedAt: string, id: string) =>
       ({ spokenAt, turnIndex, submittedAt, id });
     // A caller line spoken OVER a bot reply (back-dated spokenAt, committed AFTER it)
-    // must sort where it was SAID — the exact overlap case the stamp exists for.
+    // must sort where it was SAID â€” the exact overlap case the stamp exists for.
     const bot = t('2026-07-17T00:00:05Z', 4, '2026-07-17T00:00:06Z', 'bot');
     const overlap = t('2026-07-17T00:00:03Z', 5, '2026-07-17T00:00:09Z', 'overlap');
     expect([bot, overlap].sort(compareTurns).map((x) => x.id)).toEqual(['overlap', 'bot']);
-    // Stamp-less rows (older plugins) fall back to the turn number…
+    // Stamp-less rows (older plugins) fall back to the turn numberâ€¦
     const a = t(null, 2, '2026-07-17T00:00:01Z', 'a');
     const b = t(null, 1, '2026-07-17T00:00:02Z', 'b');
     expect([a, b].sort(compareTurns).map((x) => x.id)).toEqual(['b', 'a']);
-    // …a stamped row against a stamp-less one also uses the turn number…
+    // â€¦a stamped row against a stamp-less one also uses the turn numberâ€¦
     const c = t('2026-07-17T00:00:01Z', 3, '2026-07-17T00:00:01Z', 'c');
     const d = t(null, 2, '2026-07-17T00:00:05Z', 'd');
     expect([c, d].sort(compareTurns).map((x) => x.id)).toEqual(['d', 'c']);
-    // …and submittedAt breaks the remaining ties.
+    // â€¦and submittedAt breaks the remaining ties.
     const e = t(null, null, '2026-07-17T00:00:02Z', 'e');
     const f = t(null, null, '2026-07-17T00:00:01Z', 'f');
     expect([e, f].sort(compareTurns).map((x) => x.id)).toEqual(['f', 'e']);
@@ -329,7 +332,7 @@ describe('aokieReceptionistPack — pack-owned Calls transcript record screen (p
   });
 });
 
-describe('aokieReceptionistPack — flows & bindings', () => {
+describe('aokieReceptionistPack â€” flows & bindings', () => {
   it('ships the starter flows on valid v0 graphs', () => {
     expect([...FLOW_SLUGS].sort()).toEqual([
       'after-call-actions',
@@ -367,7 +370,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
           const ref = node.data?.[key];
           if (typeof ref !== 'string' || !ref.startsWith('@pack:')) continue;
           seen += 1;
-          expect(FORM_IDS.has(ref.slice(6)), `${flow.slug} node '${node.id}' → ${ref}`).toBe(true);
+          expect(FORM_IDS.has(ref.slice(6)), `${flow.slug} node '${node.id}' â†’ ${ref}`).toBe(true);
         }
       }
     }
@@ -377,13 +380,13 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   it('bindings reference declared flows, contract events, and declared forms', () => {
     expect(pack.flowBindings?.length).toBe(16);
     for (const binding of pack.flowBindings ?? []) {
-      expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
+      expect(FLOW_SLUGS.has(binding.flow), `binding â†’ flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
       expect(['sync', 'async', 'background', 'manual']).toContain(binding.mode);
       for (const ref of collectPackRefs(binding)) {
-        expect(FORM_IDS.has(ref), `binding '${binding.flow}' → @pack:${ref}`).toBe(true);
+        expect(FORM_IDS.has(ref), `binding '${binding.flow}' â†’ @pack:${ref}`).toBe(true);
       }
-      // Live-call decisions must stay inside the 2–4s budget with a spoken fallback (§9.7).
+      // Live-call decisions must stay inside the 2â€“4s budget with a spoken fallback (Â§9.7).
       if (binding.mode === 'sync') {
         expect(binding.timeoutMs).toBeGreaterThanOrEqual(2000);
         expect(binding.timeoutMs).toBeLessThanOrEqual(4000);
@@ -402,7 +405,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 });
 
-describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
+describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () => {
   const settingsForm = pack.forms.find((f) => f.packFormId === 'receptionist-settings')!;
   const replyModeField = settingsForm.fields.find((f) => f.id === 'reply_mode');
   const configureFlow = (pack.flows ?? []).find((f) => f.slug === 'configure-receptionist')!;
@@ -436,21 +439,21 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(payload.aiModel).toBe('$nodes.cfg.model');
     // Correction lane: the flow resolves the record's correction_source into
     // the plugin's audioTranscriptEndpoint per call. The MODEL key is retired
-    // from the console — the flow must never push audioTranscriptModel.
+    // from the console â€” the flow must never push audioTranscriptModel.
     expect(payload.audioTranscriptEndpoint).toBe('$nodes.cfg.audioTranscriptEndpoint');
     expect('audioTranscriptModel' in payload).toBe(false);
   });
 
-  it('declares connector.aokie.settings.set — the same command, so no capability change is needed for the richer payload', () => {
+  it('declares connector.aokie.settings.set â€” the same command, so no capability change is needed for the richer payload', () => {
     // The runtime capability gate (desktop runner.rs connector_request / TS nodes.ts
     // requireConnectorCapability) matches on exact `connector.<id>.<command>` or the
-    // wildcard `connector.<id>.*` — it never inspects individual payload keys — so adding
+    // wildcard `connector.<id>.*` â€” it never inspects individual payload keys â€” so adding
     // aiReceptionist to settings.set's payload needs no new nodeCapabilities entry.
     expect(configureFlow.nodeCapabilities).toContain('connector.aokie.settings.set');
   });
 
   // FLOW_AGENT_CONFIG is an inline (unexported) logic_block expression string; evaluate it
-  // exactly as the executor does — as a plain JS expression with `nodes` in scope — rather
+  // exactly as the executor does â€” as a plain JS expression with `nodes` in scope â€” rather
   // than re-deriving its logic, so this test exercises the real shipped source.
   function runAgentConfig(
     answers: Record<string, unknown> | null,
@@ -486,7 +489,7 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(runAgentConfig(null).aiReceptionist).toBe(true); // no settings record at all yet
   });
 
-  // ── Source picks (CON-301/302): laneUrl resolution inside FLOW_AGENT_CONFIG ──
+  // â”€â”€ Source picks (CON-301/302): laneUrl resolution inside FLOW_AGENT_CONFIG â”€â”€
   const RUNNING_SVCS = [
     { id: 'llama-cpp', name: 'llama.cpp server', status: 'running', port: 8080, url: 'http://127.0.0.1:8080' },
     { id: 'aokie-voice', name: 'Aokie Voice', status: 'stopped', port: 17920, url: '' },
@@ -518,14 +521,14 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(runAgentConfig({}, RUNNING_SVCS).aiEndpoint).toBe('');
   });
 
-  // ── provider: picks (SRC-203): the desktop AI gateway's per-provider OpenAI base ──
-  it('provider: pick on the LLM lane composes the FIXED desktop AI-gateway URL — even with no services listed', () => {
+  // â”€â”€ provider: picks (SRC-203): the desktop AI gateway's per-provider OpenAI base â”€â”€
+  it('provider: pick on the LLM lane composes the FIXED desktop AI-gateway URL â€” even with no services listed', () => {
     // Must match the desktop's gateway routes exactly:
     //   POST /api/ai/providers/:id/v1/chat/completions (and GET .../v1/models,
     //   which the plugin's LlmClient derives by replacing /chat/completions).
     const url = 'http://127.0.0.1:17872/api/ai/providers/my-openai/v1/chat/completions';
     expect(runAgentConfig({ llm_source: 'provider:my-openai' }, RUNNING_SVCS).aiEndpoint).toBe(url);
-    // The gateway port is fixed — no desktop_services lookup is needed, so the
+    // The gateway port is fixed â€” no desktop_services lookup is needed, so the
     // URL is emitted even when the svc node lists nothing / is absent.
     expect(runAgentConfig({ llm_source: 'provider:my-openai' }, []).aiEndpoint).toBe(url);
     expect(runAgentConfig({ llm_source: 'provider:my-openai' }).aiEndpoint).toBe(url);
@@ -540,9 +543,9 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(r.ttsEndpoint).toBe('');
   });
 
-  // ── Correction lane (audioTranscript side runs): correction_source →
+  // â”€â”€ Correction lane (audioTranscript side runs): correction_source â†’
   // audioTranscriptEndpoint, the SAME laneUrl rule with the CHAT path (the
-  // plugin's correction client is LlmClient — a full /v1/chat/completions URL).
+  // plugin's correction client is LlmClient â€” a full /v1/chat/completions URL).
   it('correction_source service pick resolves to the running service URL + the CHAT path', () => {
     const r = runAgentConfig({ correction_source: 'service:llama-cpp' }, RUNNING_SVCS);
     expect(r.audioTranscriptEndpoint).toBe('http://127.0.0.1:8080/v1/chat/completions');
@@ -566,23 +569,23 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     expect(runAgentConfig(null).audioTranscriptEndpoint).toBe('');
   });
 
-  it('blank stt/tts source semantics are UNCHANGED — the aokie-stt/aokie-tts default is a CONSOLE-side record write', () => {
+  it('blank stt/tts source semantics are UNCHANGED â€” the aokie-stt/aokie-tts default is a CONSOLE-side record write', () => {
     const svcs = [
       ...RUNNING_SVCS,
       { id: 'aokie-stt', name: 'Aokie Speech-to-Text', status: 'running', port: 17921, url: 'http://127.0.0.1:17921' },
       { id: 'aokie-tts', name: 'Aokie Text-to-Speech', status: 'running', port: 17922, url: 'http://127.0.0.1:17922' },
     ];
-    // Blank stays "plugin default" in the flow even when the Aokie services run…
+    // Blank stays "plugin default" in the flow even when the Aokie services runâ€¦
     const blank = runAgentConfig({}, svcs);
     expect(blank.sttEndpoint).toBe('');
     expect(blank.ttsEndpoint).toBe('');
-    // …the console defaults NEW/blank records by WRITING the pick explicitly.
+    // â€¦the console defaults NEW/blank records by WRITING the pick explicitly.
     const picked = runAgentConfig({ stt_source: 'service:aokie-stt', tts_source: 'service:aokie-tts' }, svcs);
     expect(picked.sttEndpoint).toBe('http://127.0.0.1:17921/v1/audio/transcriptions');
     expect(picked.ttsEndpoint).toBe('http://127.0.0.1:17922/v1/audio/speech');
   });
 
-  // ── Console mirror parity: buildAgentPayload must compose the SAME endpoints
+  // â”€â”€ Console mirror parity: buildAgentPayload must compose the SAME endpoints
   // as this flow for every source-pick shape ("Save & apply now" and the
   // per-call Configure flow can never disagree).
   describe('console mirror (buildAgentPayload) parity', () => {
@@ -619,7 +622,7 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
       expect(ui.audioTranscriptEndpoint).toBe(flow.audioTranscriptEndpoint);
     });
 
-    it('provider: composes identically with NO listing at all (remote console ↔ empty svc node)', () => {
+    it('provider: composes identically with NO listing at all (remote console â†” empty svc node)', () => {
       const ui = buildAgentPayload(draftFor({ llm_source: 'provider:my-openai' }));
       const flow = runAgentConfig({ llm_source: 'provider:my-openai' });
       expect(ui.aiEndpoint).toBe(flow.aiEndpoint);
@@ -632,7 +635,7 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
       expect('audioTranscriptEndpoint' in ui).toBe(false);
     });
 
-    it('the console never pushes audioTranscriptModel — the chosen correction service owns its model', () => {
+    it('the console never pushes audioTranscriptModel â€” the chosen correction service owns its model', () => {
       const ui = buildAgentPayload(draftFor({ correction_source: 'service:llama-cpp' }), asSourceServices(RUNNING_SVCS));
       expect('audioTranscriptModel' in ui).toBe(false);
       expect(ui.audioTranscriptEndpoint).toBe('http://127.0.0.1:8080/v1/chat/completions');
@@ -640,7 +643,7 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
   });
 });
 
-describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
+describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () => {
   // The loop's behaviour lives in logic-block STRINGS; evaluate the shipped source
   // exactly as the executor does (plain JS with `nodes`/`inputs` in scope) so these
   // tests exercise the real pack data, not a re-derivation.
@@ -672,7 +675,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       date: futureIso, time: '14:00', summary: 'Booked a haircut.', callback_requested: false,
     };
 
-    it('booking intent + real caller number → kickoff SMS + SMS-managed task + correlated appointment', () => {
+    it('booking intent + real caller number â†’ kickoff SMS + SMS-managed task + correlated appointment', () => {
       const r = evalExpr(planExpr, scopeFor(booking));
       expect(r.hasKickoffSms).toBe(true);
       expect(r.task.sms_state).toBe('active');
@@ -702,7 +705,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.task.sms_state).toBe('active');
     });
 
-    it('withheld caller number → no kickoff, task stays human-only', () => {
+    it('withheld caller number â†’ no kickoff, task stays human-only', () => {
       const r = evalExpr(planExpr, scopeFor(booking, { phone: 'unknown' }));
       expect(r.hasKickoffSms).toBe(false);
       expect(r.task.sms_state).toBeUndefined();
@@ -723,13 +726,13 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       nodes: { tasks: { responses: [{ id: 't1', answers }] } },
     });
 
-    it('active SMS-managed task → gate false (no draft; the loop answers)', () => {
+    it('active SMS-managed task â†’ gate false (no draft; the loop answers)', () => {
       expect(evalExpr(gateExpr, withTask({ status: 'open', sms_state: 'active' }))).toBe(false);
     });
-    it('opted-out sender → gate false (no draft at all after STOP)', () => {
+    it('opted-out sender â†’ gate false (no draft at all after STOP)', () => {
       expect(evalExpr(gateExpr, withTask({ status: 'open', sms_state: 'opted_out' }))).toBe(false);
     });
-    it('no SMS state / closed task / handoff → gate true (human-approval draft path)', () => {
+    it('no SMS state / closed task / handoff â†’ gate true (human-approval draft path)', () => {
       expect(evalExpr(gateExpr, withTask({ status: 'open' }))).toBe(true);
       expect(evalExpr(gateExpr, withTask({ status: 'done', sms_state: 'active' }))).toBe(true);
       expect(evalExpr(gateExpr, withTask({ status: 'open', sms_state: 'handoff' }))).toBe(true);
@@ -749,7 +752,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
     const run = (body: string, over: Record<string, unknown> = {}) =>
       evalExpr(ctxExpr, { inputs: { from: '+61400000000', body }, nodes: nodesFor(over) });
 
-    it('STOP always opts out — even punctuated, even past the cap', () => {
+    it('STOP always opts out â€” even punctuated, even past the cap', () => {
       expect(run('STOP').verdict).toBe('stop');
       expect(run('stop!').verdict).toBe('stop');
       const capped = { tasks: { responses: [{ id: 'task-1', answers: { status: 'open', sms_state: 'active', sms_exchanges: 6 } }] } };
@@ -772,7 +775,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.llmContext).toContain('Haircut');
       expect(r.llmContext).toContain('Can we do Friday at 9 instead?');
     });
-    it('no active SMS-managed task → verdict none (draft flow owns the reply)', () => {
+    it('no active SMS-managed task â†’ verdict none (draft flow owns the reply)', () => {
       expect(run('hello', { tasks: { responses: [] } }).verdict).toBe('none');
       const humanOnly = { tasks: { responses: [{ id: 't', answers: { status: 'open', sms_state: '' } }] } };
       expect(run('hello', humanOnly).verdict).toBe('none');
@@ -782,7 +785,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
     });
   });
 
-  describe('sms-followup-conversation plan: actions → writes + composed reply', () => {
+  describe('sms-followup-conversation plan: actions â†’ writes + composed reply', () => {
     const planExpr = nodeExpr('sms-followup-conversation', 'plan');
     const ctxVal = {
       verdict: 'llm', hasTask: true, taskId: 'task-1', taskCallId: 'call_1', taskCustomer: '',
@@ -818,9 +821,9 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
 
     it('every appointment write APPENDS an interaction line to the existing notes', () => {
       const r = run({ verdict: 'yes' });
-      // Old content preserved (updates patch-merge whole answers) …
+      // Old content preserved (updates patch-merge whole answers) â€¦
       expect(r.apptUpdate.notes).toContain('Booked automatically from call call_1');
-      // … and the new line quotes the customer + records the outcome.
+      // â€¦ and the new line quotes the customer + records the outcome.
       expect(r.apptUpdate.notes).toContain('customer texted "YES"');
       expect(r.apptUpdate.notes).toContain('CONFIRMED');
       // Appended, not replaced: original first, log line after.
@@ -864,9 +867,9 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.reply.body).toContain('cancelled');
     });
 
-    it('a past/garbage reschedule date degrades to a clarifying question — the booking never moves', () => {
+    it('a past/garbage reschedule date degrades to a clarifying question â€” the booking never moves', () => {
       const r = run({}, { action: 'reschedule', date: '2020-01-01', time: '09:00', reply: '' });
-      // The only appointment write is the notes-only interaction log —
+      // The only appointment write is the notes-only interaction log â€”
       // date/time/status are untouched by a bad model date.
       expect(r.hasApptCreate).toBe(false);
       expect(r.hasApptUpdate).toBe(true);
@@ -875,7 +878,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.taskUpdate.sms_exchanges).toBe(2);
     });
 
-    it('unparseable model output → human handoff with an honest reply (notes-only appointment log)', () => {
+    it('unparseable model output â†’ human handoff with an honest reply (notes-only appointment log)', () => {
       const r = run({}, 'total garbage, not json');
       expect(r.taskUpdate.sms_state).toBe('handoff');
       expect(r.taskUpdate.priority).toBe('high');
@@ -905,7 +908,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
     });
   });
 
-  describe('sms-delivery-status: exact messageId → sent/failed on the phone\'s ack', () => {
+  describe('sms-delivery-status: exact messageId â†’ sent/failed on the phone\'s ack', () => {
     const markExpr = nodeExpr('sms-delivery-status', 'mark');
     const rows = (list: Array<Record<string, unknown>>) => ({
       nodes: { messages: { responses: list.map((answers, i) => ({ id: `msg-${i}`, answers })) } },
@@ -925,7 +928,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.update).toEqual({ status: 'sent' });
     });
 
-    it('marks failed on the failure ack — inbound and already-sent rows are never touched', () => {
+    it('marks failed on the failure ack â€” inbound and already-sent rows are never touched', () => {
       const r = evalExpr(markExpr, {
         inputs: { messageId: 'sms-failed', to: '+61400000000', outcome: 'failed' },
         nodes: rows([
@@ -936,7 +939,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.update).toEqual({ status: 'failed' });
     });
 
-    it('no queued outbound row → no write (a stray ack never corrupts history)', () => {
+    it('no queued outbound row â†’ no write (a stray ack never corrupts history)', () => {
       const r = evalExpr(markExpr, {
         inputs: { messageId: 'sms-stray', to: '+61400000000', outcome: 'sent' },
         nodes: rows([
@@ -947,7 +950,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       expect(r.hasUpdate).toBe(false);
     });
 
-    it('an unknown outcome coerces to sent — never an invalid dropdown value', () => {
+    it('an unknown outcome coerces to sent â€” never an invalid dropdown value', () => {
       const r = evalExpr(markExpr, {
         inputs: { messageId: 'sms-unknown', to: '+61400000000', outcome: 'exploded' },
         nodes: rows([{ direction: 'outbound', status: 'queued', message_id: 'sms-unknown' }]).nodes,
@@ -986,7 +989,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         summary: 'Booked two visits.', callback_requested: false,
       };
 
-      it('two agreed bookings → two appointment creates, one task + one kickoff listing both', () => {
+      it('two agreed bookings â†’ two appointment creates, one task + one kickoff listing both', () => {
         const r = evalExpr(planExpr, scopeFor(twoBookings));
         expect(r.hasAppointment).toBe(true);
         expect(r.hasAppointment2).toBe(true);
@@ -994,7 +997,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.appointment.date).toBe(futureIso);
         expect(r.appointment.time).toBe('10:00');
         expect(r.appointment2.date).toBe(futureIso2);
-        // Time is PER BOOKING — never carried from the first to the second.
+        // Time is PER BOOKING â€” never carried from the first to the second.
         expect(r.appointment2.time).toBeUndefined();
         expect(r.appointment.call_id).toBe('call_2');
         expect(r.appointment2.call_id).toBe('call_2');
@@ -1016,12 +1019,12 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
           },
         };
         const r = evalExpr(planExpr, scopeFor(twoBookings, existing));
-        // The Diner booking already exists → only Dinner is created…
+        // The Diner booking already exists â†’ only Dinner is createdâ€¦
         expect(r.hasAppointment).toBe(true);
         expect(r.appointment.date).toBe(futureIso2);
         expect(r.hasAppointment2).toBe(false);
         expect(r.summaryLine).toContain('already on record');
-        // …but the kickoff still lists BOTH (the pending one folds in).
+        // â€¦but the kickoff still lists BOTH (the pending one folds in).
         expect(r.kickoffSms.body).toContain('Diner');
         expect(r.kickoffSms.body).toContain('Dinner');
         expect(r.kickoffSms.body).toContain('Reply YES to confirm both');
@@ -1156,7 +1159,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.reply.body).toContain('cancelled');
         expect(r.reply.body).toContain('Diner');
         expect(r.reply.body).toContain('Reply YES to confirm');
-        // The other booking is still pending — the loop must stay open.
+        // The other booking is still pending â€” the loop must stay open.
         expect(r.taskUpdate.status).toBeUndefined();
         expect(r.taskUpdate.sms_state).toBeUndefined();
       });
@@ -1180,7 +1183,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
       });
 
       // The live failure (2026-07-13): "Yes to Thursday 10am and 6pm for
-      // Sunday" — one message, DIFFERENT things for different bookings.
+      // Sunday" â€” one message, DIFFERENT things for different bookings.
       it('compound: confirm one booking AND move the other in one message', () => {
         const r = run(
           {},
@@ -1194,11 +1197,11 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
           },
           'Yes to Thursday 10am and 6pm for Sunday. Thanks'
         );
-        // Thursday confirmed…
+        // Thursday confirmedâ€¦
         expect(r.hasApptUpdate).toBe(true);
         expect(r.apptResponseId).toBe('appt-old');
         expect(r.apptUpdate.status).toBe('confirmed');
-        // …Sunday MOVED to 18:00 (requested, awaiting its YES) — not confirmed at 10.
+        // â€¦Sunday MOVED to 18:00 (requested, awaiting its YES) â€” not confirmed at 10.
         expect(r.hasApptUpdate2).toBe(true);
         expect(r.apptResponseId2).toBe('appt-new');
         expect(r.apptUpdate2.status).toBe('requested');
@@ -1207,7 +1210,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.reply.body).toContain('confirmed');
         expect(r.reply.body).toContain('6 PM');
         expect(r.reply.body.toLowerCase()).toContain('reply yes');
-        // A moved booking still needs its YES — the loop stays open.
+        // A moved booking still needs its YES â€” the loop stays open.
         expect(r.taskUpdate.status).toBeUndefined();
         expect(r.taskUpdate.sms_state).toBeUndefined();
       });
@@ -1256,7 +1259,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(updates.find((u) => u.id === 'appt-new')!.upd.status).toBe('cancelled');
         expect(updates.find((u) => u.id === 'appt-old')!.upd.status).toBe('confirmed');
         expect(r.reply.body).toContain('Cancelled');
-        // Nothing left pending — the loop closes.
+        // Nothing left pending â€” the loop closes.
         expect(r.taskUpdate.status).toBe('done');
         expect(r.taskUpdate.sms_state).toBe('done');
       });
@@ -1335,12 +1338,12 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.digest.split('\n').length).toBeGreaterThan(3);
       });
 
-      it('business-lookup MANAGER calls (Phase 3): occupancy slots gain customer names; ordinary calls never do — even with the customers node populated', () => {
+      it('business-lookup MANAGER calls (Phase 3): occupancy slots gain customer names; ordinary calls never do â€” even with the customers node populated', () => {
         const lookupExpr = nodeExpr('business-lookup', 'make');
         const nodesWith = {
           appts: {
             responses: [
-              // The manager's own booking (never name-annotated — it's the
+              // The manager's own booking (never name-annotated â€” it's the
               // CALLER OWN BOOKINGS section's job).
               { id: 'b1', answers: { status: 'confirmed', date: futureIso, time: '10:00', service: 'diner', phone: '+61400999888' } },
               { id: 'b2', answers: { status: 'requested', date: futureIso, time: '18:00', service: 'cut', phone: '+61499999999' } },
@@ -1363,7 +1366,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(mgr.digest).toContain('6 PM (Jane Customer)');
         expect(mgr.digest).toContain('customer names included');
         expect(mgr.digest).toContain('(Bob Untimed)');
-        // The manager's own 10 AM slot is their own booking — the occupancy
+        // The manager's own 10 AM slot is their own booking â€” the occupancy
         // slot never re-labels it with their name.
         expect(mgr.digest).not.toContain('10 AM (The Manager)');
         // The verbatim spoken date answer names customers for managers too
@@ -1424,10 +1427,10 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         // The caller's own time-less booking is never double-counted as
         // somebody ELSE's untimed booking.
         expect(direct[0]).not.toContain('other booking with no set time');
-        // Empty in-window day → plainly open.
+        // Empty in-window day â†’ plainly open.
         expect(direct[1]).toContain('NO bookings that day at all');
         expect(direct[1]).toContain('OPEN');
-        // Beyond the 90-day horizon → team confirms.
+        // Beyond the 90-day horizon â†’ team confirms.
         expect(direct[2]).toContain('beyond the calendar view');
         // The confusing 'at ?' rendering is gone everywhere.
         expect(r.digest).not.toContain('?:');
@@ -1716,7 +1719,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
         expect(r.persona).not.toContain('12 PM');
       });
 
-      it('no upcoming bookings → an EXPLICIT none-upcoming block (2026-07-14: an absent block let the model dredge old dates out of customer notes)', () => {
+      it('no upcoming bookings â†’ an EXPLICIT none-upcoming block (2026-07-14: an absent block let the model dredge old dates out of customer notes)', () => {
         const r = run([]);
         expect(r.persona).toContain('BOOKINGS ON RECORD');
         expect(r.persona).toContain('none upcoming');
@@ -1726,7 +1729,7 @@ describe('aokieReceptionistPack — SMS follow-up loop (logic blocks)', () => {
   });
 });
 
-describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS policy (call-policy spec)', () => {
+describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS policy (call-policy spec)', () => {
   const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
   const nodeExpr = (slug: string, nodeId: string): string => {
     const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
@@ -1777,7 +1780,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(typeof r.persona).toBe('string');
     });
 
-    it('the flow routes reject → call.reject and SKIPS configureAgent (exclusive branches)', () => {
+    it('the flow routes reject â†’ call.reject and SKIPS configureAgent (exclusive branches)', () => {
       const flow = flowBySlug('personalize-caller');
       const gate = flow.flowJson.nodes.find((n) => n.id === 'gate')!;
       expect(String((gate.data as { expr: string }).expr)).toContain('reject');
@@ -1802,7 +1805,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
 
   describe('personalize-caller: Calls-row caller_name backfill (2026-07-17)', () => {
     // caller_name was write-orphaned after the 'Unknown caller' literal was
-    // removed — nothing populated it. The flow now hands the matched name +
+    // removed â€” nothing populated it. The flow now hands the matched name +
     // the call's Calls-row id to the binding's output action.
     const makeExpr = nodeExpr('personalize-caller', 'make');
     const run = (customers: Array<Record<string, unknown>>, calls: Array<Record<string, unknown>>) =>
@@ -1818,19 +1821,19 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       });
     const lance = { id: 'c1', answers: { name: 'Lance Baker', phone: '+61400000000', status: 'active' } };
 
-    it('matched customer + Calls row → hasCallName with the update payload', () => {
+    it('matched customer + Calls row â†’ hasCallName with the update payload', () => {
       const r = run([lance], [{ id: 'call-resp-1', answers: { call_id: 'call_abc' } }]);
       expect(r.hasCallName).toBe(true);
       expect(r.callResponseId).toBe('call-resp-1');
       expect(r.callNameUpdate).toEqual({ caller_name: 'Lance Baker' });
     });
 
-    it('no customer match → hasCallName false (nothing written)', () => {
+    it('no customer match â†’ hasCallName false (nothing written)', () => {
       const r = run([], [{ id: 'call-resp-1', answers: { call_id: 'call_abc' } }]);
       expect(r.hasCallName).toBe(false);
     });
 
-    it('missing Calls row (raced) → hasCallName false even with a match', () => {
+    it('missing Calls row (raced) â†’ hasCallName false even with a match', () => {
       const r = run([lance], []);
       expect(r.hasCallName).toBe(false);
       expect(r.callResponseId).toBe(null);
@@ -1875,7 +1878,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       },
     });
 
-    it("sms_capable 'no' (landline) → NO kickoff text; the task tells a human to call", () => {
+    it("sms_capable 'no' (landline) â†’ NO kickoff text; the task tells a human to call", () => {
       const r = evalExpr(planExpr, scopeFor({ customer: { name: 'Lance Baker', phone: '+61400000000', sms_capable: 'no' } }));
       expect(r.hasKickoffSms).toBe(false);
       expect(r.task.sms_state).toBeUndefined();
@@ -1896,7 +1899,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(unknown.hasKickoffSms).toBe(true);
     });
 
-    it('defaultCountryCode: a 0-prefixed number is texted as +CC…; records keep the observed number', () => {
+    it('defaultCountryCode: a 0-prefixed number is texted as +CCâ€¦; records keep the observed number', () => {
       const r = evalExpr(planExpr, scopeFor({ phone: '0491570156', settings: { default_country_code: '+61' } }));
       expect(r.hasKickoffSms).toBe(true);
       expect(r.kickoffSms.to).toBe('+61491570156');
@@ -1930,7 +1933,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
     const runCtx = (body: string, customer: Record<string, unknown> | null, settingsAnswers: Record<string, unknown> = {}) =>
       evalExpr(ctxExpr, { inputs: { from: '+61400000000', body }, nodes: nodesFor(customer, settingsAnswers) });
 
-    it("a sender marked sms_capable 'no' (or blocked) mid-loop → verdict no_sms, LLM never runs", () => {
+    it("a sender marked sms_capable 'no' (or blocked) mid-loop â†’ verdict no_sms, LLM never runs", () => {
       expect(runCtx('how about friday', { sms_capable: 'no' }).verdict).toBe('no_sms');
       expect(runCtx('YES', { status: 'blocked' }).verdict).toBe('no_sms');
       // The flow's LLM gate only passes verdict 'llm'.
@@ -1995,7 +1998,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       const status = calls.fields.find((f) => f.id === 'status')!;
       const values = (status.properties as { options: Array<{ value: string }> }).options.map((o) => o.value);
       expect(values).toContain('terminated_abuse');
-      // The app-logic whitelist must let the new outcome through — anything
+      // The app-logic whitelist must let the new outcome through â€” anything
       // unknown collapses to 'completed', which would hide the abuse trail.
       const app = pack.apps![0];
       const script = (app.customLogic!.scripts as Array<{ id: string; source: string }>).find(
@@ -2018,16 +2021,16 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(evalCond({ durationSeconds: 30, outcome: 'terminated_abuse' })).toBe(false);
       expect(evalCond({ durationSeconds: 2, outcome: 'completed' })).toBe(false);
       // Phase 2 (live test call 2821e7e2): the inbound booking extractor must
-      // never run on an OUTBOUND call — it minted a junk appointment + an
+      // never run on an OUTBOUND call â€” it minted a junk appointment + an
       // active SMS loop at the callee on the very first outbound test.
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'outbound' })).toBe(false);
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound' })).toBe(true);
-      // Phase 3 (live call a5c3f900): nor on a MANAGER call — a manager-line
+      // Phase 3 (live call a5c3f900): nor on a MANAGER call â€” a manager-line
       // move was ALSO read as a new booking (duplicate appointment + kickoff
       // SMS at the manager). Manager writes ride aokie.manager.action.
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: true })).toBe(false);
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: false })).toBe(true);
-      // Older plugins that don't send the flag keep working (absent ≠ true).
+      // Older plugins that don't send the flag keep working (absent â‰  true).
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: undefined })).toBe(true);
       // The summary binding still covers the Calls row for abuse calls.
       const summary = (pack.flowBindings ?? []).find(
@@ -2109,7 +2112,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
         },
       });
 
-    it('callback REACHED → task done, no SMS', () => {
+    it('callback REACHED â†’ task done, no SMS', () => {
       const r = runResult('completed');
       expect(r.hasTaskUpdate).toBe(true);
       expect(r.taskUpdate.status).toBe('done');
@@ -2117,7 +2120,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(r.hasSms).toBe(false);
     });
 
-    it('callback NOT answered + sms-capable → apology text (normalized to +CC), task stays open as sms_sent', () => {
+    it('callback NOT answered + sms-capable â†’ apology text (normalized to +CC), task stays open as sms_sent', () => {
       const r = runResult('no_answer', { settings: { default_country_code: '61' } });
       expect(r.hasSms).toBe(true);
       expect(r.sms.to).toBe('+61491570156');
@@ -2129,7 +2132,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       expect(r.taskUpdate.status).toBeUndefined();
     });
 
-    it('callback NOT answered + landline/blocked → needs_human at urgent priority, never a text', () => {
+    it('callback NOT answered + landline/blocked â†’ needs_human at urgent priority, never a text', () => {
       const landline = runResult('no_answer', { customer: { name: 'X', phone: '0491570156', sms_capable: 'no' } });
       expect(landline.hasSms).toBe(false);
       expect(landline.taskUpdate.callback_state).toBe('needs_human');
@@ -2200,7 +2203,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
       const wl = settings.fields.find((f) => f.id === 'whitelist_only')!;
       expect(wl.type).toBe('dropdown');
       expect((wl.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['no', 'yes']);
-      // The whitelist cannot see withheld numbers (no caller_id event) — the
+      // The whitelist cannot see withheld numbers (no caller_id event) â€” the
       // field copy must point at the plugin's private-number screening.
       expect(String(wl.description ?? '')).toContain('WITHHOLD');
       const cc = settings.fields.find((f) => f.id === 'default_country_code')!;
@@ -2209,7 +2212,7 @@ describe('aokieReceptionistPack — Phase 0.5 record-driven screening & SMS poli
   });
 });
 
-describe('aokieReceptionistPack — catalog', () => {
+describe('aokieReceptionistPack â€” catalog', () => {
   it('is registered in the pack catalog with matching counts', () => {
     const entry = packCatalog.find((e) => e.id === 'aokie-receptionist');
     expect(entry).toBeDefined();
@@ -2218,7 +2221,7 @@ describe('aokieReceptionistPack — catalog', () => {
   });
 });
 
-describe('aokieReceptionistPack — hold-abandonment follow-ups (Phase 4 hold queue)', () => {
+describe('aokieReceptionistPack â€” hold-abandonment follow-ups (Phase 4 hold queue)', () => {
   const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
   const nodeExpr = (slug: string, nodeId: string): string => {
     const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
@@ -2350,7 +2353,7 @@ describe('aokieReceptionistPack — hold-abandonment follow-ups (Phase 4 hold qu
   });
 });
 
-describe('aokieReceptionistPack — callback drain (queued callbacks dial when the line frees)', () => {
+describe('aokieReceptionistPack â€” callback drain (queued callbacks dial when the line frees)', () => {
   const flowBySlug = (slug: string) => (pack.flows ?? []).find((f) => f.slug === slug)!;
   const nodeExpr = (slug: string, nodeId: string): string => {
     const node = flowBySlug(slug).flowJson.nodes.find((n) => n.id === nodeId)!;
@@ -2452,3 +2455,68 @@ describe('aokieReceptionistPack — callback drain (queued callbacks dial when t
     expect(r.task.callback_purpose).toContain('RETURNING a missed call');
   });
 });
+
+describe('aokieReceptionistPack â€” pack-owned Device Setup section screen (plan Â§8.4 port #4)', () => {
+  const hw = pack.forms.find((f) => f.packFormId === 'hardware-events');
+  const cs = hw?.customScreen as Record<string, unknown> | undefined;
+
+  it('ships Device Setup as pack-owned CODE, not a compiled-registry reference', () => {
+    expect(cs?.kind).toBe('code');
+    expect(cs?.sdkScreen).toBeUndefined();
+    expect(cs?.enabled).toBe(true);
+    // Rows land automatically from aokie.hardware.error â€” no manual entry.
+    expect(cs?.allowNewResponses).toBe(false);
+    expect(typeof cs?.js).toBe('string');
+    expect(cs?.js).toBe(AOKIE_DEVICE_SETUP_SCREEN.js);
+  });
+
+  it('the sandboxed source parses and escapes every rendered value', () => {
+    const js = String(cs?.js ?? '');
+    // Same syntax gate check-pack-screens runs â€” catches the documented
+    // template-literal escaping trap before anything ships.
+    expect(() => new Function(js)).not.toThrow();
+    expect(js).toContain('FormLogic.escapeHtml');
+    // No regex literals in the embedded source (the escaping foot-gun class).
+    expect(js).not.toContain('.match(');
+    expect(js).not.toContain('.replace(/');
+  });
+
+  it('drives ONLY sanctioned bridge surfaces â€” ceremonies stay host-owned', () => {
+    const js = String(cs?.js ?? '');
+    for (const needle of [
+      "FL.connector('aokie'",
+      'FL.service(',
+      'FL.presence()',
+      'FL.records(',
+      'FL.deleteRecords(',
+      'FL.can(',
+      "FL.host.ceremony('connect-desktop')",
+      "FL.host.ceremony('start-fresh')",
+    ]) {
+      expect(js, needle).toContain(needle);
+    }
+    // The pack never mints pairing tokens or bulk-clears itself: the desktop
+    // pairing and the whole-app reset go through named host ceremonies only.
+    expect(js).not.toContain('requestPairing');
+    expect(js).not.toContain('clearFormResponses');
+    // Only registered service operations are referenced.
+    const ops = js.match(/FL\.service\('([^']+)'/g) ?? [];
+    const allowed = new Set([
+      "FL.service('desktop.connections.list'",
+      "FL.service('aokie.companion.policy.get'",
+      "FL.service('aokie.companion.policy.update'",
+      "FL.service('aokie.companion.devices.list'",
+      "FL.service('aokie.companion.devices.revoke'",
+      "FL.service('aokie.companion.devices.approve'",
+    ]);
+    for (const op of ops) expect(allowed.has(op), op).toBe(true);
+  });
+
+  it('destructive controls are double-gated (type-to-confirm + host ceremony dialog)', () => {
+    const js = String(cs?.js ?? '');
+    expect(js).toContain('delete all');
+    expect(js).toContain('Confirm clear');
+    expect(js).toContain('Confirm revoke');
+  });
+});
+

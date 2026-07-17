@@ -31,13 +31,20 @@ export interface PackForm {
   logicScript?: string;
   /** Per-form section screen (renders on the form's view in-app and on its public link).
    *  allowNewResponses keeps the real form reachable via the runtime's "New record" button.
-   *  kind 'sdk' renders a trusted first-party React screen from the sdkScreenRegistry. */
+   *  kind 'sdk' renders a trusted first-party React screen from the sdkScreenRegistry;
+   *  kind 'code' (or bare html/css/js) is a PACK-OWNED sandboxed screen — the self-contained
+   *  route (plan §8): the source ships inside the pack and runs in the opaque-origin iframe. */
   customScreen?: {
     enabled?: boolean;
     allowNewResponses?: boolean;
-    kind?: 'dashboard' | 'sdk';
+    kind?: 'dashboard' | 'sdk' | 'code';
     dashboard?: PackDashboardScreen;
     sdkScreen?: { screenId: string; title?: string; params?: Record<string, unknown> };
+    /** kind 'code': the sandboxed section screen's source (title is display-only). */
+    title?: string;
+    html?: string;
+    css?: string;
+    js?: string;
     /** Optional per-RECORD widget on the record detail view (see RecordScreen in types/form). */
     recordScreen?: {
       kind: 'sdk' | 'code';

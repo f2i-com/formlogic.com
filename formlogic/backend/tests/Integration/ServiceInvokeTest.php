@@ -222,6 +222,104 @@ class ServiceInvokeTest extends TestCase
         $this->assertSame(200, $this->invoke($this->ownerId, 'aokie.companion.devices.list')['status']);
     }
 
+    // ── mutating companion ops (revoke / approve / policy.update) ──
+
+    /** @return string the inserted device id */
+    private function insertDevice(string $ownerUserId, string $displayName = 'Pixel 9'): string
+    {
+        $id = 'acd-' . bin2hex(random_bytes(10));
+        self::$pdo->prepare(
+            "INSERT INTO aokie_companion_devices
+                (id, user_id, app_id, subject_id, role, display_name, grants)
+             VALUES (?, ?, ?, ?, 'mobile', ?, '{\"sms\":true}')"
+        )->execute([$id, $ownerUserId, $this->appId, 'subject-' . $id, $displayName]);
+        return $id;
+    }
+
+    public function testDeviceRevokeAllowsSelfAndManagerButNeverAStranger(): void
+    {
+        // The member owns their own endpoint; a second device belongs to the owner.
+        $own = $this->insertDevice($this->memberId, 'Member phone');
+        $theirs = $this->insertDevice($this->ownerId, 'Owner phone');
+        $this->grant('connector.aokie.settings.get'); // connector binding only — no manage
+
+        // Self-revoke works without the manage permission…
+        $r = $this->invoke($this->memberId, 'aokie.companion.devices.revoke', ['deviceId' => $own]);
+        $this->assertSame(200, $r['status']);
+        $this->assertTrue($r['body']['result']['success']);
+
+        // …but another user's device reads as not-found (never a permission oracle).
+        $r2 = $this->invoke($this->memberId, 'aokie.companion.devices.revoke', ['deviceId' => $theirs]);
+        $this->assertSame(404, $r2['status']);
+        $this->assertSame('device_not_found', $r2['body']['code'] ?? null);
+
+        // The owner (manage implied) can revoke anyone's.
+        $r3 = $this->invoke($this->ownerId, 'aokie.companion.devices.revoke', ['deviceId' => $theirs]);
+        $this->assertSame(200, $r3['status']);
+    }
+
+    public function testDeviceApproveNeedsManageAndStaysAppScoped(): void
+    {
+        $id = $this->insertDevice($this->ownerId);
+        self::$pdo->prepare('UPDATE aokie_companion_devices SET revoked_at = NOW() WHERE id = ?')->execute([$id]);
+
+        // Member with connector binding but no manage permission: 403 at the registry gate.
+        $this->grant('connector.aokie.settings.get');
+        $this->assertSame(403, $this->invoke($this->memberId, 'aokie.companion.devices.approve', ['deviceId' => $id])['status']);
+
+        // With MANAGE_AOKIE_COMPANION it succeeds and requires re-authorization.
+        $this->grant(\FormLogic\Constants\AppPermissions::MANAGE_AOKIE_COMPANION);
+        $r = $this->invoke($this->memberId, 'aokie.companion.devices.approve', ['deviceId' => $id]);
+        $this->assertSame(200, $r['status']);
+        $this->assertTrue($r['body']['result']['reauthorizationRequired']);
+
+        // A device from ANOTHER app must read as not-found even for a manager.
+        $foreignApp = 'app-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO apps (id, owner_id, name, slug, status) VALUES (?, ?, 'Other', ?, 'published')")
+            ->execute([$foreignApp, $this->ownerId, 'other-' . bin2hex(random_bytes(5))]);
+        $foreignId = 'acd-' . bin2hex(random_bytes(10));
+        self::$pdo->prepare(
+            "INSERT INTO aokie_companion_devices (id, user_id, app_id, subject_id, role, display_name, grants)
+             VALUES (?, ?, ?, 'subject-x', 'mobile', 'Foreign', '{}')"
+        )->execute([$foreignId, $this->ownerId, $foreignApp]);
+        try {
+            $r2 = $this->invoke($this->ownerId, 'aokie.companion.devices.approve', ['deviceId' => $foreignId]);
+            $this->assertSame(404, $r2['status']);
+        } finally {
+            self::$pdo->prepare('DELETE FROM aokie_companion_devices WHERE id = ?')->execute([$foreignId]);
+            self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$foreignApp]);
+        }
+    }
+
+    public function testPolicyUpdateValidatesShapeAndRoundTrips(): void
+    {
+        $this->grant('connector.aokie.settings.get');
+        $this->grant(\FormLogic\Constants\AppPermissions::MANAGE_AOKIE_COMPANION);
+
+        // A partial policy object is refused outright.
+        $bad = $this->invoke($this->memberId, 'aokie.companion.policy.update', ['remoteConsent' => ['remoteMonitoring' => true]]);
+        $this->assertSame(400, $bad['status']);
+        $this->assertSame('invalid_remote_consent', $bad['body']['code'] ?? null);
+
+        $policy = [
+            'remoteMonitoring' => true,
+            'remoteConsult' => true,
+            'remoteTakeover' => false,
+            'remoteCaptions' => true,
+            'remoteAssistance' => false,
+        ];
+        $r = $this->invoke($this->memberId, 'aokie.companion.policy.update', ['remoteConsent' => $policy]);
+        $this->assertSame(200, $r['status']);
+        $this->assertTrue($r['body']['result']['configured']);
+        $this->assertFalse($r['body']['result']['remoteTakeover']);
+
+        // …and the READ op sees exactly what was written.
+        $read = $this->invoke($this->memberId, 'aokie.companion.policy.get');
+        $this->assertSame(200, $read['status']);
+        $this->assertTrue($read['body']['result']['remoteMonitoring']);
+        $this->assertFalse($read['body']['result']['remoteAssistance']);
+    }
+
     // ── aokie.companion.policy.get (member + connector binding) ──
 
     public function testCompanionPolicyClosedByDefaultAndReadableByConnectorMembers(): void

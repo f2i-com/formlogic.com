@@ -67,6 +67,12 @@ export interface ScreenBridge {
     operationId: string,
     input?: Record<string, unknown>
   ) => Promise<{ status: 'done' | 'failed'; result?: unknown; error?: Record<string, unknown> | null }>;
+  /** Advisory permission introspection (plan §8.3 permissions.can): true when
+   *  the app DECLARES the permission for this screen's scope — the same
+   *  collectConnectorGrants truth the connector() gate applies, so a screen
+   *  can grey out buttons instead of collecting rejects. ADVISORY ONLY: the
+   *  native bridge and the server stay the real trust boundary. */
+  can: (permission: string) => boolean;
   /** The observe gate for the events/captions subscription lane: true when
    *  the app DECLARES any grant string targeting this connector — i.e. a
    *  permission whose second segment names the connector or is a wildcard
@@ -279,6 +285,13 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
           error: { message: err instanceof Error ? err.message : 'Service operation failed' },
         };
       }
+    },
+
+    can: (permission) => {
+      const p = String(permission || '');
+      if (!p) return false;
+      const grants = collectConnectorGrants(deps.config, { formId: deps.formId });
+      return isPermissionGranted(p, grants);
     },
 
     canObserveConnector: (connectorId) => {

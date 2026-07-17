@@ -27,6 +27,7 @@ import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
 import { useScreenBridge, resolveScreenTarget } from '../custom-screen/screenBridge';
+import { useScreenCeremonies } from '../custom-screen/screenCeremonies';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
 import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
@@ -700,6 +701,9 @@ export function AppFormView() {
   // Bridge v1 for sandboxed code screens: connector()/updateRecord()/presence()
   // (undefined until the store is initialized for THIS app).
   const screenBridge = useScreenBridge(formId || '', appSlug);
+  // Named host ceremonies (connect-desktop, start-fresh) + their host-owned
+  // confirm dialog, for FormLogic.host.ceremony().
+  const { onCeremony: screenCeremony, ceremonyUi } = useScreenCeremonies();
   const reduceMotion = useReducedMotion();
   // Fires the per-step focus/scroll once per navigation (init 0 = skip mount).
   const lastFocusedStepRef = useRef(0);
@@ -1179,8 +1183,10 @@ export function AppFormView() {
               navigate(`/app/${appSlug}/form/${resolved}`);
               return true;
             }}
+            onCeremony={screenCeremony}
             className="w-full h-full border-0 rounded-lg"
           />
+          {ceremonyUi}
           {allowNew && !hasOwnOpen && (
             <button
               type="button"

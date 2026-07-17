@@ -221,6 +221,17 @@ set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`):
   display name; unknown targets reject (strict — never a raw route passthrough). This is the
   sanctioned shape for reaching host-owned ceremony surfaces (pairing, driver setup, typed resets):
   the pack screen asks the host to OPEN its surface; the ceremony itself stays host-owned.
+- `host.ceremony(name)` — run a NAMED host-owned ceremony (§5.2). The pack only asks; the host
+  runs its own flow with its own consent surface and resolves
+  `{ status: 'done'|'failed'|'denied'|'unavailable', message?, … }` (only an unknown name
+  rejects). v1 names: `'connect-desktop'` (the desktop pairing flow — approval happens ON the
+  desktop, and the pack never mints or sees a token) and `'start-fresh'` (the whole-app record
+  reset behind the HOST's confirm dialog — the bridge deliberately has no cross-form or clear-all
+  delete, so pack code structurally cannot wipe records without the operator confirming in host
+  UI). Both refuse in the shared demo.
+- `can(permission)` — ADVISORY grant introspection (§8.3 permissions.can): true when the app
+  declares the permission for this screen's scope — the exact gate `connector()` applies — so a
+  screen can grey out buttons instead of collecting rejects. Never a trust boundary.
 
 Outside a matching app context (builder previews, public links) these actions reject with an honest
 "not available on this screen". Deliberately NOT exposed (plan §8.3): raw backend fetch, arbitrary

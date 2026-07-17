@@ -122,12 +122,22 @@ const SDK_SHIM = `
      *  { status: 'done'|'failed', result?, error? } — operation refusals (unknown op, no
      *  permission) resolve as failed; only misuse (bad id, oversized input) rejects. */
     service: function(operationId, input){ return call('service', { operationId: operationId, input: input || {} }); },
+    /** ADVISORY permission check: true when this app declares the permission for this
+     *  screen's scope (the same gate connector() applies) — use it to grey out buttons.
+     *  The native bridge and the server stay the real trust boundary. */
+    can: function(permission){ return call('can', { permission: String(permission == null ? '' : permission) }); },
     /** Host-mediated surfaces (ceremonies stay HOST-owned — a pack screen can only ask the
-     *  host to open one of its own screens, never run the ceremony itself). */
+     *  host to open one of its own screens or run a NAMED ceremony with the host's own
+     *  consent UI; the pack never runs a ceremony itself). */
     host: {
       /** Navigate the surrounding app to another of its screens. target = a real form id or
        *  the pack's stable form key (settings.packFormId). Rejects for unknown targets. */
       openScreen: function(target){ return call('openScreen', { target: String(target == null ? '' : target) }); },
+      /** Ask the host to run a NAMED ceremony ('connect-desktop' = the desktop pairing
+       *  flow, approved on the desktop; 'start-fresh' = whole-app record reset behind the
+       *  host's own confirm dialog). Resolves { status: 'done'|'failed'|'denied'|
+       *  'unavailable', message?, deleted? } — only an unknown name rejects. */
+      ceremony: function(name){ return call('ceremony', { name: String(name == null ? '' : name) }); },
     },
     /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
     escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
@@ -152,6 +162,7 @@ export function CustomScreenRuntime({
   fetchRelated,
   bridge,
   onOpenScreen,
+  onCeremony,
 }: {
   screen: CustomScreen;
   formId: string;
@@ -179,6 +190,10 @@ export function CustomScreenRuntime({
    *  (form id or pack form key) and switch the app shell to it. Return false for an unknown
    *  target — the SDK call then rejects honestly. */
   onOpenScreen?: (target: string) => boolean | Promise<boolean>;
+  /** Named host ceremonies for FormLogic.host.ceremony (app runtime only): run the host's
+   *  own flow (with its own consent UI) and resolve the outcome. Return null for an
+   *  unknown ceremony name — the SDK call then rejects honestly. */
+  onCeremony?: (name: string) => Promise<{ status: string; message?: string; deleted?: number } | null>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
@@ -386,6 +401,20 @@ export function CustomScreenRuntime({
             result = true;
             break;
           }
+          case 'can': {
+            if (!bridge) throw new Error('can() is not available on this screen.');
+            result = bridge.can(String(m.payload?.permission || ''));
+            break;
+          }
+          case 'ceremony': {
+            if (!onCeremony) throw new Error('host.ceremony() is not available on this screen.');
+            const name = String(m.payload?.name || '');
+            if (!name) throw new Error('host.ceremony() needs a ceremony name.');
+            const outcome = await onCeremony(name);
+            if (outcome === null) throw new Error(`Unknown ceremony: ${name}`);
+            result = outcome;
+            break;
+          }
           case 'eventsSubscribe': {
             if (!bridge) throw new Error('events.subscribe() is not available on this screen.');
             // The live feed comes from the OPERATOR's real desktop — the
@@ -467,7 +496,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, screen._trust]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onCeremony, screen._trust]);
 
   return (
     <iframe

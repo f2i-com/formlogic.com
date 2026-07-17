@@ -43,6 +43,11 @@ const TRUSTED_ONLY_ACTIONS = new Set([
   // host.openScreen drives the surrounding app shell.
   'service',
   'openScreen',
+  // Fourth slice: named host ceremonies (desktop pairing, whole-app reset) and
+  // grant introspection — `can` merely REVEALS the app's declared grant config,
+  // but imported code has no business reading even that.
+  'ceremony',
+  'can',
 ]);
 
 /** Imported community code remains visual-only even if its iframe executes. */
@@ -79,6 +84,10 @@ export function createSdkRateLimiter() {
     // openScreen is user-visible navigation — spamming it would fight the user.
     service: 30,
     openScreen: 10,
+    // Ceremonies open host consent surfaces (pairing prompt, reset dialog) —
+    // a screen has no legitimate reason to raise them often.
+    ceremony: 5,
+    can: 120,
   };
   return (action: string): boolean => {
     const cap = caps[action] ?? 120;

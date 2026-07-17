@@ -23,6 +23,7 @@
 //    double-written.
 import type { PackData } from './financeOsPack';
 import { AOKIE_CALL_TRANSCRIPT_SCREEN } from './aokieCallTranscriptScreen';
+import { AOKIE_DEVICE_SETUP_SCREEN } from './aokieDeviceSetupScreen';
 
 // ── Shared defaults ─────────────────────────────────────────────────────────
 
@@ -3092,15 +3093,16 @@ export const aokieReceptionistPack: PackData = {
         { id: 'payload_json', type: 'long_text', label: 'Raw Payload', required: false, properties: {} },
       ],
       // The Hardware Events section IS the Device Setup console (desktop pairing, dongle
-      // table + driver install, phone status, recent hardware events). Rows are written
-      // AUTOMATICALLY from aokie.hardware.error events — a manual "New device setup"
-      // button is meaningless here, so new responses stay off (feature request 2026-07-13).
-      customScreen: {
-        enabled: true,
-        allowNewResponses: false,
-        kind: 'sdk',
-        sdkScreen: { screenId: 'aokie-pairing', title: 'Device Setup' },
-      },
+      // table + driver install, phone status, Companion access, recent hardware events).
+      // Rows are written AUTOMATICALLY from aokie.hardware.error events — a manual "New
+      // device setup" button is meaningless here, so new responses stay off.
+      // PACK-OWNED CODE (plan §8.4 port #4): the console ships as sandboxed HTML/CSS/JS
+      // inside the pack (aokieDeviceSetupScreen.ts) driving the typed bridge —
+      // connector()/service()/records()/host.ceremony(). Its actions are TRUSTED_ONLY:
+      // the form's custom_screen_trust must be owner/verified. Rollback = the previous
+      // sdk reference:
+      //   { kind: 'sdk', sdkScreen: { screenId: 'aokie-pairing', title: 'Device Setup' } }
+      customScreen: AOKIE_DEVICE_SETUP_SCREEN,
     },
 
     // ── 11. Receptionist Settings (user-editable AI config the live flow reads) ──

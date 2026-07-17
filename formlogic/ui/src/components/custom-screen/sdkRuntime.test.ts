@@ -5,10 +5,12 @@ describe('custom-screen SDK trust boundary', () => {
   it('makes untrusted imported code visual-only', () => {
     for (const action of [
       'submit', 'records', 'currentUser', 'record', 'related', 'navigate', 'openForm', 'openRecords',
-      // Bridge v1 (all three slices): hardware/data commands, live feeds, typed
-      // service ops and host navigation are never available to imported code.
+      // Bridge v1 (all four slices): hardware/data commands, live feeds, typed
+      // service ops, host navigation, named ceremonies and grant introspection
+      // are never available to imported code.
       'connector', 'updateRecord', 'deleteRecords', 'presence',
       'eventsSubscribe', 'captionsSubscribe', 'service', 'openScreen',
+      'ceremony', 'can',
     ]) {
       expect(isScreenSdkActionAllowed('untrusted', action), action).toBe(false);
     }

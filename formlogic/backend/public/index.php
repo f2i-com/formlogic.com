@@ -694,7 +694,8 @@ $container->set(\FormLogic\Controllers\ServiceInvokeController::class, function 
         $c->get(AppService::class),
         $c->get(AppUserService::class),
         $c->get(\FormLogic\Services\FlowService::class),
-        $c->get(\FormLogic\Services\AokieCompanionDeviceService::class)
+        $c->get(\FormLogic\Services\AokieCompanionDeviceService::class),
+        $c->get(AuditService::class)
     );
 });
 // Flow KV storage: small persistent key/value state for flows (owner + runtime surfaces).
