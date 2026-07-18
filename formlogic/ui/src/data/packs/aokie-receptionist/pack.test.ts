@@ -17,7 +17,7 @@ import {
   AI_GATEWAY_BASE,
   type Draft,
   type SourceService,
-} from '../../../components/custom-screen/aokie/receptionistPayload';
+} from './receptionistPayload';
 import {
   composeAgentPayload as screenCompose,
   DEFAULT_PERSONA as SCREEN_PERSONA,

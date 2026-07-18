@@ -15,10 +15,6 @@
 import { Component, createElement, type ReactNode } from 'react';
 import { EmptyState, useCurrentApp, useForms, useOfflineQueue, useRuntimeEnvironment } from '../../sdk';
 import { getSdkScreen, registerSdkScreen, type SdkRecordContext } from './sdkScreenRegistry';
-import { AokieLiveCallScreen } from './aokie/AokieLiveCallScreen';
-import { AokiePairingScreen } from './aokie/AokiePairingScreen';
-import { AokieCallTranscriptScreen } from './aokie/AokieCallTranscriptScreen';
-import { AokieReceptionistSettingsScreen } from './aokie/AokieReceptionistSettingsScreen';
 
 class ScreenErrorBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   constructor(props: { fallback: ReactNode; children: ReactNode }) {
@@ -82,8 +78,6 @@ function AppOverviewScreen() {
 
 registerSdkScreen('app.overview', AppOverviewScreen);
 
-// Aokie Receptionist screens (first-party, shipped with the aokie-receptionist pack).
-registerSdkScreen('aokie-live-call', AokieLiveCallScreen);
-registerSdkScreen('aokie-pairing', AokiePairingScreen);
-registerSdkScreen('aokie-call-transcript', AokieCallTranscriptScreen);
-registerSdkScreen('aokie-receptionist-settings', AokieReceptionistSettingsScreen);
+// NOTE: the Aokie Receptionist screens that used to register here were retired in favour of the
+// pack-owned sandboxed TSX screens (data/packs/aokie-receptionist/screens/*) — the pack is fully
+// self-contained; rollback lives in git history, not in live compiled twins.

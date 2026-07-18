@@ -7,7 +7,7 @@
 // no SDK imports) so the pack contract test can pin the parity byte-for-byte.
 // DEFAULT_PERSONA comes from the LEAF module (not the pack) so this file never
 // imports the pack — keeping `pack → settingsScreen → receptionistPayload` acyclic.
-import { DEFAULT_PERSONA } from '../../../data/packs/aokie-receptionist/persona';
+import { DEFAULT_PERSONA } from './persona';
 
 /** The Receptionist Settings record fields the console edits. */
 export interface Draft {

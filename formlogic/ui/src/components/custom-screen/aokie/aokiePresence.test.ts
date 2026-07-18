@@ -6,8 +6,6 @@
 //            a flow run recently claimed with runtime 'desktop',
 //   none   — neither (install/demo state; the ONLY state that shows simulate/setup).
 // Every wire failure (403/404/network/malformed) must degrade silently to 'none'.
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FlowRunLog } from '../../../types/flows';
 import {
@@ -182,25 +180,10 @@ describe('remote-mode render gating', () => {
     expect(showSimulateSetup({ kind: 'local' })).toBe(false);
   });
 
-  it('AokieLiveCallScreen gates the call stage/setup card and drives remote controls via the relay', () => {
-    // No DOM runner in this suite (vitest env: node) — pin the gating at source level, the
-    // same technique the pack test uses for registerSdkScreen ids.
-    const source = readFileSync(join(__dirname, 'AokieLiveCallScreen.tsx'), 'utf8');
-    // The setup/simulate card only shows in the 'none' state, and never once a call takes over the stage.
-    expect(source).toContain('showSimulateSetup(presence) && !active && (');
-    // The old always-on/mock-only gate must not have crept back in front of the setup card.
-    expect(source).not.toContain('mockOnly');
-    // The stage's per-mode footer still branches on remoteMode first (local vs demo second).
-    expect(source).toContain('remoteMode ? (');
-    // Local and remote controls are unified through ONE dispatcher keyed off remoteMode — not two
-    // forked branches — so answer/reject/hangup can never drift out of sync between the two modes.
-    expect(source).toContain('if (remoteMode) {');
-    expect(source).toContain('void runRelay(command, callId, payload)');
-    expect(source).toContain('void runCommand(command, payload,');
-    expect(source).toContain('Commands run on');
-    // Every control stays gated on the SAME connector grant + operating role as before.
-    expect(source).toContain("canRunCommand('call.answer', { can, roleAllowsOperating })");
-  });
+  // The compiled AokieLiveCallScreen (and its source-scan lock that lived here) was RETIRED with
+  // the pack-owned TSX console: the same gating — simulate only in the 'none' state, unified
+  // local/relay control dispatch, grant-gated controls — is now behaviorally locked by
+  // data/packs/aokie-receptionist/screens/liveCall.test.ts against the COMPILED sandbox screen.
 });
 
 describe('describeLastSeen', () => {

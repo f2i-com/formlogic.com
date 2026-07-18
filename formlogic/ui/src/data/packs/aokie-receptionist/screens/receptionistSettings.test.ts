@@ -30,7 +30,7 @@ import {
   EMPTY_DRAFT,
   type Draft,
   type SourceService,
-} from '../../../../components/custom-screen/aokie/receptionistPayload';
+} from '../receptionistPayload';
 import { DEFAULT_PERSONA } from '../persona';
 import {
   AI_GATEWAY_BASE as SCREEN_BASE,
