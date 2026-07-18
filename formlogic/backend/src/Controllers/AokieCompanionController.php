@@ -334,6 +334,33 @@ final class AokieCompanionController
         $admission['device'] = $device;
         $admission['desktopConnection'] = $binding['connection'];
         $admission['scopeCompatibility'] = $scope['legacy'] ? 'explicit_development_override' : null;
+        // Hosted relay transport (pack services wave 2), advertised ONLY here.
+        // ⚠️ NOT on the mobile admission and NOT in discovery: already-shipped
+        // native Companion builds parse both with deny_unknown_fields, so those
+        // documents must keep the exact shapes they were built against.
+        //
+        // ⚠️ ADVERTISING IS ADDITIVE; ADOPTION IS NOT. Withholding on an
+        // unconfigured origin keeps a *mintable* admission mintable — but an
+        // endpoint that accepts this field COMMITS to the relay: the plugin's
+        // GatewayTransport::open() returns the relay error rather than falling
+        // back to the WebSocket, so an advertised-but-unreachable URL is a
+        // reconnect loop, not a downgrade. What makes it safe is NOT that it is
+        // optional, it is that these URLs ride the exact `$origin . '/api'`
+        // invariant discovery already publishes as `apiBaseUrl` /
+        // `admissionEndpoint`: a deployment where they 404 is one where the
+        // Companion could never have bootstrapped at all. Split frontend/API
+        // installs must set AOKIE_COMPANION_ISSUER (see trustedOrigin()).
+        // Never widen this to a host derived from the request.
+        try {
+            $origin = $this->trustedOrigin($request);
+            $admission['relay'] = [
+                'challengeUrl' => $origin . '/api/aokie-companion/relay/challenge',
+                'framesUrl' => $origin . '/api/aokie-companion/relay/frames',
+                'streamUrl' => $origin . '/api/aokie-companion/relay/stream',
+            ];
+        } catch (\Throwable) {
+            // No trusted public URL configured; advertise nothing.
+        }
         return $this->jsonResponse($response, $admission)
             ->withHeader('Cache-Control', 'no-store')
             ->withHeader('Pragma', 'no-cache');

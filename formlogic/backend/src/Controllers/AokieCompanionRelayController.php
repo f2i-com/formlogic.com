@@ -19,7 +19,9 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * the existing v2 signalling documents and stay OPAQUE — they are
  * Ed25519-signed by the endpoints themselves; the relay stores and forwards
  * without ever interpreting their interior beyond "valid JSON within the
- * size cap".
+ * size cap". The one document the relay does compose is the endpoint
+ * challenge that opens a session — kept a SEPARATE resource precisely so the
+ * mailbox itself never has to look inside a frame.
  *
  * Party identity comes ONLY from the verified admission token (the same
  * `aokie-adm-v2` bearer the realtime gateway consumes): role 'plugin' is the
@@ -36,11 +38,95 @@ final class AokieCompanionRelayController
     public const STREAM_HEARTBEAT_SECONDS = 15;
     private const STREAM_POLL_INTERVAL_MS = 500;
 
+    /** Mirrors `aokie_protocol::v2::SCHEMA_VERSION`; the frame is refused otherwise. */
+    public const CHALLENGE_SCHEMA_VERSION = 2;
+    /**
+     * Endpoint-challenge lifetime.
+     *
+     * ⚠️ HARD-BOUNDED BY THE PROTOCOL, not a free choice.
+     * `EndpointChallengeFrame::validate()` refuses a frame whose `expiresAt`
+     * has already passed AND one that is more than
+     * `ENDPOINT_PROOF_MAX_LIFETIME` (30s) ahead of the verifier's clock — a
+     * longer window is rejected as `Expired`, failing every handshake. 25s
+     * keeps the protocol's own `ENDPOINT_PROOF_CLOCK_SKEW` (5s) of headroom
+     * for an endpoint clock that runs slow, while tolerating one up to 25s
+     * fast, and leaves the derived hello proof its full usable lifetime.
+     */
+    public const CHALLENGE_LIFETIME_SECONDS = 25;
+
     public function __construct(
         private readonly ?AokieCompanionAdmissionSigner $signer,
         private readonly AppService $apps,
         private readonly AokieCompanionRelayService $relay,
     ) {}
+
+    /**
+     * GET /api/aokie-companion/relay/challenge — the endpoint challenge the
+     * plugin requires before it will sign its hello.
+     *
+     * A DEDICATED resource rather than a frame injected into the mailbox: the
+     * mailbox stays strictly opaque, and the endpoint's existing challenge
+     * validation and hello signing run verbatim over the relay transport.
+     *
+     * It grants NOTHING. Every non-random field is copied from the presented
+     * bearer's OWN verified claims, so a challenge can only ever describe the
+     * identity that asked for it — there is no request input to influence, and
+     * no new server state to keep.
+     */
+    public function getChallenge(Request $request, Response $response): Response
+    {
+        $identity = $this->relayIdentity($request);
+        if (!$identity['ok']) {
+            return $this->error($response, $identity['status'], $identity['code'], $identity['message']);
+        }
+        if ($identity['role'] !== 'plugin') {
+            return $this->error(
+                $response,
+                403,
+                'relay_challenge_unsupported',
+                'Relay challenges are issued to the plugin party only',
+            );
+        }
+        $claims = $identity['claims'];
+        try {
+            // The peer policy rides the same HMAC as the rest of the claims, but
+            // verify() checks only what every role shares. Re-validating it here
+            // keeps a malformed roster from being echoed into a frame the
+            // endpoint would refuse only after the round trip.
+            $approvedPeers = AokieCompanionAdmissionSigner::validatePluginPeerPolicy(
+                $claims['approvedPeerKeyThumbprints'] ?? null,
+                $claims['peerRosterRevision'] ?? null,
+                $claims['peerRosterHash'] ?? null,
+            );
+        } catch (\InvalidArgumentException) {
+            return $this->error(
+                $response,
+                401,
+                'invalid_token',
+                'The admission token does not carry a plugin endpoint identity',
+            );
+        }
+        return $this->jsonResponse($response, [
+            'kind' => 'endpoint_challenge',
+            'schemaVersion' => self::CHALLENGE_SCHEMA_VERSION,
+            'appId' => (string) $claims['appId'],
+            'subjectId' => (string) $claims['subjectId'],
+            'role' => 'plugin',
+            'connectionId' => 'relay_' . bin2hex(random_bytes(16)),
+            'challengeNonce' => 'challenge_' . bin2hex(random_bytes(16)),
+            'admissionJti' => (string) $claims['jti'],
+            'holderKeyThumbprint' => (string) $claims['holderKeyThumbprint'],
+            // ⚠️ expectedPeerKeyThumbprint is DELIBERATELY ABSENT. It belongs to
+            // mobile-role challenges; on a plugin-role frame the endpoint reads
+            // its mere presence as an identity mismatch and refuses the socket.
+            'approvedPeerKeyThumbprints' => $approvedPeers,
+            'peerRosterRevision' => (int) $claims['peerRosterRevision'],
+            'peerRosterHash' => (string) $claims['peerRosterHash'],
+            'expiresAt' => time() + self::CHALLENGE_LIFETIME_SECONDS,
+        ])
+            ->withHeader('Cache-Control', 'no-store')
+            ->withHeader('Pragma', 'no-cache');
+    }
 
     /** POST /api/aokie-companion/relay/frames — {to, frames[]} → {accepted, seq}. */
     public function postFrames(Request $request, Response $response): Response
@@ -242,7 +328,11 @@ final class AokieCompanionRelayController
      * chain: verify the admission token → resolve the published app it names →
      * gate on the owner's `companion-relay` service toggle → derive the party.
      *
-     * @return array{ok:bool,status:int,code:string,message:string,appId:string,party:string,role:string}
+     * The verified claims ride along so callers that need more of the bearer's
+     * own identity (the endpoint challenge echoes its roster) read them from
+     * here instead of running a second, divergent verification.
+     *
+     * @return array{ok:bool,status:int,code:string,message:string,appId:string,party:string,role:string,claims:array<string,mixed>}
      */
     private function relayIdentity(Request $request): array
     {
@@ -254,6 +344,7 @@ final class AokieCompanionRelayController
             'appId' => '',
             'party' => '',
             'role' => '',
+            'claims' => [],
         ];
         if ($this->signer === null) {
             return $refused(503, 'companion_unavailable', 'Aokie Companion admission is not configured');
@@ -289,6 +380,7 @@ final class AokieCompanionRelayController
             'appId' => (string) $claims['appId'],
             'party' => $party,
             'role' => (string) $claims['role'],
+            'claims' => $claims,
         ];
     }
 

@@ -1889,7 +1889,24 @@ $app->post('/api/aokie-companion/activity', function ($request, $response) use (
 // admission bearer the realtime gateway consumes (verified in the controller;
 // no session/cookie auth). Fail-closed bucket like admission, but sized for
 // signalling chatter; the SSE stream costs one hit per ≤300s connection.
-$aokieRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'aokie_companion_relay', false, true);
+//
+// ⚠️ SIZING: the carrier sends one POST per outbound session message (no
+// coalescing), and this bucket is shared by challenge + POST + poll + stream
+// and keyed by IP — the desktop and its plugin are ONE key. Live captions
+// alone can run a few frames a second during a call, so an admission-grade
+// 30/min or a 120/min bucket would stall the channel mid-call (fail-closed).
+// 1200/min leaves real headroom while still bounding abuse; the durable bound
+// on the mailbox is the per-app 512-frame cap + 120s TTL, not this limiter,
+// and every route already requires a short-lived admission bearer. If the
+// carrier ever coalesces frames per POST (the API accepts 64), this can drop.
+$aokieRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 1200, 60, 'aokie_companion_relay', false, true);
+// Handshake step: the endpoint challenge a session opens with. It is derived
+// purely from the presenting bearer's own verified claims, grants nothing, and
+// keeps the frame mailbox opaque by not travelling through it.
+$app->get('/api/aokie-companion/relay/challenge', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionRelayController::class)
+        ->getChallenge($request, $response);
+})->add($aokieRelayRateLimiter);
 $app->post('/api/aokie-companion/relay/frames', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AokieCompanionRelayController::class)
         ->postFrames($request, $response);

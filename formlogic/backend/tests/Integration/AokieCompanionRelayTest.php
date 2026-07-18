@@ -182,6 +182,21 @@ final class AokieCompanionRelayTest extends TestCase
         return self::$controller->pollFrames($request, (new ResponseFactory())->createResponse());
     }
 
+    private function challenge(?string $bearer): ResponseInterface
+    {
+        return self::$controller->getChallenge(
+            $this->request('GET', '/api/aokie-companion/relay/challenge', $bearer),
+            (new ResponseFactory())->createResponse(),
+        );
+    }
+
+    /** @return array<string,mixed> the claims carried inside an admission token */
+    private static function claimsOf(string $token): array
+    {
+        [, $payloadHex] = explode('.', $token);
+        return json_decode((string) hex2bin($payloadHex), true) ?: [];
+    }
+
     private function setRelayService(bool $enabled): void
     {
         $app = self::$apps->getApp($this->appId);
@@ -409,6 +424,132 @@ final class AokieCompanionRelayTest extends TestCase
         $over = $this->post($mobile, ['to' => 'plugin', 'frames' => [['v' => 2]]]);
         $this->assertSame(429, $over->getStatusCode());
         $this->assertSame('relay_backpressure', self::decode($over)['code']);
+    }
+
+    public function testChallengeIsDerivedOnlyFromThePresentedBearersOwnClaims(): void
+    {
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $thumbprint = $this->mobileThumbprint($deviceId);
+        $token = $this->pluginToken([$thumbprint]);
+        $claims = self::claimsOf($token);
+
+        $before = time();
+        $response = $this->challenge($token);
+        $body = self::decode($response);
+        $after = time();
+        $this->assertSame(200, $response->getStatusCode(), json_encode($body));
+        $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        $this->assertSame('no-cache', $response->getHeaderLine('Pragma'));
+
+        $this->assertSame('endpoint_challenge', $body['kind']);
+        $this->assertSame(2, $body['schemaVersion'], 'must match aokie_protocol::v2::SCHEMA_VERSION');
+        $this->assertSame('plugin', $body['role']);
+        // Every non-random field is the bearer's OWN verified claim, echoed.
+        $this->assertSame($this->appId, $body['appId']);
+        $this->assertSame($claims['appId'], $body['appId']);
+        $this->assertSame($claims['subjectId'], $body['subjectId']);
+        $this->assertSame($claims['jti'], $body['admissionJti']);
+        $this->assertSame(self::PLUGIN_THUMBPRINT, $body['holderKeyThumbprint']);
+        $this->assertSame($claims['holderKeyThumbprint'], $body['holderKeyThumbprint']);
+        $this->assertSame([$thumbprint], $body['approvedPeerKeyThumbprints']);
+        $this->assertSame($claims['approvedPeerKeyThumbprints'], $body['approvedPeerKeyThumbprints']);
+        $this->assertSame($claims['peerRosterRevision'], $body['peerRosterRevision']);
+        $this->assertSame($claims['peerRosterHash'], $body['peerRosterHash']);
+
+        // ⚠️ A plugin-role challenge must NOT carry expectedPeerKeyThumbprint:
+        // the endpoint reads its presence as an identity mismatch and refuses
+        // the socket. Absent — not null, not empty string.
+        $this->assertFalse(
+            array_key_exists('expectedPeerKeyThumbprint', $body),
+            'expectedPeerKeyThumbprint must be omitted entirely for role plugin',
+        );
+
+        // ⚠️ PROTOCOL BOUND, not a preference: EndpointChallengeFrame::validate()
+        // refuses an expiry already past AND one more than
+        // ENDPOINT_PROOF_MAX_LIFETIME (30s) ahead of the verifier's clock. A
+        // longer window fails EVERY handshake with `Expired`, so the lifetime
+        // itself is locked here, not just the value it produced.
+        $lifetime = AokieCompanionRelayController::CHALLENGE_LIFETIME_SECONDS;
+        $this->assertGreaterThan(0, $lifetime);
+        $this->assertLessThanOrEqual(30, $lifetime, 'exceeds ENDPOINT_PROOF_MAX_LIFETIME — every handshake would fail');
+        $this->assertGreaterThan($after, $body['expiresAt'], 'a challenge must not arrive already expired');
+        $this->assertGreaterThanOrEqual($before + $lifetime, $body['expiresAt']);
+        $this->assertLessThanOrEqual($after + $lifetime, $body['expiresAt']);
+
+        // connectionId/challengeNonce must satisfy the protocol's safe-id rule
+        // (ASCII alphanumeric plus - _ . :) or the frame is rejected outright.
+        foreach (['connectionId' => 'relay_', 'challengeNonce' => 'challenge_'] as $field => $prefix) {
+            $this->assertStringStartsWith($prefix, $body[$field]);
+            $this->assertMatchesRegularExpression('/^[A-Za-z0-9_.:-]{1,200}$/D', $body[$field], $field);
+        }
+    }
+
+    public function testEveryChallengeMintsFreshConnectionAndNonceValues(): void
+    {
+        $token = $this->pluginToken([$this->mobileThumbprint('device_' . bin2hex(random_bytes(4)))]);
+        $first = self::decode($this->challenge($token));
+        $second = self::decode($this->challenge($token));
+
+        $this->assertNotSame($first['connectionId'], $second['connectionId']);
+        $this->assertNotSame($first['challengeNonce'], $second['challengeNonce']);
+        // The same bearer still describes the same identity both times.
+        $this->assertSame($first['admissionJti'], $second['admissionJti']);
+        $this->assertSame($first['holderKeyThumbprint'], $second['holderKeyThumbprint']);
+    }
+
+    public function testChallengeRefusalsAreTypedAndNeverLeakIdentity(): void
+    {
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+
+        // A mobile bearer cannot obtain a plugin handshake — and could not use
+        // one: the mailbox derives its party from the token, not the challenge.
+        $mobile = $this->challenge($this->mobileToken($deviceId));
+        $this->assertSame(403, $mobile->getStatusCode());
+        $this->assertSame('relay_challenge_unsupported', self::decode($mobile)['code']);
+
+        $valid = $this->pluginToken([$this->mobileThumbprint($deviceId)]);
+        foreach ([
+            'missing' => null,
+            'garbage' => 'not-an-admission-token',
+            // Deterministically flip the last signature nibble.
+            'tampered' => substr($valid, 0, -1) . (str_ends_with($valid, 'a') ? 'b' : 'a'),
+            'expired' => $this->pluginToken([$this->mobileThumbprint($deviceId)], time() - 4000),
+        ] as $label => $bearer) {
+            $response = $this->challenge($bearer);
+            $body = self::decode($response);
+            $this->assertSame(401, $response->getStatusCode(), $label);
+            $this->assertSame('invalid_token', $body['code'], $label);
+            // A refusal is an error envelope only: no identity material at all.
+            $keys = array_keys($body);
+            sort($keys);
+            $this->assertSame(['code', 'error', 'message'], $keys, $label);
+        }
+
+        // No configured signer = unavailable, never open.
+        $unconfigured = new AokieCompanionRelayController(null, self::$apps, self::$relay);
+        $response = $unconfigured->getChallenge(
+            $this->request('GET', '/api/aokie-companion/relay/challenge', $this->pluginToken([
+                $this->mobileThumbprint($deviceId),
+            ])),
+            (new ResponseFactory())->createResponse(),
+        );
+        $this->assertSame(503, $response->getStatusCode());
+        $this->assertSame('companion_unavailable', self::decode($response)['code']);
+    }
+
+    public function testServiceToggleGatesTheChallengeToo(): void
+    {
+        $token = $this->pluginToken([$this->mobileThumbprint('device_' . bin2hex(random_bytes(4)))]);
+        $this->setRelayService(false);
+        try {
+            $denied = $this->challenge($token);
+            $this->assertSame(403, $denied->getStatusCode());
+            $this->assertSame('service_disabled', self::decode($denied)['code']);
+        } finally {
+            $this->setRelayService(true);
+        }
+        $restored = $this->challenge($token);
+        $this->assertSame(200, $restored->getStatusCode(), (string) $restored->getBody());
     }
 
     public function testExpiredFramesAreSweptAndNeverServed(): void

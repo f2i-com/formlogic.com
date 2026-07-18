@@ -1064,6 +1064,84 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertSame('ws://127.0.0.1:39000/v2/realtime', $enabledDiscovery['gatewayUrl']);
     }
 
+    public function testPluginAdmissionAdvertisesTheHostedRelayAndKeepsEveryExistingKey(): void
+    {
+        // A plugin admission needs a non-empty roster; this primes one.
+        $this->ensurePluginRosterContains($this->mobileHolder('device_relayadv_' . bin2hex(random_bytes(4))));
+        $pluginRequest = fn () => $this->request('POST', '/api/v1/aokie-companion/admission')
+            ->withParsedBody($this->pluginAdmissionBody())
+            ->withAttribute('apiKeyId', $this->apiKeyId)
+            ->withAttribute('apiKeyScopes', ['aokie:realtime']);
+
+        $response = self::$controller->pluginAdmission($pluginRequest(), (new ResponseFactory())->createResponse());
+        $body = self::decode($response);
+        $this->assertSame(200, $response->getStatusCode(), json_encode($body));
+
+        // ⚠️ REGRESSION LOCK. The desktop projects this response through an
+        // EXACT key allowlist and returns None for any missing entry, so a
+        // removed or renamed key breaks admission outright. Additions are inert
+        // there until the allowlist carries them — which is what makes the
+        // `relay` advertisement safe to deploy on its own.
+        foreach ([
+            'accessToken', 'tokenType', 'expiresIn', 'expiresAt', 'gatewayUrl',
+            'appId', 'subjectId', 'role', 'holderKeyThumbprint', 'scopes',
+            'approvedPeerKeyThumbprints', 'peerRosterRevision', 'peerRosterHash',
+            'endpointPublicKey', 'iceServers', 'relayOnly', 'turnCredentialExpiresAt',
+            'device', 'desktopConnection', 'scopeCompatibility',
+        ] as $key) {
+            $this->assertArrayHasKey($key, $body, $key . ' is part of the shipped admission contract');
+        }
+        $this->assertNotSame('', (string) $body['gatewayUrl'], 'the desktop projection hard-requires gatewayUrl');
+
+        $this->assertSame([
+            'challengeUrl' => self::BASE . '/api/aokie-companion/relay/challenge',
+            'framesUrl' => self::BASE . '/api/aokie-companion/relay/frames',
+            'streamUrl' => self::BASE . '/api/aokie-companion/relay/stream',
+        ], $body['relay']);
+
+        // Turning the service off withholds the advertisement with the rest of
+        // the admission — the gate runs before anything is minted.
+        $app = self::$apps->getApp($this->appId);
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $restore = $settings;
+        $settings['services'] = ['companion-relay' => ['enabled' => false]];
+        self::$apps->updateApp($this->appId, ['settings' => $settings]);
+        try {
+            $disabled = self::$controller->pluginAdmission($pluginRequest(), (new ResponseFactory())->createResponse());
+            $disabledBody = self::decode($disabled);
+            $this->assertSame(403, $disabled->getStatusCode());
+            $this->assertSame('service_disabled', $disabledBody['code']);
+            $this->assertArrayNotHasKey('relay', $disabledBody);
+        } finally {
+            self::$apps->updateApp($this->appId, ['settings' => $restore]);
+        }
+    }
+
+    public function testPluginRelayAdvertisementIsWithheldFromMobilesAndDiscovery(): void
+    {
+        // ⚠️ Both of these documents are parsed with deny_unknown_fields by
+        // already-shipped native Companion builds: an added key is not a new
+        // feature there, it is an instant hard parse failure. The hosted relay
+        // is therefore advertised on the plugin admission ONLY.
+        $deviceId = 'device_relayscope_' . bin2hex(random_bytes(6));
+        $oauth = $this->authorizeCompanion($deviceId);
+        $mobile = $this->mobileAdmission($oauth['accessToken'], $deviceId, ['state_read']);
+        $mobileBody = self::decode($mobile);
+        $this->assertSame(200, $mobile->getStatusCode(), json_encode($mobileBody));
+        $this->assertArrayNotHasKey('relay', $mobileBody);
+        // The fields shipped Companions require must still be present.
+        foreach (['gatewayUrl', 'relayOnly', 'turnCredentialExpiresAt'] as $key) {
+            $this->assertArrayHasKey($key, $mobileBody, $key . ' is required by the shipped mobile parser');
+        }
+
+        $discovery = self::decode(self::$controller->appDiscovery(
+            $this->request('GET', '/api/app/' . $this->appSlug . '/aokie-discovery'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->appSlug],
+        ));
+        $this->assertArrayNotHasKey('relay', $discovery);
+    }
+
     public function testEndpointKeysRostersReplayRotationAndDesktopBindingFailClosed(): void
     {
         $columns = self::$pdo->query('SHOW COLUMNS FROM aokie_companion_devices')
