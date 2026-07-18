@@ -100,6 +100,14 @@ final class AokieCompanionController
         if ($app === null) {
             return $this->error($response, 403, 'forbidden', 'The app is unavailable to this account');
         }
+        if (!$this->companionRelayEnabled($app)) {
+            return $this->error(
+                $response,
+                403,
+                'service_disabled',
+                'The Companion app relay is turned off for this app — an owner can re-enable it under App Settings › Included services',
+            );
+        }
         // Re-evaluate both the member's CURRENT role and the app's CURRENT
         // remote-consent policy on every short-lived exchange. Revoking a role
         // grant or consent flag therefore takes effect within one admission TTL.
@@ -237,6 +245,14 @@ final class AokieCompanionController
         $app = $this->apps->getApp($appId);
         if ($app === null || ($app['ownerId'] ?? null) !== $userId || ($app['status'] ?? null) !== 'published') {
             return $this->error($response, 403, 'forbidden', 'The app is unavailable to this account');
+        }
+        if (!$this->companionRelayEnabled($app)) {
+            return $this->error(
+                $response,
+                403,
+                'service_disabled',
+                'The Companion app relay is turned off for this app — an owner can re-enable it under App Settings › Included services',
+            );
         }
         $binding = $this->devices->verifyPluginBinding($userId, $appId, $apiKeyId);
         if (!$binding['ok']) {
@@ -1716,6 +1732,26 @@ final class AokieCompanionController
         return $out;
     }
 
+    /**
+     * Pack services wave 1: the app owner's App Settings toggle for the
+     * `companion-relay` included service (settings.services['companion-relay']).
+     * An ABSENT map or entry means ENABLED — apps installed before pack services
+     * existed keep working unchanged; only an explicit enabled:false disables
+     * the relay.
+     *
+     * @param array<string,mixed> $app
+     */
+    private function companionRelayEnabled(array $app): bool
+    {
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $services = is_array($settings['services'] ?? null) ? $settings['services'] : [];
+        $entry = $services['companion-relay'] ?? null;
+        if (!is_array($entry)) {
+            return true;
+        }
+        return ($entry['enabled'] ?? true) !== false;
+    }
+
     /** @param array<string,mixed>|null $app */
     private function discoveryResponse(Request $request, Response $response, ?array $app): Response
     {
@@ -1795,6 +1831,26 @@ final class AokieCompanionController
         if ($app !== null) {
             $payload['appId'] = (string) $app['id'];
             $payload['appSlug'] = (string) $app['slug'];
+            // Pack services wave 1: when the owner has disabled the Companion
+            // relay, the gateway/realtime endpoints (and the ICE bootstrap that
+            // only exists to reach them) are withheld and the document states
+            // the toggle explicitly — a Companion reading it learns the service
+            // is off instead of a dead endpoint. ⚠️ The `companionRelay` field
+            // is emitted ONLY in the disabled case: the native Companion parser
+            // is deny_unknown_fields, so already-shipped builds must keep
+            // receiving the exact ENABLED document shape they were built
+            // against (absence = enabled, the same backward-compat rule the
+            // admission gate uses).
+            if (!$this->companionRelayEnabled($app)) {
+                $payload['companionRelay'] = ['enabled' => false];
+                unset(
+                    $payload['gatewayUrl'],
+                    $payload['realtimeUrl'],
+                    $payload['iceServers'],
+                    $payload['relayOnly'],
+                    $payload['turnCredentialExpiresAt'],
+                );
+            }
         }
 
         $signed = null;

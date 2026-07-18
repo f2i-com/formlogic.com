@@ -101,6 +101,23 @@ class PackCapabilitiesTest extends TestCase
         $this->assertContains('aokie', $d['connectors']);
     }
 
+    public function testDescribeSurfacesDeclaredPackServices(): void
+    {
+        // Pack services (wave 1): included-service declarations show on the
+        // install review (informational — toggled post-install, never approved here).
+        $pack = $this->pack();
+        $pack['apps'][0]['services'] = [
+            ['id' => 'companion-relay', 'title' => 'Companion app relay', 'description' => 'Relay.'],
+            ['id' => 'other-svc', 'title' => 'Other', 'description' => '', 'defaultEnabled' => false],
+        ];
+        $d = PackCapabilities::describe($pack);
+        $this->assertSame([
+            ['id' => 'companion-relay', 'title' => 'Companion app relay', 'description' => 'Relay.', 'defaultEnabled' => true],
+            ['id' => 'other-svc', 'title' => 'Other', 'description' => '', 'defaultEnabled' => false],
+        ], $d['services']);
+        $this->assertSame([], PackCapabilities::describe($this->pack())['services']);
+    }
+
     public function testConnectorGrantsIncludeWildcards(): void
     {
         // A wildcard connector grant is reviewable (the runtime gate honors it).

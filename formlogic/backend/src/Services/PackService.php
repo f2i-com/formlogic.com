@@ -171,6 +171,24 @@ class PackService
                 $defaultRoleName = $appSettings['defaultRoleName'] ?? null;
                 unset($appSettings['defaultRoleName'], $appSettings['defaultRoleId']);
 
+                // Pack services (wave 1): compose the owner-facing enable/disable map from the
+                // pack's declaration. The declaration is authoritative — any raw settings.services
+                // riding in the pack's app settings is dropped first (an absent entry means
+                // ENABLED at runtime, so dropping strays is behavior-neutral and un-spoofable).
+                unset($appSettings['services']);
+                $declaredServices = is_array($packApp['services'] ?? null) ? $packApp['services'] : [];
+                if ($declaredServices !== []) {
+                    $servicesMap = [];
+                    foreach ($declaredServices as $svc) {
+                        $servicesMap[(string) $svc['id']] = [
+                            'enabled' => ($svc['defaultEnabled'] ?? true) !== false,
+                            'title' => (string) $svc['title'],
+                            'description' => (string) $svc['description'],
+                        ];
+                    }
+                    $appSettings['services'] = $servicesMap;
+                }
+
                 // navConfig: remap each item.formId (@pack:->UUID); drop items pointing at a missing form.
                 $navConfig = [];
                 foreach ((is_array($packApp['navConfig'] ?? null) ? $packApp['navConfig'] : []) as $item) {
@@ -676,6 +694,24 @@ class PackService
             $appSettings['landingPage'] = isset($realToPackKey[$lp]) ? '@pack:' . $realToPackKey[$lp] : 'dashboard';
         }
 
+        // Pack services: settings.services (the installed enable/disable map) exports as the
+        // portable `services` DECLARATION — defaultEnabled reflects the CURRENT enabled state
+        // so importing the export reproduces this app's behavior. The raw map never rides in
+        // the exported settings (import recomposes it from the declaration).
+        $exportServices = [];
+        foreach ((is_array($appSettings['services'] ?? null) ? $appSettings['services'] : []) as $sid => $svc) {
+            if (!is_string($sid) || $sid === '' || !is_array($svc)) {
+                continue;
+            }
+            $exportServices[] = [
+                'id' => $sid,
+                'title' => is_string($svc['title'] ?? null) && $svc['title'] !== '' ? $svc['title'] : $sid,
+                'description' => is_string($svc['description'] ?? null) ? $svc['description'] : '',
+                'defaultEnabled' => ($svc['enabled'] ?? true) !== false,
+            ];
+        }
+        unset($appSettings['services']);
+
         // navConfig: remap each item.formId to @pack:<key>; drop items pointing outside the app.
         $navConfig = [];
         foreach ((is_array($app['navConfig'] ?? null) ? $app['navConfig'] : []) as $item) {
@@ -742,6 +778,9 @@ class PackService
             'forms' => $packAppForms,
             'roles' => $packRoles,
         ];
+        if ($exportServices !== []) {
+            $packApp['services'] = $exportServices;
+        }
         if (!empty($app['customScreen'])) {
             $packApp['customScreen'] = $this->packifyCustomScreen($app['customScreen'], $realToPackKey);
         }
@@ -1767,6 +1806,44 @@ class PackService
             $seenAppIds[$app['packAppId']] = true;
             if (empty($app['name'])) {
                 throw new \RuntimeException("App '{$app['packAppId']}' is missing name");
+            }
+            // Pack services (wave 1): an optional list of included-service declarations the
+            // importer composes into settings.services. Strict shape — unknown keys rejected
+            // so a pack can never smuggle extra semantics through a service entry.
+            if (array_key_exists('services', $app)) {
+                if (!is_array($app['services']) || !array_is_list($app['services'])) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' services must be a list");
+                }
+                if (count($app['services']) > 8) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' cannot declare more than 8 services");
+                }
+                $seenServiceIds = [];
+                foreach ($app['services'] as $si => $svc) {
+                    if (!is_array($svc)) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' service at index {$si} must be an object");
+                    }
+                    $unknown = array_diff(array_keys($svc), ['id', 'title', 'description', 'defaultEnabled']);
+                    if ($unknown !== []) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' service at index {$si} has unknown keys: " . implode(', ', $unknown));
+                    }
+                    $sid = $svc['id'] ?? null;
+                    if (!is_string($sid) || !preg_match('/^[a-z0-9][a-z0-9-]{1,40}$/', $sid)) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' service at index {$si} needs a slug id (lowercase letters, digits, hyphens)");
+                    }
+                    if (isset($seenServiceIds[$sid])) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' declares duplicate service id '{$sid}'");
+                    }
+                    $seenServiceIds[$sid] = true;
+                    if (!is_string($svc['title'] ?? null) || trim($svc['title']) === '' || strlen($svc['title']) > 120) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' service '{$sid}' needs a title (max 120 chars)");
+                    }
+                    if (!is_string($svc['description'] ?? null) || strlen($svc['description']) > 2000) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' service '{$sid}' needs a description string (max 2000 chars)");
+                    }
+                    if (array_key_exists('defaultEnabled', $svc) && !is_bool($svc['defaultEnabled'])) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' service '{$sid}' defaultEnabled must be a boolean");
+                    }
+                }
             }
             // Per-app size caps (mirror the form caps) — the app home screen ships executable HTML/CSS/JS.
             if (isset($app['customScreen'])) {

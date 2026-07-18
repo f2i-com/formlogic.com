@@ -16,7 +16,7 @@
       "id": "aokie-receptionist",
       "name": "Aokie Receptionist",
       "description": "An AI phone receptionist over FormLogic Desktop: raw call and SMS records land automatically from the Aokie Bluetooth phone bridge, starter FormLogic Flows look up callers, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "FormLogic",
       "tags": [
         "receptionist",
@@ -2797,6 +2797,14 @@
           "icon": "PhoneCall",
           "appKind": "staff"
         },
+        "services": [
+          {
+            "id": "companion-relay",
+            "title": "Companion app relay",
+            "description": "Lets the paired Aokie Companion mobile app connect through the receptionist's gateway for pairing, status, live captions and call controls. Relayed control and caption traffic is signature-verified end to end, but it is readable by the relay host; call audio never passes through the relay.",
+            "defaultEnabled": true
+          }
+        ],
         "theme": {
           "primaryColor": "#0ea5e9",
           "backgroundColor": "#0f172a",
@@ -6483,7 +6491,7 @@
         "form:receptionist-settings": "9927b3518987970e585bfeb4a6755e64a1ce156e53051813e3a3c8fe6a352ee5",
         "app:aokie-receptionist": "d9d78ba0048d8c8d8fffb3224cabd3bc3d11e40a97f89ae48f576ea7464501c6"
       },
-      "signature": "16zDun2RxSf2m1s+jRrqhyP0k5yw52D402P4vNnd63OgimqHyq9PodHfO5oqUbpCcVtp2HdyVfOejenHU77LCQ=="
+      "signature": "QPAF4hm517eR7HFuVt6uZj5vrpkb/VVx7AsNPQ3IbA+qgJaMDLd/OhuR8HBDzjfbuQuMNxtMV7jdcyOcHJgIBQ=="
     }
   }
 }

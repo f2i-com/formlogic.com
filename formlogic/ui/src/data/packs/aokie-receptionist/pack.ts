@@ -2421,7 +2421,7 @@ export const aokieReceptionistPack: PackData = {
     name: 'Aokie Receptionist',
     description:
       'An AI phone receptionist over FormLogic Desktop: raw call and SMS records land automatically from the Aokie Bluetooth phone bridge, starter FormLogic Flows look up callers, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.',
-    version: '1.0.0',
+    version: '1.0.1',
     author: 'FormLogic',
     tags: ['receptionist', 'phone', 'aokie', 'desktop', 'flows'],
   },
@@ -3317,6 +3317,18 @@ export const aokieReceptionistPack: PackData = {
       description:
         'AI phone receptionist over FormLogic Desktop: live call console, automatic call/SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks — with the Aokie Bluetooth phone bridge doing the hardware work. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.',
       settings: { icon: 'PhoneCall', appKind: 'staff' },
+      // Included services (pack services wave 1): the owner can turn each of these
+      // off in App Settings -> Included services; the backend gates the matching
+      // endpoints on the toggle (admission + discovery for the Companion relay).
+      services: [
+        {
+          id: 'companion-relay',
+          title: 'Companion app relay',
+          description:
+            "Lets the paired Aokie Companion mobile app connect through the receptionist's gateway for pairing, status, live captions and call controls. Relayed control and caption traffic is signature-verified end to end, but it is readable by the relay host; call audio never passes through the relay.",
+          defaultEnabled: true,
+        },
+      ],
       theme: {
         primaryColor: '#0ea5e9',
         backgroundColor: '#0f172a',

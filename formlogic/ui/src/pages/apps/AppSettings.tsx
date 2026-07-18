@@ -455,6 +455,32 @@ export function AppSettings() {
               />
             </div>
 
+            {/* Included services (pack-declared; rendered only when the app's pack shipped any).
+                Each toggle gates the service's backend endpoints — e.g. turning the Companion
+                relay off makes its admission endpoints refuse with `service_disabled`. */}
+            {app.settings?.services && Object.keys(app.settings.services).length > 0 && (
+              <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white">Included services</h3>
+                <p className="text-xs text-gray-400 dark:text-slate-500">
+                  Services this app's pack ships. Turning one off blocks its connections as soon as you save.
+                </p>
+                {Object.entries(app.settings.services).map(([id, svc]) => (
+                  <Switch
+                    key={id}
+                    checked={svc?.enabled !== false}
+                    onChange={(checked) =>
+                      updateSetting('services', {
+                        ...app.settings?.services,
+                        [id]: { ...svc, enabled: checked },
+                      })
+                    }
+                    label={svc?.title || id}
+                    description={svc?.description}
+                  />
+                ))}
+              </div>
+            )}
+
             {/* Danger zone */}
             <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
               <h3 className="text-sm font-medium text-red-700 dark:text-red-400 mb-3">Danger zone</h3>

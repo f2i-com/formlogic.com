@@ -316,6 +316,34 @@ prefix (matching what the runtime gate honors, including wildcards like `connect
 strict `AppPermissions::isConnectorGrant` validator — so a declined wildcard is actually stripped.
 `approvedConnectorGrants` absent = no review = every requested grant activates (backward compatible).
 
+### Pack services (wave 1)
+
+A pack app may declare **included services** — hosted/relayed capabilities that ship with the app —
+as `apps[].services: [{ id, title, description, defaultEnabled? }]` (id = slug
+`^[a-z0-9][a-z0-9-]{1,40}$`, max 8 entries, unknown keys rejected by `validatePack`). On import,
+`PackService::importPack` composes them into
+`apps.settings.services = { '<id>': { enabled, title, description } }` (`enabled` from
+`defaultEnabled`, absent = true); export (`exportApp`) emits the declaration back with
+`defaultEnabled` reflecting the **current** enabled state, so an export reproduces the app's
+behavior. `POST /api/packs/describe` surfaces the declarations as `capabilities.services`
+(informational — no approval gating at import in this wave).
+
+The app owner toggles each service under **App Settings → General → Included services**. Semantics
+are backward compatible: an **absent** `settings.services` map or entry means **enabled** — only an
+explicit `enabled: false` disables a service (pre-existing installs keep working without a
+retrofit).
+
+The first service is `companion-relay` (the Aokie Companion gateway/admission). When disabled, the
+companion admission endpoints (`pluginAdmission` + `mobileAdmission` in
+`AokieCompanionController`) refuse with a typed 403 `service_disabled`, and the per-app discovery
+document withholds `gatewayUrl`/`realtimeUrl` (and the ICE bootstrap) while stating
+`companionRelay: { enabled: false }`. ⚠️ The `companionRelay` field appears ONLY in the disabled
+document: the native Companion discovery parser is `deny_unknown_fields`, so enabled apps keep
+serving the exact document shape already-shipped builds were built against (absence = enabled —
+the same rule the admission gate uses). Trust note: relayed Companion control/caption traffic is
+signature-verified end to end but **readable by the relay host** (signed, not sealed); call audio
+never passes through the relay — the service description shown to the owner says so.
+
 ### Deferred
 An npm-published `@formlogic/sdk`; SDK version negotiation in the client manifest.
 (`FormView`/`ResponseDetail`/`AppButton` — previously listed here — are now implemented; see

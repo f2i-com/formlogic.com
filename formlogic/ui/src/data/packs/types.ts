@@ -149,6 +149,17 @@ export interface PackReportItem {
   blocks?: PackReportBlock[];
 }
 
+/** A service a pack DECLARES as included with its app (wave 1: 'companion-relay').
+ *  Import composes settings.services['<id>'] = { enabled, title, description } on the
+ *  installed app; the owner can toggle each entry in App Settings and the backend
+ *  gates the service's endpoints on it (absent entry = enabled, backward compatible). */
+export interface PackAppService {
+  id: string;
+  title: string;
+  description: string;
+  defaultEnabled?: boolean;
+}
+
 export interface PackApp {
   packAppId: string;
   name: string;
@@ -163,6 +174,8 @@ export interface PackApp {
   reports?: PackReportItem[];
   /** Optional sandboxed QuickJS app-logic bundle (spec §31; imported to apps.custom_logic). */
   customLogic?: CustomAppLogicBundle;
+  /** Services included with this app (owner-toggleable after install; max 8). */
+  services?: PackAppService[];
 }
 
 export interface PackData {

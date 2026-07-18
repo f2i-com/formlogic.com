@@ -155,6 +155,25 @@ describe('aokieReceptionistPack â€” app', () => {
     }
   });
 
+  it('declares exactly the companion-relay included service, honestly worded (pack services wave 1)', () => {
+    // The importer composes settings.services['companion-relay'] from this declaration and
+    // the backend gates the Companion admission endpoints on the owner's toggle.
+    expect(app.services).toBeDefined();
+    expect(app.services).toHaveLength(1);
+    const svc = app.services![0];
+    expect(svc.id).toBe('companion-relay');
+    expect(svc.defaultEnabled).toBe(true);
+    expect(svc.title).toBe('Companion app relay');
+    // The description must carry the honest trust framing: relayed traffic is
+    // signature-verified but READABLE by the relay host, and call audio never
+    // transits the relay.
+    expect(svc.description).toMatch(/signature-verified/i);
+    expect(svc.description).toMatch(/readable by the relay host/i);
+    expect(svc.description).toMatch(/audio never passes through/i);
+    // Slug shape matches the backend validator (^[a-z0-9][a-z0-9-]{1,40}$).
+    expect(svc.id).toMatch(/^[a-z0-9][a-z0-9-]{1,40}$/);
+  });
+
   it('viewer role gets no connector grants; receptionist never gets driver install', () => {
     const viewer = app.roles.find((r) => r.name === 'Viewer');
     expect(viewer).toBeDefined();

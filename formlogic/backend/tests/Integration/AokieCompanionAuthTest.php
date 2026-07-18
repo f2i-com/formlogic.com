@@ -491,6 +491,11 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertSame($this->appSlug, $body['appSlug']);
         $this->assertSame('ws://127.0.0.1:39000/v2/realtime', $body['gatewayUrl']);
         $this->assertSame($body['gatewayUrl'], $body['realtimeUrl']);
+        // ⚠️ ENABLED documents must NOT carry `companionRelay` — the native
+        // Companion parser is deny_unknown_fields, and already-shipped builds
+        // were built against this exact key set (absence = enabled; the field
+        // appears only in the disabled document, asserted below).
+        $this->assertArrayNotHasKey('companionRelay', $body);
         $this->assertSame($origin . '/oauth/authorize', $body['oauthAuthorizationUrl']);
         $this->assertSame($origin . '/api/oauth/token', $body['oauthTokenUrl']);
         $this->assertSame($origin . '/api/aokie-companion', $body['oauthResource']);
@@ -976,6 +981,87 @@ final class AokieCompanionAuthTest extends TestCase
         $fresh = $this->authorizeCompanion($deviceId);
         $again = $this->mobileAdmission($fresh['accessToken'], $deviceId, ['state_read']);
         $this->assertSame(200, $again->getStatusCode(), (string) $again->getBody());
+    }
+
+    /**
+     * Pack services wave 1: the owner's App Settings toggle for the pack-declared
+     * `companion-relay` service gates BOTH admission endpoints, and the per-app
+     * discovery document withholds the gateway endpoints while stating the toggle.
+     * An ABSENT services map (every pre-services app) stays fully enabled.
+     */
+    public function testCompanionRelayServiceToggleGatesAdmissionAndDiscovery(): void
+    {
+        $deviceId = 'device_svcgate_' . bin2hex(random_bytes(6));
+        $oauth = $this->authorizeCompanion($deviceId);
+        // Absent settings.services map (this app never declared any) = ENABLED:
+        // pairing + mobile admission proceed exactly as before pack services existed.
+        $baseline = $this->mobileAdmission($oauth['accessToken'], $deviceId, ['state_read']);
+        $this->assertSame(200, $baseline->getStatusCode(), (string) $baseline->getBody());
+
+        $setRelay = function (bool $enabled): void {
+            $app = self::$apps->getApp($this->appId);
+            $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $settings['services'] = ['companion-relay' => [
+                'enabled' => $enabled,
+                'title' => 'Companion app relay',
+                'description' => 'Relay for the Companion app',
+            ]];
+            self::$apps->updateApp($this->appId, ['settings' => $settings]);
+        };
+        $pluginRequest = fn () => $this->request('POST', '/api/v1/aokie-companion/admission')
+            ->withParsedBody($this->pluginAdmissionBody())
+            ->withAttribute('apiKeyId', $this->apiKeyId)
+            ->withAttribute('apiKeyScopes', ['aokie:realtime']);
+
+        $setRelay(false);
+        $pluginDenied = self::$controller->pluginAdmission(
+            $pluginRequest(),
+            (new ResponseFactory())->createResponse(),
+        );
+        $this->assertSame(403, $pluginDenied->getStatusCode());
+        $this->assertSame('service_disabled', self::decode($pluginDenied)['code']);
+        // The device key is already in the plugin roster from the baseline admission,
+        // so ensurePaired:false keeps this from re-running pluginAdmission (which the
+        // gate would now refuse).
+        $mobileDenied = $this->mobileAdmission(
+            $oauth['accessToken'],
+            $deviceId,
+            ['state_read'],
+            null,
+            false,
+        );
+        $this->assertSame(403, $mobileDenied->getStatusCode());
+        $this->assertSame('service_disabled', self::decode($mobileDenied)['code']);
+
+        $disabledDiscovery = self::decode(self::$controller->appDiscovery(
+            $this->request('GET', '/api/app/' . $this->appSlug . '/aokie-discovery'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->appSlug],
+        ));
+        $this->assertSame(['enabled' => false], $disabledDiscovery['companionRelay']);
+        $this->assertArrayNotHasKey('gatewayUrl', $disabledDiscovery);
+        $this->assertArrayNotHasKey('realtimeUrl', $disabledDiscovery);
+        $this->assertArrayNotHasKey('iceServers', $disabledDiscovery);
+        $this->assertArrayNotHasKey('turnCredentialExpiresAt', $disabledDiscovery);
+
+        // Re-enable: everything proceeds past the gate again.
+        $setRelay(true);
+        $pluginAllowed = self::$controller->pluginAdmission(
+            $pluginRequest(),
+            (new ResponseFactory())->createResponse(),
+        );
+        $this->assertSame(200, $pluginAllowed->getStatusCode(), (string) $pluginAllowed->getBody());
+        $mobileAllowed = $this->mobileAdmission($oauth['accessToken'], $deviceId, ['state_read'], null, false);
+        $this->assertSame(200, $mobileAllowed->getStatusCode(), (string) $mobileAllowed->getBody());
+        $enabledDiscovery = self::decode(self::$controller->appDiscovery(
+            $this->request('GET', '/api/app/' . $this->appSlug . '/aokie-discovery'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->appSlug],
+        ));
+        // Enabled documents carry NO companionRelay key (deny_unknown_fields
+        // compatibility with shipped Companion builds — absence = enabled).
+        $this->assertArrayNotHasKey('companionRelay', $enabledDiscovery);
+        $this->assertSame('ws://127.0.0.1:39000/v2/realtime', $enabledDiscovery['gatewayUrl']);
     }
 
     public function testEndpointKeysRostersReplayRotationAndDesktopBindingFailClosed(): void

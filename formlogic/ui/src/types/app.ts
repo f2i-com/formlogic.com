@@ -47,6 +47,11 @@ export interface AppSettings {
    *  account timezone. Defaulted from the creator's account on app creation;
    *  also drives report date bucketing. Empty/absent → UTC. */
   timezone?: string;
+  /** Pack-declared "included services" (e.g. the Aokie Companion relay), keyed by
+   *  service id. Composed at pack import; owner-toggleable under App Settings →
+   *  Included services. The backend gates each service's endpoints on `enabled`;
+   *  an ABSENT map/entry means enabled (backward compatible). */
+  services?: Record<string, { enabled: boolean; title?: string; description?: string }>;
 }
 
 export interface AppNavItem {

@@ -76,9 +76,26 @@ class PackCapabilities
                 }
             }
         }
+        // Pack services (wave 1): included-service declarations, surfaced so the
+        // install review can SHOW what ships with the app. Informational only —
+        // the owner toggles each service in App Settings after install (no
+        // approval gating at import in this wave).
+        $services = [];
+
         foreach ($apps as $a) {
             if (is_array($a)) {
                 $collect($a['customLogic'] ?? null);
+                foreach ((is_array($a['services'] ?? null) ? $a['services'] : []) as $svc) {
+                    if (!is_array($svc) || !is_string($svc['id'] ?? null) || $svc['id'] === '') {
+                        continue;
+                    }
+                    $services[] = [
+                        'id' => $svc['id'],
+                        'title' => is_string($svc['title'] ?? null) && $svc['title'] !== '' ? $svc['title'] : $svc['id'],
+                        'description' => is_string($svc['description'] ?? null) ? $svc['description'] : '',
+                        'defaultEnabled' => ($svc['defaultEnabled'] ?? true) !== false,
+                    ];
+                }
                 if (!empty($a['customScreen'])) {
                     $hasScreens = true;
                 }
@@ -150,6 +167,8 @@ class PackCapabilities
             'permissions' => array_values(array_keys($permissions)),
             // APP-502: the connector grants the install review may approve/deny.
             'connectorGrants' => $grantList,
+            // Pack services included with the apps (informational; owner-toggleable post-install).
+            'services' => $services,
         ];
     }
 }
