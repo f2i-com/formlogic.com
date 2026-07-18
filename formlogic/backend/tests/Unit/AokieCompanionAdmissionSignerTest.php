@@ -126,4 +126,166 @@ final class AokieCompanionAdmissionSignerTest extends TestCase
             'thumbprint' => self::MOBILE_THUMBPRINT,
         ]);
     }
+
+    private function signer(): AokieCompanionAdmissionSigner
+    {
+        return new AokieCompanionAdmissionSigner(
+            self::SECRET,
+            'wss://gateway.example/v2/realtime',
+        );
+    }
+
+    public function testVerifyRoundTripsIssuedTokensForBothRoles(): void
+    {
+        $signer = $this->signer();
+        $mobile = $signer->issue(
+            'app_a',
+            'device_a',
+            'mobile',
+            ['state_read', 'monitor'],
+            self::MOBILE_THUMBPRINT,
+            self::PLUGIN_THUMBPRINT,
+            [],
+            null,
+            null,
+            90,
+            100,
+            'admission_a',
+        );
+        $claims = $signer->verify((string) $mobile['accessToken'], 100);
+        $this->assertNotNull($claims);
+        $this->assertSame('aokie-v2-gateway', $claims['aud']);
+        $this->assertSame('app_a', $claims['appId']);
+        $this->assertSame('device_a', $claims['subjectId']);
+        $this->assertSame('mobile', $claims['role']);
+        $this->assertSame(self::MOBILE_THUMBPRINT, $claims['holderKeyThumbprint']);
+        $this->assertSame(['state_read', 'monitor'], $claims['scopes']);
+        $this->assertSame(190, $claims['exp']);
+        $this->assertSame('admission_a', $claims['jti']);
+
+        $plugin = $signer->issue(
+            'app_a',
+            'plugin_a',
+            'plugin',
+            ['state_read', 'rtc_signal'],
+            self::PLUGIN_THUMBPRINT,
+            null,
+            [self::MOBILE_THUMBPRINT],
+            7,
+            AokieCompanionAdmissionSigner::peerRosterHash(7, [self::MOBILE_THUMBPRINT]),
+            90,
+            100,
+            'admission_plugin_a',
+        );
+        $pluginClaims = $signer->verify((string) $plugin['accessToken'], 100);
+        $this->assertNotNull($pluginClaims);
+        $this->assertSame('plugin', $pluginClaims['role']);
+        $this->assertSame([self::MOBILE_THUMBPRINT], $pluginClaims['approvedPeerKeyThumbprints']);
+    }
+
+    public function testVerifyRejectsTamperedPayloadAndTamperedSignature(): void
+    {
+        $signer = $this->signer();
+        $token = (string) $signer->issue(
+            'app_a',
+            'device_a',
+            'mobile',
+            ['state_read'],
+            self::MOBILE_THUMBPRINT,
+            self::PLUGIN_THUMBPRINT,
+            [],
+            null,
+            null,
+            90,
+            100,
+            'admission_a',
+        )['accessToken'];
+        $this->assertNotNull($signer->verify($token, 100));
+
+        // Tampered payload: swap the appId inside the hex(JSON) segment. The
+        // signature no longer covers the bytes, so verification must refuse.
+        [$prefix, $payloadHex, $signatureHex] = explode('.', $token);
+        $tamperedPayload = bin2hex(str_replace(
+            '"appId":"app_a"',
+            '"appId":"app_b"',
+            (string) hex2bin($payloadHex),
+        ));
+        $this->assertNotSame($payloadHex, $tamperedPayload);
+        $this->assertNull($signer->verify("{$prefix}.{$tamperedPayload}.{$signatureHex}", 100));
+
+        // Tampered signature: flip one hex digit.
+        $tamperedSignature = ($signatureHex[0] === '0' ? '1' : '0') . substr($signatureHex, 1);
+        $this->assertNull($signer->verify("{$prefix}.{$payloadHex}.{$tamperedSignature}", 100));
+
+        // A different secret never validates the same token.
+        $other = new AokieCompanionAdmissionSigner(
+            strrev(self::SECRET),
+            'wss://gateway.example/v2/realtime',
+        );
+        $this->assertNull($other->verify($token, 100));
+    }
+
+    public function testVerifyEnforcesExpiryWithBoundedClockSkew(): void
+    {
+        $signer = $this->signer();
+        $token = (string) $signer->issue(
+            'app_a',
+            'device_a',
+            'mobile',
+            ['state_read'],
+            self::MOBILE_THUMBPRINT,
+            self::PLUGIN_THUMBPRINT,
+            [],
+            null,
+            null,
+            90,
+            100,
+            'admission_a',
+        )['accessToken'];
+        // exp = 190; the 30s skew allowance accepts up to 220, refuses beyond.
+        $this->assertNotNull($signer->verify($token, 190));
+        $this->assertNotNull($signer->verify($token, 190 + AokieCompanionAdmissionSigner::CLOCK_SKEW_SECONDS));
+        $this->assertNull($signer->verify($token, 191 + AokieCompanionAdmissionSigner::CLOCK_SKEW_SECONDS));
+    }
+
+    public function testVerifyRejectsWrongAudienceEvenWhenCorrectlySigned(): void
+    {
+        // Craft a correctly signed token whose audience is not the v2 gateway:
+        // the signature passes, the audience gate must still refuse it.
+        $claims = [
+            'aud' => 'not-the-gateway',
+            'appId' => 'app_a',
+            'subjectId' => 'device_a',
+            'role' => 'mobile',
+            'holderKeyThumbprint' => self::MOBILE_THUMBPRINT,
+            'expectedPeerKeyThumbprint' => self::PLUGIN_THUMBPRINT,
+            'scopes' => ['state_read'],
+            'exp' => 190,
+            'jti' => 'admission_a',
+        ];
+        $payload = json_encode($claims, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $token = AokieCompanionAdmissionSigner::TOKEN_PREFIX
+            . '.' . bin2hex($payload)
+            . '.' . bin2hex(hash_hmac('sha256', $payload, self::SECRET, true));
+        $this->assertNull($this->signer()->verify($token, 100));
+    }
+
+    public function testVerifyRejectsGarbageShapes(): void
+    {
+        $signer = $this->signer();
+        foreach ([
+            '',
+            'not-a-token',
+            'aokie-adm-v2',
+            'aokie-adm-v2..',
+            'aokie-adm-v2.zz.zz',
+            'aokie-adm-v2.abc.' . str_repeat('0', 64), // odd-length payload hex
+            'aokie-adm-v2.' . bin2hex('{"aud":"aokie-v2-gateway"}') . '.dead', // short signature
+            'wrong-prefix.' . bin2hex('{}') . '.' . str_repeat('0', 64),
+            'aokie-adm-v2.' . bin2hex('[1,2,3]') . '.' . bin2hex(hash_hmac('sha256', '[1,2,3]', self::SECRET, true)),
+            'aokie-adm-v2.' . bin2hex('"str"') . '.' . bin2hex(hash_hmac('sha256', '"str"', self::SECRET, true)),
+        ] as $garbage) {
+            $this->assertNull($signer->verify($garbage, 100), $garbage);
+        }
+    }
 }

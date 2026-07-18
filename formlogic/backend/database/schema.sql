@@ -988,6 +988,18 @@ CREATE TABLE `aokie_companion_push_deliveries` (
   CONSTRAINT `aokie_companion_push_deliveries_ibfk_3` FOREIGN KEY (`device_id`) REFERENCES `aokie_companion_devices` (`id`) ON DELETE CASCADE,
   CONSTRAINT `aokie_companion_push_deliveries_ibfk_4` FOREIGN KEY (`push_endpoint_id`) REFERENCES `aokie_companion_push_endpoints` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `aokie_companion_relay_frames` (
+  `seq` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `to_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `from_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `frame` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`seq`),
+  KEY `idx_aokie_relay_inbox` (`app_id`,`to_party`,`seq`),
+  KEY `idx_aokie_relay_expiry` (`created_at`),
+  CONSTRAINT `aokie_companion_relay_frames_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `users` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,

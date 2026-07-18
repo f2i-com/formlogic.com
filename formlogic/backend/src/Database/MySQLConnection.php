@@ -1869,6 +1869,25 @@ class MySQLConnection
                 INDEX idx_aokie_delivery_queue (status, expires_at, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // Pack services wave 2: the hosted Companion relay mailbox. Rows are
+        // volatile v2 signalling frames stored as OPAQUE JSON (Ed25519-signed
+        // by the endpoints; the relay never interprets them). The
+        // AUTO_INCREMENT seq is the delivery cursor — insertion order is the
+        // contract — and a 120s TTL is swept opportunistically on every POST
+        // (AokieCompanionRelayService::TTL_SECONDS).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS aokie_companion_relay_frames (
+                seq BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                to_party VARCHAR(120) NOT NULL,
+                from_party VARCHAR(120) NOT NULL,
+                frame MEDIUMTEXT NOT NULL,
+                created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                INDEX idx_aokie_relay_inbox (app_id, to_party, seq),
+                INDEX idx_aokie_relay_expiry (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 
     /**

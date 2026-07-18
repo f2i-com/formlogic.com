@@ -549,6 +549,16 @@ $container->set(\FormLogic\Controllers\AokieCompanionController::class, function
         $c->get(\FormLogic\Services\ResponseService::class),
     );
 });
+$container->set(\FormLogic\Services\AokieCompanionRelayService::class, function (Container $c) {
+    return new \FormLogic\Services\AokieCompanionRelayService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\AokieCompanionRelayController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AokieCompanionRelayController(
+        $c->get(\FormLogic\Services\AokieCompanionAdmissionSigner::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AokieCompanionRelayService::class),
+    );
+});
 
 // Billing: pay-as-you-go cloud months via PayPal (one-time captures, no subscription).
 $container->set(\FormLogic\Services\PayPalService::class, function () {
@@ -1872,6 +1882,26 @@ $app->post('/api/aokie-companion/activity', function ($request, $response) use (
     return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
         ->mobileActivity($request, $response);
 })->add($aokieAdmissionRateLimiter);
+
+// Hosted Companion relay transport (pack services wave 2): an authenticated
+// frame mailbox between the desktop plugin and Companion mobiles — POST
+// upstream, SSE/long-poll downstream. Auth = the SAME short-lived aokie-adm-v2
+// admission bearer the realtime gateway consumes (verified in the controller;
+// no session/cookie auth). Fail-closed bucket like admission, but sized for
+// signalling chatter; the SSE stream costs one hit per ≤300s connection.
+$aokieRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'aokie_companion_relay', false, true);
+$app->post('/api/aokie-companion/relay/frames', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionRelayController::class)
+        ->postFrames($request, $response);
+})->add($aokieRelayRateLimiter);
+$app->get('/api/aokie-companion/relay/frames', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionRelayController::class)
+        ->pollFrames($request, $response);
+})->add($aokieRelayRateLimiter);
+$app->get('/api/aokie-companion/relay/stream', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AokieCompanionRelayController::class)
+        ->stream($request, $response);
+})->add($aokieRelayRateLimiter);
 
 // Native Companion bootstrap/member APIs. These routes intentionally do not
 // accept browser-session authentication: the controller requires the distinct

@@ -98,6 +98,23 @@ if ($index->fetchColumn() === false) {
     $applied[] = 'aokie_companion_devices desktop index already present';
 }
 
+// 4. Hosted Aokie Companion relay mailbox (pack services wave 2). The seq
+//    AUTO_INCREMENT is the delivery cursor; rows are opaque signed frames with
+//    a 120s TTL swept on every relay POST.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `aokie_companion_relay_frames` (
+  `seq` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `to_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `from_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `frame` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`seq`),
+  KEY `idx_aokie_relay_inbox` (`app_id`,`to_party`,`seq`),
+  KEY `idx_aokie_relay_expiry` (`created_at`),
+  CONSTRAINT `aokie_companion_relay_frames_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'aokie_companion_relay_frames table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

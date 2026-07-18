@@ -344,6 +344,45 @@ the same rule the admission gate uses). Trust note: relayed Companion control/ca
 signature-verified end to end but **readable by the relay host** (signed, not sealed); call audio
 never passes through the relay — the service description shown to the owner says so.
 
+### Pack services (wave 2): hosted Companion relay transport
+
+The FormLogic website can now HOST the Companion relay itself: an authenticated frame mailbox
+between the desktop plugin and Companion mobiles (`AokieCompanionRelayController` +
+`AokieCompanionRelayService`, table `aokie_companion_relay_frames`). Frames are the existing v2
+signalling documents and stay **opaque** — the endpoints Ed25519-sign them; the relay stores and
+forwards without interpreting anything beyond "valid JSON ≤ 32 KB serialized". ⚠️ Native clients do
+NOT adopt this transport yet — it ships and is proven server-side in this slice; the desktop plugin
+and Companion app switch over in a later slice.
+
+**Auth.** Every endpoint takes the SAME short-lived `aokie-adm-v2` admission bearer the realtime
+gateway consumes (`Authorization: Bearer`), verified server-side by the new
+`AokieCompanionAdmissionSigner::verify()` (constant-time HMAC, required `aud`, expiry with a 30s
+clock-skew allowance). The default admission TTL is **90 seconds**, so clients are expected to
+**re-admit and reconnect** continuously; the `since` cursor makes reconnects lossless within the
+frame TTL. Party identity comes ONLY from the verified claims: role `plugin` → party `plugin`;
+role `mobile` → party `mobile:<holderKeyThumbprint>`. A mobile may only send to `plugin`; the
+plugin may send to any mobile party (never to itself). All endpoints gate on the wave-1
+`companion-relay` service toggle (`403 service_disabled` when the owner turned it off).
+
+**Endpoints** (all under `/api/aokie-companion/relay`, own fail-closed rate bucket):
+
+- `POST /frames` — body `{to, frames: [...]}` (1–64 frames per post, each any JSON value ≤ 32 KB
+  serialized — over → `413 relay_frame_too_large`). Returns `{accepted, seq}` (`seq` = last
+  cursor). Frames are parsed non-associatively so `{}` never degrades to `[]`.
+- `GET /frames?since=<seq>&wait=<ms>` — long-poll fallback (wait ≤ 25000 ms, 500 ms DB poll, same
+  pattern as the desktop command relay): frames addressed to the bearer's party with
+  `seq > since`, oldest first, ≤ 128 per response → `{frames: [{seq, from, frame}], lastSeq}`.
+- `GET /stream?since=<seq>` — SSE downstream: `event: frame` with `id: <seq>` and
+  `data: {seq, from, frame}`, heartbeat comment every 15 s, `Last-Event-ID` honored on reconnect
+  (it wins over `?since=`). The stream has a **hard 300 s lifetime** ending in `event: end`;
+  clients reconnect with their cursor. ⚠️ Each open stream pins one PHP worker
+  (PHP-FPM/Apache) for its lifetime — that is why the lifetime is capped; worker-starved
+  deployments should prefer the long-poll fallback.
+
+**TTL + backpressure.** Frames are volatile signalling: rows older than **120 s** are excluded
+from every read and swept opportunistically on each POST. A per-app live cap of **512 frames**
+produces a typed `429 relay_backpressure` (never a silent drop) when consumers stop draining.
+
 ### Deferred
 An npm-published `@formlogic/sdk`; SDK version negotiation in the client manifest.
 (`FormView`/`ResponseDetail`/`AppButton` — previously listed here — are now implemented; see

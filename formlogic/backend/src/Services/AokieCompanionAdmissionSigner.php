@@ -16,6 +16,10 @@ final class AokieCompanionAdmissionSigner
     public const TOKEN_PREFIX = 'aokie-adm-v2';
     public const MAX_TTL_SECONDS = 300;
     public const MAX_SAFE_INTEGER = 9_007_199_254_740_991;
+    /** verify() tolerance for clock drift between the issuer and a verifier. */
+    public const CLOCK_SKEW_SECONDS = 30;
+    /** issue() never comes close to this; anything longer is definitionally junk. */
+    private const MAX_TOKEN_LENGTH = 16384;
 
     private const ROLES = ['mobile', 'plugin'];
     private const GRANTS = [
@@ -158,6 +162,84 @@ final class AokieCompanionAdmissionSigner
             $response['peerRosterHash'] = $peerRosterHash;
         }
         return $response;
+    }
+
+    /**
+     * Verify a previously issued admission token and return its claims.
+     *
+     * This is the FormLogic-hosted counterpart of the Rust gateway's verifier:
+     * exact prefix + hex(JSON) + HMAC-SHA256 over the raw payload bytes
+     * (constant-time compare), required audience, and expiry with a bounded
+     * clock-skew allowance. The bearer is UNTRUSTED input, so — matching
+     * `McpTokenService::validate` — every invalid shape returns null rather
+     * than throwing; issue()-side misuse keeps its typed exceptions.
+     *
+     * @return array<string,mixed>|null the verified claims, or null for any
+     *         malformed, tampered, mis-audienced, or expired token
+     */
+    public function verify(string $token, ?int $now = null): ?array
+    {
+        $now ??= time();
+        if ($token === '' || strlen($token) > self::MAX_TOKEN_LENGTH) {
+            return null;
+        }
+        $parts = explode('.', $token);
+        if (count($parts) !== 3 || $parts[0] !== self::TOKEN_PREFIX) {
+            return null;
+        }
+        [, $payloadHex, $signatureHex] = $parts;
+        if ($payloadHex === ''
+            || strlen($payloadHex) % 2 !== 0
+            || !ctype_xdigit($payloadHex)
+            || strlen($signatureHex) !== 64
+            || !ctype_xdigit($signatureHex)) {
+            return null;
+        }
+        $payload = hex2bin($payloadHex);
+        $signature = hex2bin($signatureHex);
+        if ($payload === false || $signature === false) {
+            return null;
+        }
+        $expected = hash_hmac('sha256', $payload, $this->secret, true);
+        if (!hash_equals($expected, $signature)) {
+            return null;
+        }
+        try {
+            $claims = json_decode($payload, true, 8, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return null;
+        }
+        if (!is_array($claims) || array_is_list($claims)) {
+            return null;
+        }
+        if (($claims['aud'] ?? null) !== self::AUDIENCE) {
+            return null;
+        }
+        $exp = $claims['exp'] ?? null;
+        if (!is_int($exp) || $exp < 0 || $exp > self::MAX_SAFE_INTEGER) {
+            return null;
+        }
+        if ($now > $exp + self::CLOCK_SKEW_SECONDS) {
+            return null;
+        }
+        // Structural claim checks mirror what issue() guarantees; a token that
+        // passed the HMAC but violates these was minted by other software and
+        // is refused rather than interpreted loosely.
+        if (!is_string($claims['appId'] ?? null) || !self::safeId($claims['appId'])
+            || !is_string($claims['subjectId'] ?? null) || !self::safeId($claims['subjectId'])
+            || !is_string($claims['jti'] ?? null) || !self::safeId($claims['jti'])
+            || !in_array($claims['role'] ?? null, self::ROLES, true)
+            || !self::validThumbprint($claims['holderKeyThumbprint'] ?? null)) {
+            return null;
+        }
+        $scopes = $claims['scopes'] ?? null;
+        if (!is_array($scopes)
+            || !array_is_list($scopes)
+            || count($scopes) > 16
+            || array_diff($scopes, self::GRANTS) !== []) {
+            return null;
+        }
+        return $claims;
     }
 
     public function gatewayUrl(): string

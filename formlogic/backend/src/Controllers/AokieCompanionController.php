@@ -100,7 +100,7 @@ final class AokieCompanionController
         if ($app === null) {
             return $this->error($response, 403, 'forbidden', 'The app is unavailable to this account');
         }
-        if (!$this->companionRelayEnabled($app)) {
+        if (!self::companionRelayEnabled($app)) {
             return $this->error(
                 $response,
                 403,
@@ -246,7 +246,7 @@ final class AokieCompanionController
         if ($app === null || ($app['ownerId'] ?? null) !== $userId || ($app['status'] ?? null) !== 'published') {
             return $this->error($response, 403, 'forbidden', 'The app is unavailable to this account');
         }
-        if (!$this->companionRelayEnabled($app)) {
+        if (!self::companionRelayEnabled($app)) {
             return $this->error(
                 $response,
                 403,
@@ -1739,9 +1739,12 @@ final class AokieCompanionController
      * existed keep working unchanged; only an explicit enabled:false disables
      * the relay.
      *
+     * Public static so the wave-2 hosted relay transport
+     * (AokieCompanionRelayController) gates on EXACTLY the same rule.
+     *
      * @param array<string,mixed> $app
      */
-    private function companionRelayEnabled(array $app): bool
+    public static function companionRelayEnabled(array $app): bool
     {
         $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
         $services = is_array($settings['services'] ?? null) ? $settings['services'] : [];
@@ -1841,7 +1844,7 @@ final class AokieCompanionController
             // receiving the exact ENABLED document shape they were built
             // against (absence = enabled, the same backward-compat rule the
             // admission gate uses).
-            if (!$this->companionRelayEnabled($app)) {
+            if (!self::companionRelayEnabled($app)) {
                 $payload['companionRelay'] = ['enabled' => false];
                 unset(
                     $payload['gatewayUrl'],
