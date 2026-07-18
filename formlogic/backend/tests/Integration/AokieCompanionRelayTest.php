@@ -116,14 +116,18 @@ final class AokieCompanionRelayTest extends TestCase
     }
 
     /** @param list<string> $approvedMobileThumbprints */
-    private function pluginToken(array $approvedMobileThumbprints, ?int $now = null): string
+    private function pluginToken(
+        array $approvedMobileThumbprints,
+        ?int $now = null,
+        ?array $scopes = null,
+    ): string
     {
         sort($approvedMobileThumbprints, SORT_STRING);
         return (string) self::$signer->issue(
             $this->appId,
             'aokie',
             'plugin',
-            ['state_read', 'rtc_signal'],
+            $scopes ?? ['state_read', 'rtc_signal'],
             self::PLUGIN_THUMBPRINT,
             null,
             $approvedMobileThumbprints,
@@ -134,13 +138,17 @@ final class AokieCompanionRelayTest extends TestCase
         )['accessToken'];
     }
 
-    private function mobileToken(string $deviceId, ?int $now = null): string
+    private function mobileToken(
+        string $deviceId,
+        ?int $now = null,
+        ?array $scopes = null,
+    ): string
     {
         return (string) self::$signer->issue(
             $this->appId,
             $deviceId,
             'mobile',
-            ['state_read', 'rtc_signal'],
+            $scopes ?? ['state_read', 'rtc_signal'],
             $this->mobileThumbprint($deviceId),
             self::PLUGIN_THUMBPRINT,
             [],
@@ -313,6 +321,123 @@ final class AokieCompanionRelayTest extends TestCase
         // Last-Event-ID (SSE reconnect) takes precedence over ?since=.
         $viaHeader = self::decode($this->poll($plugin, ['since' => 0], (string) $body['lastSeq']));
         $this->assertSame([], $viaHeader['frames']);
+    }
+
+    public function testEveryEnvelopeCarriesVerifiedAdmissionMetadataAndLegacyRowsFailClosed(): void
+    {
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $thumbprint = $this->mobileThumbprint($deviceId);
+        $mobileGrants = ['state_read', 'caller_read', 'monitor', 'rtc_signal'];
+        $pluginGrants = ['state_read', 'caller_read', 'takeover', 'rtc_signal'];
+        $mobile = $this->mobileToken($deviceId, null, $mobileGrants);
+        $plugin = $this->pluginToken([$thumbprint], null, $pluginGrants);
+
+        // Caller-supplied top-level authority metadata is intentionally
+        // ignored; the outer envelope is stamped from the verified admission.
+        $posted = $this->post($mobile, [
+            'to' => 'plugin',
+            'subjectId' => 'spoofed_device',
+            'grants' => ['takeover'],
+            'frames' => [
+                [
+                    'kind' => 'mobile_hello',
+                    'deviceId' => 'spoofed_inner_device',
+                    'subjectId' => 'spoofed_inner_subject',
+                    'grants' => ['takeover'],
+                ],
+                ['kind' => 'lease_request'],
+            ],
+        ]);
+        $postedBody = self::decode($posted);
+        $this->assertSame(200, $posted->getStatusCode(), json_encode($postedBody));
+
+        $pluginInbox = self::decode($this->poll($plugin, ['since' => 0]));
+        $this->assertCount(2, $pluginInbox['frames']);
+        foreach ($pluginInbox['frames'] as $envelope) {
+            $this->assertSame($deviceId, $envelope['subjectId']);
+            $this->assertSame($mobileGrants, $envelope['grants']);
+        }
+        // The relay still does not interpret or rewrite the inner document.
+        $this->assertSame('spoofed_inner_device', $pluginInbox['frames'][0]['frame']['deviceId']);
+        $this->assertSame('spoofed_inner_subject', $pluginInbox['frames'][0]['frame']['subjectId']);
+        $this->assertSame(['takeover'], $pluginInbox['frames'][0]['frame']['grants']);
+
+        $stored = self::$pdo->prepare(
+            'SELECT admission_subject_id, admission_grants FROM aokie_companion_relay_frames
+             WHERE app_id = ? ORDER BY seq ASC',
+        );
+        $stored->execute([$this->appId]);
+        foreach ($stored->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $this->assertSame($deviceId, $row['admission_subject_id']);
+            $this->assertSame($mobileGrants, json_decode((string) $row['admission_grants'], true));
+        }
+
+        // The same metadata exists in the opposite direction and describes
+        // the plugin bearer that POSTed the frame, not the mobile polling it.
+        $pluginPost = $this->post($plugin, [
+            'to' => 'mobile:' . $thumbprint,
+            'frames' => [['kind' => 'plugin_snapshot']],
+        ]);
+        $this->assertSame(200, $pluginPost->getStatusCode(), (string) $pluginPost->getBody());
+        $mobileInbox = self::decode($this->poll($mobile, ['since' => 0]));
+        $this->assertCount(1, $mobileInbox['frames']);
+        $this->assertSame('aokie', $mobileInbox['frames'][0]['subjectId']);
+        $this->assertSame($pluginGrants, $mobileInbox['frames'][0]['grants']);
+
+        // Migration compatibility: an old row has no authority metadata. The
+        // nullable columns let it remain readable, while explicit null/empty
+        // wire values ensure consumers fail closed.
+        $legacy = self::$pdo->prepare(
+            'INSERT INTO aokie_companion_relay_frames
+                (app_id, to_party, from_party, frame)
+             VALUES (?, ?, ?, ?)',
+        );
+        $legacy->execute([
+            $this->appId,
+            'plugin',
+            'mobile:' . $thumbprint,
+            '{"kind":"pre_grants_schema"}',
+        ]);
+        $legacySeq = (int) self::$pdo->lastInsertId();
+        $legacyInbox = self::decode($this->poll($plugin, [
+            'since' => $postedBody['seq'],
+        ]));
+        $this->assertCount(1, $legacyInbox['frames']);
+        $this->assertSame($legacySeq, $legacyInbox['frames'][0]['seq']);
+        $this->assertNull($legacyInbox['frames'][0]['subjectId']);
+        $this->assertSame([], $legacyInbox['frames'][0]['grants']);
+
+        // Corrupt stored metadata also cannot acquire an authenticated
+        // identity merely because from_party names an approved endpoint.
+        $corrupt = self::$pdo->prepare(
+            'INSERT INTO aokie_companion_relay_frames
+                (app_id, to_party, from_party, admission_subject_id, admission_grants, frame)
+             VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        $corrupt->execute([
+            $this->appId,
+            'plugin',
+            'mobile:' . $thumbprint,
+            'not a safe subject',
+            '["state_read","state_read"]',
+            '{"kind":"corrupt_metadata"}',
+        ]);
+        $corruptInbox = self::decode($this->poll($plugin, ['since' => $legacySeq]));
+        $this->assertCount(1, $corruptInbox['frames']);
+        $this->assertNull($corruptInbox['frames'][0]['subjectId']);
+        $this->assertSame([], $corruptInbox['frames'][0]['grants']);
+
+        foreach (['admission_subject_id', 'admission_grants'] as $columnName) {
+            $column = self::$pdo->query(
+                "SHOW COLUMNS FROM aokie_companion_relay_frames LIKE '{$columnName}'",
+            )->fetch(PDO::FETCH_ASSOC);
+            $this->assertIsArray($column);
+            $this->assertSame(
+                'YES',
+                $column['Null'],
+                "legacy rows must remain representable as fail-closed {$columnName}=NULL",
+            );
+        }
     }
 
     public function testPluginToMobileDeliveryIsTargetedPerParty(): void

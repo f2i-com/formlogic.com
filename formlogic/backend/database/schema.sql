@@ -993,6 +993,8 @@ CREATE TABLE `aokie_companion_relay_frames` (
   `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `to_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
   `from_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `admission_subject_id` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `admission_grants` json NULL,
   `frame` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`seq`),

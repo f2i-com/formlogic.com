@@ -1881,6 +1881,8 @@ class MySQLConnection
                 app_id VARCHAR(36) NOT NULL,
                 to_party VARCHAR(120) NOT NULL,
                 from_party VARCHAR(120) NOT NULL,
+                admission_subject_id VARCHAR(200) NULL,
+                admission_grants JSON NULL,
                 frame MEDIUMTEXT NOT NULL,
                 created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
@@ -1888,6 +1890,14 @@ class MySQLConnection
                 INDEX idx_aokie_relay_expiry (created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        if ($pdo->query("SHOW COLUMNS FROM aokie_companion_relay_frames LIKE 'admission_subject_id'")->rowCount() === 0) {
+            // Legacy rows remain NULL and therefore fail closed to subjectId:null.
+            $pdo->exec('ALTER TABLE aokie_companion_relay_frames ADD COLUMN admission_subject_id VARCHAR(200) NULL AFTER from_party');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM aokie_companion_relay_frames LIKE 'admission_grants'")->rowCount() === 0) {
+            // Legacy rows remain NULL and therefore fail closed to grants:[].
+            $pdo->exec('ALTER TABLE aokie_companion_relay_frames ADD COLUMN admission_grants JSON NULL AFTER from_party');
+        }
     }
 
     /**

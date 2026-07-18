@@ -255,7 +255,24 @@ final class AokieCompanionRelayController
             $serialized[] = $encoded;
         }
         try {
-            $result = $this->relay->append($identity['appId'], $identity['party'], $to, $serialized);
+            // Authority metadata is derived exclusively from the admission
+            // bearer that relayIdentity() just verified. It is deliberately
+            // outside the opaque frame, and no POST-body field can influence
+            // it. The service re-validates the list shape before persistence.
+            $verifiedGrants = is_array($identity['claims']['scopes'] ?? null)
+                ? $identity['claims']['scopes']
+                : [];
+            $verifiedSubjectId = is_string($identity['claims']['subjectId'] ?? null)
+                ? $identity['claims']['subjectId']
+                : null;
+            $result = $this->relay->append(
+                $identity['appId'],
+                $identity['party'],
+                $to,
+                $serialized,
+                $verifiedGrants,
+                $verifiedSubjectId,
+            );
         } catch (\OverflowException $error) {
             return $this->error($response, 429, 'relay_backpressure', $error->getMessage());
         }
@@ -288,6 +305,9 @@ final class AokieCompanionRelayController
             $frames[] = [
                 'seq' => $row['seq'],
                 'from' => $row['from'],
+                // Relay-authenticated metadata; never decoded from `frame`.
+                'subjectId' => $row['subjectId'],
+                'grants' => $row['grants'],
                 // Non-assoc decode: {} must stay an object in the response.
                 'frame' => json_decode($row['frame'], false),
             ];

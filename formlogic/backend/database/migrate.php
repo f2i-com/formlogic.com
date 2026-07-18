@@ -106,6 +106,8 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `aokie_companion_relay_frames` (
   `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `to_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
   `from_party` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `admission_subject_id` varchar(200) COLLATE utf8mb4_unicode_ci NULL,
+  `admission_grants` json NULL,
   `frame` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`seq`),
@@ -114,6 +116,22 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `aokie_companion_relay_frames` (
   CONSTRAINT `aokie_companion_relay_frames_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'aokie_companion_relay_frames table ensured';
+if (!$columnExists($pdo, $db, 'aokie_companion_relay_frames', 'admission_subject_id')) {
+    // Nullable by design: pre-subject rows are explicitly unauthenticated and
+    // are exposed as subjectId:null rather than trusting their inner payload.
+    $pdo->exec('ALTER TABLE `aokie_companion_relay_frames` ADD COLUMN `admission_subject_id` varchar(200) COLLATE utf8mb4_unicode_ci NULL AFTER `from_party`');
+    $applied[] = 'aokie_companion_relay_frames.admission_subject_id added';
+} else {
+    $applied[] = 'aokie_companion_relay_frames.admission_subject_id already present';
+}
+if (!$columnExists($pdo, $db, 'aokie_companion_relay_frames', 'admission_grants')) {
+    // Nullable by design: rows written by the pre-authority relay become NULL
+    // and are exposed as grants:[] rather than inheriting any authority.
+    $pdo->exec('ALTER TABLE `aokie_companion_relay_frames` ADD COLUMN `admission_grants` json NULL AFTER `from_party`');
+    $applied[] = 'aokie_companion_relay_frames.admission_grants added';
+} else {
+    $applied[] = 'aokie_companion_relay_frames.admission_grants already present';
+}
 
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
