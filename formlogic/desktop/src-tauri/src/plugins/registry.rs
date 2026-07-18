@@ -474,6 +474,12 @@ impl PluginHost {
         let mut found: HashMap<String, (PathBuf, Result<PluginManifest, String>)> = HashMap::new();
         if let Ok(entries) = std::fs::read_dir(&self.plugins_root) {
             for entry in entries.flatten() {
+                // Dot-prefixed entries are private installer/work directories,
+                // not plugins; never parse or surface their partial manifests.
+                let dir_name = match entry.file_name().to_str() {
+                    Some(n) if !n.starts_with('.') => n.to_string(),
+                    _ => continue,
+                };
                 let dir = entry.path();
                 if !dir.is_dir() {
                     continue;
@@ -482,10 +488,6 @@ impl PluginHost {
                 if !manifest_path.is_file() {
                     continue; // not a plugin dir
                 }
-                let dir_name = match dir.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => n.to_string(),
-                    None => continue,
-                };
                 let loaded = std::fs::read_to_string(&manifest_path)
                     .map_err(|e| format!("cannot read manifest.json: {e}"))
                     .and_then(|text| parse_manifest(&text))
@@ -1034,6 +1036,31 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("does not match"));
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn scan_ignores_dot_prefixed_plugin_directories() {
+        let data = temp_data_dir("dot-dirs");
+        write_plugin(&data, "good", &manifest_json("good", ""));
+        // Installer work directories can temporarily contain a complete
+        // manifest whose id names the eventual destination. They are private
+        // implementation details, not disabled plugins or diagnostics.
+        write_plugin(
+            &data,
+            ".staging-45668-0",
+            &manifest_json("aokie", ""),
+        );
+        // Dot-prefixed non-directories are equally absent from discovery.
+        std::fs::write(data.join("plugins").join(".staging-marker"), b"pending").unwrap();
+
+        let host = PluginHost::new(&data, false, EventBus::new());
+        let list = host.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "good");
+        assert_eq!(list[0].state, PluginState::Installed);
+        assert_eq!(host.plugin_ids(), vec!["good"]);
+
         let _ = std::fs::remove_dir_all(&data);
     }
 
