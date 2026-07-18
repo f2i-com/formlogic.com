@@ -30,14 +30,19 @@ export interface RunScreenResult {
   js: string;
 }
 
-/** Bundle a screen's files and run them in a fresh JSDOM with the given FormLogic mock. */
+/** Bundle a screen's files and run them in a fresh JSDOM with the given FormLogic mock.
+ *  `opts.windowGlobals` seed extra properties on the sandbox window before the bundle runs
+ *  (e.g. __flPresenceGraceMs — defaulted to 0 so screens settle immediately for steady-state
+ *  assertions; a test overrides it to exercise a loading state). */
 export async function runScreen(
   screen: { files?: Array<{ path: string; content: string }>; entry?: string },
-  formLogic: Record<string, unknown>
+  formLogic: Record<string, unknown>,
+  opts: { windowGlobals?: Record<string, unknown> } = {}
 ): Promise<RunScreenResult> {
   const r = await bundleScreenFiles(screen.files ?? [], screen.entry);
   if (r.error) throw new Error(`screen bundle failed: ${r.error}`);
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+  Object.assign(dom.window as unknown as Record<string, unknown>, { __flPresenceGraceMs: 0 }, opts.windowGlobals ?? {});
   (dom.window as unknown as Record<string, unknown>).FormLogic = formLogic;
   // The bundle's free variables (window/document/FormLogic) resolve to the injected sandbox.
   // A fast requestAnimationFrame keeps preact's effect scheduling snappy under node (its

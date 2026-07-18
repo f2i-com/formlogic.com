@@ -17,6 +17,23 @@
 
 import { ms, tail9 } from './phone';
 
+/** How long to show the loading spinner while desktop presence is still resolving.
+ *  Detection is demand-driven and warms AFTER mount, so the first presence() reads
+ *  can be a transient 'none' even when a desktop is a beat away from connecting.
+ *  We hold the spinner (instead of flashing the demo Simulate card) until presence
+ *  settles to a real runtime, the demo account is confirmed, or this grace elapses —
+ *  a genuinely absent desktop then shows the Install/Simulate card. Covers one full
+ *  3s poll cycle plus headroom. */
+export const PRESENCE_GRACE_MS = 4000;
+
+/** The effective grace — a host/test may override it via window.__flPresenceGraceMs
+ *  (the screen behavioral tests set 0 for steady-state assertions). */
+function presenceGraceMs(): number {
+  const w = typeof window !== 'undefined' ? (window as unknown as { __flPresenceGraceMs?: unknown }) : undefined;
+  const o = w && typeof w.__flPresenceGraceMs === 'number' ? w.__flPresenceGraceMs : NaN;
+  return Number.isFinite(o) ? (o as number) : PRESENCE_GRACE_MS;
+}
+
 /** Loose record view of an unknown value (the old rec() helper). */
 export function rec(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -68,6 +85,9 @@ export interface ConsoleController {
   state: ConsoleState;
   isDemo(): boolean;
   remoteMode(): boolean;
+  /** False only during the brief boot window while desktop presence is still
+   *  resolving — the standby surface shows a loading spinner until this is true. */
+  presenceSettled(): boolean;
   activeCall(): CallInfo | null;
   can(perm: string): boolean;
   nameForPhone(phone: unknown): string | null;
@@ -103,9 +123,19 @@ export function createConsole(repaint: () => void): ConsoleController {
     capHandle: { unsubscribe(): Promise<unknown>; tombstone(): Promise<unknown> } | null;
   } = { unsubEvents: null, capHandle: null };
   let prevCallerTurns = 0;
+  // When the console mounted — the presence grace is measured from here (0 until wired).
+  let bootAtMs = 0;
 
   const isDemo = () => state.presence.kind === 'none' && state.demo === true;
   const remoteMode = () => state.presence.kind === 'remote';
+  // Settled once a real runtime is present, the demo account is confirmed, or the boot
+  // grace has elapsed for a genuinely absent desktop. While unsettled the standby shows
+  // a spinner instead of the demo Simulate card (avoids the "connecting" flash).
+  const presenceSettled = () =>
+    state.presence.kind === 'local' ||
+    state.presence.kind === 'remote' ||
+    isDemo() ||
+    (bootAtMs > 0 && Date.now() - bootAtMs >= presenceGraceMs());
   const activeCall = () => (state.call && state.call.state !== 'ended' ? state.call : null);
   const can = (perm: string) => state.grants[perm] === true;
 
@@ -436,16 +466,21 @@ export function createConsole(repaint: () => void): ConsoleController {
   }
 
   function wire(): () => void {
+    bootAtMs = Date.now();
     void loadAll();
     // Presence + call poll every 3s; recent calls every 10s; the elapsed timer
     // repaints the stage every 1s while a call is up.
     const pollTimer = setInterval(() => { void tick(); }, 3000);
     const recentTimer = setInterval(() => { void refreshRecent().then(() => repaint()); }, 10000);
     const elapsedTimer = setInterval(() => { if (activeCall()) repaint(); }, 1000);
+    // One repaint exactly at grace-end so a genuinely absent desktop drops the spinner
+    // for the Install/Simulate card on time (not only on the next 3s poll).
+    const graceTimer = setTimeout(() => repaint(), presenceGraceMs());
     return () => {
       clearInterval(pollTimer);
       clearInterval(recentTimer);
       clearInterval(elapsedTimer);
+      clearTimeout(graceTimer);
       detachLiveLanes();
     };
   }
@@ -454,6 +489,7 @@ export function createConsole(repaint: () => void): ConsoleController {
     state,
     isDemo,
     remoteMode,
+    presenceSettled,
     activeCall,
     can,
     nameForPhone,

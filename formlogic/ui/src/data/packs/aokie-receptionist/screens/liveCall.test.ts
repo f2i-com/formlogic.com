@@ -67,6 +67,24 @@ describe('live-call section screen (TSX)', () => {
     expect(root.textContent).toContain('Updates every 10s');
   });
 
+  it('shows a loading spinner (not the Simulate card) while presence is still resolving', async () => {
+    // Desktop detection is demand-driven and warms after mount, so the first presence
+    // reads 'none' transiently. With a real grace window active, the standby must show a
+    // loading spinner + "Connecting..." rather than flashing the demo Simulate card.
+    const { root } = await runScreen(
+      AOKIE_LIVE_CALL_SCREEN,
+      baseFL({ presence: () => Promise.resolve({ kind: 'none' }) }),
+      { windowGlobals: { __flPresenceGraceMs: 10000 } }
+    );
+    await flush();
+    expect(root.querySelector('.spinner')).not.toBeNull();
+    expect(root.textContent).toContain('Connecting...');
+    expect(root.querySelector('[data-act="simulate"]')).toBeNull();
+    expect(root.textContent).not.toContain('Simulate incoming call');
+    // The presence pill also reads Connecting while unsettled.
+    expect(root.querySelector('#presence')?.textContent).toContain('Connecting...');
+  });
+
   it("presence 'none' offers the demo call; Simulate runs host.ceremony('simulate-call')", async () => {
     let resolveCeremony: (v: { status: string }) => void = () => undefined;
     const ceremony = vi.fn(() => new Promise<{ status: string }>((r) => { resolveCeremony = r; }));

@@ -23,6 +23,16 @@ import { RecentCalls } from './components/RecentCalls';
 
 function PresencePill({ c }: { c: ConsoleController }) {
   const p = c.state.presence;
+  // While presence is still resolving, show a neutral "Connecting" pill rather than
+  // "No desktop connected" — the desktop is usually just a beat behind on mount.
+  if (!c.presenceSettled()) {
+    return (
+      <span id="presence" class="pill">
+        <span class="spinner sm" aria-hidden="true" />
+        Connecting...
+      </span>
+    );
+  }
   let cls = 'pill warn';
   let label = 'No desktop connected';
   if (p.kind === 'local') {
@@ -51,6 +61,18 @@ function PresencePill({ c }: { c: ConsoleController }) {
  *  - local: direct bridge, no panel. */
 function Standby({ c }: { c: ConsoleController }) {
   const s = c.state;
+  // Still resolving presence on load: a loading spinner, never the Simulate card —
+  // a desktop that's a beat behind must not flash the demo affordance.
+  if (!c.presenceSettled()) {
+    return (
+      <div class="standby">
+        <div class="card connecting">
+          <span class="spinner" aria-hidden="true" />
+          <p class="note">Connecting to the receptionist...</p>
+        </div>
+      </div>
+    );
+  }
   const last = s.recent.length > 0 ? s.recent[0] : null;
   let when: string | null = null;
   if (last) {

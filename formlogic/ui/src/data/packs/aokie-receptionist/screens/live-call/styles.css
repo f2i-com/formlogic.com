@@ -42,6 +42,14 @@ body { margin: 0; color: var(--fl-text); }
 #lc .dot.live { animation: fl-pulse 1.4s ease-in-out infinite; }
 @keyframes fl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+/* Loading spinner shown while desktop presence is still resolving on load. */
+#lc .spinner { width: 18px; height: 18px; border-radius: 999px; border: 2px solid var(--fl-track);
+  border-top-color: var(--fl-accent); animation: fl-spin 0.7s linear infinite; }
+#lc .spinner.sm { width: 11px; height: 11px; border-width: 2px; }
+@keyframes fl-spin { to { transform: rotate(360deg); } }
+#lc .card.connecting { display: flex; align-items: center; gap: 11px; }
+#lc .card.connecting .note { margin: 0; }
+
 #lc .stage { border: 1px solid var(--fl-accent); border-radius: 16px; padding: 16px; background: var(--fl-surface); }
 #lc .stage.ringing { animation: fl-ring 1.6s ease-in-out infinite; }
 @keyframes fl-ring { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 4px var(--fl-track); } }
