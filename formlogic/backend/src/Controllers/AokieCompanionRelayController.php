@@ -26,7 +26,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * Party identity comes ONLY from the verified admission token (the same
  * `aokie-adm-v2` bearer the realtime gateway consumes): role 'plugin' is the
  * desktop party; a mobile is 'mobile:<holderKeyThumbprint>'. Admissions are
- * short-lived (90s default), so clients re-admit and reconnect with `since`.
+ * short-lived (90s default), and every stream is bounded by the exact verified
+ * admission expiry before clients re-admit and reconnect with `since`.
  */
 final class AokieCompanionRelayController
 {
@@ -293,14 +294,23 @@ final class AokieCompanionRelayController
             $query['since'] ?? null,
         );
         $wait = filter_var($query['wait'] ?? 0, FILTER_VALIDATE_INT);
-        $rows = $this->relay->pollSince(
-            $identity['appId'],
-            $identity['party'],
+        $clock = static fn (): float => microtime(true);
+        $deadline = self::streamDeadline((int) $identity['claims']['exp'], $clock());
+        $batch = self::pollStreamBatch(
             $since,
             is_int($wait) ? $wait : 0,
+            $deadline,
+            fn (int $boundedWait): array => $this->relay->pollSince(
+                $identity['appId'],
+                $identity['party'],
+                $since,
+                $boundedWait,
+            ),
+            $clock,
         );
+        $rows = $batch['rows'];
         $frames = [];
-        $lastSeq = $since;
+        $lastSeq = $batch['lastSeq'];
         foreach ($rows as $row) {
             $frames[] = [
                 'seq' => $row['seq'],
@@ -311,7 +321,6 @@ final class AokieCompanionRelayController
                 // Non-assoc decode: {} must stay an object in the response.
                 'frame' => json_decode($row['frame'], false),
             ];
-            $lastSeq = max($lastSeq, $row['seq']);
         }
         return $this->jsonResponse($response, ['frames' => $frames, 'lastSeq' => $lastSeq])
             ->withHeader('Cache-Control', 'no-store');
@@ -333,7 +342,111 @@ final class AokieCompanionRelayController
             $request->getHeaderLine('Last-Event-ID'),
             $request->getQueryParams()['since'] ?? null,
         );
-        $this->emitStream($identity['appId'], $identity['party'], $since);
+        $this->emitStream(
+            $identity['appId'],
+            $identity['party'],
+            $since,
+            (int) $identity['claims']['exp'],
+        );
+    }
+
+    /**
+     * Absolute authorization deadline for one SSE request.
+     *
+     * The signer's bounded clock skew is part of verify()'s exact acceptance
+     * window, so the stream may use that same window but never the independent
+     * 300-second worker cap beyond it.
+     *
+     * @internal Public only so the never-returning raw SSE seam has a
+     * deterministic regression test.
+     */
+    public static function streamDeadline(int $admissionExpiresAt, ?float $now = null): float
+    {
+        $now ??= microtime(true);
+        return max(
+            $now,
+            min(
+                $now + self::STREAM_LIFETIME_SECONDS,
+                (float) $admissionExpiresAt + AokieCompanionAdmissionSigner::CLOCK_SKEW_SECONDS,
+            ),
+        );
+    }
+
+    /**
+     * Perform one long poll without allowing its wait to cross authorization.
+     *
+     * @param callable(int):list<array{seq:int,from:string,subjectId:?string,grants:list<string>,frame:string}> $poll
+     * @param callable():float $clock
+     * @return array{rows:list<array{seq:int,from:string,subjectId:?string,grants:list<string>,frame:string}>,lastSeq:int,expired:bool}
+     * @internal Public only for deterministic auth-boundary regressions.
+     */
+    public static function pollStreamBatch(
+        int $since,
+        int $requestedWaitMs,
+        float $deadline,
+        callable $poll,
+        callable $clock,
+    ): array {
+        $remainingMs = (int) floor(($deadline - $clock()) * 1_000);
+        if ($remainingMs <= 0) {
+            return ['rows' => [], 'lastSeq' => $since, 'expired' => true];
+        }
+        $boundedWait = min(max(0, $requestedWaitMs), $remainingMs);
+        $rows = $poll($boundedWait);
+        if ($clock() >= $deadline) {
+            return ['rows' => [], 'lastSeq' => $since, 'expired' => true];
+        }
+        $lastSeq = $since;
+        foreach ($rows as $row) {
+            $lastSeq = max($lastSeq, $row['seq']);
+        }
+        return ['rows' => $rows, 'lastSeq' => $lastSeq, 'expired' => false];
+    }
+
+    /**
+     * Fetch and emit one SSE mailbox batch while authorization is current.
+     *
+     * The post-fetch check is security-significant: a database read that
+     * begins before expiry may finish after it, and those rows belong to the
+     * next freshly admitted stream rather than this expired one.
+     *
+     * @param callable(int):list<array{seq:int,from:string,subjectId:?string,grants:list<string>,frame:string}> $fetch
+     * @param callable(array{seq:int,from:string,subjectId:?string,grants:list<string>,frame:string}):string $encode
+     * @param callable(string):void $emit
+     * @param callable():float $clock
+     * @return array{cursor:int,emitted:bool,expired:bool}
+     * @internal Public only for a deterministic auth-boundary regression.
+     */
+    public static function fetchAndEmitStreamBatch(
+        int $cursor,
+        float $deadline,
+        callable $fetch,
+        callable $encode,
+        callable $emit,
+        callable $clock,
+    ): array {
+        $rows = $fetch($cursor);
+        if ($clock() >= $deadline) {
+            return ['cursor' => $cursor, 'emitted' => false, 'expired' => true];
+        }
+
+        $emitted = false;
+        foreach ($rows as $row) {
+            if ($clock() >= $deadline) {
+                return ['cursor' => $cursor, 'emitted' => $emitted, 'expired' => true];
+            }
+            $event = $encode($row);
+            // Encoding includes the opaque mailbox frame and can itself cross
+            // the auth boundary. Check at the final output seam, not merely
+            // before serialization.
+            if ($clock() >= $deadline) {
+                return ['cursor' => $cursor, 'emitted' => $emitted, 'expired' => true];
+            }
+            $emit($event);
+            $cursor = $row['seq'];
+            $emitted = true;
+        }
+        return ['cursor' => $cursor, 'emitted' => $emitted, 'expired' => false];
     }
 
     /**
@@ -350,7 +463,7 @@ final class AokieCompanionRelayController
      * interleave flushes with real-time data), so it writes headers/output
      * directly and terminates the request when done.
      */
-    private function emitStream(string $appId, string $party, int $since): never
+    private function emitStream(string $appId, string $party, int $since, int $admissionExpiresAt): never
     {
         set_time_limit(self::STREAM_LIFETIME_SECONDS + 30);
         ignore_user_abort(false);
@@ -369,27 +482,41 @@ final class AokieCompanionRelayController
         echo ': connected' . "\n\n";
         flush();
 
+        $clock = static fn (): float => microtime(true);
         $cursor = $since;
-        $deadline = microtime(true) + self::STREAM_LIFETIME_SECONDS;
-        $lastOutput = microtime(true);
-        while (microtime(true) < $deadline) {
-            $rows = $this->relay->fetchSince($appId, $party, $cursor);
-            foreach ($rows as $row) {
-                echo AokieCompanionRelayService::sseEvent($row);
-                $cursor = $row['seq'];
+        $deadline = self::streamDeadline($admissionExpiresAt, $clock());
+        $lastOutput = $clock();
+        while ($clock() < $deadline) {
+            $batch = self::fetchAndEmitStreamBatch(
+                $cursor,
+                $deadline,
+                fn (int $after): array => $this->relay->fetchSince($appId, $party, $after),
+                static fn (array $row): string => AokieCompanionRelayService::sseEvent($row),
+                static function (string $event): void {
+                    echo $event;
+                },
+                $clock,
+            );
+            $cursor = $batch['cursor'];
+            if ($batch['expired']) {
+                break;
             }
-            if ($rows !== []) {
+            if ($batch['emitted']) {
                 flush();
-                $lastOutput = microtime(true);
-            } elseif (microtime(true) - $lastOutput >= self::STREAM_HEARTBEAT_SECONDS) {
+                $lastOutput = $clock();
+            } elseif ($clock() - $lastOutput >= self::STREAM_HEARTBEAT_SECONDS) {
                 echo ': keepalive' . "\n\n";
                 flush();
-                $lastOutput = microtime(true);
+                $lastOutput = $clock();
             }
             if (connection_aborted() !== 0) {
                 exit;
             }
-            usleep(self::STREAM_POLL_INTERVAL_MS * 1000);
+            $remainingMicroseconds = (int) floor(($deadline - $clock()) * 1_000_000);
+            if ($remainingMicroseconds <= 0) {
+                break;
+            }
+            usleep(min(self::STREAM_POLL_INTERVAL_MS * 1000, $remainingMicroseconds));
         }
         // Clean end-of-lifetime marker; the client reconnects with `since`.
         echo 'id: ' . $cursor . "\n" . 'event: end' . "\n" . 'data: {}' . "\n\n";
