@@ -15,6 +15,20 @@ import { AppResponseDetail } from './AppResponseDetail';
 import { AppAnalytics } from './AppAnalytics';
 import { AppUserProfile } from './AppUserProfile';
 
+/**
+ * Blocks direct navigation into a data-only (`hidden`) form: no fill view,
+ * records grid, record detail or analytics — the form's data exists purely for
+ * other screens' SDK reads/writes. Single choke point for all /form/:formId
+ * routes; the menu never renders an entry for these either.
+ */
+function HiddenFormGuard({ children }: { children: React.ReactNode }) {
+  const { formId } = useParams();
+  const config = useAppRuntimeStore((s) => s.config);
+  const hidden = config?.forms.find((f) => f.formId === formId)?.hidden === true;
+  if (hidden) return <Navigate to="." replace />;
+  return <>{children}</>;
+}
+
 export function AppRuntimeRoot() {
   const { appSlug } = useParams();
   const { initialize, config, reset } = useAppRuntimeStore();
@@ -104,10 +118,10 @@ export function AppRuntimeRoot() {
             <Route path="/" element={<AppHomeScreen />} />
             <Route path="/records" element={<AppRecordsBrowser />} />
             <Route path="/reports" element={<AppReports />} />
-            <Route path="/form/:formId" element={<AppFormView />} />
-            <Route path="/form/:formId/responses" element={<AppDataTable />} />
-            <Route path="/form/:formId/responses/:responseId" element={<AppResponseDetail />} />
-            <Route path="/form/:formId/analytics" element={<AppAnalytics />} />
+            <Route path="/form/:formId" element={<HiddenFormGuard><AppFormView /></HiddenFormGuard>} />
+            <Route path="/form/:formId/responses" element={<HiddenFormGuard><AppDataTable /></HiddenFormGuard>} />
+            <Route path="/form/:formId/responses/:responseId" element={<HiddenFormGuard><AppResponseDetail /></HiddenFormGuard>} />
+            <Route path="/form/:formId/analytics" element={<HiddenFormGuard><AppAnalytics /></HiddenFormGuard>} />
             <Route path="/profile" element={<AppUserProfile />} />
             <Route path="*" element={<Navigate to="." replace />} />
           </Routes>

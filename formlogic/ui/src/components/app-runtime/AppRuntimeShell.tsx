@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, FileBarChart } from 'lucide-react';
+import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, FileBarChart, Link2 } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
+import { interleaveMenu, menuForms, menuLinks } from './appMenu';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -13,7 +14,7 @@ interface AppRuntimeShellProps {
   children: React.ReactNode;
 }
 
-type NavKind = 'dashboard' | 'form' | 'records' | 'reports';
+type NavKind = 'dashboard' | 'form' | 'records' | 'reports' | 'link';
 
 interface NavItem {
   id: string;
@@ -21,6 +22,8 @@ interface NavItem {
   iconName: string | null;
   kind: NavKind;
   path: string;
+  /** kind 'link' with an http(s) target: opened in a new tab, never routed. */
+  external?: boolean;
 }
 
 export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
@@ -119,24 +122,48 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const showReports = (config.app?.reports?.length ?? 0) > 0 || isOwner();
 
   const dashboardItem: NavItem = { id: 'dashboard', label: 'Dashboard', iconName: null, kind: 'dashboard', path: basePath };
-  const formItems: NavItem[] = forms.map((f) => ({
+  // Menu entries: data-only (`hidden`) and unlisted (`menuHidden`) forms render
+  // no entry; hidden forms are also excluded from custom-link nav targets.
+  const formItems: NavItem[] = menuForms(forms).map((f) => ({
     id: f.formId,
     label: f.displayName,
     iconName: f.icon ?? null,
     kind: 'form',
     path: `${basePath}/form/${f.formId}`,
   }));
+  // Owner-authored custom menu links (navConfig kind 'link'), interleaved into
+  // the Forms group at their authored positions.
+  const navigableIds = new Set(forms.filter((f) => f.hidden !== true).map((f) => f.formId));
+  const linkItems = menuLinks(config.app.navConfig, navigableIds).map((l) => ({
+    item: {
+      id: `link:${l.key}`,
+      label: l.label,
+      iconName: l.icon,
+      kind: 'link',
+      path: l.externalUrl ?? `${basePath}/${l.appTarget}`,
+      external: !!l.externalUrl,
+    } as NavItem,
+    position: l.position,
+  }));
+  const formsGroupItems: NavItem[] = interleaveMenu(formItems, linkItems).map((e) =>
+    'item' in (e as { item?: NavItem }) ? (e as { item: NavItem }).item : (e as NavItem)
+  );
   const recordsItem: NavItem = { id: 'records', label: 'Records', iconName: null, kind: 'records', path: `${basePath}/records` };
   const reportsItem: NavItem = { id: 'reports', label: 'Reports', iconName: null, kind: 'reports', path: `${basePath}/reports` };
 
   // Sidebar/drawer nav, grouped: Overview / Forms / Data.
   const navGroups: Array<{ label: string; items: NavItem[] }> = [
     { label: 'Overview', items: [dashboardItem] },
-    ...(formItems.length > 0 ? [{ label: 'Forms', items: formItems }] : []),
+    ...(formsGroupItems.length > 0 ? [{ label: 'Forms', items: formsGroupItems }] : []),
     { label: 'Data', items: showReports ? [recordsItem, reportsItem] : [recordsItem] },
   ];
 
   const handleNav = (item: NavItem) => {
+    if (item.external) {
+      window.open(item.path, '_blank', 'noopener,noreferrer');
+      setMobileMenuOpen(false);
+      return;
+    }
     setActiveForm(item.kind === 'form' ? item.id : null);
     navigate(item.path);
     setMobileMenuOpen(false);
@@ -146,6 +173,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     if (item.kind === 'dashboard') return <Home className={className} />;
     if (item.kind === 'records') return <Database className={className} />;
     if (item.kind === 'reports') return <FileBarChart className={className} />;
+    if (item.kind === 'link' && !item.iconName) return <Link2 className={className} />;
     return <DynamicIcon name={item.iconName} className={className} />;
   };
 
@@ -161,9 +189,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   // under "More" (they're also reachable from Dashboard and Records), so Records and
   // Reports never fall into the overflow just because an app has many forms.
   const bottomNavItems: NavItem[] = [dashboardItem, recordsItem, ...(showReports ? [reportsItem] : [])];
-  const hasMoreItems = formItems.length > 0;
+  const hasMoreItems = formsGroupItems.length > 0;
   // Highlight "More" when the current section (a form) lives in the overflow menu.
-  const activeInOverflow = hasMoreItems && formItems.some((i) => isActive(i.id));
+  const activeInOverflow = hasMoreItems && formsGroupItems.some((i) => isActive(i.id));
 
   // Brand mark: logo image if the app has one, else its lucide icon, else its initial —
   // always on the app-accent tint tile so every app gets a mark without configuration.

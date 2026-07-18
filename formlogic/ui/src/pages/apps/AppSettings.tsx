@@ -13,15 +13,16 @@ import { TimezoneSelect } from '../../components/ui/TimezoneSelect';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { IconPicker } from '../../components/ui/IconPicker';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
-import { cn } from '../../lib/utils';
+import { cn, generateId } from '../../lib/utils';
 import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
 import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
-import type { App, AppRole, AppForm, AppKind } from '../../types/app';
+import type { App, AppRole, AppForm, AppKind, AppNavItem } from '../../types/app';
 import { DEFAULT_APP_THEME, KIND_LABELS } from '../../types/app';
 
 const tabs = [
   { label: 'General', value: 'general', icon: Settings },
   { label: 'Theme', value: 'theme', icon: Palette },
+  { label: 'Menu', value: 'menu', icon: Link2 },
   { label: 'Manage', value: 'manage', icon: LayoutGrid },
 ];
 
@@ -554,6 +555,109 @@ export function AppSettings() {
                 </div>
               </div>
             </div>
+          </div>
+          </TabsContent>
+
+          <TabsContent value="menu">
+          <div className="space-y-6">
+            {(() => {
+              // Custom LINK entries live in navConfig (kind 'link'); form entries keep
+              // app_forms as their single source of truth (Manage → Forms edits name/
+              // order/visibility incl. Unlisted and Data-only) — no drift between the two.
+              const navLinks = (app.navConfig || []).filter((n): n is AppNavItem => !!n && n.kind === 'link');
+              const otherNav = (app.navConfig || []).filter((n) => !n || n.kind !== 'link');
+              const setNavLinks = (links: AppNavItem[]) => setApp({ ...app, navConfig: [...otherNav, ...links] });
+              const patchLink = (id: string, patch: Partial<AppNavItem>) =>
+                setNavLinks(navLinks.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+              const looksValid = (l: AppNavItem) => {
+                const url = String(l.url ?? '').trim();
+                return url === '' || /^https?:\/\//i.test(url) || /^(records|reports|form\/[A-Za-z0-9_-]+)/.test(url);
+              };
+              return (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900 dark:text-white">Custom menu links</h3>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                      Extra links shown in the app's menu alongside your forms — external sites (open a new tab) or places
+                      inside the app (<code className="font-mono">records</code>, <code className="font-mono">reports</code>,{' '}
+                      <code className="font-mono">form/&lt;form-id&gt;</code>). Form entries themselves — name, order, and
+                      visibility (including <em>Unlisted</em> and <em>Data-only</em>) — are managed under{' '}
+                      <button type="button" className="underline cursor-pointer" onClick={() => navigate(paths.appSub(`${appId}`, 'forms'))}>Manage → Forms</button>.
+                    </p>
+                  </div>
+                  {navLinks.length === 0 && (
+                    <p className="text-sm text-gray-400 dark:text-slate-500">No custom links yet.</p>
+                  )}
+                  <div className="space-y-3">
+                    {navLinks.map((l) => (
+                      <div key={l.id || l.displayName} className="rounded-xl border border-gray-200 dark:border-slate-700 p-4 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Label</label>
+                            <input
+                              type="text"
+                              value={l.displayName}
+                              onChange={(e) => patchLink(l.id!, { displayName: e.target.value })}
+                              placeholder="Help centre"
+                              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Link</label>
+                            <input
+                              type="text"
+                              value={l.url || ''}
+                              onChange={(e) => patchLink(l.id!, { url: e.target.value })}
+                              placeholder="https://example.com or records"
+                              className={cn(
+                                'w-full px-3 py-2 border rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent',
+                                looksValid(l) ? 'border-gray-300 dark:border-slate-600' : 'border-amber-400 dark:border-amber-500'
+                              )}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Icon</label>
+                            <IconPicker value={l.icon} onChange={(name) => patchLink(l.id!, { icon: name ?? undefined })} />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1" title="0 puts the link at the top of the Forms group; higher numbers sit further down among the form entries.">Position</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={Number.isFinite(l.sortOrder) ? l.sortOrder : 0}
+                              onChange={(e) => patchLink(l.id!, { sortOrder: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                              className="w-20 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                            />
+                          </div>
+                          <div className="flex-1" />
+                          <Switch
+                            checked={l.isVisible !== false}
+                            onChange={(checked) => patchLink(l.id!, { isVisible: checked })}
+                            label="Shown"
+                          />
+                          <Button variant="ghost" size="sm" onClick={() => setNavLinks(navLinks.filter((x) => x.id !== l.id))} leftIcon={<Trash2 className="h-4 w-4" />}>
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setNavLinks([...navLinks, { kind: 'link', id: generateId(), displayName: '', url: '', sortOrder: navLinks.length + 99, isVisible: true }])}
+                  >
+                    Add link
+                  </Button>
+                  <p className="text-xs text-gray-400 dark:text-slate-500">
+                    Only <code className="font-mono">https://</code> sites and in-app targets ever render — anything else is
+                    ignored by the menu. Save with the button above.
+                  </p>
+                </>
+              );
+            })()}
           </div>
           </TabsContent>
 

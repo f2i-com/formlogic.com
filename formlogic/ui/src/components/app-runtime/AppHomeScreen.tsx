@@ -55,7 +55,9 @@ export function AppHomeScreen() {
         onNavigate={(target) => {
           // Resolve against a strict allowlist — a custom screen must not be able to send the viewer
           // to arbitrary internal (settings/billing/admin) or external routes. Unknown → ignored.
-          const path = safeAppNavTarget(target, new Set(config.forms.map((f) => f.formId)));
+          // Hidden (data-only) forms are never navigation targets — their data
+          // is SDK-reachable, their UI is not.
+          const path = safeAppNavTarget(target, new Set(config.forms.filter((f) => f.hidden !== true).map((f) => f.formId)));
           if (path) navigate(path);
         }}
         className="w-full h-full border-0 rounded-lg"

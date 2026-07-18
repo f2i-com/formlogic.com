@@ -129,12 +129,22 @@ class AppPublicController
                 if (isset($formData['settings']) && is_array($formData['settings'])) {
                     unset($formData['settings']['notifications']);
                 }
+                $afSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
                 $runtimeForms[] = [
                     'formId' => $form['formId'],
                     'displayName' => $form['displayName'],
                     // Stable machine alias from pack import (audit FL-007) —
                     // app-logic formKey resolution prefers it over labels.
-                    'packFormId' => is_array($form['settings'] ?? null) ? ($form['settings']['packFormId'] ?? null) : null,
+                    'packFormId' => $afSettings['packFormId'] ?? null,
+                    // Data-only form: stays in the runtime config so custom-screen
+                    // SDK reads/writes keep resolving it, but the client renders no
+                    // menu entry and blocks direct navigation. Distinct from
+                    // is_visible=false, which drops the form from the config
+                    // entirely (and from the SDK with it).
+                    'hidden' => ($afSettings['hidden'] ?? false) === true,
+                    // Unlisted: no menu entry, but the form stays openable by URL
+                    // and from screens (the softer sibling of `hidden`).
+                    'menuHidden' => ($afSettings['menuHidden'] ?? false) === true,
                     'sortOrder' => $form['sortOrder'],
                     'fields' => $formData['fields'],
                     'settings' => $formData['settings'],
@@ -159,8 +169,14 @@ class AppPublicController
         // names, queries) of forms the member can't see. Owners get the full app.
         if (!$isOwner) {
             unset($safeApp['ownerId']);
-            $accessible = array_column($runtimeForms, 'formId');
-            $safeApp = $this->filterAppForMember($safeApp, $accessible);
+            // Navigable = forms a member can actually OPEN (hidden data-only forms
+            // stay out of nav targets and the landing page, though their data is
+            // still SDK-reachable via the full runtimeForms list).
+            $navigable = array_column(
+                array_values(array_filter($runtimeForms, fn($f) => !$f['hidden'])),
+                'formId'
+            );
+            $safeApp = $this->filterAppForMember($safeApp, $navigable);
         }
 
         return $this->jsonResponse($response, [
@@ -185,11 +201,15 @@ class AppPublicController
     {
         $ok = fn($fid) => $fid === null || $fid === '' || in_array($fid, $accessible, true);
 
-        // Nav: accessible forms only.
+        // Nav: accessible forms only. Custom LINK entries (kind 'link', no form
+        // reference) are app-chrome the owner authored for everyone — kept.
         if (isset($safeApp['navConfig']) && is_array($safeApp['navConfig'])) {
             $safeApp['navConfig'] = array_values(array_filter(
                 $safeApp['navConfig'],
-                fn($item) => is_array($item) && in_array($item['formId'] ?? null, $accessible, true)
+                fn($item) => is_array($item) && (
+                    (($item['kind'] ?? 'form') === 'link' && !isset($item['formId']))
+                    || in_array($item['formId'] ?? null, $accessible, true)
+                )
             ));
         }
 

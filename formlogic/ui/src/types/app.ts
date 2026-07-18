@@ -50,11 +50,21 @@ export interface AppSettings {
 }
 
 export interface AppNavItem {
-  formId: string;
+  /** 'form' (default, legacy entries) references an app form; 'link' is an
+   *  owner-authored custom menu link rendered in the app's nav. */
+  kind?: 'form' | 'link';
+  /** kind 'form' only. Optional so link entries can omit it. */
+  formId?: string;
   displayName: string;
   sortOrder: number;
   isVisible: boolean;
   icon?: string;
+  /** kind 'link': https URL (opens a new tab) or an in-app target accepted by
+   *  safeAppNavTarget ('records', 'reports', 'form/<id>'…). Render-side scheme
+   *  guard — javascript:/data: never navigate. */
+  url?: string;
+  /** kind 'link': stable id for editor keys (generated client-side). */
+  id?: string;
 }
 
 export interface App {
@@ -363,6 +373,13 @@ export interface AppRuntimeForm {
   /** Stable machine alias stamped at pack import (audit FL-007) — app-logic
    *  formKey resolution prefers it over rename-able labels. */
   packFormId?: string | null;
+  /** Data-only form (app_forms.settings.hidden): no menu entry, direct
+   *  navigation blocked — but the form stays in this config so custom-screen
+   *  SDK reads/writes (queryRecords/related/updateRecord) keep resolving it. */
+  hidden?: boolean;
+  /** Unlisted (app_forms.settings.menuHidden): no menu entry, but the form
+   *  remains openable by URL and from screens. */
+  menuHidden?: boolean;
   icon?: string;
   description?: string | null;
   fields: unknown[];

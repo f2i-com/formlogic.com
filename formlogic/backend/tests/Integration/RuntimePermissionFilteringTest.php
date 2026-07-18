@@ -297,4 +297,51 @@ class RuntimePermissionFilteringTest extends TestCase
         // ...and the invisible form leaks through no app-config surface either (nav was seeded with C).
         $this->assertNotContains($s['formC'], array_column($r['body']['app']['navConfig'] ?? [], 'formId'));
     }
+
+    public function testHiddenDataOnlyFormStaysInRuntimePayloadFlaggedHidden(): void
+    {
+        $s = $this->seedApp();
+        // Flag A data-only; sibling settings keys (packFormId) must ride along untouched.
+        self::$pdo->prepare('UPDATE app_forms SET settings = ? WHERE app_id = ? AND form_id = ?')
+            ->execute([json_encode(['hidden' => true, 'packFormId' => 'stable-alias']), $this->appId, $s['formA']]);
+
+        $r = $this->getApp($s['member'], $s['slug']);
+        $forms = [];
+        foreach ($r['body']['forms'] ?? [] as $f) {
+            $forms[$f['formId']] = $f;
+        }
+        $this->assertArrayHasKey($s['formA'], $forms, 'a hidden (data-only) form must STAY in the runtime payload so the screen SDK resolves it');
+        $this->assertTrue($forms[$s['formA']]['hidden']);
+        $this->assertFalse($forms[$s['formA']]['menuHidden']);
+        $this->assertSame('stable-alias', $forms[$s['formA']]['packFormId']);
+    }
+
+    public function testHiddenFormIsNotANavTargetForMembers(): void
+    {
+        $s = $this->seedApp();
+        self::$pdo->prepare('UPDATE app_forms SET settings = ? WHERE app_id = ? AND form_id = ?')
+            ->execute([json_encode(['hidden' => true]), $this->appId, $s['formA']]);
+        self::$pdo->prepare('UPDATE apps SET settings = ? WHERE id = ?')
+            ->execute([json_encode(['landingPage' => $s['formA']]), $this->appId]);
+
+        $r = $this->getApp($s['member'], $s['slug']);
+        $this->assertSame('dashboard', $r['body']['app']['settings']['landingPage'] ?? null, 'a landing page at a hidden form must reset — the form has no UI to land on');
+        $this->assertNotContains($s['formA'], array_column($r['body']['app']['navConfig'] ?? [], 'formId'), 'hidden forms never surface as member nav entries');
+    }
+
+    public function testCustomLinkNavEntriesSurviveMemberFiltering(): void
+    {
+        $s = $this->seedApp();
+        $nav = json_encode([
+            ['kind' => 'link', 'id' => 'l1', 'displayName' => 'Help', 'url' => 'https://example.com', 'sortOrder' => 0, 'isVisible' => true],
+            ['formId' => $s['formA'], 'displayName' => 'A', 'sortOrder' => 1, 'isVisible' => true],
+            ['formId' => $s['formB'], 'displayName' => 'B', 'sortOrder' => 2, 'isVisible' => true],
+        ]);
+        self::$pdo->prepare('UPDATE apps SET nav_config = ? WHERE id = ?')->execute([$nav, $this->appId]);
+
+        $r = $this->getApp($s['member'], $s['slug']);
+        $navOut = $r['body']['app']['navConfig'] ?? [];
+        $keys = array_map(fn ($n) => ($n['kind'] ?? 'form') === 'link' ? 'link:' . ($n['id'] ?? '?') : ($n['formId'] ?? '?'), $navOut);
+        $this->assertSame(['link:l1', $s['formA']], $keys, 'owner-authored link entries are app chrome for everyone; inaccessible form entries drop');
+    }
 }

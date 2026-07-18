@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag, Share2, Layers } from 'lucide-react';
+import { ArrowLeft, Plus, X, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag, Share2, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
@@ -228,10 +228,29 @@ export function AppFormManager() {
     setBusyFormId(null);
   };
 
-  const handleToggleVisibility = async (formId: string, currentlyVisible: boolean) => {
+  // Four nav states per app form. 'shown' = normal menu entry; 'unlisted' = no
+  // menu entry but still openable (URL / screens); 'data-only' = no UI at all,
+  // records stay readable/writable from other forms' custom screens via the
+  // SDK; 'off' = legacy is_visible=false, excluded from the app runtime
+  // entirely (not even the SDK sees it).
+  type FormNavState = 'shown' | 'unlisted' | 'data-only' | 'off';
+  const formNavState = (af: AppForm): FormNavState => {
+    if (!af.isVisible) return 'off';
+    if ((af.settings as { hidden?: boolean } | undefined)?.hidden === true) return 'data-only';
+    if ((af.settings as { menuHidden?: boolean } | undefined)?.menuHidden === true) return 'unlisted';
+    return 'shown';
+  };
+  const applyNavState = async (af: AppForm, state: FormNavState) => {
     if (!appId) return;
-    setBusyFormId(formId);
-    await updateAppForm(appId, formId, { isVisible: !currentlyVisible });
+    setBusyFormId(af.formId);
+    // settings is stored WHOLE (server replaces the JSON object) — spread the
+    // existing object so packFormId and future keys survive the toggle.
+    const settings = { ...(af.settings || {}) } as Record<string, unknown>;
+    delete settings.hidden;
+    delete settings.menuHidden;
+    if (state === 'data-only') settings.hidden = true;
+    if (state === 'unlisted') settings.menuHidden = true;
+    await updateAppForm(appId, af.formId, { isVisible: state !== 'off', settings });
     await loadForms();
     setBusyFormId(null);
   };
@@ -419,9 +438,22 @@ export function AppFormManager() {
                   <button onClick={() => navigate(paths.builder(af.formId, appId))} aria-label={`Edit ${af.displayName}`} title="Edit form" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
                     <Pencil className="h-4 w-4" />
                   </button>
-                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors cursor-pointer', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
-                    {af.isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                  </button>
+                  <select
+                    value={formNavState(af)}
+                    onChange={(e) => applyNavState(af, e.target.value as FormNavState)}
+                    disabled={busyFormId === af.formId}
+                    aria-label={`Visibility for ${af.displayName}`}
+                    title={'Shown — normal menu entry.\nUnlisted — no menu link, still openable by URL and screens.\nData-only — no UI at all; records stay available to other forms’ custom screens through the SDK.\nOff — removed from the app runtime entirely.'}
+                    className={cn(
+                      'text-xs px-1.5 py-1 rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-900 disabled:opacity-50 transition-colors cursor-pointer',
+                      formNavState(af) === 'shown' ? 'text-green-600' : formNavState(af) === 'off' ? 'text-gray-400 dark:text-slate-500' : 'text-amber-600 dark:text-amber-400'
+                    )}
+                  >
+                    <option value="shown">Shown</option>
+                    <option value="unlisted">Unlisted</option>
+                    <option value="data-only">Data-only</option>
+                    <option value="off">Off</option>
+                  </select>
                   <button onClick={() => handleRemoveRequest(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 transition-colors cursor-pointer">
                     {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
                   </button>
