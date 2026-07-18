@@ -61,17 +61,20 @@ final class AokieCompanionRelayController
     ) {}
 
     /**
-     * GET /api/aokie-companion/relay/challenge — the endpoint challenge the
-     * plugin requires before it will sign its hello.
+     * GET /api/aokie-companion/relay/challenge — the endpoint challenge an
+     * endpoint requires before it will sign its hello. Issued to BOTH parties:
+     * the plugin gets its roster shape, a Companion mobile its peer shape.
      *
      * A DEDICATED resource rather than a frame injected into the mailbox: the
      * mailbox stays strictly opaque, and the endpoint's existing challenge
      * validation and hello signing run verbatim over the relay transport.
      *
-     * It grants NOTHING. Every non-random field is copied from the presented
-     * bearer's OWN verified claims, so a challenge can only ever describe the
-     * identity that asked for it — there is no request input to influence, and
-     * no new server state to keep.
+     * It grants NOTHING, and serving mobiles widens nothing: every non-random
+     * field is copied from the presented bearer's OWN verified claims, so a
+     * challenge can only ever describe the identity that asked for it — there
+     * is no request input to influence, and no new server state to keep. A
+     * mobile's challenge names the plugin its admission was already minted
+     * against, which the bearer itself already carries.
      */
     public function getChallenge(Request $request, Response $response): Response
     {
@@ -79,31 +82,87 @@ final class AokieCompanionRelayController
         if (!$identity['ok']) {
             return $this->error($response, $identity['status'], $identity['code'], $identity['message']);
         }
-        if ($identity['role'] !== 'plugin') {
+        $claims = $identity['claims'];
+        // ⚠️ THE TWO ROLE SHAPES ARE MUTUALLY EXCLUSIVE, NOT MERELY DIFFERENT.
+        // `aokie_protocol::v2::validate_peer_policy` refuses a mobile challenge
+        // that carries ANY roster field, and refuses a plugin challenge that
+        // carries expectedPeerKeyThumbprint at all — reading its mere presence
+        // as an identity mismatch. Each branch therefore OMITS the other's keys
+        // entirely rather than sending them empty or null. The frame struct
+        // defaults every one of them, so absence decodes cleanly.
+        if ($identity['role'] === 'plugin') {
+            try {
+                // The peer policy rides the same HMAC as the rest of the claims, but
+                // verify() checks only what every role shares. Re-validating it here
+                // keeps a malformed roster from being echoed into a frame the
+                // endpoint would refuse only after the round trip.
+                $approvedPeers = AokieCompanionAdmissionSigner::validatePluginPeerPolicy(
+                    $claims['approvedPeerKeyThumbprints'] ?? null,
+                    $claims['peerRosterRevision'] ?? null,
+                    $claims['peerRosterHash'] ?? null,
+                );
+            } catch (\InvalidArgumentException) {
+                return $this->error(
+                    $response,
+                    401,
+                    'invalid_token',
+                    'The admission token does not carry a plugin endpoint identity',
+                );
+            }
+            // ⚠️ The LAST roster rule, and the only one validatePluginPeerPolicy
+            // structurally cannot make: it is never handed the holder. The
+            // protocol refuses a roster that approves the endpoint's OWN key
+            // (v2.rs:2466, the mirror of the mobile branch's self-reference
+            // check below), so echoing one would mint a challenge the plugin
+            // rejects only after the round trip — and because a roster revision
+            // may only ever advance, that failure would be STICKY rather than
+            // self-correcting. Refusing here can never cost a working session:
+            // any roster the endpoint would have accepted already satisfies it.
+            if (in_array((string) $claims['holderKeyThumbprint'], $approvedPeers, true)) {
+                return $this->error(
+                    $response,
+                    401,
+                    'invalid_token',
+                    'The admission token does not carry a plugin endpoint identity',
+                );
+            }
+            $peerPolicy = [
+                // ⚠️ expectedPeerKeyThumbprint is DELIBERATELY ABSENT. It belongs to
+                // mobile-role challenges; on a plugin-role frame the endpoint reads
+                // its mere presence as an identity mismatch and refuses the socket.
+                'approvedPeerKeyThumbprints' => $approvedPeers,
+                'peerRosterRevision' => (int) $claims['peerRosterRevision'],
+                'peerRosterHash' => (string) $claims['peerRosterHash'],
+            ];
+        } elseif ($identity['role'] === 'mobile') {
+            // Same reasoning as the plugin roster above: verify() does not look
+            // at expectedPeerKeyThumbprint, so it is re-checked here — including
+            // the protocol's "must differ from the holder" rule — rather than
+            // echoing a frame the endpoint would refuse after the round trip.
+            $expectedPeer = $claims['expectedPeerKeyThumbprint'] ?? null;
+            if (!AokieCompanionAdmissionSigner::validThumbprint($expectedPeer)
+                || $expectedPeer === ($claims['holderKeyThumbprint'] ?? null)) {
+                return $this->error(
+                    $response,
+                    401,
+                    'invalid_token',
+                    'The admission token does not carry a mobile endpoint identity',
+                );
+            }
+            $peerPolicy = [
+                // ⚠️ approvedPeerKeyThumbprints / peerRosterRevision / peerRosterHash
+                // are DELIBERATELY ABSENT. They describe a plugin's roster; on a
+                // mobile-role frame any one of them is refused outright.
+                'expectedPeerKeyThumbprint' => (string) $expectedPeer,
+            ];
+        } else {
+            // Unreachable while ROLES is {mobile, plugin} — verify() refuses any
+            // other role before this point. Kept so a future role fails closed.
             return $this->error(
                 $response,
                 403,
                 'relay_challenge_unsupported',
-                'Relay challenges are issued to the plugin party only',
-            );
-        }
-        $claims = $identity['claims'];
-        try {
-            // The peer policy rides the same HMAC as the rest of the claims, but
-            // verify() checks only what every role shares. Re-validating it here
-            // keeps a malformed roster from being echoed into a frame the
-            // endpoint would refuse only after the round trip.
-            $approvedPeers = AokieCompanionAdmissionSigner::validatePluginPeerPolicy(
-                $claims['approvedPeerKeyThumbprints'] ?? null,
-                $claims['peerRosterRevision'] ?? null,
-                $claims['peerRosterHash'] ?? null,
-            );
-        } catch (\InvalidArgumentException) {
-            return $this->error(
-                $response,
-                401,
-                'invalid_token',
-                'The admission token does not carry a plugin endpoint identity',
+                'Relay challenges are issued to the plugin and mobile parties only',
             );
         }
         return $this->jsonResponse($response, [
@@ -111,17 +170,12 @@ final class AokieCompanionRelayController
             'schemaVersion' => self::CHALLENGE_SCHEMA_VERSION,
             'appId' => (string) $claims['appId'],
             'subjectId' => (string) $claims['subjectId'],
-            'role' => 'plugin',
+            'role' => $identity['role'],
             'connectionId' => 'relay_' . bin2hex(random_bytes(16)),
             'challengeNonce' => 'challenge_' . bin2hex(random_bytes(16)),
             'admissionJti' => (string) $claims['jti'],
             'holderKeyThumbprint' => (string) $claims['holderKeyThumbprint'],
-            // ⚠️ expectedPeerKeyThumbprint is DELIBERATELY ABSENT. It belongs to
-            // mobile-role challenges; on a plugin-role frame the endpoint reads
-            // its mere presence as an identity mismatch and refuses the socket.
-            'approvedPeerKeyThumbprints' => $approvedPeers,
-            'peerRosterRevision' => (int) $claims['peerRosterRevision'],
-            'peerRosterHash' => (string) $claims['peerRosterHash'],
+            ...$peerPolicy,
             'expiresAt' => time() + self::CHALLENGE_LIFETIME_SECONDS,
         ])
             ->withHeader('Cache-Control', 'no-store')

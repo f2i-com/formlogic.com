@@ -151,6 +151,69 @@ final class AokieCompanionRelayTest extends TestCase
         )['accessToken'];
     }
 
+    /**
+     * Mint a correctly SIGNED token over arbitrary claims.
+     *
+     * issue() structurally cannot produce a mobile admission without a valid
+     * expectedPeerKeyThumbprint, and verify() does not inspect that claim — so
+     * this is the only way to exercise the controller's own re-validation of
+     * it. It stands for software that holds the signing secret but composes a
+     * claim set issue() would refuse.
+     *
+     * @param array<string,mixed> $claims
+     */
+    private function forgedToken(array $claims): string
+    {
+        $payload = (string) json_encode($claims, JSON_UNESCAPED_SLASHES);
+        return AokieCompanionAdmissionSigner::TOKEN_PREFIX
+            . '.' . bin2hex($payload)
+            . '.' . bin2hex(hash_hmac('sha256', $payload, self::SECRET, true));
+    }
+
+    /**
+     * The claim set issue() emits for a mobile, as a mutable starting point.
+     *
+     * @return array<string,mixed>
+     */
+    private function mobileClaims(string $deviceId): array
+    {
+        return [
+            'aud' => AokieCompanionAdmissionSigner::AUDIENCE,
+            'appId' => $this->appId,
+            'subjectId' => $deviceId,
+            'role' => 'mobile',
+            'holderKeyThumbprint' => $this->mobileThumbprint($deviceId),
+            'expectedPeerKeyThumbprint' => self::PLUGIN_THUMBPRINT,
+            'scopes' => ['state_read'],
+            'exp' => time() + 90,
+            'jti' => 'adm_' . bin2hex(random_bytes(8)),
+        ];
+    }
+
+    /**
+     * The claim set issue() emits for a plugin, as a mutable starting point.
+     *
+     * @param list<string> $approvedMobileThumbprints
+     * @return array<string,mixed>
+     */
+    private function pluginClaims(array $approvedMobileThumbprints): array
+    {
+        sort($approvedMobileThumbprints, SORT_STRING);
+        return [
+            'aud' => AokieCompanionAdmissionSigner::AUDIENCE,
+            'appId' => $this->appId,
+            'subjectId' => 'aokie',
+            'role' => 'plugin',
+            'holderKeyThumbprint' => self::PLUGIN_THUMBPRINT,
+            'approvedPeerKeyThumbprints' => $approvedMobileThumbprints,
+            'peerRosterRevision' => 1,
+            'peerRosterHash' => AokieCompanionAdmissionSigner::peerRosterHash(1, $approvedMobileThumbprints),
+            'scopes' => ['state_read'],
+            'exp' => time() + 90,
+            'jti' => 'adm_' . bin2hex(random_bytes(8)),
+        ];
+    }
+
     private function request(string $method, string $path, ?string $bearer): ServerRequestInterface
     {
         $request = (new ServerRequestFactory())->createServerRequest($method, self::BASE . $path);
@@ -484,6 +547,181 @@ final class AokieCompanionRelayTest extends TestCase
         }
     }
 
+    public function testMobileChallengeCarriesThePeerShapeAndNeverTheRoster(): void
+    {
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $token = $this->mobileToken($deviceId);
+        $claims = self::claimsOf($token);
+
+        $before = time();
+        $response = $this->challenge($token);
+        $body = self::decode($response);
+        $after = time();
+        $this->assertSame(200, $response->getStatusCode(), json_encode($body));
+        $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        $this->assertSame('no-cache', $response->getHeaderLine('Pragma'));
+
+        $this->assertSame('endpoint_challenge', $body['kind']);
+        $this->assertSame(2, $body['schemaVersion'], 'must match aokie_protocol::v2::SCHEMA_VERSION');
+        $this->assertSame('mobile', $body['role']);
+        // Same invariant as the plugin branch: every non-random field is the
+        // bearer's OWN verified claim, echoed. No request input is consulted.
+        $this->assertSame($this->appId, $body['appId']);
+        $this->assertSame($claims['appId'], $body['appId']);
+        $this->assertSame($claims['subjectId'], $body['subjectId']);
+        $this->assertSame($claims['jti'], $body['admissionJti']);
+        $this->assertSame($this->mobileThumbprint($deviceId), $body['holderKeyThumbprint']);
+        $this->assertSame($claims['holderKeyThumbprint'], $body['holderKeyThumbprint']);
+
+        // ⚠️ THE MOBILE SHAPE: expectedPeerKeyThumbprint REQUIRED and DISTINCT
+        // from the holder. aokie_protocol::v2::validate_peer_policy refuses the
+        // frame when it is absent, and refuses it again when it equals the
+        // holder — a self-referential peer is read as an identity mismatch.
+        $this->assertSame($claims['expectedPeerKeyThumbprint'], $body['expectedPeerKeyThumbprint']);
+        $this->assertSame(self::PLUGIN_THUMBPRINT, $body['expectedPeerKeyThumbprint']);
+        $this->assertNotSame(
+            $body['holderKeyThumbprint'],
+            $body['expectedPeerKeyThumbprint'],
+            'expectedPeerKeyThumbprint must name the PEER, never the holder itself',
+        );
+
+        // ⚠️ And the roster keys must be ABSENT — not null, not empty. Any one
+        // of them present makes validate_peer_policy refuse a mobile frame
+        // outright. EndpointChallengeFrame defaults all three, so omitting them
+        // decodes cleanly to (empty vec, None, None).
+        foreach (['approvedPeerKeyThumbprints', 'peerRosterRevision', 'peerRosterHash'] as $rosterKey) {
+            $this->assertFalse(
+                array_key_exists($rosterKey, $body),
+                $rosterKey . ' must be omitted entirely for role mobile',
+            );
+        }
+
+        $lifetime = AokieCompanionRelayController::CHALLENGE_LIFETIME_SECONDS;
+        $this->assertGreaterThan($after, $body['expiresAt'], 'a challenge must not arrive already expired');
+        $this->assertGreaterThanOrEqual($before + $lifetime, $body['expiresAt']);
+        $this->assertLessThanOrEqual($after + $lifetime, $body['expiresAt']);
+
+        foreach (['connectionId' => 'relay_', 'challengeNonce' => 'challenge_'] as $field => $prefix) {
+            $this->assertStringStartsWith($prefix, $body[$field]);
+            $this->assertMatchesRegularExpression('/^[A-Za-z0-9_.:-]{1,200}$/D', $body[$field], $field);
+        }
+    }
+
+    public function testTheTwoChallengeShapesAreMutuallyExclusive(): void
+    {
+        // The protocol does not merely allow different shapes per role, it
+        // REFUSES each role carrying the other's peer fields. Asserting the two
+        // documents side by side locks the disjointness itself, so neither
+        // branch can drift toward the other.
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $thumbprint = $this->mobileThumbprint($deviceId);
+        $plugin = self::decode($this->challenge($this->pluginToken([$thumbprint])));
+        $mobile = self::decode($this->challenge($this->mobileToken($deviceId)));
+
+        $this->assertSame('plugin', $plugin['role']);
+        $this->assertSame('mobile', $mobile['role']);
+
+        $shared = ['kind', 'schemaVersion', 'appId', 'subjectId', 'role', 'connectionId',
+            'challengeNonce', 'admissionJti', 'holderKeyThumbprint', 'expiresAt'];
+        $rosterOnly = ['approvedPeerKeyThumbprints', 'peerRosterRevision', 'peerRosterHash'];
+
+        $this->assertSame($shared, array_values(array_diff(array_keys($plugin), $rosterOnly)));
+        $this->assertSame($shared, array_values(array_diff(array_keys($mobile), ['expectedPeerKeyThumbprint'])));
+        // Exactly one peer-policy vocabulary each, with no overlap.
+        $this->assertSame($rosterOnly, array_values(array_intersect(array_keys($plugin), $rosterOnly)));
+        $this->assertArrayNotHasKey('expectedPeerKeyThumbprint', $plugin);
+        $this->assertSame([], array_values(array_intersect(array_keys($mobile), $rosterOnly)));
+        $this->assertArrayHasKey('expectedPeerKeyThumbprint', $mobile);
+    }
+
+    public function testMobileChallengeRefusesAMalformedEndpointIdentity(): void
+    {
+        // verify() checks only what every role shares, so a token that passed
+        // the HMAC can still carry a peer claim issue() would never emit. The
+        // controller re-validates rather than echoing a frame the endpoint
+        // would refuse only after a full round trip.
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $holder = $this->mobileThumbprint($deviceId);
+        foreach ([
+            'absent' => null,
+            'empty' => '',
+            'not-a-thumbprint' => 'nope',
+            'wrong-length' => substr($holder, 0, 42),
+            // The protocol refuses a peer that names the holder itself.
+            'self-referential' => $holder,
+        ] as $label => $expectedPeer) {
+            $claims = $this->mobileClaims($deviceId);
+            if ($expectedPeer === null) {
+                unset($claims['expectedPeerKeyThumbprint']);
+            } else {
+                $claims['expectedPeerKeyThumbprint'] = $expectedPeer;
+            }
+            $response = $this->challenge($this->forgedToken($claims));
+            $body = self::decode($response);
+            $this->assertSame(401, $response->getStatusCode(), $label);
+            $this->assertSame('invalid_token', $body['code'], $label);
+            // A refusal is an error envelope only: no identity material at all.
+            $keys = array_keys($body);
+            sort($keys);
+            $this->assertSame(['code', 'error', 'message'], $keys, $label);
+        }
+
+        // Control: the same forging path with an untouched claim set succeeds,
+        // proving the refusals above are the peer check and not the forgery.
+        $ok = $this->challenge($this->forgedToken($this->mobileClaims($deviceId)));
+        $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
+    }
+
+    public function testPluginChallengeRefusesARosterThatApprovesItsOwnKey(): void
+    {
+        // ⚠️ THE MIRROR OF THE MOBILE SELF-REFERENCE CASE, and the one roster
+        // rule validatePluginPeerPolicy structurally cannot make: it is never
+        // handed the holder. aokie_protocol::v2::validate_peer_policy refuses a
+        // plugin frame whose roster approves the endpoint's OWN key — so
+        // echoing one would mint a challenge the plugin rejects only after a
+        // full round trip, and since a roster revision may only ever advance,
+        // that failure would be STICKY rather than self-correcting.
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $claims = $this->pluginClaims([$this->mobileThumbprint($deviceId), self::PLUGIN_THUMBPRINT]);
+        $response = $this->challenge($this->forgedToken($claims));
+        $body = self::decode($response);
+        $this->assertSame(401, $response->getStatusCode(), json_encode($body));
+        $this->assertSame('invalid_token', $body['code']);
+        // A refusal stays an error envelope only — no roster material leaks.
+        $keys = array_keys($body);
+        sort($keys);
+        $this->assertSame(['code', 'error', 'message'], $keys);
+
+        // Control: the same forging path with a roster that excludes the holder
+        // succeeds, proving the refusal is the holder rule and not the forgery.
+        $ok = $this->challenge($this->forgedToken($this->pluginClaims([$this->mobileThumbprint($deviceId)])));
+        $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
+    }
+
+    public function testPluginChallengeNeverEchoesAMobilePeerClaim(): void
+    {
+        // The plugin half of the disjointness the mobile branch already locks.
+        // validate_peer_policy refuses a plugin frame carrying
+        // expectedPeerKeyThumbprint AT ALL — reading its mere presence as an
+        // identity mismatch — so a token that smuggles one (issue() refuses to
+        // mint it, but verify() does not inspect it) must not have it copied
+        // through. The branch composes its peer policy from scratch rather than
+        // filtering the claims, which is what makes that structural.
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        $claims = $this->pluginClaims([$this->mobileThumbprint($deviceId)]);
+        $claims['expectedPeerKeyThumbprint'] = $this->mobileThumbprint($deviceId);
+        $response = $this->challenge($this->forgedToken($claims));
+        $body = self::decode($response);
+        $this->assertSame(200, $response->getStatusCode(), json_encode($body));
+        $this->assertSame('plugin', $body['role']);
+        $this->assertArrayNotHasKey(
+            'expectedPeerKeyThumbprint',
+            $body,
+            'a plugin challenge must never carry the mobile peer field, whatever the token claims',
+        );
+        $this->assertSame([$this->mobileThumbprint($deviceId)], $body['approvedPeerKeyThumbprints']);
+    }
+
     public function testEveryChallengeMintsFreshConnectionAndNonceValues(): void
     {
         $token = $this->pluginToken([$this->mobileThumbprint('device_' . bin2hex(random_bytes(4)))]);
@@ -501,11 +739,15 @@ final class AokieCompanionRelayTest extends TestCase
     {
         $deviceId = 'device_' . bin2hex(random_bytes(4));
 
-        // A mobile bearer cannot obtain a plugin handshake — and could not use
-        // one: the mailbox derives its party from the token, not the challenge.
-        $mobile = $this->challenge($this->mobileToken($deviceId));
-        $this->assertSame(403, $mobile->getStatusCode());
-        $this->assertSame('relay_challenge_unsupported', self::decode($mobile)['code']);
+        // A mobile bearer now opens its OWN session, but it still cannot obtain
+        // a PLUGIN handshake: the role and every peer field come from the token,
+        // never from the request — and the mailbox derives its party the same
+        // way, so a stolen plugin challenge would buy nothing either.
+        $mobile = self::decode($this->challenge($this->mobileToken($deviceId)));
+        $this->assertSame('mobile', $mobile['role']);
+        foreach (['approvedPeerKeyThumbprints', 'peerRosterRevision', 'peerRosterHash'] as $rosterKey) {
+            $this->assertArrayNotHasKey($rosterKey, $mobile, 'a mobile bearer must never receive plugin roster material');
+        }
 
         $valid = $this->pluginToken([$this->mobileThumbprint($deviceId)]);
         foreach ([
@@ -539,17 +781,28 @@ final class AokieCompanionRelayTest extends TestCase
 
     public function testServiceToggleGatesTheChallengeToo(): void
     {
-        $token = $this->pluginToken([$this->mobileThumbprint('device_' . bin2hex(random_bytes(4)))]);
+        $deviceId = 'device_' . bin2hex(random_bytes(4));
+        // Both parties, including a bearer minted while the service was still
+        // on: the gate is re-checked on every relay request, so turning the
+        // service off closes an ALREADY-ISSUED session within one poll.
+        $tokens = [
+            'plugin' => $this->pluginToken([$this->mobileThumbprint($deviceId)]),
+            'mobile' => $this->mobileToken($deviceId),
+        ];
         $this->setRelayService(false);
         try {
-            $denied = $this->challenge($token);
-            $this->assertSame(403, $denied->getStatusCode());
-            $this->assertSame('service_disabled', self::decode($denied)['code']);
+            foreach ($tokens as $role => $token) {
+                $denied = $this->challenge($token);
+                $this->assertSame(403, $denied->getStatusCode(), $role);
+                $this->assertSame('service_disabled', self::decode($denied)['code'], $role);
+            }
         } finally {
             $this->setRelayService(true);
         }
-        $restored = $this->challenge($token);
-        $this->assertSame(200, $restored->getStatusCode(), (string) $restored->getBody());
+        foreach ($tokens as $role => $token) {
+            $restored = $this->challenge($token);
+            $this->assertSame(200, $restored->getStatusCode(), $role . ': ' . (string) $restored->getBody());
+        }
     }
 
     public function testExpiredFramesAreSweptAndNeverServed(): void

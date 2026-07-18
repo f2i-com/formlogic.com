@@ -31,6 +31,8 @@ use Slim\Psr7\Factory\StreamFactory;
 final class AokieCompanionAuthTest extends TestCase
 {
     private const BASE = 'http://localhost';
+    /** Sentinel: omit `supportedTransports` entirely, as a shipped build does. */
+    private const NO_TRANSPORTS = '__omit__';
     private const API_BASE = 'http://api.localhost';
     private const SECRET = '0123456789abcdef0123456789abcdef';
     private const PLUGIN_PUBLIC_KEY = 'PUAXw-hDiVqStwqnTRt-vJyYLM8uxJaMwM1V8Sr0Zgw';
@@ -300,12 +302,19 @@ final class AokieCompanionAuthTest extends TestCase
             ->withAttribute('userId', $this->userId);
     }
 
+    /**
+     * @param mixed $supportedTransports the transport declaration to send, or
+     *        the NO_TRANSPORTS sentinel to omit the key entirely — the two are
+     *        distinct cases, since `null` is itself a shape that must not read
+     *        as consent.
+     */
     private function mobileAdmission(
         string $accessToken,
         string $deviceId,
         ?array $grants = null,
         ?string $holderKeyThumbprint = null,
         bool $ensurePaired = true,
+        mixed $supportedTransports = self::NO_TRANSPORTS,
     ): ResponseInterface
     {
         $holderKeyThumbprint ??= $this->mobileHolder($deviceId);
@@ -320,6 +329,9 @@ final class AokieCompanionAuthTest extends TestCase
         ];
         if ($grants !== null) {
             $body['grants'] = $grants;
+        }
+        if ($supportedTransports !== self::NO_TRANSPORTS) {
+            $body['supportedTransports'] = $supportedTransports;
         }
         return self::$controller->mobileAdmission(
             $this->request('POST', '/api/aokie-companion/admission')
@@ -1117,23 +1129,95 @@ final class AokieCompanionAuthTest extends TestCase
         }
     }
 
-    public function testPluginRelayAdvertisementIsWithheldFromMobilesAndDiscovery(): void
+    public function testMobileRelayAdvertisementIsNegotiatedAndAbsentFromDiscovery(): void
     {
-        // ⚠️ Both of these documents are parsed with deny_unknown_fields by
-        // already-shipped native Companion builds: an added key is not a new
-        // feature there, it is an instant hard parse failure. The hosted relay
-        // is therefore advertised on the plugin admission ONLY.
+        // ⚠️ THE MOBILE ADMISSION IS PARSED WITH deny_unknown_fields BY
+        // ALREADY-SHIPPED NATIVE COMPANION BUILDS, and unlike the plugin path
+        // there is no desktop broker in between to strip a key the client did
+        // not ask for. An unconditional `relay` field would therefore be an
+        // instant hard parse failure on every installed build. So the mobile
+        // advertisement is NEGOTIATED: emitted only when the caller declares
+        // relay support, which is exactly what keeps the two repos free to
+        // deploy in either order.
         $deviceId = 'device_relayscope_' . bin2hex(random_bytes(6));
         $oauth = $this->authorizeCompanion($deviceId);
-        $mobile = $this->mobileAdmission($oauth['accessToken'], $deviceId, ['state_read']);
-        $mobileBody = self::decode($mobile);
-        $this->assertSame(200, $mobile->getStatusCode(), json_encode($mobileBody));
-        $this->assertArrayNotHasKey('relay', $mobileBody);
-        // The fields shipped Companions require must still be present.
-        foreach (['gatewayUrl', 'relayOnly', 'turnCredentialExpiresAt'] as $key) {
-            $this->assertArrayHasKey($key, $mobileBody, $key . ' is required by the shipped mobile parser');
+
+        // 1. Silence is not consent — the shipped-build case. Asserted WITH a
+        //    positive check: an error body carries no `relay` either, so
+        //    absence alone would also "pass" on a mint that had started failing.
+        $silentResponse = $this->mobileAdmission($oauth['accessToken'], $deviceId, ['state_read']);
+        $silent = self::decode($silentResponse);
+        $this->assertSame(200, $silentResponse->getStatusCode(), json_encode($silent));
+        $this->assertArrayNotHasKey('relay', $silent);
+
+        // 2. Neither is any ambiguous shape. Only a JSON LIST carrying the
+        //    exact string 'relay' may be read as support; anything else must
+        //    fall back to the shape the caller was built against.
+        foreach ([
+            'empty list' => [],
+            'another transport' => ['websocket'],
+            'object with named key' => ['transport' => 'relay'],
+            'bare string' => 'relay',
+            'null' => null,
+            'nested' => [['relay']],
+            'case mismatch' => ['Relay'],
+        ] as $label => $declared) {
+            $body = self::decode($this->mobileAdmission(
+                $oauth['accessToken'],
+                $deviceId,
+                ['state_read'],
+                supportedTransports: $declared,
+            ));
+            $this->assertArrayNotHasKey('relay', $body, $label . ' must not read as opt-in');
+            $this->assertArrayHasKey('accessToken', $body, $label . ' must still mint normally');
         }
 
+        // 2b. ⚠️ ONE SHAPE IS INDISTINGUISHABLE, DOCUMENTED RATHER THAN HIDDEN.
+        //     A numeric-keyed JSON object {"0":"relay"} and the list ["relay"]
+        //     decode to the SAME PHP array — assoc decoding casts decimal-string
+        //     keys to ints, the same lossiness the relay controller calls out
+        //     for {} vs []. Telling them apart would mean re-decoding the raw
+        //     body non-associatively in body(), which every other route shares.
+        //     It is left as-is because the shape is one no client emits, and the
+        //     only consequence of reading it as consent is offering three URLs
+        //     to a caller that asked for them in a degenerate way — while the
+        //     cases that actually matter (silence above all, and a named-key
+        //     object) are refused above.
+        $degenerate = self::decode($this->mobileAdmission(
+            $oauth['accessToken'],
+            $deviceId,
+            ['state_read'],
+            supportedTransports: ['0' => 'relay'],
+        ));
+        $this->assertArrayHasKey('relay', $degenerate, 'known and accepted limit of assoc JSON decoding');
+
+        // 3. A declared opt-in gets exactly the three URLs — the same values the
+        //    plugin admission publishes, off the one trustedOrigin invariant.
+        $negotiated = self::decode($this->mobileAdmission(
+            $oauth['accessToken'],
+            $deviceId,
+            ['state_read'],
+            supportedTransports: ['relay'],
+        ));
+        $this->assertSame([
+            'challengeUrl' => self::BASE . '/api/aokie-companion/relay/challenge',
+            'framesUrl' => self::BASE . '/api/aokie-companion/relay/frames',
+            'streamUrl' => self::BASE . '/api/aokie-companion/relay/stream',
+        ], $negotiated['relay']);
+
+        // 4. ⚠️ REGRESSION LOCK, both branches. These are what the shipped
+        //    mobile parser hard-requires; negotiation must never trade one of
+        //    them away for the new field.
+        foreach ([$silent, $negotiated] as $index => $body) {
+            foreach (['gatewayUrl', 'relayOnly', 'turnCredentialExpiresAt'] as $key) {
+                $this->assertArrayHasKey($key, $body, $key . ' is required by the shipped mobile parser (branch ' . $index . ')');
+            }
+        }
+
+        // 5. Discovery still carries no relay in EITHER case. It is fetched
+        //    pre-auth, is cached, and is gated twice on the Companion — a
+        //    V2_PAYLOAD_KEYS allowlist that hard-errors on an unknown key
+        //    BEFORE signature verification, plus a deny_unknown_fields struct.
         $discovery = self::decode(self::$controller->appDiscovery(
             $this->request('GET', '/api/app/' . $this->appSlug . '/aokie-discovery'),
             (new ResponseFactory())->createResponse(),

@@ -216,9 +216,89 @@ final class AokieCompanionController
             return $this->error($response, 500, 'admission_failed', 'The short-lived admission could not be issued');
         }
         $admission['device'] = $device;
+        // ⚠️ NEGOTIATED, unlike the plugin path. A mobile posts here DIRECTLY —
+        // there is no desktop broker in between to strip a field the client did
+        // not ask for — and already-shipped native Companion builds parse this
+        // document with deny_unknown_fields. An unconditional `relay` key would
+        // therefore be an instant hard parse failure on every installed build,
+        // not a new feature. Emitting it only when the caller declares support
+        // is what makes the two repos deploy-order independent in BOTH
+        // directions: body() ignores unknown REQUEST keys, so a newer Companion
+        // may declare this against an older backend and simply not be offered
+        // the transport.
+        if ($this->wantsRelayTransport($body)) {
+            $this->advertiseRelay($admission, $request);
+        }
         return $this->jsonResponse($response, $admission)
             ->withHeader('Cache-Control', 'no-store')
             ->withHeader('Pragma', 'no-cache');
+    }
+
+    /**
+     * Did the caller declare relay support? Consent is a non-empty JSON LIST
+     * carrying the exact string 'relay'. Absence above all — the shipped-build
+     * case — plus empty, scalar, and named-key object shapes read as "no", so
+     * an ambiguous body is not mistaken for an opt-in by a client that would
+     * then fail to parse the answer.
+     *
+     * ⚠️ ONE SHAPE CANNOT BE DISTINGUISHED, by design of the decoder rather
+     * than of this check: assoc JSON decoding casts decimal-string keys to
+     * ints, so the object {"0":"relay"} arrives as the list ["relay"] and is
+     * read as consent. Telling them apart would mean re-decoding the raw body
+     * non-associatively in body(), which every other route shares. It is left
+     * as-is because no client emits that shape, and the worst case is offering
+     * three URLs to a caller that asked for them degenerately.
+     *
+     * @param array<string,mixed> $body
+     */
+    private function wantsRelayTransport(array $body): bool
+    {
+        $transports = $body['supportedTransports'] ?? null;
+        return is_array($transports)
+            && array_is_list($transports)
+            && in_array('relay', $transports, true);
+    }
+
+    /**
+     * Advertise the hosted relay transport (pack services wave 2) on an
+     * admission that is otherwise ready to return.
+     *
+     * ⚠️ ADVERTISING IS ADDITIVE; ADOPTION IS NOT. Withholding on an
+     * unconfigured origin keeps a *mintable* admission mintable — but an
+     * endpoint that accepts this field COMMITS to the relay: the plugin's
+     * GatewayTransport::open() returns the relay error rather than falling
+     * back to the WebSocket, so an advertised-but-unreachable URL is a
+     * reconnect loop, not a downgrade. What makes it safe is NOT that it is
+     * optional, it is that these URLs ride the exact `$origin . '/api'`
+     * invariant discovery already publishes as `apiBaseUrl` /
+     * `admissionEndpoint`: a deployment where they 404 is one where the
+     * Companion could never have bootstrapped at all. Split frontend/API
+     * installs must set AOKIE_COMPANION_ISSUER (see trustedOrigin()).
+     * Never widen this to a host derived from the request.
+     *
+     * ⚠️ Still NOT in discovery, for both parties. That document is fetched
+     * pre-authentication (no per-request channel to negotiate on), is cached,
+     * and is gated twice on the Companion — a V2_PAYLOAD_KEYS allowlist whose
+     * split_v2_document hard-errors on an unknown key BEFORE signature
+     * verification, plus a deny_unknown_fields struct. The relay is a property
+     * of an authenticated session, not of an app.
+     *
+     * @param array<string,mixed> $admission
+     */
+    private function advertiseRelay(array &$admission, Request $request): void
+    {
+        try {
+            $origin = $this->trustedOrigin($request);
+        } catch (\Throwable) {
+            // No trusted public URL configured; advertise nothing. A misconfigured
+            // origin must never turn a mintable admission into a failure.
+            return;
+        }
+        $admission['relay'] = [
+            'challengeUrl' => $origin . '/api/aokie-companion/relay/challenge',
+            'framesUrl' => $origin . '/api/aokie-companion/relay/frames',
+            'streamUrl' => $origin . '/api/aokie-companion/relay/stream',
+        ];
     }
 
     /** Desktop API-key route; ApiKeyMiddleware supplies the trusted owner. */
@@ -334,33 +414,13 @@ final class AokieCompanionController
         $admission['device'] = $device;
         $admission['desktopConnection'] = $binding['connection'];
         $admission['scopeCompatibility'] = $scope['legacy'] ? 'explicit_development_override' : null;
-        // Hosted relay transport (pack services wave 2), advertised ONLY here.
-        // ⚠️ NOT on the mobile admission and NOT in discovery: already-shipped
-        // native Companion builds parse both with deny_unknown_fields, so those
-        // documents must keep the exact shapes they were built against.
-        //
-        // ⚠️ ADVERTISING IS ADDITIVE; ADOPTION IS NOT. Withholding on an
-        // unconfigured origin keeps a *mintable* admission mintable — but an
-        // endpoint that accepts this field COMMITS to the relay: the plugin's
-        // GatewayTransport::open() returns the relay error rather than falling
-        // back to the WebSocket, so an advertised-but-unreachable URL is a
-        // reconnect loop, not a downgrade. What makes it safe is NOT that it is
-        // optional, it is that these URLs ride the exact `$origin . '/api'`
-        // invariant discovery already publishes as `apiBaseUrl` /
-        // `admissionEndpoint`: a deployment where they 404 is one where the
-        // Companion could never have bootstrapped at all. Split frontend/API
-        // installs must set AOKIE_COMPANION_ISSUER (see trustedOrigin()).
-        // Never widen this to a host derived from the request.
-        try {
-            $origin = $this->trustedOrigin($request);
-            $admission['relay'] = [
-                'challengeUrl' => $origin . '/api/aokie-companion/relay/challenge',
-                'framesUrl' => $origin . '/api/aokie-companion/relay/frames',
-                'streamUrl' => $origin . '/api/aokie-companion/relay/stream',
-            ];
-        } catch (\Throwable) {
-            // No trusted public URL configured; advertise nothing.
-        }
+        // Hosted relay transport (pack services wave 2). UNCONDITIONAL here, and
+        // negotiated on the mobile admission — the asymmetry is deliberate: the
+        // desktop broker sits between this response and the plugin and already
+        // strips the field unless the plugin asked for it, so the negotiation
+        // for this party lives there. A mobile posts directly, with no broker,
+        // so it has to negotiate in-band (see mobileAdmission()).
+        $this->advertiseRelay($admission, $request);
         return $this->jsonResponse($response, $admission)
             ->withHeader('Cache-Control', 'no-store')
             ->withHeader('Pragma', 'no-cache');
