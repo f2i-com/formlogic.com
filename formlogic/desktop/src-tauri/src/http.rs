@@ -33,7 +33,7 @@
 use axum::{
     extract::{Path, Query, Request, State},
     http::{
-        header::{AUTHORIZATION, CONTENT_TYPE, ORIGIN},
+        header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, ORIGIN},
         HeaderMap, Method, StatusCode,
     },
     middleware::{self, Next},
@@ -1567,6 +1567,105 @@ async fn plugin_logs(
     }
 }
 
+/// Content-Type per allow-listed screen-asset extension. Matched against the
+/// MANIFEST-declared relative path (never the raw request), so the fallback is
+/// unreachable for a validated manifest — kept honest rather than guessing.
+fn screen_asset_content_type(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, e)| e).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+/// `GET /api/plugins/{id}/ui/{screen}/{*path}` — serve one plugin-shipped
+/// screen asset (manifest v2 `ui.screens`; the self-contained-plugins
+/// foundation). Only paths EXACTLY listed in the declared screen's `files`
+/// are served — no directory walking — and the disk read is
+/// canonicalization-checked to stay inside the plugin dir. Trust mirrors the
+/// launch gate: a tampered (quarantined) package never serves; an unsigned
+/// dev sideload serves only while unsigned plugins may START
+/// (FORMLOGIC_REQUIRE_SIGNED_PLUGINS unset).
+async fn plugin_ui_asset(
+    State(st): State<DesktopState>,
+    Path((id, screen, path)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    let Some(p) = st.host.get(&id) else {
+        return desktop_err(
+            StatusCode::NOT_FOUND,
+            "command_failed",
+            &format!("unknown plugin {id:?}"),
+        );
+    };
+    // Same rule as plugin start (scan trust_block + the runner's launch
+    // re-verify). The verdict is the registry's last assessment — refreshed
+    // on every GET /api/plugins rescan; the exact-file allowlist + the
+    // containment check below bound what a stale verdict could expose.
+    match p.package {
+        "tampered" => {
+            return desktop_err(
+                StatusCode::FORBIDDEN,
+                "package_untrusted",
+                "package verification failed (quarantined) — screen assets are not served",
+            )
+        }
+        "unsigned" if crate::plugins::package_trust::require_signed() => {
+            return desktop_err(
+                StatusCode::FORBIDDEN,
+                "package_untrusted",
+                "unsigned plugin refused: FORMLOGIC_REQUIRE_SIGNED_PLUGINS is on and \
+                 this directory has no valid signed package manifest",
+            )
+        }
+        _ => {}
+    }
+    let screens = p.ui.as_ref().map(|u| u.screens.as_slice()).unwrap_or(&[]);
+    let Some(rel) = crate::plugins::manifest::resolve_screen_asset(screens, &screen, &path)
+    else {
+        return desktop_err(
+            StatusCode::NOT_FOUND,
+            "command_failed",
+            &format!("no screen asset {path:?} under screen {screen:?}"),
+        );
+    };
+    // Belt over the manifest braces (the validator already refuses absolute /
+    // '..' / backslash paths): canonicalize BOTH ends and require containment
+    // so even a symlinked entry can never read outside the plugin dir.
+    let not_found = || {
+        desktop_err(
+            StatusCode::NOT_FOUND,
+            "command_failed",
+            "screen asset not present on disk",
+        )
+    };
+    let plugin_dir = std::path::PathBuf::from(&p.dir);
+    let (Ok(dir_canon), Ok(file_canon)) =
+        (plugin_dir.canonicalize(), plugin_dir.join(rel).canonicalize())
+    else {
+        return not_found();
+    };
+    if !file_canon.starts_with(&dir_canon) {
+        return not_found();
+    }
+    let Ok(bytes) = std::fs::read(&file_canon) else {
+        return not_found();
+    };
+    (
+        [
+            (CONTENT_TYPE, screen_asset_content_type(rel)),
+            // Bundles change with the package, not a cache key — never cache.
+            (CACHE_CONTROL, "no-store"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
 /// `POST /api/plugins/{id}/commands/{command}` — admin/dev direct command:
 /// forwarded as a `connector.request` to THAT plugin. Optional JSON body
 /// `{payload?, timeoutMs?, requestId?, connectorId?}`; the connector defaults
@@ -2988,6 +3087,10 @@ pub async fn serve(
         .route("/api/plugins/:id/health", get(plugin_health))
         .route("/api/plugins/:id/logs", get(plugin_logs))
         .route("/api/plugins/:id/commands/:command", post(plugin_command))
+        // Self-contained plugin UI foundation: screen bundles shipped INSIDE
+        // the (signed) package, declared in manifest v2 `ui.screens`. Same
+        // guard as the rest of /api/plugins*.
+        .route("/api/plugins/:id/ui/:screen/*path", get(plugin_ui_asset))
         .route("/api/plugins/:id/consent", post(issue_plugin_consent))
         .route("/api/connectors", get(list_connectors))
         .route("/api/connectors/:id/status", get(connector_status))
@@ -3092,7 +3195,7 @@ mod tests {
         connector_failure_status, desktop_auth_decision, desktop_info_body,
         direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
         is_gui_webview_origin, is_privileged_path, management_auth_decision, offline_grace_grants,
-        service_source_capabilities, OFFLINE_GRACE_MAX_AGE,
+        screen_asset_content_type, service_source_capabilities, OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::{Method, StatusCode};
@@ -3133,6 +3236,26 @@ mod tests {
                 serde_json::from_str(json).expect("split template deserializes");
             assert_eq!(t.category, category);
             assert_eq!(service_source_capabilities(&t.capabilities, &t.category), expected);
+        }
+    }
+
+    #[test]
+    fn screen_assets_get_the_right_content_type() {
+        // One mapping per allow-listed extension (manifest.rs SCREEN_ASSET_EXTS)
+        // — matched on the manifest-declared path, so the fallback only exists
+        // for honesty, never for guessing.
+        for (path, want) in [
+            ("ui/receptionist/index.html", "text/html; charset=utf-8"),
+            ("ui/styles.css", "text/css; charset=utf-8"),
+            ("ui/app.js", "text/javascript; charset=utf-8"),
+            ("ui/app.mjs", "text/javascript; charset=utf-8"),
+            ("ui/config.json", "application/json"),
+            ("ui/logo.svg", "image/svg+xml"),
+            ("ui/logo.png", "image/png"),
+            ("ui/fonts/dm-sans.woff2", "font/woff2"),
+            ("ui/unknown.bin", "application/octet-stream"),
+        ] {
+            assert_eq!(screen_asset_content_type(path), want, "{path}");
         }
     }
 

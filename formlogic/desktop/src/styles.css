@@ -2856,6 +2856,18 @@ code {
 .plugin-status-field dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
 .plugin-action-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* Plugin-shipped sandboxed screen host (manifest v2 ui.screens): the iframe
+   fills the workspace body; loading/error reuse the standard panel states. */
+.plugin-screen-host { height: 100%; gap: 12px; }
+.plugin-screen-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 320px;
+  border: 0;
+  border-radius: var(--radius-panel);
+  background: transparent;
+}
+
 /* ---------- First-run setup guide ("Let's get you ready") ---------- */
 
 /* The wizard reuses .confirm-overlay/.confirm-dialog; this just widens it. */

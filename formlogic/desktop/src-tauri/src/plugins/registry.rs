@@ -1037,6 +1037,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    /// The `GET /api/plugins` snapshot carries manifest v2 `ui.screens` (the
+    /// self-contained plugin UI foundation) — the frontend needs the declared
+    /// screens + entry to know what the serving route can produce.
+    #[test]
+    fn snapshot_carries_ui_screens() {
+        let data = temp_data_dir("uiscreens");
+        write_plugin(
+            &data,
+            "screeny",
+            r#"{
+                "schemaVersion": 2, "id": "screeny", "name": "S", "version": "0.1.0",
+                "entry": { "kind": "process", "command": "run" },
+                "ui": {
+                    "nav": [{ "id": "home", "label": "Home", "screen": "home-screen" }],
+                    "screens": [{
+                        "id": "home-screen", "title": "Home",
+                        "entry": "ui/index.html",
+                        "files": ["ui/index.html", "ui/app.js"]
+                    }]
+                }
+            }"#,
+        );
+        let host = PluginHost::new(&data, false, EventBus::new());
+        let snap = host.get("screeny").expect("scanned");
+        let wire = serde_json::to_value(&snap).expect("serializes");
+        assert_eq!(wire["ui"]["screens"][0]["id"], "home-screen");
+        assert_eq!(wire["ui"]["screens"][0]["entry"], "ui/index.html");
+        assert_eq!(wire["ui"]["screens"][0]["files"][1], "ui/app.js");
+        assert_eq!(wire["ui"]["nav"][0]["screen"], "home-screen");
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     #[test]
     fn connector_collision_quarantines_the_loser_deterministically() {
         let data = temp_data_dir("collide");

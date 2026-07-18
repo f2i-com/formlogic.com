@@ -7,6 +7,7 @@
  */
 
 import { aokieCommandRequestId } from './aokie/aokieRequestId';
+import type { PluginScreenDecl } from './pluginScreens';
 
 export const API_BASE = 'http://127.0.0.1:17872';
 
@@ -573,7 +574,13 @@ export interface PluginSnapshot {
 
 /** PLG-203 — a plugin's declarative UI contributions. */
 export interface PluginUiContributions {
-  nav?: { id: string; label: string; icon?: string; badge?: string }[];
+  /** `screen` (manifest v2) opens a plugin-shipped `ui.screens` bundle
+   *  instead of the generic declarative screen. */
+  nav?: { id: string; label: string; icon?: string; badge?: string; screen?: string }[];
+  /** Plugin-shipped sandboxed screen bundles (manifest v2 `ui.screens`),
+   *  served by GET /api/plugins/:id/ui/:screen/*path and rendered by
+   *  PluginScreenPage. */
+  screens?: PluginScreenDecl[];
   overview?: {
     id: string;
     kind: string;

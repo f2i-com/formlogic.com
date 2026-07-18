@@ -85,6 +85,12 @@ pub struct UiContributions {
     /// Safe action buttons (a declared command + confirm copy).
     #[serde(default)]
     pub actions: Vec<ActionButton>,
+    /// Plugin-shipped interactive screens: static HTML/JS/CSS bundles that
+    /// live INSIDE the signed package and are served to the webview by the
+    /// host (`GET /api/plugins/:id/ui/:screen/*path`). The foundation of the
+    /// self-contained-plugins epic — a nav entry may open one via `screen`.
+    #[serde(default)]
+    pub screens: Vec<ScreenContribution>,
 }
 
 /// A side-menu contribution. `icon` is an allow-listed name (the host maps it;
@@ -99,6 +105,10 @@ pub struct NavContribution {
     pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<String>,
+    /// A plugin-shipped screen (a `ui.screens` id) this entry opens instead of
+    /// the generic contributed screen. Validated as a cross-reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<String>,
 }
 
 /// An Overview card. `kind` is "hero" (a prominent banner) or "status" (a
@@ -188,6 +198,81 @@ pub struct ActionButton {
     /// Restrict the button to dev mode (e.g. a simulate affordance).
     #[serde(default)]
     pub dev_only: bool,
+}
+
+/// A plugin-shipped interactive screen: an entry HTML document plus the EXACT
+/// file set the host may serve for it. Every path is package-relative; the
+/// serving route matches requested paths against `files` by exact string
+/// (no directory walking, no normalization). Unknown fields tolerated like
+/// the rest of the presentation-only `ui` subtree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenContribution {
+    pub id: String,
+    pub title: String,
+    /// The screen's entry document — must be listed in `files`, must end .html.
+    pub entry: String,
+    /// The complete servable file set (relative package paths, allow-listed
+    /// static-asset extensions only).
+    pub files: Vec<String>,
+}
+
+/// Extensions a plugin-shipped screen may serve. Anything else fails manifest
+/// validation — a screen bundle is static web assets, never executables.
+pub const SCREEN_ASSET_EXTS: &[&str] =
+    &["html", "css", "js", "mjs", "json", "svg", "png", "woff2"];
+
+/// Validate one `ui.screens[].files` path: RELATIVE, forward slashes only, no
+/// drive letters, no empty/`.`/`..` segments, and an allow-listed extension.
+/// Same spirit as [`validate_entry_command`] — the manifest can structurally
+/// never name a file outside the plugin directory. The error is a fragment
+/// ("is absolute — …") the caller prefixes with the offending field.
+pub fn validate_screen_asset_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("is empty".into());
+    }
+    if path.len() > 260 {
+        return Err(format!("is {} chars (max 260)", path.len()));
+    }
+    if path.contains('\\') {
+        return Err("contains '\\' (use forward slashes)".into());
+    }
+    if path.starts_with('/') {
+        return Err("is absolute — want a package-relative path".into());
+    }
+    // A ':' anywhere catches drive letters ("C:/…" AND drive-relative "C:x")
+    // plus URL schemes; ':' is never valid in a relative path on Windows.
+    if path.contains(':') {
+        return Err("contains ':' (drive letters / absolute paths aren't allowed)".into());
+    }
+    if path.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..") {
+        return Err("has an empty, '.' or '..' segment".into());
+    }
+    let ext = path.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    if !SCREEN_ASSET_EXTS.contains(&ext) {
+        return Err(format!(
+            "has extension {ext:?} (allowed: {SCREEN_ASSET_EXTS:?})"
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve a requested screen asset for the serving route: the screen must
+/// exist and the requested relative path must EXACTLY match one of its
+/// declared `files` — the whole lookup rule (no directory walking, no
+/// normalization; anything a validated manifest didn't list is a 404).
+/// Returns the declared relative path to read under the plugin directory.
+pub fn resolve_screen_asset<'a>(
+    screens: &'a [ScreenContribution],
+    screen_id: &str,
+    requested: &str,
+) -> Option<&'a str> {
+    let screen = screens.iter().find(|s| s.id == screen_id)?;
+    screen
+        .files
+        .iter()
+        .find(|f| f.as_str() == requested)
+        .map(String::as_str)
 }
 
 /// PLG-206 — a plugin-owned service template reference (a package-relative JSON).
@@ -569,6 +654,15 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
             if n.label.is_empty() || n.label.len() > 60 {
                 return Err(format!("ui.nav[{i}].label must be 1-60 chars"));
             }
+            // A nav entry may open a plugin-shipped screen — the reference
+            // must resolve, same as a CTA's nav id.
+            if let Some(sid) = &n.screen {
+                if !ui.screens.iter().any(|s| s.id == *sid) {
+                    return Err(format!(
+                        "ui.nav[{i}].screen {sid:?} does not match any ui.screens id"
+                    ));
+                }
+            }
         }
         if ui.overview.len() > 16 {
             return Err(format!("ui.overview has {} entries (max 16)", ui.overview.len()));
@@ -650,6 +744,47 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
                 return Err(format!(
                     "ui.actions[{i}].command {:?} is not declared by any connector",
                     a.command
+                ));
+            }
+        }
+        // screens — plugin-shipped bundles. The file list is the serving
+        // route's allowlist, so every path is validated hard here (relative,
+        // no traversal, static-asset extensions only).
+        if ui.screens.len() > 16 {
+            return Err(format!("ui.screens has {} entries (max 16)", ui.screens.len()));
+        }
+        let mut screen_ids = std::collections::HashSet::new();
+        for (i, s) in ui.screens.iter().enumerate() {
+            if !is_valid_contrib_id(&s.id) {
+                return Err(format!("ui.screens[{i}].id {:?} is invalid (a-z0-9-, 1-64)", s.id));
+            }
+            if !screen_ids.insert(&s.id) {
+                return Err(format!("ui.screens[{i}].id {:?} is duplicated", s.id));
+            }
+            if s.title.is_empty() || s.title.len() > 80 {
+                return Err(format!("ui.screens[{i}].title must be 1-80 chars"));
+            }
+            if s.files.is_empty() || s.files.len() > 64 {
+                return Err(format!(
+                    "ui.screens[{i}].files must have 1-64 entries (got {})",
+                    s.files.len()
+                ));
+            }
+            for (j, f) in s.files.iter().enumerate() {
+                if let Err(e) = validate_screen_asset_path(f) {
+                    return Err(format!("ui.screens[{i}].files[{j}] {f:?} {e}"));
+                }
+                if s.files[..j].contains(f) {
+                    return Err(format!("ui.screens[{i}].files[{j}] {f:?} is duplicated"));
+                }
+            }
+            if !s.entry.ends_with(".html") {
+                return Err(format!("ui.screens[{i}].entry {:?} must end in .html", s.entry));
+            }
+            if !s.files.contains(&s.entry) {
+                return Err(format!(
+                    "ui.screens[{i}].entry {:?} is not listed in files",
+                    s.entry
                 ));
             }
         }
@@ -947,6 +1082,170 @@ mod tests {
         let mut v = base_v2();
         v["ui"] = serde_json::json!({ "actions": (0..17).map(action).collect::<Vec<_>>() });
         assert!(parse(v).unwrap_err().contains("max 16"));
+    }
+
+    // ---- ui.screens (plugin-shipped screen bundles) ----
+
+    fn screens_ui(files: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "nav": [{ "id": "home", "label": "Mock", "screen": "receptionist-home" }],
+            "screens": [{
+                "id": "receptionist-home",
+                "title": "AI Receptionist",
+                "entry": "ui/receptionist/index.html",
+                "files": files
+            }]
+        })
+    }
+
+    #[test]
+    fn v2_screens_section_parses_and_serializes() {
+        let mut v = base_v2();
+        v["ui"] = screens_ui(serde_json::json!([
+            "ui/receptionist/index.html",
+            "ui/receptionist/app.js",
+            "ui/receptionist/styles.css"
+        ]));
+        let m = parse(v).expect("screens section valid");
+        let ui = m.ui.expect("ui");
+        assert_eq!(ui.screens.len(), 1);
+        assert_eq!(ui.screens[0].id, "receptionist-home");
+        assert_eq!(ui.screens[0].entry, "ui/receptionist/index.html");
+        assert_eq!(ui.nav[0].screen.as_deref(), Some("receptionist-home"));
+        // The snapshot serializes `ui` verbatim — screens must survive the
+        // round trip so GET /api/plugins carries them.
+        let wire = serde_json::to_value(&ui).expect("serializes");
+        assert_eq!(wire["screens"][0]["id"], "receptionist-home");
+        assert_eq!(wire["screens"][0]["files"][1], "ui/receptionist/app.js");
+        assert_eq!(wire["nav"][0]["screen"], "receptionist-home");
+    }
+
+    #[test]
+    fn v2_screens_refused_under_schema_version_1() {
+        let mut v = base_manifest(); // schemaVersion 1
+        v["ui"] = screens_ui(serde_json::json!(["ui/receptionist/index.html"]));
+        let err = parse(v).expect_err("ui.screens under v1 refused");
+        assert!(err.contains("requires schemaVersion 2"), "got: {err}");
+    }
+
+    #[test]
+    fn v2_screen_file_paths_reject_escape_shapes() {
+        // Every shape that could name a file outside the package (or a
+        // non-static asset) fails the manifest, never reaches the route.
+        for bad in [
+            "../escape.html",              // traversal
+            "ui/../../escape.html",        // nested traversal
+            "/etc/passwd.html",            // absolute
+            "C:/windows/evil.html",        // drive letter
+            "ui\\receptionist\\index.html", // backslashes
+            "ui//index.html",              // empty segment
+            "ui/./index.html",             // '.' segment
+            "ui/receptionist/plugin.exe",  // extension not allow-listed
+            "ui/receptionist/noext",       // no extension at all
+            "",                            // empty
+        ] {
+            let mut v = base_v2();
+            v["ui"] = serde_json::json!({
+                "screens": [{ "id": "s", "title": "S", "entry": "index.html",
+                    "files": ["index.html", bad] }]
+            });
+            let err = parse(v).expect_err(&format!("path {bad:?} must be rejected"));
+            assert!(err.contains("ui.screens[0].files[1]"), "{bad:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn v2_screen_entry_must_be_a_listed_html_file() {
+        // Entry not listed in files.
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "screens": [{ "id": "s", "title": "S", "entry": "index.html",
+                "files": ["other.html"] }]
+        });
+        assert!(parse(v).unwrap_err().contains("not listed in files"));
+
+        // Entry listed but not .html.
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "screens": [{ "id": "s", "title": "S", "entry": "app.js",
+                "files": ["app.js"] }]
+        });
+        assert!(parse(v).unwrap_err().contains("must end in .html"));
+    }
+
+    #[test]
+    fn v2_nav_screen_ref_must_resolve() {
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "nav": [{ "id": "home", "label": "H", "screen": "ghost-screen" }],
+            "screens": [{ "id": "real", "title": "R", "entry": "index.html",
+                "files": ["index.html"] }]
+        });
+        assert!(parse(v)
+            .unwrap_err()
+            .contains("does not match any ui.screens id"));
+    }
+
+    #[test]
+    fn v2_screens_are_capped_and_deduped() {
+        // screens > 16
+        let screen = |i: usize| {
+            serde_json::json!({ "id": format!("s{i}"), "title": "S",
+                "entry": "index.html", "files": ["index.html"] })
+        };
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({ "screens": (0..17).map(screen).collect::<Vec<_>>() });
+        assert!(parse(v).unwrap_err().contains("max 16"));
+
+        // duplicate screen id
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({ "screens": [screen(0), screen(0)] });
+        assert!(parse(v).unwrap_err().contains("duplicated"));
+
+        // files empty / over 64
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "screens": [{ "id": "s", "title": "S", "entry": "index.html", "files": [] }]
+        });
+        assert!(parse(v).unwrap_err().contains("1-64 entries"));
+        let files: Vec<String> = (0..65).map(|i| format!("f{i}.css")).collect();
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "screens": [{ "id": "s", "title": "S", "entry": "index.html",
+                "files": files }]
+        });
+        assert!(parse(v).unwrap_err().contains("1-64 entries"));
+
+        // duplicate file
+        let mut v = base_v2();
+        v["ui"] = serde_json::json!({
+            "screens": [{ "id": "s", "title": "S", "entry": "index.html",
+                "files": ["index.html", "index.html"] }]
+        });
+        assert!(parse(v).unwrap_err().contains("duplicated"));
+    }
+
+    #[test]
+    fn resolve_screen_asset_is_exact_match_only() {
+        let screens = vec![ScreenContribution {
+            id: "home".into(),
+            title: "Home".into(),
+            entry: "ui/index.html".into(),
+            files: vec!["ui/index.html".into(), "ui/app.js".into()],
+        }];
+        // Listed file resolves; everything else — unknown screen, unlisted
+        // file, and any normalization/traversal spelling — is None.
+        assert_eq!(
+            resolve_screen_asset(&screens, "home", "ui/index.html"),
+            Some("ui/index.html")
+        );
+        assert_eq!(resolve_screen_asset(&screens, "home", "ui/app.js"), Some("ui/app.js"));
+        assert_eq!(resolve_screen_asset(&screens, "ghost", "ui/index.html"), None);
+        assert_eq!(resolve_screen_asset(&screens, "home", "ui/secret.js"), None);
+        assert_eq!(resolve_screen_asset(&screens, "home", "ui/../ui/index.html"), None);
+        assert_eq!(resolve_screen_asset(&screens, "home", "UI/INDEX.HTML"), None);
+        assert_eq!(resolve_screen_asset(&screens, "home", "/ui/index.html"), None);
+        assert_eq!(resolve_screen_asset(&screens, "home", ""), None);
     }
 
     #[test]

@@ -14,6 +14,8 @@ import { useDesktopOverview } from './useDesktopOverview';
 import { ExternalLinkIcon, MoonIcon, SunIcon } from './Icons';
 import { PluginContributedScreen } from './PluginContributedUi';
 import { parsePluginSection, pluginNavEntries } from './pluginContributions';
+import PluginScreenPage from './PluginScreenPage';
+import { pluginNavScreen } from './pluginScreens';
 import { getAokieUiSource } from './aokieUiSource';
 import { prefetchPanelData } from './panelCache';
 // Explicit extension: on a case-insensitive filesystem the bare './SetupWizard'
@@ -121,6 +123,14 @@ export default function App() {
   const bodyPlugin = bodyPluginSection
     ? pluginList.find((p) => p.id === bodyPluginSection.pluginId)
     : undefined;
+  // Manifest v2 `ui.screens`: a nav entry that declares `screen` (and whose
+  // id resolves in the snapshot's declared screens) renders the plugin-shipped
+  // SANDBOXED bundle instead of the declarative/compiled fallback. Today's
+  // manifests declare none, so behavior is unchanged until a plugin ships one.
+  const bodyPluginScreen =
+    bodyPlugin && bodyPluginSection
+      ? pluginNavScreen(bodyPlugin.ui, bodyPluginSection.navId)
+      : null;
   useEffect(() => {
     if (section === 'receptionist' && overview.loaded && !aokieInstalled) {
       setSection('overview');
@@ -376,16 +386,39 @@ export default function App() {
           {/* AOK-305: in manifest mode, an Aokie plugin nav opens the COMPILED
               interactive ReceptionistPanel (the manifest supplies the nav entry
               + Overview banner declaratively; the interactive content — pairing,
-              live call, consent, dongle wizard — stays compiled). */}
-          {bodyPluginSection?.pluginId === 'aokie' && aokieManifestMode && <ReceptionistPanel />}
-          {/* PLG-203: a plugin-contributed screen (declarative status cards +
-              actions) for any OTHER plugin. */}
+              live call, consent, dongle wizard — stays compiled) — UNLESS the
+              nav entry declares a plugin-shipped `screen` (the self-contained
+              migration path), which then renders the sandboxed bundle. */}
+          {bodyPluginSection?.pluginId === 'aokie' &&
+            aokieManifestMode &&
+            (bodyPlugin && bodyPluginScreen ? (
+              <PluginScreenPage
+                key={`${bodyPlugin.id}:${bodyPluginScreen.id}`}
+                plugin={bodyPlugin}
+                screen={bodyPluginScreen}
+                theme={theme}
+              />
+            ) : (
+              <ReceptionistPanel />
+            ))}
+          {/* PLG-203: a plugin-contributed screen for any OTHER plugin — the
+              plugin-shipped sandboxed bundle when the nav entry declares one,
+              else the declarative status cards + actions. */}
           {bodyPlugin && bodyPluginSection && bodyPluginSection.pluginId !== 'aokie' && (
-            <PluginContributedScreen
-              plugin={bodyPlugin}
-              navId={bodyPluginSection.navId}
-              devMode={devMode}
-            />
+            bodyPluginScreen ? (
+              <PluginScreenPage
+                key={`${bodyPlugin.id}:${bodyPluginScreen.id}`}
+                plugin={bodyPlugin}
+                screen={bodyPluginScreen}
+                theme={theme}
+              />
+            ) : (
+              <PluginContributedScreen
+                plugin={bodyPlugin}
+                navId={bodyPluginSection.navId}
+                devMode={devMode}
+              />
+            )
           )}
         </main>
       </div>
