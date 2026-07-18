@@ -26,6 +26,13 @@ export function screenPaletteCss(accent: string, onAccent: string): string {
     + '--fl-text:#e8edf5;--fl-muted:#93a1b8;--fl-faint:#64748b;--fl-track:rgba(255,255,255,.07);'
     + '--fl-good:#34d399;--fl-warn:#fbbf24;--fl-bad:#f87171;--fl-shadow:0 1px 2px rgba(0,0,0,.35);'
     + '}'
+    // Native widget chrome (select POPUPS, scrollbars, date pickers) follows
+    // CSS color-scheme, not the token palette — without this the app's dark
+    // theme over a light OS rendered a white option list with --fl-text white
+    // text (live report 2026-07-18, Receptionist Settings dropdowns). The CSS
+    // property beats the runtime's <meta color-scheme> and flips live with
+    // the fl-dark class.
+    + 'html{color-scheme:light;}html.fl-dark{color-scheme:dark;}'
     + 'html,body{background:var(--fl-bg);color:var(--fl-text);}'
     + '*{scrollbar-color:var(--fl-faint) transparent;}'
   );

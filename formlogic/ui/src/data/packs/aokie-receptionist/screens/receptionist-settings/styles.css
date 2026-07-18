@@ -33,6 +33,10 @@ body { color: var(--fl-text); }
 }
 #rs textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
 #rs select { cursor: pointer; }
+/* The option POPUP is native chrome: the host palette pins color-scheme to the
+   app theme, and these solid token colors keep the list legible on browsers
+   that honor option styling (dark mode used to render white-on-white). */
+#rs select option { background: var(--fl-bg); color: var(--fl-text); }
 #rs .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 520px) { #rs .row2 { grid-template-columns: 1fr; } }
 @media (max-width: 380px) { #rs { padding: 6px 4px 88px; } #rs .card { padding: 12px 12px; } }
