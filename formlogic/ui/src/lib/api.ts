@@ -1414,10 +1414,11 @@ class ApiClient {
     fields?: Array<{ id: string; label: string; type: string }>,
     existing?: string,
     appForms?: Array<{ formId: string; title: string; fields: unknown[] }>,
+    screenType?: 'section' | 'record',
   ): Promise<ApiResponse<{ data: { html: string; css: string; js: string; files?: Array<{ path: string; content: string }> } }>> {
     return this.request('/ai/generate-screen', {
       method: 'POST',
-      body: JSON.stringify({ prompt, fields, existing, appForms }),
+      body: JSON.stringify({ prompt, fields, existing, appForms, screenType }),
     });
   }
 

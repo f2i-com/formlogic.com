@@ -231,13 +231,15 @@ class AIService
      * Generate a CUSTOM SCREEN ({ html, css, js }) for a form — a sandboxed single-page UI that talks
      * to the backend only via the FormLogic SDK. $fields are the form's fields the screen submits to.
      */
-    public function generateCustomScreen(string $prompt, array $fields = [], string $existing = '', array $appForms = []): array
+    public function generateCustomScreen(string $prompt, array $fields = [], string $existing = '', array $appForms = [], string $screenType = 'section'): array
     {
         // When appForms is given, the screen is an APP HOME (multi-form, app-scoped SDK); otherwise it's
-        // a single-form screen.
+        // a single-form screen — either the form's SECTION screen or its per-RECORD widget.
         $system = !empty($appForms)
             ? $this->getAppScreenSystemPrompt($appForms)
-            : $this->getCustomScreenSystemPrompt($fields);
+            : ($screenType === 'record'
+                ? $this->getRecordScreenSystemPrompt($fields)
+                : $this->getCustomScreenSystemPrompt($fields));
         $messages = [
             ['role' => 'system', 'content' => $system],
         ];
@@ -314,6 +316,62 @@ Respond with ONLY fenced code blocks, ONE PER FILE, each fence tagged with its p
 ...the styles...
 ```
 Add more component files as extra blocks, e.g. ```tsx file=components/Leaderboard.tsx
+PROMPT;
+    }
+
+    /** System prompt for a per-RECORD widget (customScreen.recordScreen) — renders on ONE record's
+     *  detail page inside a height-bounded card, with record()/related() added to the SDK. */
+    private function getRecordScreenSystemPrompt(array $fields): string
+    {
+        $fieldList = '(this form has no fields yet)';
+        if (!empty($fields)) {
+            $lines = [];
+            foreach ($fields as $f) {
+                if (!is_array($f)) {
+                    continue;
+                }
+                $lines[] = '- ' . ($f['id'] ?? '?') . ' (' . ($f['type'] ?? 'text') . '): ' . ($f['label'] ?? '');
+            }
+            $fieldList = implode("\n", $lines);
+        }
+
+        return <<<PROMPT
+You build a RECORD WIDGET - a small React-style TSX app rendered on ONE record's detail page, inside a
+height-bounded card (roughly 420px tall; it scrolls internally if taller). It runs in a SANDBOXED iframe
+with NO network of its own. It talks to the backend ONLY through the injected global `FormLogic` SDK:
+
+  await FormLogic.record()             -> { id, answers: {<fieldId>: value}, submittedAt, status }  // THE record this widget renders for
+  await FormLogic.related()            -> { '<form.fieldId>': { fieldId, columns, records: [{ id, fields, submittedAt }] } }  // records LINKED to this one, grouped per linking field
+  await FormLogic.updateRecord(null, answers)  -> patch THIS record (partial answers object; server-side edit permission applies)
+  await FormLogic.records({ limit })   -> this form's records (for cross-record context)
+  await FormLogic.currentUser()        -> { id, name, email } | null
+  FormLogic.toast.success(msg) / .error(msg)
+
+RUNTIME: multi-file TypeScript/TSX bundled in the sandbox; JSX runs on Preact with React aliased -
+`import { useState, useEffect } from 'react'` and `import { createRoot } from 'react-dom/client'` work.
+Built-ins (no network): 'react', 'react-dom/client', 'preact', 'preact/hooks', 'formlogic/kit'.
+PREFER the kit for UI chrome - `import { Card, Button, Field, Input, Stat, Badge, EmptyState, Skeleton, Toolbar } from 'formlogic/kit'` -
+pre-styled to the app theme. Other npm packages come from esm.sh at compile time (pin versions) - avoid
+unless essential. The entry index.tsx MUST mount: createRoot(document.getElementById('root')!).render(<Widget />).
+A <div id="root"></div> shell exists automatically; every .css file you emit is injected.
+
+This form's fields (the record's answers use these EXACT ids):
+{$fieldList}
+
+Requirements:
+- Load the record FIRST (FormLogic.record()) and render something genuinely useful about it - a summary,
+  a timeline from related(), a computed status, quick actions via updateRecord.
+- Design for the bounded card: compact spacing, no giant headers, content scrolls if long.
+- Wrap async calls in try/catch and use FormLogic.toast.error on failure; show a Skeleton while loading.
+- Handle events with JSX props (onClick etc.); render record data as JSX text (auto-escaped) - NEVER
+  dangerouslySetInnerHTML.
+- Split non-trivial UIs into component files (components/...).
+
+Respond with ONLY fenced code blocks, ONE PER FILE, each fence tagged with its path - no prose, no JSON:
+```tsx file=index.tsx
+...the entry: components + createRoot mount...
+```
+Add more files as extra blocks, e.g. ```tsx file=components/Timeline.tsx or ```css file=styles.css
 PROMPT;
     }
 

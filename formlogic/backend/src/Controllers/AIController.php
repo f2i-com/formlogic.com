@@ -165,9 +165,11 @@ class AIController
         $fields = is_array($body['fields'] ?? null) ? array_slice($body['fields'], 0, 200) : [];
         $existing = is_string($body['existing'] ?? null) ? substr($body['existing'], 0, 200000) : '';
         $appForms = is_array($body['appForms'] ?? null) ? array_slice($body['appForms'], 0, 50) : [];
+        // 'record' switches to the per-record widget prompt (record()/related() SDK, bounded card).
+        $screenType = ($body['screenType'] ?? '') === 'record' ? 'record' : 'section';
 
         try {
-            $screen = $this->aiService->generateCustomScreen($prompt, $fields, $existing, $appForms);
+            $screen = $this->aiService->generateCustomScreen($prompt, $fields, $existing, $appForms, $screenType);
             return $this->jsonResponse($response, ['success' => true, 'data' => $screen]);
         } catch (\Throwable $e) {
             $this->logger->error('AI screen generation error', ['exception' => $e->getMessage()]);

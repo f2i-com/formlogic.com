@@ -30,6 +30,12 @@ interface FlFormSdk {
   currentUser(): Promise<FlUser | null>;
   /** This screen's context. */
   context(): Promise<{ formId: string; title: string; fields: FlField[] }>;
+  /** RECORD screens only: the record this widget renders for. */
+  record(): Promise<FlRecord>;
+  /** RECORD screens only: records linked to this one, grouped per linking field. */
+  related(): Promise<Record<string, { fieldId?: string; columns?: Array<{ id: string; label?: string }>; records?: Array<{ id: string; fields: Record<string, any>; submittedAt?: string }> }>>;
+  /** Update a record (record screens may pass null to update the viewed record). */
+  updateRecord(responseId: string | null, answers: Record<string, any>): Promise<any>;
   toast: FlToast;
   /** Escape a value for safe innerHTML interpolation (use for any record/user data). */
   escapeHtml(v: unknown): string;

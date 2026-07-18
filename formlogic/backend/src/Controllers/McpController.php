@@ -1049,7 +1049,7 @@ class McpController
     /** Shared customScreen shape check (form section screens AND the app home): key whitelist + size cap. */
     private function validateCustomScreen(array $cs): void
     {
-        $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields', 'kind', 'dashboard'];
+        $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields', 'kind', 'dashboard', 'recordScreen', 'allowNewResponses'];
         $unknown = array_diff(array_keys($cs), $allowed);
         if (!empty($unknown)) {
             throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown) . ' (a widget dashboard is { kind:"dashboard", dashboard:{ cols, widgets } })');
@@ -1265,6 +1265,7 @@ customScreen = { enabled:true, files:[ {"path":"index.tsx","content":"…compone
 - Folders + relative imports between your files are fine (e.g. import { Card } from './components/Card'). Every .css file is injected automatically.
 - The host injects CSS variables for theming — use var(--fl-accent) / var(--fl-accent-contrast) for the brand color.
 Legacy shapes still work: { enabled:true, ts:"…single TypeScript/TSX file…" } or plain { html, css, js }. Everything is compiled/bundled automatically.
+PER-RECORD widget (forms only): customScreen.recordScreen = { kind:"code", title?, height? (px, 160-1200), files:[…], entry:"index.tsx" } renders on EACH record's detail page in a bounded card. Its SDK additionally exposes await FormLogic.record() (the viewed record) and await FormLogic.related() (records linked to it, grouped per linking field); updateRecord(null, answers) patches the viewed record. Set it via update_form { formId, customScreen: { …section screen…, recordScreen } } — include the EXISTING section-screen keys so they persist.
 Inside the screen, window.FormLogic is the SDK:
 - await FormLogic.context() -> { appName, appSlug, forms:[{formId,displayName,fields}] }
 - await FormLogic.forms()
