@@ -999,7 +999,7 @@ async fn execute_node(
             } else {
                 None
             };
-            let request_id = flow_connector_request_id(node, opts, &connector_id, &command);
+            let request_id = flow_connector_request_id(node, opts, deps, &connector_id, &command);
             connector_request(
                 node,
                 deps,
@@ -1064,7 +1064,7 @@ async fn execute_node(
                 "aokie",
                 "call.operatorSpeak",
                 Some(payload),
-                flow_connector_request_id(node, opts, "aokie", "call.operatorSpeak"),
+                flow_connector_request_id(node, opts, deps, "aokie", "call.operatorSpeak"),
                 &["stale_call", "stale_turn"],
             )
             .await
@@ -1152,18 +1152,27 @@ async fn connector_request(
     .await
 }
 
+/// A stable id for a connector command the owning plugin journals, so a retried
+/// flow replays the same physical effect instead of repeating it. AOK-303: the
+/// journalled surface comes from that plugin's manifest, which is why this now
+/// needs `deps` — with no plugin gateway there is nothing to declare it (and
+/// nothing to dispatch to either).
 fn flow_connector_request_id(
     node: &GraphNode,
     opts: &RunOptions,
+    deps: &RunDeps,
     connector_id: &str,
     command: &str,
 ) -> Option<String> {
-    (connector_id == "aokie" && connectors::aokie_command_requires_request_id(command)).then(|| {
-        connectors::stable_request_id(
-            "flow-command",
-            &[&opts.request_id_seed, &opts.flow_slug, &node.id, command],
-        )
-    })
+    deps.host
+        .as_ref()
+        .is_some_and(|host| host.command_is_journalled(connector_id, command))
+        .then(|| {
+            connectors::stable_request_id(
+                "flow-command",
+                &[&opts.request_id_seed, &opts.flow_slug, &node.id, command],
+            )
+        })
 }
 
 /// Like [`connector_request`], but the listed typed connector error codes
@@ -1850,15 +1859,31 @@ mod tests {
         }
     }
 
+    /// `deps` carrying the real bundled Aokie manifest, so the journalled
+    /// surface under test is the one the live phone line runs on.
+    fn deps_with_aokie() -> RunDeps {
+        let data = std::env::temp_dir().join(format!(
+            "fl-runner-journalled-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let host = PluginHost::new(&data, false, crate::events::EventBus::new());
+        host.install_builtin("aokie").expect("install aokie");
+        RunDeps {
+            host: Some(host),
+            ..deps()
+        }
+    }
+
     #[test]
     fn physical_connector_effect_reuses_request_id_per_logical_flow_execution() {
+        let deps = deps_with_aokie();
         let node = GraphNode {
             id: "reconnect-phone".into(),
             node_type: "connector_request".into(),
             data: Value::Null,
         };
-        let first = flow_connector_request_id(&node, &opts(), "aokie", "phone.connect");
-        let retry = flow_connector_request_id(&node, &opts(), "aokie", "phone.connect");
+        let first = flow_connector_request_id(&node, &opts(), &deps, "aokie", "phone.connect");
+        let retry = flow_connector_request_id(&node, &opts(), &deps, "aokie", "phone.connect");
         assert_eq!(first, retry);
         assert!(first.as_deref().is_some_and(|id| id.len() <= 128));
 
@@ -1866,11 +1891,34 @@ mod tests {
         next_execution.request_id_seed = "test-run-2".into();
         assert_ne!(
             first,
-            flow_connector_request_id(&node, &next_execution, "aokie", "phone.connect")
+            flow_connector_request_id(&node, &next_execution, &deps, "aokie", "phone.connect")
         );
         assert_eq!(
-            flow_connector_request_id(&node, &opts(), "aokie", "phone.status"),
-            None
+            flow_connector_request_id(&node, &opts(), &deps, "aokie", "phone.status"),
+            None,
+            "a read command is not journalled"
+        );
+    }
+
+    /// The id is minted from the plugin's declaration, so an unknown connector
+    /// (and a run with no plugin gateway at all) mints nothing — matching the
+    /// dispatch that would fail with `connector_missing` anyway.
+    #[test]
+    fn only_a_declaring_plugin_makes_a_command_journalled() {
+        let node = GraphNode {
+            id: "n".into(),
+            node_type: "connector_request".into(),
+            data: Value::Null,
+        };
+        assert_eq!(
+            flow_connector_request_id(&node, &opts(), &deps_with_aokie(), "widget", "phone.connect"),
+            None,
+            "no plugin exposes the 'widget' connector"
+        );
+        assert_eq!(
+            flow_connector_request_id(&node, &opts(), &deps(), "aokie", "phone.connect"),
+            None,
+            "no plugin gateway ⇒ nothing declares anything"
         );
     }
 

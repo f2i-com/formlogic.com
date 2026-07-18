@@ -94,11 +94,14 @@ pub fn stable_request_id(namespace: &str, parts: &[&str]) -> String {
     format!("fl-{namespace}-{hex}")
 }
 
-/// Aokie commands that can cause an observable phone/radio effect. The plugin
-/// durably journals this exact surface and refuses calls without requestId.
-/// Keeping the host aware of the contract lets every flow/relay caller derive
-/// a stable id before dispatch instead of learning through a runtime failure.
-pub fn aokie_command_requires_request_id(command: &str) -> bool {
+/// The Aokie commands that caused an observable phone/radio effect back when
+/// this rule was a hardcoded mirror of one plugin's contract. AOK-303 replaced
+/// it with the owning plugin's own `commands.journalled` declaration
+/// ([`PluginHost::command_is_journalled`]); it survives only as the fixture the
+/// equality test pins that declaration against, so a manifest edit that would
+/// silently stop minting request ids for the live phone line fails the suite.
+#[cfg(test)]
+pub(crate) fn aokie_command_requires_request_id(command: &str) -> bool {
     matches!(
         command,
         "phone.startPairing"
@@ -161,10 +164,13 @@ pub struct ConnectorStatus {
 }
 
 /// Schema-level validation of the request body (patterns + ranges), with the
-/// URL's connector id as the authority. Pure, so it's unit-testable.
+/// URL's connector id as the authority. `journalled` answers whether a command
+/// needs a durable requestId — passed in (rather than read from the host here)
+/// to keep this pure, so it stays unit-testable.
 pub fn validate_request_body(
     path_connector_id: &str,
     body: &ConnectorRequestBody,
+    journalled: &dyn Fn(&str) -> bool,
 ) -> Result<(), String> {
     if !is_valid_plugin_id(path_connector_id) {
         return Err(format!("connectorId {path_connector_id:?} is malformed"));
@@ -194,14 +200,12 @@ pub fn validate_request_body(
             return Err("requestId must be 1-128 chars".into());
         }
     }
-    // Aokie's physical commands keep durable receipts keyed by requestId.
-    // Refuse unsafe callers here, before the request reaches the plugin.
-    if path_connector_id == "aokie"
-        && aokie_command_requires_request_id(&body.command)
-        && body.request_id.is_none()
-    {
+    // Journalled commands keep durable receipts keyed by requestId. Refuse
+    // unsafe callers here, before the request reaches the plugin. The cheap
+    // `is_none` runs first so a well-formed caller never pays the lookup.
+    if body.request_id.is_none() && journalled(&body.command) {
         return Err(format!(
-            "aokie {} requires requestId for durable idempotency",
+            "{path_connector_id} {} requires requestId for durable idempotency",
             body.command
         ));
     }
@@ -234,6 +238,28 @@ fn find_target(host: &PluginHost, connector_id: &str) -> Option<Target> {
     None
 }
 
+impl PluginHost {
+    /// PLG-202/AOK-303: does the plugin exposing `connector_id` declare
+    /// `command` as journalled — i.e. it durably keeps a receipt keyed by
+    /// requestId, so every flow/relay/HTTP caller must derive a stable one
+    /// before dispatch instead of learning through a runtime failure?
+    ///
+    /// It lives beside [`find_target`] because it has to resolve the connector
+    /// exactly the way the gateway does: a connector id is not necessarily its
+    /// plugin's id. Fails closed — an unknown connector, an unparsed manifest,
+    /// or a v1 plugin that declares nothing journals nothing, which is how
+    /// every non-Aokie connector already behaved under the hardcoded rule.
+    pub fn command_is_journalled(&self, connector_id: &str, command: &str) -> bool {
+        find_target(self, connector_id).is_some_and(|target| {
+            target
+                .manifest
+                .commands
+                .as_ref()
+                .is_some_and(|declared| declared.journalled.iter().any(|c| c == command))
+        })
+    }
+}
+
 /// The gateway: contract checks 2-4 (auth is upstream), then forward.
 /// Returns the success body per `connector-response.schema.json`.
 pub async fn dispatch(
@@ -241,8 +267,10 @@ pub async fn dispatch(
     connector_id: &str,
     body: &ConnectorRequestBody,
 ) -> Result<Value, ConnectorFailure> {
-    validate_request_body(connector_id, body)
-        .map_err(|m| ConnectorFailure::new("command_failed", m))?;
+    validate_request_body(connector_id, body, &|command| {
+        host.command_is_journalled(connector_id, command)
+    })
+    .map_err(|m| ConnectorFailure::new("command_failed", m))?;
 
     let target = find_target(host, connector_id).ok_or_else(|| {
         ConnectorFailure::new(
@@ -455,30 +483,89 @@ mod tests {
         }
     }
 
+    /// Nothing journalled — the shape of a connector whose plugin declares no
+    /// `commands.journalled` (every non-Aokie connector today).
+    fn nothing_journalled(_command: &str) -> bool {
+        false
+    }
+
     #[test]
     fn body_validation() {
         // Minimal valid body (connectorId comes from the URL).
         let b = body(r#"{ "command": "echo.ping" }"#);
-        assert!(validate_request_body("mock", &b).is_ok());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_ok());
         // Body id must MATCH the URL when present.
         let b = body(r#"{ "connectorId": "other", "command": "echo.ping" }"#);
-        assert!(validate_request_body("mock", &b).is_err());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_err());
         let b = body(r#"{ "connectorId": "mock", "command": "echo.ping" }"#);
-        assert!(validate_request_body("mock", &b).is_ok());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_ok());
         // Command pattern.
         let b = body(r#"{ "command": "EchoPing" }"#);
-        assert!(validate_request_body("mock", &b).is_err());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_err());
         // timeoutMs range.
         let b = body(r#"{ "command": "echo.ping", "timeoutMs": 50 }"#);
-        assert!(validate_request_body("mock", &b).is_err());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_err());
         let b = body(r#"{ "command": "echo.ping", "timeoutMs": 120001 }"#);
-        assert!(validate_request_body("mock", &b).is_err());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_err());
         // requestId length.
         let long = "x".repeat(129);
         let b = body(&format!(
             r#"{{ "command": "echo.ping", "requestId": "{long}" }}"#
         ));
-        assert!(validate_request_body("mock", &b).is_err());
+        assert!(validate_request_body("mock", &b, &nothing_journalled).is_err());
+    }
+
+    /// The rule now follows the OWNING PLUGIN'S declaration, so it applies to
+    /// any connector that journals — not just the one that used to be named in
+    /// an `if`. A plugin that declares nothing keeps today's behaviour.
+    #[test]
+    fn the_journalled_rule_follows_the_declaration_not_a_hardcoded_connector() {
+        let journals_reboot = |command: &str| command == "device.reboot";
+
+        let missing = body(r#"{ "command": "device.reboot" }"#);
+        let error = validate_request_body("widget", &missing, &journals_reboot).unwrap_err();
+        assert!(error.contains("widget device.reboot"));
+        assert!(error.contains("requires requestId"));
+
+        assert!(validate_request_body("widget", &missing, &nothing_journalled).is_ok());
+        let read = body(r#"{ "command": "device.status" }"#);
+        assert!(validate_request_body("widget", &read, &journals_reboot).is_ok());
+    }
+
+    /// The manifest-derived set the live phone line runs on must be the exact
+    /// set the hardcoded rule used to mint ids for. A drift here means physical
+    /// commands silently stop getting durable request ids.
+    #[test]
+    fn bundled_aokie_journalled_commands_match_the_historical_hardcoded_rule() {
+        let bundled: serde_json::Value = serde_json::from_str(include_str!(
+            "../resources/plugins/aokie/manifest.json"
+        ))
+        .expect("bundled aokie manifest parses");
+        let journalled = bundled["commands"]["journalled"]
+            .as_array()
+            .expect("commands.journalled declared")
+            .iter()
+            .map(|c| c.as_str().expect("command name").to_string())
+            .collect::<Vec<_>>();
+
+        for command in &journalled {
+            assert!(
+                aokie_command_requires_request_id(command),
+                "manifest journals {command}, which the historical rule did not"
+            );
+        }
+        for command in bundled["connectors"][0]["commands"]
+            .as_array()
+            .expect("declared commands")
+        {
+            let command = command.as_str().expect("command name");
+            assert_eq!(
+                journalled.iter().any(|j| j == command),
+                aokie_command_requires_request_id(command),
+                "journalled declaration drifted from the historical rule for {command}"
+            );
+        }
+        assert_eq!(journalled.len(), 14, "the historical physical-command set");
     }
 
     #[test]
@@ -492,6 +579,10 @@ mod tests {
 
     #[test]
     fn aokie_physical_commands_require_a_bounded_stable_request_id() {
+        // The live rule reads the plugin's own declaration; the historical set
+        // is pinned to it by
+        // `bundled_aokie_journalled_commands_match_the_historical_hardcoded_rule`.
+        let journalled = |command: &str| aokie_command_requires_request_id(command);
         for command in [
             "phone.connect",
             "phone.startPairing",
@@ -499,13 +590,13 @@ mod tests {
             "sms.send",
         ] {
             let missing = body(&format!(r#"{{ "command": "{command}" }}"#));
-            let error = validate_request_body("aokie", &missing).unwrap_err();
+            let error = validate_request_body("aokie", &missing, &journalled).unwrap_err();
             assert!(error.contains(command));
             assert!(error.contains("requires requestId"));
         }
 
         let read = body(r#"{ "command": "phone.status" }"#);
-        assert!(validate_request_body("aokie", &read).is_ok());
+        assert!(validate_request_body("aokie", &read, &journalled).is_ok());
 
         let stable_a = stable_request_id("flow-command", &["run-42", "connect"]);
         let stable_b = stable_request_id("flow-command", &["run-42", "connect"]);
@@ -517,6 +608,6 @@ mod tests {
         let accepted = body(&format!(
             r#"{{ "command": "phone.connect", "payload": {{ "address": "00:11:22:33:44:55" }}, "requestId": "{stable_a}" }}"#
         ));
-        assert!(validate_request_body("aokie", &accepted).is_ok());
+        assert!(validate_request_body("aokie", &accepted, &journalled).is_ok());
     }
 }

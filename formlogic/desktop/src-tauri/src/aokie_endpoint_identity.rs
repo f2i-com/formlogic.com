@@ -26,6 +26,17 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// The single plugin this identity belongs to.
+///
+/// This module is a SINGLETON: one credential key (`KEY_NAME`), one approved
+/// roster (`ROSTER_FILE`), no per-plugin parameter anywhere in its API. So
+/// brokering admission for a second plugin would not give that plugin its own
+/// identity — it would hand it this one, i.e. Aokie's phone-bridge identity.
+/// Naming the owner here keeps the host (not a manifest) the authority on who
+/// that is; AOK-303 replaces the constant with a per-plugin identity lookup,
+/// and the admission gate then needs no other change.
+pub const IDENTITY_OWNER_PLUGIN_ID: &str = "aokie";
+
 const KEY_NAME: &str = "aokie-v2-endpoint-signing-key";
 const KEY_FILE: &str = "aokie-v2-endpoint-signing.key";
 const ROSTER_FILE: &str = "aokie-mobile-roster-v2.json";

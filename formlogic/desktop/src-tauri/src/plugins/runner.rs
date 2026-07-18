@@ -513,14 +513,21 @@ pub fn declares_flow_run(manifest: &crate::plugins::manifest::PluginManifest) ->
         .any(|c| c == FLOW_RUN_CAPABILITY || c == "flow.*")
 }
 
-/// AOK-302: which plugins the host will broker admission for. A generic
+/// AOK-302/303: which plugins the host will broker admission for. A generic
 /// capability NAME does not widen this set — the host remains the security
-/// authority. Today only the (package-verified, account-linked) Aokie plugin;
-/// AOK-303 (supervised) generalizes the broker + identity migration before any
-/// other plugin is added here. Kept as a single seam so the pin is a stated
-/// policy, not string equality scattered through the request path.
+/// authority. Kept as a single seam so the pin is a stated policy, not string
+/// equality scattered through the request path.
+///
+/// The policy is "the plugin that OWNS the endpoint identity the broker mints
+/// against", which today is exactly the one id the literal used to name. It is
+/// read from host state ([`crate::aokie_endpoint_identity::IDENTITY_OWNER_PLUGIN_ID`])
+/// and never from anything a plugin declares — the identity is a singleton, so
+/// admitting a second
+/// plugin would lend it Aokie's identity rather than give it its own. AOK-303
+/// (supervised) turns that constant into a per-plugin lookup — the broker
+/// generalizes there, not here.
 pub fn admission_eligible(plugin_id: &str) -> bool {
-    matches!(plugin_id, "aokie")
+    plugin_id == crate::aokie_endpoint_identity::IDENTITY_OWNER_PLUGIN_ID
 }
 
 /// The admission broker is intentionally a separate, exact capability — a
@@ -1186,6 +1193,33 @@ mod tests {
         assert!(admission_eligible("aokie"));
         assert!(!admission_eligible("not-aokie"));
         assert!(!admission_eligible("some-other-plugin"));
+    }
+
+    /// The pin is the OWNER of the endpoint identity the broker mints against —
+    /// host state, never a plugin's own declaration. A plugin that is signed and
+    /// declares the capability is still refused, because eligibility is not
+    /// something a manifest can claim.
+    #[tokio::test]
+    async fn admission_is_pinned_to_the_endpoint_identity_owner_not_a_declared_capability() {
+        assert!(admission_eligible(
+            crate::aokie_endpoint_identity::IDENTITY_OWNER_PLUGIN_ID
+        ));
+
+        let h = host();
+        let m = manifest("\"host.admission\"");
+        for impostor in ["aokie-companion", "not-aokie"] {
+            let refused = handle_inbound_plugin_request(
+                &h,
+                &m,
+                impostor,
+                true, // package-verified …
+                "host.admission",
+                json!({}),
+            )
+            .await
+            .expect_err("a signed, capability-declaring plugin is still not the identity owner");
+            assert_eq!(refused.data.unwrap()["code"], "capability_denied");
+        }
     }
 
     #[test]

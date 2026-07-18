@@ -2179,8 +2179,9 @@ impl FlowRuntime {
                 let cid = action.get("connectorId").and_then(Value::as_str).ok_or("connector.request missing connectorId")?;
                 let cmd = action.get("command").and_then(Value::as_str).ok_or("connector.request missing command")?;
                 let payload = resolve_deep(action.get("payload").unwrap_or(&Value::Null), scope);
-                let request_id = (cid == "aokie"
-                    && crate::connectors::aokie_command_requires_request_id(cmd))
+                let request_id = self
+                    .host
+                    .command_is_journalled(cid, cmd)
                     .then_some(connector_request_id);
                 self.connector(cid, cmd, Some(payload), request_id).await
             }
@@ -2370,6 +2371,10 @@ impl FlowRuntime {
         // its first managed connection Desktop resolves the app from the same
         // connector-assignment authority used for Aokie events. Once the first
         // admission is returned, the plugin pins that appId on every refresh.
+        // NOTE: assignments are keyed by CONNECTOR id, so this looks the app up
+        // by the plugin's id — sound only because Aokie's plugin and connector
+        // ids are the same string. AOK-303 must resolve the connector properly
+        // (as the gateway does) before a second plugin is brokered here.
         let app_id = requested_app_id
             .or_else(|| self.assigned_app_id(&host_plugin_id))
             .ok_or_else(|| invalid("companion.admission requires an unambiguous Aokie connector assignment"))?;
@@ -2420,6 +2425,8 @@ impl FlowRuntime {
             &app_id,
             plugin_id,
             &endpoint_binding,
+            &self.base_url(),
+            plugin_supports_relay_transport(&params),
         ) else {
             return Err(RpcErrorObj {
                 code: -32002,
@@ -2680,8 +2687,8 @@ impl FlowRuntime {
                 let host = host.clone();
                 let relay_request_id = relay_request_id.clone();
                 async move {
-                    let request_id = (connector_id == "aokie"
-                        && crate::connectors::aokie_command_requires_request_id(&cmd))
+                    let request_id = host
+                        .command_is_journalled(&connector_id, &cmd)
                         .then_some(relay_request_id)
                         .flatten();
                     let body = crate::connectors::ConnectorRequestBody {
@@ -2749,11 +2756,24 @@ impl PluginRpcHandler for RpcBridge {
 /// also returns Desktop/operator metadata (`desktopConnection` and
 /// `scopeCompatibility`); forwarding those fields into the plugin's strict
 /// `deny_unknown_fields` decoder makes an otherwise valid admission unusable.
+///
+/// The hosted-relay endpoints (`relay`) are OPTIONAL in BOTH directions: a
+/// backend that has not deployed them yet still projects cleanly, and the
+/// member is forwarded only to a plugin that asked for it (`relay_requested`,
+/// from [`plugin_supports_relay_transport`]) — the admission decoder on the
+/// other side of the pipe is `deny_unknown_fields`, so handing `relay` to a
+/// build that predates it fails the WHOLE admission, not just the transport.
+/// When forwarded they are re-projected to exactly the three declared URLs and
+/// pinned to the linked site — the admission bearer is sent on them, so a
+/// compromised or misconfigured response must not be able to aim them at
+/// another operator's host (see [`relay_endpoints_for_site`]).
 fn project_companion_admission_response(
     response: &Value,
     app_id: &str,
     plugin_id: &str,
     endpoint_binding: &Value,
+    site_base_url: &str,
+    relay_requested: bool,
 ) -> Option<Value> {
     const FIELDS: [&str; 18] = [
         "accessToken",
@@ -2799,11 +2819,122 @@ fn project_companion_admission_response(
         return None;
     }
 
-    let mut projected = Map::with_capacity(FIELDS.len());
+    let mut projected = Map::with_capacity(FIELDS.len() + 1);
     for field in FIELDS {
         projected.insert(field.into(), source.get(field)?.clone());
     }
+    // Additive + optional, so the mandatory 18 stay the whole contract for a
+    // backend that has not shipped the relay yet. A present-but-unusable
+    // `relay` is DROPPED rather than failing the admission: the plugin then
+    // reconnects over the gateway instead of losing the line entirely.
+    if let Some(relay) = source.get("relay") {
+        match (relay_requested, relay_endpoints_for_site(relay, site_base_url)) {
+            (true, Some(endpoints)) => {
+                projected.insert("relay".into(), endpoints);
+            }
+            // Dropping keeps the line up, but it is INVISIBLE: the plugin just
+            // stays on its gateway, which is indistinguishable from a backend
+            // that never advertised. Name the reason once so a stalled
+            // activation is diagnosable from the log instead of a debugger.
+            (false, _) => note_relay_not_forwarded(
+                relay,
+                site_base_url,
+                "the plugin did not declare the \"relay\" transport",
+            ),
+            (true, None) => note_relay_not_forwarded(
+                relay,
+                site_base_url,
+                "the advertised endpoints are not on the linked site",
+            ),
+        }
+    }
     Some(Value::Object(projected))
+}
+
+/// One line per desktop run. Both refusals are STATIC — a plugin build that
+/// does not opt in, or a `base_url`/issuer pair that is not same-site — so they
+/// would otherwise repeat on every admission refresh and churn the bounded log
+/// ring that a stalled activation is read from.
+fn note_relay_not_forwarded(relay: &Value, site_base_url: &str, reason: &str) {
+    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    // URLs only; the admission bearer is never part of this member.
+    let advertised = relay
+        .get("framesUrl")
+        .and_then(Value::as_str)
+        .unwrap_or("<no framesUrl>");
+    eprintln!(
+        "[flows] Companion relay advertised ({advertised}) but not forwarded: {reason} \
+         — the plugin keeps its WebSocket gateway (linked site {site_base_url})"
+    );
+}
+
+/// Did the calling plugin declare that it understands the optional `relay`
+/// member of the admission response?
+///
+/// Aokie decodes the admission with `deny_unknown_fields`, so a `relay` sent to
+/// a build that predates the member does not degrade to the WebSocket path — it
+/// fails the decode, and the plugin answers every refresh with a permanent
+/// `rebootstrap` loop whose message names no cause. That would make Desktop and
+/// the plugin a version-locked pair, upgradable only in one order, on every
+/// install; they ship as separate artifacts and update independently.
+///
+/// So the member is NEGOTIATED rather than deploy-ordered. A build that does not
+/// ask keeps the exact pre-relay wire shape, whichever side upgrades first.
+fn plugin_supports_relay_transport(params: &Value) -> bool {
+    params
+        .get("supportedTransports")
+        .and_then(Value::as_array)
+        .is_some_and(|transports| {
+            transports
+                .iter()
+                .any(|transport| transport.as_str() == Some("relay"))
+        })
+}
+
+/// The hosted-relay URLs, re-projected to exactly the three fields Aokie's
+/// `RelayEndpoints` declares (it decodes with `deny_unknown_fields`, so a later
+/// backend key must not ride along) and pinned to the linked FormLogic site.
+///
+/// The pin is same-SITE rather than same-origin deliberately. This deployment
+/// answers admissions on the frontend origin (`base_url` =
+/// `http://formlogic.local`) while the backend advertises its API face
+/// (`AOKIE_COMPANION_ISSUER` = `http://api.formlogic.local`), so a strict origin
+/// match would drop every relay object and silently strand the plugin on the
+/// gateway. Anchoring the suffix on a dot keeps a look-alike host
+/// (`notformlogic.local`) out while allowing the operator's own sub-domain.
+fn relay_endpoints_for_site(relay: &Value, site_base_url: &str) -> Option<Value> {
+    const RELAY_FIELDS: [&str; 3] = ["challengeUrl", "framesUrl", "streamUrl"];
+
+    let base = crate::external_url::validate_external_http_url(site_base_url).ok()?;
+    let source = relay.as_object()?;
+    let mut projected = Map::with_capacity(RELAY_FIELDS.len());
+    for field in RELAY_FIELDS {
+        let raw = source.get(field)?.as_str()?;
+        // Rejects credentials, non-http(s) schemes, control characters, and the
+        // WHATWG parser's host recovery; the bearer additionally must not leave
+        // the linked site.
+        let url = crate::external_url::validate_external_http_url(raw).ok()?;
+        if url.fragment().is_some() || !same_site(&url, &base) {
+            return None;
+        }
+        projected.insert(field.into(), Value::String(raw.to_string()));
+    }
+    Some(Value::Object(projected))
+}
+
+/// Same scheme, and the same host or a sub-domain of it. The `.` anchor is what
+/// stops `notformlogic.local` from passing for `formlogic.local`.
+fn same_site(url: &url::Url, base: &url::Url) -> bool {
+    let (Some(host), Some(base_host)) = (url.host_str(), base.host_str()) else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    let base_host = base_host.to_ascii_lowercase();
+    url.scheme() == base.scheme()
+        && (host == base_host || host.ends_with(&format!(".{base_host}")))
 }
 
 fn safe_companion_id(value: &str) -> bool {
@@ -3063,8 +3194,13 @@ mod tests {
         assert_eq!(rt.assigned_app_id("aokie").as_deref(), Some("app-b"));
     }
 
-    #[test]
-    fn companion_admission_projection_strips_backend_metadata_for_strict_plugin_shape() {
+    /// The linked FormLogic site the admission projection pins relay endpoints
+    /// to (`FlowRuntime::base_url`).
+    const SITE_BASE: &str = "https://site.example.test";
+
+    /// `(endpoint_binding, backend response)` for one valid plugin admission,
+    /// backend metadata included so the projection's stripping stays exercised.
+    fn admission_fixture() -> (Value, Value) {
         let endpoint_key = json!({
             "algorithm": "ed25519",
             "publicKey": "desktop-public-key",
@@ -3099,11 +3235,25 @@ mod tests {
             "desktopConnection": {"id": "desktop-row"},
             "scopeCompatibility": null,
         });
+        (binding, response)
+    }
 
-        let projected =
-            project_companion_admission_response(&response, "app-a", "aokie", &binding)
-                .expect("valid admission");
+    #[test]
+    fn companion_admission_projection_strips_backend_metadata_for_strict_plugin_shape() {
+        let (binding, response) = admission_fixture();
+
+        let projected = project_companion_admission_response(
+            &response,
+            "app-a",
+            "aokie",
+            &binding,
+            SITE_BASE,
+            true,
+        )
+        .expect("valid admission");
+        // No `relay` in the response ⇒ the pre-relay wire shape, byte for byte.
         assert_eq!(projected.as_object().unwrap().len(), 18);
+        assert!(projected.get("relay").is_none());
         assert!(projected.get("desktopConnection").is_none());
         assert!(projected.get("scopeCompatibility").is_none());
         assert_eq!(projected["turnCredentialExpiresAt"], Value::Null);
@@ -3118,6 +3268,8 @@ mod tests {
             "app-a",
             "aokie",
             &binding,
+            SITE_BASE,
+            true,
         )
         .is_none());
 
@@ -3128,8 +3280,152 @@ mod tests {
             "app-a",
             "aokie",
             &binding,
+            SITE_BASE,
+            true,
         )
         .is_none());
+    }
+
+    /// The relay endpoints reach the plugin only when they belong to the linked
+    /// site: they carry the admission bearer, and the plugin decodes them with
+    /// `deny_unknown_fields`. An unusable `relay` is dropped on its own so the
+    /// admission still succeeds and the plugin falls back to the gateway.
+    #[test]
+    fn companion_admission_projection_forwards_only_site_pinned_relay_endpoints() {
+        let project = |relay: Value| {
+            let (binding, mut response) = admission_fixture();
+            response["relay"] = relay;
+            project_companion_admission_response(
+                &response,
+                "app-a",
+                "aokie",
+                &binding,
+                SITE_BASE,
+                true,
+            )
+        };
+        let relay_at = |origin: &str| {
+            json!({
+                "challengeUrl": format!("{origin}/api/aokie-companion/relay/challenge"),
+                "framesUrl": format!("{origin}/api/aokie-companion/relay/frames"),
+                "streamUrl": format!("{origin}/api/aokie-companion/relay/stream"),
+            })
+        };
+
+        let projected = project(relay_at(SITE_BASE)).expect("same-origin relay is forwarded");
+        assert_eq!(projected.as_object().unwrap().len(), 19);
+        assert_eq!(projected["relay"], relay_at(SITE_BASE));
+
+        // The live topology: admissions answer on the frontend origin while the
+        // backend advertises its API sub-domain.
+        assert_eq!(
+            project(relay_at("https://api.site.example.test"))
+                .expect("api sub-domain relay is forwarded")["relay"],
+            relay_at("https://api.site.example.test")
+        );
+        // The production pair verbatim (`base_url` vs `AOKIE_COMPANION_ISSUER`).
+        // A same-ORIGIN rule would drop this and silently strand the plugin on
+        // the dead gateway, so pin it: the two are different origins, same site.
+        assert!(relay_endpoints_for_site(
+            &json!({
+                "challengeUrl": "http://api.formlogic.local/api/aokie-companion/relay/challenge",
+                "framesUrl": "http://api.formlogic.local/api/aokie-companion/relay/frames",
+                "streamUrl": "http://api.formlogic.local/api/aokie-companion/relay/stream",
+            }),
+            "http://formlogic.local",
+        )
+        .is_some());
+
+        for hostile in [
+            "https://gateway.evil.test",    // another operator entirely
+            "https://notsite.example.test", // a look-alike the dot anchor stops
+            "http://site.example.test",     // scheme downgrade
+        ] {
+            let projected = project(relay_at(hostile))
+                .unwrap_or_else(|| panic!("{hostile} must not fail the whole admission"));
+            assert!(
+                projected.get("relay").is_none(),
+                "{hostile} must not reach the plugin"
+            );
+            assert_eq!(projected.as_object().unwrap().len(), 18);
+        }
+
+        // A field the plugin's strict decoder does not declare is stripped, and
+        // an incomplete/ill-formed relay is refused outright.
+        let mut extra = relay_at(SITE_BASE);
+        extra["turnUrl"] = json!(format!("{SITE_BASE}/api/aokie-companion/relay/turn"));
+        assert_eq!(
+            project(extra).expect("valid urls")["relay"],
+            relay_at(SITE_BASE)
+        );
+
+        let mut incomplete = relay_at(SITE_BASE);
+        incomplete.as_object_mut().unwrap().remove("streamUrl");
+        assert!(project(incomplete).expect("admission survives")["relay"].is_null());
+        assert!(
+            project(json!({
+                "challengeUrl": "https://user:pw@site.example.test/challenge",
+                "framesUrl": format!("{SITE_BASE}/frames"),
+                "streamUrl": format!("{SITE_BASE}/stream"),
+            }))
+            .expect("admission survives")["relay"]
+                .is_null(),
+            "embedded credentials are refused"
+        );
+    }
+
+    /// The relay member is NEGOTIATED, not deploy-ordered. Aokie's admission
+    /// decoder is `deny_unknown_fields`, so forwarding `relay` to a build that
+    /// predates it fails the whole admission into a permanent rebootstrap loop
+    /// — Desktop and the plugin would become a version-locked pair upgradable
+    /// in one order only. A plugin that does not ask keeps the pre-relay wire
+    /// shape byte for byte, whichever side upgrades first.
+    #[test]
+    fn relay_reaches_only_a_plugin_that_declared_it_understands_the_member() {
+        let relay = json!({
+            "challengeUrl": format!("{SITE_BASE}/api/aokie-companion/relay/challenge"),
+            "framesUrl": format!("{SITE_BASE}/api/aokie-companion/relay/frames"),
+            "streamUrl": format!("{SITE_BASE}/api/aokie-companion/relay/stream"),
+        });
+        let project = |relay_requested: bool| {
+            let (binding, mut response) = admission_fixture();
+            response["relay"] = relay.clone();
+            project_companion_admission_response(
+                &response,
+                "app-a",
+                "aokie",
+                &binding,
+                SITE_BASE,
+                relay_requested,
+            )
+            .expect("valid admission")
+        };
+
+        // A shipped build that never learned the member: the backend advertises
+        // the relay, and the admission still decodes on the far side.
+        let legacy = project(false);
+        assert!(legacy.get("relay").is_none());
+        assert_eq!(legacy.as_object().unwrap().len(), 18);
+        assert_eq!(project(true)["relay"], relay);
+
+        // Only the exact declaration opts in — an empty/absent/unrelated list
+        // stays on the WebSocket path.
+        assert!(plugin_supports_relay_transport(
+            &json!({"supportedTransports": ["relay"]})
+        ));
+        for silent in [
+            json!({}),
+            json!({"supportedTransports": []}),
+            json!({"supportedTransports": ["websocket"]}),
+            // Shape confusions must not read as consent.
+            json!({"supportedTransports": "relay"}),
+            json!({"supportedTransports": {"relay": true}}),
+        ] {
+            assert!(
+                !plugin_supports_relay_transport(&silent),
+                "{silent} must not opt in"
+            );
+        }
     }
 
     #[test]
