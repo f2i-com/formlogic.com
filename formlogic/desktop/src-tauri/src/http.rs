@@ -46,7 +46,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::connectors::{self, ConnectorFailure, ConnectorRequestBody};
@@ -1666,6 +1667,165 @@ async fn plugin_ui_asset(
         .into_response()
 }
 
+/// Staged screen DOCUMENTS for the sandboxed plugin-screen iframes.
+///
+/// ⚠️ Why this exists: a `srcdoc` iframe INHERITS the parent document's CSP,
+/// and the desktop webview's CSP is `script-src 'self'` — the screen bundle's
+/// inline shim + code never execute (live report 2026-07-18: the first
+/// plugin-shipped screen sat on its static "Loading…" shell forever). Serving
+/// the COMPOSED document from this server gives it its OWN response CSP (the
+/// sandbox policy below) while the iframe's `sandbox="allow-scripts"` keeps
+/// the document's origin opaque — it can never wield this API origin, and its
+/// CSP has `connect-src 'none'` besides.
+///
+/// Flow: the (webview-authed) host POSTs the composed html → gets a
+/// single-use nonce → points the iframe at GET /ui/rendered/{nonce}. The GET
+/// is on the OPEN router — an iframe navigation carries no auth headers — so
+/// the nonce IS the auth: 128-bit random, 60s TTL, consumed on first read,
+/// bound to the plugin id in the path. The store is bounded; staging past the
+/// cap sweeps expired entries first and then refuses.
+struct StagedScreenDoc {
+    plugin_id: String,
+    html: String,
+    expires_at: std::time::Instant,
+}
+
+fn staged_screen_docs() -> &'static Mutex<HashMap<String, StagedScreenDoc>> {
+    static DOCS: OnceLock<Mutex<HashMap<String, StagedScreenDoc>>> = OnceLock::new();
+    DOCS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const STAGED_SCREEN_DOC_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+const STAGED_SCREEN_DOC_CAP: usize = 16;
+const STAGED_SCREEN_DOC_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// The response CSP for a rendered screen document — the sandbox policy the
+/// srcDoc composition also carries as a meta (the header is what actually
+/// governs; keep the two in lock-step with pluginScreens.PLUGIN_SCREEN_CSP).
+const RENDERED_SCREEN_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; \
+     style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; \
+     base-uri 'none'; form-action 'none'";
+
+/// Stage a composed document; returns the nonce, or None when the store is
+/// full even after sweeping expired entries. Pure over the map for tests.
+fn stage_screen_doc_in(
+    map: &mut HashMap<String, StagedScreenDoc>,
+    plugin_id: &str,
+    html: String,
+    now: std::time::Instant,
+) -> Option<String> {
+    map.retain(|_, d| d.expires_at > now);
+    if map.len() >= STAGED_SCREEN_DOC_CAP {
+        return None;
+    }
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    map.insert(
+        nonce.clone(),
+        StagedScreenDoc {
+            plugin_id: plugin_id.to_string(),
+            html,
+            expires_at: now + STAGED_SCREEN_DOC_TTL,
+        },
+    );
+    Some(nonce)
+}
+
+/// Consume a staged document: single-use, expiry-checked, plugin-id-bound
+/// (the GET path names the plugin; a nonce staged for another plugin never
+/// serves). Pure over the map for tests.
+fn take_screen_doc_in(
+    map: &mut HashMap<String, StagedScreenDoc>,
+    plugin_id: &str,
+    nonce: &str,
+    now: std::time::Instant,
+) -> Option<String> {
+    let doc = map.remove(nonce)?;
+    if doc.expires_at <= now || doc.plugin_id != plugin_id {
+        return None;
+    }
+    Some(doc.html)
+}
+
+#[derive(serde::Deserialize)]
+struct RenderDocBody {
+    html: String,
+}
+
+/// `POST /api/plugins/{id}/ui/render-doc` (webview-authed): stage a composed
+/// screen document, get back `{ nonce }` for the iframe URL.
+async fn plugin_ui_render_doc(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+    axum::Json(body): axum::Json<RenderDocBody>,
+) -> impl IntoResponse {
+    let Some(p) = st.host.get(&id) else {
+        return desktop_err(
+            StatusCode::NOT_FOUND,
+            "command_failed",
+            &format!("unknown plugin {id:?}"),
+        );
+    };
+    // Same trust rule as serving the raw assets (the composed doc IS those
+    // assets): a quarantined package renders nothing.
+    match p.package {
+        "tampered" => {
+            return desktop_err(
+                StatusCode::FORBIDDEN,
+                "package_untrusted",
+                "package verification failed (quarantined) — screen documents are not staged",
+            )
+        }
+        "unsigned" if crate::plugins::package_trust::require_signed() => {
+            return desktop_err(
+                StatusCode::FORBIDDEN,
+                "package_untrusted",
+                "unsigned plugin refused: FORMLOGIC_REQUIRE_SIGNED_PLUGINS is on and \
+                 this directory has no valid signed package manifest",
+            )
+        }
+        _ => {}
+    }
+    if body.html.len() > STAGED_SCREEN_DOC_MAX_BYTES {
+        return desktop_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "command_failed",
+            "screen document exceeds the 4MB staging cap",
+        );
+    }
+    let mut docs = staged_screen_docs().lock().expect("staged docs lock");
+    match stage_screen_doc_in(&mut docs, &id, body.html, std::time::Instant::now()) {
+        Some(nonce) => axum::Json(serde_json::json!({ "nonce": nonce })).into_response(),
+        None => desktop_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "command_failed",
+            "too many staged screen documents — retry in a moment",
+        ),
+    }
+}
+
+/// `GET /api/plugins/{id}/ui/rendered/{nonce}` (OPEN route — the single-use
+/// nonce is the auth; see the staging doc-comment). Serves the composed
+/// document ONCE with the sandbox CSP as a response header.
+async fn plugin_ui_rendered(Path((id, nonce)): Path<(String, String)>) -> impl IntoResponse {
+    let mut docs = staged_screen_docs().lock().expect("staged docs lock");
+    match take_screen_doc_in(&mut docs, &id, &nonce, std::time::Instant::now()) {
+        Some(html) => (
+            [
+                (CONTENT_TYPE, "text/html; charset=utf-8"),
+                (axum::http::header::CONTENT_SECURITY_POLICY, RENDERED_SCREEN_CSP),
+                (CACHE_CONTROL, "no-store"),
+            ],
+            html,
+        )
+            .into_response(),
+        None => desktop_err(
+            StatusCode::NOT_FOUND,
+            "command_failed",
+            "unknown, expired or already-used screen document nonce",
+        ),
+    }
+}
+
 /// `POST /api/plugins/{id}/commands/{command}` — admin/dev direct command:
 /// forwarded as a `connector.request` to THAT plugin. Optional JSON body
 /// `{payload?, timeoutMs?, requestId?, connectorId?}`; the connector defaults
@@ -2999,6 +3159,10 @@ pub async fn serve(
     // secret-free by contract (`health_reports_new_and_legacy_identity`).
     let open_api = Router::new()
         .route("/api/health", get(health))
+        // One-shot staged screen documents (see plugin_ui_render_doc): the
+        // 128-bit single-use nonce is the auth — an iframe navigation cannot
+        // send headers, and the response carries its own sandbox CSP.
+        .route("/api/plugins/:id/ui/rendered/:nonce", get(plugin_ui_rendered))
         .with_state(state.clone());
 
     // Management plane (services / models / python / config / desktop-info):
@@ -3089,7 +3253,10 @@ pub async fn serve(
         .route("/api/plugins/:id/commands/:command", post(plugin_command))
         // Self-contained plugin UI foundation: screen bundles shipped INSIDE
         // the (signed) package, declared in manifest v2 `ui.screens`. Same
-        // guard as the rest of /api/plugins*.
+        // guard as the rest of /api/plugins*. Staging (render-doc) is webview-
+        // authed here; the one-shot GET for the staged document lives on the
+        // OPEN router (iframe navigations carry no auth — the nonce is the auth).
+        .route("/api/plugins/:id/ui/render-doc", post(plugin_ui_render_doc))
         .route("/api/plugins/:id/ui/:screen/*path", get(plugin_ui_asset))
         .route("/api/plugins/:id/consent", post(issue_plugin_consent))
         .route("/api/connectors", get(list_connectors))
@@ -3257,6 +3424,45 @@ mod tests {
         ] {
             assert_eq!(screen_asset_content_type(path), want, "{path}");
         }
+    }
+
+    /// Staged screen documents: single-use, expiry-checked, plugin-id-bound,
+    /// bounded store (the srcdoc-CSP-inheritance fix — live report 2026-07-18).
+    #[test]
+    fn staged_screen_docs_are_single_use_bounded_and_plugin_bound() {
+        use super::{stage_screen_doc_in, take_screen_doc_in, STAGED_SCREEN_DOC_CAP};
+        let mut map = std::collections::HashMap::new();
+        let t0 = std::time::Instant::now();
+
+        let nonce = stage_screen_doc_in(&mut map, "aokie", "<html>x</html>".into(), t0)
+            .expect("stages under the cap");
+        // Wrong plugin id never serves (and CONSUMES the nonce — a probe burns it).
+        assert!(take_screen_doc_in(&mut map, "other", &nonce, t0).is_none());
+        assert!(
+            take_screen_doc_in(&mut map, "aokie", &nonce, t0).is_none(),
+            "a nonce is single-use even when the first taker was refused"
+        );
+
+        // Normal round trip + single use.
+        let n2 = stage_screen_doc_in(&mut map, "aokie", "<html>y</html>".into(), t0).unwrap();
+        assert_eq!(take_screen_doc_in(&mut map, "aokie", &n2, t0).as_deref(), Some("<html>y</html>"));
+        assert!(take_screen_doc_in(&mut map, "aokie", &n2, t0).is_none());
+
+        // Expiry: a doc staged at t0 is dead after the TTL.
+        let n3 = stage_screen_doc_in(&mut map, "aokie", "<html>z</html>".into(), t0).unwrap();
+        let later = t0 + super::STAGED_SCREEN_DOC_TTL + std::time::Duration::from_millis(1);
+        assert!(take_screen_doc_in(&mut map, "aokie", &n3, later).is_none());
+
+        // Cap: refuses when full of LIVE docs, but expired ones sweep out first.
+        map.clear();
+        for _ in 0..STAGED_SCREEN_DOC_CAP {
+            stage_screen_doc_in(&mut map, "aokie", String::new(), t0).unwrap();
+        }
+        assert!(stage_screen_doc_in(&mut map, "aokie", String::new(), t0).is_none());
+        assert!(
+            stage_screen_doc_in(&mut map, "aokie", String::new(), later).is_some(),
+            "expired entries sweep out, freeing the cap"
+        );
     }
 
     #[test]

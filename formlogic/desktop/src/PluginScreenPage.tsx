@@ -75,6 +75,26 @@ async function fetchScreenAsset(
   }
 }
 
+/** Stage a composed screen document with the desktop server; returns the
+ *  one-shot nonce for the iframe URL. ⚠️ srcdoc is NOT usable here: a srcdoc
+ *  document inherits the WEBVIEW's CSP (script-src 'self'), so the bundle's
+ *  inline scripts never run (live report 2026-07-18) — the staged document
+ *  gets its OWN sandbox CSP from the serving route instead. */
+async function stageScreenDoc(pluginId: string, html: string): Promise<string> {
+  const resp = await fetch(
+    `${API_BASE}/api/plugins/${encodeURIComponent(pluginId)}/ui/render-doc`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html }),
+    },
+  );
+  if (!resp.ok) throw new Error(`staging the screen document failed (${resp.status})`);
+  const body = await resp.json();
+  if (typeof body?.nonce !== 'string' || !body.nonce) throw new Error('staging returned no nonce');
+  return body.nonce;
+}
+
 const TOAST_KINDS: readonly ToastKind[] = ['success', 'error', 'info'];
 
 /** One live event subscription: the SSE listeners registered for it. */
@@ -146,6 +166,33 @@ export default function PluginScreenPage({
     // (a srcdoc mutation on the live iframe adds a history entry).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assets?.html, assets?.css, assets?.js]);
+
+  // Stage the composed document for one-shot serving (srcdoc would inherit
+  // the webview's CSP and block the bundle's inline scripts — see
+  // stageScreenDoc). A fresh srcDoc string = a fresh nonce = a fresh iframe.
+  const [frameSrc, setFrameSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (srcDoc == null) {
+      setFrameSrc(null);
+      return;
+    }
+    let alive = true;
+    stageScreenDoc(plugin.id, srcDoc)
+      .then((nonce) => {
+        if (alive) {
+          setFrameSrc(
+            `${API_BASE}/api/plugins/${encodeURIComponent(plugin.id)}/ui/rendered/${nonce}`,
+          );
+        }
+      })
+      .catch((e) => {
+        if (alive) setLoadError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcDoc, plugin.id]);
 
   // Push theme flips into the loaded document (instant, no reload).
   useEffect(() => {
@@ -376,14 +423,19 @@ export default function PluginScreenPage({
           Loading {screen.title}…
         </div>
       )}
-      {!loadError && srcDoc != null && (
+      {!loadError && frameSrc != null && (
         <iframe
+          // Keyed on the URL so a new staged document REPLACES the element —
+          // mutating a live iframe's src adds a browser history entry.
+          key={frameSrc}
           ref={iframeRef}
           title={screen.title}
           // Opaque origin: scripts only, never allow-same-origin (see the
-          // security invariants at the top of this file).
+          // security invariants at the top of this file). The staged document
+          // is served from the desktop API origin, but the sandbox keeps its
+          // origin opaque and its response CSP has connect-src 'none'.
           sandbox="allow-scripts"
-          srcDoc={srcDoc}
+          src={frameSrc}
           className="plugin-screen-frame"
         />
       )}
