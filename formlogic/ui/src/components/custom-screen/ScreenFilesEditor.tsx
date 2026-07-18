@@ -18,7 +18,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { toast } from '../../stores/toastStore';
 import type { ScreenFile } from '../../lib/screenCompile';
 import { NewFileModal, RenameFileModal } from './ScreenFileModals';
-import { readUploadedScreenFiles } from './screenFileUpload';
+import { isImagePath, readUploadedScreenFiles } from './screenFileUpload';
 
 function langOf(path: string): string {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
@@ -48,10 +48,37 @@ function fileIcon(path: string): { Icon: LucideIcon; className: string } {
     case 'json':
       return { Icon: Braces, className: 'text-amber-500 dark:text-amber-400' };
     case 'svg':
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'webp':
+    case 'ico':
+    case 'bmp':
+    case 'avif':
       return { Icon: FileImage, className: 'text-purple-500 dark:text-purple-400' };
     default:
       return { Icon: FileText, className: 'text-gray-400 dark:text-slate-500' };
   }
+}
+
+/** Preview pane for binary image assets (stored as data: URIs — not text-editable). */
+function ImagePreview({ file }: { file: ScreenFile }) {
+  const importName = file.path.slice(file.path.lastIndexOf('/') + 1).split('.')[0].replace(/[^A-Za-z0-9_]/g, '') || 'img';
+  return (
+    <div className="h-full flex flex-col items-center justify-center gap-3 p-6 bg-gray-50 dark:bg-slate-900/40">
+      <div className="max-w-full max-h-[60%] rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm" style={{ backgroundImage: 'linear-gradient(45deg, rgba(127,127,127,.08) 25%, transparent 25%, transparent 75%, rgba(127,127,127,.08) 75%), linear-gradient(45deg, rgba(127,127,127,.08) 25%, transparent 25%, transparent 75%, rgba(127,127,127,.08) 75%)', backgroundSize: '16px 16px', backgroundPosition: '0 0, 8px 8px' }}>
+        <img src={file.content} alt={file.path} className="max-w-full max-h-full object-contain" />
+      </div>
+      <div className="text-center">
+        <p className="text-sm font-medium text-gray-900 dark:text-white font-mono">{file.path}</p>
+        <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{Math.max(1, Math.round(file.content.length / 1024))}KB stored as a data: URI</p>
+        <p className="mt-2 text-xs text-gray-400 dark:text-slate-500">
+          Use it in code: <code className="font-mono text-primary-600 dark:text-primary-400">{`import ${importName} from './${file.path}'`}</code> then <code className="font-mono text-primary-600 dark:text-primary-400">{`<img src={${importName}} />`}</code>
+        </p>
+      </div>
+    </div>
+  );
 }
 
 // React's TS types don't know the (widely supported) folder-picker attributes.
@@ -208,7 +235,11 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
       </div>
       <div className="flex-1 min-h-0">
         {activeFile ? (
-          <CodeEditor key={activeFile.path} value={activeFile.content} onChange={(v) => setContent(activeFile.path, v)} language={langOf(activeFile.path)} path={activeFile.path} sdk={sdk} />
+          isImagePath(activeFile.path) || activeFile.content.startsWith('data:image') ? (
+            <ImagePreview key={activeFile.path} file={activeFile} />
+          ) : (
+            <CodeEditor key={activeFile.path} value={activeFile.content} onChange={(v) => setContent(activeFile.path, v)} language={langOf(activeFile.path)} path={activeFile.path} sdk={sdk} />
+          )
         ) : (
           <div className="h-full flex items-center justify-center text-sm text-gray-400 dark:text-slate-500">No file selected</div>
         )}

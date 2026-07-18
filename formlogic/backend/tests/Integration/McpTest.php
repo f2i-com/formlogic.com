@@ -624,7 +624,8 @@ class McpTest extends TestCase
             $fields[] = ['id' => "f{$i}", 'type' => 'short_text', 'label' => 'L', 'required' => false];
         }
         $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'fields' => $fields])['isError'], '>200 fields rejected');
-        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'customScreen' => ['enabled' => true, 'html' => str_repeat('y', 600000)]])['isError'], 'oversized customScreen rejected');
+        // The customScreen cap is 2MB (raised for data:-URI image assets) — 2.2MB must still refuse.
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'customScreen' => ['enabled' => true, 'html' => str_repeat('y', 2200000)]])['isError'], 'oversized customScreen rejected');
     }
 
     public function testAppScopeBypassAttemptsRejected(): void

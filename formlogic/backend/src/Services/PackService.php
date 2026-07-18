@@ -1741,8 +1741,9 @@ class PackService
             }
             if (isset($form['customScreen'])) {
                 $screenJson = json_encode($form['customScreen']);
-                if ($screenJson !== false && strlen($screenJson) > 524288) {
-                    throw new \RuntimeException("Form '{$form['packFormId']}' custom screen exceeds 512KB limit");
+                // 2MB: screens may carry image assets as data: URIs in `files`.
+                if ($screenJson !== false && strlen($screenJson) > 2097152) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' custom screen exceeds 2MB limit");
                 }
             }
             if (isset($seenFormIds[$form['packFormId']])) {
@@ -1770,8 +1771,9 @@ class PackService
             // Per-app size caps (mirror the form caps) — the app home screen ships executable HTML/CSS/JS.
             if (isset($app['customScreen'])) {
                 $screenJson = json_encode($app['customScreen']);
-                if ($screenJson !== false && strlen($screenJson) > 524288) {
-                    throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 512KB limit");
+                // 2MB: screens may carry image assets as data: URIs in `files`.
+                if ($screenJson !== false && strlen($screenJson) > 2097152) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 2MB limit");
                 }
             }
             // Custom app-logic is code (sandboxed at runtime); cap at 100KB like a form's logic script.

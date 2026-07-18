@@ -280,8 +280,12 @@ global `FormLogic` SDK, which is already injected (do not redefine it):
 RUNTIME: the screen is a multi-file TypeScript/TSX project bundled in the sandbox. JSX components run on
 Preact with React aliased to it — `import { useState, useEffect } from 'react'` and
 `import { createRoot } from 'react-dom/client'` work as usual. ONLY these built-in modules exist:
-'react', 'react-dom/client', 'preact', 'preact/hooks'. NO other npm packages — everything else must be
-your own files, imported with RELATIVE paths (folders are fine, e.g. `import { Card } from './components/Card'`).
+'react', 'react-dom/client', 'preact', 'preact/hooks' (always available, no network). Other npm packages
+CAN be imported — they are fetched from esm.sh when the screen COMPILES (needs internet; pin versions,
+e.g. `import confetti from 'canvas-confetti@1.9.3'`) — but PREFER the built-ins and dependency-free code.
+Your own files import with RELATIVE paths (folders are fine, e.g. `import { Card } from './components/Card'`).
+SVG assets work as files: emit e.g. ```svg file=logo.svg and `import logo from './logo.svg'` gives a
+data: URI for `<img src={logo} />` (inline <svg> JSX also works).
 The entry file is index.tsx and it MUST mount the app:
   createRoot(document.getElementById('root')!).render(<App />);
 A `<div id="root"></div>` shell exists automatically — you do NOT need an index.html. Every .css file you
@@ -352,8 +356,12 @@ This SDK is APP-scoped — it spans the app's forms, so data calls take a formId
 RUNTIME: the screen is a multi-file TypeScript/TSX project bundled in the sandbox. JSX components run on
 Preact with React aliased to it — `import { useState, useEffect } from 'react'` and
 `import { createRoot } from 'react-dom/client'` work as usual. ONLY these built-in modules exist:
-'react', 'react-dom/client', 'preact', 'preact/hooks'. NO other npm packages — everything else must be
-your own files, imported with RELATIVE paths (folders are fine, e.g. `import { Card } from './components/Card'`).
+'react', 'react-dom/client', 'preact', 'preact/hooks' (always available, no network). Other npm packages
+CAN be imported — they are fetched from esm.sh when the screen COMPILES (needs internet; pin versions,
+e.g. `import confetti from 'canvas-confetti@1.9.3'`) — but PREFER the built-ins and dependency-free code.
+Your own files import with RELATIVE paths (folders are fine, e.g. `import { Card } from './components/Card'`).
+SVG assets work as files: emit e.g. ```svg file=logo.svg and `import logo from './logo.svg'` gives a
+data: URI for `<img src={logo} />` (inline <svg> JSX also works).
 The entry file is index.tsx and it MUST mount the app:
   createRoot(document.getElementById('root')!).render(<App />);
 A `<div id="root"></div>` shell exists automatically — you do NOT need an index.html. Every .css file you

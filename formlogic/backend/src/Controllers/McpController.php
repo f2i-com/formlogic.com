@@ -1054,8 +1054,9 @@ class McpController
         if (!empty($unknown)) {
             throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown) . ' (a widget dashboard is { kind:"dashboard", dashboard:{ cols, widgets } })');
         }
-        if (strlen((string) json_encode($cs)) > 524288) {
-            throw new \Exception('customScreen exceeds the 512KB limit');
+        // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
+        if (strlen((string) json_encode($cs)) > 2097152) {
+            throw new \Exception('customScreen exceeds the 2MB limit');
         }
     }
 
@@ -1139,7 +1140,7 @@ class McpController
     private function toolDefs(array $session): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
-        $screen = ['type' => 'object', 'description' => "Custom screen — two kinds. (1) PREFERRED no-code widget DASHBOARD: { kind:'dashboard', dashboard:{ cols?:12, widgets:[{ kind:'report'|'list'|'text'|'actions'|'activity', layout:{x,y,w,h}, title?, … }] } } — 'report' embeds a chart/KPI/table via `spec` (the SAME shape as create_report's spec), 'list' shows recent records via `list`:{formId,limit?,titleField?,subtitleField?,metaField?}, 'text' a note via `text`:{body}, 'actions' new-record buttons, 'activity' a latest-records feed (both config-free, app home only). Widget specs are validated against the in-scope forms on save; out-of-scope widgets are dropped. (2) CODE screen — a sandboxed full frontend: EITHER `ts` (a single TypeScript/TSX file) OR `files` (a multi-file project: an array of { path, content } with .tsx/.ts/.css files, folders + relative imports allowed, entry index.tsx). React-style TSX components WORK: 'react', 'react-dom/client', 'preact', 'preact/hooks' are built-in (react aliases to Preact) — no other npm packages. No index.html needed (a <div id=\"root\"></div> shell is automatic; entry must createRoot(...).render(<App/>)). Compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast)."];
+        $screen = ['type' => 'object', 'description' => "Custom screen — two kinds. (1) PREFERRED no-code widget DASHBOARD: { kind:'dashboard', dashboard:{ cols?:12, widgets:[{ kind:'report'|'list'|'text'|'actions'|'activity', layout:{x,y,w,h}, title?, … }] } } — 'report' embeds a chart/KPI/table via `spec` (the SAME shape as create_report's spec), 'list' shows recent records via `list`:{formId,limit?,titleField?,subtitleField?,metaField?}, 'text' a note via `text`:{body}, 'actions' new-record buttons, 'activity' a latest-records feed (both config-free, app home only). Widget specs are validated against the in-scope forms on save; out-of-scope widgets are dropped. (2) CODE screen — a sandboxed full frontend: EITHER `ts` (a single TypeScript/TSX file) OR `files` (a multi-file project: an array of { path, content } with .tsx/.ts/.css files, folders + relative imports allowed, entry index.tsx). React-style TSX components WORK: 'react', 'react-dom/client', 'preact', 'preact/hooks' are built-in (react aliases to Preact); other npm packages resolve via esm.sh at compile time (pin versions). Image assets: .svg as text files, binary images as data: URI content — importing an image file yields its data: URI. No index.html needed (a <div id=\"root\"></div> shell is automatic; entry must createRoot(...).render(<App/>)). Compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast)."];
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;
@@ -1258,7 +1259,8 @@ FORM SECTION dashboards: a form can carry its own dashboard, shown on its sectio
 ## Custom CODE screen (advanced alternative to a dashboard)
 A sandboxed frontend over the app's forms. PREFERRED shape: a multi-file React-style TSX project —
 customScreen = { enabled:true, files:[ {"path":"index.tsx","content":"…components + createRoot mount…"}, {"path":"components/Card.tsx","content":"…"}, {"path":"styles.css","content":"…"} ] }
-- JSX components run on Preact with React aliased to it: import { useState, useEffect } from 'react' and import { createRoot } from 'react-dom/client' work as usual. ONLY these built-ins exist: 'react', 'react-dom/client', 'preact', 'preact/hooks' — no other npm/CDN.
+- JSX components run on Preact with React aliased to it: import { useState, useEffect } from 'react' and import { createRoot } from 'react-dom/client' work as usual. Built-ins (always available, no network): 'react', 'react-dom/client', 'preact', 'preact/hooks'. Other npm packages resolve via esm.sh when the screen COMPILES (the editing browser needs internet; pin versions, e.g. 'canvas-confetti@1.9.3') — prefer the built-ins and dependency-free code.
+- IMAGE ASSETS: include .svg files as text, and binary images (.png/.jpg/.gif/.webp) as data: URI strings in a file's content (e.g. {"path":"assets/logo.png","content":"data:image/png;base64,..."}). `import logo from './assets/logo.png'` yields the data: URI for <img src={logo} />. Keep images small — the whole screen caps at 2MB.
 - The entry (index.tsx) MUST mount: createRoot(document.getElementById('root')!).render(<App />). A <div id="root"></div> shell exists automatically — no index.html needed (you may include one to customize the shell).
 - Folders + relative imports between your files are fine (e.g. import { Card } from './components/Card'). Every .css file is injected automatically.
 - The host injects CSS variables for theming — use var(--fl-accent) / var(--fl-accent-contrast) for the brand color.

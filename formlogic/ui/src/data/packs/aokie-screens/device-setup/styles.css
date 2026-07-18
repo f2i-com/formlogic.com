@@ -10,7 +10,7 @@ body { margin: 0; padding: 14px 16px; color: var(--fl-text); }
 #ds .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 #ds h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 #ds h2 {
-  margin: 0 0 10px; font-size: 11px; font-weight: 600;
+  margin: 0 0 10px; font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.08em; color: var(--fl-muted);
 }
 
@@ -22,12 +22,12 @@ body { margin: 0; padding: 14px 16px; color: var(--fl-text); }
 
 #ds p { margin: 0; overflow-wrap: break-word; }
 #ds p + p { margin-top: 8px; }
-#ds .cta { margin-top: 10px; }
+#ds .cta { margin-top: 12px; }
 #ds .intro { margin-bottom: 2px; }
 #ds .unset { margin-bottom: 8px; }
-#ds .listhead { margin: 12px 0 4px; }
-#ds .footnote { margin-top: 8px; }
-#ds .shownote { margin-top: 6px; }
+#ds .listhead { margin: 14px 0 6px; }
+#ds .footnote { margin-top: 10px; }
+#ds .shownote { margin-top: 8px; }
 
 #ds .btn {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
@@ -46,36 +46,47 @@ body { margin: 0; padding: 14px 16px; color: var(--fl-text); }
 #ds .faint { color: var(--fl-faint); font-size: 12px; }
 #ds .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
 
+/* Status chips share one height/radius/weight; the semantic variants keep the
+   same footprint and add a faint currentColor tint (base surface-2 fallback
+   where color-mix is unsupported). */
 #ds .pill {
   display: inline-flex; align-items: center; border-radius: 999px;
-  padding: 2px 9px; font-size: 10.5px; font-weight: 600;
+  padding: 2px 9px; font-size: 10.5px; font-weight: 600; line-height: 1.5; white-space: nowrap;
   border: 1px solid var(--fl-border); color: var(--fl-muted); background: var(--fl-surface-2);
 }
-#ds .pill.ok { color: var(--fl-good); border-color: var(--fl-good); background: transparent; }
-#ds .pill.warn { color: var(--fl-warn); border-color: var(--fl-warn); background: transparent; }
-#ds .pill.bad { color: var(--fl-bad); border-color: var(--fl-bad); background: transparent; }
-#ds .pill.accent { color: var(--fl-accent); border-color: var(--fl-accent); background: transparent; }
+#ds .pill.ok { color: var(--fl-good); border-color: var(--fl-good); background: color-mix(in srgb, var(--fl-good) 8%, transparent); }
+#ds .pill.warn { color: var(--fl-warn); border-color: var(--fl-warn); background: color-mix(in srgb, var(--fl-warn) 8%, transparent); }
+#ds .pill.bad { color: var(--fl-bad); border-color: var(--fl-bad); background: color-mix(in srgb, var(--fl-bad) 8%, transparent); }
+#ds .pill.accent { color: var(--fl-accent); border-color: var(--fl-accent); background: color-mix(in srgb, var(--fl-accent) 8%, transparent); }
 
 #ds .banner {
   border: 1px solid var(--fl-bad); border-radius: 12px; padding: 10px 14px;
-  font-size: 13px; color: var(--fl-bad); overflow-wrap: break-word;
+  font-size: 13px; color: var(--fl-bad);
+  background: color-mix(in srgb, var(--fl-bad) 6%, transparent); overflow-wrap: break-word;
 }
 
+/* Tables and lists share one row rhythm: 9px vertical padding, hairline
+   dividers, a subtle full-row hover. */
 #ds table { width: 100%; border-collapse: collapse; font-size: 13px; }
 #ds th {
   text-align: left; font-size: 10.5px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--fl-faint); padding: 4px 10px 6px 0;
+  letter-spacing: 0.04em; color: var(--fl-faint); padding: 0 12px 8px 0;
 }
-#ds td { padding: 7px 10px 7px 0; border-top: 1px solid var(--fl-border); vertical-align: middle; }
+#ds td { padding: 9px 12px 9px 0; border-top: 1px solid var(--fl-border); vertical-align: middle; }
+#ds th:last-child, #ds td:last-child { padding-right: 0; }
 #ds td.actions { text-align: right; white-space: nowrap; }
+#ds tbody tr { transition: background 0.15s ease; }
+#ds tbody tr:hover { background: var(--fl-surface-2); }
 #ds .tscroll { overflow-x: auto; }
 
 #ds ul { list-style: none; margin: 0; padding: 0; }
 #ds li {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  gap: 8px; padding: 8px 0; border-top: 1px solid var(--fl-border);
+  gap: 8px; padding: 9px 6px; margin: 0 -6px; border-top: 1px solid var(--fl-border);
+  border-radius: 8px; transition: background 0.15s ease;
 }
 #ds li:first-child { border-top: 0; }
+#ds li:hover { background: var(--fl-surface-2); }
 #ds .rowmain { min-width: 0; overflow-wrap: break-word; }
 #ds .rowname { font-size: 13.5px; font-weight: 500; }
 #ds .evmeta { display: inline-flex; align-items: center; gap: 8px; }
@@ -92,8 +103,12 @@ body { margin: 0; padding: 14px 16px; color: var(--fl-text); }
   font: inherit; font-size: 13px; color: var(--fl-text);
   background: var(--fl-surface); border: 1px solid var(--fl-border);
   border-radius: 10px; padding: 7px 11px; width: 220px; max-width: 100%;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-#ds input[type="text"]:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; }
+#ds input[type="text"]:focus-visible {
+  outline: none; border-color: var(--fl-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fl-accent) 16%, transparent);
+}
 
 #ds .sectionrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 #ds .sectionrow h2 { margin: 0; }
@@ -106,3 +121,9 @@ body { margin: 0; padding: 14px 16px; color: var(--fl-text); }
 }
 #ds .skeleton.short { width: 38%; margin-top: 8px; }
 @keyframes fl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Small phones: tighter page + card padding, same rhythm. */
+@media (max-width: 420px) {
+  body { padding: 10px 12px; }
+  #ds .card { padding: 12px 14px; }
+}

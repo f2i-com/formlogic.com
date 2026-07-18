@@ -1,7 +1,9 @@
 // Reads user-selected files (a single file, a multi-select, or a whole folder picked via a
-// webkitdirectory input) into ScreenFile objects for the custom-screen Studios. Text files only,
-// per-file + batch size caps, and normalized safe paths (forward slashes, no '..', no leading '/').
-// Anything that can't be imported is returned in `skipped` with a human-readable reason.
+// webkitdirectory input) into ScreenFile objects for the custom-screen Studios. Text files are
+// stored as-is; IMAGE files are stored as data: URIs (the bundler exports them as URI strings for
+// `import logo from './logo.png'`, and the iframe CSP allows img-src data:). Per-file + batch size
+// caps, normalized safe paths (forward slashes, no '..', no leading '/'). Anything that can't be
+// imported is returned in `skipped` with a human-readable reason.
 
 import type { ScreenFile } from '../../lib/screenCompile';
 
@@ -10,26 +12,47 @@ export const TEXT_FILE_EXTENSIONS = [
   'html', 'htm', 'css', 'js', 'ts', 'tsx', 'jsx', 'json', 'svg', 'md', 'txt',
 ] as const;
 
-/** Max size for a single uploaded file (256KB). */
+/** Binary image extensions stored as data: URIs (previewed, not text-edited). */
+export const IMAGE_FILE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'avif'] as const;
+
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  webp: 'image/webp', ico: 'image/x-icon', bmp: 'image/bmp', avif: 'image/avif',
+};
+
+/** Max size for a single uploaded text file (256KB). */
 export const MAX_FILE_BYTES = 256 * 1024;
 
+/** Max size for a single uploaded image (512KB on disk; ~⅓ larger stored as base64). */
+export const MAX_IMAGE_BYTES = 512 * 1024;
+
 /**
- * Max combined size for one upload batch. The backend caps the whole saved screen JSON (files +
- * compiled js/html/css) at 512KB (FormController/AppController: 524288), so the batch cap matches
- * that server limit rather than a looser client-side default.
+ * Max combined STORED size for one upload batch (data-URI inflation counted). The backend caps
+ * the whole saved screen JSON (files + compiled js/html/css) at 2MB (FormController/AppController +
+ * MCP: 2097152), so the batch cap matches that server limit rather than a looser client default.
  */
-export const MAX_BATCH_BYTES = 512 * 1024;
+export const MAX_BATCH_BYTES = 2 * 1024 * 1024;
 
 /** Folders that are never worth importing (dependency/VCS/OS junk). */
 const SKIPPED_DIRS = new Set(['node_modules', '.git', '__MACOSX']);
 
-/** True when the path ends in one of the editable text extensions. */
-export function hasAllowedExtension(path: string): boolean {
+function extOf(path: string): string | null {
   const base = path.slice(path.lastIndexOf('/') + 1);
   const dot = base.lastIndexOf('.');
-  if (dot <= 0) return false; // no extension, or a dotfile like ".gitignore"
-  const ext = base.slice(dot + 1).toLowerCase();
-  return (TEXT_FILE_EXTENSIONS as readonly string[]).includes(ext);
+  if (dot <= 0) return null; // no extension, or a dotfile like ".gitignore"
+  return base.slice(dot + 1).toLowerCase();
+}
+
+/** True when the path ends in one of the editable text extensions. */
+export function hasAllowedExtension(path: string): boolean {
+  const ext = extOf(path);
+  return ext !== null && (TEXT_FILE_EXTENSIONS as readonly string[]).includes(ext);
+}
+
+/** True when the path is a binary image asset (stored as a data: URI, previewed in the editor). */
+export function isImagePath(path: string): boolean {
+  const ext = extOf(path);
+  return ext !== null && (IMAGE_FILE_EXTENSIONS as readonly string[]).includes(ext);
 }
 
 /**
@@ -56,6 +79,16 @@ function normalizeUploadPath(file: File): string | null {
 }
 
 const kb = (bytes: number) => `${Math.round(bytes / 1024)}KB`;
+
+/** Read a binary image into a data: URI (chunked base64 — huge spreads overflow the stack). */
+async function readAsDataUri(file: File, ext: string): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:${IMAGE_MIME[ext] ?? 'application/octet-stream'};base64,${btoa(binary)}`;
+}
 
 /**
  * Read an upload selection (FileList from an <input type="file"> — plain, multiple, or
@@ -87,16 +120,14 @@ export async function readUploadedScreenFiles(
       skipped.push(`${display} — unsafe or empty path`);
       continue;
     }
-    if (!hasAllowedExtension(path)) {
-      skipped.push(`${display} — not an editable text file`);
+    const image = isImagePath(path);
+    if (!image && !hasAllowedExtension(path)) {
+      skipped.push(`${display} — not an editable text file or image`);
       continue;
     }
-    if (file.size > MAX_FILE_BYTES) {
-      skipped.push(`${display} — larger than ${kb(MAX_FILE_BYTES)}`);
-      continue;
-    }
-    if (total + file.size > MAX_BATCH_BYTES) {
-      skipped.push(`${display} — upload limit reached (${kb(MAX_BATCH_BYTES)} total)`);
+    const perFileCap = image ? MAX_IMAGE_BYTES : MAX_FILE_BYTES;
+    if (file.size > perFileCap) {
+      skipped.push(`${display} — larger than ${kb(perFileCap)}`);
       continue;
     }
     if (seen.has(path)) {
@@ -106,18 +137,27 @@ export async function readUploadedScreenFiles(
 
     let content: string;
     try {
-      content = await file.text();
+      if (image) {
+        content = await readAsDataUri(file, extOf(path) ?? 'png');
+      } else {
+        content = await file.text();
+        if (content.includes(String.fromCharCode(0))) {
+          skipped.push(`${display} — binary content`);
+          continue;
+        }
+      }
     } catch {
       skipped.push(`${display} — could not be read`);
       continue;
     }
-    if (content.includes(String.fromCharCode(0))) {
-      skipped.push(`${display} — binary content`);
+    // Budget by STORED size (a data URI is ~⅓ larger than the image on disk).
+    if (total + content.length > MAX_BATCH_BYTES) {
+      skipped.push(`${display} — upload limit reached (${kb(MAX_BATCH_BYTES)} total)`);
       continue;
     }
 
     seen.add(path);
-    total += file.size;
+    total += content.length;
     files.push({ path, content });
   }
 

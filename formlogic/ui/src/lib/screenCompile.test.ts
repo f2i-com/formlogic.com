@@ -13,16 +13,27 @@ import * as esbuildNative from 'esbuild';
 import { JSDOM } from 'jsdom';
 import {
   __setEsbuildForTests,
+  __setEsmFetchForTests,
   bundleScreenFiles,
   compileScreenCode,
   type EsbuildLike,
+  type EsmFetch,
 } from './screenCompile';
 
 // The first build call spawns the esbuild service process — slow under full-suite CPU load.
 vi.setConfig({ testTimeout: 30000 });
 
 beforeAll(() => __setEsbuildForTests(esbuildNative as unknown as EsbuildLike));
-afterAll(() => __setEsbuildForTests(null));
+afterAll(() => { __setEsbuildForTests(null); __setEsmFetchForTests(null); });
+
+/** An offline fake esm.sh: url → module source. Unknown urls 404. */
+function fakeEsm(registry: Record<string, string>): EsmFetch {
+  return (url) => Promise.resolve({
+    ok: url in registry,
+    status: url in registry ? 200 : 404,
+    text: () => Promise.resolve(registry[url] ?? ''),
+  });
+}
 
 /** Run a compiled screen bundle against a fresh document with a #root, like the sandbox iframe would. */
 function execute(js: string) {
@@ -107,11 +118,115 @@ describe('bundleScreenFiles — TSX components', () => {
     expect(root.querySelector('#ok')?.textContent).toBe('css imports ignored');
   });
 
-  it('still refuses unknown npm imports with an honest message', async () => {
+});
+
+describe('bundleScreenFiles — npm via esm.sh (compile-time, offline-faked)', () => {
+  it('resolves a bare import through esm.sh, following the module graph', async () => {
+    __setEsmFetchForTests(fakeEsm({
+      'https://esm.sh/greeting-lib@1.0.0': `import { base } from '/base-lib@2.0.0/index.mjs'; export const greet = (n) => base + ' ' + n;`,
+      'https://esm.sh/base-lib@2.0.0/index.mjs': `export const base = 'Hello';`,
+    }));
     const r = await bundleScreenFiles([
-      { path: 'index.ts', content: `import _ from 'lodash'; console.log(_);` },
+      {
+        path: 'index.tsx',
+        content: `
+          import { render } from 'preact';
+          import { greet } from 'greeting-lib@1.0.0';
+          render(<p id="npm">{greet('esm')}</p>, document.getElementById('root')!);
+        `,
+      },
     ]);
-    expect(r.error).toContain("npm imports aren't supported here: 'lodash'");
+    expect(r.error).toBeUndefined();
+    const { root } = execute(r.js);
+    await flushRender();
+    expect(root.querySelector('#npm')?.textContent).toBe('Hello esm');
+  });
+
+  it("maps 'react' INSIDE fetched packages onto the embedded preact runtime (one runtime, hooks work)", async () => {
+    __setEsmFetchForTests(fakeEsm({
+      'https://esm.sh/use-flag@1.0.0': `import { useState } from 'react'; export function useFlag() { const [v] = useState('esm-flag'); return v; }`,
+    }));
+    const r = await bundleScreenFiles([
+      {
+        path: 'index.tsx',
+        content: `
+          import { render } from 'preact';
+          import { useFlag } from 'use-flag@1.0.0';
+          function App() { return <b id="flag">{useFlag()}</b>; }
+          render(<App />, document.getElementById('root')!);
+        `,
+      },
+    ]);
+    expect(r.error).toBeUndefined();
+    const { root } = execute(r.js);
+    await flushRender();
+    expect(root.querySelector('#flag')?.textContent).toBe('esm-flag');
+  });
+
+  it('reports an honest error when the package cannot be fetched', async () => {
+    __setEsmFetchForTests(fakeEsm({}));
+    const r = await bundleScreenFiles([
+      { path: 'index.ts', content: `import x from 'no-such-pkg@9.9.9'; console.log(x);` },
+    ]);
+    expect(r.error).toContain('esm.sh');
+    expect(r.error).toContain('no-such-pkg');
+  });
+
+  it('refuses full-URL imports from any origin other than esm.sh', async () => {
+    __setEsmFetchForTests(fakeEsm({}));
+    const r = await bundleScreenFiles([
+      { path: 'index.ts', content: `import x from 'https://evil.example/x.js'; console.log(x);` },
+    ]);
+    expect(r.error).toContain('Only https://esm.sh URL imports are allowed');
+  });
+});
+
+describe('bundleScreenFiles — image assets', () => {
+  it('imports an .svg file as a utf8 data: URI usable in <img src>', async () => {
+    const r = await bundleScreenFiles([
+      { path: 'assets/logo.svg', content: '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>' },
+      {
+        path: 'index.tsx',
+        content: `
+          import { render } from 'preact';
+          import logo from './assets/logo.svg';
+          render(<img id="logo" src={logo} />, document.getElementById('root')!);
+        `,
+      },
+    ]);
+    expect(r.error).toBeUndefined();
+    const { root } = execute(r.js);
+    await flushRender();
+    const src = root.querySelector('img')?.getAttribute('src') ?? '';
+    expect(src.startsWith('data:image/svg+xml;utf8,')).toBe(true);
+    expect(decodeURIComponent(src)).toContain('<circle r="4"/>');
+  });
+
+  it('imports a binary image stored as a data: URI verbatim', async () => {
+    const uri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+    const r = await bundleScreenFiles([
+      { path: 'assets/pic.png', content: uri },
+      {
+        path: 'index.tsx',
+        content: `
+          import { render } from 'preact';
+          import pic from './assets/pic.png';
+          render(<img id="pic" src={pic} />, document.getElementById('root')!);
+        `,
+      },
+    ]);
+    expect(r.error).toBeUndefined();
+    const { root } = execute(r.js);
+    await flushRender();
+    expect(root.querySelector('img')?.getAttribute('src')).toBe(uri);
+  });
+
+  it('refuses a binary image that is not stored as a data: URI', async () => {
+    const r = await bundleScreenFiles([
+      { path: 'pic.png', content: 'not-a-data-uri' },
+      { path: 'index.ts', content: `import pic from './pic.png'; console.log(pic);` },
+    ]);
+    expect(r.error).toContain('data: URIs');
   });
 });
 

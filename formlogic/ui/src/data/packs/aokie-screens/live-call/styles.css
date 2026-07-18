@@ -9,17 +9,22 @@ body { margin: 0; color: var(--fl-text); }
 #lc .console { border: 1px solid var(--fl-border); border-radius: 18px; overflow: hidden; background: var(--fl-surface); }
 
 #lc .chead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 13px 16px; border-bottom: 1px solid var(--fl-border); background: var(--fl-surface-2); }
+  padding: 14px 16px; border-bottom: 1px solid var(--fl-border); background: var(--fl-surface-2); }
 #lc .ident { display: flex; align-items: center; gap: 11px; min-width: 0; }
 #lc .logo { width: 38px; height: 38px; border-radius: 11px; flex: none; display: flex; align-items: center; justify-content: center;
-  font-weight: 700; color: var(--fl-accent-contrast); background: var(--fl-accent); }
-#lc h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
-#lc .sub { margin: 0; font-size: 11px; color: var(--fl-faint); }
+  font-weight: 700; font-size: 15px; color: var(--fl-accent-contrast); background: var(--fl-accent); }
+#lc h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+#lc .sub { margin: 1px 0 0; font-size: 11px; color: var(--fl-faint); }
 
 #lc .cbody { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
 #lc .card { border: 1px solid var(--fl-border); border-radius: 14px; padding: 14px 16px; background: var(--fl-surface); }
 /* The standby wrapper's children join .cbody's flex flow directly (same 14px rhythm). */
 #lc .standby { display: contents; }
+/* The last-call / update-cadence status line above the standby panel. */
+#lc .standby > .faint { padding: 2px 4px 0; font-size: 11.5px; }
+/* The remote mirror note reads as a considered callout: accent left rail on a
+   tinted surface, same 14px radius as every other card. */
+#lc .card.callout { border-left: 3px solid var(--fl-accent); background: var(--fl-surface-2); padding-left: 15px; }
 #lc .faint { font-size: 11px; color: var(--fl-faint); }
 #lc .muted { color: var(--fl-muted); }
 #lc .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -44,7 +49,7 @@ body { margin: 0; color: var(--fl-text); }
 #lc .avatar { width: 46px; height: 46px; flex: none; border-radius: 999px; display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 15px; color: var(--fl-accent-contrast); background: var(--fl-accent); }
 #lc .cid { min-width: 0; flex: 1; }
-#lc .eyebrow { margin: 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fl-accent); }
+#lc .eyebrow { margin: 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fl-accent); }
 #lc .eyebrow.live { color: var(--fl-good); }
 #lc .cname { margin: 2px 0 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: break-word; }
 #lc .cphone { margin: 2px 0 0; font-size: 12px; color: var(--fl-muted); }
@@ -64,13 +69,13 @@ body { margin: 0; color: var(--fl-text); }
 #lc .stagefoot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--fl-border); font-size: 11px; color: var(--fl-faint); }
 
 #lc .capcard { border: 1px solid var(--fl-border); border-radius: 14px; padding: 10px 16px; background: var(--fl-surface); }
-#lc .caphd { display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fl-faint); }
+#lc .caphd { display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fl-faint); }
 #lc .cappartial { margin: 5px 0 0; font-size: 14px; font-style: italic; color: var(--fl-muted); }
 #lc .capbot { margin: 5px 0 0; font-size: 14px; color: var(--fl-good); }
 #lc .capbot .tag { margin-right: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; opacity: 0.75; }
 
 #lc .thead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-#lc .thead h2 { margin: 0; font-size: 13px; font-weight: 600; }
+#lc .thead h2 { margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fl-muted); }
 #lc .turns { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto; }
 #lc .turn { display: flex; align-items: flex-start; gap: 8px; max-width: 86%; }
 #lc .turn.caller { flex-direction: row-reverse; align-self: flex-end; }
@@ -82,17 +87,18 @@ body { margin: 0; color: var(--fl-text); }
 #lc .twho { display: flex; align-items: baseline; gap: 8px; font-size: 11px; font-weight: 600; }
 #lc .turn.caller .twho { flex-direction: row-reverse; }
 #lc .ttime { font-size: 10px; font-weight: 400; color: var(--fl-faint); }
-#lc .ttext { margin: 4px 0 0; padding: 7px 11px; font-size: 13.5px; line-height: 1.5; color: var(--fl-text);
+#lc .ttext { margin: 4px 0 0; padding: 8px 12px; font-size: 13.5px; line-height: 1.5; color: var(--fl-text);
   border: 1px solid var(--fl-border); white-space: pre-wrap; overflow-wrap: break-word; }
-#lc .turn.agent .ttext { border-radius: 4px 12px 12px 12px; background: var(--fl-surface-2); }
-#lc .turn.caller .ttext { border-radius: 12px 4px 12px 12px; background: var(--fl-surface); }
+#lc .turn.agent .ttext { border-radius: 4px 14px 14px 14px; background: var(--fl-surface-2); }
+#lc .turn.caller .ttext { border-radius: 14px 4px 14px 14px; background: var(--fl-surface); }
 #lc .turn.pending .ttext { font-style: italic; opacity: 0.75; }
 
 #lc .composer { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--fl-border); }
 #lc .composer input { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--fl-text);
   background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 999px; padding: 8px 15px;
-  transition: border-color 0.15s ease; }
-#lc .composer input:focus-visible { outline: none; border-color: var(--fl-accent); }
+  transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+#lc .composer input:focus-visible { outline: none; border-color: var(--fl-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fl-accent) 16%, transparent); }
 #lc .composer input:disabled { opacity: 0.5; }
 #lc .send { width: 36px; height: 36px; flex: none; border-radius: 999px; cursor: pointer; border: 0;
   color: var(--fl-accent-contrast); background: var(--fl-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; }
@@ -113,6 +119,7 @@ body { margin: 0; color: var(--fl-text); }
 #lc .cstat.ok { color: var(--fl-good); }
 #lc .cstat.bad { color: var(--fl-bad); }
 #lc .link { color: var(--fl-accent); font-size: 12px; font-weight: 500; cursor: pointer; }
+#lc .link:hover { text-decoration: underline; }
 #lc .link:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 2px; border-radius: 6px; }
 
 /* Small phones: tighter shell, full-width call controls, wider bubbles. */

@@ -102,11 +102,24 @@ async function bundleFilesScreen(files, entry) {
             }
             const id = VENDOR_PATHS[args.path] ? args.path : VENDOR_ALIASES[args.path];
             if (id) return { path: VENDOR_PATHS[id] };
-            return { errors: [{ text: `npm import not allowed in screens: '${args.path}'` }] };
+            // PACK screens must stay hermetic + deterministic (they are signed and run for every
+            // installer): no esm.sh here even though user-authored Studio screens get it.
+            return { errors: [{ text: `npm import not allowed in PACK screens: '${args.path}' (pack screens are hermetic — built-ins only)` }] };
           });
           b.onLoad({ filter: /.*/, namespace: 'vfs' }, (args) => {
+            const contents = map.get(args.path);
+            // Image assets import as data: URI strings — mirror screenCompile's loader.
+            if (/\.(png|jpe?g|gif|webp|ico|bmp|avif|svg)$/i.test(args.path)) {
+              const uri = contents.startsWith('data:')
+                ? contents
+                : /\.svg$/i.test(args.path)
+                  ? 'data:image/svg+xml;utf8,' + encodeURIComponent(contents)
+                  : null;
+              if (uri === null) return { errors: [{ text: `${args.path}: binary images must be data: URIs` }] };
+              return { contents: `export default ${JSON.stringify(uri)};`, loader: 'js' };
+            }
             const ext = args.path.slice(args.path.lastIndexOf('.') + 1);
-            return { contents: map.get(args.path), loader: ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : 'js' };
+            return { contents, loader: ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : 'js' };
           });
           b.onLoad({ filter: /.*/, namespace: 'css-stub' }, () => ({ contents: '', loader: 'js' }));
         },
@@ -214,10 +227,13 @@ async function checkScreen(label, cs, { isForm }) {
   // Multi-file TS/TSX screens compile at runtime (sandbox bundler) — prove the sources COMPILE
   // with the same vfs+vendor+JSX semantics, then apply the content policies to the sources.
   if (!cs.js && cs.files?.length) {
-    const all = cs.files.map((f) => f.content || '').join('\n');
+    // data: URI assets (uploaded images) are excluded from the text policies — base64 payloads
+    // are huge and can't carry emoji/hex-color violations anyway.
+    const textFiles = cs.files.filter((f) => !String(f.content || '').startsWith('data:'));
+    const all = textFiles.map((f) => f.content || '').join('\n');
     const emoji = all.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u);
     if (emoji) { console.error(`[${label}] emoji/symbol found: ${emoji[0]}`); fail = 1; }
-    const cssText = cs.files.filter((f) => /\.css$/i.test(f.path)).map((f) => f.content || '').join('\n');
+    const cssText = textFiles.filter((f) => /\.css$/i.test(f.path)).map((f) => f.content || '').join('\n');
     const hexes = [...new Set((cssText.match(/#[0-9a-fA-F]{3,8}\b/g) || []).filter((x) => !/^#(fff|ffffff)$/i.test(x)))];
     if (hexes.length) { console.error(`[${label}] hardcoded hex in css: ${hexes.join(' ')} (use --fl-* vars)`); fail = 1; }
     const r = await bundleFilesScreen(cs.files, cs.entry);

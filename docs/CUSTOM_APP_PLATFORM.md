@@ -174,11 +174,19 @@ Sandboxed `code` screens (form sections, record widgets, app homes) can be autho
 that mounts `createRoot(document.getElementById('root')!).render(<App/>)`. The sandbox bundler
 (`lib/screenCompile.ts`, esbuild-wasm + a virtual filesystem) compiles them on render with the
 automatic JSX runtime on **embedded Preact** — `'react'`, `'react-dom/client'`, `'preact'` and
-`'preact/hooks'` are the only resolvable bare imports (`react` aliases to `preact/compat`; the
-module sources ship inside a lazy chunk, `lib/screenVendorModules.ts` — no network, no other npm).
+`'preact/hooks'` resolve from embedded module sources (`react` aliases to `preact/compat`; a lazy
+chunk, `lib/screenVendorModules.ts` — never a network fetch). Any OTHER bare import resolves via
+**esm.sh at COMPILE time**: the bundler (running in the host page, which has network) fetches the
+package's module graph and inlines it, so the compiled bundle stays self-contained and the sandbox
+iframe stays network-free (react-family modules inside fetched packages fold onto the embedded
+Preact so there is exactly one component runtime; per-build caps: 64 modules / 4MB; esm.sh is the
+only allowed URL origin; pack-owned screens are exempted — they stay hermetic, built-ins only).
 Folders + relative imports between files are supported; every `.css` file is injected into the
 shell automatically (JS-side `import './x.css'` is a tolerated no-op); a missing `index.html`
-falls back to `<div id="root"></div>`. Pack-owned screens ship their sources the same way
+falls back to `<div id="root"></div>`. **Image assets**: `.svg` files ship as text, binary images
+(`.png/.jpg/.gif/.webp/…`) ship as `data:` URI file contents (the Studio upload converts, with an
+image preview pane in the files editor); importing an image file from code yields its data: URI
+for `<img src={...}>` (the iframe CSP allows `img-src data:`). The saved-screen cap is 2MB. Pack-owned screens ship their sources the same way
 (`src/data/packs/aokie-screens/…` imported `?raw` into the pack modules), so they are
 type-checked by the repo's tsc and unit-tested as real modules; `scripts/check-pack-screens.mjs`
 compiles every files-based pack screen with the same semantics and enforces the content policies

@@ -389,7 +389,7 @@ export default function CustomScreenStudio() {
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept=".html,.htm,.css,.js,.ts,.tsx,.jsx,.json,.svg,.md,.txt"
+                  accept=".html,.htm,.css,.js,.ts,.tsx,.jsx,.json,.svg,.md,.txt,.png,.jpg,.jpeg,.gif,.webp,.ico,.bmp,.avif"
                   className="hidden"
                   onChange={(e) => { const picked = e.currentTarget.files ? Array.from(e.currentTarget.files) : []; e.currentTarget.value = ''; void onUpload(picked); }}
                 />

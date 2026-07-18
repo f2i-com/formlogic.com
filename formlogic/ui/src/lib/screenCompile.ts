@@ -85,8 +85,71 @@ function resolveRelative(importer: string, spec: string, map: Map<string, string
 
 const ENTRY_CANDIDATES = ['index.tsx', 'index.ts', 'main.tsx', 'main.ts', 'app.tsx', 'app.ts'];
 
-/** The virtual-filesystem + embedded-vendor resolver shared by every screen bundle. */
+// ---- npm imports via esm.sh (COMPILE-time only) --------------------------------------------
+// Bare imports beyond the embedded react/preact built-ins resolve against https://esm.sh: the
+// bundler (running in the HOST page, which has network) fetches the module graph and inlines it,
+// so the compiled bundle stays fully self-contained and the sandbox iframe stays network-free
+// (its CSP is unchanged). Pack-owned screens deliberately do NOT get this — they must stay
+// hermetic/deterministic (check-pack-screens keeps refusing npm imports for them).
+
+/** Minimal fetch shape the resolver needs — lets tests inject an offline fake registry. */
+export type EsmFetch = (url: string) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+
+let esmFetchOverride: EsmFetch | null = null;
+const esmCache = new Map<string, Promise<string>>();
+
+/** Tests only: replace the network fetch for esm.sh modules (null restores; clears the cache). */
+export function __setEsmFetchForTests(impl: EsmFetch | null): void {
+  esmFetchOverride = impl;
+  esmCache.clear();
+}
+
+const ESM_ORIGIN = 'https://esm.sh';
+const ESM_MAX_MODULES = 64;
+const ESM_MAX_BYTES = 4 * 1024 * 1024;
+
+function esmFetchText(url: string): Promise<string> {
+  let p = esmCache.get(url);
+  if (!p) {
+    const f: EsmFetch = esmFetchOverride ?? ((u) => fetch(u));
+    p = f(url).then(async (res) => {
+      if (!res.ok) throw new Error(`esm.sh returned ${res.status}`);
+      return res.text();
+    });
+    p.catch(() => esmCache.delete(url)); // a transient failure may retry on the next build
+    esmCache.set(url, p);
+  }
+  return p;
+}
+
+/**
+ * Map a react-family esm.sh path onto the embedded preact vendors, so a fetched package shares
+ * ONE component runtime with the screen — bundling a second real React would break hooks.
+ */
+function esmReactVendorId(pathname: string): string | null {
+  const m = pathname.match(/^\/(?:stable\/|v\d+\/)?react(-dom)?@[^/]+(\/.*)?$/);
+  if (!m) return null;
+  const sub = m[2] ?? '';
+  if (sub.includes('jsx-runtime')) return 'preact/jsx-runtime';
+  if (m[1] && sub.includes('client')) return 'preact/compat/client';
+  return 'preact/compat';
+}
+
+/** Image assets: imported from JS/TSX they resolve to a data: URI string (default export). */
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|ico|bmp|avif|svg)$/i;
+
+/** The virtual-filesystem + embedded-vendor + esm.sh resolver shared by every screen bundle. */
 function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
+  // Per-build budgets so one screen can't quietly pull a huge dependency graph.
+  let esmModules = 0;
+  let esmBytes = 0;
+  const toEsm = (url: URL): { path: string; namespace: string } =>
+    /\.css$/i.test(url.pathname)
+      ? { path: '\0css-stub', namespace: 'css-stub' } // package css can't inject into the shell — no-op
+      : (() => {
+          const reactId = esmReactVendorId(url.pathname);
+          return reactId ? { path: reactId, namespace: 'vendor' } : { path: url.href, namespace: 'esm' };
+        })();
   return {
     name: 'formlogic-vfs',
     setup(build) {
@@ -99,6 +162,21 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
             ? { path: id, namespace: 'vendor' }
             : { errors: [{ text: `Unresolvable built-in import '${args.path}'` }] };
         }
+        // Inside a fetched esm.sh module: relative + root-absolute specifiers stay on esm.sh;
+        // react-family bares fold into the embedded vendors.
+        if (args.namespace === 'esm') {
+          if (args.path.startsWith('.')) return toEsm(new URL(args.path, args.importer));
+          if (args.path.startsWith('/')) return toEsm(new URL(args.path, ESM_ORIGIN));
+          const id = vendors.resolveVendorId(args.path);
+          if (id) return { path: id, namespace: 'vendor' };
+          if (/^https?:\/\//i.test(args.path)) {
+            const u = new URL(args.path);
+            return u.origin === ESM_ORIGIN
+              ? toEsm(u)
+              : { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${u.origin}).` }] };
+          }
+          return toEsm(new URL('/' + args.path, ESM_ORIGIN));
+        }
         if (args.path.startsWith('.')) {
           // CSS is injected into the page separately (all .css files concatenate into the shell),
           // so a JS-side `import './styles.css'` — a habit AI/React authors bring — is a no-op.
@@ -108,16 +186,53 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
         }
         const id = vendors.resolveVendorId(args.path);
         if (id) return { path: id, namespace: 'vendor' };
-        return { errors: [{ text: `npm imports aren't supported here: '${args.path}'. Built-ins: ${vendors.VENDOR_IMPORT_HINT} (JSX components run on Preact). Use relative imports for your own files.` }] };
+        // Full-URL imports: esm.sh only (anything else would be an uncontrolled code source).
+        if (/^https?:\/\//i.test(args.path)) {
+          const u = new URL(args.path);
+          return u.origin === ESM_ORIGIN
+            ? toEsm(u)
+            : { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${u.origin}).` }] };
+        }
+        // Any other bare specifier = an npm package, resolved via esm.sh at compile time.
+        return toEsm(new URL('/' + args.path, ESM_ORIGIN));
       });
       build.onLoad({ filter: /.*/, namespace: 'vendor' }, (args) => ({
         contents: vendors.VENDOR_MODULES[args.path] ?? '',
         loader: 'js',
       }));
       build.onLoad({ filter: /.*/, namespace: 'css-stub' }, () => ({ contents: '', loader: 'js' }));
+      build.onLoad({ filter: /.*/, namespace: 'esm' }, async (args) => {
+        if (++esmModules > ESM_MAX_MODULES) {
+          return { errors: [{ text: `This screen pulls more than ${ESM_MAX_MODULES} npm modules — trim its dependencies.` }] };
+        }
+        try {
+          const code = await esmFetchText(args.path);
+          esmBytes += code.length;
+          if (esmBytes > ESM_MAX_BYTES) {
+            return { errors: [{ text: `This screen's npm dependencies exceed ${Math.round(ESM_MAX_BYTES / 1048576)}MB — trim its dependencies.` }] };
+          }
+          return { contents: code, loader: 'js' };
+        } catch (e) {
+          const why = e instanceof Error ? e.message : 'network error';
+          return { errors: [{ text: `Could not fetch '${args.path}' (${why}). npm imports are downloaded from esm.sh when the screen COMPILES, so the editor needs internet — and pin versions (e.g. canvas-confetti@1.9.3) for reproducible builds. Built-ins that never need network: ${vendors.VENDOR_IMPORT_HINT}.` }] };
+        }
+      });
       build.onLoad({ filter: /.*/, namespace: 'vfs' }, (args) => {
         const contents = map.get(args.path);
         if (contents === undefined) return { errors: [{ text: `Missing file: ${args.path}` }] };
+        // Images import as a data: URI string (default export) for <img src={...}>. Binary
+        // formats are STORED as data: URIs (the Studio upload converts); .svg text is wrapped.
+        if (IMAGE_EXT_RE.test(args.path)) {
+          const uri = contents.startsWith('data:')
+            ? contents
+            : /\.svg$/i.test(args.path)
+              ? 'data:image/svg+xml;utf8,' + encodeURIComponent(contents)
+              : null;
+          if (uri === null) {
+            return { errors: [{ text: `${args.path}: binary images must be stored as data: URIs — upload the image through the Studio's file upload.` }] };
+          }
+          return { contents: `export default ${JSON.stringify(uri)};`, loader: 'js' };
+        }
         const ext = args.path.slice(args.path.lastIndexOf('.') + 1);
         const loader = ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : 'js';
         return { contents, loader };
@@ -158,7 +273,8 @@ async function runBundle(map: Map<string, string>, entryPath: string): Promise<{
 /**
  * Bundle a multi-file screen project (TypeScript/TSX/JS with relative imports) into one runnable JS via
  * esbuild-wasm + a virtual filesystem. Returns the shell html, concatenated css, and the bundled js.
- * npm imports resolve only against the embedded built-ins (react/preact) — the sandbox has no network.
+ * npm imports resolve against the embedded built-ins (react/preact) first, then via esm.sh at
+ * COMPILE time (fetched by the host and inlined — the sandbox itself stays network-free).
  */
 export async function bundleScreenFiles(files: ScreenFile[], entry?: string): Promise<{ html: string; css: string; js: string; error?: string }> {
   const map = new Map(files.map((f) => [normalizePath(f.path), f.content]));

@@ -119,8 +119,9 @@ class FormController
                 return 'Custom screen must be an object';
             }
             $screenJson = json_encode($data['customScreen']);
-            if ($screenJson !== false && strlen($screenJson) > 524288) {
-                return 'Custom screen must be 512KB or smaller';
+            // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
+            if ($screenJson !== false && strlen($screenJson) > 2097152) {
+                return 'Custom screen must be 2MB or smaller';
             }
         }
         if (isset($data['customLogic'])) {

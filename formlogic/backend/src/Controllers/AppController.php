@@ -201,8 +201,9 @@ class AppController
                 $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboardForApp($data['customScreen']['dashboard'], $args['id']);
             }
             $screenJson = json_encode($data['customScreen']);
-            if ($screenJson !== false && strlen($screenJson) > 524288) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 512KB or smaller'], 400);
+            // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
+            if ($screenJson !== false && strlen($screenJson) > 2097152) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 2MB or smaller'], 400);
             }
         }
 

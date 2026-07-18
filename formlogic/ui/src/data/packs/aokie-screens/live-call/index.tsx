@@ -63,7 +63,7 @@ function Standby({ c }: { c: ConsoleController }) {
     <div class="standby">
       <div class="faint">{line}</div>
       {s.presence.kind === 'remote' ? (
-        <div class="card">
+        <div class="card callout">
           <p class="note">
             {'The receptionist runs on ' + (s.presence.deviceName || 'another machine')
               + '. This console mirrors its calls and relays your controls.'}
