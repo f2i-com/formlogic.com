@@ -87,6 +87,26 @@ describe('bundleScreenFiles — TSX components', () => {
     expect(root.querySelector('h1')?.textContent).toBe('Hello TSX');
   });
 
+  it('tolerates JS-side css imports as no-ops (css is injected separately)', async () => {
+    const r = await bundleScreenFiles([
+      { path: 'styles.css', content: '.a { color: var(--fl-accent); }' },
+      {
+        path: 'index.tsx',
+        content: `
+          import './styles.css';
+          import './missing.css';
+          import { render } from 'preact';
+          render(<p id="ok">css imports ignored</p>, document.getElementById('root')!);
+        `,
+      },
+    ]);
+    expect(r.error).toBeUndefined();
+    expect(r.css).toContain('--fl-accent'); // still collected from the file itself
+    const { root } = execute(r.js);
+    await flushRender();
+    expect(root.querySelector('#ok')?.textContent).toBe('css imports ignored');
+  });
+
   it('still refuses unknown npm imports with an honest message', async () => {
     const r = await bundleScreenFiles([
       { path: 'index.ts', content: `import _ from 'lodash'; console.log(_);` },

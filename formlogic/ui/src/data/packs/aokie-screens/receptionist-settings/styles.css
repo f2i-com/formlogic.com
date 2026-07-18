@@ -1,0 +1,81 @@
+/* Token-only styling (--fl-* variables from the host palette) so the console
+   follows the app accent and flips with the viewer's light/dark theme.
+   Card pattern: var(--fl-surface) on a 1px var(--fl-border), 14px radius,
+   11px uppercase eyebrow titles in var(--fl-muted). */
+html, body { background: transparent; }
+body { color: var(--fl-text); }
+#rs { max-width: 780px; margin: 0 auto; padding: 8px 8px 88px; display: flex; flex-direction: column; }
+#rs #cards { display: flex; flex-direction: column; gap: 14px; }
+
+#rs .card { border: 1px solid var(--fl-border); border-radius: 14px; padding: 14px 16px; background: var(--fl-surface); transition: border-color 0.15s ease; }
+#rs .card.danger { border-color: var(--fl-bad); }
+#rs h2 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fl-muted); }
+#rs h3 { margin: 12px 0 4px; font-size: 12.5px; font-weight: 600; }
+#rs .hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+#rs .hdr h2 { margin: 0; }
+
+#rs label.f { display: block; margin: 10px 0 0; }
+#rs label.f:first-child { margin-top: 0; }
+#rs .lbl { display: block; margin-bottom: 4px; font-size: 11.5px; font-weight: 500; color: var(--fl-muted); }
+#rs .hint { margin: 4px 0 0; font-size: 11px; line-height: 1.45; color: var(--fl-faint); }
+#rs .muted { color: var(--fl-muted); font-size: 12.5px; }
+#rs .faint { color: var(--fl-faint); font-size: 11px; }
+#rs .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+#rs input[type="text"], #rs input[type="password"], #rs textarea, #rs select {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--fl-text);
+  background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 10px; padding: 8px 11px;
+  transition: border-color 0.15s ease;
+}
+#rs input[type="text"]:focus, #rs input[type="password"]:focus, #rs textarea:focus, #rs select:focus {
+  outline: none; border-color: var(--fl-accent);
+}
+#rs textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
+#rs select { cursor: pointer; }
+#rs .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 520px) { #rs .row2 { grid-template-columns: 1fr; } }
+@media (max-width: 380px) { #rs { padding: 6px 4px 88px; } #rs .card { padding: 12px 12px; } }
+
+#rs .chk { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: 12.5px; cursor: pointer; }
+#rs .chk input { margin-top: 2px; width: 15px; height: 15px; flex: none; }
+#rs .chk .sub { display: block; margin-top: 2px; font-size: 11px; color: var(--fl-faint); font-weight: 400; }
+#rs .chk.off { opacity: .55; }
+
+#rs .btn { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500;
+  border-radius: 10px; padding: 7px 13px; border: 1px solid var(--fl-border); color: var(--fl-text); background: var(--fl-surface);
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease; }
+#rs .btn:hover { background: var(--fl-surface-2); }
+#rs .btn[disabled] { opacity: .45; cursor: not-allowed; }
+#rs .btn.dark { background: var(--fl-text); color: var(--fl-surface); border-color: var(--fl-text); }
+#rs .btn.primary { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-accent-contrast); }
+#rs .btn.sm { font-size: 11.5px; padding: 5px 10px; }
+#rs .savebtnrow { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+#rs .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 600; border: 1px solid var(--fl-border); color: var(--fl-muted); }
+#rs .pill.ok { color: var(--fl-good); border-color: var(--fl-good); }
+#rs .pill.accent { color: var(--fl-accent); border-color: var(--fl-accent); }
+
+#rs .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#rs .chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--fl-surface-2); padding: 3px 5px 3px 10px; font-size: 11px; }
+#rs .chip button { cursor: pointer; border: 0; background: transparent; color: var(--fl-faint); font-size: 14px; line-height: 1; padding: 0 2px; transition: color 0.15s ease; }
+#rs .chip button:hover { color: var(--fl-bad); }
+
+#rs #banner:empty { display: none; }
+#rs #err { border: 1px solid var(--fl-bad); border-radius: 12px; padding: 10px 14px; font-size: 13px; color: var(--fl-bad); overflow-wrap: break-word; }
+
+#rs .running .greet { font-size: 13.5px; }
+#rs .running .meta { margin-top: 3px; font-size: 11.5px; color: var(--fl-muted); }
+#rs .running .persona { margin-top: 3px; font-size: 11px; color: var(--fl-faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+#rs .savebar { position: sticky; bottom: 8px; margin-top: 14px; z-index: 5; }
+#rs .savebar .inner { border: 1px solid var(--fl-border); border-radius: 14px; padding: 10px 12px; background: var(--fl-surface); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; box-shadow: 0 8px 30px -18px rgba(0,0,0,.4); }
+#rs .savebar .right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+#rs .dirty { font-size: 11.5px; font-weight: 600; color: var(--fl-warn); }
+#rs .clean { font-size: 11.5px; color: var(--fl-faint); }
+
+#rs .adv summary { cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fl-muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+#rs .adv summary::-webkit-details-marker { display: none; }
+/* Disclosure triangle driven by the native [open] state so it can never go
+   stale (the open flag is only mirrored into the store for re-renders). */
+#rs .adv summary::before { content: '>'; color: var(--fl-faint); font-family: ui-monospace, monospace; }
+#rs .adv[open] summary::before { content: 'v'; }

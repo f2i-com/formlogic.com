@@ -22,15 +22,29 @@ const STARTER: ScreenFile[] = [
 ];
 
 // React-style components — no index.html needed (the bundler mounts into a default <div id="root">).
-// 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual.
+// 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual. Folders of
+// components with relative imports are supported — this starter shows the pattern.
 const STARTER_TSX: ScreenFile[] = [
-  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n' },
+  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n.form-card { display: block; width: 100%; text-align: left; padding: 12px 16px; margin: 0 0 8px; border: 1px solid var(--fl-border); border-radius: 10px; background: var(--fl-surface); cursor: pointer; font: inherit; }\n.form-card:hover { border-color: var(--fl-accent); }\n' },
+  {
+    path: 'components/FormCard.tsx',
+    content: `// A tiny reusable component — add more files/folders and import them with relative paths.
+export function FormCard({ name, onOpen }: { name: string; onOpen: () => void }) {
+  return (
+    <button class="form-card" onClick={onOpen}>
+      {name}
+    </button>
+  );
+}
+`,
+  },
   {
     path: 'index.tsx',
     content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact).
 // window.FormLogic (app SDK): context(), forms(), submit(formId, answers), records(formId), navigate(formId).
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { FormCard } from './components/FormCard';
 
 function App() {
   const [ctx, setCtx] = useState<{ appName: string; forms: FlFormRef[] } | null>(null);
@@ -43,13 +57,9 @@ function App() {
   return (
     <main>
       <h1>{ctx.appName}</h1>
-      <ul>
-        {ctx.forms.map((f) => (
-          <li key={f.formId}>
-            <button onClick={() => FormLogic.navigate(f.formId)}>{f.displayName}</button>
-          </li>
-        ))}
-      </ul>
+      {ctx.forms.map((f) => (
+        <FormCard key={f.formId} name={f.displayName} onOpen={() => FormLogic.navigate(f.formId)} />
+      ))}
     </main>
   );
 }
@@ -194,11 +204,14 @@ export default function AppHomeStudio() {
     setGenerating(false);
     const g = res.data?.data;
     if (res.error || !g) { toast.error(typeof res.error === 'string' ? res.error : 'Could not generate the app.'); return; }
-    const next: ScreenFile[] = [
-      { path: 'index.html', content: g.html || '<div id="app"></div>' },
-      { path: 'styles.css', content: g.css || '' },
-      { path: 'index.ts', content: g.js || '' },
-    ];
+    // Preferred: a multi-file TSX project straight from the model; legacy triple as fallback.
+    const next: ScreenFile[] = g.files?.length
+      ? g.files.map((f) => ({ path: f.path, content: f.content }))
+      : [
+          { path: 'index.html', content: g.html || '<div id="app"></div>' },
+          { path: 'styles.css', content: g.css || '' },
+          { path: 'index.ts', content: g.js || '' },
+        ];
     setFiles(next); setDirty(true); rebuild(next);
     toast.success('App generated — preview on the right.');
   };

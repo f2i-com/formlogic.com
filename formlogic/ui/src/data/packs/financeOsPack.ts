@@ -40,11 +40,15 @@ export interface PackForm {
     kind?: 'dashboard' | 'sdk' | 'code';
     dashboard?: PackDashboardScreen;
     sdkScreen?: { screenId: string; title?: string; params?: Record<string, unknown> };
-    /** kind 'code': the sandboxed section screen's source (title is display-only). */
+    /** kind 'code': the sandboxed section screen's source (title is display-only). Either a
+     *  precompiled html/css/js triple, or a TSX/TS `files` project the runtime bundles
+     *  (entry index.tsx; preact/react built-ins available). */
     title?: string;
     html?: string;
     css?: string;
     js?: string;
+    files?: Array<{ path: string; content: string }>;
+    entry?: string;
     /** Optional per-RECORD widget on the record detail view (see RecordScreen in types/form). */
     recordScreen?: {
       kind: 'sdk' | 'code';
@@ -55,6 +59,8 @@ export interface PackForm {
       html?: string;
       css?: string;
       js?: string;
+      files?: Array<{ path: string; content: string }>;
+      entry?: string;
       height?: number;
     };
   };

@@ -265,7 +265,7 @@ class AIService
         }
 
         return <<<PROMPT
-You build a single-page CUSTOM SCREEN (vanilla HTML, CSS, and JavaScript) that runs inside a SANDBOXED iframe.
+You build a CUSTOM SCREEN — a small React-style TSX app that runs inside a SANDBOXED iframe.
 It has NO network access of its own (fetch/XHR are blocked). It talks to the FormLogic backend ONLY through the
 global `FormLogic` SDK, which is already injected (do not redefine it):
 
@@ -275,31 +275,39 @@ global `FormLogic` SDK, which is already injected (do not redefine it):
   await FormLogic.currentUser()        -> { id, name, email } | null
   FormLogic.toast.success(message)     // small success toast
   FormLogic.toast.error(message)       // small error toast
-  FormLogic.escapeHtml(value)          // -> HTML-escaped string; use for ANY record/user data put into innerHTML
+  FormLogic.escapeHtml(value)          // -> HTML-escaped string (only needed if you build raw HTML strings; JSX text is auto-escaped)
+
+RUNTIME: the screen is a multi-file TypeScript/TSX project bundled in the sandbox. JSX components run on
+Preact with React aliased to it — `import { useState, useEffect } from 'react'` and
+`import { createRoot } from 'react-dom/client'` work as usual. ONLY these built-in modules exist:
+'react', 'react-dom/client', 'preact', 'preact/hooks'. NO other npm packages — everything else must be
+your own files, imported with RELATIVE paths (folders are fine, e.g. `import { Card } from './components/Card'`).
+The entry file is index.tsx and it MUST mount the app:
+  createRoot(document.getElementById('root')!).render(<App />);
+A `<div id="root"></div>` shell exists automatically — you do NOT need an index.html. Every .css file you
+emit is injected automatically. The host injects CSS custom properties for theming: use var(--fl-accent)
+and var(--fl-accent-contrast) for the brand color so the screen matches the app.
 
 This form's fields (submit using these EXACT ids):
 {$fieldList}
 
 Requirements:
-- Self-contained: all logic in the js, all styling in the css. Do NOT load external scripts, fonts, or images by URL.
-- Use ONLY FormLogic for data — never fetch().
-- Make it genuinely functional and visually polished (responsive, looks good on its own).
-- To save data call FormLogic.submit({ ...fieldId: value }); to show a leaderboard/history call FormLogic.records().
-- Wrap async calls in try/catch and use FormLogic.toast.error on failure.
-- Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
-- SECURITY: never interpolate record/user data straight into innerHTML — use textContent, or FormLogic.escapeHtml(value) when building HTML strings, so submitted values can't inject markup.
-- Keep total output reasonable so it isn't truncated; put ALL behaviour in the js block.
+- Use ONLY FormLogic for data — never fetch(). Wrap async calls in try/catch and use FormLogic.toast.error on failure.
+- Make it genuinely functional and visually polished (responsive, clean typography, sensible spacing).
+- To save data call FormLogic.submit({ fieldId: value }); to show a leaderboard/history call FormLogic.records().
+- Handle events with JSX props (onClick etc.) — never inline HTML attribute handlers.
+- SECURITY: render record/user data as JSX text (auto-escaped). NEVER use dangerouslySetInnerHTML with record data.
+- Split non-trivial UIs into component files (components/…) rather than one giant file.
+- Keep total output reasonable so it isn't truncated.
 
-Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):
-```html
-...the body markup...
+Respond with ONLY fenced code blocks, ONE PER FILE, each fence tagged with its path — no prose, no JSON:
+```tsx file=index.tsx
+...the entry: components + createRoot mount...
 ```
-```css
-...the css rules...
+```css file=styles.css
+...the styles...
 ```
-```js
-...the javascript...
-```
+Add more component files as extra blocks, e.g. ```tsx file=components/Leaderboard.tsx
 PROMPT;
     }
 
@@ -327,8 +335,8 @@ PROMPT;
         }
 
         return <<<PROMPT
-You build an APP HOME screen — the landing page of a multi-form app — as a single page of vanilla HTML, CSS,
-and JavaScript that runs inside a SANDBOXED iframe. It has NO network access of its own (fetch/XHR are blocked).
+You build an APP HOME screen — the landing page of a multi-form app — as a small React-style TSX app that
+runs inside a SANDBOXED iframe. It has NO network access of its own (fetch/XHR are blocked).
 It talks to the backend ONLY through the global `FormLogic` SDK, which is already injected (do not redefine it).
 This SDK is APP-scoped — it spans the app's forms, so data calls take a formId:
 
@@ -341,39 +349,95 @@ This SDK is APP-scoped — it spans the app's forms, so data calls take a formId
   FormLogic.toast.success(message) / FormLogic.toast.error(message)
   FormLogic.escapeHtml(value)                -> HTML-escaped string; use for ANY record/user data put into innerHTML
 
+RUNTIME: the screen is a multi-file TypeScript/TSX project bundled in the sandbox. JSX components run on
+Preact with React aliased to it — `import { useState, useEffect } from 'react'` and
+`import { createRoot } from 'react-dom/client'` work as usual. ONLY these built-in modules exist:
+'react', 'react-dom/client', 'preact', 'preact/hooks'. NO other npm packages — everything else must be
+your own files, imported with RELATIVE paths (folders are fine, e.g. `import { Card } from './components/Card'`).
+The entry file is index.tsx and it MUST mount the app:
+  createRoot(document.getElementById('root')!).render(<App />);
+A `<div id="root"></div>` shell exists automatically — you do NOT need an index.html. Every .css file you
+emit is injected automatically. The host injects CSS custom properties for theming: use var(--fl-accent)
+and var(--fl-accent-contrast) for the brand color so the screen matches the app.
+
 This app's forms (use these EXACT formId values and field ids):
 {$formList}
 
 Requirements:
-- Self-contained: all logic in the js, all styling in the css. Do NOT load external scripts, fonts, or images by URL.
 - Use ONLY FormLogic for data — never fetch(). Pass the correct formId to submit/records/navigate.
-- Make it a genuinely useful, polished landing (responsive, looks good on its own) — e.g. a dashboard, a game, a launcher.
-- Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
-- SECURITY: never interpolate record/user data straight into innerHTML — use textContent or FormLogic.escapeHtml(value).
-- Wrap async calls in try/catch and use FormLogic.toast.error on failure. Put ALL behaviour in the js block.
+- Make it a genuinely useful, polished landing (responsive, clean typography) — e.g. a dashboard, a game, a launcher.
+- Handle events with JSX props (onClick etc.) — never inline HTML attribute handlers.
+- SECURITY: render record/user data as JSX text (auto-escaped). NEVER use dangerouslySetInnerHTML with record data.
+- Split non-trivial UIs into component files (components/…) rather than one giant file.
+- Wrap async calls in try/catch and use FormLogic.toast.error on failure.
 
-Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):
-```html
-...the body markup...
+Respond with ONLY fenced code blocks, ONE PER FILE, each fence tagged with its path — no prose, no JSON:
+```tsx file=index.tsx
+...the entry: components + createRoot mount...
 ```
-```css
-...the css rules...
+```css file=styles.css
+...the styles...
 ```
-```js
-...the javascript...
-```
+Add more component files as extra blocks, e.g. ```tsx file=components/FormCard.tsx
 PROMPT;
     }
 
-    /** Parse the three fenced code blocks (robust for code); fall back to a JSON object if needed. */
-    private function parseCustomScreen(string $response): array
+    /**
+     * Parse the AI screen reply. Preferred format: fenced blocks tagged with file paths
+     * (```tsx file=index.tsx …) — returned as a multi-file `files` project the Studio/runtime
+     * bundles (TSX on the embedded Preact). Falls back to the legacy three-block html/css/js
+     * triple, then to a JSON object, so older models keep working.
+     */
+    public function parseCustomScreen(string $response): array
     {
+        // Named-file fences: ```<lang> file=path
+        if (preg_match_all('/```[a-zA-Z]*[ \t]+file=([^\s`]+)[ \t]*\r?\n([\s\S]*?)```/i', $response, $m, PREG_SET_ORDER)) {
+            $files = [];
+            $total = 0;
+            foreach (array_slice($m, 0, 24) as $match) {
+                $path = $this->sanitizeScreenFilePath($match[1]);
+                if ($path === null) {
+                    continue;
+                }
+                $content = substr(trim($match[2]), 0, 200000);
+                $total += strlen($content);
+                if ($total > 480000) { // stay under the 512KB customScreen cap with JSON overhead
+                    break;
+                }
+                $files[] = ['path' => $path, 'content' => $content];
+            }
+            $hasEntry = array_filter($files, static fn ($f) => preg_match('/^(index|main|app)\.(tsx?|jsx?)$/', $f['path']));
+            if (!empty($files) && !empty($hasEntry)) {
+                // Models sometimes mix formats: tagged code fences plus an UNTAGGED css/html block.
+                // Fold those in rather than silently dropping them.
+                $paths = array_column($files, 'path');
+                if (!in_array(true, array_map(static fn ($p) => (bool) preg_match('/\.css$/', $p), $paths), true)
+                    && preg_match('/```css\b[ \t]*\r?\n([\s\S]*?)```/i', $response, $cssM)) {
+                    $files[] = ['path' => 'styles.css', 'content' => substr(trim($cssM[1]), 0, 100000)];
+                }
+                if (!in_array('index.html', $paths, true)
+                    && preg_match('/```html\b[ \t]*\r?\n([\s\S]*?)```/i', $response, $htmlM)) {
+                    $files[] = ['path' => 'index.html', 'content' => substr(trim($htmlM[1]), 0, 100000)];
+                }
+                return ['html' => '', 'css' => '', 'js' => '', 'files' => $files];
+            }
+        }
+
         $grab = static function (string $lang) use ($response): string {
             return preg_match('/```' . $lang . '\b[ \t]*\r?\n([\s\S]*?)```/i', $response, $m) ? trim($m[1]) : '';
         };
         $html = $grab('html');
         $css = $grab('css');
         $js = $grab('(?:js|javascript)');
+        // A lone un-tagged tsx/ts fence still counts as an entry file (models sometimes drop the tag).
+        $tsx = $grab('(?:tsx|ts|typescript)');
+        if ($tsx !== '' && $js === '') {
+            $files = [['path' => 'index.tsx', 'content' => substr($tsx, 0, 200000)]];
+            if ($css !== '') {
+                $files[] = ['path' => 'styles.css', 'content' => substr($css, 0, 100000)];
+            }
+            return ['html' => '', 'css' => '', 'js' => '', 'files' => $files];
+        }
 
         // Fallback: some models return a JSON object instead of fenced blocks.
         if ($html === '' && $js === '' && preg_match('/\{[\s\S]*\}/', $response, $m)) {
@@ -389,6 +453,19 @@ PROMPT;
         }
         $clip = static fn ($v, int $max): string => substr((string) $v, 0, $max);
         return ['html' => $clip($html, 100000), 'css' => $clip($css, 100000), 'js' => $clip($js, 200000)];
+    }
+
+    /** Normalize an AI-emitted screen file path; null = refuse (traversal / bad extension). */
+    private function sanitizeScreenFilePath(string $path): ?string
+    {
+        $path = ltrim(str_replace('\\', '/', trim($path)), '/');
+        if ($path === '' || strlen($path) > 160 || str_contains($path, '..')) {
+            return null;
+        }
+        if (!preg_match('#^[A-Za-z0-9._/-]+\.(html?|css|jsx?|tsx?|json|svg|md|txt)$#', $path)) {
+            return null;
+        }
+        return $path;
     }
 
     /**

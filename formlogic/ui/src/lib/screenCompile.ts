@@ -100,6 +100,9 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
             : { errors: [{ text: `Unresolvable built-in import '${args.path}'` }] };
         }
         if (args.path.startsWith('.')) {
+          // CSS is injected into the page separately (all .css files concatenate into the shell),
+          // so a JS-side `import './styles.css'` — a habit AI/React authors bring — is a no-op.
+          if (/\.css$/i.test(args.path)) return { path: '\0css-stub', namespace: 'css-stub' };
           const resolved = resolveRelative(args.importer, args.path, map);
           return resolved ? { path: resolved, namespace: 'vfs' } : { errors: [{ text: `Cannot find module '${args.path}' (imported by ${args.importer})` }] };
         }
@@ -111,6 +114,7 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
         contents: vendors.VENDOR_MODULES[args.path] ?? '',
         loader: 'js',
       }));
+      build.onLoad({ filter: /.*/, namespace: 'css-stub' }, () => ({ contents: '', loader: 'js' }));
       build.onLoad({ filter: /.*/, namespace: 'vfs' }, (args) => {
         const contents = map.get(args.path);
         if (contents === undefined) return { errors: [{ text: `Missing file: ${args.path}` }] };

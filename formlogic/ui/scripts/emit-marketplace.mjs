@@ -1,13 +1,29 @@
 // Emit the static marketplace packs (authored in TypeScript under src/data/packs) to JSON the
 // PHP backend can read, so the same packs can be seeded into the catalog and provisioned into the
 // Demo account. Run with Node 24 (strips the type-only imports): `node scripts/emit-marketplace.mjs`.
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { buildPackSigning, loadVendorKey } from './packSigning.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// Vite-style `?raw` imports (pack modules import screen .tsx/.css sources as strings) for the
+// node-side esbuild bundle of the pack TS. Mirrors check-pack-screens.mjs.
+const rawPlugin = {
+  name: 'vite-raw',
+  setup(b) {
+    b.onResolve({ filter: /\?raw$/ }, (args) => ({
+      path: resolve(args.resolveDir, args.path.replace(/\?raw$/, '')),
+      namespace: 'raw-text',
+    }));
+    b.onLoad({ filter: /.*/, namespace: 'raw-text' }, (args) => ({
+      contents: `export default ${JSON.stringify(readFileSync(args.path, 'utf8'))};`,
+      loader: 'js',
+    }));
+  },
+};
 
 // Bundle the TS pack catalog in-memory (type-only imports are dropped), then import it as a data: URL.
 const bundled = await build({
@@ -17,6 +33,7 @@ const bundled = await build({
   platform: 'node',
   write: false,
   logLevel: 'silent',
+  plugins: [rawPlugin],
 });
 const code = bundled.outputFiles[0].text;
 const { packCatalog } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));

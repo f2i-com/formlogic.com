@@ -21,15 +21,29 @@ const STARTER: ScreenFile[] = [
 ];
 
 // React-style components — no index.html needed (the bundler mounts into a default <div id="root">).
-// 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual.
+// 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual. Folders of
+// components with relative imports are supported — this starter shows the pattern.
 const STARTER_TSX: ScreenFile[] = [
-  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n' },
+  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n.stat { display: inline-block; padding: 10px 16px; border-radius: 10px; background: var(--fl-surface-2); }\n.stat b { color: var(--fl-accent); }\n' },
+  {
+    path: 'components/Stat.tsx',
+    content: `// A tiny reusable component — add more files/folders and import them with relative paths.
+export function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <p class="stat">
+      <b>{value}</b> {label}
+    </p>
+  );
+}
+`,
+  },
   {
     path: 'index.tsx',
     content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact).
 // window.FormLogic is the SDK: submit(answers), records(), currentUser(), context().
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Stat } from './components/Stat';
 
 function App() {
   const [title, setTitle] = useState('');
@@ -43,7 +57,7 @@ function App() {
   return (
     <main>
       <h1>{title || 'My screen'}</h1>
-      <p>{records.length} record{records.length === 1 ? '' : 's'} so far.</p>
+      <Stat label={records.length === 1 ? 'record so far' : 'records so far'} value={records.length} />
     </main>
   );
 }
@@ -174,11 +188,14 @@ export default function CustomScreenStudio() {
     setGenerating(false);
     const g = res.data?.data;
     if (res.error || !g) { toast.error(typeof res.error === 'string' ? res.error : 'Could not generate the screen.'); return; }
-    const next: ScreenFile[] = [
-      { path: 'index.html', content: g.html || '<div id="app"></div>' },
-      { path: 'styles.css', content: g.css || '' },
-      { path: 'index.ts', content: g.js || '' },
-    ];
+    // Preferred: a multi-file TSX project straight from the model; legacy triple as fallback.
+    const next: ScreenFile[] = g.files?.length
+      ? g.files.map((f) => ({ path: f.path, content: f.content }))
+      : [
+          { path: 'index.html', content: g.html || '<div id="app"></div>' },
+          { path: 'styles.css', content: g.css || '' },
+          { path: 'index.ts', content: g.js || '' },
+        ];
     setFiles(next); setDirty(true); rebuild(next);
     toast.success('Screen generated — preview on the right.');
   };

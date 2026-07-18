@@ -14,9 +14,15 @@ import { packCatalog } from './index';
 import {
   buildAgentPayload,
   EMPTY_DRAFT,
+  AI_GATEWAY_BASE,
   type Draft,
   type SourceService,
 } from '../../components/custom-screen/aokie/receptionistPayload';
+import {
+  composeAgentPayload as screenCompose,
+  DEFAULT_PERSONA as SCREEN_PERSONA,
+  AI_GATEWAY_BASE as SCREEN_GATEWAY,
+} from './aokie-screens/receptionist-settings/agentPayload';
 
 describe('aokieReceptionistPack â€” shared persona (audit CROSS-SCHEMA-001)', () => {
   it("matches the cross-repo persona fixture the plugin's DEFAULT_AGENT_PERSONA is locked to", () => {
@@ -278,29 +284,28 @@ describe('aokieReceptionistPack â€” pack-owned Calls transcript record scre
     expect(rs?.kind).toBe('code');
     // No registry coupling left: the source travels with the pack.
     expect(rs?.screenId).toBeUndefined();
-    expect(typeof rs?.js).toBe('string');
-    expect((rs?.js ?? '').length).toBeGreaterThan(0);
-    expect(rs?.js).toBe(AOKIE_CALL_TRANSCRIPT_SCREEN.js);
+    expect(rs?.js).toBeUndefined();
+    expect(rs?.entry).toBe('index.tsx');
+    expect((rs?.files ?? []).map((f) => f.path)).toEqual(['index.tsx', 'sort.ts', 'styles.css']);
+    expect(rs?.files).toEqual(AOKIE_CALL_TRANSCRIPT_SCREEN.files);
     // The generic related panel keeps hiding the group this widget renders itself â€”
     // packFormId-qualified because follow-up-tasks also link via a call_link field.
     expect(rs?.consumesRelated).toEqual(['transcript-turns.call_link']);
   });
 
-  it('the sandboxed source parses, escapes record data, and marks audio-model corrections', () => {
-    const js = rs?.js ?? '';
-    // Same syntax gate check-pack-screens runs for recordScreen code.
-    expect(() => new Function(js)).not.toThrow();
-    // Stored-XSS guard: every record value goes through the bridge's escapeHtml
-    // (bound to `esc`) before touching innerHTML.
-    expect(js).toContain('FormLogic.escapeHtml');
-    expect(js).toContain('esc(t.text)');
+  it('the TSX source renders record data as JSX text and marks audio-model corrections', () => {
+    const js = (rs?.files ?? []).map((f) => f.content).join('\n');
+    // JSX text auto-escapes; the source must never open a raw-HTML sink for record data.
+    expect(js).not.toContain('dangerouslySetInnerHTML');
+    expect(js).not.toContain('innerHTML');
     // Corrected-turn affordance: rows the audio model re-heard carry the tooltip.
     expect(js).toContain("f.source === 'audio_model'");
     expect(js).toContain('Corrected by the audio model');
     // The embedded comparator IS the exported (unit-tested) helper â€” one source of truth.
-    expect(js).toContain(compareTurns.toString());
+    expect(js).toContain('export function compareTurns');
+    expect(js).toContain("import { compareTurns } from './sort'");
     // Data path: record screens read the record's related groups via the bridge.
-    expect(js).toContain('FL.related()');
+    expect(js).toContain('FormLogic.related()');
   });
 
   it('the related columns feed the screen what it renders (timestamp for ordering, source for corrections)', () => {
@@ -665,20 +670,19 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
     // the WHOLE payload — persona/greeting/ttsVoice/aiModel/aiReceptionist AND the
     // four endpoints — so persona/business-info/greeting composition can't drift.
     describe('sandbox embed (composeAgentPayload) parity', () => {
-      // The screen's js begins with the PAYLOAD_EMBED block (var AI_GATEWAY_BASE
-      // = …; var DEFAULT_PERSONA = …; var composeAgentPayload = <fn>;) BEFORE the
-      // IIFE. Eval just that block, then call the embedded copy.
-      const embed = AOKIE_RECEPTIONIST_SETTINGS_SCREEN.js.split('(function ()')[0];
-      const embedded = new Function(
-        'draft',
-        'svcs',
-        `${embed}\nreturn composeAgentPayload(draft, svcs, DEFAULT_PERSONA, AI_GATEWAY_BASE);`,
-      ) as (draft: Draft, svcs: SourceService[] | undefined) => Record<string, unknown>;
+      // The pack-owned settings screen ships composeAgentPayload as a REAL source
+      // file (aokie-screens/receptionist-settings/agentPayload.ts) inside its
+      // customScreen.files. Import the SHIPPED module directly and call it exactly
+      // as the sandbox does.
+      const embedded = (draft: Draft, svcs: SourceService[] | undefined): Record<string, unknown> =>
+        screenCompose(draft as never, svcs as never, SCREEN_PERSONA, SCREEN_GATEWAY) as Record<string, unknown>;
 
-      it('the embed block actually defines composeAgentPayload (guards a bad split)', () => {
-        expect(embed).toContain('composeAgentPayload');
-        expect(embed).toContain('AI_GATEWAY_BASE');
-        expect(embed).toContain('DEFAULT_PERSONA');
+      it('the shipped constants strict-equal the canonical persona + gateway base', () => {
+        expect(SCREEN_PERSONA).toBe(DEFAULT_PERSONA);
+        expect(SCREEN_GATEWAY).toBe(AI_GATEWAY_BASE);
+        // The shipped module travels in the screen's files (not just the repo).
+        const shipped = (AOKIE_RECEPTIONIST_SETTINGS_SCREEN.files as Array<{ path: string }>).map((f) => f.path);
+        expect(shipped).toContain('agentPayload.ts');
       });
 
       it.each(CASES)('whole-payload deep-equal vs buildAgentPayload: %s', (_name, over) => {
@@ -2527,63 +2531,62 @@ describe('aokieReceptionistPack â€” pack-owned Device Setup section screen 
   const hw = pack.forms.find((f) => f.packFormId === 'hardware-events');
   const cs = hw?.customScreen as Record<string, unknown> | undefined;
 
-  it('ships Device Setup as pack-owned CODE, not a compiled-registry reference', () => {
+  const files = (cs?.files as Array<{ path: string; content: string }> | undefined) ?? [];
+  const src = files.map((f) => f.content).join('\n');
+
+  it('ships Device Setup as pack-owned TSX SOURCE FILES, not a compiled-registry reference', () => {
     expect(cs?.kind).toBe('code');
     expect(cs?.sdkScreen).toBeUndefined();
     expect(cs?.enabled).toBe(true);
-    // Rows land automatically from aokie.hardware.error â€” no manual entry.
+    // Rows land automatically from aokie.hardware.error - no manual entry.
     expect(cs?.allowNewResponses).toBe(false);
-    expect(typeof cs?.js).toBe('string');
-    expect(cs?.js).toBe(AOKIE_DEVICE_SETUP_SCREEN.js);
+    expect(cs?.js).toBeUndefined();
+    expect(cs?.entry).toBe('index.tsx');
+    expect(files.map((f) => f.path)).toContain('index.tsx');
+    expect(files).toEqual(AOKIE_DEVICE_SETUP_SCREEN.files);
   });
 
-  it('the sandboxed source parses and escapes every rendered value', () => {
-    const js = String(cs?.js ?? '');
-    // Same syntax gate check-pack-screens runs â€” catches the documented
-    // template-literal escaping trap before anything ships.
-    expect(() => new Function(js)).not.toThrow();
-    expect(js).toContain('FormLogic.escapeHtml');
-    // No regex literals in the embedded source (the escaping foot-gun class).
-    expect(js).not.toContain('.match(');
-    expect(js).not.toContain('.replace(/');
+  it('the TSX source renders data as JSX text (no raw-HTML sink)', () => {
+    expect(src.length).toBeGreaterThan(0);
+    expect(src).not.toContain('dangerouslySetInnerHTML');
+    expect(src).not.toContain('innerHTML');
   });
 
-  it('drives ONLY sanctioned bridge surfaces â€” ceremonies stay host-owned', () => {
-    const js = String(cs?.js ?? '');
+  it('drives ONLY sanctioned bridge surfaces - ceremonies stay host-owned', () => {
     for (const needle of [
-      "FL.connector('aokie'",
-      'FL.service(',
-      'FL.presence()',
-      'FL.records(',
-      'FL.deleteRecords(',
-      'FL.can(',
-      "FL.host.ceremony('connect-desktop')",
-      "FL.host.ceremony('start-fresh')",
+      "FormLogic.connector('aokie'",
+      'FormLogic.service(',
+      'FormLogic.presence()',
+      'FormLogic.records(',
+      'FormLogic.deleteRecords(',
+      'FormLogic.can(',
+      "ceremony('connect-desktop')",
+      "ceremony('start-fresh')",
     ]) {
-      expect(js, needle).toContain(needle);
+      expect(src, needle).toContain(needle);
     }
     // The pack never mints pairing tokens or bulk-clears itself: the desktop
     // pairing and the whole-app reset go through named host ceremonies only.
-    expect(js).not.toContain('requestPairing');
-    expect(js).not.toContain('clearFormResponses');
-    // Only registered service operations are referenced.
-    const ops = js.match(/FL\.service\('([^']+)'/g) ?? [];
+    expect(src).not.toContain('requestPairing');
+    expect(src).not.toContain('clearFormResponses');
+    // Only registered service operations are referenced (svc('<op>') literals).
+    const ops = src.match(/svc\('([^']+)'/g) ?? [];
+    expect(ops.length).toBeGreaterThan(0);
     const allowed = new Set([
-      "FL.service('desktop.connections.list'",
-      "FL.service('aokie.companion.policy.get'",
-      "FL.service('aokie.companion.policy.update'",
-      "FL.service('aokie.companion.devices.list'",
-      "FL.service('aokie.companion.devices.revoke'",
-      "FL.service('aokie.companion.devices.approve'",
+      "svc('desktop.connections.list'",
+      "svc('aokie.companion.policy.get'",
+      "svc('aokie.companion.policy.update'",
+      "svc('aokie.companion.devices.list'",
+      "svc('aokie.companion.devices.revoke'",
+      "svc('aokie.companion.devices.approve'",
     ]);
     for (const op of ops) expect(allowed.has(op), op).toBe(true);
   });
 
   it('destructive controls are double-gated (type-to-confirm + host ceremony dialog)', () => {
-    const js = String(cs?.js ?? '');
-    expect(js).toContain('delete all');
-    expect(js).toContain('Confirm clear');
-    expect(js).toContain('Confirm revoke');
+    expect(src).toContain('delete all');
+    expect(src).toContain('Confirm clear');
+    expect(src).toContain('Confirm revoke');
   });
 });
 
@@ -2593,64 +2596,65 @@ describe('aokieReceptionistPack — pack-owned Live Call section screen (plan §
   const calls = pack.forms.find((f) => f.packFormId === 'calls');
   const cs = calls?.customScreen as Record<string, unknown> | undefined;
 
-  it('ships the Calls SECTION as pack-owned CODE while KEEPING the record transcript', () => {
+  const lcFiles = (cs?.files as Array<{ path: string; content: string }> | undefined) ?? [];
+  const lcSrc = lcFiles.map((f) => f.content).join('\n');
+  const lcIndex = lcFiles.find((f) => f.path === 'index.tsx')?.content ?? '';
+
+  it('ships the Calls SECTION as pack-owned TSX SOURCE FILES while KEEPING the record transcript', () => {
     expect(cs?.kind).toBe('code');
     expect(cs?.sdkScreen).toBeUndefined();
     expect(cs?.allowNewResponses).toBe(false);
-    expect(cs?.js).toBe(AOKIE_LIVE_CALL_SCREEN.js);
+    expect(cs?.js).toBeUndefined();
+    expect(cs?.entry).toBe('index.tsx');
+    expect(lcFiles).toEqual(AOKIE_LIVE_CALL_SCREEN.files);
     // The per-record transcript widget is a separate blob and must survive the section port.
     const rs = (cs?.recordScreen as Record<string, unknown> | undefined);
     expect(rs?.kind).toBe('code');
     expect(rs?.consumesRelated).toEqual(['transcript-turns.call_link']);
+    expect(((rs?.files as unknown[] | undefined) ?? []).length).toBeGreaterThan(0);
   });
 
-  it('the sandboxed source parses and escapes rendered values, regex-free', () => {
-    const js = String(cs?.js ?? '');
-    expect(() => new Function(js)).not.toThrow();
-    // Bound once as `esc` and applied to every interpolated value.
-    expect(js).toContain('var esc = FL.escapeHtml');
-    expect(js).toContain('esc(');
-    expect(js).not.toContain('.match(');
-    expect(js).not.toContain('.replace(/');
+  it('the TSX source renders data as JSX text, regex-free', () => {
+    expect(lcSrc.length).toBeGreaterThan(0);
+    expect(lcSrc).not.toContain('dangerouslySetInnerHTML');
+    expect(lcSrc).not.toContain('innerHTML');
+    expect(lcSrc).not.toContain('.match(');
+    expect(lcSrc).not.toContain('.replace(/');
   });
 
-  it('drives the subscription lanes + the full bridge — commands go through connector()', () => {
-    const js = String(cs?.js ?? '');
+  it('drives the subscription lanes + the full bridge - commands go through connector()', () => {
     for (const needle of [
-      "FL.connector('aokie', 'call.current'",
-      "FL.connector('aokie', command",       // answer/reject/hangup/operatorSpeak
-      "FL.events.subscribe({ connectorId: 'aokie' }",
-      'FL.captions.subscribe(',
-      "FL.queryRecords('customers'",
-      "FL.queryRecords('transcript-turns'",
-      'FL.records(',
-      'FL.presence()',
-      "FL.host.ceremony('simulate-call')",
-      "FL.can('connector.aokie.'",
+      "FormLogic.connector('aokie', 'call.current'",
+      "FormLogic.events.subscribe({ connectorId: 'aokie' }",
+      'FormLogic.captions.subscribe(',
+      "FormLogic.queryRecords('customers'",
+      "FormLogic.queryRecords('transcript-turns'",
+      'FormLogic.records(',
+      'FormLogic.presence()',
+      "FormLogic.host.ceremony('simulate-call')",
+      "FormLogic.can('connector.aokie.'",
     ]) {
-      expect(js, needle).toContain(needle);
+      expect(lcSrc, needle).toContain(needle);
     }
     // The correction event patches the live bubble (converges with stored surfaces).
-    expect(js).toContain('aokie.call.turn.corrected');
+    expect(lcSrc).toContain('aokie.call.turn.corrected');
     // Captions tombstone when a durable caller turn lands (final wins).
-    expect(js).toContain('tombstone');
+    expect(lcSrc).toContain('tombstone');
   });
 
-  it('offers the demo Simulate ONLY when there is no real runtime — never in remote mode', () => {
+  it('offers the demo Simulate ONLY when there is no real runtime - never in remote mode', () => {
     // A REAL desktop reachable over the relay (presence 'remote') must show a
-    // mirror note, NOT the scripted "Simulate incoming call" button — that was
-    // the "connected but shows Simulate" bug. Structural lock: the remote
-    // branch renders the mirror text, and the simulate button lives in a
-    // SEPARATE else-if (non-local) branch that comes after it.
-    const js = String(cs?.js ?? '');
-    const remoteIdx = js.indexOf('mirrors its calls and relays your controls');
-    const simIdx = js.indexOf('data-act="simulate"');
+    // mirror note, NOT the scripted "Simulate incoming call" button - that was
+    // the "connected but shows Simulate" bug. Structural lock on index.tsx: the
+    // remote branch renders the mirror text, and the simulate affordance lives
+    // in the SEPARATE non-local ternary branch that comes after it. The
+    // behavioral twin lives in aokieLiveCallScreenTsx.test.ts (executed DOM).
+    const remoteIdx = lcIndex.indexOf('mirrors its calls and relays your controls');
+    const simIdx = lcIndex.indexOf('data-act="simulate"');
     expect(remoteIdx).toBeGreaterThan(-1);
     expect(simIdx).toBeGreaterThan(remoteIdx);
-    // The remote branch closes into an else-if before the simulate button —
-    // i.e. the mirror (remote) branch does NOT contain the simulate affordance.
-    expect(js.slice(remoteIdx, simIdx)).toContain("else if (state.presence.kind !== 'local')");
-    expect(js).toContain("state.presence.kind === 'remote'");
+    expect(lcIndex.slice(remoteIdx, simIdx)).toContain("s.presence.kind !== 'local'");
+    expect(lcIndex).toContain("s.presence.kind === 'remote'");
   });
 });
 
@@ -2658,73 +2662,70 @@ describe('aokieReceptionistPack — pack-owned Live Call section screen (plan §
 describe('aokieReceptionistPack — pack-owned Receptionist Settings section screen (plan §8.4 port #3)', () => {
   const rsForm = pack.forms.find((f) => f.packFormId === 'receptionist-settings');
   const cs = rsForm?.customScreen as Record<string, unknown> | undefined;
+  const rsFiles = (cs?.files as Array<{ path: string; content: string }> | undefined) ?? [];
+  const rsSrc = rsFiles.map((f) => f.content).join('\n');
 
-  it('ships the section as pack-owned CODE, not a compiled-registry reference', () => {
+  it('ships the section as pack-owned TSX SOURCE FILES, not a compiled-registry reference', () => {
     expect(cs?.kind).toBe('code');
     expect(cs?.sdkScreen).toBeUndefined();
     expect(cs?.allowNewResponses).toBe(false);
-    expect(cs?.js).toBe(AOKIE_RECEPTIONIST_SETTINGS_SCREEN.js);
+    expect(cs?.js).toBeUndefined();
+    expect(cs?.entry).toBe('index.tsx');
+    expect(rsFiles.map((f) => f.path)).toContain('agentPayload.ts');
+    expect(rsFiles).toEqual(AOKIE_RECEPTIONIST_SETTINGS_SCREEN.files);
   });
 
-  it('the sandboxed source parses and escapes rendered values, regex-free', () => {
-    const js = String(cs?.js ?? '');
-    expect(() => new Function(js)).not.toThrow();
-    expect(js).toContain('var esc = FL.escapeHtml');
-    // No regex literals — the block-list split / bundle prettify / basename are char scans.
-    expect(js).not.toContain('.match(');
-    expect(js).not.toContain('.replace(/');
-    expect(js).not.toContain('.split(/');
+  it('the TSX source renders data as JSX text (no raw-HTML sink)', () => {
+    expect(rsSrc.length).toBeGreaterThan(0);
+    expect(rsSrc).not.toContain('dangerouslySetInnerHTML');
+    expect(rsSrc).not.toContain('innerHTML');
   });
 
   it('drives ONLY sanctioned bridge surfaces (settings via connector, record via submit/updateRecord)', () => {
-    const js = String(cs?.js ?? '');
     for (const needle of [
-      "FL.connector('aokie', 'settings.get'",
-      "FL.connector('aokie', 'settings.set'",
-      'FL.records(',
-      'FL.submit(',
-      'FL.updateRecord(',
-      'FL.aiSources()',
-      'FL.presence()',
-      "FL.can('connector.aokie.settings.get')",
-      "FL.can('connector.aokie.settings.set')",
+      "FormLogic.connector('aokie', 'settings.get'",
+      "FormLogic.connector('aokie', 'settings.set'",
+      'FormLogic.records(',
+      'FormLogic.submit(',
+      'FormLogic.updateRecord(',
+      'FormLogic.aiSources()',
+      'FormLogic.presence()',
+      "FormLogic.can('connector.aokie.settings.get')",
+      "FormLogic.can('connector.aokie.settings.set')",
       'composeAgentPayload(',
     ]) {
-      expect(js, needle).toContain(needle);
+      expect(rsSrc, needle).toContain(needle);
     }
   });
 
   it('manager-PIN guardrails: write-only, blank-means-keep, explicit remove', () => {
-    const js = String(cs?.js ?? '');
     // The PIN key is sent ONLY when a new value was typed (blank keeps the stored PIN).
-    expect(js).toContain('if (newPin) payload.managerPin = newPin;');
+    expect(rsSrc).toContain('if (newPin) payload.managerPin = newPin;');
     // A dedicated Remove PIN action sends an explicit empty PIN.
-    expect(js).toContain("settingsSet({ managerPin: '' })");
+    expect(rsSrc).toContain("settingsSet({ managerPin: '' })");
     // The PIN is never seeded from settings.get (write-only) — only managerPinSet is read.
-    expect(js).toContain('res.managerPinSet === true');
-    expect(js).toContain("state.screening.managerPin = ''");
+    expect(rsSrc).toContain('res.managerPinSet === true');
+    expect(rsSrc).toContain("state.screening.managerPin = ''");
     // The field renders as a password input, never plain text.
-    expect(js).toContain('type="password"');
+    expect(rsSrc).toContain('type="password"');
   });
 
   it('partial saves never clobber the whole dirty baseline (review 2026-07-18 HIGH)', () => {
-    const js = String(cs?.js ?? '');
     // A save handler must not unconditionally re-clone the entire draft into the
     // saved baseline — that would mark unrelated pending edits as saved + lose
     // them. Partial saves reflect ONLY their own keys (audio patches correction;
     // screening writes no draft keys) unless it was the first-ever create.
-    expect(js).toContain('var wasCreate = !state.recordId;');
-    expect(js).toContain('state.saved.correction_source = state.draft.correction_source;');
+    expect(rsSrc).toContain('const wasCreate = !state.recordId;');
+    expect(rsSrc).toContain('(state.saved as Draft).correction_source = (state.draft as Draft).correction_source;');
     // The full-clone is gated behind wasCreate, not run on every partial save.
-    expect(js).not.toContain('.then(function () { state.saved = JSON.parse(JSON.stringify(state.draft)); return settingsGet(); })');
+    expect(rsSrc).not.toContain('.then(function () { state.saved = JSON.parse(JSON.stringify(state.draft)); return settingsGet(); })');
   });
 
   it('a shared in-flight guard prevents duplicate singleton records (review 2026-07-18 MEDIUM)', () => {
-    const js = String(cs?.js ?? '');
-    // Concurrent first-saves must not each FL.submit and duplicate the singleton.
-    expect(js).toContain('var createInFlight = null;');
-    expect(js).toContain('if (createInFlight) return createInFlight.then(');
+    // Concurrent first-saves must not each FormLogic.submit and duplicate the singleton.
+    expect(rsSrc).toContain('let createInFlight: Promise<unknown> | null = null;');
+    expect(rsSrc).toContain('if (createInFlight) return createInFlight.then(');
     // The create sends the FULL draft (create validates required fields, no merge).
-    expect(js).toContain('for (var j in answers) full[j] = answers[j];');
+    expect(rsSrc).toContain('for (const j in answers) full[j] = answers[j];');
   });
 });

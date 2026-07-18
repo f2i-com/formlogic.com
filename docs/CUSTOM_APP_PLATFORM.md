@@ -167,6 +167,24 @@ The existing *sandboxed* custom-screen SDK (postMessage bridge, iframe = the bou
 This SDK is for **host-rendered** React screens that run in the trusted app shell. Both expose the
 same capabilities; pick by whether your screen is sandboxed code or trusted React.
 
+#### Sandboxed TSX screens (React-style components)
+
+Sandboxed `code` screens (form sections, record widgets, app homes) can be authored as
+**multi-file TSX projects**: `customScreen.files = [{path, content}]` with an `index.tsx` entry
+that mounts `createRoot(document.getElementById('root')!).render(<App/>)`. The sandbox bundler
+(`lib/screenCompile.ts`, esbuild-wasm + a virtual filesystem) compiles them on render with the
+automatic JSX runtime on **embedded Preact** — `'react'`, `'react-dom/client'`, `'preact'` and
+`'preact/hooks'` are the only resolvable bare imports (`react` aliases to `preact/compat`; the
+module sources ship inside a lazy chunk, `lib/screenVendorModules.ts` — no network, no other npm).
+Folders + relative imports between files are supported; every `.css` file is injected into the
+shell automatically (JS-side `import './x.css'` is a tolerated no-op); a missing `index.html`
+falls back to `<div id="root"></div>`. Pack-owned screens ship their sources the same way
+(`src/data/packs/aokie-screens/…` imported `?raw` into the pack modules), so they are
+type-checked by the repo's tsc and unit-tested as real modules; `scripts/check-pack-screens.mjs`
+compiles every files-based pack screen with the same semantics and enforces the content policies
+(token-only CSS, no emoji, explicit `allowNewResponses`, form-scope rules). The AI screen
+generator and the MCP tools emit/accept this shape natively.
+
 #### Sandboxed bridge v1 (pack-owned screens)
 
 App-runtime `code` screens (owner/verified trust ONLY — every bridge action below is

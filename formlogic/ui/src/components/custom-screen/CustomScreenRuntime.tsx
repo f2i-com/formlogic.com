@@ -64,8 +64,9 @@ const SDK_SHIM = `
     /** This screen's context: { formId, title, fields } — choice fields include options [{label, value}]. */
     context: function(){ return call('context'); },
     toast: {
-      success: function(msg){ return call('toast', { type: 'success', msg: String(msg) }); },
-      error: function(msg){ return call('toast', { type: 'error', msg: String(msg) }); },
+      success: function(msg, detail){ return call('toast', { type: 'success', msg: String(msg), detail: detail == null ? undefined : String(detail) }); },
+      error: function(msg, detail){ return call('toast', { type: 'error', msg: String(msg), detail: detail == null ? undefined : String(detail) }); },
+      info: function(msg, detail){ return call('toast', { type: 'info', msg: String(msg), detail: detail == null ? undefined : String(detail) }); },
     },
     /** Open the real form for a new record (only when the owner enabled "allow new records"). */
     openForm: function(){ return call('openForm'); },
@@ -276,7 +277,6 @@ export function CustomScreenRuntime({
     // mount, and recomputing srcDoc there would bump the gen stamp and mutate
     // the live iframe's srcdoc — which adds a browser history entry (the
     // "press Back twice" bug). Identical content ⇒ same deps ⇒ no rebuild.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assets.html, assets.css, assets.js, accentColor]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
@@ -360,7 +360,10 @@ export function CustomScreenRuntime({
             break;
           case 'toast': {
             const msg = String(m.payload?.msg || '').slice(0, 200);
-            if (m.payload?.type === 'error') toast.error(msg); else toast.success(msg);
+            const detail = m.payload?.detail == null ? undefined : String(m.payload.detail).slice(0, 300);
+            if (m.payload?.type === 'error') toast.error(msg, detail);
+            else if (m.payload?.type === 'info') toast.info(msg, detail);
+            else toast.success(msg, detail);
             result = true;
             break;
           }

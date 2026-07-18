@@ -1,0 +1,60 @@
+/* Token-only styling (--fl-* variables from the host palette) so the widget follows the
+   app accent and flips with the viewer's light/dark theme automatically. */
+html, body { background: transparent; }
+html, body, #root { height: 100%; }
+body { margin: 0; padding: 14px 18px 10px; box-sizing: border-box; }
+
+#root .wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+#root .meta { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+#root .count {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--fl-surface-2); color: var(--fl-muted);
+}
+#root .note { font-size: 12px; color: var(--fl-faint); }
+
+#root .turns {
+  display: flex; flex-direction: column; gap: 10px;
+  flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px;
+}
+
+#root .turn { display: flex; align-items: flex-start; gap: 8px; max-width: 86%; }
+#root .turn.caller { flex-direction: row-reverse; align-self: flex-end; }
+
+#root .avatar {
+  flex: none; width: 26px; height: 26px; margin-top: 2px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+}
+#root .turn.agent .avatar { background: var(--fl-accent); color: var(--fl-accent-contrast); }
+#root .turn.caller .avatar { background: var(--fl-track); color: var(--fl-muted); }
+
+#root .bubble { min-width: 0; padding: 8px 12px; }
+#root .turn.agent .bubble { border-radius: 4px 14px 14px 14px; background: var(--fl-surface-2); }
+#root .turn.caller .bubble { border-radius: 14px 4px 14px 14px; background: var(--fl-surface); border: 1px solid var(--fl-border); }
+
+#root .who { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; }
+#root .turn.agent .who { color: var(--fl-accent); }
+#root .turn.caller .who { color: var(--fl-muted); }
+#root .corrected {
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 999px; cursor: help;
+  background: var(--fl-track); color: var(--fl-faint);
+}
+#root .text { margin: 2px 0 0; font-size: 14px; line-height: 1.45; color: var(--fl-text); white-space: pre-wrap; overflow-wrap: break-word; }
+
+#root .more {
+  align-self: center; margin: 4px 0; padding: 6px 14px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--fl-muted);
+  background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 999px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+#root .more:hover { background: var(--fl-surface-2); border-color: var(--fl-accent); }
+
+#root .state { padding: 20px 0; text-align: center; font-size: 13px; color: var(--fl-faint); }
+#root .state.error { color: var(--fl-bad); }
+
+#root .skeleton { height: 36px; width: 66%; border-radius: 14px; background: var(--fl-track); margin-bottom: 8px; animation: fl-pulse 1.4s ease-in-out infinite; }
+#root .skeleton.right { margin-left: auto; }
+@keyframes fl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }

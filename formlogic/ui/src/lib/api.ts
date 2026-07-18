@@ -1407,13 +1407,14 @@ class ApiClient {
     });
   }
 
-  /** Generate a custom screen ({ html, css, js }); pass appForms for an APP HOME (multi-form SDK). */
+  /** Generate a custom screen — preferred result is a multi-file TSX project (`files`); legacy
+   *  models may return the html/css/js triple. Pass appForms for an APP HOME (multi-form SDK). */
   async generateScreen(
     prompt: string,
     fields?: Array<{ id: string; label: string; type: string }>,
     existing?: string,
     appForms?: Array<{ formId: string; title: string; fields: unknown[] }>,
-  ): Promise<ApiResponse<{ data: { html: string; css: string; js: string } }>> {
+  ): Promise<ApiResponse<{ data: { html: string; css: string; js: string; files?: Array<{ path: string; content: string }> } }>> {
     return this.request('/ai/generate-screen', {
       method: 'POST',
       body: JSON.stringify({ prompt, fields, existing, appForms }),

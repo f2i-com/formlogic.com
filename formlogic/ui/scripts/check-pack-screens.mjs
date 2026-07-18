@@ -29,6 +29,97 @@ let fail = 0;
 let apps = 0;
 let forms = 0;
 
+// Vite-style `?raw` imports (pack modules import screen .tsx/.css sources as strings) for the
+// node-side esbuild bundle of the pack TS.
+const rawPlugin = {
+  name: 'vite-raw',
+  setup(b) {
+    b.onResolve({ filter: /\?raw$/ }, (args) => ({
+      path: path.resolve(args.resolveDir, args.path.replace(/\?raw$/, '')),
+      namespace: 'raw-text',
+    }));
+    b.onLoad({ filter: /.*/, namespace: 'raw-text' }, (args) => ({
+      contents: `export default ${JSON.stringify(fs.readFileSync(args.path, 'utf8'))};`,
+      loader: 'js',
+    }));
+  },
+};
+
+// Sandbox-bundle a files-based screen the same way the runtime does (screenCompile.ts vfs +
+// embedded preact vendors + automatic JSX) — proves the sources COMPILE. Vendor resolution
+// mirrors src/lib/screenVendorModules.ts; keep the two in lock-step.
+const preactRoot = path.dirname(require2.resolve('preact/package.json'));
+const VENDOR_PATHS = {
+  'preact': path.join(preactRoot, 'dist/preact.mjs'),
+  'preact/hooks': path.join(preactRoot, 'hooks/dist/hooks.mjs'),
+  'preact/compat': path.join(preactRoot, 'compat/dist/compat.mjs'),
+  'preact/compat/client': path.join(preactRoot, 'compat/client.mjs'),
+  'preact/jsx-runtime': path.join(preactRoot, 'jsx-runtime/dist/jsxRuntime.mjs'),
+};
+const VENDOR_ALIASES = {
+  'react': 'preact/compat',
+  'react-dom': 'preact/compat',
+  'react-dom/client': 'preact/compat/client',
+  'react/jsx-runtime': 'preact/jsx-runtime',
+  'react/jsx-dev-runtime': 'preact/jsx-runtime',
+  'preact/jsx-dev-runtime': 'preact/jsx-runtime',
+};
+const ENTRY_CANDIDATES = ['index.tsx', 'index.ts', 'main.tsx', 'main.ts', 'app.tsx', 'app.ts'];
+
+async function bundleFilesScreen(files, entry) {
+  const map = new Map(files.map((f) => [f.path, f.content ?? '']));
+  const entryPath = (entry && map.has(entry) ? entry : null) ?? ENTRY_CANDIDATES.find((c) => map.has(c));
+  if (!entryPath) return { error: 'no entry file (index.tsx / index.ts)' };
+  try {
+    const result = await build({
+      entryPoints: [entryPath],
+      bundle: true,
+      write: false,
+      format: 'iife',
+      target: 'es2020',
+      logLevel: 'silent',
+      jsx: 'automatic',
+      jsxImportSource: 'preact',
+      plugins: [{
+        name: 'screen-vfs',
+        setup(b) {
+          b.onResolve({ filter: /.*/ }, (args) => {
+            if (args.kind === 'entry-point') return { path: args.path, namespace: 'vfs' };
+            if (args.namespace !== 'vfs') return null; // vendor-internal imports resolve normally on disk
+            if (args.path.startsWith('.')) {
+              // JS-side css imports are no-ops (css is injected separately) — mirror screenCompile.
+              if (/\.css$/i.test(args.path)) return { path: '\0css-stub', namespace: 'css-stub' };
+              const dir = args.importer.includes('/') ? args.importer.slice(0, args.importer.lastIndexOf('/')) : '';
+              const segs = [];
+              for (const s of `${dir}/${args.path}`.split('/')) {
+                if (s === '' || s === '.') continue;
+                if (s === '..') segs.pop(); else segs.push(s);
+              }
+              const base = segs.join('/');
+              const hit = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.jsx`, `${base}.json`,
+                `${base}/index.ts`, `${base}/index.tsx`].find((c) => map.has(c));
+              return hit ? { path: hit, namespace: 'vfs' } : { errors: [{ text: `Cannot find module '${args.path}' (imported by ${args.importer})` }] };
+            }
+            const id = VENDOR_PATHS[args.path] ? args.path : VENDOR_ALIASES[args.path];
+            if (id) return { path: VENDOR_PATHS[id] };
+            return { errors: [{ text: `npm import not allowed in screens: '${args.path}'` }] };
+          });
+          b.onLoad({ filter: /.*/, namespace: 'vfs' }, (args) => {
+            const ext = args.path.slice(args.path.lastIndexOf('.') + 1);
+            return { contents: map.get(args.path), loader: ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : 'js' };
+          });
+          b.onLoad({ filter: /.*/, namespace: 'css-stub' }, () => ({ contents: '', loader: 'js' }));
+        },
+      }],
+    });
+    const out = result.outputFiles?.find((o) => o.path.endsWith('.js')) ?? result.outputFiles?.[0];
+    return { js: out?.text ?? '' };
+  } catch (e) {
+    const first = e?.errors?.[0];
+    return { error: first ? `${first.text}${first.location ? ` (${first.location.file}:${first.location.line})` : ''}` : String(e.message || e) };
+  }
+}
+
 // Trusted SDK screen ids — collected from every registerSdkScreen('<id>', …) call in the
 // custom-screen sources, so a pack can never reference a screen the bundle doesn't register.
 const sdkScreenIds = (() => {
@@ -48,7 +139,7 @@ const sdkScreenIds = (() => {
   return ids;
 })();
 
-function checkScreen(label, cs, { isForm }) {
+async function checkScreen(label, cs, { isForm }) {
   if (!cs || cs.enabled !== true) {
     console.error(`[${label}] missing/disabled customScreen`);
     fail = 1;
@@ -63,7 +154,15 @@ function checkScreen(label, cs, { isForm }) {
         console.error(`[${label}] recordScreen sdk id '${rs.screenId}' is not registered in sdkScreenRegistry`); fail = 1;
       }
     } else if (rs.kind === 'code') {
-      try { new Function(rs.js || ''); } catch (e) { console.error(`[${label}] recordScreen JS SYNTAX ERROR: ${e.message}`); fail = 1; }
+      if (!rs.js && rs.files?.length) {
+        const all = rs.files.map((f) => f.content || '').join('\n');
+        const emoji = all.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u);
+        if (emoji) { console.error(`[${label}] recordScreen emoji/symbol found: ${emoji[0]}`); fail = 1; }
+        const r = await bundleFilesScreen(rs.files, rs.entry);
+        if (r.error) { console.error(`[${label}] recordScreen files do not compile: ${r.error}`); fail = 1; }
+      } else {
+        try { new Function(rs.js || ''); } catch (e) { console.error(`[${label}] recordScreen JS SYNTAX ERROR: ${e.message}`); fail = 1; }
+      }
     } else {
       console.error(`[${label}] recordScreen has unknown kind '${rs.kind}'`); fail = 1;
     }
@@ -112,12 +211,24 @@ function checkScreen(label, cs, { isForm }) {
     if (isForm && typeof cs.allowNewResponses !== 'boolean') { console.error(`[${label}] allowNewResponses must be set explicitly on section screens (true, or false for flow-written forms)`); fail = 1; }
     return;
   }
-  // Multi-file TS screens (sample-app homes) compile at runtime — the js-string heuristics don't
-  // apply. Run only the content policy checks over their sources.
+  // Multi-file TS/TSX screens compile at runtime (sandbox bundler) — prove the sources COMPILE
+  // with the same vfs+vendor+JSX semantics, then apply the content policies to the sources.
   if (!cs.js && cs.files?.length) {
     const all = cs.files.map((f) => f.content || '').join('\n');
-    const emoji = all.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
-    if (emoji) { console.error(`[${label}] emoji found: ${emoji[0]}`); fail = 1; }
+    const emoji = all.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u);
+    if (emoji) { console.error(`[${label}] emoji/symbol found: ${emoji[0]}`); fail = 1; }
+    const cssText = cs.files.filter((f) => /\.css$/i.test(f.path)).map((f) => f.content || '').join('\n');
+    const hexes = [...new Set((cssText.match(/#[0-9a-fA-F]{3,8}\b/g) || []).filter((x) => !/^#(fff|ffffff)$/i.test(x)))];
+    if (hexes.length) { console.error(`[${label}] hardcoded hex in css: ${hexes.join(' ')} (use --fl-* vars)`); fail = 1; }
+    const r = await bundleFilesScreen(cs.files, cs.entry);
+    if (r.error) { console.error(`[${label}] files screen does not compile: ${r.error}`); fail = 1; }
+    if (isForm) {
+      if (typeof cs.allowNewResponses !== 'boolean') { console.error(`[${label}] allowNewResponses must be set explicitly on section screens (true, or false for flow-written forms)`); fail = 1; }
+      if (cs.allowNewResponses === true && !/openForm/.test(all)) { console.error(`[${label}] no New-record affordance (openForm)`); fail = 1; }
+      if (/FormLogic\.navigate|FL\.navigate|data-nav/.test(all)) { console.error(`[${label}] section screens are form-scoped — no navigate/data-nav`); fail = 1; }
+    } else if (!/navigate\(|data-nav/.test(all)) {
+      console.error(`[${label}] app home screen has no navigation (FormLogic.navigate)`); fail = 1;
+    }
     return;
   }
   const css = cs.css || '', js = cs.js || '', html = cs.html || '';
@@ -146,13 +257,13 @@ function checkScreen(label, cs, { isForm }) {
   }
 }
 
-function checkPack(name, pack) {
+async function checkPack(name, pack) {
   for (const app of pack.apps || []) {
-    checkScreen(`${name} app:${app.packAppId || app.name}`, app.customScreen, { isForm: false });
+    await checkScreen(`${name} app:${app.packAppId || app.name}`, app.customScreen, { isForm: false });
     apps++;
   }
   for (const form of pack.forms || []) {
-    checkScreen(`${name} form:${form.packFormId || form.title}`, form.customScreen, { isForm: true });
+    await checkScreen(`${name} form:${form.packFormId || form.title}`, form.customScreen, { isForm: true });
     forms++;
   }
 }
@@ -162,11 +273,11 @@ const packDir = path.resolve('src/data/packs');
 for (const f of fs.readdirSync(packDir).filter((x) => x.endsWith('Pack.ts')).sort()) {
   const out = path.join(os.tmpdir(), `pack-screens-${f}-${process.pid}.mjs`);
   try {
-    await build({ entryPoints: [path.join(packDir, f)], bundle: true, format: 'esm', outfile: out, platform: 'node', logLevel: 'silent' });
+    await build({ entryPoints: [path.join(packDir, f)], bundle: true, format: 'esm', outfile: out, platform: 'node', logLevel: 'silent', plugins: [rawPlugin] });
     const mod = await import(pathToFileURL(out).href);
     const pack = Object.values(mod).find((v) => v && typeof v === 'object' && Array.isArray(v.apps));
     if (!pack) { console.error(`[${f}] no pack export with .apps`); fail = 1; continue; }
-    checkPack(f, pack);
+    await checkPack(f, pack);
   } catch (e) {
     console.error(`[${f}] bundle/import failed: ${e.message}`);
     fail = 1;
@@ -180,7 +291,7 @@ const sampleDir = path.resolve('../backend/resources/sample-apps');
 for (const f of fs.readdirSync(sampleDir).filter((x) => x.endsWith('.json')).sort()) {
   try {
     const pack = JSON.parse(fs.readFileSync(path.join(sampleDir, f), 'utf8'));
-    checkPack(f, pack);
+    await checkPack(f, pack);
   } catch (e) {
     console.error(`[${f}] parse failed: ${e.message}`);
     fail = 1;

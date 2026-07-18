@@ -1,0 +1,108 @@
+/* Token-only styling (--fl-* variables from the host palette) so the console
+   follows the app accent and flips with the viewer's light/dark theme.
+   Layout holds down to ~360px: cards stack, tables scroll inside .tscroll,
+   list rows wrap, long event messages break instead of overflowing. */
+html, body { background: transparent; }
+body { margin: 0; padding: 14px 16px; color: var(--fl-text); }
+
+#ds { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+
+#ds .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#ds h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+#ds h2 {
+  margin: 0 0 10px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--fl-muted);
+}
+
+#ds .card {
+  background: var(--fl-surface); border: 1px solid var(--fl-border);
+  border-radius: 14px; padding: 14px 16px; box-shadow: var(--fl-shadow);
+}
+#ds .card.danger { border-color: var(--fl-bad); }
+
+#ds p { margin: 0; overflow-wrap: break-word; }
+#ds p + p { margin-top: 8px; }
+#ds .cta { margin-top: 10px; }
+#ds .intro { margin-bottom: 2px; }
+#ds .unset { margin-bottom: 8px; }
+#ds .listhead { margin: 12px 0 4px; }
+#ds .footnote { margin-top: 8px; }
+#ds .shownote { margin-top: 6px; }
+
+#ds .btn {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--fl-text);
+  background: var(--fl-surface); border: 1px solid var(--fl-border);
+  border-radius: 10px; padding: 6px 12px;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+#ds .btn:hover { background: var(--fl-surface-2); }
+#ds .btn:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; }
+#ds .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+#ds .btn.primary { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-accent-contrast); }
+#ds .btn.danger-btn { background: var(--fl-bad); border-color: var(--fl-bad); color: #fff; }
+
+#ds .muted { color: var(--fl-muted); font-size: 12.5px; }
+#ds .faint { color: var(--fl-faint); font-size: 12px; }
+#ds .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+
+#ds .pill {
+  display: inline-flex; align-items: center; border-radius: 999px;
+  padding: 2px 9px; font-size: 10.5px; font-weight: 600;
+  border: 1px solid var(--fl-border); color: var(--fl-muted); background: var(--fl-surface-2);
+}
+#ds .pill.ok { color: var(--fl-good); border-color: var(--fl-good); background: transparent; }
+#ds .pill.warn { color: var(--fl-warn); border-color: var(--fl-warn); background: transparent; }
+#ds .pill.bad { color: var(--fl-bad); border-color: var(--fl-bad); background: transparent; }
+#ds .pill.accent { color: var(--fl-accent); border-color: var(--fl-accent); background: transparent; }
+
+#ds .banner {
+  border: 1px solid var(--fl-bad); border-radius: 12px; padding: 10px 14px;
+  font-size: 13px; color: var(--fl-bad); overflow-wrap: break-word;
+}
+
+#ds table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#ds th {
+  text-align: left; font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--fl-faint); padding: 4px 10px 6px 0;
+}
+#ds td { padding: 7px 10px 7px 0; border-top: 1px solid var(--fl-border); vertical-align: middle; }
+#ds td.actions { text-align: right; white-space: nowrap; }
+#ds .tscroll { overflow-x: auto; }
+
+#ds ul { list-style: none; margin: 0; padding: 0; }
+#ds li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 0; border-top: 1px solid var(--fl-border);
+}
+#ds li:first-child { border-top: 0; }
+#ds .rowmain { min-width: 0; overflow-wrap: break-word; }
+#ds .rowname { font-size: 13.5px; font-weight: 500; }
+#ds .evmeta { display: inline-flex; align-items: center; gap: 8px; }
+
+#ds .policy {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px 14px; margin: 8px 0 10px;
+}
+#ds .policy label { display: flex; align-items: center; gap: 7px; font-size: 12.5px; cursor: pointer; }
+#ds .policy input { accent-color: var(--fl-accent); }
+
+#ds .freshrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+#ds input[type="text"] {
+  font: inherit; font-size: 13px; color: var(--fl-text);
+  background: var(--fl-surface); border: 1px solid var(--fl-border);
+  border-radius: 10px; padding: 7px 11px; width: 220px; max-width: 100%;
+}
+#ds input[type="text"]:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; }
+
+#ds .sectionrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+#ds .sectionrow h2 { margin: 0; }
+
+#ds .loading { animation: fl-pulse 1.4s ease-in-out infinite; }
+#ds .loadwrap { display: block; }
+#ds .skeleton {
+  display: block; height: 12px; width: 60%; border-radius: 999px;
+  background: var(--fl-track); animation: fl-pulse 1.4s ease-in-out infinite;
+}
+#ds .skeleton.short { width: 38%; margin-top: 8px; }
+@keyframes fl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
