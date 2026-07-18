@@ -1,6 +1,7 @@
 {
   "id": "finance-os-us",
   "name": "Finance OS (United States)",
+  "version": "1.0.0",
   "description": "Complete United States-focused onboarding, compliance, and advisory workflow for RIAs, broker-dealers, and wealth managers. Includes 12 forms and 2 apps.",
   "tags": [
     "finance",

@@ -1,6 +1,7 @@
 {
   "id": "clinic-appointment-intake",
   "name": "Clinic Appointment & Intake",
+  "version": "1.0.0",
   "description": "A light front-desk toolkit for a small clinic: register patients, manage providers, book and track appointments, capture patient intake and consent, and schedule follow-ups from one linked dashboard. Includes 5 forms and 1 app.",
   "tags": [
     "clinic",

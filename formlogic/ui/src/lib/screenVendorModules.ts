@@ -11,6 +11,7 @@ import hooksSrc from 'preact/hooks?raw';
 import compatSrc from 'preact/compat?raw';
 import compatClientSrc from 'preact/compat/client?raw';
 import jsxRuntimeSrc from 'preact/jsx-runtime?raw';
+import kitSrc from './screen-kit/kit.tsx?raw';
 
 /** Canonical vendor module id → ESM source. Aliases resolve to these ids first (see below) so
  *  e.g. 'react' and 'preact/compat' are the SAME module instance in the bundle — never two
@@ -21,6 +22,13 @@ export const VENDOR_MODULES: Record<string, string> = {
   'preact/compat': compatSrc,
   'preact/compat/client': compatClientSrc,
   'preact/jsx-runtime': jsxRuntimeSrc,
+  // The built-in screen component kit (lib/screen-kit/kit.tsx) — token-themed preact components.
+  'formlogic/kit': kitSrc,
+};
+
+/** Per-module esbuild loader (default 'js' — the preact dists are compiled ESM; the kit is TSX). */
+export const VENDOR_LOADERS: Record<string, 'js' | 'tsx'> = {
+  'formlogic/kit': 'tsx',
 };
 
 /** Bare-import aliases → canonical vendor id. */
@@ -31,6 +39,7 @@ const VENDOR_ALIASES: Record<string, string> = {
   'react/jsx-runtime': 'preact/jsx-runtime',
   'react/jsx-dev-runtime': 'preact/jsx-runtime',
   'preact/jsx-dev-runtime': 'preact/jsx-runtime',
+  '@formlogic/kit': 'formlogic/kit',
 };
 
 /** Resolve a bare import specifier to a canonical vendor id, or null when it isn't a built-in. */
@@ -40,4 +49,4 @@ export function resolveVendorId(specifier: string): string | null {
 }
 
 /** The names screens may import, for the honest bundle-error message. */
-export const VENDOR_IMPORT_HINT = "react, react-dom/client, preact, preact/hooks";
+export const VENDOR_IMPORT_HINT = "react, react-dom/client, preact, preact/hooks, formlogic/kit";

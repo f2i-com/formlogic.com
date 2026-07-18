@@ -1,6 +1,7 @@
 {
   "id": "fleetflow-fleet",
   "name": "FleetFlow — Vehicle Fleet & Driver Log",
+  "version": "1.0.0",
   "description": "A fleet and driver logbook for small fleets: track vehicles and drivers, log trips and fuel, schedule maintenance, and record incidents, with rego, insurance and licence expiry warnings. Includes 5 forms and 1 app.",
   "tags": [
     "fleet",

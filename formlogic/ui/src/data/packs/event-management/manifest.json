@@ -1,6 +1,7 @@
 {
   "id": "event-management",
   "name": "Event Management",
+  "version": "1.0.0",
   "description": "Complete event management workflow covering registration, speaker submissions, vendor applications, volunteer coordination, incident logging, budget tracking, and post-event feedback. Includes 7 forms and 1 app.",
   "tags": [
     "events",

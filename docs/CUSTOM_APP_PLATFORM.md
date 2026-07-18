@@ -173,8 +173,10 @@ Sandboxed `code` screens (form sections, record widgets, app homes) can be autho
 **multi-file TSX projects**: `customScreen.files = [{path, content}]` with an `index.tsx` entry
 that mounts `createRoot(document.getElementById('root')!).render(<App/>)`. The sandbox bundler
 (`lib/screenCompile.ts`, esbuild-wasm + a virtual filesystem) compiles them on render with the
-automatic JSX runtime on **embedded Preact** — `'react'`, `'react-dom/client'`, `'preact'` and
-`'preact/hooks'` resolve from embedded module sources (`react` aliases to `preact/compat`; a lazy
+automatic JSX runtime on **embedded Preact** — `'react'`, `'react-dom/client'`, `'preact'`,
+`'preact/hooks'` and **`'formlogic/kit'`** (the built-in component kit: Card/Button/Field/Input/
+Select/Textarea/Stat/Badge/EmptyState/Skeleton/Toolbar, token-themed via `--fl-*`, stylesheet
+self-injecting — `lib/screen-kit/kit.tsx`) resolve from embedded module sources (`react` aliases to `preact/compat`; a lazy
 chunk, `lib/screenVendorModules.ts` — never a network fetch). Any OTHER bare import resolves via
 **esm.sh at COMPILE time**: the bundler (running in the host page, which has network) fetches the
 package's module graph and inlines it, so the compiled bundle stays self-contained and the sandbox

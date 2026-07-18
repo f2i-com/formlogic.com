@@ -1,6 +1,7 @@
 {
   "id": "job-invoice-management",
   "name": "Job & Invoice Management",
+  "version": "1.0.0",
   "description": "A universal job-to-quote-to-invoice-to-payment pipeline for any service business, with clients, jobs, quotes, invoices, and payments plus a live billing dashboard. Includes 5 forms and 1 app.",
   "tags": [
     "invoicing",

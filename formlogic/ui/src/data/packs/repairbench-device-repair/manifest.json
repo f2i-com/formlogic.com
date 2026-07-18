@@ -1,6 +1,7 @@
 {
   "id": "repairbench-device-repair",
   "name": "RepairBench — Device Repair Shop",
+  "version": "1.0.0",
   "description": "An electronics repair shop workflow: intake devices and customers, run repair jobs through a full diagnosis-to-pickup pipeline, order parts, and sign off quality checks. Includes 6 forms and 1 app.",
   "tags": [
     "repairs",

@@ -1,6 +1,7 @@
 {
   "id": "finance-os-au",
   "name": "Finance OS (Australia)",
+  "version": "1.0.0",
   "description": "Comprehensive advisory workflow for Australian AFSLs, covering client onboarding, Best Interest Duty compliance, superannuation, and AUSTRAC requirements. Includes 10 forms and 2 apps.",
   "tags": [
     "finance",

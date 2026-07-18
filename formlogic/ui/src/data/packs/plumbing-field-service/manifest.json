@@ -1,6 +1,7 @@
 {
   "id": "plumbing-field-service",
   "name": "Plumbing & Trades Field Service",
+  "version": "1.0.0",
   "description": "Field-service operations for a plumbing or trades business: manage customers, schedule and track jobs, log on-site work orders, raise invoices, and request parts and materials — all linked together. Includes 5 forms and 1 app.",
   "tags": [
     "plumbing",

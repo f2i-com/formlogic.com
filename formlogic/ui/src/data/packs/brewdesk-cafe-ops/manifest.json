@@ -1,6 +1,7 @@
 {
   "id": "brewdesk-cafe-ops",
   "name": "BrewDesk — Cafe & Barista Ops",
+  "version": "1.0.0",
   "description": "A cafe operations hub: take dine-in and takeaway orders, run the barista queue, track beans and milk stock, manage the roster, and close out the day. Includes 6 forms and 1 app.",
   "tags": [
     "cafe",

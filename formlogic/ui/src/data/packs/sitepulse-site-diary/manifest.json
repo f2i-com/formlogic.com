@@ -1,6 +1,7 @@
 {
   "id": "sitepulse-site-diary",
   "name": "SitePulse — Construction Site Diary",
+  "version": "1.0.0",
   "description": "A daily site diary for small builders and subcontractors: run projects, log daily diaries with weather and manpower, track deliveries, defects and variations, and keep subcontractor insurance current. Includes 6 forms and 1 app.",
   "tags": [
     "construction",

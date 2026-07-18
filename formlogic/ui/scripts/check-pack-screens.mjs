@@ -55,6 +55,10 @@ const VENDOR_PATHS = {
   'preact/compat': path.join(preactRoot, 'compat/dist/compat.mjs'),
   'preact/compat/client': path.join(preactRoot, 'compat/client.mjs'),
   'preact/jsx-runtime': path.join(preactRoot, 'jsx-runtime/dist/jsxRuntime.mjs'),
+  // The built-in screen component kit is a first-party vendor module (TSX on disk —
+  // esbuild infers the loader; its 'preact' imports resolve via node_modules to the
+  // same files as above, so it shares the runtime).
+  'formlogic/kit': path.resolve('src/lib/screen-kit/kit.tsx'),
 };
 const VENDOR_ALIASES = {
   'react': 'preact/compat',
@@ -63,6 +67,7 @@ const VENDOR_ALIASES = {
   'react/jsx-runtime': 'preact/jsx-runtime',
   'react/jsx-dev-runtime': 'preact/jsx-runtime',
   'preact/jsx-dev-runtime': 'preact/jsx-runtime',
+  '@formlogic/kit': 'formlogic/kit',
 };
 const ENTRY_CANDIDATES = ['index.tsx', 'index.ts', 'main.tsx', 'main.ts', 'app.tsx', 'app.ts'];
 

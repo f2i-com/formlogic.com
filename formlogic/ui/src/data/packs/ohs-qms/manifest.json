@@ -1,6 +1,7 @@
 {
   "id": "ohs-qms",
   "name": "OHS & Quality Management",
+  "version": "1.0.0",
   "description": "Complete occupational health & safety and quality management system covering incident reporting, hazard identification, audits, corrective actions, NCRs, and training records. Aligned with ISO 45001 and ISO 9001. Includes 12 forms and 2 apps.",
   "tags": [
     "safety",

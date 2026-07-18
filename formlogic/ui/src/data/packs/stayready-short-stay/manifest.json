@@ -1,6 +1,7 @@
 {
   "id": "stayready-short-stay",
   "name": "StayReady — Short-Stay Turnover",
+  "version": "1.0.0",
   "description": "A turnover manager for Airbnb and short-stay hosts: track properties and bookings, schedule cleaner turnovers between checkout and check-in, run inspections, and keep per-property supplies stocked. Includes 6 forms and 1 app.",
   "tags": [
     "airbnb",

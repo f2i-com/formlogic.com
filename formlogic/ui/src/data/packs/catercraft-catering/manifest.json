@@ -1,6 +1,7 @@
 {
   "id": "catercraft-catering",
   "name": "CaterCraft — Catering & Event Orders",
+  "version": "1.0.0",
   "description": "Quote, plan, produce and deliver catering jobs: manage clients and menu packages, move jobs through an event pipeline, run the production board, dispatch deliveries, and track dietary requirements. Includes 6 forms and 1 app.",
   "tags": [
     "catering",

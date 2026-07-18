@@ -78,6 +78,23 @@ declare module 'preact' {
   export type ComponentChildren = any;
 }
 declare module 'preact/hooks' { export * from 'react'; }
+declare module 'formlogic/kit' {
+  type Kids = any;
+  export function ensureKitStyles(): void;
+  export function Card(props: { title?: Kids; actions?: Kids; children?: Kids }): any;
+  export function Button(props: { variant?: 'default' | 'primary' | 'danger'; disabled?: boolean; onClick?: (e: any) => void; type?: string; children?: Kids } & Record<string, any>): any;
+  export function Field(props: { label: Kids; hint?: Kids; children?: Kids }): any;
+  export function Input(props: Record<string, any>): any;
+  export function Select(props: { children?: Kids } & Record<string, any>): any;
+  export function Textarea(props: Record<string, any>): any;
+  export function Stat(props: { label: Kids; value: Kids }): any;
+  export function Badge(props: { tone?: 'ok' | 'warn' | 'bad' | 'accent' | 'muted'; children?: Kids }): any;
+  export function EmptyState(props: { title: Kids; hint?: Kids }): any;
+  export function Skeleton(props: { width?: string | number; height?: string | number }): any;
+  export function Toolbar(props: { children?: Kids }): any;
+  export function Spacer(): any;
+}
+declare module '@formlogic/kit' { export * from 'formlogic/kit'; }
 declare module 'preact/compat' { export * from 'react'; }
 declare module 'preact/jsx-runtime' { export const jsx: any, jsxs: any, jsxDEV: any, Fragment: any; }
 declare module 'react/jsx-runtime' { export const jsx: any, jsxs: any, jsxDEV: any, Fragment: any; }

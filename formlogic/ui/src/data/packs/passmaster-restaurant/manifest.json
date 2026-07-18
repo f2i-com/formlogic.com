@@ -1,6 +1,7 @@
 {
   "id": "passmaster-restaurant",
   "name": "PassMaster — Restaurant Kitchen & Table Service",
+  "version": "1.0.0",
   "description": "Front-of-house and kitchen pass for small restaurants: take reservations, run the floor and table status, fire kitchen tickets by course, work the prep list, and close the shift. Includes 6 forms and 1 app.",
   "tags": [
     "restaurant",

@@ -24,26 +24,38 @@ const STARTER: ScreenFile[] = [
 // 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual. Folders of
 // components with relative imports are supported — this starter shows the pattern.
 const STARTER_TSX: ScreenFile[] = [
-  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n.stat { display: inline-block; padding: 10px 16px; border-radius: 10px; background: var(--fl-surface-2); }\n.stat b { color: var(--fl-accent); }\n' },
+  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; }\nmain { max-width: 640px; margin: 0 auto; display: grid; gap: 12px; }\n' },
   {
-    path: 'components/Stat.tsx',
-    content: `// A tiny reusable component — add more files/folders and import them with relative paths.
-export function Stat({ label, value }: { label: string; value: number }) {
+    path: 'components/RecentList.tsx',
+    content: `// Your own components live in folders like this one; 'formlogic/kit' provides app-themed chrome.
+import { Card, EmptyState } from 'formlogic/kit';
+
+export function RecentList({ records }: { records: FlRecord[] }) {
   return (
-    <p class="stat">
-      <b>{value}</b> {label}
-    </p>
+    <Card title="Recent records">
+      {records.length === 0 ? (
+        <EmptyState title="Nothing here yet" hint="Saved records appear in this list." />
+      ) : (
+        <ul>
+          {records.slice(0, 5).map((r) => (
+            <li key={r.id}>{r.submittedAt}</li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 `,
   },
   {
     path: 'index.tsx',
-    content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact).
+    content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact), and
+// 'formlogic/kit' gives you app-themed UI (Card, Button, Field, Stat, Badge, EmptyState, ...).
 // window.FormLogic is the SDK: submit(answers), records(), currentUser(), context().
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Stat } from './components/Stat';
+import { Card, Stat } from 'formlogic/kit';
+import { RecentList } from './components/RecentList';
 
 function App() {
   const [title, setTitle] = useState('');
@@ -56,8 +68,10 @@ function App() {
 
   return (
     <main>
-      <h1>{title || 'My screen'}</h1>
-      <Stat label={records.length === 1 ? 'record so far' : 'records so far'} value={records.length} />
+      <Card title={title || 'My screen'}>
+        <Stat label={records.length === 1 ? 'record so far' : 'records so far'} value={records.length} />
+      </Card>
+      <RecentList records={records} />
     </main>
   );
 }

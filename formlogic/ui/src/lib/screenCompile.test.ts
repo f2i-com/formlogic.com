@@ -120,6 +120,55 @@ describe('bundleScreenFiles — TSX components', () => {
 
 });
 
+describe('bundleScreenFiles — formlogic/kit built-in', () => {
+  it('renders kit components with the stylesheet injected exactly once', async () => {
+    const r = await bundleScreenFiles([
+      {
+        path: 'index.tsx',
+        content: `
+          import { render } from 'preact';
+          import { Card, Button, Stat, Badge, EmptyState } from 'formlogic/kit';
+          render(
+            <Card title="Kit card" actions={<Badge tone="ok">live</Badge>}>
+              <Stat label="records" value={7} />
+              <Button variant="primary">Go</Button>
+              <EmptyState title="Nothing yet" hint="hint text" />
+            </Card>,
+            document.getElementById('root')!
+          );
+        `,
+      },
+    ]);
+    expect(r.error).toBeUndefined();
+    const { root, window } = execute(r.js);
+    await flushRender();
+    expect(root.querySelector('.flk-card-title')?.textContent).toBe('Kit card');
+    expect(root.querySelector('.flk-stat b')?.textContent).toBe('7');
+    expect(root.querySelector('.flk-btn.primary')?.textContent).toBe('Go');
+    expect(root.querySelector('.flk-badge.ok')?.textContent).toBe('live');
+    expect(root.querySelector('.flk-empty p')?.textContent).toBe('Nothing yet');
+    // ensureKitStyles is idempotent — many components, ONE stylesheet.
+    expect(window.document.querySelectorAll('#flk-styles').length).toBe(1);
+  });
+
+  it("resolves the '@formlogic/kit' alias to the same built-in", async () => {
+    const r = await bundleScreenFiles([
+      {
+        path: 'index.tsx',
+        content: `
+          import { render } from 'preact';
+          import { Badge } from '@formlogic/kit';
+          render(<Badge tone="warn">aliased</Badge>, document.getElementById('root')!);
+        `,
+      },
+    ]);
+    expect(r.error).toBeUndefined();
+    const { root } = execute(r.js);
+    await flushRender();
+    expect(root.querySelector('.flk-badge.warn')?.textContent).toBe('aliased');
+  });
+});
+
 describe('bundleScreenFiles — npm via esm.sh (compile-time, offline-faked)', () => {
   it('resolves a bare import through esm.sh, following the module graph', async () => {
     __setEsmFetchForTests(fakeEsm({

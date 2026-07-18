@@ -198,7 +198,7 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
       });
       build.onLoad({ filter: /.*/, namespace: 'vendor' }, (args) => ({
         contents: vendors.VENDOR_MODULES[args.path] ?? '',
-        loader: 'js',
+        loader: vendors.VENDOR_LOADERS[args.path] ?? 'js',
       }));
       build.onLoad({ filter: /.*/, namespace: 'css-stub' }, () => ({ contents: '', loader: 'js' }));
       build.onLoad({ filter: /.*/, namespace: 'esm' }, async (args) => {

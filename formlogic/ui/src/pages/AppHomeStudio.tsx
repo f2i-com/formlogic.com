@@ -25,26 +25,34 @@ const STARTER: ScreenFile[] = [
 // 'react' imports bundle to Preact inside the sandbox, so hooks and JSX work as usual. Folders of
 // components with relative imports are supported — this starter shows the pattern.
 const STARTER_TSX: ScreenFile[] = [
-  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }\nmain { max-width: 640px; margin: 0 auto; }\n.form-card { display: block; width: 100%; text-align: left; padding: 12px 16px; margin: 0 0 8px; border: 1px solid var(--fl-border); border-radius: 10px; background: var(--fl-surface); cursor: pointer; font: inherit; }\n.form-card:hover { border-color: var(--fl-accent); }\n' },
+  { path: 'styles.css', content: 'body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; }\nmain { max-width: 640px; margin: 0 auto; }\n' },
   {
-    path: 'components/FormCard.tsx',
-    content: `// A tiny reusable component — add more files/folders and import them with relative paths.
-export function FormCard({ name, onOpen }: { name: string; onOpen: () => void }) {
+    path: 'components/FormLauncher.tsx',
+    content: `// Your own components live in folders like this one; 'formlogic/kit' provides app-themed chrome.
+import { Button, Card } from 'formlogic/kit';
+
+export function FormLauncher({ forms }: { forms: FlFormRef[] }) {
   return (
-    <button class="form-card" onClick={onOpen}>
-      {name}
-    </button>
+    <Card title="Open a form">
+      {forms.map((f) => (
+        <p key={f.formId}>
+          <Button onClick={() => FormLogic.navigate(f.formId)}>{f.displayName}</Button>
+        </p>
+      ))}
+    </Card>
   );
 }
 `,
   },
   {
     path: 'index.tsx',
-    content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact).
+    content: `// index.tsx — React-style components. \`import from 'react'\` works (bundled with Preact), and
+// 'formlogic/kit' gives you app-themed UI (Card, Button, Field, Stat, Badge, EmptyState, ...).
 // window.FormLogic (app SDK): context(), forms(), submit(formId, answers), records(formId), navigate(formId).
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FormCard } from './components/FormCard';
+import { Skeleton } from 'formlogic/kit';
+import { FormLauncher } from './components/FormLauncher';
 
 function App() {
   const [ctx, setCtx] = useState<{ appName: string; forms: FlFormRef[] } | null>(null);
@@ -53,13 +61,11 @@ function App() {
     FormLogic.context().then(setCtx);
   }, []);
 
-  if (!ctx) return <p>Loading…</p>;
+  if (!ctx) return <Skeleton height={120} />;
   return (
     <main>
       <h1>{ctx.appName}</h1>
-      {ctx.forms.map((f) => (
-        <FormCard key={f.formId} name={f.displayName} onOpen={() => FormLogic.navigate(f.formId)} />
-      ))}
+      <FormLauncher forms={ctx.forms} />
     </main>
   );
 }

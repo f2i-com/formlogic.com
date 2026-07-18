@@ -39,6 +39,8 @@ import aokieReceptionistManifest from './aokie-receptionist/manifest.json';
 export interface PackManifest {
   id: string;
   name: string;
+  /** Mirrors the payload's packMeta.version — emit-marketplace fails the build on drift. */
+  version: string;
   description: string;
   tags: string[];
   icon: string;

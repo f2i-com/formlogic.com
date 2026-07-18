@@ -52,6 +52,13 @@ const vendorKey = loadVendorKey();
 if (!vendorKey) console.warn('⚠️  no vendor key at ~/.formlogic-signing/formlogic-packs-2026a.json — emitting UNSIGNED packs');
 
 for (const entry of packCatalog) {
+  // The manifest's version MIRRORS the payload's packMeta.version — a drift means someone bumped
+  // one without the other, which would ship a store listing lying about what installs.
+  const payloadVersion = entry.pack?.packMeta?.version;
+  if (entry.version !== payloadVersion) {
+    console.error(`✗ ${entry.id}: manifest.json version '${entry.version}' != packMeta.version '${payloadVersion}'`);
+    process.exit(1);
+  }
   // Store the full catalog entry (id, name, description, tags, icon) alongside the pack payload,
   // so the provisioner has the marketplace metadata plus the installable pack in one file.
   const signing = buildPackSigning(entry.pack, vendorKey);

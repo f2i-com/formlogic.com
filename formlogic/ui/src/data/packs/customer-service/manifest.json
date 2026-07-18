@@ -1,6 +1,7 @@
 {
   "id": "customer-service",
   "name": "Customer Service",
+  "version": "1.0.0",
   "description": "Complete customer service and support workflow covering support tickets, bug reports, feature requests, customer feedback, refund requests, escalation management, and knowledge base. Includes 7 forms and 1 app.",
   "tags": [
     "customer-service",

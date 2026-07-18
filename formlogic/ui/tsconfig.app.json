@@ -12,6 +12,9 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
+    "paths": {
+      "formlogic/kit": ["./src/lib/screen-kit/kit.tsx"]
+    },
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
