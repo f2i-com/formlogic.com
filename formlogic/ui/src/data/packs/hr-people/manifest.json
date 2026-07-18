@@ -1,0 +1,14 @@
+{
+  "id": "hr-people",
+  "name": "HR & People Management",
+  "description": "Complete human resources workflow covering recruitment, onboarding, leave management, performance reviews, expense claims, training requests, and exit interviews. Includes 8 forms and 1 app.",
+  "tags": [
+    "hr",
+    "people",
+    "recruitment",
+    "onboarding",
+    "leave",
+    "performance"
+  ],
+  "icon": "Users"
+}

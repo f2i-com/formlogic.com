@@ -36,7 +36,10 @@ const bundled = await build({
   plugins: [rawPlugin],
 });
 const code = bundled.outputFiles[0].text;
-const { packCatalog } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+// The catalog is lazy (per-pack dynamic imports); esbuild inlines them when bundling without
+// splitting, so loadAllPacks() resolves everything from the single bundled module.
+const { loadAllPacks } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const packCatalog = await loadAllPacks();
 
 const outDir = join(here, '..', '..', 'backend', 'resources', 'marketplace-packs');
 mkdirSync(outDir, { recursive: true });

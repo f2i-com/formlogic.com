@@ -1,0 +1,859 @@
+// ── Type re-use ─────────────────────────────────────────────────────────────
+import type { PackData } from '../types';
+
+// ── Shared defaults ─────────────────────────────────────────────────────────
+
+const defaultSettings: Record<string, unknown> = {
+  presentationMode: 'both',
+  defaultPresentationMode: 'focused',
+  showProgressBar: true,
+  allowBackNavigation: true,
+  submitButtonText: 'Submit',
+  notifications: { emailNotifications: false },
+  isClosed: false,
+};
+
+const defaultTheme: Record<string, unknown> = {
+  primaryColor: '#dc2626',
+  backgroundColor: '#ffffff',
+  textColor: '#1f2937',
+  fontFamily: 'Inter',
+  borderRadius: 'medium',
+};
+
+// ── Pack data ───────────────────────────────────────────────────────────────
+
+export const fitStudioPack: PackData = {
+  formatVersion: 1,
+  packMeta: {
+    id: 'fitstudio-coaching',
+    name: 'FitStudio — Personal Training & Gym Coaching',
+    description:
+      'A coaching manager for personal trainers, gyms and studios: keep client profiles and a trainer roster, book and track sessions, log progress assessments, run training programs, and record payments — all linked together.',
+    version: '1.0.0',
+    author: 'FormLogic',
+    tags: ['fitness', 'training', 'coaching', 'gym', 'clients'],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────
+  // FORMS
+  // ────────────────────────────────────────────────────────────────────────
+  forms: [
+    // ── 1. Client ─────────────────────────────────────────────────────────
+    {
+      packFormId: 'client',
+      title: 'Client',
+      icon: 'Users',
+      description:
+        'Add a client with their contact details, fitness goal, medical notes and training status.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Client',
+          description: 'Capture the client details so you can book sessions and track their progress.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'name',
+          type: 'short_text',
+          label: 'Client Name',
+          required: true,
+          properties: { placeholder: 'Full name' },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email Address',
+          required: false,
+          properties: { placeholder: 'you@example.com' },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone Number',
+          required: false,
+          properties: { placeholder: '(555) 555-5555' },
+        },
+        {
+          id: 'goal',
+          type: 'dropdown',
+          label: 'Fitness Goal',
+          required: false,
+          properties: {
+            options: [
+              { id: 'fat-loss', label: 'Fat loss', value: 'fat-loss' },
+              { id: 'strength', label: 'Strength', value: 'strength' },
+              { id: 'muscle-gain', label: 'Muscle gain', value: 'muscle-gain' },
+              { id: 'endurance', label: 'Endurance', value: 'endurance' },
+              { id: 'mobility', label: 'Mobility', value: 'mobility' },
+              { id: 'rehab', label: 'Rehab', value: 'rehab' },
+            ],
+          },
+        },
+        {
+          id: 'medical_notes',
+          type: 'long_text',
+          label: 'Medical Notes',
+          required: false,
+          properties: { placeholder: 'Injuries, conditions, medications the coach should know about…' },
+        },
+        {
+          id: 'emergency_contact',
+          type: 'short_text',
+          label: 'Emergency Contact',
+          required: false,
+          properties: { placeholder: 'Name and phone number' },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'active', label: 'Active', value: 'active' },
+              { id: 'trial', label: 'Trial', value: 'trial' },
+              { id: 'paused', label: 'Paused', value: 'paused' },
+              { id: 'finished', label: 'Finished', value: 'finished' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total clients', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Active', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'active' }] } },
+            { id: 'k3', title: 'On trial', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'trial' }] } },
+            { id: 'k4', title: 'New this month', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'this_month' }] } },
+            { id: 'c1', title: 'Clients by goal', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'bar', groupBy: { field: 'goal', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'New clients over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent clients', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:client', titleField: 'name', subtitleField: 'goal', limit: 8 } },
+          ],
+        },
+      },
+    },
+
+    // ── 2. Trainer ────────────────────────────────────────────────────────
+    {
+      packFormId: 'trainer',
+      title: 'Trainer',
+      icon: 'UserCog',
+      description:
+        'Add a trainer or instructor to the roster with their role, specialties and contact details.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Trainer',
+          description: 'Add a coach to the bench so sessions and programs can be booked against them.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'name',
+          type: 'short_text',
+          label: 'Name',
+          required: true,
+          properties: { placeholder: 'Full name' },
+        },
+        {
+          id: 'role',
+          type: 'dropdown',
+          label: 'Role',
+          required: true,
+          properties: {
+            options: [
+              { id: 'personal-trainer', label: 'Personal trainer', value: 'personal-trainer' },
+              { id: 'group-instructor', label: 'Group instructor', value: 'group-instructor' },
+              { id: 'physio', label: 'Physio', value: 'physio' },
+              { id: 'nutrition-coach', label: 'Nutrition coach', value: 'nutrition-coach' },
+            ],
+          },
+        },
+        {
+          id: 'specialties',
+          type: 'checkboxes',
+          label: 'Specialties',
+          required: false,
+          properties: {
+            options: [
+              { id: 'strength', label: 'Strength', value: 'strength' },
+              { id: 'hiit', label: 'HIIT', value: 'hiit' },
+              { id: 'pilates', label: 'Pilates', value: 'pilates' },
+              { id: 'yoga', label: 'Yoga', value: 'yoga' },
+              { id: 'boxing', label: 'Boxing', value: 'boxing' },
+              { id: 'rehab', label: 'Rehab', value: 'rehab' },
+              { id: 'nutrition', label: 'Nutrition', value: 'nutrition' },
+            ],
+          },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone Number',
+          required: false,
+          properties: { placeholder: '(555) 555-5555' },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email Address',
+          required: false,
+          properties: { placeholder: 'coach@example.com' },
+        },
+        {
+          id: 'active',
+          type: 'dropdown',
+          label: 'Active',
+          required: false,
+          properties: {
+            options: [
+              { id: 'active', label: 'Active', value: 'active' },
+              { id: 'inactive', label: 'Inactive', value: 'inactive' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total trainers', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:trainer', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Active coaches', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:trainer', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'active', op: 'eq', value: 'active' }] } },
+            { id: 'k3', title: 'Personal trainers', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:trainer', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'role', op: 'eq', value: 'personal-trainer' }] } },
+            { id: 'k4', title: 'Added this month', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:trainer', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'this_month' }] } },
+            { id: 'c1', title: 'Trainers by role', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:trainer', viz: 'bar', groupBy: { field: 'role', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Active vs inactive', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:trainer', viz: 'donut', groupBy: { field: 'active', bucket: 'none' }, measure: { fn: 'count' } } },
+            { id: 'l1', title: 'The bench', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:trainer', titleField: 'name', subtitleField: 'role', limit: 8 } },
+          ],
+        },
+      },
+    },
+    // ── 3. Session ────────────────────────────────────────────────────────
+    {
+      packFormId: 'session',
+      title: 'Session',
+      icon: 'CalendarClock',
+      description:
+        'Book a training session linking a client and trainer with its date, time, type, status and fee.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'Book a Session',
+          description: 'Put a session on the day sheet with the client, trainer, time and fee.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'trainer',
+          type: 'linked_record',
+          label: 'Trainer',
+          required: true,
+          properties: { targetFormId: '@pack:trainer' },
+        },
+        {
+          id: 'date',
+          type: 'date',
+          label: 'Session Date',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'time',
+          type: 'time',
+          label: 'Time',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'session_type',
+          type: 'dropdown',
+          label: 'Session Type',
+          required: true,
+          properties: {
+            options: [
+              { id: 'pt', label: 'PT', value: 'pt' },
+              { id: 'group', label: 'Group', value: 'group' },
+              { id: 'assessment', label: 'Assessment', value: 'assessment' },
+              { id: 'rehab', label: 'Rehab', value: 'rehab' },
+              { id: 'nutrition', label: 'Nutrition', value: 'nutrition' },
+            ],
+          },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'scheduled', label: 'Scheduled', value: 'scheduled' },
+              { id: 'completed', label: 'Completed', value: 'completed' },
+              { id: 'cancelled', label: 'Cancelled', value: 'cancelled' },
+              { id: 'no-show', label: 'No-show', value: 'no-show' },
+            ],
+          },
+        },
+        {
+          id: 'notes',
+          type: 'long_text',
+          label: 'Notes',
+          required: false,
+          properties: { placeholder: 'Focus for this session, equipment to set up, anything to watch…' },
+        },
+        {
+          id: 'fee',
+          type: 'number',
+          label: 'Fee ($)',
+          required: false,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total sessions', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:session', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Completed', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:session', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'completed' }] } },
+            { id: 'k3', title: 'Scheduled', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:session', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'scheduled' }] } },
+            { id: 'k4', title: 'Fees billed', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:session', viz: 'kpi', measure: { fn: 'sum', field: 'fee' } } },
+            { id: 'c1', title: 'Sessions by type', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:session', viz: 'bar', groupBy: { field: 'session_type', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Sessions over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:session', viz: 'area', groupBy: { field: 'date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent sessions', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:session', titleField: 'session_type', subtitleField: 'status', limit: 8 } },
+          ],
+        },
+      },
+    },
+
+    // ── 4. Assessment ─────────────────────────────────────────────────────
+    {
+      packFormId: 'assessment',
+      title: 'Assessment',
+      icon: 'Activity',
+      description:
+        'Record a progress check-in with weight, body fat, mobility score, a progress photo and coach notes.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'Progress Check-in',
+          description: 'Log the numbers that show a client how far they have come.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'date',
+          type: 'date',
+          label: 'Date',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'weight_kg',
+          type: 'number',
+          label: 'Weight (kg)',
+          required: false,
+          properties: { placeholder: '80', min: 0 },
+        },
+        {
+          id: 'body_fat_pct',
+          type: 'number',
+          label: 'Body Fat (%)',
+          required: false,
+          properties: { placeholder: '20', min: 0 },
+        },
+        {
+          id: 'strength_notes',
+          type: 'long_text',
+          label: 'Strength Notes',
+          required: false,
+          properties: { placeholder: 'Key lifts, reps and loads from this check-in…' },
+        },
+        {
+          id: 'mobility_score',
+          type: 'rating',
+          label: 'Mobility Score',
+          required: false,
+          properties: { max: 5 },
+        },
+        {
+          id: 'progress_photo',
+          type: 'file_upload',
+          label: 'Progress Photo',
+          required: false,
+          properties: { acceptedFileTypes: ['.jpg', '.png'] },
+        },
+        {
+          id: 'coach_notes',
+          type: 'long_text',
+          label: 'Coach Notes',
+          required: false,
+          properties: { placeholder: 'Wins to celebrate, what to adjust before the next block…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total check-ins', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:assessment', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Clients assessed', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:assessment', viz: 'kpi', measure: { fn: 'countDistinct', field: 'client' } } },
+            { id: 'k3', title: 'Avg mobility', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:assessment', viz: 'kpi', measure: { fn: 'avg', field: 'mobility_score' } } },
+            { id: 'k4', title: 'Avg body fat %', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:assessment', viz: 'kpi', measure: { fn: 'avg', field: 'body_fat_pct' } } },
+            { id: 'c1', title: 'Check-ins over time', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:assessment', viz: 'area', groupBy: { field: 'date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'c2', title: 'Avg weight trend', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:assessment', viz: 'line', groupBy: { field: 'date', bucket: 'month' }, measure: { fn: 'avg', field: 'weight_kg' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent check-ins', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:assessment', titleField: 'date', subtitleField: 'weight_kg', limit: 8 } },
+          ],
+        },
+      },
+    },
+
+    // ── 5. Program ────────────────────────────────────────────────────────
+    {
+      packFormId: 'program',
+      title: 'Program',
+      icon: 'Target',
+      description:
+        'Build a training program for a client with its goal, start and end dates, and status.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Program',
+          description: 'Map out a block of training toward a clear goal, with a start and a finish.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'program_name',
+          type: 'short_text',
+          label: 'Program Name',
+          required: true,
+          properties: { placeholder: 'e.g. 12-Week Fat Loss, Strength Base' },
+        },
+        {
+          id: 'goal',
+          type: 'dropdown',
+          label: 'Goal',
+          required: false,
+          properties: {
+            options: [
+              { id: 'fat-loss', label: 'Fat loss', value: 'fat-loss' },
+              { id: 'strength', label: 'Strength', value: 'strength' },
+              { id: 'muscle-gain', label: 'Muscle gain', value: 'muscle-gain' },
+              { id: 'endurance', label: 'Endurance', value: 'endurance' },
+              { id: 'mobility', label: 'Mobility', value: 'mobility' },
+              { id: 'rehab', label: 'Rehab', value: 'rehab' },
+            ],
+          },
+        },
+        {
+          id: 'start_date',
+          type: 'date',
+          label: 'Start Date',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'end_date',
+          type: 'date',
+          label: 'End Date',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'draft', label: 'Draft', value: 'draft' },
+              { id: 'active', label: 'Active', value: 'active' },
+              { id: 'completed', label: 'Completed', value: 'completed' },
+              { id: 'abandoned', label: 'Abandoned', value: 'abandoned' },
+            ],
+          },
+        },
+        {
+          id: 'program_notes',
+          type: 'long_text',
+          label: 'Program Notes',
+          required: false,
+          properties: { placeholder: 'Structure of the block, weekly split, progression plan…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total programs', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:program', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Active', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:program', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'active' }] } },
+            { id: 'k3', title: 'Completed', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:program', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'completed' }] } },
+            { id: 'k4', title: 'Drafts', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:program', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'draft' }] } },
+            { id: 'c1', title: 'Programs by goal', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:program', viz: 'bar', groupBy: { field: 'goal', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Programs by status', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:program', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' } } },
+            { id: 'l1', title: 'Recent programs', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:program', titleField: 'program_name', subtitleField: 'status', limit: 8 } },
+          ],
+        },
+      },
+    },
+
+    // ── 6. Payment ────────────────────────────────────────────────────────
+    {
+      packFormId: 'payment',
+      title: 'Payment',
+      icon: 'CreditCard',
+      description:
+        'Record a payment from a client with its amount, type, date and status.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Payment',
+          description: 'Log a payment so the revenue board stays up to date.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'amount',
+          type: 'number',
+          label: 'Amount ($)',
+          required: true,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+        {
+          id: 'payment_type',
+          type: 'dropdown',
+          label: 'Payment Type',
+          required: false,
+          properties: {
+            options: [
+              { id: 'session-pack', label: 'Session pack', value: 'session-pack' },
+              { id: 'membership', label: 'Membership', value: 'membership' },
+              { id: 'casual-visit', label: 'Casual visit', value: 'casual-visit' },
+              { id: 'program-fee', label: 'Program fee', value: 'program-fee' },
+            ],
+          },
+        },
+        {
+          id: 'date',
+          type: 'date',
+          label: 'Date',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'paid', label: 'Paid', value: 'paid' },
+              { id: 'pending', label: 'Pending', value: 'pending' },
+              { id: 'failed', label: 'Failed', value: 'failed' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Collected', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'paid' }] } },
+            { id: 'k2', title: 'Payments', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k3', title: 'Pending', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'pending' }] } },
+            { id: 'k4', title: 'Failed', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'failed' }] } },
+            { id: 'c1', title: 'Revenue by type', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'bar', groupBy: { field: 'payment_type', bucket: 'none' }, measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'paid' }], seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Revenue over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'area', groupBy: { field: 'date', bucket: 'day' }, measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'paid' }], seriesSort: 'label', limit: 31 } },
+            { id: 'l1', title: 'Recent payments', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:payment', titleField: 'payment_type', subtitleField: 'status', limit: 8 } },
+          ],
+        },
+      },
+    },
+  ],
+
+  // ────────────────────────────────────────────────────────────────────────
+  // APPS
+  // ────────────────────────────────────────────────────────────────────────
+  apps: [
+    {
+      packAppId: 'fitstudio',
+      name: 'FitStudio',
+      description:
+        'A coaching operations hub: manage clients and the trainer bench, book and track sessions, log progress assessments, run training programs, and record payments from one dashboard.',
+      settings: { icon: 'Dumbbell' },
+      theme: {
+        primaryColor: '#dc2626',
+        backgroundColor: '#0f172a',
+        textColor: '#f8fafc',
+        fontFamily: 'Inter',
+        borderRadius: 'medium',
+      },
+      forms: [
+        { packFormId: 'client', displayName: 'Clients', sortOrder: 1, isVisible: true },
+        { packFormId: 'trainer', displayName: 'Trainers', sortOrder: 2, isVisible: true },
+        { packFormId: 'session', displayName: 'Sessions', sortOrder: 3, isVisible: true },
+        { packFormId: 'assessment', displayName: 'Assessments', sortOrder: 4, isVisible: true },
+        { packFormId: 'program', displayName: 'Programs', sortOrder: 5, isVisible: true },
+        { packFormId: 'payment', displayName: 'Payments', sortOrder: 6, isVisible: true },
+      ],
+      customScreen: {
+        enabled: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Clients', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Sessions', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:session', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k3', title: 'Active programs', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:program', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'active' }] } },
+            { id: 'k4', title: 'Collected', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'paid' }] } },
+            { id: 'c1', title: 'Revenue over time', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'area', groupBy: { field: 'date', bucket: 'day' }, measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'paid' }], seriesSort: 'label', limit: 31 } },
+            { id: 'c2', title: 'Sessions by trainer', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:session', viz: 'bar', joins: [{ via: 'trainer', formId: '@pack:trainer', type: 'left' }], groupBy: { field: '@pack:trainer::name', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'a1', title: 'Quick actions', layout: { x: 0, y: 4, w: 12, h: 1 }, kind: 'actions' },
+            { id: 'l1', title: 'Recent sessions', layout: { x: 0, y: 5, w: 8, h: 3 }, kind: 'list', list: { formId: '@pack:session', titleField: 'session_type', subtitleField: 'status', limit: 8 } },
+            { id: 'v1', title: 'Recent activity', layout: { x: 8, y: 5, w: 4, h: 3 }, kind: 'activity' },
+          ],
+        },
+      },
+      roles: [
+        {
+          name: 'Studio Owner',
+          description: 'Full access to every FitStudio form.',
+          permissions: [
+            { packFormId: 'client', permission: 'submit_responses' },
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'client', permission: 'edit_responses' },
+            { packFormId: 'client', permission: 'delete_responses' },
+            { packFormId: 'client', permission: 'export_responses' },
+            { packFormId: 'trainer', permission: 'submit_responses' },
+            { packFormId: 'trainer', permission: 'view_all_responses' },
+            { packFormId: 'trainer', permission: 'edit_responses' },
+            { packFormId: 'trainer', permission: 'delete_responses' },
+            { packFormId: 'trainer', permission: 'export_responses' },
+            { packFormId: 'session', permission: 'submit_responses' },
+            { packFormId: 'session', permission: 'view_all_responses' },
+            { packFormId: 'session', permission: 'edit_responses' },
+            { packFormId: 'session', permission: 'delete_responses' },
+            { packFormId: 'session', permission: 'export_responses' },
+            { packFormId: 'assessment', permission: 'submit_responses' },
+            { packFormId: 'assessment', permission: 'view_all_responses' },
+            { packFormId: 'assessment', permission: 'edit_responses' },
+            { packFormId: 'assessment', permission: 'delete_responses' },
+            { packFormId: 'assessment', permission: 'export_responses' },
+            { packFormId: 'program', permission: 'submit_responses' },
+            { packFormId: 'program', permission: 'view_all_responses' },
+            { packFormId: 'program', permission: 'edit_responses' },
+            { packFormId: 'program', permission: 'delete_responses' },
+            { packFormId: 'program', permission: 'export_responses' },
+            { packFormId: 'payment', permission: 'submit_responses' },
+            { packFormId: 'payment', permission: 'view_all_responses' },
+            { packFormId: 'payment', permission: 'edit_responses' },
+            { packFormId: 'payment', permission: 'delete_responses' },
+            { packFormId: 'payment', permission: 'export_responses' },
+          ],
+        },
+        {
+          name: 'Coach',
+          description: 'Trainers who run sessions, log assessments and manage their clients’ programs.',
+          permissions: [
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'trainer', permission: 'view_all_responses' },
+            { packFormId: 'session', permission: 'submit_responses' },
+            { packFormId: 'session', permission: 'view_all_responses' },
+            { packFormId: 'session', permission: 'edit_responses' },
+            { packFormId: 'assessment', permission: 'submit_responses' },
+            { packFormId: 'assessment', permission: 'view_all_responses' },
+            { packFormId: 'assessment', permission: 'edit_responses' },
+            { packFormId: 'program', permission: 'submit_responses' },
+            { packFormId: 'program', permission: 'view_all_responses' },
+            { packFormId: 'program', permission: 'edit_responses' },
+            { packFormId: 'payment', permission: 'view_all_responses' },
+          ],
+        },
+        {
+          name: 'Front Desk',
+          description: 'Reception staff who sign up clients, book sessions and record payments.',
+          permissions: [
+            { packFormId: 'client', permission: 'submit_responses' },
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'client', permission: 'edit_responses' },
+            { packFormId: 'trainer', permission: 'view_all_responses' },
+            { packFormId: 'session', permission: 'submit_responses' },
+            { packFormId: 'session', permission: 'view_all_responses' },
+            { packFormId: 'session', permission: 'edit_responses' },
+            { packFormId: 'program', permission: 'view_all_responses' },
+            { packFormId: 'payment', permission: 'submit_responses' },
+            { packFormId: 'payment', permission: 'view_all_responses' },
+          ],
+        },
+      ],
+      reports: [
+        {
+          reportId: 'sessions-count',
+          kind: 'chart' as const,
+          name: 'Sessions booked',
+          description: 'Total number of sessions on record across the studio.',
+          spec: {
+            formId: '@pack:session',
+            viz: 'kpi' as const,
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'sessions-by-type',
+          kind: 'chart' as const,
+          name: 'Sessions by type',
+          description: 'Count of sessions broken down by session type.',
+          spec: {
+            formId: '@pack:session',
+            viz: 'bar' as const,
+            groupBy: { field: 'session_type' },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'sessions-over-time',
+          kind: 'chart' as const,
+          name: 'Sessions over time',
+          description: 'Monthly trend of sessions booked.',
+          spec: {
+            formId: '@pack:session',
+            viz: 'line' as const,
+            groupBy: { field: '__submitted_at', bucket: 'month' as const },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'revenue-total',
+          kind: 'chart' as const,
+          name: 'Total revenue',
+          description: 'Cumulative revenue summed across all payments.',
+          spec: {
+            formId: '@pack:payment',
+            viz: 'kpi' as const,
+            measure: { fn: 'sum' as const, field: 'amount' },
+          },
+        },
+        {
+          reportId: 'sessions-by-trainer',
+          kind: 'chart' as const,
+          name: 'Sessions by trainer',
+          description: 'Count of sessions grouped by the linked trainer name.',
+          spec: {
+            formId: '@pack:session',
+            viz: 'bar' as const,
+            joins: [{ via: 'trainer', formId: '@pack:trainer', type: 'left' as const }],
+            groupBy: { field: '@pack:trainer::name' },
+            measure: { fn: 'count' as const },
+            seriesSort: 'value' as const,
+            sort: 'desc' as const,
+          },
+        },
+        {
+          reportId: 'clients-by-goal',
+          kind: 'chart' as const,
+          name: 'Clients by goal',
+          description: 'How the client base splits across fitness goals.',
+          spec: {
+            formId: '@pack:client',
+            viz: 'bar' as const,
+            groupBy: { field: 'goal' },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'fitstudio-overview',
+          kind: 'document' as const,
+          name: 'Coaching business overview',
+          description: 'High-level summary of session activity, revenue and the client base.',
+          blocks: [
+            {
+              kind: 'text' as const,
+              title: 'Coaching business overview',
+              body: 'This report summarises coaching activity across the studio. Use it to track how many sessions are being delivered and by whom, watch revenue build over time, and understand what your clients are training for.',
+            },
+            { kind: 'report' as const, reportId: 'sessions-count', caption: 'Total sessions on record.' },
+            { kind: 'report' as const, reportId: 'sessions-by-type', caption: 'Session mix by type.' },
+            { kind: 'report' as const, reportId: 'sessions-over-time', caption: 'Month-by-month session volume.' },
+            { kind: 'report' as const, reportId: 'sessions-by-trainer', caption: 'Coaching load by trainer.' },
+            { kind: 'report' as const, reportId: 'revenue-total', caption: 'Total revenue across all payments.' },
+            { kind: 'report' as const, reportId: 'clients-by-goal', caption: 'Client base by fitness goal.' },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+export default fitStudioPack;

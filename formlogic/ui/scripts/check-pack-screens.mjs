@@ -284,18 +284,28 @@ async function checkPack(name, pack) {
   }
 }
 
-// Official packs (TS sources — bundle each, import, find the export with .apps)
+// Official packs: one FOLDER per pack (<id>/manifest.json + <id>/pack.ts) — bundle each pack.ts,
+// import, take the default export (falling back to any export with .apps).
 const packDir = path.resolve('src/data/packs');
-for (const f of fs.readdirSync(packDir).filter((x) => x.endsWith('Pack.ts')).sort()) {
-  const out = path.join(os.tmpdir(), `pack-screens-${f}-${process.pid}.mjs`);
+const packFolders = fs.readdirSync(packDir, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && fs.existsSync(path.join(packDir, e.name, 'pack.ts')))
+  .map((e) => e.name)
+  .sort();
+if (packFolders.length === 0) { console.error('no pack folders found under src/data/packs'); fail = 1; }
+for (const folder of packFolders) {
+  const out = path.join(os.tmpdir(), `pack-screens-${folder}-${process.pid}.mjs`);
   try {
-    await build({ entryPoints: [path.join(packDir, f)], bundle: true, format: 'esm', outfile: out, platform: 'node', logLevel: 'silent', plugins: [rawPlugin] });
+    if (!fs.existsSync(path.join(packDir, folder, 'manifest.json'))) {
+      console.error(`[${folder}] missing manifest.json`); fail = 1;
+    }
+    await build({ entryPoints: [path.join(packDir, folder, 'pack.ts')], bundle: true, format: 'esm', outfile: out, platform: 'node', logLevel: 'silent', plugins: [rawPlugin] });
     const mod = await import(pathToFileURL(out).href);
-    const pack = Object.values(mod).find((v) => v && typeof v === 'object' && Array.isArray(v.apps));
-    if (!pack) { console.error(`[${f}] no pack export with .apps`); fail = 1; continue; }
-    await checkPack(f, pack);
+    const pack = (mod.default && Array.isArray(mod.default.apps) ? mod.default : null)
+      ?? Object.values(mod).find((v) => v && typeof v === 'object' && Array.isArray(v.apps));
+    if (!pack) { console.error(`[${folder}] no pack export with .apps`); fail = 1; continue; }
+    await checkPack(folder, pack);
   } catch (e) {
-    console.error(`[${f}] bundle/import failed: ${e.message}`);
+    console.error(`[${folder}] bundle/import failed: ${e.message}`);
     fail = 1;
   } finally {
     try { fs.unlinkSync(out); } catch { /* already gone */ }

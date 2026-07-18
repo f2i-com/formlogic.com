@@ -1,0 +1,13 @@
+{
+  "id": "plumbing-field-service",
+  "name": "Plumbing & Trades Field Service",
+  "description": "Field-service operations for a plumbing or trades business: manage customers, schedule and track jobs, log on-site work orders, raise invoices, and request parts and materials — all linked together. Includes 5 forms and 1 app.",
+  "tags": [
+    "plumbing",
+    "trades",
+    "field-service",
+    "jobs",
+    "scheduling"
+  ],
+  "icon": "Wrench"
+}

@@ -1,0 +1,603 @@
+// ── Type re-use ─────────────────────────────────────────────────────────────
+import type { PackData } from '../types';
+
+// ── Shared defaults ─────────────────────────────────────────────────────────
+
+const defaultSettings: Record<string, unknown> = {
+  presentationMode: 'both',
+  defaultPresentationMode: 'focused',
+  showProgressBar: true,
+  allowBackNavigation: true,
+  submitButtonText: 'Submit',
+  notifications: { emailNotifications: false },
+  isClosed: false,
+};
+
+const defaultTheme: Record<string, unknown> = {
+  primaryColor: '#db2777',
+  backgroundColor: '#ffffff',
+  textColor: '#1f2937',
+  fontFamily: 'Inter',
+  borderRadius: 'medium',
+};
+
+// ── Pack data ───────────────────────────────────────────────────────────────
+
+export const salonBeautyPack: PackData = {
+  formatVersion: 1,
+  packMeta: {
+    id: 'salon-beauty-studio',
+    name: 'Hair Salon & Beauty Studio',
+    description:
+      'A booking and client manager for a hair salon or beauty studio: keep client profiles, a service menu and stylist roster, book and track appointments, and record retail product sales — all linked together.',
+    version: '1.0.0',
+    author: 'FormLogic',
+    tags: ['salon', 'beauty', 'appointments', 'bookings', 'clients'],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────
+  // FORMS
+  // ────────────────────────────────────────────────────────────────────────
+  forms: [
+    // ── 1. Client ─────────────────────────────────────────────────────────
+    {
+      packFormId: 'client',
+      title: 'Client',
+      icon: 'Users',
+      description:
+        'Add a salon client with their contact details, preferences and the date they first visited.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Client',
+          description: 'Capture the client details so you can book appointments and track their history.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'name',
+          type: 'short_text',
+          label: 'Client Name',
+          required: true,
+          properties: { placeholder: 'Full name' },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone Number',
+          required: true,
+          properties: { placeholder: '(555) 555-5555' },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email Address',
+          required: false,
+          properties: { placeholder: 'you@example.com' },
+        },
+        {
+          id: 'client_since',
+          type: 'date',
+          label: 'Client Since',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'notes',
+          type: 'long_text',
+          label: 'Notes & Preferences',
+          required: false,
+          properties: { placeholder: 'Colour formula, allergies, preferred stylist, favourite products…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total clients', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'c1', title: 'New clients over time', layout: { x: 3, y: 0, w: 5, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'c2', title: 'First visits by month', layout: { x: 8, y: 0, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'bar', groupBy: { field: 'client_since', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent clients', layout: { x: 0, y: 1, w: 3, h: 2 }, kind: 'list', list: { formId: '@pack:client', titleField: 'name', subtitleField: 'phone', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 2. Service ────────────────────────────────────────────────────────
+    {
+      packFormId: 'service',
+      title: 'Service',
+      icon: 'Scissors',
+      description:
+        'Define a service on the menu with its category, duration and price.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'name',
+          type: 'short_text',
+          label: 'Service Name',
+          required: true,
+          properties: { placeholder: 'e.g. Cut & Blow Dry, Full Head Colour' },
+        },
+        {
+          id: 'category',
+          type: 'dropdown',
+          label: 'Category',
+          required: true,
+          properties: {
+            options: [
+              { id: 'hair', label: 'Hair', value: 'hair' },
+              { id: 'colour', label: 'Colour', value: 'colour' },
+              { id: 'nails', label: 'Nails', value: 'nails' },
+              { id: 'skin', label: 'Skin', value: 'skin' },
+              { id: 'massage', label: 'Massage', value: 'massage' },
+              { id: 'other', label: 'Other', value: 'other' },
+            ],
+          },
+        },
+        {
+          id: 'duration_minutes',
+          type: 'number',
+          label: 'Duration (minutes)',
+          required: true,
+          properties: { placeholder: '45', min: 5, step: 5 },
+        },
+        {
+          id: 'price',
+          type: 'number',
+          label: 'Price ($)',
+          required: true,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+        {
+          id: 'description',
+          type: 'long_text',
+          label: 'Description',
+          required: false,
+          properties: { placeholder: 'What the service includes…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Services', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:service', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Avg price', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:service', viz: 'kpi', measure: { fn: 'avg', field: 'price' } } },
+            { id: 'k3', title: 'Avg duration (min)', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:service', viz: 'kpi', measure: { fn: 'avg', field: 'duration_minutes' } } },
+            { id: 'k4', title: 'Top price', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:service', viz: 'kpi', measure: { fn: 'max', field: 'price' } } },
+            { id: 'c1', title: 'Menu by category', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:service', viz: 'bar', groupBy: { field: 'category', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Avg price by category', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:service', viz: 'bar', groupBy: { field: 'category', bucket: 'none' }, measure: { fn: 'avg', field: 'price' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'l1', title: 'Recent services', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:service', titleField: 'name', subtitleField: 'category', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 3. Stylist ────────────────────────────────────────────────────────
+    {
+      packFormId: 'stylist',
+      title: 'Stylist',
+      icon: 'UserCog',
+      description:
+        'Add a stylist or therapist to the roster with their role and contact number.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'name',
+          type: 'short_text',
+          label: 'Name',
+          required: true,
+          properties: { placeholder: 'Full name' },
+        },
+        {
+          id: 'role',
+          type: 'dropdown',
+          label: 'Role',
+          required: true,
+          properties: {
+            options: [
+              { id: 'senior-stylist', label: 'Senior Stylist', value: 'senior-stylist' },
+              { id: 'stylist', label: 'Stylist', value: 'stylist' },
+              { id: 'colour-specialist', label: 'Colour Specialist', value: 'colour-specialist' },
+              { id: 'nail-technician', label: 'Nail Technician', value: 'nail-technician' },
+              { id: 'therapist', label: 'Beauty Therapist', value: 'therapist' },
+              { id: 'apprentice', label: 'Apprentice', value: 'apprentice' },
+            ],
+          },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone Number',
+          required: false,
+          properties: { placeholder: '(555) 555-5555' },
+        },
+        {
+          id: 'active',
+          type: 'checkbox',
+          label: 'Availability',
+          required: false,
+          properties: {
+            options: [
+              { id: 'active', label: 'Currently active / taking bookings', value: 'active' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total stylists', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:stylist', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Roles covered', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:stylist', viz: 'kpi', measure: { fn: 'countDistinct', field: 'role' } } },
+            { id: 'c2', title: 'Role share', layout: { x: 6, y: 0, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:stylist', viz: 'donut', groupBy: { field: 'role', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c1', title: 'Team by role', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:stylist', viz: 'bar', groupBy: { field: 'role', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'l1', title: 'Roster', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:stylist', titleField: 'name', subtitleField: 'role', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 4. Appointment ────────────────────────────────────────────────────
+    {
+      packFormId: 'appointment',
+      title: 'Appointment',
+      icon: 'CalendarClock',
+      description:
+        'Book an appointment linking a client, a service and a stylist with date, time, status and price.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'service',
+          type: 'linked_record',
+          label: 'Service',
+          required: true,
+          properties: { targetFormId: '@pack:service' },
+        },
+        {
+          id: 'stylist',
+          type: 'linked_record',
+          label: 'Stylist',
+          required: true,
+          properties: { targetFormId: '@pack:stylist' },
+        },
+        {
+          id: 'date',
+          type: 'date',
+          label: 'Date',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'time',
+          type: 'time',
+          label: 'Time',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'booked', label: 'Booked', value: 'booked' },
+              { id: 'confirmed', label: 'Confirmed', value: 'confirmed' },
+              { id: 'completed', label: 'Completed', value: 'completed' },
+              { id: 'no-show', label: 'No-show', value: 'no-show' },
+              { id: 'cancelled', label: 'Cancelled', value: 'cancelled' },
+            ],
+          },
+        },
+        {
+          id: 'price',
+          type: 'number',
+          label: 'Price ($)',
+          required: false,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+        {
+          id: 'notes',
+          type: 'long_text',
+          label: 'Notes',
+          required: false,
+          properties: { placeholder: 'Anything the stylist should know for this visit…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Appointments', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Total revenue', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'sum', field: 'price' } } },
+            { id: 'k3', title: 'Avg price', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'avg', field: 'price' } } },
+            { id: 'k4', title: 'Clients served', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'countDistinct', field: 'client' } } },
+            { id: 'c1', title: 'By status', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Appointments by month', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'area', groupBy: { field: 'date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'c3', title: 'Revenue by service', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'bar', joins: [{ via: 'service', formId: '@pack:service', type: 'left' }], groupBy: { field: '@pack:service::name', bucket: 'none' }, measure: { fn: 'sum', field: 'price' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'l1', title: 'Recent appointments', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:appointment', subtitleField: 'status', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 5. Product Sale ───────────────────────────────────────────────────
+    {
+      packFormId: 'product-sale',
+      title: 'Product Sale',
+      icon: 'ShoppingBag',
+      description:
+        'Record a retail product sold to a client, with quantity, amount and date.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'product_name',
+          type: 'short_text',
+          label: 'Product',
+          required: true,
+          properties: { placeholder: 'e.g. Shampoo, Styling Cream' },
+        },
+        {
+          id: 'quantity',
+          type: 'number',
+          label: 'Quantity',
+          required: true,
+          properties: { placeholder: '1', min: 1, step: 1 },
+        },
+        {
+          id: 'amount',
+          type: 'number',
+          label: 'Amount ($)',
+          required: true,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+        {
+          id: 'date',
+          type: 'date',
+          label: 'Sale Date',
+          required: true,
+          properties: {},
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Sales', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Total revenue', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'kpi', measure: { fn: 'sum', field: 'amount' } } },
+            { id: 'k3', title: 'Units sold', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'kpi', measure: { fn: 'sum', field: 'quantity' } } },
+            { id: 'k4', title: 'Avg sale', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'kpi', measure: { fn: 'avg', field: 'amount' } } },
+            { id: 'c1', title: 'Top products', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'bar', groupBy: { field: 'product_name', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Revenue over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'area', groupBy: { field: 'date', bucket: 'month' }, measure: { fn: 'sum', field: 'amount' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent sales', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:product-sale', titleField: 'product_name', subtitleField: 'date', limit: 6 } },
+          ],
+        },
+      },
+    },
+  ],
+
+  // ────────────────────────────────────────────────────────────────────────
+  // APPS
+  // ────────────────────────────────────────────────────────────────────────
+  apps: [
+    {
+      packAppId: 'salon',
+      name: 'Salon',
+      description:
+        'A salon operations hub: manage clients, the service menu and stylist roster, book and track appointments, and record product sales from one dashboard.',
+      settings: { icon: 'Scissors' },
+      theme: {
+        primaryColor: '#db2777',
+        backgroundColor: '#0f172a',
+        textColor: '#f8fafc',
+        fontFamily: 'Inter',
+        borderRadius: 'medium',
+      },
+      forms: [
+        { packFormId: 'client', displayName: 'Clients', sortOrder: 1, isVisible: true },
+        { packFormId: 'service', displayName: 'Services', sortOrder: 2, isVisible: true },
+        { packFormId: 'stylist', displayName: 'Stylists', sortOrder: 3, isVisible: true },
+        { packFormId: 'appointment', displayName: 'Appointments', sortOrder: 4, isVisible: true },
+        { packFormId: 'product-sale', displayName: 'Product Sales', sortOrder: 5, isVisible: true },
+      ],
+      customScreen: {
+        enabled: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Clients', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Appointments', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k3', title: 'Services', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:service', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k4', title: 'Stylists', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:stylist', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k5', title: 'Product sales', layout: { x: 0, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k6', title: 'Service revenue', layout: { x: 3, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'sum', field: 'price' } } },
+            { id: 'k7', title: 'Retail revenue', layout: { x: 6, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:product-sale', viz: 'kpi', measure: { fn: 'sum', field: 'amount' } } },
+            { id: 'k8', title: 'Avg ticket', layout: { x: 9, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'kpi', measure: { fn: 'avg', field: 'price' } } },
+            { id: 'c1', title: 'Appointments by status', layout: { x: 0, y: 2, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Bookings over time', layout: { x: 6, y: 2, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'area', groupBy: { field: 'date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent appointments', layout: { x: 0, y: 5, w: 4, h: 3 }, kind: 'list', list: { formId: '@pack:appointment', subtitleField: 'status', limit: 6 } },
+            { id: 'ac1', title: 'Recent activity', layout: { x: 4, y: 5, w: 4, h: 3 }, kind: 'activity' },
+            { id: 'c3', title: 'Revenue by service', layout: { x: 8, y: 5, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:appointment', viz: 'bar', joins: [{ via: 'service', formId: '@pack:service', type: 'left' }], groupBy: { field: '@pack:service::name', bucket: 'none' }, measure: { fn: 'sum', field: 'price' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'act1', title: 'Quick actions', layout: { x: 0, y: 8, w: 12, h: 1 }, kind: 'actions' },
+          ],
+        },
+      },
+      roles: [
+        {
+          name: 'Salon Owner',
+          description: 'Full access to all salon forms.',
+          permissions: [
+            { packFormId: 'client', permission: 'submit_responses' },
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'client', permission: 'edit_responses' },
+            { packFormId: 'client', permission: 'delete_responses' },
+            { packFormId: 'client', permission: 'export_responses' },
+            { packFormId: 'service', permission: 'submit_responses' },
+            { packFormId: 'service', permission: 'view_all_responses' },
+            { packFormId: 'service', permission: 'edit_responses' },
+            { packFormId: 'service', permission: 'delete_responses' },
+            { packFormId: 'service', permission: 'export_responses' },
+            { packFormId: 'stylist', permission: 'submit_responses' },
+            { packFormId: 'stylist', permission: 'view_all_responses' },
+            { packFormId: 'stylist', permission: 'edit_responses' },
+            { packFormId: 'stylist', permission: 'delete_responses' },
+            { packFormId: 'stylist', permission: 'export_responses' },
+            { packFormId: 'appointment', permission: 'submit_responses' },
+            { packFormId: 'appointment', permission: 'view_all_responses' },
+            { packFormId: 'appointment', permission: 'edit_responses' },
+            { packFormId: 'appointment', permission: 'delete_responses' },
+            { packFormId: 'appointment', permission: 'export_responses' },
+            { packFormId: 'product-sale', permission: 'submit_responses' },
+            { packFormId: 'product-sale', permission: 'view_all_responses' },
+            { packFormId: 'product-sale', permission: 'edit_responses' },
+            { packFormId: 'product-sale', permission: 'delete_responses' },
+            { packFormId: 'product-sale', permission: 'export_responses' },
+          ],
+        },
+        {
+          name: 'Front Desk',
+          description: 'Reception staff who book appointments, manage clients and record sales.',
+          permissions: [
+            { packFormId: 'client', permission: 'submit_responses' },
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'client', permission: 'edit_responses' },
+            { packFormId: 'service', permission: 'view_all_responses' },
+            { packFormId: 'stylist', permission: 'view_all_responses' },
+            { packFormId: 'appointment', permission: 'submit_responses' },
+            { packFormId: 'appointment', permission: 'view_all_responses' },
+            { packFormId: 'appointment', permission: 'edit_responses' },
+            { packFormId: 'product-sale', permission: 'submit_responses' },
+            { packFormId: 'product-sale', permission: 'view_all_responses' },
+          ],
+        },
+        {
+          name: 'Stylist',
+          description: 'Stylists and therapists who view their appointments and update outcomes.',
+          permissions: [
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'service', permission: 'view_all_responses' },
+            { packFormId: 'appointment', permission: 'view_all_responses' },
+            { packFormId: 'appointment', permission: 'edit_responses' },
+            { packFormId: 'product-sale', permission: 'submit_responses' },
+            { packFormId: 'product-sale', permission: 'view_all_responses' },
+          ],
+        },
+      ],
+      reports: [
+        {
+          reportId: 'appts-by-status',
+          kind: 'chart' as const,
+          name: 'Appointments by status',
+          description: 'Count of appointments broken down by their current status.',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'bar' as const,
+            groupBy: { field: 'status' },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'revenue-by-service',
+          kind: 'chart' as const,
+          name: 'Revenue by service',
+          description: 'Total appointment revenue grouped by the linked service name.',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'bar' as const,
+            joins: [{ via: 'service', formId: '@pack:service', type: 'left' as const }],
+            groupBy: { field: '@pack:service::name' },
+            measure: { fn: 'sum' as const, field: 'price' },
+            seriesSort: 'value' as const,
+            sort: 'desc' as const,
+          },
+        },
+        {
+          reportId: 'appts-over-time',
+          kind: 'chart' as const,
+          name: 'Appointments over time',
+          description: 'Monthly trend of appointments booked.',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'line' as const,
+            groupBy: { field: '__submitted_at', bucket: 'month' as const },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'total-revenue',
+          kind: 'chart' as const,
+          name: 'Total revenue',
+          description: 'Cumulative revenue summed across all appointments.',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'kpi' as const,
+            measure: { fn: 'sum' as const, field: 'price' },
+          },
+        },
+        {
+          reportId: 'salon-overview',
+          kind: 'document' as const,
+          name: 'Salon overview',
+          description: 'High-level summary of salon appointment activity and revenue.',
+          blocks: [
+            {
+              kind: 'text' as const,
+              title: 'Salon performance overview',
+              body: 'This report summarises appointment activity and revenue across the salon. Use it to monitor booking trends, understand which services generate the most revenue, and track overall throughput at a glance.',
+            },
+            { kind: 'report' as const, reportId: 'appts-by-status', caption: 'Appointment counts by current status.' },
+            { kind: 'report' as const, reportId: 'revenue-by-service', caption: 'Revenue contribution by service type.' },
+            { kind: 'report' as const, reportId: 'appts-over-time', caption: 'Month-by-month appointment volume.' },
+            { kind: 'report' as const, reportId: 'total-revenue', caption: 'Total revenue across all appointments.' },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+export default salonBeautyPack;

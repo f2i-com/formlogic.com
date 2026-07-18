@@ -1,0 +1,862 @@
+// ── Type re-use ─────────────────────────────────────────────────────────────
+import type { PackData } from '../types';
+
+// ── Shared defaults ─────────────────────────────────────────────────────────
+
+const defaultSettings: Record<string, unknown> = {
+  presentationMode: 'both',
+  defaultPresentationMode: 'focused',
+  showProgressBar: true,
+  allowBackNavigation: true,
+  submitButtonText: 'Submit',
+  notifications: { emailNotifications: false },
+  isClosed: false,
+};
+
+const defaultTheme: Record<string, unknown> = {
+  primaryColor: '#d97706',
+  backgroundColor: '#ffffff',
+  textColor: '#1f2937',
+  fontFamily: 'Inter',
+  borderRadius: 'medium',
+};
+
+// ── Pack data ───────────────────────────────────────────────────────────────
+
+export const sitePulsePack: PackData = {
+  formatVersion: 1,
+  packMeta: {
+    id: 'sitepulse-site-diary',
+    name: 'SitePulse — Construction Site Diary',
+    description:
+      'A lightweight daily site diary for small builders and subcontractors: set up projects, log each day on site, keep a subbie register with insurance expiry, record deliveries, chase defects and get variations approved — all linked together.',
+    version: '1.0.0',
+    author: 'FormLogic',
+    tags: ['construction', 'site-diary', 'builders', 'defects', 'projects'],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────
+  // FORMS
+  // ────────────────────────────────────────────────────────────────────────
+  forms: [
+    // ── 1. Project ────────────────────────────────────────────────────────
+    {
+      packFormId: 'project',
+      title: 'Project',
+      icon: 'Building2',
+      description:
+        'Set up a project with its client, site address, key dates, manager and status.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Project',
+          description: 'Set the job up once — every diary entry, delivery, defect and variation links back to it.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'project_name',
+          type: 'short_text',
+          label: 'Project Name',
+          required: true,
+          properties: { placeholder: 'e.g. 14 Harbour St townhouses' },
+        },
+        {
+          id: 'client',
+          type: 'short_text',
+          label: 'Client',
+          required: false,
+          properties: { placeholder: 'Client or head contractor' },
+        },
+        {
+          id: 'site_address',
+          type: 'location',
+          label: 'Site Address',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'start_date',
+          type: 'date',
+          label: 'Start Date',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'target_completion',
+          type: 'date',
+          label: 'Target Completion',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'project_manager',
+          type: 'short_text',
+          label: 'Project Manager',
+          required: false,
+          properties: { placeholder: 'Who runs this job' },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'planning', label: 'Planning', value: 'planning' },
+              { id: 'active', label: 'Active', value: 'active' },
+              { id: 'on-hold', label: 'On hold', value: 'on-hold' },
+              { id: 'practical-completion', label: 'Practical completion', value: 'practical-completion' },
+              { id: 'closed', label: 'Closed', value: 'closed' },
+            ],
+          },
+        },
+        {
+          id: 'notes',
+          type: 'long_text',
+          label: 'Notes',
+          required: false,
+          properties: { placeholder: 'Site access, key contacts, anything the crew should know…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total projects', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:project', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Active', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:project', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'active' }] } },
+            { id: 'k3', title: 'On hold', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:project', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'on-hold' }] } },
+            { id: 'k4', title: 'Practical completion', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:project', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'practical-completion' }] } },
+            { id: 'c1', title: 'Projects by status', layout: { x: 0, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:project', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c2', title: 'New projects over time', layout: { x: 4, y: 1, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:project', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent projects', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:project', titleField: 'project_name', subtitleField: 'client', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 2. Daily Site Diary ─────────────────────────────────────────────────
+    {
+      packFormId: 'site-diary',
+      title: 'Daily Site Diary',
+      icon: 'ClipboardList',
+      description:
+        'Log the day on site: weather, crew numbers, what got done, delays, visitors and a sign-off.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'Daily Site Diary',
+          description: 'Two minutes at knock-off keeps a defensible record of every day on the job.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'project',
+          type: 'linked_record',
+          label: 'Project',
+          required: true,
+          properties: { targetFormId: '@pack:project' },
+        },
+        {
+          id: 'date',
+          type: 'date',
+          label: 'Date',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'weather',
+          type: 'dropdown',
+          label: 'Weather',
+          required: false,
+          properties: {
+            options: [
+              { id: 'fine', label: 'Fine', value: 'fine' },
+              { id: 'overcast', label: 'Overcast', value: 'overcast' },
+              { id: 'rain', label: 'Rain', value: 'rain' },
+              { id: 'wind', label: 'Wind', value: 'wind' },
+              { id: 'heat', label: 'Heat', value: 'heat' },
+            ],
+          },
+        },
+        {
+          id: 'workers_on_site',
+          type: 'number',
+          label: 'Workers on Site',
+          required: false,
+          properties: { placeholder: '0', min: 0, step: 1 },
+        },
+        {
+          id: 'work_completed',
+          type: 'long_text',
+          label: 'Work Completed',
+          required: false,
+          properties: { placeholder: 'What the crew got through today…' },
+        },
+        {
+          id: 'delays',
+          type: 'long_text',
+          label: 'Delays',
+          required: false,
+          properties: { placeholder: 'Weather, materials, access, anything that held things up…' },
+        },
+        {
+          id: 'visitors',
+          type: 'long_text',
+          label: 'Visitors',
+          required: false,
+          properties: { placeholder: 'Certifier, client, delivery driver…' },
+        },
+        {
+          id: 'photos',
+          type: 'file_upload',
+          label: 'Photos',
+          required: false,
+          properties: { acceptedFileTypes: ['.jpg', '.png', '.webp'] },
+        },
+        {
+          id: 'signed_by',
+          type: 'signature',
+          label: 'Signed By',
+          required: false,
+          properties: {},
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Diary entries', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Avg workers on site', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'kpi', measure: { fn: 'avg', field: 'workers_on_site' } } },
+            { id: 'k3', title: 'Crew-days logged', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'kpi', measure: { fn: 'sum', field: 'workers_on_site' } } },
+            { id: 'c1', title: 'Weather mix', layout: { x: 0, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'donut', groupBy: { field: 'weather', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c2', title: 'Entries over time', layout: { x: 4, y: 1, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'c3', title: 'Crew by weather', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'bar', groupBy: { field: 'weather', bucket: 'none' }, measure: { fn: 'sum', field: 'workers_on_site' }, seriesSort: 'value', sort: 'desc' } },
+            { id: 'l1', title: 'Recent entries', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:site-diary', titleField: 'work_completed', subtitleField: 'delays', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 3. Subcontractor ────────────────────────────────────────────────────
+    {
+      packFormId: 'subcontractor',
+      title: 'Subcontractor',
+      icon: 'HardHat',
+      description:
+        'Keep a subbie register with trade, contact details and insurance expiry so nothing lapses.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Subcontractor',
+          description: 'Add the trades you work with and keep their insurance dates where you can see them.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'business_name',
+          type: 'short_text',
+          label: 'Business Name',
+          required: true,
+          properties: { placeholder: 'e.g. Coastline Electrical' },
+        },
+        {
+          id: 'contact',
+          type: 'short_text',
+          label: 'Contact',
+          required: false,
+          properties: { placeholder: 'Main contact person' },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone',
+          required: false,
+          properties: { placeholder: '(555) 555-5555' },
+        },
+        {
+          id: 'trade',
+          type: 'dropdown',
+          label: 'Trade',
+          required: true,
+          properties: {
+            options: [
+              { id: 'electrical', label: 'Electrical', value: 'electrical' },
+              { id: 'plumbing', label: 'Plumbing', value: 'plumbing' },
+              { id: 'carpentry', label: 'Carpentry', value: 'carpentry' },
+              { id: 'concreting', label: 'Concreting', value: 'concreting' },
+              { id: 'roofing', label: 'Roofing', value: 'roofing' },
+              { id: 'painting', label: 'Painting', value: 'painting' },
+              { id: 'earthworks', label: 'Earthworks', value: 'earthworks' },
+            ],
+          },
+        },
+        {
+          id: 'insurance_expiry',
+          type: 'date',
+          label: 'Insurance Expiry',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'approved', label: 'Approved', value: 'approved' },
+              { id: 'pending-review', label: 'Pending review', value: 'pending-review' },
+              { id: 'expired-insurance', label: 'Expired insurance', value: 'expired-insurance' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Subcontractors', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:subcontractor', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Approved', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:subcontractor', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'approved' }] } },
+            { id: 'k3', title: 'Expired insurance', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:subcontractor', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'expired-insurance' }] } },
+            { id: 'c1', title: 'By trade', layout: { x: 0, y: 1, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:subcontractor', viz: 'bar', groupBy: { field: 'trade', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'By status', layout: { x: 8, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:subcontractor', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'l1', title: 'Recent subbies', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:subcontractor', titleField: 'business_name', subtitleField: 'trade', limit: 6 } },
+            { id: 'c3', title: 'Added over time', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:subcontractor', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+          ],
+        },
+      },
+    },
+
+    // ── 4. Delivery ─────────────────────────────────────────────────────────
+    {
+      packFormId: 'delivery',
+      title: 'Delivery',
+      icon: 'Truck',
+      description:
+        'Record materials landing on site with supplier, quantity, who received them and any issues.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Delivery',
+          description: 'A quick note on every drop-off gives you a paper trail for shortages and damage.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'project',
+          type: 'linked_record',
+          label: 'Project',
+          required: true,
+          properties: { targetFormId: '@pack:project' },
+        },
+        {
+          id: 'delivery_date',
+          type: 'date',
+          label: 'Delivery Date',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'supplier',
+          type: 'short_text',
+          label: 'Supplier',
+          required: false,
+          properties: { placeholder: 'Who delivered it' },
+        },
+        {
+          id: 'material',
+          type: 'short_text',
+          label: 'Material',
+          required: false,
+          properties: { placeholder: 'e.g. Reo bar, Gyprock sheets' },
+        },
+        {
+          id: 'quantity',
+          type: 'number',
+          label: 'Quantity',
+          required: false,
+          properties: { placeholder: '0', min: 0 },
+        },
+        {
+          id: 'received_by',
+          type: 'short_text',
+          label: 'Received By',
+          required: false,
+          properties: { placeholder: 'Who signed for it' },
+        },
+        {
+          id: 'issues',
+          type: 'long_text',
+          label: 'Issues',
+          required: false,
+          properties: { placeholder: 'Shortages, damage, wrong item…' },
+        },
+        {
+          id: 'photo',
+          type: 'file_upload',
+          label: 'Photo',
+          required: false,
+          properties: { acceptedFileTypes: ['.jpg', '.png', '.webp'] },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Deliveries', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:delivery', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Units received', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:delivery', viz: 'kpi', measure: { fn: 'sum', field: 'quantity' } } },
+            { id: 'k3', title: 'Avg per delivery', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:delivery', viz: 'kpi', measure: { fn: 'avg', field: 'quantity' } } },
+            { id: 'c1', title: 'Deliveries by project', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:delivery', viz: 'bar', joins: [{ via: 'project', formId: '@pack:project', type: 'left' }], groupBy: { field: '@pack:project::project_name', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Deliveries over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:delivery', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent deliveries', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:delivery', titleField: 'material', subtitleField: 'supplier', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 5. Defect & Issue ───────────────────────────────────────────────────
+    {
+      packFormId: 'defect',
+      title: 'Defect & Issue',
+      icon: 'AlertTriangle',
+      description:
+        'Raise a defect or snag with category, priority, who owns it and when it is due, then chase it to verified.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Defect or Issue',
+          description: 'Catch it, own it, close it out — every snag tracked from open to verified.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'project',
+          type: 'linked_record',
+          label: 'Project',
+          required: true,
+          properties: { targetFormId: '@pack:project' },
+        },
+        {
+          id: 'issue_title',
+          type: 'short_text',
+          label: 'Issue Title',
+          required: true,
+          properties: { placeholder: 'e.g. Cracked render to north wall' },
+        },
+        {
+          id: 'category',
+          type: 'dropdown',
+          label: 'Category',
+          required: true,
+          properties: {
+            options: [
+              { id: 'structural', label: 'Structural', value: 'structural' },
+              { id: 'waterproofing', label: 'Waterproofing', value: 'waterproofing' },
+              { id: 'finishes', label: 'Finishes', value: 'finishes' },
+              { id: 'services', label: 'Services', value: 'services' },
+              { id: 'safety', label: 'Safety', value: 'safety' },
+              { id: 'other', label: 'Other', value: 'other' },
+            ],
+          },
+        },
+        {
+          id: 'priority',
+          type: 'dropdown',
+          label: 'Priority',
+          required: true,
+          properties: {
+            options: [
+              { id: 'low', label: 'Low', value: 'low' },
+              { id: 'medium', label: 'Medium', value: 'medium' },
+              { id: 'high', label: 'High', value: 'high' },
+              { id: 'critical', label: 'Critical', value: 'critical' },
+            ],
+          },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'open', label: 'Open', value: 'open' },
+              { id: 'assigned', label: 'Assigned', value: 'assigned' },
+              { id: 'fixed', label: 'Fixed', value: 'fixed' },
+              { id: 'verified', label: 'Verified', value: 'verified' },
+            ],
+          },
+        },
+        {
+          id: 'assigned_to',
+          type: 'short_text',
+          label: 'Assigned To',
+          required: false,
+          properties: { placeholder: 'Who is fixing it' },
+        },
+        {
+          id: 'due_date',
+          type: 'date',
+          label: 'Due Date',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'photo',
+          type: 'file_upload',
+          label: 'Photo',
+          required: false,
+          properties: { acceptedFileTypes: ['.jpg', '.png', '.webp'] },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total defects', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Open', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'open' }] } },
+            { id: 'k3', title: 'Critical', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'priority', op: 'eq', value: 'critical' }] } },
+            { id: 'c1', title: 'By priority', layout: { x: 0, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'bar', groupBy: { field: 'priority', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc' } },
+            { id: 'c2', title: 'By category', layout: { x: 4, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'donut', groupBy: { field: 'category', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c3', title: 'By status', layout: { x: 8, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'l1', title: 'Recent defects', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:defect', titleField: 'issue_title', subtitleField: 'assigned_to', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 6. Variation Request ────────────────────────────────────────────────
+    {
+      packFormId: 'variation',
+      title: 'Variation Request',
+      icon: 'FileText',
+      description:
+        'Raise a variation with a cost estimate and track it from draft through client approval.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Variation Request',
+          description: 'Price the change, send it, get it signed — a clean record protects the margin.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'project',
+          type: 'linked_record',
+          label: 'Project',
+          required: true,
+          properties: { targetFormId: '@pack:project' },
+        },
+        {
+          id: 'variation_title',
+          type: 'short_text',
+          label: 'Variation Title',
+          required: true,
+          properties: { placeholder: 'e.g. Upgrade to stone benchtops' },
+        },
+        {
+          id: 'description',
+          type: 'long_text',
+          label: 'Description',
+          required: false,
+          properties: { placeholder: 'What changes and why…' },
+        },
+        {
+          id: 'estimated_cost',
+          type: 'number',
+          label: 'Estimated Cost ($)',
+          required: false,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'draft', label: 'Draft', value: 'draft' },
+              { id: 'sent', label: 'Sent', value: 'sent' },
+              { id: 'approved', label: 'Approved', value: 'approved' },
+              { id: 'rejected', label: 'Rejected', value: 'rejected' },
+            ],
+          },
+        },
+        {
+          id: 'client_approval',
+          type: 'signature',
+          label: 'Client Approval',
+          required: false,
+          properties: {},
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Variations', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:variation', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Approved value', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:variation', viz: 'kpi', measure: { fn: 'sum', field: 'estimated_cost' }, filters: [{ field: 'status', op: 'eq', value: 'approved' }] } },
+            { id: 'k3', title: 'Awaiting client', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:variation', viz: 'kpi', measure: { fn: 'sum', field: 'estimated_cost' }, filters: [{ field: 'status', op: 'eq', value: 'sent' }] } },
+            { id: 'c1', title: 'By status', layout: { x: 0, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:variation', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c2', title: 'Value by status', layout: { x: 4, y: 1, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:variation', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'sum', field: 'estimated_cost' }, seriesSort: 'value', sort: 'desc' } },
+            { id: 'l1', title: 'Recent variations', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:variation', titleField: 'variation_title', subtitleField: 'status', limit: 6 } },
+          ],
+        },
+      },
+    },
+  ],
+
+  // ────────────────────────────────────────────────────────────────────────
+  // APPS
+  // ────────────────────────────────────────────────────────────────────────
+  apps: [
+    {
+      packAppId: 'sitepulse',
+      name: 'SitePulse',
+      description:
+        'A site diary hub for small builders: run projects, log each day on site, keep a subbie register, record deliveries, chase defects and get variations approved from one dashboard.',
+      settings: { icon: 'HardHat' },
+      theme: {
+        primaryColor: '#d97706',
+        backgroundColor: '#0f172a',
+        textColor: '#f8fafc',
+        fontFamily: 'Inter',
+        borderRadius: 'medium',
+      },
+      forms: [
+        { packFormId: 'project', displayName: 'Projects', sortOrder: 1, isVisible: true },
+        { packFormId: 'site-diary', displayName: 'Site Diaries', sortOrder: 2, isVisible: true },
+        { packFormId: 'subcontractor', displayName: 'Subcontractors', sortOrder: 3, isVisible: true },
+        { packFormId: 'delivery', displayName: 'Deliveries', sortOrder: 4, isVisible: true },
+        { packFormId: 'defect', displayName: 'Defects', sortOrder: 5, isVisible: true },
+        { packFormId: 'variation', displayName: 'Variations', sortOrder: 6, isVisible: true },
+      ],
+      customScreen: {
+        enabled: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Projects', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:project', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Site diaries', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k3', title: 'Deliveries', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:delivery', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k4', title: 'Defects', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'c1', title: 'Defects by status', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:defect', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc' } },
+            { id: 'c2', title: 'Diary entries over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:site-diary', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'c3', title: 'Variation value by status', layout: { x: 0, y: 4, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:variation', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'sum', field: 'estimated_cost' }, seriesSort: 'value', sort: 'desc' } },
+            { id: 'ac1', title: 'Recent activity', layout: { x: 8, y: 4, w: 4, h: 3 }, kind: 'activity' },
+            { id: 'a1', title: 'Quick actions', layout: { x: 0, y: 7, w: 12, h: 1 }, kind: 'actions' },
+          ],
+        },
+      },
+      roles: [
+        {
+          name: 'Site Manager',
+          description: 'Full access to every SitePulse form.',
+          permissions: [
+            { packFormId: 'project', permission: 'submit_responses' },
+            { packFormId: 'project', permission: 'view_all_responses' },
+            { packFormId: 'project', permission: 'edit_responses' },
+            { packFormId: 'project', permission: 'delete_responses' },
+            { packFormId: 'project', permission: 'export_responses' },
+            { packFormId: 'site-diary', permission: 'submit_responses' },
+            { packFormId: 'site-diary', permission: 'view_all_responses' },
+            { packFormId: 'site-diary', permission: 'edit_responses' },
+            { packFormId: 'site-diary', permission: 'delete_responses' },
+            { packFormId: 'site-diary', permission: 'export_responses' },
+            { packFormId: 'subcontractor', permission: 'submit_responses' },
+            { packFormId: 'subcontractor', permission: 'view_all_responses' },
+            { packFormId: 'subcontractor', permission: 'edit_responses' },
+            { packFormId: 'subcontractor', permission: 'delete_responses' },
+            { packFormId: 'subcontractor', permission: 'export_responses' },
+            { packFormId: 'delivery', permission: 'submit_responses' },
+            { packFormId: 'delivery', permission: 'view_all_responses' },
+            { packFormId: 'delivery', permission: 'edit_responses' },
+            { packFormId: 'delivery', permission: 'delete_responses' },
+            { packFormId: 'delivery', permission: 'export_responses' },
+            { packFormId: 'defect', permission: 'submit_responses' },
+            { packFormId: 'defect', permission: 'view_all_responses' },
+            { packFormId: 'defect', permission: 'edit_responses' },
+            { packFormId: 'defect', permission: 'delete_responses' },
+            { packFormId: 'defect', permission: 'export_responses' },
+            { packFormId: 'variation', permission: 'submit_responses' },
+            { packFormId: 'variation', permission: 'view_all_responses' },
+            { packFormId: 'variation', permission: 'edit_responses' },
+            { packFormId: 'variation', permission: 'delete_responses' },
+            { packFormId: 'variation', permission: 'export_responses' },
+          ],
+        },
+        {
+          name: 'Site Supervisor',
+          description: 'Runs the day on site: logs diaries, deliveries and defects and keeps them moving.',
+          permissions: [
+            { packFormId: 'project', permission: 'view_all_responses' },
+            { packFormId: 'subcontractor', permission: 'view_all_responses' },
+            { packFormId: 'site-diary', permission: 'submit_responses' },
+            { packFormId: 'site-diary', permission: 'view_all_responses' },
+            { packFormId: 'site-diary', permission: 'edit_responses' },
+            { packFormId: 'delivery', permission: 'submit_responses' },
+            { packFormId: 'delivery', permission: 'view_all_responses' },
+            { packFormId: 'delivery', permission: 'edit_responses' },
+            { packFormId: 'defect', permission: 'submit_responses' },
+            { packFormId: 'defect', permission: 'view_all_responses' },
+            { packFormId: 'defect', permission: 'edit_responses' },
+            { packFormId: 'variation', permission: 'submit_responses' },
+            { packFormId: 'variation', permission: 'view_all_responses' },
+          ],
+        },
+        {
+          name: 'Subcontractor',
+          description: 'Trades who view the jobs they are on and update the defects assigned to them.',
+          permissions: [
+            { packFormId: 'project', permission: 'view_all_responses' },
+            { packFormId: 'site-diary', permission: 'view_all_responses' },
+            { packFormId: 'defect', permission: 'view_all_responses' },
+            { packFormId: 'defect', permission: 'edit_responses' },
+            { packFormId: 'variation', permission: 'submit_responses' },
+          ],
+        },
+      ],
+      reports: [
+        {
+          reportId: 'diary-entries',
+          kind: 'chart' as const,
+          name: 'Diary entries',
+          description: 'Total number of daily site diary entries logged.',
+          spec: {
+            formId: '@pack:site-diary',
+            viz: 'kpi' as const,
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'defects-by-priority',
+          kind: 'chart' as const,
+          name: 'Defects by priority',
+          description: 'Count of defects broken down by priority.',
+          spec: {
+            formId: '@pack:defect',
+            viz: 'bar' as const,
+            groupBy: { field: 'priority' },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'defects-by-status',
+          kind: 'chart' as const,
+          name: 'Defects by status',
+          description: 'Count of defects by where they sit in the fix workflow.',
+          spec: {
+            formId: '@pack:defect',
+            viz: 'bar' as const,
+            groupBy: { field: 'status' },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'diary-over-time',
+          kind: 'chart' as const,
+          name: 'Diary entries over time',
+          description: 'Monthly trend of diary entries logged.',
+          spec: {
+            formId: '@pack:site-diary',
+            viz: 'line' as const,
+            groupBy: { field: '__submitted_at', bucket: 'month' as const },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'approved-variation-value',
+          kind: 'chart' as const,
+          name: 'Approved variation value',
+          description: 'Total estimated cost of variations that have been approved.',
+          spec: {
+            formId: '@pack:variation',
+            viz: 'kpi' as const,
+            filters: [{ field: 'status', op: 'eq', value: 'approved' }],
+            measure: { fn: 'sum' as const, field: 'estimated_cost' },
+          },
+        },
+        {
+          reportId: 'defects-by-project',
+          kind: 'chart' as const,
+          name: 'Defects by project',
+          description: 'Count of defects grouped by the linked project name.',
+          spec: {
+            formId: '@pack:defect',
+            viz: 'bar' as const,
+            joins: [{ via: 'project', formId: '@pack:project', type: 'left' as const }],
+            groupBy: { field: '@pack:project::project_name' },
+            measure: { fn: 'count' as const },
+            seriesSort: 'value' as const,
+            sort: 'desc' as const,
+          },
+        },
+        {
+          reportId: 'sitepulse-overview',
+          kind: 'document' as const,
+          name: 'Site diary weekly report',
+          description: 'A weekly snapshot of site activity: diary volume, defect load and variation value.',
+          blocks: [
+            {
+              kind: 'text' as const,
+              title: 'Site diary weekly report',
+              body: 'This report summarises activity across your sites: how many diary entries were logged, where defects sit by priority and status, which projects carry the most issues, and the value of variations in play. Use it to run the weekly site meeting and keep clients informed.',
+            },
+            { kind: 'report' as const, reportId: 'diary-over-time', caption: 'Diary entries logged month by month.' },
+            { kind: 'report' as const, reportId: 'defects-by-priority', caption: 'Open and closed defects by priority.' },
+            { kind: 'report' as const, reportId: 'defects-by-status', caption: 'Where defects sit in the fix workflow.' },
+            { kind: 'report' as const, reportId: 'defects-by-project', caption: 'Which projects carry the most defects.' },
+            { kind: 'report' as const, reportId: 'approved-variation-value', caption: 'Total approved variation value.' },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+export default sitePulsePack;

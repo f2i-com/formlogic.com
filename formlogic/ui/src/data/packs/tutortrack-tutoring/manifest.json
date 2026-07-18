@@ -1,0 +1,13 @@
+{
+  "id": "tutortrack-tutoring",
+  "name": "TutorTrack — Tutoring & Lessons Manager",
+  "description": "A lessons manager for tutoring studios and music teachers: keep student and tutor profiles, schedule lessons, record progress notes, and raise invoices. Includes 5 forms and 1 app.",
+  "tags": [
+    "tutoring",
+    "lessons",
+    "education",
+    "students",
+    "billing"
+  ],
+  "icon": "GraduationCap"
+}

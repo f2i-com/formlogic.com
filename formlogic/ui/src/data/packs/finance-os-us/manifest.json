@@ -1,0 +1,12 @@
+{
+  "id": "finance-os-us",
+  "name": "Finance OS (United States)",
+  "description": "Complete United States-focused onboarding, compliance, and advisory workflow for RIAs, broker-dealers, and wealth managers. Includes 12 forms and 2 apps.",
+  "tags": [
+    "finance",
+    "compliance",
+    "onboarding",
+    "united-states"
+  ],
+  "icon": "DollarSign"
+}

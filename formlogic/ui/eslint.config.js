@@ -24,7 +24,7 @@ export default defineConfig([
     // Sandboxed custom-screen SOURCES (shipped as customScreen.files, bundled by esbuild-wasm on
     // Preact inside an iframe): no Vite fast-refresh and no React compiler apply to them, so those
     // app-oriented rules are noise here. Core correctness rules stay on.
-    files: ['src/data/packs/aokie-screens/**/*.{ts,tsx}'],
+    files: ['src/data/packs/*/screens/**/*.{ts,tsx}'],
     rules: {
       'react-refresh/only-export-components': 'off',
       'react-hooks/purity': 'off',

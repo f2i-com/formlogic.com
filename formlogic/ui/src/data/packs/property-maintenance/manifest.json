@@ -1,0 +1,13 @@
+{
+  "id": "property-maintenance",
+  "name": "Property Maintenance & Handyman",
+  "description": "A maintenance-request and work-order tracker for property managers and handymen: manage properties and tenants, log maintenance requests, schedule and track work orders, and record inspections. Includes 5 forms and 1 app.",
+  "tags": [
+    "property",
+    "maintenance",
+    "handyman",
+    "jobs",
+    "landlord"
+  ],
+  "icon": "Home"
+}

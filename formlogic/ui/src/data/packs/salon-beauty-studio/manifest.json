@@ -1,0 +1,13 @@
+{
+  "id": "salon-beauty-studio",
+  "name": "Hair Salon & Beauty Studio",
+  "description": "A booking and client manager for a hair salon or beauty studio: keep client profiles, a service menu and stylist roster, book and track appointments, and record retail product sales. Includes 5 forms and 1 app.",
+  "tags": [
+    "salon",
+    "beauty",
+    "appointments",
+    "bookings",
+    "clients"
+  ],
+  "icon": "Scissors"
+}

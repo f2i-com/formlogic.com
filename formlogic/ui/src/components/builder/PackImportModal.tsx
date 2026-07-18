@@ -146,7 +146,10 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           seedAttemptedRef.current = true;
           setSeeding(true);
           try {
-            const { packCatalog } = await import('../../data/packs');
+            // Pack payloads are lazy per-pack chunks now — load them all only for this
+            // one-time empty-catalog seeding path.
+            const { loadAllPacks } = await import('../../data/packs');
+            const packCatalog = await loadAllPacks();
             const seedData = packCatalog.map((entry) => ({
               name: entry.name,
               description: entry.description,

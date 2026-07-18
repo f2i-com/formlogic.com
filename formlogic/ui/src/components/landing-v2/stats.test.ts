@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FIELD_TYPE_COUNT, PACK_COUNT } from './stats';
-import { packCatalog } from '../../data/packs';
+import { packManifests } from '../../data/packs';
 import { FIELD_TYPE_INFO } from '../../types/form';
 
 /**
@@ -11,7 +11,7 @@ import { FIELD_TYPE_INFO } from '../../types/form';
  */
 describe('landing marketing stats are real', () => {
   it('pack count matches the marketplace catalogue', () => {
-    expect(PACK_COUNT).toBe(packCatalog.length);
+    expect(PACK_COUNT).toBe(packManifests.length);
   });
 
   it('field type count matches the builder palette', () => {

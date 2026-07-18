@@ -1,0 +1,903 @@
+// ── Type re-use ─────────────────────────────────────────────────────────────
+import type { PackData } from '../types';
+
+// ── Shared defaults ─────────────────────────────────────────────────────────
+
+const defaultSettings: Record<string, unknown> = {
+  presentationMode: 'both',
+  defaultPresentationMode: 'focused',
+  showProgressBar: true,
+  allowBackNavigation: true,
+  submitButtonText: 'Submit',
+  notifications: { emailNotifications: false },
+  isClosed: false,
+};
+
+const defaultTheme: Record<string, unknown> = {
+  primaryColor: '#0891b2',
+  backgroundColor: '#ffffff',
+  textColor: '#1f2937',
+  fontFamily: 'Inter',
+  borderRadius: 'medium',
+};
+
+// ── Pack data ───────────────────────────────────────────────────────────────
+
+export const cleanShiftPack: PackData = {
+  formatVersion: 1,
+  packMeta: {
+    id: 'cleanshift-cleaning',
+    name: 'CleanShift — Cleaning Business Scheduler',
+    description:
+      'A scheduler for residential and commercial cleaning businesses: keep client and access details, dispatch cleaning teams, run the daily job sheet, sign off quality checks, watch supply levels and resolve client issues — all linked together.',
+    version: '1.0.0',
+    author: 'FormLogic',
+    tags: ['cleaning', 'scheduling', 'teams', 'quality', 'field-service'],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────
+  // FORMS
+  // ────────────────────────────────────────────────────────────────────────
+  forms: [
+    // ── 1. Client ─────────────────────────────────────────────────────────
+    {
+      packFormId: 'client',
+      title: 'Client',
+      icon: 'Users',
+      description:
+        'Add a cleaning client with contact details, address, access instructions and billing status.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Client',
+          description: 'Add a client with their property details and access notes so every crew arrives prepared.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client_name',
+          type: 'short_text',
+          label: 'Client Name',
+          required: true,
+          properties: { placeholder: 'Full name or business name' },
+        },
+        {
+          id: 'client_type',
+          type: 'dropdown',
+          label: 'Type',
+          required: false,
+          properties: {
+            options: [
+              { id: 'residential', label: 'Residential', value: 'residential' },
+              { id: 'commercial', label: 'Commercial', value: 'commercial' },
+              { id: 'airbnb', label: 'Airbnb', value: 'airbnb' },
+              { id: 'office', label: 'Office', value: 'office' },
+            ],
+          },
+        },
+        {
+          id: 'email',
+          type: 'email',
+          label: 'Email',
+          required: false,
+          properties: { placeholder: 'you@example.com' },
+        },
+        {
+          id: 'phone',
+          type: 'phone',
+          label: 'Phone',
+          required: false,
+          properties: { placeholder: '(555) 555-5555' },
+        },
+        {
+          id: 'address',
+          type: 'location',
+          label: 'Address',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'access_instructions',
+          type: 'long_text',
+          label: 'Access Instructions',
+          required: false,
+          properties: { placeholder: 'Key safe code, alarm, gate, parking, pets…' },
+        },
+        {
+          id: 'billing_status',
+          type: 'dropdown',
+          label: 'Billing Status',
+          required: false,
+          properties: {
+            options: [
+              { id: 'up-to-date', label: 'Up to date', value: 'up-to-date' },
+              { id: 'pending', label: 'Pending', value: 'pending' },
+              { id: 'overdue', label: 'Overdue', value: 'overdue' },
+            ],
+          },
+        },
+        {
+          id: 'notes',
+          type: 'long_text',
+          label: 'Notes',
+          required: false,
+          properties: { placeholder: 'Preferences, product sensitivities, rooms to skip…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total clients', layout: { x: 0, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Overdue billing', layout: { x: 4, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'billing_status', op: 'eq', value: 'overdue' }] } },
+            { id: 'k3', title: 'Commercial sites', layout: { x: 8, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'client_type', op: 'eq', value: 'commercial' }] } },
+            { id: 'c1', title: 'Clients by type', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'bar', groupBy: { field: 'client_type', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Billing status', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'donut', groupBy: { field: 'billing_status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c3', title: 'New clients over time', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent clients', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:client', titleField: 'client_name', subtitleField: 'client_type', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 2. Team ───────────────────────────────────────────────────────────
+    {
+      packFormId: 'team',
+      title: 'Team',
+      icon: 'HardHat',
+      description:
+        'Add a cleaning crew with its lead, members, vehicle and the areas of the city it covers.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Team',
+          description: 'Set up a cleaning crew so you can assign jobs and see who covers which part of town.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'team_name',
+          type: 'short_text',
+          label: 'Team Name',
+          required: true,
+          properties: { placeholder: 'e.g. Crew A, Blue Team' },
+        },
+        {
+          id: 'lead_cleaner',
+          type: 'short_text',
+          label: 'Lead Cleaner',
+          required: false,
+          properties: { placeholder: 'Who runs this crew' },
+        },
+        {
+          id: 'members',
+          type: 'long_text',
+          label: 'Members',
+          required: false,
+          properties: { placeholder: 'Names of the cleaners on this crew…' },
+        },
+        {
+          id: 'vehicle',
+          type: 'short_text',
+          label: 'Vehicle',
+          required: false,
+          properties: { placeholder: 'e.g. Van 2, Rego ABC-123' },
+        },
+        {
+          id: 'service_areas',
+          type: 'checkboxes',
+          label: 'Service Areas',
+          required: false,
+          properties: {
+            options: [
+              { id: 'north-side', label: 'North side', value: 'north-side' },
+              { id: 'south-side', label: 'South side', value: 'south-side' },
+              { id: 'east-side', label: 'East side', value: 'east-side' },
+              { id: 'west-side', label: 'West side', value: 'west-side' },
+              { id: 'inner-city', label: 'Inner city', value: 'inner-city' },
+            ],
+          },
+        },
+        {
+          id: 'active',
+          type: 'dropdown',
+          label: 'Active',
+          required: false,
+          properties: {
+            options: [
+              { id: 'active', label: 'Active', value: 'active' },
+              { id: 'inactive', label: 'Inactive', value: 'inactive' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total teams', layout: { x: 0, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:team', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Active crews', layout: { x: 4, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:team', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'active', op: 'eq', value: 'active' }] } },
+            { id: 'k3', title: 'Inactive crews', layout: { x: 8, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:team', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'active', op: 'eq', value: 'inactive' }] } },
+            { id: 'c1', title: 'Area coverage', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:team', viz: 'bar', groupBy: { field: 'service_areas', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Active vs inactive', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:team', viz: 'donut', groupBy: { field: 'active', bucket: 'none' }, measure: { fn: 'count' }, limit: 4 } },
+            { id: 'c3', title: 'New teams over time', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:team', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Crews', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:team', titleField: 'team_name', subtitleField: 'lead_cleaner', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 3. Cleaning Job ───────────────────────────────────────────────────
+    {
+      packFormId: 'cleaning-job',
+      title: 'Cleaning Job',
+      icon: 'CalendarClock',
+      description:
+        'Schedule a cleaning job for a client with the team, date, time, duration, status and price.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Cleaning Job',
+          description: 'Book a job onto the run sheet, link the client and crew, and keep the whole day organised.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'job_type',
+          type: 'dropdown',
+          label: 'Job Type',
+          required: false,
+          properties: {
+            options: [
+              { id: 'regular-clean', label: 'Regular clean', value: 'regular-clean' },
+              { id: 'deep-clean', label: 'Deep clean', value: 'deep-clean' },
+              { id: 'end-of-lease', label: 'End-of-lease', value: 'end-of-lease' },
+              { id: 'office', label: 'Office', value: 'office' },
+              { id: 'airbnb-turnover', label: 'Airbnb turnover', value: 'airbnb-turnover' },
+            ],
+          },
+        },
+        {
+          id: 'scheduled_date',
+          type: 'date',
+          label: 'Scheduled Date',
+          required: true,
+          properties: {},
+        },
+        {
+          id: 'start_time',
+          type: 'time',
+          label: 'Start Time',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'duration_hours',
+          type: 'number',
+          label: 'Duration (hours)',
+          required: false,
+          properties: { placeholder: '2', min: 0, step: 0.5 },
+        },
+        {
+          id: 'assigned_team',
+          type: 'linked_record',
+          label: 'Assigned Team',
+          required: true,
+          properties: { targetFormId: '@pack:team' },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: true,
+          properties: {
+            options: [
+              { id: 'scheduled', label: 'Scheduled', value: 'scheduled' },
+              { id: 'in-progress', label: 'In progress', value: 'in-progress' },
+              { id: 'completed', label: 'Completed', value: 'completed' },
+              { id: 'cancelled', label: 'Cancelled', value: 'cancelled' },
+              { id: 'issue', label: 'Issue', value: 'issue' },
+            ],
+          },
+        },
+        {
+          id: 'price',
+          type: 'number',
+          label: 'Price ($)',
+          required: false,
+          properties: { placeholder: '0.00', min: 0 },
+        },
+        {
+          id: 'notes',
+          type: 'long_text',
+          label: 'Notes',
+          required: false,
+          properties: { placeholder: 'Anything the crew should know for this job…' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total jobs', layout: { x: 0, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Total revenue', layout: { x: 4, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'kpi', measure: { fn: 'sum', field: 'price' } } },
+            { id: 'k3', title: 'Flagged issues', layout: { x: 8, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'issue' }] } },
+            { id: 'c1', title: 'Jobs by type', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'bar', groupBy: { field: 'job_type', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Jobs by status', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c3', title: 'Jobs scheduled over time', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'area', groupBy: { field: 'scheduled_date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent jobs', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:cleaning-job', titleField: 'job_type', subtitleField: 'scheduled_date', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 4. Quality Check ──────────────────────────────────────────────────
+    {
+      packFormId: 'quality-check',
+      title: 'Quality Check',
+      icon: 'ClipboardCheck',
+      description:
+        'Sign off a completed job against a checklist, rate the result and flag any follow-up.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Quality Check',
+          description: 'Walk the checklist, score the clean and note anything that needs a revisit.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'cleaning_job',
+          type: 'linked_record',
+          label: 'Cleaning Job',
+          required: true,
+          properties: { targetFormId: '@pack:cleaning-job' },
+        },
+        {
+          id: 'checklist_completed',
+          type: 'checkboxes',
+          label: 'Checklist Completed',
+          required: false,
+          properties: {
+            options: [
+              { id: 'kitchen', label: 'Kitchen', value: 'kitchen' },
+              { id: 'bathrooms', label: 'Bathrooms', value: 'bathrooms' },
+              { id: 'floors', label: 'Floors', value: 'floors' },
+              { id: 'windows-and-glass', label: 'Windows and glass', value: 'windows-and-glass' },
+              { id: 'dusting', label: 'Dusting', value: 'dusting' },
+              { id: 'bins-and-consumables', label: 'Bins and consumables', value: 'bins-and-consumables' },
+            ],
+          },
+        },
+        {
+          id: 'rating',
+          type: 'rating',
+          label: 'Rating',
+          required: false,
+          properties: { max: 5 },
+        },
+        {
+          id: 'issues_found',
+          type: 'long_text',
+          label: 'Issues Found',
+          required: false,
+          properties: { placeholder: 'Anything missed or below standard…' },
+        },
+        {
+          id: 'photos',
+          type: 'file_upload',
+          label: 'Photos',
+          required: false,
+          properties: {
+            acceptedFileTypes: ['.jpg', '.png'],
+            allowMultiple: true,
+          },
+        },
+        {
+          id: 'follow_up',
+          type: 'dropdown',
+          label: 'Follow-up Required',
+          required: false,
+          properties: {
+            options: [
+              { id: 'yes', label: 'Yes', value: 'yes' },
+              { id: 'no', label: 'No', value: 'no' },
+            ],
+          },
+        },
+        {
+          id: 'checked_by',
+          type: 'short_text',
+          label: 'Checked By',
+          required: false,
+          properties: { placeholder: 'Who signed off this job' },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total checks', layout: { x: 0, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:quality-check', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Avg rating', layout: { x: 4, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:quality-check', viz: 'kpi', measure: { fn: 'avg', field: 'rating' } } },
+            { id: 'k3', title: 'Follow-ups', layout: { x: 8, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:quality-check', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'follow_up', op: 'eq', value: 'yes' }] } },
+            { id: 'c1', title: 'Rating spread', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:quality-check', viz: 'bar', groupBy: { field: 'rating', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 5 } },
+            { id: 'c2', title: 'Follow-up required', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:quality-check', viz: 'donut', groupBy: { field: 'follow_up', bucket: 'none' }, measure: { fn: 'count' }, limit: 4 } },
+            { id: 'c3', title: 'Checks over time', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:quality-check', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent checks', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:quality-check', titleField: 'checked_by', subtitleField: 'follow_up', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 5. Supply Item ────────────────────────────────────────────────────
+    {
+      packFormId: 'supply',
+      title: 'Supply Item',
+      icon: 'Boxes',
+      description:
+        'Track a supply in the cupboard with its stock level, reorder point, unit and status.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Supply Item',
+          description: 'Keep an eye on chemicals, cloths and equipment so a crew never turns up empty-handed.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'supply_item',
+          type: 'short_text',
+          label: 'Supply Item',
+          required: true,
+          properties: { placeholder: 'e.g. All-purpose spray, Microfibre cloths' },
+        },
+        {
+          id: 'category',
+          type: 'dropdown',
+          label: 'Category',
+          required: false,
+          properties: {
+            options: [
+              { id: 'chemicals', label: 'Chemicals', value: 'chemicals' },
+              { id: 'cloths-and-pads', label: 'Cloths and pads', value: 'cloths-and-pads' },
+              { id: 'equipment', label: 'Equipment', value: 'equipment' },
+              { id: 'consumables', label: 'Consumables', value: 'consumables' },
+            ],
+          },
+        },
+        {
+          id: 'current_stock',
+          type: 'number',
+          label: 'Current Stock',
+          required: false,
+          properties: { placeholder: '0', min: 0 },
+        },
+        {
+          id: 'reorder_point',
+          type: 'number',
+          label: 'Reorder Point',
+          required: false,
+          properties: { placeholder: '5', min: 0 },
+        },
+        {
+          id: 'unit',
+          type: 'dropdown',
+          label: 'Unit',
+          required: false,
+          properties: {
+            options: [
+              { id: 'bottles', label: 'bottles', value: 'bottles' },
+              { id: 'packs', label: 'packs', value: 'packs' },
+              { id: 'units', label: 'units', value: 'units' },
+              { id: 'boxes', label: 'boxes', value: 'boxes' },
+            ],
+          },
+        },
+        {
+          id: 'supplier',
+          type: 'short_text',
+          label: 'Supplier',
+          required: false,
+          properties: { placeholder: 'Where you reorder from' },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: false,
+          properties: {
+            options: [
+              { id: 'ok', label: 'OK', value: 'ok' },
+              { id: 'low', label: 'Low', value: 'low' },
+              { id: 'out', label: 'Out', value: 'out' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total items', layout: { x: 0, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:supply', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Low stock', layout: { x: 4, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:supply', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'low' }] } },
+            { id: 'k3', title: 'Out of stock', layout: { x: 8, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:supply', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'out' }] } },
+            { id: 'c1', title: 'By category', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:supply', viz: 'bar', groupBy: { field: 'category', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'Stock status', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:supply', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 4 } },
+            { id: 'c3', title: 'Items added over time', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:supply', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent items', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:supply', titleField: 'supply_item', subtitleField: 'category', limit: 6 } },
+          ],
+        },
+      },
+    },
+
+    // ── 6. Client Issue ───────────────────────────────────────────────────
+    {
+      packFormId: 'client-issue',
+      title: 'Client Issue',
+      icon: 'AlertTriangle',
+      description:
+        'Log a client complaint, damage or access problem, set its severity and track it to resolution.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'New Client Issue',
+          description: 'Capture what went wrong, how serious it is and who is putting it right.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'client',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client' },
+        },
+        {
+          id: 'cleaning_job',
+          type: 'linked_record',
+          label: 'Cleaning Job',
+          required: true,
+          properties: { targetFormId: '@pack:cleaning-job' },
+        },
+        {
+          id: 'issue_type',
+          type: 'dropdown',
+          label: 'Issue Type',
+          required: false,
+          properties: {
+            options: [
+              { id: 'complaint', label: 'Complaint', value: 'complaint' },
+              { id: 'damage', label: 'Damage', value: 'damage' },
+              { id: 'access-issue', label: 'Access issue', value: 'access-issue' },
+              { id: 'missed-item', label: 'Missed item', value: 'missed-item' },
+              { id: 'payment-issue', label: 'Payment issue', value: 'payment-issue' },
+            ],
+          },
+        },
+        {
+          id: 'severity',
+          type: 'dropdown',
+          label: 'Severity',
+          required: false,
+          properties: {
+            options: [
+              { id: 'low', label: 'Low', value: 'low' },
+              { id: 'medium', label: 'Medium', value: 'medium' },
+              { id: 'high', label: 'High', value: 'high' },
+            ],
+          },
+        },
+        {
+          id: 'description',
+          type: 'long_text',
+          label: 'Description',
+          required: true,
+          properties: { placeholder: 'What happened, in the client’s words if you have them…' },
+        },
+        {
+          id: 'resolution',
+          type: 'long_text',
+          label: 'Resolution',
+          required: false,
+          properties: { placeholder: 'What was done to put it right…' },
+        },
+        {
+          id: 'status',
+          type: 'dropdown',
+          label: 'Status',
+          required: false,
+          properties: {
+            options: [
+              { id: 'open', label: 'Open', value: 'open' },
+              { id: 'in-progress', label: 'In progress', value: 'in-progress' },
+              { id: 'resolved', label: 'Resolved', value: 'resolved' },
+            ],
+          },
+        },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Total issues', layout: { x: 0, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Open issues', layout: { x: 4, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'open' }] } },
+            { id: 'k3', title: 'High severity', layout: { x: 8, y: 0, w: 4, h: 1 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'severity', op: 'eq', value: 'high' }] } },
+            { id: 'c1', title: 'By issue type', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'bar', groupBy: { field: 'issue_type', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'c2', title: 'By severity', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'donut', groupBy: { field: 'severity', bucket: 'none' }, measure: { fn: 'count' }, limit: 4 } },
+            { id: 'c3', title: 'Issues over time', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'l1', title: 'Recent issues', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'list', list: { formId: '@pack:client-issue', titleField: 'issue_type', subtitleField: 'status', limit: 6 } },
+          ],
+        },
+      },
+    },
+  ],
+
+  // ────────────────────────────────────────────────────────────────────────
+  // APPS
+  // ────────────────────────────────────────────────────────────────────────
+  apps: [
+    {
+      packAppId: 'cleanshift',
+      name: 'CleanShift',
+      description:
+        'A cleaning operations hub: keep clients and crews, run the daily job sheet, sign off quality checks, watch supply levels and resolve client issues from one dashboard.',
+      settings: { icon: 'Sparkles' },
+      theme: {
+        primaryColor: '#0891b2',
+        backgroundColor: '#0f172a',
+        textColor: '#f8fafc',
+        fontFamily: 'Inter',
+        borderRadius: 'medium',
+      },
+      forms: [
+        { packFormId: 'client', displayName: 'Clients', sortOrder: 1, isVisible: true },
+        { packFormId: 'team', displayName: 'Teams', sortOrder: 2, isVisible: true },
+        { packFormId: 'cleaning-job', displayName: 'Cleaning Jobs', sortOrder: 3, isVisible: true },
+        { packFormId: 'quality-check', displayName: 'Quality Checks', sortOrder: 4, isVisible: true },
+        { packFormId: 'supply', displayName: 'Supplies', sortOrder: 5, isVisible: true },
+        { packFormId: 'client-issue', displayName: 'Client Issues', sortOrder: 6, isVisible: true },
+      ],
+      customScreen: {
+        enabled: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 'k1', title: 'Clients', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k2', title: 'Cleaning jobs', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k3', title: 'Revenue', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'kpi', measure: { fn: 'sum', field: 'price' } } },
+            { id: 'k4', title: 'Open issues', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:client-issue', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'ne', value: 'resolved' }] } },
+            { id: 'c1', title: 'Jobs scheduled over time', layout: { x: 0, y: 1, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'area', groupBy: { field: 'scheduled_date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
+            { id: 'c2', title: 'Jobs by status', layout: { x: 8, y: 1, w: 4, h: 3 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'donut', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, limit: 6 } },
+            { id: 'c3', title: 'Revenue by team', layout: { x: 0, y: 4, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:cleaning-job', viz: 'bar', joins: [{ via: 'assigned_team', formId: '@pack:team', type: 'left' }], groupBy: { field: '@pack:team::team_name', bucket: 'none' }, measure: { fn: 'sum', field: 'price' }, seriesSort: 'value', sort: 'desc', limit: 8 } },
+            { id: 'act1', title: 'Recent activity', layout: { x: 6, y: 4, w: 6, h: 3 }, kind: 'activity' },
+            { id: 'a1', title: 'Quick actions', layout: { x: 0, y: 7, w: 12, h: 1 }, kind: 'actions' },
+          ],
+        },
+      },
+      roles: [
+        {
+          name: 'Operations Manager',
+          description: 'Full access to every CleanShift form.',
+          permissions: [
+            { packFormId: 'client', permission: 'submit_responses' },
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'client', permission: 'edit_responses' },
+            { packFormId: 'client', permission: 'delete_responses' },
+            { packFormId: 'client', permission: 'export_responses' },
+            { packFormId: 'team', permission: 'submit_responses' },
+            { packFormId: 'team', permission: 'view_all_responses' },
+            { packFormId: 'team', permission: 'edit_responses' },
+            { packFormId: 'team', permission: 'delete_responses' },
+            { packFormId: 'team', permission: 'export_responses' },
+            { packFormId: 'cleaning-job', permission: 'submit_responses' },
+            { packFormId: 'cleaning-job', permission: 'view_all_responses' },
+            { packFormId: 'cleaning-job', permission: 'edit_responses' },
+            { packFormId: 'cleaning-job', permission: 'delete_responses' },
+            { packFormId: 'cleaning-job', permission: 'export_responses' },
+            { packFormId: 'quality-check', permission: 'submit_responses' },
+            { packFormId: 'quality-check', permission: 'view_all_responses' },
+            { packFormId: 'quality-check', permission: 'edit_responses' },
+            { packFormId: 'quality-check', permission: 'delete_responses' },
+            { packFormId: 'quality-check', permission: 'export_responses' },
+            { packFormId: 'supply', permission: 'submit_responses' },
+            { packFormId: 'supply', permission: 'view_all_responses' },
+            { packFormId: 'supply', permission: 'edit_responses' },
+            { packFormId: 'supply', permission: 'delete_responses' },
+            { packFormId: 'supply', permission: 'export_responses' },
+            { packFormId: 'client-issue', permission: 'submit_responses' },
+            { packFormId: 'client-issue', permission: 'view_all_responses' },
+            { packFormId: 'client-issue', permission: 'edit_responses' },
+            { packFormId: 'client-issue', permission: 'delete_responses' },
+            { packFormId: 'client-issue', permission: 'export_responses' },
+          ],
+        },
+        {
+          name: 'Dispatcher',
+          description: 'Coordinators who manage clients, crews and the run sheet, and log client issues.',
+          permissions: [
+            { packFormId: 'client', permission: 'submit_responses' },
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'client', permission: 'edit_responses' },
+            { packFormId: 'team', permission: 'submit_responses' },
+            { packFormId: 'team', permission: 'view_all_responses' },
+            { packFormId: 'team', permission: 'edit_responses' },
+            { packFormId: 'cleaning-job', permission: 'submit_responses' },
+            { packFormId: 'cleaning-job', permission: 'view_all_responses' },
+            { packFormId: 'cleaning-job', permission: 'edit_responses' },
+            { packFormId: 'quality-check', permission: 'view_all_responses' },
+            { packFormId: 'supply', permission: 'view_all_responses' },
+            { packFormId: 'client-issue', permission: 'submit_responses' },
+            { packFormId: 'client-issue', permission: 'view_all_responses' },
+            { packFormId: 'client-issue', permission: 'edit_responses' },
+          ],
+        },
+        {
+          name: 'Cleaner',
+          description: 'Field crew who work jobs, sign off quality checks, log issues and update stock.',
+          permissions: [
+            { packFormId: 'client', permission: 'view_all_responses' },
+            { packFormId: 'team', permission: 'view_all_responses' },
+            { packFormId: 'cleaning-job', permission: 'view_all_responses' },
+            { packFormId: 'cleaning-job', permission: 'edit_responses' },
+            { packFormId: 'quality-check', permission: 'submit_responses' },
+            { packFormId: 'quality-check', permission: 'view_all_responses' },
+            { packFormId: 'supply', permission: 'submit_responses' },
+            { packFormId: 'supply', permission: 'view_all_responses' },
+            { packFormId: 'supply', permission: 'edit_responses' },
+            { packFormId: 'client-issue', permission: 'submit_responses' },
+            { packFormId: 'client-issue', permission: 'view_all_responses' },
+          ],
+        },
+      ],
+      reports: [
+        {
+          reportId: 'jobs-count',
+          kind: 'chart' as const,
+          name: 'Cleaning jobs',
+          description: 'Total number of cleaning jobs scheduled across the business.',
+          spec: {
+            formId: '@pack:cleaning-job',
+            viz: 'kpi' as const,
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'jobs-by-type',
+          kind: 'chart' as const,
+          name: 'Jobs by type',
+          description: 'Count of jobs broken down by the type of clean.',
+          spec: {
+            formId: '@pack:cleaning-job',
+            viz: 'bar' as const,
+            groupBy: { field: 'job_type' },
+            measure: { fn: 'count' as const },
+            seriesSort: 'value' as const,
+            sort: 'desc' as const,
+          },
+        },
+        {
+          reportId: 'jobs-over-time',
+          kind: 'chart' as const,
+          name: 'Jobs over time',
+          description: 'Monthly trend of cleaning jobs scheduled.',
+          spec: {
+            formId: '@pack:cleaning-job',
+            viz: 'line' as const,
+            groupBy: { field: '__submitted_at', bucket: 'month' as const },
+            measure: { fn: 'count' as const },
+          },
+        },
+        {
+          reportId: 'jobs-revenue',
+          kind: 'chart' as const,
+          name: 'Revenue',
+          description: 'Total revenue summed across all cleaning jobs.',
+          spec: {
+            formId: '@pack:cleaning-job',
+            viz: 'kpi' as const,
+            measure: { fn: 'sum' as const, field: 'price' },
+          },
+        },
+        {
+          reportId: 'jobs-by-team',
+          kind: 'chart' as const,
+          name: 'Jobs by team',
+          description: 'Number of jobs assigned to each cleaning team.',
+          spec: {
+            formId: '@pack:cleaning-job',
+            viz: 'bar' as const,
+            joins: [{ via: 'assigned_team', formId: '@pack:team', type: 'left' as const }],
+            groupBy: { field: '@pack:team::team_name' },
+            measure: { fn: 'count' as const },
+            seriesSort: 'value' as const,
+            sort: 'desc' as const,
+          },
+        },
+        {
+          reportId: 'issues-by-type',
+          kind: 'chart' as const,
+          name: 'Issues by type',
+          description: 'Count of client issues broken down by type.',
+          spec: {
+            formId: '@pack:client-issue',
+            viz: 'bar' as const,
+            groupBy: { field: 'issue_type' },
+            measure: { fn: 'count' as const },
+            seriesSort: 'value' as const,
+            sort: 'desc' as const,
+          },
+        },
+        {
+          reportId: 'cleanshift-overview',
+          kind: 'document' as const,
+          name: 'Cleaning operations overview',
+          description: 'High-level summary of cleaning job activity, revenue and client issues.',
+          blocks: [
+            {
+              kind: 'text' as const,
+              title: 'Cleaning operations overview',
+              body: 'This report summarises cleaning job activity, revenue and client issues across the business. Use it to track workload, see which teams and job types carry the most work, and monitor how the operation is trending month to month.',
+            },
+            { kind: 'report' as const, reportId: 'jobs-by-type', caption: 'Cleaning jobs by the type of clean.' },
+            { kind: 'report' as const, reportId: 'jobs-over-time', caption: 'Month-by-month cleaning job volume.' },
+            { kind: 'report' as const, reportId: 'jobs-by-team', caption: 'Workload distribution across cleaning teams.' },
+            { kind: 'report' as const, reportId: 'issues-by-type', caption: 'Client issues by type.' },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+export default cleanShiftPack;

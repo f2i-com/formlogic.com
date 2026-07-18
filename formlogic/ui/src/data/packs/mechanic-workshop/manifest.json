@@ -1,0 +1,13 @@
+{
+  "id": "mechanic-workshop",
+  "name": "Mechanic Workshop Manager",
+  "description": "Run an auto mechanic workshop end to end: manage customers and their vehicles, track job cards through the bay, log parts used, and raise invoices from one linked dashboard. Includes 5 forms and 1 app.",
+  "tags": [
+    "mechanic",
+    "automotive",
+    "workshop",
+    "repairs",
+    "vehicles"
+  ],
+  "icon": "Car"
+}
