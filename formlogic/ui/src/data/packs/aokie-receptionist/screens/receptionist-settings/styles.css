@@ -49,6 +49,12 @@ body { color: var(--fl-text); }
 #rs .btn:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; }
 #rs .btn[disabled] { opacity: .45; cursor: not-allowed; }
 #rs .btn.dark { background: var(--fl-text); color: var(--fl-surface); border-color: var(--fl-text); }
+/* The dark save buttons stay a dark button with white text in BOTH themes. In dark mode
+   var(--fl-text) is near-white and var(--fl-surface) near-transparent, which would flip
+   these to a light background with unreadable light text — so pin them to the dark page
+   colour with white text instead of letting the palette invert them. */
+html.fl-dark #rs .btn.dark { background: var(--fl-bg); color: #fff; border-color: var(--fl-border); }
+html.fl-dark #rs .btn.dark:hover { background: var(--fl-surface-2); }
 #rs .btn.primary { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-accent-contrast); }
 #rs .btn.sm { font-size: 11.5px; padding: 5px 10px; }
 #rs .savebtnrow { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
