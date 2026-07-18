@@ -6,7 +6,6 @@
  * non-2xx as thrown errors with the body's `error` field when present.
  */
 
-import { aokieCommandRequestId } from './aokie/aokieRequestId';
 import type { PluginScreenDecl } from './pluginScreens';
 
 export const API_BASE = 'http://127.0.0.1:17872';
@@ -621,10 +620,10 @@ export interface BuiltinPluginInfo {
 
 export interface PluginsListResponse {
   pluginsDir: string;
-  /** Dev mode drives dev-only affordances (Aokie's "Simulate incoming call"). */
+  /** Dev mode drives dev-only affordances (a manifest action's devOnly flag). */
   devMode: boolean;
   plugins: PluginSnapshot[];
-  /** Bundled templates + installed flags — the "Install Aokie plugin" cards. */
+  /** Bundled templates + installed flags — the "Install … plugin" cards. */
   builtins: BuiltinPluginInfo[];
 }
 
@@ -693,9 +692,15 @@ export const plugins = {
   /** Admin/dev direct command — forwarded as a connector.request. */
   command: (id: string, command: string, payload?: unknown, requestId?: string) => {
     // One id per direct operator action. Explicit ids (for caller-managed
-    // retries) win; Aokie's durable physical commands get a safe id even when
-    // an older UI call site omitted one.
-    const durableRequestId = aokieCommandRequestId(id, command, requestId);
+    // retries) win; otherwise EVERY command gets one minted here — the Rust
+    // side accepts a requestId universally (connectors.rs validates only
+    // 1-128 chars) and plugins that journal commands durably REFUSE calls
+    // without one, so an unconditional mint keeps every plugin safe without
+    // per-plugin command lists in the UI. Dots become dashes to keep the id
+    // in the plugin-safe character set (the webview is a secure context, so
+    // crypto.randomUUID is always available).
+    const commandTag = command.replaceAll('.', '-');
+    const durableRequestId = requestId ?? `ui-${commandTag}-${crypto.randomUUID()}`;
     return request<{ ok: true; data?: unknown }>(
       `/api/plugins/${encodeURIComponent(id)}/commands/${encodeURIComponent(command)}`,
       { method: 'POST', body: JSON.stringify({ payload, requestId: durableRequestId }) },

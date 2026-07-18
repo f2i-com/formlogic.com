@@ -6,7 +6,7 @@
  * app uses, and a "Take me there" hand-off opens the real panel (which does
  * the explaining). This module keeps the React-free parts:
  *
- *  - localStorage state (same try/catch discipline as aokieUiSource.ts):
+ *  - localStorage state (try/catch so private mode / disabled storage degrade):
  *    `formlogic.setupGuide` — absent = true first run (auto-open once),
  *    'pending' = seen but unfinished (header pill re-opens it),
  *    'done' / 'dismissed' = never auto-surface again.

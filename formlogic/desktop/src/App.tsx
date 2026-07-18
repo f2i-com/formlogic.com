@@ -7,16 +7,14 @@ import ModelsPanel from './ModelsPanel';
 import PythonPanel from './PythonPanel';
 import SettingsPanel from './SettingsPanel';
 import ConnectionsPanel from './ConnectionsPanel';
-import ReceptionistPanel from './aokie/ReceptionistPanel';
 import { DesktopOverview } from './DesktopOverview';
 import { DesktopSidebar, SECTION_META, type SectionId } from './DesktopSidebar';
 import { useDesktopOverview } from './useDesktopOverview';
 import { ExternalLinkIcon, MoonIcon, SunIcon } from './Icons';
 import { PluginContributedScreen } from './PluginContributedUi';
-import { parsePluginSection, pluginNavEntries } from './pluginContributions';
+import { parsePluginSection, pluginNavEntries, pluginSectionId } from './pluginContributions';
 import PluginScreenPage from './PluginScreenPage';
 import { pluginNavScreen } from './pluginScreens';
-import { getAokieUiSource } from './aokieUiSource';
 import { prefetchPanelData } from './panelCache';
 // Explicit extension: on a case-insensitive filesystem the bare './SetupWizard'
 // specifier would resolve to setupWizard.ts (the logic module) first.
@@ -85,33 +83,10 @@ export default function App() {
   const pluginList = overview.plugins?.plugins ?? [];
   const devMode = overview.plugins?.devMode ?? false;
 
-  // The AI Receptionist workspace is the Aokie PLUGIN's UI, not core chrome:
-  // it exists only while the plugin is installed (uninstalled → nav entry and
-  // panel disappear; the Plugins page still offers the bundled template).
-  const aokieInstalled = pluginList.some((p) => p.id === 'aokie');
-  // AOK-305: which Aokie UI to render. `compiled` (default) keeps the proven
-  // interactive panel + hardcoded nav/hero and suppresses the manifest's; only
-  // `manifest` lights up Aokie's declarative ui contributions. This is a
-  // desktop-side flip — no plugin redeploy — so it's the instant rollback.
-  const aokieUiSource = getAokieUiSource();
-  const allPluginNav = pluginNavEntries(pluginList);
-  // Manifest mode additionally requires the installed plugin to actually
-  // CONTRIBUTE a nav entry — with a v1/ui-less manifest the flag would
-  // otherwise hide the compiled nav with nothing standing in (receptionist
-  // unreachable). Self-heals to compiled until the v2 manifest is deployed.
-  const aokieManifestMode =
-    aokieUiSource === 'manifest' &&
-    aokieInstalled &&
-    allPluginNav.some((n) => n.pluginId === 'aokie');
-  // The compiled receptionist nav/panel exists while Aokie is installed UNLESS
-  // we're in manifest mode (then the manifest's nav owns it).
-  const receptionistAvailable = (!overview.loaded || aokieInstalled) && !aokieManifestMode;
-  // PLG-203: nav entries contributed by installed v2 plugins. In compiled mode
-  // Aokie's own manifest nav is filtered out (the compiled 'receptionist' entry
-  // stands in for it) so a v2 Aokie manifest never double-renders.
-  const pluginNav = allPluginNav.filter(
-    (n) => n.pluginId !== 'aokie' || aokieManifestMode,
-  );
+  // PLG-203: nav entries contributed by installed v2 plugins. Every plugin —
+  // including Aokie — supplies its own workspace through its manifest `ui`
+  // contributions; the desktop carries no plugin-specific chrome.
+  const pluginNav = pluginNavEntries(pluginList);
   // The plugin section (if any) currently selected, resolved to its snapshot.
   const activePluginSection = parsePluginSection(section);
   const activePlugin = activePluginSection
@@ -132,8 +107,13 @@ export default function App() {
       ? pluginNavScreen(bodyPlugin.ui, bodyPluginSection.navId)
       : null;
   useEffect(() => {
-    if (section === 'receptionist' && overview.loaded && !aokieInstalled) {
-      setSection('overview');
+    // Legacy redirect: 'receptionist' was a hardcoded SectionId before the
+    // Aokie plugin shipped its own manifest UI. A stored/stranded selection
+    // resolves to the plugin's contributed nav section, else Overview — a
+    // saved UI state must never dead-end on a retired section id.
+    if (section === 'receptionist' && overview.loaded) {
+      const aokieNav = pluginNav.find((n) => n.pluginId === 'aokie');
+      setSection(aokieNav ? pluginSectionId(aokieNav.pluginId, aokieNav.navId) : 'overview');
     }
     // A plugin section whose plugin vanished (uninstalled/disabled) → Overview.
     if (
@@ -143,18 +123,7 @@ export default function App() {
     ) {
       setSection('overview');
     }
-    // An aokie plugin section stranded by a mode flip (or the plugin being
-    // disabled): the plugin:aokie:* body only renders in manifest mode, so
-    // route to the compiled receptionist panel — the exact panel that section
-    // deep-linked to anyway — or Overview when Aokie is gone entirely.
-    if (
-      activePluginSection?.pluginId === 'aokie' &&
-      overview.loaded &&
-      !aokieManifestMode
-    ) {
-      setSection(aokieInstalled ? 'receptionist' : 'overview');
-    }
-  }, [section, overview.loaded, aokieInstalled, aokieManifestMode, activePluginSection, pluginList]);
+  }, [section, overview.loaded, activePluginSection, pluginList, pluginNav]);
 
   const toggleTheme = () => {
     const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
@@ -286,7 +255,6 @@ export default function App() {
         onChange={changeSection}
         pendingPairing={overview.pendingPairing?.length ?? 0}
         cloudLabel={cloudLabel}
-        receptionistAvailable={receptionistAvailable}
         pluginNav={pluginNav}
       />
 
@@ -366,45 +334,23 @@ export default function App() {
             <DesktopOverview
               data={overview}
               onOpen={changeSection}
-              onOpenPluginNav={(pid, nav) => changeSection(`plugin:${pid}:${nav}`)}
-              suppressAokieHero={aokieManifestMode}
+              onOpenPluginNav={(pid, nav) => changeSection(pluginSectionId(pid, nav))}
             />
-          )}
-          {/* The panel renders for the 'receptionist' section whenever Aokie is
-              installed — even in manifest mode (where only the NAV entry is
-              manifest-owned), so a section selected before the mode resolved
-              never strands a blank body. */}
-          {deferredSection === 'receptionist' && (!overview.loaded || aokieInstalled) && (
-            <ReceptionistPanel />
           )}
           {deferredSection === 'services' && <ServicesPanel />}
           {deferredSection === 'models' && <ModelsPanel />}
-          {deferredSection === 'plugins' && <PluginsPanel />}
+          {deferredSection === 'plugins' && (
+            <PluginsPanel
+              onOpenPluginNav={(pid, nav) => changeSection(pluginSectionId(pid, nav))}
+            />
+          )}
           {deferredSection === 'python' && <PythonPanel />}
           {deferredSection === 'connections' && <ConnectionsPanel />}
           {deferredSection === 'settings' && <SettingsPanel />}
-          {/* AOK-305: in manifest mode, an Aokie plugin nav opens the COMPILED
-              interactive ReceptionistPanel (the manifest supplies the nav entry
-              + Overview banner declaratively; the interactive content — pairing,
-              live call, consent, dongle wizard — stays compiled) — UNLESS the
-              nav entry declares a plugin-shipped `screen` (the self-contained
-              migration path), which then renders the sandboxed bundle. */}
-          {bodyPluginSection?.pluginId === 'aokie' &&
-            aokieManifestMode &&
-            (bodyPlugin && bodyPluginScreen ? (
-              <PluginScreenPage
-                key={`${bodyPlugin.id}:${bodyPluginScreen.id}`}
-                plugin={bodyPlugin}
-                screen={bodyPluginScreen}
-                theme={theme}
-              />
-            ) : (
-              <ReceptionistPanel />
-            ))}
-          {/* PLG-203: a plugin-contributed screen for any OTHER plugin — the
-              plugin-shipped sandboxed bundle when the nav entry declares one,
-              else the declarative status cards + actions. */}
-          {bodyPlugin && bodyPluginSection && bodyPluginSection.pluginId !== 'aokie' && (
+          {/* PLG-203: a plugin-contributed section — the plugin-shipped
+              sandboxed bundle when the nav entry declares a `screen`, else the
+              declarative status cards + actions. */}
+          {bodyPlugin && bodyPluginSection && (
             bodyPluginScreen ? (
               <PluginScreenPage
                 key={`${bodyPlugin.id}:${bodyPluginScreen.id}`}

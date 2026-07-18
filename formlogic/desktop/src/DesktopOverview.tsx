@@ -9,7 +9,6 @@ import {
   CloudIcon,
   DatabaseIcon,
   LinkIcon,
-  PhoneCallIcon,
   PuzzleIcon,
   ServerIcon,
   TerminalSquareIcon,
@@ -37,16 +36,11 @@ export function DesktopOverview({
   data,
   onOpen,
   onOpenPluginNav,
-  suppressAokieHero = false,
 }: {
   data: DesktopOverviewData;
   onOpen: (s: SectionId) => void;
   /** PLG-203: open a plugin-contributed section from an Overview card CTA. */
   onOpenPluginNav?: (pluginId: string, navId: string) => void;
-  /** AOK-305: in Aokie manifest mode, hide the compiled hero (the manifest's
-   *  Overview card renders it) — and, conversely, in compiled mode Aokie is
-   *  filtered out of the generic PluginOverviewCards so it never double-renders. */
-  suppressAokieHero?: boolean;
 }) {
   const svc = data.services?.services ?? [];
   const running = svc.filter((s) => s.status === 'running').length;
@@ -62,11 +56,6 @@ export function DesktopOverview({
   const plg = data.plugins?.plugins ?? [];
   const plgRunning = plg.filter((p) => p.state === 'running').length;
   const plgTrouble = plg.filter((p) => p.state === 'unhealthy' || p.state === 'crashed').length;
-
-  const aokie = plg.find((p) => p.id === 'aokie');
-  const aokieInstalled = Boolean(aokie);
-  const aokieRunning = aokie?.state === 'running';
-  const aokieHealthy = aokieRunning && (aokie?.lastHealth?.ok ?? true);
 
   const runtime = data.runtime;
   const linked = runtime?.linked ?? data.cloud?.linked ?? false;
@@ -96,73 +85,11 @@ export function DesktopOverview({
         </button>
       </section>
 
-      {/* The receptionist hero is the Aokie PLUGIN's surface — it renders only
-          while the plugin is installed (or the first fetch is still loading),
-          so removing the plugin removes its chrome too. AOK-305: hidden in
-          manifest mode (the manifest's Overview card renders instead). */}
-      {(!data.loaded || aokieInstalled) && !suppressAokieHero && (
-      <section className="desktop-aokie-card">
-        <div className="desktop-aokie-card__accent" aria-hidden="true" />
-        <div className="desktop-aokie-card__main">
-          <span className="desktop-aokie-card__icon">
-            <PhoneCallIcon size={24} />
-          </span>
-          <div className="desktop-aokie-card__copy">
-            <span className="desktop-card-eyebrow">AI RECEPTIONIST</span>
-            <h3>
-              {!data.loaded
-                ? 'Checking Aokie…'
-                : !aokieInstalled
-                  ? 'Aokie is not installed yet.'
-                  : aokieHealthy
-                    ? 'Aokie is ready for your next call.'
-                    : aokieRunning
-                      ? 'Aokie is running with warnings.'
-                      : 'Aokie is installed but not running.'}
-            </h3>
-            <p>
-              {!aokieInstalled
-                ? 'Install the Aokie phone bridge from Plugins to turn calls into FormLogic records.'
-                : aokie?.lastHealth?.detail ||
-                  'Answer, transcribe and capture business calls through your paired phone.'}
-            </p>
-            <div className="desktop-aokie-card__actions">
-              <button
-                type="button"
-                className="desktop-button is-primary"
-                onClick={() => onOpen(aokieInstalled ? 'receptionist' : 'plugins')}
-              >
-                {aokieInstalled ? 'Open Aokie' : 'Open Plugins'} <ChevronRightIcon size={14} />
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="desktop-aokie-card__readiness">
-          <span className={`desktop-status-pill ${aokieHealthy ? 'is-ok' : aokieRunning ? 'is-warn' : 'is-neutral'}`}>
-            <i />
-            {aokieHealthy ? 'Ready' : aokieRunning ? 'Degraded' : aokieInstalled ? aokie?.state ?? 'stopped' : 'Not installed'}
-          </span>
-          <span>
-            <PuzzleIcon size={15} />
-            <small>Plugin</small>
-            <strong>{aokie ? aokie.state : '—'}</strong>
-          </span>
-          <span>
-            <CloudIcon size={15} />
-            <small>Cloud</small>
-            <strong>{linked ? 'Linked' : 'Not linked'}</strong>
-          </span>
-        </div>
-      </section>
-      )}
-
       {/* PLG-203: cards contributed by installed v2 plugins (a plugin's
-          ui.overview) — rendered dynamically from the manifest. AOK-305: in
-          compiled mode Aokie's manifest hero is filtered out (the compiled hero
-          above stands in); in manifest mode it renders here and the compiled
-          hero is suppressed — so the Aokie hero shows exactly once either way. */}
+          ui.overview) — rendered dynamically from the manifest, uniformly for
+          every plugin (Aokie's hero comes from its own manifest contribution). */}
       <PluginOverviewCards
-        plugins={suppressAokieHero ? plg : plg.filter((p) => p.id !== 'aokie')}
+        plugins={plg}
         onOpenNav={(pid, nav) => onOpenPluginNav?.(pid, nav)}
       />
 

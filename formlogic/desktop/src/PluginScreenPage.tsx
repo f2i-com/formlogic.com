@@ -201,8 +201,8 @@ export default function PluginScreenPage({
 
   // ---- live event feeds: ONE parent EventSource on /api/events, filtered to
   // the names THIS plugin's manifest declares, pushed into the iframe as
-  // { __pluginScreenPush, gen, subId, frame } (same transport as
-  // aokie/useAokieEvents — the webview origin passes the auth guard). ----
+  // { __pluginScreenPush, gen, subId, frame } (the webview origin passes the
+  // auth guard). ----
   const eventSourceRef = useRef<EventSource | null>(null);
   const subsRef = useRef(new Map<number, ScreenEventSub>());
   const subSeqRef = useRef(0);
@@ -281,9 +281,9 @@ export default function PluginScreenPage({
           case 'command': {
             const command = String(args.command ?? '');
             if (!command) throw new Error('command() needs a command name.');
-            // Journalled commands (the plugin MANIFEST's list, generalized
-            // from the hardcoded aokie set) get a durable requestId minted
-            // here — the plugin refuses journalled commands without one.
+            // Journalled commands (the plugin MANIFEST's list) get a durable
+            // requestId minted here — the plugin refuses journalled commands
+            // without one.
             const requestId =
               journalledRequestIdFor(pluginRef.current.journalledCommands, command) ?? undefined;
             const res = await plugins.command(pluginId, command, args.payload, requestId);

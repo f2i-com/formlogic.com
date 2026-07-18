@@ -11,7 +11,6 @@ import {
 } from './api';
 import { AlertTriangleIcon, CheckIcon, DownloadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
-import { AokieCard } from './aokie/AokieCard';
 import { useConfirm } from './ConfirmDialog';
 import { PANEL_CACHE_KEYS, getPanelCache, setPanelCache } from './panelCache';
 import { PanelRefresh } from './PanelRefresh';
@@ -25,14 +24,18 @@ import { useToast } from './Toasts';
  * 2s — the list endpoint rescans the folder, so dropping a plugin dir in
  * shows up without a restart.
  *
- * Bundled TEMPLATES (e.g. the Aokie phone bridge) are offered below the
- * installed plugins: Install materialises the manifest into the plugins
- * folder; the plugin then shows "binary … not installed" until the built
- * executable is dropped alongside it. The Aokie plugin additionally gets a
- * live dongle/phone status card (via connector requests) and, in dev mode,
- * a "Simulate incoming call" button (dongle.diagnostics {simulate:"call"}).
+ * Bundled TEMPLATES are offered below the installed plugins: Install
+ * materialises the manifest into the plugins folder; the plugin then shows
+ * "binary … not installed" until the built executable is dropped alongside
+ * it. A plugin whose manifest contributes nav entries additionally gets an
+ * "Open" button that jumps to its workspace section.
  */
-export default function PluginsPanel() {
+export default function PluginsPanel({
+  onOpenPluginNav,
+}: {
+  /** Navigate to a plugin-contributed section (`plugin:<id>:<navId>`). */
+  onOpenPluginNav?: (pluginId: string, navId: string) => void;
+} = {}) {
   // Seed from the module-level cache (app-start prefetch / last visit) so the
   // section paints instantly; the mount-time refresh revalidates right away.
   const [snapshot, setSnapshot] = useState<PluginsListResponse | null>(
@@ -266,9 +269,9 @@ export default function PluginsPanel() {
           <PluginCard
             key={p.id}
             plugin={p}
-            devMode={snapshot.devMode}
             expanded={expandedId === p.id}
             pending={pendingIds.has(p.id)}
+            onOpenNav={onOpenPluginNav}
             onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
             onStart={() => runAction(() => plugins.start(p.id), p.id)}
             onStop={() => runAction(() => plugins.stop(p.id), p.id)}
@@ -392,7 +395,7 @@ function BuiltinCard({
             disabled={pending || !!builtin.incompatible}
             className="btn btn-primary"
           >
-            Install {builtin.id === 'aokie' ? 'Aokie' : builtin.name} plugin
+            Install {builtin.name} plugin
           </button>
         </div>
       </div>
@@ -402,9 +405,10 @@ function BuiltinCard({
 
 interface CardProps {
   plugin: PluginSnapshot;
-  devMode: boolean;
   expanded: boolean;
   pending: boolean;
+  /** Navigate to a section the plugin's manifest `ui.nav` contributes. */
+  onOpenNav?: (pluginId: string, navId: string) => void;
   onToggle: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -416,9 +420,9 @@ interface CardProps {
 
 function PluginCard({
   plugin,
-  devMode,
   expanded,
   pending,
+  onOpenNav,
   onToggle,
   onStart,
   onStop,
@@ -505,6 +509,22 @@ function PluginCard({
           )}
         </div>
         <div className="service-actions">
+          {/* A plugin whose manifest contributes nav entries gets a jump to
+              its workspace section (plugin:<id>:<navId>) — the same section
+              the sidebar nav opens. Disabled plugins contribute no UI. */}
+          {onOpenNav &&
+            plugin.state !== 'disabled' &&
+            (plugin.ui?.nav ?? []).map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => onOpenNav(plugin.id, n.id)}
+                className="btn btn-secondary"
+                title={`Open ${n.label}`}
+              >
+                Open
+              </button>
+            ))}
           {active ? (
             <>
               <button onClick={onStop} disabled={pending} className="btn btn-warn">
@@ -563,9 +583,6 @@ function PluginCard({
           />
           Also delete this plugin's data (settings, journals) on remove
         </label>
-      )}
-      {plugin.id === 'aokie' && (
-        <AokieCard running={plugin.state === 'running'} devMode={devMode} />
       )}
       {expanded && (
         <LogsViewer

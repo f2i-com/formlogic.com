@@ -4,7 +4,6 @@ import {
   GearIcon,
   LayoutGridIcon,
   LinkIcon,
-  PhoneCallIcon,
   PuzzleIcon,
   ServerIcon,
   TerminalSquareIcon,
@@ -15,7 +14,6 @@ import { normalizeIcon, pluginSectionId, type PluginNavEntry } from './pluginCon
 /** The workspace sections of the redesigned shell (navigation, not tabs). */
 export type SectionId =
   | 'overview'
-  | 'receptionist'
   | 'services'
   | 'models'
   | 'plugins'
@@ -25,7 +23,6 @@ export type SectionId =
 
 export const SECTION_META: Record<SectionId, { title: string; subtitle: string }> = {
   overview: { title: 'Control centre', subtitle: 'Everything local, connected and ready at a glance.' },
-  receptionist: { title: 'Aokie Receptionist', subtitle: 'Phone, voice and front-desk automation in one workspace.' },
   services: { title: 'Local services', subtitle: 'Install, run and inspect the local engines behind your flows.' },
   models: { title: 'Models', subtitle: 'Download and organise models available to FormLogic services.' },
   plugins: { title: 'Plugins', subtitle: 'Manage supervised connectors that bridge apps to local capability.' },
@@ -52,7 +49,6 @@ export function DesktopSidebar({
   onChange,
   pendingPairing,
   cloudLabel,
-  receptionistAvailable,
   pluginNav = [],
 }: {
   section: string;
@@ -61,9 +57,6 @@ export function DesktopSidebar({
   pendingPairing: number;
   /** e.g. the linked device/base host, or "Not linked". */
   cloudLabel: string;
-  /** The Aokie plugin is installed — its workspace is plugin UI, not core
-   *  chrome, so the nav entry only exists while the plugin does. */
-  receptionistAvailable: boolean;
   /** PLG-203: nav entries contributed by installed v2 plugins. */
   pluginNav?: PluginNavEntry[];
 }) {
@@ -72,9 +65,6 @@ export function DesktopSidebar({
       label: 'Operate',
       items: [
         { id: 'overview', label: 'Overview', icon: LayoutGridIcon },
-        ...(receptionistAvailable
-          ? [{ id: 'receptionist', label: 'AI Receptionist', icon: PhoneCallIcon, badge: 'New', badgeTone: 'accent' } as NavItem]
-          : []),
         // PLG-203: plugin-contributed nav entries (a v2 plugin's ui.nav).
         ...pluginNav.map(
           (n): NavItem => ({

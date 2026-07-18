@@ -271,10 +271,9 @@ const defaultGenerator: RequestIdGenerator = () => {
 
 /**
  * Mint a durable requestId for a screen-invoked command when the plugin's
- * MANIFEST marks it journalled (snapshot `journalledCommands` — the
- * generalized twin of the hardcoded aokie set in aokieRequestId.ts). A
- * journalled command without an id would be refused by the plugin; a
- * non-journalled command returns null (no id sent).
+ * MANIFEST marks it journalled (snapshot `journalledCommands`). A journalled
+ * command without an id would be refused by the plugin; a non-journalled
+ * command returns null (no id sent).
  */
 export function journalledRequestIdFor(
   journalledCommands: readonly string[] | undefined,
