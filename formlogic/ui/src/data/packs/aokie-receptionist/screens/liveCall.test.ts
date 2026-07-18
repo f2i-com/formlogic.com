@@ -272,4 +272,41 @@ describe('live-call section screen (TSX)', () => {
     // Only the call.current poll ever went to the connector — never a control command.
     for (const call of connector.mock.calls) expect(call[1]).toBe('call.current');
   });
+
+  it('a stuck active call self-heals from the authoritative call.current poll (live report 2026-07-18)', async () => {
+    // Remote mode: there is NO event lane, so a missed/never-delivered
+    // aokie.call.ended used to leave the stage stuck on the hangup button
+    // forever — the poll's `call: null` could not clear a non-ended call.
+    // Now two consecutive null polls end it (one is forgiven as a race).
+    let nulls = 0;
+    const connector = vi.fn((_id: string, cmd: string) => {
+      if (cmd !== 'call.current') return Promise.resolve({ status: 'done', result: {} });
+      if (connector.mock.calls.filter((c) => c[1] === 'call.current').length <= 1) {
+        return Promise.resolve({
+          status: 'done',
+          result: { call: { callId: 'call-9', from: '0400 111 222', state: 'active', startedAt: '2026-07-18T00:00:00Z' } },
+        });
+      }
+      nulls += 1;
+      return Promise.resolve({ status: 'done', result: { call: null } });
+    });
+    const { root } = await runScreen(
+      AOKIE_LIVE_CALL_SCREEN,
+      baseFL({
+        presence: () => Promise.resolve({ kind: 'remote', deviceName: 'DESKTOP-HESQH3A' }),
+        can: () => Promise.resolve(true),
+        connector,
+      }),
+      { windowGlobals: { __flPollMs: 40 } }
+    );
+    await flush();
+    // The active stage is up (poll #1 returned the call).
+    expect(root.querySelector('.btn.hangup')).not.toBeNull();
+    // Let several poll cycles run; every further call.current reports null.
+    await flush(400);
+    expect(nulls).toBeGreaterThanOrEqual(2);
+    // The stage cleared without any ended event — back to the remote standby.
+    expect(root.querySelector('.btn.hangup')).toBeNull();
+    expect(root.textContent).toContain('mirrors its calls');
+  });
 });

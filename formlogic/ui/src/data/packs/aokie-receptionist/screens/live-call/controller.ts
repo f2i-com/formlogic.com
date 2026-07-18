@@ -34,6 +34,14 @@ function presenceGraceMs(): number {
   return Number.isFinite(o) ? (o as number) : PRESENCE_GRACE_MS;
 }
 
+/** The presence/call poll cadence — overridable via window.__flPollMs so the
+ *  behavioral tests can drive multiple poll cycles without real 3s waits. */
+function pollMs(): number {
+  const w = typeof window !== 'undefined' ? (window as unknown as { __flPollMs?: unknown }) : undefined;
+  const o = w && typeof w.__flPollMs === 'number' ? w.__flPollMs : NaN;
+  return Number.isFinite(o) && (o as number) > 0 ? (o as number) : 3000;
+}
+
 /** Loose record view of an unknown value (the old rec() helper). */
 export function rec(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -125,6 +133,9 @@ export function createConsole(repaint: () => void): ConsoleController {
   let prevCallerTurns = 0;
   // When the console mounted — the presence grace is measured from here (0 until wired).
   let bootAtMs = 0;
+  // Consecutive call.current polls that reported NO call while we still show a
+  // live one — see setCallFromCurrent.
+  let currentMisses = 0;
 
   const isDemo = () => state.presence.kind === 'none' && state.demo === true;
   const remoteMode = () => state.presence.kind === 'remote';
@@ -166,6 +177,7 @@ export function createConsole(repaint: () => void): ConsoleController {
   function setCallFromCurrent(res: Record<string, unknown>): void {
     const c = rec(res.call);
     if (typeof c.callId === 'string') {
+      currentMisses = 0;
       const st: CallInfo['state'] = c.state === 'active' ? 'active' : c.state === 'ended' ? 'ended' : 'ringing';
       const prev = state.call;
       const same = prev !== null && prev.callId === c.callId;
@@ -178,8 +190,24 @@ export function createConsole(repaint: () => void): ConsoleController {
       };
       state.startedAtMs = ms(state.call.startedAt) || (same ? state.startedAtMs : Date.now());
     } else if (!state.call || state.call.state === 'ended') {
+      currentMisses = 0;
       state.call = null;
       state.startedAtMs = null;
+    } else {
+      // The plugin is AUTHORITATIVE and reports no current call while the
+      // stage still shows one as ringing/active: the ended event was missed
+      // (the relay path has no event lane at all, and even the local lane can
+      // shed a frame). Two consecutive misses (~2 poll cycles) end the call
+      // here; a single miss is forgiven so an in-flight null response racing
+      // a just-started call can never kill the fresh stage. Without this the
+      // hangup button stuck forever (live report 2026-07-18).
+      currentMisses += 1;
+      if (currentMisses >= 2) {
+        currentMisses = 0;
+        state.call.state = 'ended';
+        state.startedAtMs = null;
+        setTimeout(() => { void refreshRecent().then(() => repaint()); }, 1500);
+      }
     }
   }
 
@@ -470,7 +498,7 @@ export function createConsole(repaint: () => void): ConsoleController {
     void loadAll();
     // Presence + call poll every 3s; recent calls every 10s; the elapsed timer
     // repaints the stage every 1s while a call is up.
-    const pollTimer = setInterval(() => { void tick(); }, 3000);
+    const pollTimer = setInterval(() => { void tick(); }, pollMs());
     const recentTimer = setInterval(() => { void refreshRecent().then(() => repaint()); }, 10000);
     const elapsedTimer = setInterval(() => { if (activeCall()) repaint(); }, 1000);
     // One repaint exactly at grace-end so a genuinely absent desktop drops the spinner
