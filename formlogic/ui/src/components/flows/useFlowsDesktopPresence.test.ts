@@ -1,11 +1,11 @@
 // Flows desktop presence resolution.
 //
 // Pins the /flows-specific contract: local paired Desktop wins; otherwise only a fresh
-// desktop_connections row is presence, using the shared Aokie timestamp/freshness helpers.
+// desktop_connections row is presence, using the shared connector timestamp/freshness helpers.
 // Any registry failure flattens to no signal.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, type DesktopConnection } from '../../lib/api';
-import { CONNECTION_FRESH_MS } from '../custom-screen/aokie/aokiePresence';
+import { CONNECTION_FRESH_MS } from '../custom-screen/connector/runtimePresence';
 import {
   deriveFlowsDesktopPresence,
   describeFlowsLastSeen,

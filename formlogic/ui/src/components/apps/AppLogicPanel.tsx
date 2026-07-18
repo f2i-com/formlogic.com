@@ -214,7 +214,11 @@ export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialL
     strictPermissions: strict,
     permissions: parsePerms(appPerms),
     scripts,
-  }), [scripts, appPerms, strict]);
+    // The pack-embedded connector bundle is not editable here — carry it
+    // through unchanged so a logic save can never silently drop the app's
+    // connector (manifest + demo driver).
+    ...(initialLogic?.connector ? { connector: initialLogic.connector } : {}),
+  }), [scripts, appPerms, strict, initialLogic?.connector]);
 
   const addScript = (hook: CustomAppLogicHookName, source: string) => {
     setScripts((l) => [...l, {

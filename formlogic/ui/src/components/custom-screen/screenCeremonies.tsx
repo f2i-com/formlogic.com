@@ -13,14 +13,14 @@
 //  - 'start-fresh': the whole-app record reset (a HOST-owned owner ceremony
 //    per §8.3 — the bridge deliberately has no cross-form or clear-all
 //    delete). The HOST confirms with its own dialog before touching
-//    anything, so pack code structurally cannot wipe records silently; the
-//    Receptionist Settings singleton (config, not data) always survives.
-//  - 'simulate-call': drive the contract's scripted demo call sequence
-//    (AOKIE_PLUGIN_CONTRACT.md §4) through the mock connector's local event
-//    hub, so the Live Call screen is explorable with zero hardware. Host-owned
-//    because it reaches the client-runtime mock; a no-op with a real desktop
-//    (real calls arrive on their own). Refused only when a real bridge would
-//    make it meaningless is NOT enforced — it's a dev/demo affordance.
+//    anything, so pack code structurally cannot wipe records silently;
+//    settings singletons (config, not data) always survive.
+//  - pack-declared demo ceremonies (e.g. 'simulate-call'): any other name is
+//    looked up in the app's registered pack-connector drivers
+//    (packConnectorDriver.runConnectorCeremony) — the pack's sandboxed demo
+//    driver scripts the sequence, the HOST plays it into the local event hub
+//    (allowlisted + provenance-stamped), so screens are explorable with zero
+//    hardware. Grant-gated: needs connector.<id>.driver.demo.
 //
 // Both are refused in the shared demo (the demo must never pair with a real
 // desktop, and its records are managed server-side — demo_readonly would
@@ -39,7 +39,7 @@ import {
   requestPairing,
 } from '../../client-runtime/desktop/desktopPairing';
 import { desktopClient } from '../../client-runtime/desktop/desktopClient';
-import { simulateIncomingCall } from '../../client-runtime/connectors/aokieConnector';
+import { runConnectorCeremony } from '../../client-runtime/connectors/packConnectorDriver';
 
 /** What FormLogic.host.ceremony() resolves. 'denied' = the user (or the
  *  desktop) declined; 'unavailable' = this context can't run it (demo, no
@@ -51,8 +51,11 @@ export interface CeremonyOutcome {
   deleted?: number;
 }
 
-/** The pack form key of the settings singleton Start fresh must never touch. */
-const SETTINGS_PACK_FORM_ID = 'receptionist-settings';
+/** Configuration singletons (settings.singleRecord — e.g. a pack's settings
+ *  console) hold the app's CONFIG, not data: Start fresh must never touch them. */
+function isConfigSingleton(form: { settings?: unknown }): boolean {
+  return (form.settings as { singleRecord?: boolean } | undefined)?.singleRecord === true;
+}
 
 async function runConnectDesktop(): Promise<CeremonyOutcome> {
   if (api.isDemoMode()) {
@@ -142,9 +145,7 @@ export function useScreenCeremonies(): {
     let deleted = 0;
     const skipped: string[] = [];
     try {
-      const targets = appForms.filter(
-        (f) => f.packFormId !== SETTINGS_PACK_FORM_ID && f.displayName !== 'Receptionist Settings'
-      );
+      const targets = appForms.filter((f) => !isConfigSingleton(f));
       for (const form of targets) {
         if (!canDelete(form.formId)) {
           skipped.push(form.displayName);
@@ -172,13 +173,13 @@ export function useScreenCeremonies(): {
           return runConnectDesktop();
         case 'start-fresh':
           return runStartFresh();
-        case 'simulate-call':
-          // Drives the mock connector's scripted lifecycle into the local
-          // event hub; the screen's events.subscribe lane then receives it.
-          await simulateIncomingCall();
-          return { status: 'done' };
-        default:
-          return null; // unknown → the SDK call rejects
+        default: {
+          // Pack-declared demo ceremony: the app's registered connector driver
+          // scripts the sequence into the local event hub; the screen's
+          // events.subscribe lane then receives it. null (no registered
+          // connector declares the name) → the SDK call rejects as unknown.
+          return runConnectorCeremony(name);
+        }
       }
     },
     [runStartFresh]
@@ -191,7 +192,7 @@ export function useScreenCeremonies(): {
         onClose={() => { if (!clearing) settle(false); }}
         onConfirm={() => settle(true)}
         title="Delete every record in this app?"
-        message="This removes all calls, transcripts, appointments, customers, follow-up tasks, messages and hardware events so testing starts from a clean slate. Receptionist Settings, forms and flows are NOT touched. This cannot be undone."
+        message="This removes every record across this app's forms so testing starts from a clean slate. Settings singletons, the forms themselves and flows are NOT touched. This cannot be undone."
         confirmLabel="Delete all records"
         variant="danger"
         isLoading={clearing}

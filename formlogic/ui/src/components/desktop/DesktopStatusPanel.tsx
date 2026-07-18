@@ -2,14 +2,14 @@
 //
 // Shows whether FormLogic Desktop is running on this machine, runs the pairing flow
 // ("Connect FormLogic Desktop" → native confirmation on the desktop → origin-bound
-// token), and — once paired — lists the desktop's plugins and the aokie connector's
-// status. When no Desktop is around, a dev-only "Simulate incoming call" button drives
-// the mock aokie event sequence so the demo works with zero hardware.
+// token), and — once paired — lists the desktop's plugins. Connector status +
+// demo simulation belong to the APP that registers the pack connector (its own
+// screens / host ceremonies), not to this host panel.
 //
 // On a successful pairing the server-side registry (POST /api/desktop-connections, owned
 // by the Flows backend) is updated best-effort: a 404/failed call never blocks pairing.
 import { useCallback, useEffect, useState } from 'react';
-import { Laptop, PhoneIncoming, Plug, RefreshCw, Unplug } from 'lucide-react';
+import { Laptop, Plug, RefreshCw, Unplug } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
@@ -29,8 +29,6 @@ import {
   subscribeDesktopPaired,
 } from '../../client-runtime/desktop/desktopPairing';
 import { desktopClient } from '../../client-runtime/desktop/desktopClient';
-import type { ConnectorStatusInfo } from '../../client-runtime/connectors/connectorTypes';
-import { aokieConnector, simulateIncomingCall } from '../../client-runtime/connectors/aokieConnector';
 import type { DesktopPluginSummary } from '../../client-runtime/desktop/desktopTypes';
 
 type PairingUiState = 'idle' | 'pending' | 'approved' | 'denied' | 'failed';
@@ -57,9 +55,7 @@ export function DesktopStatusPanel() {
   const [paired, setPaired] = useState<boolean>(() => isDesktopPaired());
   const [pairing, setPairing] = useState<PairingUiState>('idle');
   const [plugins, setPlugins] = useState<DesktopPluginSummary[] | null>(null);
-  const [aokieStatus, setAokieStatus] = useState<ConnectorStatusInfo | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [simulating, setSimulating] = useState(false);
 
   // Detection runs only while this panel (or the app runtime) is mounted/subscribed.
   useEffect(() => subscribeDesktopStatus(setInfo), []);
@@ -78,18 +74,13 @@ export function DesktopStatusPanel() {
   const loadDesktopDetails = useCallback(async () => {
     if (!getDesktopInfo().available || !isDesktopPaired()) {
       setPlugins(null);
-      setAokieStatus(null);
       setPaired(isDesktopPaired());
       return;
     }
-    const [pluginsRes, status] = await Promise.all([
-      desktopClient.plugins.list(),
-      aokieConnector.status(),
-    ]);
+    const pluginsRes = await desktopClient.plugins.list();
     // A 401 drops the token inside the client — reflect that instead of stale lists.
     setPaired(isDesktopPaired());
     setPlugins(pluginsRes.ok ? pluginsRes.data : null);
-    setAokieStatus(status as ConnectorStatusInfo);
   }, []);
 
   useEffect(() => {
@@ -142,7 +133,6 @@ export function DesktopStatusPanel() {
     setPaired(false);
     setPairing('idle');
     setPlugins(null);
-    setAokieStatus(null);
     toast.info('Disconnected', 'The pairing token for this browser session was discarded.');
   };
 
@@ -153,19 +143,7 @@ export function DesktopStatusPanel() {
     setRefreshing(false);
   };
 
-  const handleSimulateCall = async () => {
-    if (simulating) return;
-    setSimulating(true);
-    toast.info('Simulating a call', 'A scripted demo call sequence is being emitted.');
-    try {
-      await simulateIncomingCall();
-    } finally {
-      setSimulating(false);
-    }
-  };
-
   const detected = info.available;
-  const mockOnly = !detected || !paired;
 
   return (
     <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
@@ -200,7 +178,7 @@ export function DesktopStatusPanel() {
       </div>
 
       <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
-        FormLogic Desktop is the local companion that hosts device plugins (like the Aokie phone bridge),
+        FormLogic Desktop is the local companion that hosts device plugins,
         local AI models, and hardware connectors. Apps in this browser talk to it over{' '}
         <span className="font-mono">127.0.0.1</span> — never to raw hardware directly.
       </p>
@@ -259,18 +237,6 @@ export function DesktopStatusPanel() {
             )}
           </div>
 
-          {/* Aokie connector */}
-          <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 px-3 py-2 text-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-medium text-gray-900 dark:text-white">Aokie phone bridge</span>
-              <span className={`text-xs font-medium ${aokieStatus?.available ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-slate-500'}`}>
-                {aokieStatus ? (aokieStatus.available ? 'Available' : 'Unavailable') : 'Checking…'}
-              </span>
-            </div>
-            {aokieStatus?.detail && (
-              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">{aokieStatus.detail}</p>
-            )}
-          </div>
 
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] text-gray-400 dark:text-slate-500">
@@ -284,18 +250,6 @@ export function DesktopStatusPanel() {
         </div>
       )}
 
-      {/* Dev-only mock driver: available whenever the mock (not a paired Desktop) would serve aokie. */}
-      {import.meta.env.DEV && mockOnly && (
-        <div className="border-t border-gray-100 dark:border-slate-700/60 pt-3">
-          <Button variant="outline" size="sm" onClick={handleSimulateCall} isLoading={simulating} disabled={simulating} leftIcon={<PhoneIncoming className="h-3.5 w-3.5" />}>
-            Simulate incoming call (mock)
-          </Button>
-          <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
-            Dev only — emits the scripted demo call sequence through the local event hub, exactly as the Aokie plugin
-            would over FormLogic Desktop.
-          </p>
-        </div>
-      )}
     </div>
   );
 }

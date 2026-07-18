@@ -31,6 +31,12 @@ import { AOKIE_RECEPTIONIST_SETTINGS_SCREEN } from './screens/receptionistSettin
 // forming a cycle. Re-exported here so existing `from './aokieReceptionistPack'`
 // importers keep working.
 import { DEFAULT_PERSONA } from './persona';
+// Pack-embedded connector (spec: self-contained packs): the manifest declares the
+// aokie connector's identity + command surface; the demo driver is a sandboxed
+// QuickJS state machine the HOST runs for simulator sessions only
+// (packConnectorDriver.ts). Real transport stays host-owned.
+import AOKIE_CONNECTOR_MANIFEST from './connector/manifest.json';
+import AOKIE_CONNECTOR_DRIVER from './connector/driver.js?raw';
 
 // ── Shared defaults ─────────────────────────────────────────────────────────
 
@@ -3375,6 +3381,7 @@ export const aokieReceptionistPack: PackData = {
         version: 1,
         runtime: 'quickjs',
         strictPermissions: true,
+        connector: { manifest: AOKIE_CONNECTOR_MANIFEST, demoDriver: AOKIE_CONNECTOR_DRIVER },
         permissions: [
           'formlogic.responses.write',
           'storage.local',
@@ -3412,6 +3419,10 @@ export const aokieReceptionistPack: PackData = {
           // console quietly hid its apply controls (live report 2026-07-14).
           'connector.aokie.settings.get',
           'connector.aokie.settings.set',
+          // Activates the pack's DEMO driver (simulator sessions only — never real
+          // hardware). Reviewable at install; stripping it leaves the connector
+          // transport-only.
+          'connector.aokie.driver.demo',
         ],
         scripts: [
           { id: 'aokie-call-incoming', hook: 'onConnectorEvent', runtime: 'quickjs', description: 'Log a Calls row the moment a call rings (deduped on the event idempotencyKey).', source: LOGIC_CALL_INCOMING },

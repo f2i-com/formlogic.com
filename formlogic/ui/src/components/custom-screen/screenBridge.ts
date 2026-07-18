@@ -6,12 +6,12 @@
 //  - GRANT-GATED: a screen may only invoke connector commands its app has
 //    declared (`connector.<id>.<command>` — the SAME gate as useConnector,
 //    matching the capabilities published in the signed client manifest);
-//  - TRANSPARENT ROUTING: pack code never reimplements the aokieRelay
+//  - TRANSPARENT ROUTING: pack code never reimplements the relay
 //    uncertain-outcome machine. When a LOCAL desktop bridge is present the
 //    local transport is AUTHORITATIVE — its failures surface as failed and
 //    never retry via the relay (an attempted desktop route that lost its
 //    response also throws connector_unavailable, and the command may have
-//    executed — aokieConnector.ts transportFailure). Only when NO local
+//    executed — the connector client's transportFailure). Only when NO local
 //    bridge exists does the bridge try the local client (in-browser
 //    connectors + the demo simulator need no desktop) and fall back to the
 //    relay on the then-guaranteed-pre-transport connector_unavailable — so
@@ -31,8 +31,8 @@ import { collectConnectorGrants, type GrantSource } from '../../client-runtime/c
 import { isPermissionGranted } from '../../client-runtime/logic/appLogicPermissions';
 import { getDesktopInfo } from '../../client-runtime/desktop/desktopDetection';
 import { isDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
-import { runRelayCommand, type RelayApi, type RunRelayOptions } from './aokie/aokieRelay';
-import { resolveRemoteRuntime, type AokiePresence } from './aokie/aokiePresence';
+import { runRelayCommand, type RelayApi, type RunRelayOptions } from './connector/commandRelay';
+import { resolveRemoteRuntime, type ConnectorPresence } from './connector/runtimePresence';
 import { listAiSources, listDesktopServices, type AiSourceListing } from '../../client-runtime/flows/desktopService';
 
 /** What FormLogic.connector() resolves inside the sandbox. Mirrors the relay's
@@ -74,7 +74,7 @@ export interface ScreenBridge {
    *  composes lane endpoints without a listing and lets the per-call flow
    *  resolve `service:` picks. */
   aiSources: () => Promise<AiSourceListing[] | null>;
-  presence: () => Promise<AokiePresence>;
+  presence: () => Promise<ConnectorPresence>;
   /** Typed service.invoke (plan §8.3, APP-503): run a SERVER-REGISTERED
    *  operation. Resolves an outcome ({status done|failed, result?, error?}) —
    *  operation-level refusals (unknown op, forbidden, unavailable) resolve as
@@ -139,7 +139,7 @@ export interface ScreenBridgeDeps {
    *  Resolves [] on any refusal so pack code has one path. */
   queryResponses: (formId: string, limit: number) => Promise<Array<Record<string, unknown>>>;
   /** One-shot presence resolution (injectable for tests). */
-  resolvePresence: () => Promise<AokiePresence>;
+  resolvePresence: () => Promise<ConnectorPresence>;
   /** Resolve the local desktop's AI-sources listing (injectable for tests);
    *  null when no local desktop is available. */
   resolveAiSources: () => Promise<AiSourceListing[] | null>;
@@ -152,7 +152,7 @@ export interface ScreenBridgeDeps {
   /** True in the shared demo session (live feeds are then refused). */
   demoMode: () => boolean;
   /** Test seam for the relay's poll cadence/clock. */
-  relayOptions?: RunRelayOptions;
+  relayOptions?: Omit<RunRelayOptions, 'connectorId'>;
 }
 
 /** Payload byte budgets (JSON length) — same order of magnitude as submit's. */
@@ -221,8 +221,7 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
         throw new Error(`This app has not been granted the "${required}" connector permission.`);
       }
 
-      // Route decision up front, like the compiled screens' tested fork
-      // (aokieRelay dispatchCallCommand): a present local bridge is
+      // Route decision up front: a present local bridge is
       // authoritative, so a lost-response transport failure can never be
       // re-executed remotely.
       const localAuthoritative = deps.localBridgeAvailable();
@@ -378,12 +377,12 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
 }
 
 /**
- * One-shot presence snapshot with useAokiePresence's exact semantics: the
+ * One-shot presence snapshot with useConnectorPresence's exact semantics: the
  * shared Demo account is always 'none' (a paired desktop on the same machine
  * must never read as the demo's runtime), a paired local bridge wins, else the
  * remote probe (desktop-connections freshness + recent desktop flow runs).
  */
-export async function resolveScreenPresence(appId?: string): Promise<AokiePresence> {
+export async function resolveScreenPresence(appId?: string): Promise<ConnectorPresence> {
   if (api.isDemoMode()) return { kind: 'none' };
   if (getDesktopInfo().available && isDesktopPaired()) return { kind: 'local' };
   const remote = await resolveRemoteRuntime(appId);
@@ -466,7 +465,7 @@ export function useScreenBridge(formId: string, appSlug?: string): ScreenBridge 
       formId,
       config,
       localRequest: (connectorId, command, payload) => getConnectorClient().request(connectorId, command, payload),
-      // Same truth as aokieConnector.desktopRouteAvailable(): the demo
+      // Same truth as the desktop connector's route gate: the demo
       // account never reads a same-machine desktop as its runtime.
       localBridgeAvailable: () => !api.isDemoMode() && getDesktopInfo().available && isDesktopPaired(),
       relayApi: api,

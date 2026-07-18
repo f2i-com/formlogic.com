@@ -1,4 +1,4 @@
-// Aokie remote-viewer presence resolution (docs/FORMLOGIC_FLOWS.md §14).
+// Connector remote-viewer presence resolution (docs/FORMLOGIC_FLOWS.md §14).
 //
 // Pins the three-state banner logic the Live Call / Device Setup screens hang off:
 //   local  — this browser is paired to a local FormLogic Desktop (always wins),
@@ -11,18 +11,13 @@ import type { FlowRunLog } from '../../../types/flows';
 import {
   CONNECTION_FRESH_MS,
   RUN_SIGNAL_FRESH_MS,
-  REMOTE_CALL_LIVE_WINDOW_MS,
-  deriveRemoteCall,
-  describeLastSeen,
   fetchDesktopConnections,
   parseDbTimestamp,
   pickFreshConnection,
   pickFreshDesktopRun,
   resolvePresence,
   resolveRemoteRuntime,
-  selectTurnsForCall,
-  showSimulateSetup,
-} from './aokiePresence';
+} from './runtimePresence';
 
 // Fixed "now" (an opaque instant; the zone-less parse below is local, which is fine here).
 const NOW = Date.parse('2026-07-07T12:00:00');
@@ -172,31 +167,6 @@ describe('resolvePresence (three-state banner)', () => {
     expect(p).toEqual({ kind: 'none' });
   });
 });
-
-describe('remote-mode render gating', () => {
-  it('the simulate/setup card shows ONLY in the none state', () => {
-    expect(showSimulateSetup({ kind: 'none' })).toBe(true);
-    expect(showSimulateSetup({ kind: 'remote', deviceName: 'Home Office PC', lastSeenAt: null })).toBe(false);
-    expect(showSimulateSetup({ kind: 'local' })).toBe(false);
-  });
-
-  // The compiled AokieLiveCallScreen (and its source-scan lock that lived here) was RETIRED with
-  // the pack-owned TSX console: the same gating — simulate only in the 'none' state, unified
-  // local/relay control dispatch, grant-gated controls — is now behaviorally locked by
-  // data/packs/aokie-receptionist/screens/liveCall.test.ts against the COMPILED sandbox screen.
-});
-
-describe('describeLastSeen', () => {
-  it('renders compact ago labels and null for unparseable stamps', () => {
-    expect(describeLastSeen(mysqlTs(NOW - 3_000), NOW)).toBe('just now');
-    expect(describeLastSeen(mysqlTs(NOW - 42_000), NOW)).toBe('42s ago');
-    expect(describeLastSeen(mysqlTs(NOW - 5 * 60_000), NOW)).toBe('5m ago');
-    expect(describeLastSeen(mysqlTs(NOW - 3 * 60 * 60_000), NOW)).toBe('3h ago');
-    expect(describeLastSeen(null, NOW)).toBeNull();
-    expect(describeLastSeen('garbage', NOW)).toBeNull();
-  });
-});
-
 describe('resolveRemoteRuntime (probe order)', () => {
   it('a fresh registry hit never touches the runs fallback', async () => {
     const runs = vi.fn();
@@ -248,54 +218,5 @@ describe('fetchDesktopConnections (owner registry, degrade-silently wire contrac
   it('a 200 without a connections array flattens to null', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ nope: 1 }) } as unknown as Response));
     expect(await fetchDesktopConnections()).toBeNull();
-  });
-});
-
-describe('remote record derivation (stored rows replace the hub feed)', () => {
-  const callsRow = (answers: Record<string, unknown>, submittedAt = mysqlTs(NOW - 20_000)) => ({
-    id: 'resp-1',
-    answers,
-    submittedAt,
-  });
-
-  it('newest Calls row maps incoming/answered to a live snapshot', () => {
-    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', caller_phone: '+61 4', caller_name: 'Ada', status: 'incoming', started_at: mysqlTs(NOW - 10_000) })], NOW))
-      .toEqual({ callId: 'c-9', from: '+61 4', callerName: 'Ada', state: 'ringing', startedAtMs: NOW - 10_000 });
-    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered', started_at: mysqlTs(NOW - 10_000) })], NOW)?.state).toBe('active');
-    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'completed' })], NOW)?.state).toBe('ended');
-    expect(deriveRemoteCall([], NOW)).toBeNull();
-  });
-
-  it('startedAtMs carries the parsed started_at (or submittedAt fallback) for the Live Call stage timer', () => {
-    // started_at present → used directly.
-    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered', started_at: mysqlTs(NOW - 45_000) })], NOW)?.startedAtMs).toBe(NOW - 45_000);
-    // No started_at recorded — falls back to submittedAt so the timer still has something to anchor on.
-    const submittedAt = mysqlTs(NOW - 5_000);
-    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered' }, submittedAt)], NOW)?.startedAtMs).toBe(NOW - 5_000);
-    // Neither timestamp parses — startedAtMs is null so the UI can hide the timer rather than show garbage.
-    expect(deriveRemoteCall([callsRow({ call_id: 'c-9', status: 'answered' }, 'not-a-date')], NOW)?.startedAtMs).toBeNull();
-  });
-
-  it('a stuck non-terminal row past the live window reads as ended', () => {
-    const stale = callsRow(
-      { call_id: 'c-9', status: 'answered', started_at: mysqlTs(NOW - REMOTE_CALL_LIVE_WINDOW_MS - 60_000) },
-      mysqlTs(NOW - REMOTE_CALL_LIVE_WINDOW_MS - 60_000)
-    );
-    expect(deriveRemoteCall([stale], NOW)?.state).toBe('ended');
-  });
-
-  it('selectTurnsForCall filters to the call and orders by turn_index', () => {
-    const rows = [
-      { id: 't3', answers: { call_id: 'c-9', turn_index: 2, speaker: 'aokie', text: 'How can I help?', timestamp: 'ts3' }, submittedAt: 's3' },
-      { id: 'tX', answers: { call_id: 'OTHER', turn_index: 0, speaker: 'caller', text: 'wrong call' }, submittedAt: 'sX' },
-      { id: 't1', answers: { call_id: 'c-9', turn_index: 0, speaker: 'caller', text: 'Hi', timestamp: 'ts1' }, submittedAt: 's1' },
-      { id: 't2', answers: { call_id: 'c-9', turn_index: 1, speaker: 'caller', text: 'Booking please', timestamp: 'ts2' }, submittedAt: 's2' },
-    ];
-    expect(selectTurnsForCall(rows, 'c-9')).toEqual([
-      { key: 't1', speaker: 'caller', text: 'Hi', occurredAt: 'ts1', corrected: false },
-      { key: 't2', speaker: 'caller', text: 'Booking please', occurredAt: 'ts2', corrected: false },
-      { key: 't3', speaker: 'aokie', text: 'How can I help?', occurredAt: 'ts3', corrected: false },
-    ]);
-    expect(selectTurnsForCall(rows, undefined)).toEqual([]);
   });
 });

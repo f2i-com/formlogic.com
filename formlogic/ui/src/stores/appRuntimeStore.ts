@@ -8,6 +8,7 @@ import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult, DashboardScreen } from '../types/app';
 import type { CustomScreen } from '../types/form';
 import type { CustomAppLogicBundle } from '../types/customAppLogic';
+import { syncPackConnectors } from '../client-runtime/connectors/packConnectorDriver';
 
 // ── Stable submission intent keys (audit FL-004/C-11) ──────────────────────
 // A failed ONLINE submit must reuse its idempotency key on manual retry, so a
@@ -162,6 +163,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
               isLoading: false,
               activeFormId: null,
             });
+            // Pack-declared connectors are app-scoped: (re)register this app's
+            // driver bundle against its granted permissions.
+            syncPackConnectors(config);
           }
         } catch (e) {
           set({ error: e instanceof Error ? e.message : 'Failed to load app', isLoading: false });
@@ -172,16 +176,20 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
 
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
-      reset: () => set({
-        config: null,
-        appSlug: null,
-        activeFormId: null,
-        isLoading: false,
-        error: null,
-        permissions: null,
-        roleName: null,
-        memberTimezone: null,
-      }),
+      reset: () => {
+        // Leaving the app tears its pack connectors down with it.
+        syncPackConnectors(null);
+        set({
+          config: null,
+          appSlug: null,
+          activeFormId: null,
+          isLoading: false,
+          error: null,
+          permissions: null,
+          roleName: null,
+          memberTimezone: null,
+        });
+      },
 
       fetchResponses: async (formId, options) => {
         const slug = get().appSlug;
@@ -395,6 +403,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         const prevLogic = cfg.app.customLogic;
         // Optimistic: reflect immediately so hooks pick up the new logic without a reload.
         set({ config: { ...cfg, app: { ...cfg.app, customLogic: bundle } } });
+        syncPackConnectors(get().config);
         if (api.isDemoMode()) {
           try { localStorage.setItem(demoCustomLogicKey(cfg.app.id), JSON.stringify(bundle)); } catch { /* ignore */ }
           return true;
@@ -405,6 +414,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           const cur = get().config;
           if (cur) set({ config: { ...cur, app: { ...cur.app, customLogic: prevLogic } } });
           toast.error('Failed to save app logic', typeof r.error === 'string' ? r.error : undefined);
+          syncPackConnectors(get().config);
           return false;
         }
         return true;

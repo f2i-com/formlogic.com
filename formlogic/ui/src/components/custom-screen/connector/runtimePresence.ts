@@ -1,4 +1,4 @@
-// Aokie Receptionist — runtime presence resolution (docs/FORMLOGIC_FLOWS.md §14).
+// Connector runtime presence resolution (docs/FORMLOGIC_FLOWS.md §14).
 //
 // The receptionist can live in three places relative to THIS browser:
 //   'local'  — FormLogic Desktop is running on this machine and this browser is paired
@@ -14,8 +14,9 @@
 // on either signal simply reads as "no remote runtime" (state 'none') — non-owner
 // members without run visibility just keep the current behaviour.
 //
-// Pure resolution functions live here (unit-tested in aokiePresence.test.ts); the React
-// hook that polls them is useAokiePresence.ts.
+// Pure resolution functions live here (unit-tested in runtimePresence.test.ts). Record-
+// derived call/transcript views are APP logic and live inside the pack screens' sandboxed
+// code, not in this host module.
 import { api } from '../../../lib/api';
 import type { FlowRunLog } from '../../../types/flows';
 
@@ -27,8 +28,6 @@ export const RUN_SIGNAL_FRESH_MS = 5 * 60_000;
 export const PRESENCE_POLL_MS = 30_000;
 /** Remote mode: how often the screens re-fetch stored Calls/Transcript records. */
 export const REMOTE_RECORDS_POLL_MS = 10_000;
-/** A non-terminal Calls row older than this no longer reads as a live call. */
-export const REMOTE_CALL_LIVE_WINDOW_MS = 30 * 60_000;
 
 export interface RemoteRuntimeInfo {
   deviceName: string;
@@ -36,17 +35,10 @@ export interface RemoteRuntimeInfo {
   lastSeenAt: string | null;
 }
 
-export type AokiePresence =
+export type ConnectorPresence =
   | { kind: 'local' }
   | { kind: 'remote'; deviceName: string; lastSeenAt: string | null }
   | { kind: 'none' };
-
-/** Row shape shared with the SDK's useResponses (kept structural — no sdk import here). */
-export interface ResponseRowLike {
-  id: string;
-  answers: Record<string, unknown>;
-  submittedAt: string;
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -122,96 +114,10 @@ export function pickFreshDesktopRun(runs: FlowRunLog[] | null | undefined, now: 
 export function resolvePresence(
   input: { localBridge: boolean; connections: unknown | null; runs: FlowRunLog[] | null },
   now: number = Date.now()
-): AokiePresence {
+): ConnectorPresence {
   if (input.localBridge) return { kind: 'local' };
   const remote = pickFreshConnection(input.connections, now) ?? pickFreshDesktopRun(input.runs, now);
   return remote ? { kind: 'remote', ...remote } : { kind: 'none' };
-}
-
-/**
- * Render gate for the "Install FormLogic Desktop / Simulate incoming call" setup card:
- * only the 'none' state shows it — in remote mode the receptionist IS running (elsewhere),
- * so simulating a mock call here would only fork the record trail.
- */
-export function showSimulateSetup(presence: AokiePresence): boolean {
-  return presence.kind === 'none';
-}
-
-/** Compact "last seen" label for the device status card ('just now' / '42s ago' / '3m ago'). */
-export function describeLastSeen(lastSeenAt: string | null, now: number = Date.now()): string | null {
-  const seen = parseDbTimestamp(lastSeenAt);
-  if (seen === null) return null;
-  const seconds = Math.max(0, Math.round((now - seen) / 1000));
-  if (seconds < 10) return 'just now';
-  if (seconds < 90) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 90) return `${minutes}m ago`;
-  return `${Math.round(minutes / 60)}h ago`;
-}
-
-// ── Remote-mode record derivation (stored rows replace the local hub feed) ─────────────
-
-export interface RemoteCallSnapshot {
-  callId: string;
-  from?: string;
-  callerName?: string;
-  state: 'ringing' | 'active' | 'ended';
-  /** Parsed started_at (falling back to submittedAt), for the Live Call stage's mm:ss timer. Null when neither parses. */
-  startedAtMs: number | null;
-}
-
-/**
- * The newest stored Calls row as a live-call snapshot ('incoming' → ringing, 'answered' →
- * active, terminal → ended). Rows arrive newest-first from useResponses. A non-terminal row
- * older than REMOTE_CALL_LIVE_WINDOW_MS reads as ended — a stuck row must not look live forever.
- */
-export function deriveRemoteCall(rows: ResponseRowLike[], now: number = Date.now()): RemoteCallSnapshot | null {
-  const row = rows[0];
-  if (!row) return null;
-  const a = row.answers ?? {};
-  const status = String(a.status ?? '');
-  let state: RemoteCallSnapshot['state'] = status === 'incoming' ? 'ringing' : status === 'answered' ? 'active' : 'ended';
-  const startedAtMs = parseDbTimestamp(a.started_at) ?? parseDbTimestamp(row.submittedAt);
-  if (state !== 'ended' && startedAtMs !== null && now - startedAtMs > REMOTE_CALL_LIVE_WINDOW_MS) {
-    state = 'ended';
-  }
-  return {
-    callId: String(a.call_id || row.id),
-    from: typeof a.caller_phone === 'string' && a.caller_phone !== '' ? a.caller_phone : undefined,
-    callerName: typeof a.caller_name === 'string' && a.caller_name !== '' ? a.caller_name : undefined,
-    state,
-    startedAtMs,
-  };
-}
-
-export interface RemoteTurn {
-  key: string;
-  speaker: string;
-  text: string;
-  occurredAt: string;
-  /** Remote rows come from storage, which the correction lane already
-   *  updated in place — set when the row's source says audio_model so the
-   *  UI can share one turn shape with the local live view. */
-  corrected?: boolean;
-}
-
-/** Stored Transcript Turns rows for one call, oldest turn first (turn_index order). */
-export function selectTurnsForCall(rows: ResponseRowLike[], callId: string | undefined): RemoteTurn[] {
-  if (!callId) return [];
-  return rows
-    .filter((r) => String(r.answers?.call_id ?? '') === callId)
-    .map((r) => ({
-      index: Number(r.answers?.turn_index ?? 0),
-      turn: {
-        key: r.id,
-        speaker: String(r.answers?.speaker || 'caller'),
-        text: String(r.answers?.text || ''),
-        occurredAt: String(r.answers?.timestamp || r.submittedAt || ''),
-        corrected: String(r.answers?.source || '') === 'audio_model',
-      },
-    }))
-    .sort((a, b) => a.index - b.index)
-    .map((x) => x.turn);
 }
 
 // ── Wire fetchers (injectable so the resolution stays unit-testable) ────────────────────

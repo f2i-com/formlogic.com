@@ -425,7 +425,7 @@ class McpController
                     if (array_key_exists('customLogic', $args) && is_array($args['customLogic'])) {
                         $bundle = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($args['customLogic']);
                         if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($bundle)) {
-                            throw new \Exception('customLogic exceeds the 100KB limit');
+                            throw new \Exception('customLogic exceeds the 256KB limit');
                         }
                         $upd['customLogic'] = $bundle;
                     }
@@ -1145,7 +1145,7 @@ class McpController
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;
         $flowGraph = ['type' => 'object', 'description' => "The automation graph: { nodes:[{ id, type, data:{ …node config } }], edges:[{ source, target, sourceHandle? }] }. Node ids are unique strings; node config lives under data; every edge references existing node ids; a condition node routes downstream via sourceHandle 'true' / 'false'. Node types + their config: see the get_started guide (§ Flows)."];
-        $customLogic = ['type' => 'object', 'description' => "App-logic bundle: { version:1, scripts:[{ id?, hook, source, permissions?, enabled? }], permissions?:[…] }. hook ∈ onAppStart|onScreenEnter|onScreenLeave|onButtonClick|onBeforeSubmit|onAfterSubmit|onConnectorEvent|onSyncConflict|mapConnectorDataToForm|calculateDashboardState. source = sandboxed QuickJS (≤50KB/script, ≤100KB total). permissions grant what the scripts may do (e.g. 'formlogic.responses.write', 'connector.aokie.call.answer')."];
+        $customLogic = ['type' => 'object', 'description' => "App-logic bundle: { version:1, scripts:[{ id?, hook, source, permissions?, enabled? }], permissions?:[…], connector?:{ manifest, demoDriver? } }. hook ∈ onAppStart|onScreenEnter|onScreenLeave|onButtonClick|onBeforeSubmit|onAfterSubmit|onConnectorEvent|onSyncConflict|mapConnectorDataToForm|calculateDashboardState. source = sandboxed QuickJS (≤50KB/script, ≤256KB total). permissions grant what the scripts may do (e.g. 'formlogic.responses.write', 'connector.aokie.call.answer'). connector (optional) declares a pack-embedded connector: manifest { connectorId, kind, label, commands[], journalledCommands?, demoEvents?, demoCeremonies?, captions? } + demoDriver (a QuickJS 'function run(ctx)' simulator, ≤128KB) — the demo driver only activates with the reviewable grant 'connector.<id>.driver.demo' and only inside an explicit simulator session; real hardware always routes host-side via FormLogic Desktop."];
         // Ordered deliberately: the core BUILD path first (create_app → create_app_form →
         // set_app_home → update_app → flows), because some MCP clients (e.g. Claude) surface only
         // the first batch of tool schemas eagerly and lazy-load the rest — a fresh app build should

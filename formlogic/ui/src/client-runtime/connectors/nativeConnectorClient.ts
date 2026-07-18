@@ -19,7 +19,6 @@ import { ConnectorError, FALLBACKABLE_CODES, parseConnectorError } from './conne
 import { mockVehicleConnector } from './vehicleConnector';
 import { createLocalHttpConnector } from './localHttpConnector';
 import { deviceConnector } from './deviceConnector';
-import { aokieConnector } from './aokieConnector';
 
 export interface ConnectorClient {
   isNativeAvailable(): boolean;
@@ -39,12 +38,13 @@ export interface ConnectorClient {
 // Browser connector registry. `device` is web-serviced everywhere (preferLocal); the
 // native runtime supplies vehicle/etc. over the bridge.
 const localHttpConnector = createLocalHttpConnector();
+// Pack-declared connectors (e.g. the Aokie phone bridge) register dynamically via
+// registerBrowserConnector when their app's runtime loads (packConnectorDriver.ts) —
+// they route desktop-first internally (FormLogic Desktop gateway → explicit simulator).
 const BROWSER_CONNECTORS: Record<string, BrowserConnector> = {
   [deviceConnector.id]: deviceConnector,
   [mockVehicleConnector.id]: mockVehicleConnector,
   [localHttpConnector.id]: localHttpConnector,
-  // Aokie routes desktop-first internally (FormLogic Desktop gateway → mock fallback).
-  [aokieConnector.id]: aokieConnector,
 };
 
 function nativeBridge() {
@@ -362,9 +362,31 @@ export function getConnectorClient(): ConnectorClient {
   return singleton;
 }
 
-/** Register an extra browser connector (used by tests / future connectors). */
+// The connectors seeded at module init — reserved ids a pack-declared connector may
+// never claim (registering id 'device' would let a pack shadow the WebView's own
+// geolocation/camera; unregistering it on app-switch would break it page-wide).
+const BUILT_IN_CONNECTOR_IDS: ReadonlySet<string> = new Set(Object.keys(BROWSER_CONNECTORS));
+
+/** True for a built-in browser connector id (device/vehicle/local_http) a pack must not claim. */
+export function isBuiltInConnectorId(id: string): boolean {
+  return BUILT_IN_CONNECTOR_IDS.has(id);
+}
+
+/** Register an extra browser connector (pack-declared connectors + tests). Refuses to
+ *  overwrite a built-in — its id is reserved (defense in depth; the pack path also
+ *  rejects reserved ids up front in validateConnectorManifest). */
 export function registerBrowserConnector(connector: BrowserConnector): void {
+  if (BUILT_IN_CONNECTOR_IDS.has(connector.id)) {
+    throw new Error(`Connector id "${connector.id}" is reserved for a built-in connector.`);
+  }
   BROWSER_CONNECTORS[connector.id] = connector;
+}
+
+/** Remove a registered browser connector (pack connectors unregister when their app
+ *  unloads). Never deletes a built-in — those outlive every app. */
+export function unregisterBrowserConnector(id: string): void {
+  if (BUILT_IN_CONNECTOR_IDS.has(id)) return;
+  delete BROWSER_CONNECTORS[id];
 }
 
 /** Is `id` a registered browser connector? (Desktop event → app-logic gating uses this.) */

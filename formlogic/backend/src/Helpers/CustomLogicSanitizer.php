@@ -21,7 +21,14 @@ class CustomLogicSanitizer
 
     public const MAX_SCRIPTS = 50;
     public const MAX_SOURCE_BYTES = 51200;   // 50KB per script
-    public const MAX_BUNDLE_BYTES = 102400;  // 100KB total
+    // 256KB total: scripts (50KB each) plus an optional pack connector driver (128KB).
+    public const MAX_BUNDLE_BYTES = 262144;
+    // Pack-embedded connector demo driver (client packConnectorDriver.ts DRIVER_SOURCE_MAX — keep in sync).
+    public const MAX_DRIVER_BYTES = 131072;
+    private const CONNECTOR_ID_PATTERN = '/^[a-z][a-z0-9_-]{0,63}$/';
+    // Ids of the host's built-in browser connectors — a pack may never claim one
+    // (mirror of nativeConnectorClient's BUILT_IN_CONNECTOR_IDS).
+    private const RESERVED_CONNECTOR_IDS = ['device', 'vehicle', 'local_http'];
 
     /** @param array<string,mixed> $bundle */
     public static function sanitize(array $bundle): array
@@ -75,7 +82,86 @@ class CustomLogicSanitizer
         if (array_key_exists('strictPermissions', $bundle)) {
             $result['strictPermissions'] = (bool) $bundle['strictPermissions'];
         }
+        // Pack-embedded connector driver (spec: self-contained packs). The client's
+        // trusted host is the enforcement point (grant-gated demo driver, allowlisted
+        // events, QuickJS sandbox); here we just keep the shape sane + bounded so an
+        // owner's customLogic save can never silently DROP the pack's connector.
+        $connector = self::sanitizeConnector($bundle['connector'] ?? null);
+        if ($connector !== null) {
+            $result['connector'] = $connector;
+        }
         return $result;
+    }
+
+    /**
+     * Normalize a pack connector bundle ({manifest, demoDriver?}) or reject it (null).
+     * Mirrors the TS ConnectorDriverManifest surface: dot-free connectorId slug,
+     * bounded string lists, driver source under MAX_DRIVER_BYTES.
+     *
+     * @param mixed $connector
+     * @return array<string,mixed>|null
+     */
+    public static function sanitizeConnector(mixed $connector): ?array
+    {
+        if (!is_array($connector) || !is_array($connector['manifest'] ?? null)) {
+            return null;
+        }
+        $m = $connector['manifest'];
+        $id = $m['connectorId'] ?? '';
+        if (!is_string($id) || preg_match(self::CONNECTOR_ID_PATTERN, $id) !== 1) {
+            return null;
+        }
+        if (in_array($id, self::RESERVED_CONNECTOR_IDS, true)) {
+            return null; // reserved for a built-in browser connector
+        }
+        if (!is_string($m['kind'] ?? null) || ($m['kind'] ?? '') === ''
+            || !is_string($m['label'] ?? null) || ($m['label'] ?? '') === '') {
+            return null;
+        }
+        $stringList = static function (mixed $list, int $cap): ?array {
+            if (!is_array($list)) {
+                return null;
+            }
+            $out = [];
+            foreach ($list as $item) {
+                if (!is_string($item) || $item === '' || strlen($item) > 80) {
+                    continue;
+                }
+                $out[] = $item;
+                if (count($out) >= $cap) {
+                    break;
+                }
+            }
+            return $out;
+        };
+        $commands = $stringList($m['commands'] ?? null, 64);
+        if ($commands === null || $commands === []) {
+            return null;
+        }
+        $manifest = [
+            'connectorId' => $id,
+            'kind' => mb_substr($m['kind'], 0, 80),
+            'label' => mb_substr($m['label'], 0, 120),
+            'commands' => $commands,
+        ];
+        foreach (['journalledCommands' => 64, 'demoEvents' => 32, 'demoCeremonies' => 8] as $key => $cap) {
+            $list = $stringList($m[$key] ?? null, $cap);
+            if ($list !== null) {
+                $manifest[$key] = $list;
+            }
+        }
+        if (is_string($m['demoStatusDetail'] ?? null)) {
+            $manifest['demoStatusDetail'] = mb_substr($m['demoStatusDetail'], 0, 300);
+        }
+        if (array_key_exists('captions', $m)) {
+            $manifest['captions'] = (bool) $m['captions'];
+        }
+        $out = ['manifest' => $manifest];
+        $driver = $connector['demoDriver'] ?? null;
+        if (is_string($driver) && $driver !== '' && strlen($driver) <= self::MAX_DRIVER_BYTES) {
+            $out['demoDriver'] = $driver;
+        }
+        return $out;
     }
 
     /** True when the JSON-encoded bundle is within the size cap. A bundle that cannot be encoded

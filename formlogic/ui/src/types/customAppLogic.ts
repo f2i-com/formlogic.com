@@ -55,6 +55,60 @@ export interface CustomAppLogicBundle {
   permissions?: CustomAppLogicPermission[];
   /** When true, every emitted effect must map to an explicit permission. */
   strictPermissions?: boolean;
+  /**
+   * Optional pack-shipped connector driver (spec: pack-embedded connectors).
+   * The manifest declares the connector's identity + command surface; the demo
+   * driver is a sandboxed QuickJS script the trusted host runs for simulator
+   * sessions ONLY. Real hardware transport (FormLogic Desktop gateway / relay)
+   * is always host-owned — the driver never sees tokens or live IO.
+   */
+  connector?: PackConnectorBundle;
+}
+
+// ── Pack-embedded connector drivers ──────────────────────────────────────────
+
+/**
+ * The declarative half of a pack-shipped connector: identity, command surface
+ * and the demo driver's allowlists. Everything the host needs to route real
+ * commands (desktop gateway + relay) comes from here; everything the DEMO
+ * driver may do (emit events, run ceremonies) is capped by these declarations
+ * so a driver script can never widen its own surface.
+ */
+export interface ConnectorDriverManifest {
+  /** Dot-free slug — the id used in connector.<id>.<command> grants. */
+  connectorId: string;
+  /** Connector family, e.g. 'aokie_phone' (shown in status/summary rows). */
+  kind: string;
+  /** Human label for status copy ("<label> (FormLogic Desktop)" etc.). */
+  label: string;
+  /** Full command surface (the desktop plugin's contract list). */
+  commands: string[];
+  /**
+   * Commands the desktop plugin journals durably — the host mints ONE
+   * `ui-<command>-<id>` requestId per operator action for these, so a
+   * capability-refresh retry re-sends the same body instead of acting twice.
+   */
+  journalledCommands?: string[];
+  /** Event names the DEMO driver may emit (host-enforced allowlist). */
+  demoEvents?: string[];
+  /** Demo ceremony names the driver implements (e.g. 'simulate-call'). */
+  demoCeremonies?: string[];
+  /** Detail line for the demo status card. */
+  demoStatusDetail?: string;
+  /** True when this connector provides the volatile live-captions lane. */
+  captions?: boolean;
+}
+
+/** The pack-shipped connector bundle stored on app customLogic. */
+export interface PackConnectorBundle {
+  manifest: ConnectorDriverManifest;
+  /**
+   * QuickJS demo-driver source (`function run(ctx) { ... }` convention, same
+   * sandbox as app-logic scripts: zero IO, pure state-threaded — the host
+   * passes `ctx.state` in and persists the returned `state`). Optional: a
+   * manifest without a driver routes to real hardware only.
+   */
+  demoDriver?: string;
 }
 
 export interface CustomAppLogicInput {

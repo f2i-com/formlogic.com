@@ -1776,11 +1776,12 @@ class PackService
                     throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 2MB limit");
                 }
             }
-            // Custom app-logic is code (sandboxed at runtime); cap at 100KB like a form's logic script.
+            // Custom app-logic is code (sandboxed at runtime); 256KB covers the QuickJS
+            // scripts plus an optional pack connector demo driver (CustomLogicSanitizer caps).
             if (isset($app['customLogic'])) {
                 $logicJson = json_encode($app['customLogic']);
-                if ($logicJson !== false && strlen($logicJson) > 102400) {
-                    throw new \RuntimeException("App '{$app['packAppId']}' custom logic exceeds 100KB limit");
+                if ($logicJson !== false && strlen($logicJson) > CustomLogicSanitizer::MAX_BUNDLE_BYTES) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' custom logic exceeds 256KB limit");
                 }
             }
             foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240, 'reports' => 262144] as $key => $cap) {

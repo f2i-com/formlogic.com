@@ -372,6 +372,49 @@ returns deterministic values for testing. **Verify**: open `/device-check` in th
 `request(connectorId, command, payload)` is identical in both environments — the app-logic host
 calls it for `connector.request` effects.
 
+### Pack-embedded connector drivers
+
+A pack ships its connector as DATA on the app's customLogic bundle — nothing connector-specific
+lives in the host UI:
+
+```jsonc
+customLogic.connector = {
+  "manifest": {              // identity + command surface + demo allowlists
+    "connectorId": "aokie", "kind": "aokie_phone", "label": "Aokie phone bridge",
+    "commands": ["phone.status", "call.answer", …],
+    "journalledCommands": ["call.answer", …],   // host mints ui-<cmd>-<id> requestIds for these
+    "demoEvents": ["aokie.call.incoming", …],   // the ONLY events the demo driver may emit
+    "demoCeremonies": ["simulate-call"],        // demo sequences FormLogic.host.ceremony() can run
+    "captions": true                            // provides the volatile live-captions lane
+  },
+  "demoDriver": "function run(ctx) { … }"       // QuickJS simulator (≤128KB)
+}
+```
+
+When an app runtime loads, `packConnectorDriver.syncPackConnectors` registers a composed
+desktop-first `BrowserConnector` built from the manifest (`desktopConnector.ts` — the generic
+FormLogic Desktop gateway transport; pairing tokens, authenticated fetch, relay and rate caps are
+host-owned and never enter any sandbox). The **demo driver** is the app-logic sandbox applied to
+simulation: a pure state machine (`ctx.state` in → `state` out, zero IO, 500ms budget) whose
+declared `events` the HOST emits — allowlisted by `manifest.demoEvents`, capped per run, and
+provenance-stamped `simulated: true` by the host so a driver can neither invent event names nor
+omit the stamp. Trust rules:
+
+- The demo driver activates only with the reviewable grant `connector.<id>.driver.demo`
+  (a `connector.`-prefixed permission, so the APP-502 install review lists it; stripping it
+  leaves the connector transport-only — real hardware keeps working, the simulator is inert).
+- Simulation additionally needs an explicit simulator session (audit FL-CONN-001): the shared
+  Demo account, a demo ceremony the user started, or a per-connector dev flag
+  (`localStorage formlogic.connectorSimulator.<id>`). It is NEVER a fallback for an
+  absent/unpaired desktop, and once a real desktop route was attempted nothing falls back.
+- Demo ceremonies play server-of-clock: the driver returns one step's events + `delayMs`/`done`
+  at a time; the host owns the timers and the step cap (`runConnectorCeremony`).
+
+Backend: `CustomLogicSanitizer::sanitizeConnector` preserves + bounds the bundle on every
+customLogic write (an owner's app-logic save can never silently drop the pack's connector);
+`connector.<id>.driver.demo` rides the normal grant carriers, so import review + role grants
+apply unchanged. Reference implementation: `ui/src/data/packs/aokie-receptionist/connector/`.
+
 ### Native (FormLogic Native Runtime)
 
 Inside the Tauri runtime, connectors are serviced by Rust commands over `window.FormLogicNative`

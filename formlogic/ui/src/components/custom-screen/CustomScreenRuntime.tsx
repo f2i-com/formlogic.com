@@ -7,7 +7,8 @@ import { SCREEN_CSP, createSdkRateLimiter, isScreenSdkActionAllowed } from './sd
 import type { ScreenBridge } from './screenBridge';
 import { subscribeDesktopEvents } from '../../client-runtime/desktop/desktopEvents';
 import { subscribeDesktopStatus } from '../../client-runtime/desktop/desktopDetection';
-import { startRealtimeCaptions } from './aokie/realtimeCaptions';
+import { startRealtimeCaptions } from './connector/realtimeCaptions';
+import { captionsConnectorId } from '../../client-runtime/connectors/packConnectorDriver';
 import {
   CAPTIONS_PUSH_BUDGET,
   EVENTS_PUSH_BUDGET,
@@ -520,10 +521,14 @@ export function CustomScreenRuntime({
                 'captions.subscribe() needs the local desktop bridge — check presence(); remote mode polls records instead.'
               );
             }
-            // The volatile lane is the aokie realtime feed — same observe
-            // gate as its events.
-            if (!bridge.canObserveConnector('aokie')) {
-              throw new Error('This app has no "connector.aokie.*" grants to observe captions for.');
+            // The volatile lane belongs to the app's captions-providing pack
+            // connector (manifest.captions) — same observe gate as its events.
+            const captionsId = captionsConnectorId();
+            if (!captionsId) {
+              throw new Error('No connector in this app provides a live-captions lane.');
+            }
+            if (!bridge.canObserveConnector(captionsId)) {
+              throw new Error(`This app has no "connector.${captionsId}.*" grants to observe captions for.`);
             }
             if (subscriptions().hasKind('captions')) {
               throw new Error('This screen already subscribes to captions.');

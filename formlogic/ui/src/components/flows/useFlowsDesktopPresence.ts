@@ -12,7 +12,7 @@ import {
   PRESENCE_POLL_MS,
   parseDbTimestamp,
   pickFreshConnection,
-} from '../custom-screen/aokie/aokiePresence';
+} from '../custom-screen/connector/runtimePresence';
 
 export type FlowsDesktopPresenceKind = 'local' | 'remote' | 'none';
 
