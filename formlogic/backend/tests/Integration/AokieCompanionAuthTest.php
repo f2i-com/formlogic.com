@@ -1624,10 +1624,23 @@ final class AokieCompanionAuthTest extends TestCase
         $admission = self::decode($this->mobileAdmission($oauth['accessToken'], $deviceId));
         $device = $admission['device'];
         $service = new AokieCompanionDeviceService(self::$mysql);
+        $siblingSubject = 'native_sibling_' . bin2hex(random_bytes(5));
+        $siblingDevice = $service->enrollOrTouch(
+            $this->userId,
+            $this->appId,
+            $siblingSubject,
+            'mobile',
+            'Sibling endpoint',
+            (array) $device['grants'],
+            ['holderKeyThumbprint' => $this->mobileHolder($siblingSubject)],
+        );
         $service->saveRoutingGroup($this->userId, $this->appId, [
             'name' => 'Native Reception',
             'policy' => 'all',
-            'members' => [['deviceId' => $device['id'], 'priority' => 10]],
+            'members' => [
+                ['deviceId' => $device['id'], 'priority' => 10],
+                ['deviceId' => $siblingDevice['id'], 'priority' => 20],
+            ],
         ]);
         $staffUser = 'staff-' . bin2hex(random_bytes(8));
         $this->extraUsers[] = $staffUser;
@@ -1648,7 +1661,8 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertSame(401, $cookieOnly->getStatusCode(), 'browser identity is never native Companion identity');
         $bootstrap = self::$controller->mobileBootstrap(
             $this->request('GET', '/api/aokie-companion/mobile/bootstrap')
-                ->withHeader('Authorization', 'Bearer ' . $oauth['accessToken']),
+                ->withHeader('Authorization', 'Bearer ' . $oauth['accessToken'])
+                ->withHeader('X-Aokie-Companion-Routing-Schema', '2'),
             (new ResponseFactory())->createResponse(),
         );
         $bootstrapBody = self::decode($bootstrap);
@@ -1703,6 +1717,7 @@ final class AokieCompanionAuthTest extends TestCase
             'displayName',
             'roleName',
             'isCurrentUser',
+            'isCurrentDevice',
             'priority',
             'enabled',
             'availability',
@@ -1713,19 +1728,44 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertSame('Owner', $routingMember['displayName'], 'device-supplied display name is not staff authority');
         $this->assertSame('Owner', $routingMember['roleName']);
         $this->assertTrue($routingMember['isCurrentUser']);
+        $this->assertTrue($routingMember['isCurrentDevice']);
         $this->assertSame(10, $routingMember['priority']);
         $this->assertTrue($routingMember['enabled']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/D', $routingMember['availabilityUpdatedAt']);
         $routing = self::$controller->mobileRouting(
             $this->request('GET', '/api/aokie-companion/mobile/routing')
-                ->withHeader('Authorization', 'Bearer ' . $oauth['accessToken']),
+                ->withHeader('Authorization', 'Bearer ' . $oauth['accessToken'])
+                ->withHeader('X-Aokie-Companion-Routing-Schema', '2'),
             (new ResponseFactory())->createResponse(),
         );
         $routingBody = self::decode($routing);
         $this->assertSame(200, $routing->getStatusCode(), json_encode($routingBody));
         $this->assertSame(['routingGroups', 'staff'], array_keys($routingBody));
         $this->assertSame($routingMember, $routingBody['routingGroups'][0]['members'][0]);
+        $this->assertTrue($routingBody['routingGroups'][0]['members'][1]['isCurrentUser']);
+        $this->assertFalse($routingBody['routingGroups'][0]['members'][1]['isCurrentDevice']);
+        $this->assertStringNotContainsString(
+            (string) $device['id'],
+            json_encode($routingBody, JSON_THROW_ON_ERROR),
+            'the current endpoint is identified by a boolean, never its internal device id',
+        );
+        $this->assertStringNotContainsString(
+            (string) $siblingDevice['id'],
+            json_encode($routingBody, JSON_THROW_ON_ERROR),
+            'other internal device ids remain private too',
+        );
         $this->assertSame($bootstrapBody['staff'], $routingBody['staff']);
+
+        $legacyRouting = self::decode(self::$controller->mobileRouting(
+            $this->request('GET', '/api/aokie-companion/mobile/routing')
+                ->withHeader('Authorization', 'Bearer ' . $oauth['accessToken']),
+            (new ResponseFactory())->createResponse(),
+        ));
+        $this->assertArrayNotHasKey(
+            'isCurrentDevice',
+            $legacyRouting['routingGroups'][0]['members'][0],
+            'pre-v2 strict clients keep their exact routing-member schema during rollout',
+        );
 
         $availability = self::$controller->mobileSetAvailability(
             $this->request('PUT', '/api/aokie-companion/mobile/availability')

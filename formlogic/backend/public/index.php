@@ -557,6 +557,7 @@ $container->set(\FormLogic\Controllers\AokieCompanionRelayController::class, fun
         $c->get(\FormLogic\Services\AokieCompanionAdmissionSigner::class),
         $c->get(AppService::class),
         $c->get(\FormLogic\Services\AokieCompanionRelayService::class),
+        $c->get(\FormLogic\Services\AokieCompanionDeviceService::class),
     );
 });
 

@@ -11,9 +11,9 @@ use PDO;
  * Hosted Aokie Companion relay mailbox (pack services wave 2).
  *
  * Stores and forwards the v2 signalling frames between the desktop plugin and
- * Companion mobiles as OPAQUE JSON documents: the endpoints Ed25519-sign every
- * frame themselves, so the relay never interprets frame contents — it only
- * checks "valid JSON within the size cap", addresses rows to one party, and
+ * Companion mobiles as opaque JSON documents. The controller has already
+ * applied size and root-kind routing checks; this persistence layer never
+ * interprets or rewrites a frame. It only addresses rows to one party and
  * serves them back in insertion order (the AUTO_INCREMENT `seq` is the
  * cursor). Frames are volatile signalling with a short TTL; expired rows are
  * swept opportunistically on every append.

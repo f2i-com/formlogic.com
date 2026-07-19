@@ -578,7 +578,11 @@ final class AokieCompanionController
             $this->roleGatewayGrants($userId, $appId),
             $this->consentGatewayGrants($this->remoteConsent($identity['app'])),
         ));
-        $groups = $this->mobileRoutingGroups($appId, $userId);
+        $groups = $this->mobileRoutingGroups(
+            $appId,
+            $userId,
+            $this->wantsCurrentDeviceRouting($request) ? (string) $device['id'] : null,
+        );
         $staff = $this->appUsers?->getAokieCompanionStaff($appId, $userId) ?? [];
         $history = $this->devices->history($appId, 50);
         if (!$this->canAudit($userId, $appId)) {
@@ -671,7 +675,12 @@ final class AokieCompanionController
         if (!$identity['ok']) {
             return $this->error($response, $identity['status'], $identity['code'], $identity['message']);
         }
-        $groups = $this->mobileRoutingGroups($identity['appId'], $identity['userId']);
+        $groups = $this->mobileRoutingGroups(
+            $identity['appId'],
+            $identity['userId'],
+            $this->wantsCurrentDeviceRouting($request)
+                ? (string) $identity['device']['id'] : null,
+        );
         $staff = $this->appUsers?->getAokieCompanionStaff(
             $identity['appId'],
             $identity['userId'],
@@ -1302,7 +1311,11 @@ final class AokieCompanionController
     }
 
     /** @return list<array<string,mixed>> */
-    private function mobileRoutingGroups(string $appId, string $currentUserId): array
+    private function mobileRoutingGroups(
+        string $appId,
+        string $currentUserId,
+        ?string $currentDeviceId,
+    ): array
     {
         $groups = [];
         foreach (array_slice($this->devices->listRoutingGroups($appId), 0, 200) as $group) {
@@ -1325,12 +1338,21 @@ final class AokieCompanionController
                 $availability = is_string($member['availability'] ?? null)
                     && in_array($member['availability'], ['available', 'busy', 'offline', 'do_not_disturb'], true)
                     ? $member['availability'] : 'offline';
-                $members[] = [
+                $formatted = [
                     'staffId' => $staffId,
                     'displayName' => $staffName ?? 'App member',
                     'roleName' => $this->boundedText($member['roleName'] ?? null, 120),
                     'isCurrentUser' => is_string($member['userId'] ?? null)
                         && hash_equals($member['userId'], $currentUserId),
+                ];
+                if ($currentDeviceId !== null) {
+                    // Schema 2 may contain several installations owned by one
+                    // user. Expose only equality with this authenticated
+                    // device; internal device-record IDs remain private.
+                    $formatted['isCurrentDevice'] = is_string($member['deviceId'] ?? null)
+                        && hash_equals($member['deviceId'], $currentDeviceId);
+                }
+                $members[] = $formatted + [
                     'priority' => max(0, min((int) ($member['priority'] ?? 0), 1000000)),
                     'enabled' => (bool) ($member['enabled'] ?? false),
                     'availability' => $availability,
@@ -1349,6 +1371,11 @@ final class AokieCompanionController
             ];
         }
         return $groups;
+    }
+
+    private function wantsCurrentDeviceRouting(Request $request): bool
+    {
+        return trim($request->getHeaderLine('X-Aokie-Companion-Routing-Schema')) === '2';
     }
 
     /**

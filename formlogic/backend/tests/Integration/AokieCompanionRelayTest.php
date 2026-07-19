@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Integration;
 
+use FormLogic\Constants\AppPermissions;
 use FormLogic\Controllers\AokieCompanionRelayController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AokieCompanionAdmissionSigner;
+use FormLogic\Services\AokieCompanionDeviceService;
 use FormLogic\Services\AokieCompanionRelayService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\FormService;
@@ -35,6 +37,7 @@ final class AokieCompanionRelayTest extends TestCase
     private static AppService $apps;
     private static SQLiteConnection $sqlite;
     private static AokieCompanionAdmissionSigner $signer;
+    private static AokieCompanionDeviceService $devices;
     private static AokieCompanionRelayService $relay;
     private static AokieCompanionRelayController $controller;
 
@@ -71,8 +74,14 @@ final class AokieCompanionRelayTest extends TestCase
         self::$sqlite = new SQLiteConnection(sys_get_temp_dir() . '/formlogic-aokie-relay-' . bin2hex(random_bytes(4)));
         self::$apps = new AppService($connection, new FormService($connection, self::$sqlite));
         self::$signer = new AokieCompanionAdmissionSigner(self::SECRET, 'ws://127.0.0.1:39000/v2/realtime');
+        self::$devices = new AokieCompanionDeviceService($connection);
         self::$relay = new AokieCompanionRelayService($connection);
-        self::$controller = new AokieCompanionRelayController(self::$signer, self::$apps, self::$relay);
+        self::$controller = new AokieCompanionRelayController(
+            self::$signer,
+            self::$apps,
+            self::$relay,
+            self::$devices,
+        );
     }
 
     protected function setUp(): void
@@ -88,6 +97,17 @@ final class AokieCompanionRelayTest extends TestCase
             'name' => 'Relay Test ' . $suffix,
             'slug' => 'relay-test-' . $suffix,
             'status' => 'published',
+            'settings' => [
+                'aokieCompanion' => [
+                    'remoteConsent' => [
+                        'remoteMonitoring' => true,
+                        'remoteConsult' => true,
+                        'remoteTakeover' => true,
+                        'remoteCaptions' => true,
+                        'remoteAssistance' => true,
+                    ],
+                ],
+            ],
         ], $this->userId);
         $this->appId = (string) $app['id'];
     }
@@ -280,6 +300,40 @@ final class AokieCompanionRelayTest extends TestCase
         self::$apps->updateApp($this->appId, ['settings' => $settings]);
     }
 
+    private function setRemoteAssistanceConsent(bool $assistance, bool $takeover): void
+    {
+        $app = self::$apps->getApp($this->appId);
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $settings['aokieCompanion']['remoteConsent'] = [
+            'remoteMonitoring' => true,
+            'remoteConsult' => true,
+            'remoteTakeover' => $takeover,
+            'remoteCaptions' => true,
+            'remoteAssistance' => $assistance,
+        ];
+        self::$apps->updateApp($this->appId, ['settings' => $settings]);
+    }
+
+    /** @param list<string> $grants @return array{device:array<string,mixed>,group:array<string,mixed>} */
+    private function enrollRoutedMobile(string $deviceId, array $grants): array
+    {
+        $device = self::$devices->enrollOrTouch(
+            $this->userId,
+            $this->appId,
+            $deviceId,
+            'mobile',
+            'Relay recipient',
+            $grants,
+            ['holderKeyThumbprint' => $this->mobileThumbprint($deviceId)],
+        );
+        $group = self::$devices->saveRoutingGroup($this->userId, $this->appId, [
+            'name' => 'Relay routing ' . bin2hex(random_bytes(5)),
+            'policy' => 'all',
+            'members' => [['deviceId' => $device['id'], 'priority' => 10]],
+        ]);
+        return ['device' => $device, 'group' => $group];
+    }
+
     public function testMobileToPluginDeliveryWithAdvancingSinceCursor(): void
     {
         $deviceId = 'device_' . bin2hex(random_bytes(4));
@@ -464,6 +518,417 @@ final class AokieCompanionRelayTest extends TestCase
         $this->assertSame([], $forB['frames']);
     }
 
+    public function testPluginAdmissionCannotAddressAnOutOfRosterRoutedMobile(): void
+    {
+        $approvedDeviceId = 'approved_device_' . bin2hex(random_bytes(4));
+        $targetDeviceId = 'out_of_roster_' . bin2hex(random_bytes(4));
+        $targetThumbprint = $this->mobileThumbprint($targetDeviceId);
+        $target = $this->enrollRoutedMobile(
+            $targetDeviceId,
+            ['state_read', 'assistance_read', 'assistance_respond'],
+        )['device'];
+        $this->assertTrue(
+            self::$devices->canReceiveRelayAssistance($this->appId, $targetThumbprint),
+            'control: target is otherwise a live, Available assistance member',
+        );
+
+        $plugin = $this->pluginToken([$this->mobileThumbprint($approvedDeviceId)]);
+        $refused = $this->post($plugin, [
+            'to' => 'mobile:' . $targetThumbprint,
+            'frames' => [
+                ['kind' => 'plugin_idle'],
+                [
+                    'kind' => 'assistance_request',
+                    'requestId' => 'private_out_of_roster',
+                    'question' => 'Private caller context',
+                    'transferOffered' => true,
+                ],
+            ],
+        ]);
+        $body = self::decode($refused);
+        $this->assertSame(403, $refused->getStatusCode(), json_encode($body));
+        $this->assertSame('relay_target_forbidden', $body['code']);
+
+        $inbox = self::decode($this->poll(
+            $this->mobileToken($targetDeviceId, null, $target['grants']),
+            ['since' => 0],
+        ));
+        $this->assertSame([], $inbox['frames']);
+        $persisted = self::$pdo->prepare(
+            "SELECT COUNT(*) FROM aokie_companion_relay_frames
+             WHERE app_id = ? AND to_party = ?
+               AND JSON_UNQUOTE(JSON_EXTRACT(frame, '$.requestId')) = 'private_out_of_roster'",
+        );
+        $persisted->execute([$this->appId, 'mobile:' . $targetThumbprint]);
+        $this->assertSame(0, (int) $persisted->fetchColumn());
+    }
+
+    public function testAssistanceFanoutRequiresFreshAvailableRoutingWithoutNarrowingDeviceGrants(): void
+    {
+        $deviceId = 'assistance_device_' . bin2hex(random_bytes(4));
+        $thumbprint = $this->mobileThumbprint($deviceId);
+        $deviceGrants = [
+            'state_read',
+            'caller_read',
+            'captions_read',
+            'rtc_signal',
+            'takeover',
+            'assistance_read',
+            'assistance_respond',
+        ];
+        $routing = $this->enrollRoutedMobile($deviceId, $deviceGrants);
+        $device = $routing['device'];
+        $group = $routing['group'];
+        $plugin = $this->pluginToken([$thumbprint], null, ['state_read', 'assistance_read']);
+        $mobile = $this->mobileToken(
+            $deviceId,
+            null,
+            ['state_read', 'rtc_signal', 'takeover', 'assistance_read', 'assistance_respond'],
+        );
+        $target = 'mobile:' . $thumbprint;
+        $assistance = static fn (string $id): array => [
+            'kind' => 'assistance_request',
+            'schemaVersion' => 2,
+            'appId' => 'opaque-to-the-relay',
+            'requestId' => $id,
+            'question' => 'Can you take this caller?',
+            'transferOffered' => true,
+        ];
+
+        // Default Available delivers the request. The hello in the same batch
+        // locks the important mixed-batch behavior used for a newly connected
+        // endpoint: policy filtering may not suppress its transport handshake.
+        $available = $this->post($plugin, [
+            'to' => $target,
+            'frames' => [
+                ['kind' => 'plugin_hello', 'schemaVersion' => 2],
+                $assistance('assistance_available'),
+            ],
+        ]);
+        $availableBody = self::decode($available);
+        $this->assertSame(200, $available->getStatusCode(), json_encode($availableBody));
+        $this->assertSame(2, $availableBody['accepted']);
+        $inbox = self::decode($this->poll($mobile, ['since' => 0]));
+        $this->assertSame(
+            ['plugin_hello', 'assistance_request'],
+            array_column(array_column($inbox['frames'], 'frame'), 'kind'),
+        );
+        $cursor = $inbox['lastSeq'];
+        $suppressedRequestIds = [
+            'assistance_consent_off',
+            'assistance_transfer_consent_off',
+            'assistance_transfer_malformed',
+            'assistance_busy',
+        ];
+
+        // A still-valid plugin admission cannot preserve stale app consent.
+        // Suppression remains per-frame so ordinary state/control traffic in
+        // the same post continues across the relay.
+        $this->setRemoteAssistanceConsent(false, true);
+        $consentOff = self::decode($this->post($plugin, [
+            'to' => $target,
+            'frames' => [
+                ['kind' => 'plugin_idle', 'schemaVersion' => 2, 'session' => 'consent_refresh'],
+                array_replace(
+                    $assistance('assistance_consent_off'),
+                    ['transferOffered' => false],
+                ),
+            ],
+        ]));
+        $this->assertSame(1, $consentOff['accepted']);
+        $consentOffInbox = self::decode($this->poll($mobile, ['since' => $cursor]));
+        $this->assertSame(
+            ['plugin_idle'],
+            array_column(array_column($consentOffInbox['frames'], 'frame'), 'kind'),
+        );
+        $cursor = $consentOffInbox['lastSeq'];
+
+        // Assistance without a transfer remains allowed when only takeover
+        // consent is disabled. An actual transfer offer requires both flags.
+        $this->setRemoteAssistanceConsent(true, false);
+        $plainAssistance = self::decode($this->post($plugin, [
+            'to' => $target,
+            'frames' => [array_replace(
+                $assistance('assistance_without_transfer'),
+                ['transferOffered' => false],
+            )],
+        ]));
+        $this->assertSame(1, $plainAssistance['accepted']);
+        $plainInbox = self::decode($this->poll($mobile, ['since' => $cursor]));
+        $this->assertSame('assistance_without_transfer', $plainInbox['frames'][0]['frame']['requestId']);
+        $cursor = $plainInbox['lastSeq'];
+
+        $transferConsentOff = self::decode($this->post($plugin, [
+            'to' => $target,
+            'frames' => [$assistance('assistance_transfer_consent_off')],
+        ]));
+        $this->assertSame(['accepted' => 0, 'seq' => 0], $transferConsentOff);
+        $this->assertSame([], self::decode($this->poll($mobile, ['since' => $cursor]))['frames']);
+
+        // A malformed transfer flag is never silently downgraded into an
+        // ordinary assistance request for policy purposes.
+        $malformedTransfer = self::decode($this->post($plugin, [
+            'to' => $target,
+            'frames' => [array_replace(
+                $assistance('assistance_transfer_malformed'),
+                ['transferOffered' => 'false'],
+            )],
+        ]));
+        $this->assertSame(['accepted' => 0, 'seq' => 0], $malformedTransfer);
+        $this->assertSame([], self::decode($this->poll($mobile, ['since' => $cursor]))['frames']);
+        $this->setRemoteAssistanceConsent(true, true);
+
+        // The real first-delivery shape is mixed: RelayChannel prepends its
+        // hello to a newly learned party. Busy must remove only the private
+        // assistance request, report one accepted frame, and preserve the
+        // handshake so availability never becomes a transport outage.
+        $this->assertTrue(self::$devices->setAvailability($this->appId, $device['id'], 'busy'));
+        $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+        $busyMixed = $this->post($plugin, [
+            'to' => $target,
+            'frames' => [
+                ['kind' => 'plugin_hello', 'schemaVersion' => 2, 'session' => 'busy_refresh'],
+                $assistance('assistance_busy'),
+            ],
+        ]);
+        $busyMixedBody = self::decode($busyMixed);
+        $this->assertSame(200, $busyMixed->getStatusCode(), json_encode($busyMixedBody));
+        $this->assertSame(1, $busyMixedBody['accepted']);
+        $busyInbox = self::decode($this->poll($mobile, ['since' => $cursor]));
+        $this->assertSame(
+            ['plugin_hello'],
+            array_column(array_column($busyInbox['frames'], 'frame'), 'kind'),
+        );
+        $this->assertSame('busy_refresh', $busyInbox['frames'][0]['frame']['session']);
+        $cursor = $busyInbox['lastSeq'];
+
+        $assertSuppressed = function (string $requestId, string $label) use (
+            $plugin,
+            $target,
+            $assistance,
+            $mobile,
+            &$cursor,
+            &$suppressedRequestIds,
+        ): void {
+            $suppressedRequestIds[] = $requestId;
+            $response = $this->post($plugin, [
+                'to' => $target,
+                'frames' => [$assistance($requestId)],
+            ]);
+            $body = self::decode($response);
+            $this->assertSame(200, $response->getStatusCode(), $label);
+            $this->assertSame(['accepted' => 0, 'seq' => 0], $body, $label);
+            $empty = self::decode($this->poll($mobile, ['since' => $cursor]));
+            $this->assertSame([], $empty['frames'], $label);
+            $this->assertSame($cursor, $empty['lastSeq'], $label);
+        };
+
+        foreach (['do_not_disturb', 'offline'] as $status) {
+            $this->assertTrue(self::$devices->setAvailability($this->appId, $device['id'], $status));
+            $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+            $assertSuppressed('assistance_' . $status, $status);
+        }
+
+        // An Available status with an expired TTL is effectively Offline and
+        // must not leave a request queued to appear if availability changes.
+        $this->assertTrue(self::$devices->setAvailability(
+            $this->appId,
+            $device['id'],
+            'available',
+            time() + 60,
+        ));
+        self::$pdo->prepare(
+            'UPDATE aokie_companion_routing_members
+             SET availability_expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)
+             WHERE device_id = ?',
+        )->execute([$device['id']]);
+        $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+        $assertSuppressed('assistance_expired', 'expired availability');
+
+        // Non-assistance state and an existing lease's safety/control traffic
+        // remain routable while unavailable. Availability governs fresh
+        // assistance fanout; it must not strand a call by cutting live control.
+        $idle = self::decode($this->post($plugin, [
+            'to' => $target,
+            'frames' => [
+                ['kind' => 'plugin_idle', 'schemaVersion' => 2],
+                [
+                    'kind' => 'plugin_lease_revoke',
+                    'schemaVersion' => 2,
+                    'deviceId' => $deviceId,
+                    'leaseId' => 'existing_lease',
+                ],
+            ],
+        ]));
+        $this->assertSame(2, $idle['accepted']);
+        $idleInbox = self::decode($this->poll($mobile, ['since' => $cursor]));
+        $this->assertSame(
+            ['plugin_idle', 'plugin_lease_revoke'],
+            array_column(array_column($idleInbox['frames'], 'frame'), 'kind'),
+        );
+        $cursor = $idleInbox['lastSeq'];
+
+        $this->assertTrue(self::$devices->setAvailability($this->appId, $device['id'], 'available'));
+        $this->assertTrue(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+
+        self::$pdo->prepare(
+            'UPDATE aokie_companion_routing_members SET enabled = 0
+             WHERE group_id = ? AND device_id = ?',
+        )->execute([$group['id'], $device['id']]);
+        $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+        $assertSuppressed('assistance_member_disabled', 'disabled routing member');
+        self::$pdo->prepare(
+            'UPDATE aokie_companion_routing_members SET enabled = 1
+             WHERE group_id = ? AND device_id = ?',
+        )->execute([$group['id'], $device['id']]);
+        $this->assertTrue(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+
+        self::$pdo->prepare('UPDATE aokie_companion_routing_groups SET enabled = 0 WHERE id = ?')
+            ->execute([$group['id']]);
+        $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+        $assertSuppressed('assistance_group_disabled', 'disabled routing group');
+        self::$pdo->prepare('UPDATE aokie_companion_routing_groups SET enabled = 1 WHERE id = ?')
+            ->execute([$group['id']]);
+        $this->assertTrue(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+
+        $withoutAssistance = array_values(array_diff($deviceGrants, ['assistance_read']));
+        self::$pdo->prepare('UPDATE aokie_companion_devices SET grants = ? WHERE id = ?')
+            ->execute([json_encode($withoutAssistance, JSON_THROW_ON_ERROR), $device['id']]);
+        $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+        $assertSuppressed('assistance_grant_removed', 'missing assistance_read');
+        self::$pdo->prepare('UPDATE aokie_companion_devices SET grants = ? WHERE id = ?')
+            ->execute([json_encode($deviceGrants, JSON_THROW_ON_ERROR), $device['id']]);
+        $this->assertTrue(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+
+        self::$pdo->prepare('UPDATE aokie_companion_devices SET revoked_at = NOW() WHERE id = ?')
+            ->execute([$device['id']]);
+        $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+        $assertSuppressed('assistance_device_revoked', 'revoked endpoint');
+        self::$pdo->prepare('UPDATE aokie_companion_devices SET revoked_at = NULL WHERE id = ?')
+            ->execute([$device['id']]);
+        $this->assertTrue(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+
+        $restored = self::decode($this->post($plugin, [
+            'to' => $target,
+            'frames' => [$assistance('assistance_restored')],
+        ]));
+        $this->assertSame(1, $restored['accepted']);
+        $restoredInbox = self::decode($this->poll($mobile, ['since' => $cursor]));
+        $this->assertSame(
+            ['assistance_request'],
+            array_column(array_column($restoredInbox['frames'], 'frame'), 'kind'),
+        );
+
+        $placeholders = implode(',', array_fill(0, count($suppressedRequestIds), '?'));
+        $persistedSuppressed = self::$pdo->prepare(
+            "SELECT COUNT(*) FROM aokie_companion_relay_frames
+             WHERE app_id = ?
+               AND JSON_UNQUOTE(JSON_EXTRACT(frame, '$.requestId')) IN ({$placeholders})",
+        );
+        $persistedSuppressed->execute([$this->appId, ...$suppressedRequestIds]);
+        $this->assertSame(
+            0,
+            (int) $persistedSuppressed->fetchColumn(),
+            'Filtered questions, context, and transfer scripts must be removed before mailbox persistence',
+        );
+
+        $stored = self::$pdo->prepare('SELECT grants FROM aokie_companion_devices WHERE id = ?');
+        $stored->execute([$device['id']]);
+        $this->assertSame(
+            $deviceGrants,
+            json_decode((string) $stored->fetchColumn(), true),
+            'Availability is transient routing state and must never persistently narrow endpoint capabilities',
+        );
+    }
+
+    public function testAssistanceFanoutRejectsASuspendedNonOwnerWithPreviouslyGrantedAccess(): void
+    {
+        $memberId = 'relay_member_' . bin2hex(random_bytes(6));
+        self::$pdo->prepare(
+            "INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Relay Member')",
+        )->execute([$memberId, $memberId . '@relay.test']);
+        try {
+            $role = self::$pdo->prepare(
+                "SELECT id FROM app_roles WHERE app_id = ? AND name = 'Member' LIMIT 1",
+            );
+            $role->execute([$this->appId]);
+            $roleId = $role->fetchColumn();
+            $this->assertIsString($roleId);
+            foreach ([
+                AppPermissions::AOKIE_COMPANION_STATE,
+                AppPermissions::AOKIE_COMPANION_ASSISTANCE,
+            ] as $permission) {
+                self::$pdo->prepare(
+                    'INSERT IGNORE INTO app_role_permissions
+                        (id, role_id, form_id, permission) VALUES (?, ?, NULL, ?)',
+                )->execute(['perm_' . bin2hex(random_bytes(8)), $roleId, $permission]);
+            }
+            $appUserId = 'app_user_' . bin2hex(random_bytes(7));
+            self::$pdo->prepare(
+                "INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at)
+                 VALUES (?, ?, ?, ?, 'active', NOW())",
+            )->execute([$appUserId, $this->appId, $memberId, $roleId]);
+
+            $deviceId = 'member_device_' . bin2hex(random_bytes(5));
+            $thumbprint = $this->mobileThumbprint($deviceId);
+            $deviceGrants = ['state_read', 'assistance_read', 'assistance_respond'];
+            $device = self::$devices->enrollOrTouch(
+                $memberId,
+                $this->appId,
+                $deviceId,
+                'mobile',
+                'Member endpoint',
+                $deviceGrants,
+                ['holderKeyThumbprint' => $thumbprint],
+            );
+            self::$devices->saveRoutingGroup($this->userId, $this->appId, [
+                'name' => 'Member assistance ' . bin2hex(random_bytes(4)),
+                'policy' => 'all',
+                'members' => [['deviceId' => $device['id'], 'priority' => 10]],
+            ]);
+            $plugin = $this->pluginToken([$thumbprint], null, ['state_read', 'assistance_read']);
+            $mobile = $this->mobileToken($deviceId, null, $deviceGrants);
+            $target = 'mobile:' . $thumbprint;
+
+            $this->assertTrue(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+            $allowed = self::decode($this->post($plugin, [
+                'to' => $target,
+                'frames' => [[
+                    'kind' => 'assistance_request',
+                    'requestId' => 'member_before_suspension',
+                    'transferOffered' => true,
+                ]],
+            ]));
+            $this->assertSame(1, $allowed['accepted']);
+            $allowedInbox = self::decode($this->poll($mobile, ['since' => 0]));
+            $this->assertCount(1, $allowedInbox['frames']);
+            $cursor = $allowedInbox['lastSeq'];
+
+            self::$pdo->prepare("UPDATE app_users SET status = 'suspended' WHERE id = ?")
+                ->execute([$appUserId]);
+            $this->assertFalse(self::$devices->canReceiveRelayAssistance($this->appId, $thumbprint));
+            $suppressedResponse = $this->post($plugin, [
+                'to' => $target,
+                'frames' => [[
+                    'kind' => 'assistance_request',
+                    'requestId' => 'member_after_suspension',
+                    'transferOffered' => true,
+                ]],
+            ]);
+            $this->assertSame(200, $suppressedResponse->getStatusCode());
+            $this->assertSame(['accepted' => 0, 'seq' => 0], self::decode($suppressedResponse));
+            $suppressedInbox = self::decode($this->poll($mobile, ['since' => $cursor]));
+            $this->assertSame([], $suppressedInbox['frames']);
+            $this->assertSame($cursor, $suppressedInbox['lastSeq']);
+
+            $stored = self::$pdo->prepare('SELECT grants FROM aokie_companion_devices WHERE id = ?');
+            $stored->execute([$device['id']]);
+            $this->assertSame($deviceGrants, json_decode((string) $stored->fetchColumn(), true));
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$memberId]);
+        }
+    }
+
     public function testFramesStayOpaqueIncludingEmptyJsonObjects(): void
     {
         $deviceId = 'device_' . bin2hex(random_bytes(4));
@@ -522,7 +987,7 @@ final class AokieCompanionRelayTest extends TestCase
         }
 
         // No configured signer = the relay is unavailable, never open.
-        $unconfigured = new AokieCompanionRelayController(null, self::$apps, self::$relay);
+        $unconfigured = new AokieCompanionRelayController(null, self::$apps, self::$relay, self::$devices);
         $response = $unconfigured->postFrames(
             $this->request('POST', '/api/aokie-companion/relay/frames', $this->mobileToken($deviceId))
                 ->withBody((new StreamFactory())->createStream((string) json_encode($frames))),
@@ -893,7 +1358,7 @@ final class AokieCompanionRelayTest extends TestCase
         }
 
         // No configured signer = unavailable, never open.
-        $unconfigured = new AokieCompanionRelayController(null, self::$apps, self::$relay);
+        $unconfigured = new AokieCompanionRelayController(null, self::$apps, self::$relay, self::$devices);
         $response = $unconfigured->getChallenge(
             $this->request('GET', '/api/aokie-companion/relay/challenge', $this->pluginToken([
                 $this->mobileThumbprint($deviceId),

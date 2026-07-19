@@ -949,6 +949,54 @@ final class AokieCompanionDeviceService
         ];
     }
 
+    /**
+     * Whether one relay-addressed mobile may receive a fresh assistance or
+     * transfer request right now.
+     *
+     * The holder key is the server-authenticated mailbox address, not a field
+     * read from the opaque frame. Availability remains transient routing
+     * policy: this read deliberately never rewrites the endpoint's durable
+     * grants. A member must still have the current stored grant and current
+     * app-role permission, so revocation or role suspension takes effect even
+     * while an older plugin admission is alive.
+     */
+    public function canReceiveRelayAssistance(string $appId, string $holderKeyThumbprint): bool
+    {
+        if (!AokieCompanionAdmissionSigner::validThumbprint($holderKeyThumbprint)) {
+            return false;
+        }
+        $stmt = $this->db()->prepare(
+            "SELECT 1
+             FROM aokie_companion_devices d
+             JOIN apps a ON a.id = d.app_id AND a.status = 'published'
+             JOIN aokie_companion_routing_members rm ON rm.device_id = d.id
+             JOIN aokie_companion_routing_groups rg
+               ON rg.id = rm.group_id AND rg.app_id = d.app_id AND rg.enabled = 1
+             LEFT JOIN app_users au
+               ON au.app_id = d.app_id AND au.user_id = d.user_id AND au.status = 'active'
+             WHERE d.app_id = :app AND d.role = 'mobile'
+               AND d.holder_key_thumbprint = :holder AND d.revoked_at IS NULL
+               AND JSON_CONTAINS(d.grants, JSON_QUOTE('state_read')) = 1
+               AND JSON_CONTAINS(d.grants, JSON_QUOTE('assistance_read')) = 1
+               AND rm.enabled = 1 AND rm.availability = 'available'
+               AND (rm.availability_expires_at IS NULL OR rm.availability_expires_at > NOW())
+               AND (a.owner_id = d.user_id OR (
+                   au.id IS NOT NULL AND EXISTS (
+                       SELECT 1 FROM app_role_permissions arp
+                       WHERE arp.role_id = au.role_id AND arp.form_id IS NULL
+                         AND arp.permission = :permission
+                   )
+               ))
+             LIMIT 1"
+        );
+        $stmt->execute([
+            'app' => $appId,
+            'holder' => $holderKeyThumbprint,
+            'permission' => AppPermissions::AOKIE_COMPANION_ASSISTANCE,
+        ]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     /** Atomically resolve and, for round-robin, advance one deterministic group. */
     public function resolveRoutingGroup(string $appId, string $id, ?string $requiredGrant = null): array
     {

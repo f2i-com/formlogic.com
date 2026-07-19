@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\AokieCompanionAdmissionSigner;
+use FormLogic\Services\AokieCompanionDeviceService;
 use FormLogic\Services\AokieCompanionRelayService;
 use FormLogic\Services\AppService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -16,12 +17,13 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  *
  * An authenticated frame mailbox between the desktop plugin and Companion
  * mobiles: POST upstream, SSE (or long-poll fallback) downstream. Frames are
- * the existing v2 signalling documents and stay OPAQUE — they are
- * Ed25519-signed by the endpoints themselves; the relay stores and forwards
- * without ever interpreting their interior beyond "valid JSON within the
- * size cap". The one document the relay does compose is the endpoint
- * challenge that opens a session — kept a SEPARATE resource precisely so the
- * mailbox itself never has to look inside a frame.
+ * the existing v2 signalling documents, Ed25519-signed by the endpoints.
+ * The relay never rewrites their interior. The HTTP boundary reads only the
+ * root protocol `kind` and strict `transferOffered` boolean, solely to apply
+ * server-owned consent and availability to `assistance_request`. The one
+ * document the relay does compose is the endpoint
+ * challenge that opens a session — kept a separate resource so ordinary
+ * stored frame contents otherwise remain opaque.
  *
  * Party identity comes ONLY from the verified admission token (the same
  * `aokie-adm-v2` bearer the realtime gateway consumes): role 'plugin' is the
@@ -59,6 +61,7 @@ final class AokieCompanionRelayController
         private readonly ?AokieCompanionAdmissionSigner $signer,
         private readonly AppService $apps,
         private readonly AokieCompanionRelayService $relay,
+        private readonly AokieCompanionDeviceService $devices,
     ) {}
 
     /**
@@ -227,6 +230,47 @@ final class AokieCompanionRelayController
                 'The plugin sends frames to mobile parties, never to itself',
             );
         }
+        if ($identity['role'] === 'plugin') {
+            // A syntactically valid mobile mailbox is not sufficient. The
+            // plugin admission is minted against one exact, revisioned peer
+            // roster; letting that bearer address an out-of-roster endpoint
+            // would bypass the approval ceremony and could disclose caller
+            // state or private assistance context. Revalidate the signed
+            // roster shape here (verify() covers only common claims), then
+            // fence every plugin->mobile frame family to one approved peer.
+            try {
+                $approvedPeers = AokieCompanionAdmissionSigner::validatePluginPeerPolicy(
+                    $identity['claims']['approvedPeerKeyThumbprints'] ?? null,
+                    $identity['claims']['peerRosterRevision'] ?? null,
+                    $identity['claims']['peerRosterHash'] ?? null,
+                );
+            } catch (\InvalidArgumentException) {
+                return $this->error(
+                    $response,
+                    401,
+                    'invalid_token',
+                    'The admission token does not carry a valid plugin peer roster',
+                );
+            }
+            $holder = $identity['claims']['holderKeyThumbprint'] ?? null;
+            if (!is_string($holder) || in_array($holder, $approvedPeers, true)) {
+                return $this->error(
+                    $response,
+                    401,
+                    'invalid_token',
+                    'The admission token does not carry a valid plugin peer roster',
+                );
+            }
+            $targetThumbprint = substr($to, strlen(AokieCompanionRelayService::PARTY_MOBILE_PREFIX));
+            if (!in_array($targetThumbprint, $approvedPeers, true)) {
+                return $this->error(
+                    $response,
+                    403,
+                    'relay_target_forbidden',
+                    'The target mobile is not approved by this plugin admission',
+                );
+            }
+        }
         $frames = $body->frames ?? null;
         if (!is_array($frames)
             || $frames === []
@@ -253,7 +297,34 @@ final class AokieCompanionRelayController
                     'Each frame must serialize to at most ' . AokieCompanionRelayService::MAX_FRAME_BYTES . ' bytes',
                 );
             }
+            // Assistance and transfer share the exact assistance_request
+            // protocol frame. The hosted carrier used to trust the plugin's
+            // already-learned peer list here, bypassing FormLogic's current
+            // consent and durable Available/Busy/DND/Offline routing sources
+            // of truth. Inspect only the root dispatch discriminator and the
+            // protocol's strict transfer boolean; the signed frame remains
+            // otherwise opaque and is never rewritten. A non-assistance frame
+            // in the same batch (notably plugin_hello) must still be delivered.
+            if ($identity['role'] === 'plugin'
+                && is_object($frame)
+                && ($frame->kind ?? null) === 'assistance_request'
+                && (!$this->currentConsentAllowsAssistance($identity['appId'], $frame)
+                    || !$this->devices->canReceiveRelayAssistance(
+                        $identity['appId'],
+                        substr($to, strlen(AokieCompanionRelayService::PARTY_MOBILE_PREFIX)),
+                    ))) {
+                continue;
+            }
             $serialized[] = $encoded;
+        }
+        // A policy-suppressed assistance request is an intentional terminal
+        // no-op for this recipient, not a transport failure. A 2xx keeps the
+        // plugin session healthy and prevents a Busy/DND endpoint from being
+        // hammered with retries; accepted=0 truthfully records that no mailbox
+        // row (and therefore no later delivery) was created.
+        if ($serialized === []) {
+            return $this->jsonResponse($response, ['accepted' => 0, 'seq' => 0])
+                ->withHeader('Cache-Control', 'no-store');
         }
         try {
             // Authority metadata is derived exclusively from the admission
@@ -279,6 +350,45 @@ final class AokieCompanionRelayController
         }
         return $this->jsonResponse($response, $result)
             ->withHeader('Cache-Control', 'no-store');
+    }
+
+    /**
+     * Fail-closed mirror of the app's strict remoteConsent contract.
+     *
+     * Only `transferOffered` is inspected from the endpoint-signed frame:
+     * every fresh assistance request needs remoteAssistance, and a request
+     * that also offers transfer needs remoteTakeover. A missing/malformed
+     * transfer discriminator is not safe to downgrade to ordinary assistance.
+     */
+    private function currentConsentAllowsAssistance(string $appId, object $frame): bool
+    {
+        if (!property_exists($frame, 'transferOffered') || !is_bool($frame->transferOffered)) {
+            return false;
+        }
+        $app = $this->apps->getApp($appId);
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $companion = is_array($settings['aokieCompanion'] ?? null)
+            ? $settings['aokieCompanion'] : [];
+        $consent = $companion['remoteConsent'] ?? null;
+        $keys = [
+            'remoteMonitoring',
+            'remoteConsult',
+            'remoteTakeover',
+            'remoteCaptions',
+            'remoteAssistance',
+        ];
+        if (!is_array($consent)
+            || array_diff(array_keys($consent), $keys) !== []
+            || array_diff($keys, array_keys($consent)) !== []) {
+            return false;
+        }
+        foreach ($keys as $key) {
+            if (!is_bool($consent[$key])) {
+                return false;
+            }
+        }
+        return $consent['remoteAssistance']
+            && (!$frame->transferOffered || $consent['remoteTakeover']);
     }
 
     /** GET /api/aokie-companion/relay/frames?since=&wait= — long-poll fallback. */
