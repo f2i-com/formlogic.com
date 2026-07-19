@@ -60,7 +60,15 @@ final class AokieCompanionAdmissionSignerTest extends TestCase
             'app_a',
             'plugin_a',
             'plugin',
-            ['state_read', 'rtc_signal', 'assistance_read', 'assistance_respond'],
+            [
+                'state_read',
+                'rtc_signal',
+                'assistance_read',
+                'assistance_respond',
+                'participants_read',
+                'participant_identity_read',
+                'audio_levels_read',
+            ],
             self::PLUGIN_THUMBPRINT,
             null,
             [self::MOBILE_THUMBPRINT],
@@ -72,6 +80,9 @@ final class AokieCompanionAdmissionSignerTest extends TestCase
         );
         $this->assertSame(300, $issued['expiresIn']);
         $this->assertContains('assistance_respond', $issued['scopes']);
+        $this->assertContains('participants_read', $issued['scopes']);
+        $this->assertContains('participant_identity_read', $issued['scopes']);
+        $this->assertContains('audio_levels_read', $issued['scopes']);
         $this->assertSame([self::MOBILE_THUMBPRINT], $issued['approvedPeerKeyThumbprints']);
         $this->assertSame(7, $issued['peerRosterRevision']);
 

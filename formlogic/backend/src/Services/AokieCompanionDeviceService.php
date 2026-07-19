@@ -36,6 +36,9 @@ final class AokieCompanionDeviceService
     /** @var array<string,string> */
     private const GATEWAY_TO_PERMISSION = [
         'state_read' => AppPermissions::AOKIE_COMPANION_STATE,
+        'participants_read' => AppPermissions::AOKIE_COMPANION_STATE,
+        'participant_identity_read' => AppPermissions::AOKIE_COMPANION_STATE,
+        'audio_levels_read' => AppPermissions::AOKIE_COMPANION_STATE,
         'monitor' => AppPermissions::AOKIE_COMPANION_MONITOR,
         'consult' => AppPermissions::AOKIE_COMPANION_CONSULT,
         'takeover' => AppPermissions::AOKIE_COMPANION_TAKEOVER,
@@ -47,7 +50,8 @@ final class AokieCompanionDeviceService
 
     /** @var list<string> Exact grants that may be persisted on an endpoint. */
     private const DEVICE_GRANTS = [
-        'state_read', 'caller_read', 'captions_read', 'monitor', 'consult',
+        'state_read', 'caller_read', 'captions_read', 'participants_read',
+        'participant_identity_read', 'audio_levels_read', 'monitor', 'consult',
         'takeover', 'resume_aokie', 'rtc_signal', 'assistance_read',
         'assistance_respond', 'end_caller',
     ];

@@ -2342,7 +2342,13 @@ final class AokieCompanionAuthTest extends TestCase
         $deviceId = 'closed_device_' . bin2hex(random_bytes(4));
         $oauth = $this->authorizeCompanion($deviceId);
         $admission = self::decode($this->mobileAdmission($oauth['accessToken'], $deviceId));
-        $this->assertSame(['state_read', 'caller_read'], $admission['scopes']);
+        $this->assertSame([
+            'state_read',
+            'caller_read',
+            'participants_read',
+            'participant_identity_read',
+            'audio_levels_read',
+        ], $admission['scopes']);
 
         self::setEnvironment('AOKIE_COMPANION_ICE_SERVERS_JSON', json_encode([[
             'urls' => ['turns:turn.example.test:5349?transport=tcp'],

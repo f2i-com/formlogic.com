@@ -26,7 +26,14 @@ final class AokieCompanionController
     use JsonResponseTrait;
 
     private const OAUTH_TO_GATEWAY = [
-        'aokie:state' => ['state_read', 'caller_read', 'captions_read'],
+        'aokie:state' => [
+            'state_read',
+            'caller_read',
+            'captions_read',
+            'participants_read',
+            'participant_identity_read',
+            'audio_levels_read',
+        ],
         'aokie:monitor' => ['monitor', 'rtc_signal'],
         'aokie:consult' => ['consult', 'rtc_signal'],
         'aokie:takeover' => ['takeover', 'rtc_signal'],
@@ -1646,7 +1653,14 @@ final class AokieCompanionController
     private function roleGatewayGrants(string $userId, string $appId): array
     {
         $map = [
-            AppPermissions::AOKIE_COMPANION_STATE => ['state_read', 'caller_read', 'captions_read'],
+            AppPermissions::AOKIE_COMPANION_STATE => [
+                'state_read',
+                'caller_read',
+                'captions_read',
+                'participants_read',
+                'participant_identity_read',
+                'audio_levels_read',
+            ],
             AppPermissions::AOKIE_COMPANION_MONITOR => ['monitor', 'rtc_signal'],
             AppPermissions::AOKIE_COMPANION_CONSULT => ['consult', 'rtc_signal'],
             AppPermissions::AOKIE_COMPANION_TAKEOVER => ['takeover', 'rtc_signal'],
@@ -1672,7 +1686,13 @@ final class AokieCompanionController
     /** App policy can only remove grants. Missing/malformed consent fails closed. */
     private function consentGatewayGrants(array $consent): array
     {
-        $grants = ['state_read', 'caller_read'];
+        $grants = [
+            'state_read',
+            'caller_read',
+            'participants_read',
+            'participant_identity_read',
+            'audio_levels_read',
+        ];
         if (($consent['remoteCaptions'] ?? false) === true) {
             $grants[] = 'captions_read';
         }
