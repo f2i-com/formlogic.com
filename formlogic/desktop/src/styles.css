@@ -1816,6 +1816,240 @@ code {
 .services-freshness-stale { color: var(--err-text); font-weight: 600; }
 .services-buildms { opacity: 0.75; }
 
+/* Unified Service Center catalog controls. */
+.service-center-controls {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  margin: -4px 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.service-center-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.service-center-controls label > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.service-center-controls select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--ink);
+  font-size: 12px;
+}
+.service-center-controls select:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+.service-center-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.service-center-actions .icon-button-label { gap: 6px; }
+.service-center-editor { margin-bottom: 14px; }
+.service-center-results { gap: 10px; }
+.service-center-result-meta,
+.service-center-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.service-center-result-meta {
+  padding: 0 2px 2px;
+}
+.service-center-pagination {
+  justify-content: center;
+  padding: 8px 0 2px;
+}
+.service-center-card--pilot { border-left: 3px solid var(--signal); }
+.service-center-card--pilot .service-actions { flex-wrap: wrap; justify-content: flex-end; }
+.service-center-boundary {
+  max-width: 760px;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-soft);
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.service-center-safety {
+  margin-top: 7px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.service-center-device-code {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 760px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ok-line);
+  border-radius: 8px;
+  background: var(--ok-soft);
+  color: var(--ink-dim);
+  font-size: 11.5px;
+}
+.service-center-device-code > code {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+.service-center-device-url {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.service-center-try {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-2);
+  padding-top: 9px;
+}
+.service-center-try > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--signal-bright);
+  font-size: 12px;
+  font-weight: 650;
+  user-select: none;
+}
+.service-center-try > summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+.service-center-try__body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 9px;
+}
+.service-center-try__notice {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.service-center-try__form { display: flex; flex-direction: column; gap: 9px; }
+.service-center-try__options {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(120px, 1fr);
+  gap: 8px;
+}
+.service-center-try__options label,
+.service-center-try__prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ink-dim);
+  font-size: 11px;
+}
+.service-center-try__options select,
+.service-center-try__prompt textarea {
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+}
+.service-center-try__options select { padding: 6px 8px; }
+.service-center-try__prompt textarea {
+  min-height: 82px;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.service-center-try__options select:focus-visible,
+.service-center-try__prompt textarea:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+.service-center-try__model-desc {
+  color: var(--ink-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.service-center-try__actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.service-center-try__answer {
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.service-center-try__answer > div {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.service-center-try__answer pre {
+  max-height: 360px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.service-center-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.service-center-tags > span {
+  padding: 2px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+@media (max-width: 1050px) {
+  .service-center-controls { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+}
+@media (max-width: 680px) {
+  .service-center-controls { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .service-center-card .service-row { flex-direction: column; }
+  .service-center-card .service-actions { width: 100%; flex-wrap: wrap; }
+  .service-center-try__options { grid-template-columns: 1fr; }
+}
+
 /* Cold-start skeletons — same footprint as a service card, no layout shift. */
 .service-skeleton { pointer-events: none; }
 .skeleton-line {

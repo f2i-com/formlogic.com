@@ -1,18 +1,49 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   appConfig,
+  aiProviders,
   openExternal,
   openInExplorer,
+  servicePlatform,
   services,
+  type AiProviderProfile,
+  type AiProviderView,
+  type AiProtocol,
+  type CodexLoginStart,
+  type CodexModelView,
+  type CodexServiceStatus,
   type GpuInfo,
+  type ServiceDefinitionSummary,
   type ServiceSnapshot,
   type ServiceStatus,
   type ServiceTemplateInput,
 } from './api';
-import AiProvidersPanel from './AiProvidersPanel';
+import {
+  AiProviderCard,
+  createBlankAiProviderProfile,
+  ProviderForm,
+} from './AiProvidersPanel';
 import { useConfirm } from './ConfirmDialog';
 import { AlertTriangleIcon, DownloadIcon, TrashIcon, UploadIcon, XIcon } from './Icons';
 import LogsViewer from './LogsViewer';
+import { PANEL_CACHE_KEYS, getPanelCache, setPanelCache } from './panelCache';
+import {
+  buildServiceCenterItems,
+  CODEX_LOGIN_TIMEOUT_MS,
+  formatCodexReasoningEffort,
+  getPersistedServiceCenterQuery,
+  getCodexReasoningEfforts,
+  getServiceCenterFacetOptions,
+  isSafeBrowserAuthUrl,
+  isSafeDeviceVerificationUrl,
+  isCodexLoginExpired,
+  queryServiceCenter,
+  setPersistedServiceCenterQuery,
+  shouldFocusServiceSearch,
+  type ServiceCenterPageSize,
+  type ServiceCenterQuery,
+  type ServiceCenterSort,
+} from './serviceCenterModel';
 import { refreshServices, useServicesStore } from './servicesStore';
 import {
   composeEngineArgs,
@@ -38,11 +69,27 @@ export default function ServicesPanel() {
   const [logsId, setLogsId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [filter, setFilter] = useState('');
+  const [providers, setProviders] = useState<AiProviderView[] | null>(
+    () =>
+      getPanelCache<{ providers: AiProviderView[] }>(PANEL_CACHE_KEYS.aiProviders)?.providers ??
+      null,
+  );
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [editingProvider, setEditingProvider] = useState<AiProviderProfile | null>(null);
+  const [testingProvider, setTestingProvider] = useState<string | null>(null);
+  const [serviceDefinitions, setServiceDefinitions] = useState<ServiceDefinitionSummary[]>([]);
+  const [codexStatus, setCodexStatus] = useState<CodexServiceStatus | null>(null);
+  const [codexError, setCodexError] = useState<string | null>(null);
+  const [codexBusy, setCodexBusy] = useState<'login' | 'logout' | 'cancel' | null>(null);
+  const [codexLogin, setCodexLogin] = useState<CodexLoginStart | null>(null);
+  const [codexLoginStartedAt, setCodexLoginStartedAt] = useState<number | null>(null);
+  const [query, setQuery] = useState<ServiceCenterQuery>(getPersistedServiceCenterQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(query.search);
   // Per-service ids with an action in flight — disables that row's buttons so a
   // double-click can't fire duplicate start/stop/install/delete requests.
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const importInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const toast = useToast();
   const { confirm: requestConfirm } = useConfirm();
@@ -53,6 +100,124 @@ export default function ServicesPanel() {
   const seenStatusRef = useRef<Map<string, ServiceStatus>>(new Map());
   const firstPollRef = useRef(true);
   const cancelledInstallIdsRef = useRef<Set<string>>(new Set());
+
+  const refreshProviders = useCallback(async () => {
+    try {
+      const response = await aiProviders.list();
+      setPanelCache(PANEL_CACHE_KEYS.aiProviders, response);
+      setProviders(response.providers);
+      setProviderError(null);
+    } catch (providerLoadError) {
+      setProviderError(
+        providerLoadError instanceof Error ? providerLoadError.message : String(providerLoadError),
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProviders();
+  }, [refreshProviders]);
+
+  const refreshCodexStatus = useCallback(async (): Promise<CodexServiceStatus | null> => {
+    try {
+      const status = await servicePlatform.codexStatus();
+      setCodexStatus(status);
+      setCodexError(null);
+      return status;
+    } catch (statusError) {
+      setCodexError(statusError instanceof Error ? statusError.message : String(statusError));
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    void servicePlatform.catalog()
+      .then((catalog) => setServiceDefinitions(catalog.definitions))
+      .catch(() => {
+        // The normalized built-in fallback keeps the catalog usable against an
+        // older Desktop host; status/action failures are surfaced separately.
+      });
+    void refreshCodexStatus();
+  }, [refreshCodexStatus]);
+
+  useEffect(() => {
+    if (!codexLogin || codexLoginStartedAt === null) return;
+    let disposed = false;
+    let settled = false;
+    let pollTimer: number | undefined;
+    let timeoutTimer: number | undefined;
+
+    const clearTimers = () => {
+      if (pollTimer !== undefined) window.clearTimeout(pollTimer);
+      if (timeoutTimer !== undefined) window.clearTimeout(timeoutTimer);
+    };
+    const expire = () => {
+      if (disposed || settled) return;
+      settled = true;
+      clearTimers();
+      void servicePlatform.cancelCodexLogin(codexLogin.loginId).catch(() => undefined);
+      setCodexLogin(null);
+      setCodexLoginStartedAt(null);
+      setCodexError('ChatGPT sign-in timed out after 10 minutes. Start a new sign-in to try again.');
+    };
+    const poll = async () => {
+      const status = await refreshCodexStatus();
+      if (disposed || settled) return;
+      if (status && !status.requiresOpenaiAuth && status.account) {
+        settled = true;
+        clearTimers();
+        setCodexLogin(null);
+        setCodexLoginStartedAt(null);
+        toast.push({
+          kind: 'success',
+          title: 'ChatGPT account connected',
+          body: status.account.email ?? status.account.planType ?? undefined,
+        });
+        return;
+      }
+      pollTimer = window.setTimeout(() => void poll(), 2000);
+    };
+
+    const elapsed = Date.now() - codexLoginStartedAt;
+    if (isCodexLoginExpired(codexLoginStartedAt)) {
+      expire();
+    } else {
+      timeoutTimer = window.setTimeout(
+        expire,
+        Math.max(0, CODEX_LOGIN_TIMEOUT_MS - elapsed),
+      );
+      pollTimer = window.setTimeout(() => void poll(), 1200);
+    }
+    return () => {
+      disposed = true;
+      clearTimers();
+    };
+  }, [codexLogin, codexLoginStartedAt, refreshCodexStatus, toast]);
+
+  useEffect(() => {
+    setPersistedServiceCenterQuery(query);
+  }, [query]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(query.search), 200);
+    return () => window.clearTimeout(timeout);
+  }, [query.search]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldFocusServiceSearch({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        target: event.target instanceof HTMLElement ? event.target : null,
+      })) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -126,6 +291,123 @@ export default function ServicesPanel() {
     [refresh],
   );
 
+  const testProvider = useCallback(
+    async (id: string, protocol: AiProtocol) => {
+      setTestingProvider(id);
+      try {
+        const result = await aiProviders.test(id);
+        toast.push(
+          result.ok
+            ? {
+                kind: 'success',
+                title: `"${id}" looks good`,
+                body:
+                  protocol === 'openai'
+                    ? 'Endpoint answered and the key (if set) is accepted.'
+                    : "URL and egress policy check out — this protocol's test does not contact the server.",
+              }
+            : { kind: 'error', title: `"${id}" test failed` },
+        );
+      } catch (providerTestError) {
+        toast.push({
+          kind: 'error',
+          title: `"${id}" test failed`,
+          body:
+            providerTestError instanceof Error
+              ? providerTestError.message
+              : String(providerTestError),
+        });
+      } finally {
+        setTestingProvider(null);
+      }
+    },
+    [toast],
+  );
+
+  const startCodexSignIn = useCallback(async (deviceCode = false) => {
+    if (codexBusy) return;
+    setCodexBusy('login');
+    setCodexError(null);
+    let loginId: string | null = null;
+    try {
+      const login = await servicePlatform.startCodexLogin(deviceCode);
+      loginId = login.loginId;
+      const targetUrl = deviceCode ? login.verificationUrl : login.authUrl;
+      const safeTarget = targetUrl && (
+        deviceCode ? isSafeDeviceVerificationUrl(targetUrl) : isSafeBrowserAuthUrl(targetUrl)
+      );
+      if (!targetUrl || !safeTarget) {
+        throw new Error(
+          deviceCode
+            ? 'Codex did not return a safe device verification URL.'
+            : 'Codex did not return a safe browser sign-in URL.',
+        );
+      }
+      if (deviceCode && !login.userCode) {
+        throw new Error('Codex did not return a device sign-in code.');
+      }
+      setCodexLogin(login);
+      setCodexLoginStartedAt(Date.now());
+      await openExternal(targetUrl);
+      toast.push({
+        kind: 'info',
+        title: deviceCode ? 'Enter the code shown on the Codex card' : 'Finish signing in in your browser',
+        body: 'FormLogic will update the card when the ChatGPT account is connected.',
+      });
+    } catch (loginError) {
+      if (loginId) {
+        await servicePlatform.cancelCodexLogin(loginId).catch(() => undefined);
+      }
+      setCodexLogin(null);
+      setCodexLoginStartedAt(null);
+      setCodexError(loginError instanceof Error ? loginError.message : String(loginError));
+    } finally {
+      setCodexBusy(null);
+    }
+  }, [codexBusy, toast]);
+
+  const cancelCodexSignIn = useCallback(async () => {
+    if (!codexLogin || codexBusy) return;
+    const loginId = codexLogin.loginId;
+    setCodexBusy('cancel');
+    setCodexError(null);
+    setCodexLogin(null);
+    setCodexLoginStartedAt(null);
+    try {
+      await servicePlatform.cancelCodexLogin(loginId);
+      await refreshCodexStatus();
+      toast.push({ kind: 'info', title: 'ChatGPT sign-in cancelled' });
+    } catch (cancelError) {
+      setCodexError(cancelError instanceof Error ? cancelError.message : String(cancelError));
+    } finally {
+      setCodexBusy(null);
+    }
+  }, [codexBusy, codexLogin, refreshCodexStatus, toast]);
+
+  const logoutCodex = useCallback(async () => {
+    if (codexBusy) return;
+    const confirmed = await requestConfirm({
+      title: 'Sign out of ChatGPT for FormLogic?',
+      body: 'This clears the dedicated Codex account connection. OpenAI API providers and their keys are not changed.',
+      confirmLabel: 'Sign out',
+      danger: true,
+    });
+    if (!confirmed) return;
+    setCodexBusy('logout');
+    setCodexError(null);
+    try {
+      await servicePlatform.logoutCodex();
+      setCodexLogin(null);
+      setCodexLoginStartedAt(null);
+      await refreshCodexStatus();
+      toast.push({ kind: 'info', title: 'ChatGPT account disconnected' });
+    } catch (logoutError) {
+      setCodexError(logoutError instanceof Error ? logoutError.message : String(logoutError));
+    } finally {
+      setCodexBusy(null);
+    }
+  }, [codexBusy, refreshCodexStatus, requestConfirm, toast]);
+
   // Import a self-contained service package (a .json with template + bundled
   // `files`). POSTs to /api/services, which materializes the scripts so it's
   // immediately installable — no recompile.
@@ -186,37 +468,51 @@ export default function ServicesPanel() {
     }
   }, [toast]);
 
-  // Group by category for cleaner sectioning, after the search filter.
-  const grouped = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    const match = (s: ServiceSnapshot) =>
-      !q ||
-      s.name.toLowerCase().includes(q) ||
-      s.id.toLowerCase().includes(q) ||
-      s.description.toLowerCase().includes(q) ||
-      s.category.toLowerCase().includes(q);
-    const map = new Map<string, ServiceSnapshot[]>();
-    for (const s of snapshot?.services ?? []) {
-      if (!match(s)) continue;
-      const arr = map.get(s.category) ?? [];
-      arr.push(s);
-      map.set(s.category, arr);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [snapshot, filter]);
+  // One normalized catalog drives searching/facets while source-specific cards
+  // keep their established process and provider controls.
+  const codexDefinition = useMemo(
+    () => serviceDefinitions.find((definition) => definition.id === 'openai-codex-agent'),
+    [serviceDefinitions],
+  );
+  const catalogItems = useMemo(
+    () => buildServiceCenterItems(
+      snapshot?.services ?? [],
+      providers ?? [],
+      true,
+      codexDefinition,
+      codexStatus ?? undefined,
+    ),
+    [snapshot, providers, codexDefinition, codexStatus],
+  );
+  const facets = useMemo(() => getServiceCenterFacetOptions(catalogItems), [catalogItems]);
+  const result = useMemo(
+    () => queryServiceCenter(catalogItems, { ...query, search: debouncedSearch }),
+    [catalogItems, debouncedSearch, query],
+  );
+  const serviceById = useMemo(
+    () => new Map((snapshot?.services ?? []).map((service) => [service.id, service])),
+    [snapshot],
+  );
+  const providerById = useMemo(
+    () => new Map((providers ?? []).map((provider) => [provider.id, provider])),
+    [providers],
+  );
 
-  // SRV-004 summary counts (from the UNFILTERED snapshot — the chips describe
-  // the machine, not the current search).
+  // Counts come from the unfiltered catalog, not the current result page.
   const counts = useMemo(() => {
-    const c = { running: 0, stopped: 0, errored: 0, busy: 0 };
-    for (const s of snapshot?.services ?? []) {
-      if (s.status === 'running') c.running += 1;
-      else if (s.status === 'errored') c.errored += 1;
-      else if (s.status === 'installing' || s.status === 'starting') c.busy += 1;
-      else c.stopped += 1;
+    const count = { running: 0, configured: 0, attention: 0, unavailable: 0 };
+    for (const item of catalogItems) {
+      if (item.status === 'running') count.running += 1;
+      else if (item.status === 'configured') count.configured += 1;
+      else if (item.status === 'unavailable') count.unavailable += 1;
+      else if (item.status === 'error' || item.status === 'needs-setup') count.attention += 1;
     }
-    return c;
-  }, [snapshot]);
+    return count;
+  }, [catalogItems]);
+
+  const updateQuery = useCallback((patch: Partial<ServiceCenterQuery>, resetPage = true) => {
+    setQuery((current) => ({ ...current, ...patch, page: resetPage ? 1 : patch.page ?? current.page }));
+  }, []);
 
   const logsService = logsId
     ? snapshot?.services.find((s) => s.id === logsId) ?? null
@@ -245,21 +541,22 @@ export default function ServicesPanel() {
         <div className="services-summary">
           <div className="services-summary-chips">
             <span className="summary-chip summary-chip-ok">{counts.running} running</span>
-            <span className="summary-chip summary-chip-neutral">{counts.stopped} stopped</span>
-            {counts.busy > 0 && (
-              <span className="summary-chip summary-chip-pending">{counts.busy} busy</span>
+            <span className="summary-chip summary-chip-neutral">{counts.configured} configured</span>
+            {counts.attention > 0 && (
+              <span className="summary-chip summary-chip-err">{counts.attention} need attention</span>
             )}
-            {counts.errored > 0 && (
-              <span className="summary-chip summary-chip-err">{counts.errored} errored</span>
+            {counts.unavailable > 0 && (
+              <span className="summary-chip summary-chip-neutral">{counts.unavailable} unavailable</span>
             )}
           </div>
           <input
+            ref={searchInputRef}
             type="search"
             className="services-search"
-            placeholder="Filter services…"
-            aria-label="Filter services"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search services, capabilities or tags…  /"
+            aria-label="Search Service Center"
+            value={query.search}
+            onChange={(e) => updateQuery({ search: e.target.value })}
           />
           <span
             className={`services-freshness${stale ? ' services-freshness-stale' : ''}`}
@@ -278,6 +575,92 @@ export default function ServicesPanel() {
           </span>
         </div>
       )}
+      {snapshot && (
+        <div className="service-center-controls" aria-label="Service filters">
+          <label>
+            <span>Category</span>
+            <select value={query.category} onChange={(e) => updateQuery({ category: e.target.value })}>
+              <option value="">All categories</option>
+              {facets.categories.map((category) => <option key={category}>{category}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Tag</span>
+            <select value={query.tag} onChange={(e) => updateQuery({ tag: e.target.value })}>
+              <option value="">All tags</option>
+              {facets.tags.map((tag) => <option key={tag}>{tag}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={query.status} onChange={(e) => updateQuery({ status: e.target.value })}>
+              <option value="">All statuses</option>
+              {facets.statuses.map((status) => <option key={status} value={status}>{status.replace('-', ' ')}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Kind</span>
+            <select value={query.kind} onChange={(e) => updateQuery({ kind: e.target.value })}>
+              <option value="">All kinds</option>
+              {facets.kinds.map((kind) => <option key={kind} value={kind}>{kind.replace('-', ' ')}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Sort</span>
+            <select
+              value={query.sort}
+              onChange={(e) => updateQuery({ sort: e.target.value as ServiceCenterSort })}
+            >
+              <option value="relevance">Relevance</option>
+              <option value="name">Name</option>
+              <option value="status">Status</option>
+              <option value="kind">Kind</option>
+            </select>
+          </label>
+          <label>
+            <span>Per page</span>
+            <select
+              value={query.pageSize}
+              onChange={(e) => updateQuery({ pageSize: Number(e.target.value) as ServiceCenterPageSize })}
+            >
+              <option value={12}>12</option>
+              <option value={24}>24</option>
+              <option value={48}>48</option>
+            </select>
+          </label>
+        </div>
+      )}
+      {snapshot && (
+        <div className="service-center-actions">
+          <button className="btn btn-secondary" onClick={() => setShowAddForm(true)}>
+            + Add local service
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setEditingProvider(createBlankAiProviderProfile())}
+          >
+            + Add API provider
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => importInputRef.current?.click()}
+            title="Import a self-contained service package"
+          >
+            <span className="icon-button-label"><DownloadIcon size={14} />Import package</span>
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void importPackage(file);
+              e.currentTarget.value = '';
+            }}
+          />
+        </div>
+      )}
       {actionError && (
         <div className="banner banner-err banner-dismissable">
           <span>
@@ -293,6 +676,42 @@ export default function ServicesPanel() {
             <XIcon size={14} />
           </button>
         </div>
+      )}
+      {providerError && (
+        <div className="banner banner-err">
+          Couldn't load AI providers: {providerError}. Local services and the catalog remain available.
+        </div>
+      )}
+      {showAddForm && (
+        <section className="service-section service-center-editor">
+          <AddServiceForm
+            onCancel={() => setShowAddForm(false)}
+            onSaved={() => {
+              setShowAddForm(false);
+              void refresh();
+              toast.push({
+                kind: 'success',
+                title: 'Custom service added',
+                body: 'Click Start to launch it.',
+              });
+            }}
+            onError={(message) => setActionError(message)}
+          />
+        </section>
+      )}
+      {editingProvider && (
+        <section className="service-section service-center-editor">
+          <ProviderForm
+            key={editingProvider.id || 'new'}
+            initial={editingProvider}
+            onCancel={() => setEditingProvider(null)}
+            onKeyRemoved={() => void refreshProviders()}
+            onSaved={() => {
+              setEditingProvider(null);
+              void refreshProviders();
+            }}
+          />
+        </section>
       )}
       {snapshot && (
         <div className="datadir-note">
@@ -310,18 +729,16 @@ export default function ServicesPanel() {
             open
           </button>{' '}
           Services are plug-and-play: drop a package <code>*.json</code> into{' '}
-          <code>templates/</code> (or use <strong>Import package</strong> below)
+          <code>templates/</code> (or use <strong>Import package</strong> in the toolbar)
           to register one without rebuilding. A package can bundle its own
           scripts in a <code>"files"</code> map, so a single JSON is everything
           needed to install + run it — <strong>Export</strong> any service to
           get one.
         </div>
       )}
-      {grouped.length === 0 && snapshot && !error && (
+      {result.total === 0 && snapshot && !error && (
         <div className="empty-state">
-          {filter.trim()
-            ? 'No services match the filter.'
-            : 'No service templates loaded. Built-ins should appear on first run — if you just installed FormLogic Desktop, try restarting it.'}
+          No services match the current search and filters.
         </div>
       )}
       {!snapshot && !error && (
@@ -337,15 +754,19 @@ export default function ServicesPanel() {
           ))}
         </section>
       )}
-      {/* SRV-004/AI-407: local processes are grouped by category; external AI
-          endpoints are a semantically-distinct group (no pid/logs — health is
-          a reachability probe). Rendered below the local services. */}
-      {grouped.map(([category, svcs]) => (
-        <section key={category} className="service-section">
-          <h3 className="section-title">Local processes · {category}</h3>
-          {svcs.map((svc) => (
+      {snapshot && result.total > 0 && (
+        <section className="service-section service-center-results">
+          <div className="service-center-result-meta" aria-live="polite">
+            <span>{result.total} result{result.total === 1 ? '' : 's'}</span>
+            <span>Page {result.page} of {result.pageCount}</span>
+          </div>
+          {result.items.map((item) => {
+            if (item.source === 'runtime') {
+              const svc = serviceById.get(item.id);
+              if (!svc) return null;
+              return (
             <ServiceCard
-              key={svc.id}
+              key={item.key}
               service={svc}
               logsOpen={logsId === svc.id}
               pending={pendingIds.has(svc.id)}
@@ -401,61 +822,194 @@ export default function ServicesPanel() {
                 }
               }}
             />
-          ))}
-        </section>
-      ))}
+              );
+            }
 
-      {/* AI-407: external AI endpoints. Only render once the local-services
-          snapshot exists so a cold API failure doesn't show a half page. */}
-      {snapshot && <AiProvidersPanel />}
+            if (item.source === 'provider') {
+              const provider = providerById.get(item.id);
+              if (!provider) return null;
+              return (
+                <AiProviderCard
+                  key={item.key}
+                  provider={provider}
+                  displayName={item.name}
+                  description={item.description}
+                  status={item.status}
+                  kind={item.kind}
+                  tags={item.tags}
+                  testing={testingProvider === provider.id}
+                  onTest={() => void testProvider(provider.id, provider.protocol)}
+                  onEdit={() => setEditingProvider(provider)}
+                  onRemove={async () => {
+                    const confirmed = await requestConfirm({
+                      title: `Remove "${provider.name}"?`,
+                      body: 'The provider config and its stored API key are deleted.',
+                      confirmLabel: 'Remove',
+                      danger: true,
+                    });
+                    if (!confirmed) return;
+                    try {
+                      await aiProviders.remove(provider.id);
+                      await refreshProviders();
+                      toast.push({ kind: 'success', title: `"${provider.name}" removed` });
+                    } catch (removeError) {
+                      toast.push({
+                        kind: 'error',
+                        title: 'Remove failed',
+                        body: removeError instanceof Error ? removeError.message : String(removeError),
+                      });
+                    }
+                  }}
+                />
+              );
+            }
 
-      <section className="service-section">
-        {showAddForm ? (
-          <AddServiceForm
-            onCancel={() => setShowAddForm(false)}
-            onSaved={() => {
-              setShowAddForm(false);
-              refresh();
-              toast.push({
-                kind: 'success',
-                title: 'Custom service added',
-                body: 'Click Start to launch it.',
-              });
-            }}
-            onError={(msg) => setActionError(msg)}
-          />
-        ) : (
-          <div className="inline-actions">
+            const codexConnected = Boolean(
+              codexStatus?.available && !codexStatus.requiresOpenaiAuth && codexStatus.account,
+            );
+            const codexStatusLabel = codexLogin
+              ? 'sign-in pending'
+              : codexConnected
+                ? 'connected'
+                : codexStatus?.available
+                  ? 'needs sign-in'
+                  : codexStatus
+                    ? 'unavailable'
+                    : 'checking';
+            return (
+              <div key={item.key} className="service-card service-center-card service-center-card--pilot">
+                <div className="service-row">
+                  <div className="service-info">
+                    <div className="service-name">
+                      {item.name}
+                      <span className="badge badge-neutral">delegated agent</span>
+                      <span className={`badge ${codexConnected ? 'badge-ok' : 'badge-neutral'}`}>
+                        {codexStatusLabel}
+                      </span>
+                      {codexStatus?.running && <span className="badge badge-ok">agent running</span>}
+                    </div>
+                    <div className="service-desc">{item.description}</div>
+                    <div className="service-meta">
+                      {codexStatus?.account?.email ?? codexStatus?.account?.accountType ?? 'Eligible ChatGPT plan'}
+                      {codexStatus?.account?.planType && <> · {codexStatus.account.planType}</>}
+                      {codexStatus?.version && <> · Codex {codexStatus.version}</>}
+                    </div>
+                    <div className="service-center-boundary">
+                      ChatGPT sign-in uses eligible ChatGPT/Codex plan entitlements. It is separate
+                      from OpenAI Platform API keys and API billing. Aokie can optionally use it as
+                      an experimental text-only call LLM with reasoning Off or Low; speech-to-text
+                      and text-to-speech remain separate, and this is not OpenAI Realtime voice.
+                    </div>
+                    {codexLogin?.method === 'device-code' && codexLogin.userCode && codexLogin.verificationUrl && (
+                      <div className="service-center-device-code" role="status">
+                        <span>Device sign-in code</span>
+                        <code>{codexLogin.userCode}</code>
+                        <span className="service-center-device-url">{codexLogin.verificationUrl}</span>
+                        <button
+                          type="button"
+                          className="btn-tiny"
+                          onClick={() => {
+                            if (!isSafeDeviceVerificationUrl(codexLogin.verificationUrl!)) return;
+                            void openExternal(codexLogin.verificationUrl!).catch((openError) =>
+                              setCodexError(openError instanceof Error ? openError.message : String(openError)),
+                            );
+                          }}
+                        >
+                          Open verification page
+                        </button>
+                      </div>
+                    )}
+                    {codexStatus && (
+                      <div className="service-center-safety">
+                        Safe defaults: files {codexStatus.safeDefaults.fileSystem} · network{' '}
+                        {codexStatus.safeDefaults.network} · approvals {codexStatus.safeDefaults.approvals}
+                        {' '}· credentials {codexStatus.safeDefaults.credentials}
+                      </div>
+                    )}
+                    {(codexError || codexStatus?.error) && (
+                      <div className="service-error">
+                        <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+                        {codexError ?? codexStatus?.error}
+                      </div>
+                    )}
+                    <div className="service-center-tags" aria-label="Tags">
+                      {item.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                    </div>
+                  </div>
+                  <div className="service-actions">
+                    {codexLogin ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={codexBusy !== null}
+                        onClick={() => void cancelCodexSignIn()}
+                      >
+                        {codexBusy === 'cancel' ? 'Cancelling…' : 'Cancel sign-in'}
+                      </button>
+                    ) : codexConnected ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={codexBusy !== null}
+                        onClick={() => void logoutCodex()}
+                      >
+                        {codexBusy === 'logout' ? 'Signing out…' : 'Sign out'}
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={!codexStatus?.available || codexBusy !== null}
+                          onClick={() => void startCodexSignIn(false)}
+                        >
+                          {codexBusy === 'login' ? 'Opening browser…' : 'Sign in with ChatGPT'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          disabled={!codexStatus?.available || codexBusy !== null}
+                          onClick={() => void startCodexSignIn(true)}
+                        >
+                          Use device code
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={codexBusy !== null}
+                      onClick={() => void refreshCodexStatus()}
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+                {codexConnected && <CodexAssistantTryout />}
+              </div>
+            );
+          })}
+          <div className="service-center-pagination" aria-label="Service result pages">
             <button
+              type="button"
               className="btn btn-secondary"
-              onClick={() => setShowAddForm(true)}
+              disabled={result.page <= 1}
+              onClick={() => updateQuery({ page: result.page - 1 }, false)}
             >
-              + Add custom service
+              Previous
             </button>
+            <span>Page {result.page} of {result.pageCount}</span>
             <button
+              type="button"
               className="btn btn-secondary"
-              onClick={() => importInputRef.current?.click()}
-              title="Import a self-contained service package (.json with bundled scripts)"
+              disabled={result.page >= result.pageCount}
+              onClick={() => updateQuery({ page: result.page + 1 }, false)}
             >
-              <span className="icon-button-label">
-                <DownloadIcon size={14} />
-                Import package
-              </span>
+              Next
             </button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void importPackage(f);
-                e.currentTarget.value = '';
-              }}
-            />
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {/* SRV-004: logs open in a slide-over drawer (no accordion jumping the
           card list around). Esc, the scrim, or the viewer's close all exit. */}
@@ -483,10 +1037,205 @@ export default function ServicesPanel() {
   );
 }
 
+function CodexAssistantTryout() {
+  const [open, setOpen] = useState(false);
+  const [models, setModels] = useState<CodexModelView[] | null>(null);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [reasoningEffort, setReasoningEffort] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelsAttempted, setModelsAttempted] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadModels = useCallback(async () => {
+    if (loadingModels) return;
+    setLoadingModels(true);
+    setModelsAttempted(true);
+    setError(null);
+    try {
+      const response = await servicePlatform.codexModels();
+      const available = response.models.filter((model) => model.model.trim() !== '');
+      setModels(available);
+      setSelectedModel((current) => {
+        if (available.some((model) => model.model === current)) return current;
+        return (available.find((model) => model.isDefault) ?? available[0])?.model ?? '';
+      });
+    } catch (modelError) {
+      setModels(null);
+      setError(modelError instanceof Error ? modelError.message : String(modelError));
+    } finally {
+      setLoadingModels(false);
+    }
+  }, [loadingModels]);
+
+  useEffect(() => {
+    if (open && !modelsAttempted && !loadingModels) void loadModels();
+  }, [loadModels, loadingModels, modelsAttempted, open]);
+
+  const selectedModelInfo = useMemo(
+    () => models?.find((model) => model.model === selectedModel) ?? null,
+    [models, selectedModel],
+  );
+  const reasoningChoices = useMemo(
+    () => getCodexReasoningEfforts(selectedModelInfo),
+    [selectedModelInfo],
+  );
+
+  useEffect(() => {
+    setReasoningEffort((current) => {
+      if (reasoningChoices.includes(current)) return current;
+      const preferred = selectedModelInfo?.defaultReasoningEffort;
+      return preferred && reasoningChoices.includes(preferred)
+        ? preferred
+        : reasoningChoices[0] ?? '';
+    });
+  }, [reasoningChoices, selectedModelInfo]);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt || !selectedModel || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const response = await servicePlatform.codexChat({
+        prompt: cleanPrompt,
+        threadId: threadId ?? undefined,
+        model: selectedModel,
+        reasoningEffort: reasoningEffort || undefined,
+      });
+      setThreadId(response.threadId);
+      setAnswer(response.text);
+      setPrompt('');
+    } catch (chatError) {
+      setError(chatError instanceof Error ? chatError.message : String(chatError));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <details
+      className="service-center-try"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Try assistant</summary>
+      <div className="service-center-try__body">
+        <div className="service-center-try__notice">
+          Read-only workspace · file access off · agent tools cannot use the network · your prompt
+          is sent to OpenAI through Codex · no raw agent events are shown
+        </div>
+        {loadingModels && <div className="section-loading"><span className="spinner" />Loading models…</div>}
+        {!loadingModels && models?.length === 0 && (
+          <div className="empty-state">This ChatGPT workspace did not return any available Codex models.</div>
+        )}
+        {models && models.length > 0 && (
+          <form className="service-center-try__form" onSubmit={submit}>
+            <div className="service-center-try__options">
+              <label>
+                <span>Model</span>
+                <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                  {models.map((model) => (
+                    <option key={model.id} value={model.model}>
+                      {model.displayName}{model.isDefault ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {reasoningChoices.length > 0 && (
+                <label>
+                  <span>Reasoning</span>
+                  <select
+                    value={reasoningEffort}
+                    onChange={(event) => setReasoningEffort(event.target.value)}
+                  >
+                    {reasoningChoices.map((effort) => (
+                      <option key={effort} value={effort}>{formatCodexReasoningEffort(effort)}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            {selectedModelInfo?.description && (
+              <div className="service-center-try__model-desc">{selectedModelInfo.description}</div>
+            )}
+            <label className="service-center-try__prompt">
+              <span>{threadId ? 'Continue this conversation' : 'Ask the assistant'}</span>
+              <textarea
+                rows={4}
+                maxLength={200_000}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Describe the form, app or flow you want help with…"
+              />
+            </label>
+            <div className="service-center-try__actions">
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={sending || !prompt.trim() || !selectedModel}
+              >
+                {sending ? 'Thinking…' : threadId ? 'Continue' : 'Ask assistant'}
+              </button>
+              {threadId && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={sending}
+                  onClick={() => {
+                    setThreadId(null);
+                    setAnswer(null);
+                    setPrompt('');
+                    setError(null);
+                  }}
+                >
+                  New conversation
+                </button>
+              )}
+            </div>
+          </form>
+        )}
+        {error && (
+          <div className="service-error">
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            {error}{' '}
+            {models === null && !loadingModels && (
+              <button type="button" className="btn-tiny" onClick={() => void loadModels()}>Retry</button>
+            )}
+          </div>
+        )}
+        {answer !== null && (
+          <div className="service-center-try__answer" role="region" aria-label="Assistant response">
+            <div>Assistant</div>
+            <pre>{answer}</pre>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 interface AddFormProps {
   onCancel: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
+}
+
+function parseTagList(value: string): string[] {
+  const seen = new Set<string>();
+  return value
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter((tag) => {
+      const key = tag.toLocaleLowerCase();
+      if (!tag || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 /**
@@ -500,6 +1249,7 @@ function AddServiceForm({ onCancel, onSaved, onError }: AddFormProps) {
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Custom');
+  const [tagsText, setTagsText] = useState('');
   const [description, setDescription] = useState('');
   const [command, setCommand] = useState('');
   const [argsText, setArgsText] = useState('');
@@ -513,6 +1263,7 @@ function AddServiceForm({ onCancel, onSaved, onError }: AddFormProps) {
       name: name.trim() || id.trim(),
       description: description.trim() || `Custom service: ${command}`,
       category: category.trim() || 'Custom',
+      tags: parseTagList(tagsText),
       defaultPort: port,
       install: { kind: 'none' },
       run: {
@@ -563,6 +1314,16 @@ function AddServiceForm({ onCancel, onSaved, onError }: AddFormProps) {
           />
         </label>
       </div>
+      <label className="form-row">
+        <span>Tags (comma-separated)</span>
+        <input
+          type="text"
+          placeholder="automation, internal, image"
+          value={tagsText}
+          onChange={(e) => setTagsText(e.target.value)}
+        />
+        <span className="form-hint">Used by Service Center search and filters.</span>
+      </label>
       <label className="form-row">
         <span>Description</span>
         <input
@@ -1418,7 +2179,7 @@ function ServiceCard({
                   rel="noreferrer"
                   onClick={(e) => {
                     e.preventDefault();
-                    openExternal(service.docsUrl!);
+                    void openExternal(service.docsUrl!).catch(() => undefined);
                   }}
                 >
                   docs

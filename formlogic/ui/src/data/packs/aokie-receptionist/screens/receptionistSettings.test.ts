@@ -54,6 +54,7 @@ function makeFl(opts: {
   records?: Array<{ id: string; answers: Record<string, unknown> }>;
   settings?: Record<string, unknown>;
   getExtra?: Record<string, unknown>;
+  aiSources?: Array<Record<string, unknown>> | null;
   submitDelayMs?: number;
 } = {}): { fl: Record<string, unknown>; calls: FlCalls } {
   const calls: FlCalls = { set: [], submit: [], update: [] };
@@ -61,7 +62,7 @@ function makeFl(opts: {
     presence: () => Promise.resolve({ kind: 'local' }),
     can: () => Promise.resolve(true),
     currentUser: () => Promise.resolve(null),
-    aiSources: () => Promise.resolve(null),
+    aiSources: () => Promise.resolve(opts.aiSources ?? null),
     records: () => Promise.resolve(opts.records ?? []),
     connector: (_id: string, cmd: string, payload: Record<string, unknown>) => {
       if (cmd === 'settings.get') {
@@ -178,6 +179,145 @@ describe('agentPayload.ts parity with the canonical modules', () => {
 // ── compiled-screen behavior ─────────────────────────────────────────────────
 
 describe('receptionist settings screen (TSX, compiled artifact)', () => {
+  const CODEX_SOURCES = [
+    {
+      kind: 'provider',
+      id: 'provider:openai-codex-agent-none',
+      refId: 'openai-codex-agent-none',
+      name: 'ChatGPT/Codex - Off (fastest, experimental)',
+      category: 'AI',
+      status: 'running',
+      url: '',
+      capabilities: ['chat'],
+      enabled: true,
+      model: 'gpt-5.5',
+    },
+    {
+      kind: 'provider',
+      id: 'provider:openai-codex-agent-low',
+      refId: 'openai-codex-agent-low',
+      name: 'ChatGPT/Codex - Low reasoning (experimental)',
+      category: 'AI',
+      status: 'running',
+      url: '',
+      capabilities: ['chat'],
+      enabled: true,
+      model: 'gpt-5.5',
+    },
+    {
+      kind: 'service',
+      id: 'service:aokie-stt',
+      refId: 'aokie-stt',
+      name: 'Aokie Speech to Text',
+      category: 'Speech-to-Text',
+      status: 'running',
+      url: 'http://127.0.0.1:17921',
+      capabilities: ['transcription'],
+    },
+    {
+      kind: 'service',
+      id: 'service:aokie-tts',
+      refId: 'aokie-tts',
+      name: 'Aokie Text to Speech',
+      category: 'Text-to-Speech',
+      status: 'running',
+      url: 'http://127.0.0.1:17922',
+      capabilities: ['speech'],
+    },
+  ];
+
+  it('offers both experimental Codex reply modes, fixes gpt-5.5, and blocks direct caller audio', async () => {
+    const { fl, calls } = makeFl({
+      records: [{
+        id: 'r1',
+        answers: {
+          model: 'local-model',
+          stt_source: 'service:aokie-stt',
+          tts_source: 'service:aokie-tts',
+        },
+      }],
+      settings: { sendAudio: true, audioTranscript: false },
+      aiSources: CODEX_SOURCES,
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+    const reply = root.querySelector('[data-lane="llm"]') as HTMLSelectElement;
+    const values = Array.from(reply.options).map((option) => option.value);
+    expect(values).toContain('provider:openai-codex-agent-none');
+    expect(values).toContain('provider:openai-codex-agent-low');
+
+    reply.value = 'provider:openai-codex-agent-low';
+    reply.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+
+    const model = root.querySelector('[data-d="model"]') as HTMLInputElement;
+    expect(model.value).toBe('gpt-5.5');
+    expect(model.disabled).toBe(true);
+    expect((root.querySelector('[data-lane="stt"]') as HTMLSelectElement).value).toBe('service:aokie-stt');
+    expect((root.querySelector('[data-lane="tts"]') as HTMLSelectElement).value).toBe('service:aokie-tts');
+    expect(root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain('may add noticeable delay');
+
+    const audio = root.querySelector('[data-audio="mode"]') as HTMLSelectElement;
+    expect(audio.value).toBe('off');
+    expect((audio.querySelector('option[value="direct"]') as HTMLOptionElement).disabled).toBe(true);
+    expect((audio.querySelector('option[value="both"]') as HTMLOptionElement).disabled).toBe(true);
+    expect(root.querySelector('[data-codex-live-call-note="audio"]')?.textContent).toContain('Direct caller audio is blocked');
+
+    // Even a synthetic/programmatic attempt cannot bypass the store guard.
+    audio.value = 'both';
+    audio.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+    expect((root.querySelector('[data-audio="mode"]') as HTMLSelectElement).value).toBe('corrections');
+
+    (root.querySelector('[data-act="save-audio"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(calls.set[0].sendAudio).toBe(false);
+    expect(calls.set[0].audioTranscript).toBe(true);
+
+    (root.querySelector('[data-act="save-apply"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(calls.set[1].sendAudio).toBe(false);
+    expect(calls.set[1].aiModel).toBe('gpt-5.5');
+    expect(calls.set[1].aiEndpoint).toBe(
+      'http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-low/v1/chat/completions',
+    );
+  });
+
+  it('normalizes a previously saved Codex source and never restores stale sendAudio=true', async () => {
+    const { fl, calls } = makeFl({
+      records: [{
+        id: 'r1',
+        answers: {
+          llm_source: 'provider:openai-codex-agent-none',
+          model: 'stale-model',
+          stt_source: 'service:aokie-stt',
+          tts_source: 'service:aokie-tts',
+        },
+      }],
+      settings: { sendAudio: true, audioTranscript: false },
+      aiSources: CODEX_SOURCES,
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+
+    expect((root.querySelector('[data-d="model"]') as HTMLInputElement).value).toBe('gpt-5.5');
+    expect((root.querySelector('[data-audio="mode"]') as HTMLSelectElement).value).toBe('off');
+    expect(root.querySelector('.savebar .dirty')?.textContent).toBe('Unsaved changes');
+    expect(root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain('fastest setting');
+
+    const audio = root.querySelector('[data-audio="mode"]') as HTMLSelectElement;
+    audio.value = 'direct';
+    audio.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+    expect((root.querySelector('[data-audio="mode"]') as HTMLSelectElement).value).toBe('off');
+
+    (root.querySelector('[data-act="save-audio"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(calls.set[0].sendAudio).toBe(false);
+  });
+
   it('(e) the running-now strip renders greeting/voice/model/mode/configVersion from settings.get', async () => {
     const { fl } = makeFl({
       records: [{ id: 'r1', answers: {} }],

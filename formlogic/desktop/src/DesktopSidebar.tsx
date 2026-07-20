@@ -23,7 +23,7 @@ export type SectionId =
 
 export const SECTION_META: Record<SectionId, { title: string; subtitle: string }> = {
   overview: { title: 'Control centre', subtitle: 'Everything local, connected and ready at a glance.' },
-  services: { title: 'Local services', subtitle: 'Install, run and inspect the local engines behind your flows.' },
+  services: { title: 'Service Center', subtitle: 'Find and manage local runtimes, AI APIs and connected agents.' },
   models: { title: 'Models', subtitle: 'Download and organise models available to FormLogic services.' },
   plugins: { title: 'Plugins', subtitle: 'Manage supervised connectors that bridge apps to local capability.' },
   python: { title: 'Python', subtitle: 'A portable runtime and reusable environments for local services.' },
@@ -65,6 +65,7 @@ export function DesktopSidebar({
       label: 'Operate',
       items: [
         { id: 'overview', label: 'Overview', icon: LayoutGridIcon },
+        { id: 'services', label: 'Service Center', icon: ServerIcon },
         // PLG-203: plugin-contributed nav entries (a v2 plugin's ui.nav).
         ...pluginNav.map(
           (n): NavItem => ({
@@ -80,7 +81,6 @@ export function DesktopSidebar({
     {
       label: 'Local runtime',
       items: [
-        { id: 'services', label: 'Services', icon: ServerIcon },
         { id: 'models', label: 'Models', icon: DatabaseIcon },
         { id: 'plugins', label: 'Plugins', icon: PuzzleIcon },
         { id: 'python', label: 'Python', icon: TerminalSquareIcon },

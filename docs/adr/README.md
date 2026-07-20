@@ -16,6 +16,7 @@ mid-implementation. Statuses: **accepted** (locked for implementation), **provis
 | [ADR-006](ADR-006-companion-key-custody.md) | Companion root-key custody | provisional — host security broker; AOK-303 prototype is the gate |
 | [ADR-007](ADR-007-settings-ownership.md) | Settings ownership split | accepted |
 | [ADR-008](ADR-008-ai-provider-gateway.md) | AI provider profiles + gateway authentication | accepted |
+| [ADR-009](ADR-009-service-platform.md) | One service contract, one credential boundary, many consumers | accepted for first slice |
 
 Supporting Phase −1 artifacts:
 

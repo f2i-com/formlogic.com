@@ -275,6 +275,43 @@ export interface LaneOption {
   label: string;
 }
 
+export const CODEX_LIVE_CALL_MODEL = 'gpt-5.5';
+const CODEX_LIVE_CALL_SOURCES = [
+  'provider:openai-codex-agent-none',
+  'provider:openai-codex-agent-low',
+];
+
+/** The two Desktop-owned Codex pseudo-providers are text-only live-call
+ *  adapters. They deliberately share a fixed model; their source id selects
+ *  the reasoning/latency profile. Keep this exact allow-list narrow so an
+ *  ordinary provider whose id merely contains "codex" is never constrained. */
+export function isCodexLiveCallSource(source: string): boolean {
+  return CODEX_LIVE_CALL_SOURCES.indexOf(source.trim()) >= 0;
+}
+
+export function codexLiveCallReasoning(source: string): 'none' | 'low' | null {
+  if (source.trim() === 'provider:openai-codex-agent-none') return 'none';
+  if (source.trim() === 'provider:openai-codex-agent-low') return 'low';
+  return null;
+}
+
+function enforceCodexTextOnly(): void {
+  if (!isCodexLiveCallSource(d().llm_source)) return;
+  if (d().model !== CODEX_LIVE_CALL_MODEL) setDraft({ model: CODEX_LIVE_CALL_MODEL });
+  state.audio.sendAudio = false;
+}
+
+function currentAgentPayload(): Record<string, unknown> {
+  enforceCodexTextOnly();
+  const payload = composeAgentPayload(d(), services(), DEFAULT_PERSONA, AI_GATEWAY_BASE);
+  // Defense in depth for both newly selected and previously saved Codex
+  // sources: Save & apply can never carry a stale direct-audio setting into
+  // this chat-only provider. The Desktop/provider boundary enforces the same
+  // rule, but the settings UI must also represent and persist it honestly.
+  if (isCodexLiveCallSource(d().llm_source)) payload.sendAudio = false;
+  return payload;
+}
+
 export function laneOptions(lane: Lane): LaneOption[] {
   const cap = LANE_CAP[lane];
   const defId = LANE_DEFAULT[lane];
@@ -307,7 +344,11 @@ export function laneOptions(lane: Lane): LaneOption[] {
 function seedFromSettings(res: Record<string, unknown>): void {
   const s = rec(res.settings);
   if (!state.audio.loaded) {
-    state.audio = { loaded: true, sendAudio: boolish(s.sendAudio), audioTranscript: boolish(s.audioTranscript) };
+    state.audio = {
+      loaded: true,
+      sendAudio: isCodexLiveCallSource(d().llm_source) ? false : boolish(s.sendAudio),
+      audioTranscript: boolish(s.audioTranscript),
+    };
   }
   if (!state.waiting.loaded) {
     state.waiting = {
@@ -373,6 +414,10 @@ function loadRecord(): Promise<void> {
       nd.active = nd.active || 'yes';
       state.draft = nd;
       state.saved = JSON.parse(JSON.stringify(nd)) as Draft;
+      // A record may have been written before this UI learned the Codex
+      // provider contract. Normalize the working draft (but leave the saved
+      // baseline intact so the fixed model is visibly pending until saved).
+      enforceCodexTextOnly();
       state.recordId = newest ? newest.id : null;
       // Record-side screening fields (whitelist mode + country code).
       state.screening.whitelistOnly = String(a.whitelist_only || '') === 'yes';
@@ -428,6 +473,7 @@ function writeRecord(answers: Record<string, unknown>): Promise<unknown> {
 }
 
 function persistDraft(): Promise<boolean> {
+  enforceCodexTextOnly();
   const full: Record<string, unknown> = { ...d() };
   return writeRecord(full).then(() => {
     state.saved = JSON.parse(JSON.stringify(state.draft)) as Draft;
@@ -454,13 +500,17 @@ export function saveEngine(): void {
 }
 
 export function saveAudio(): void {
+  enforceCodexTextOnly();
   state.busy.audio = true;
   state.err = null;
   // Capture BEFORE the write: a first-save creates the FULL draft (whole
   // record persisted), a later save persists only the two correction keys.
   const wasCreate = !state.recordId;
   touch();
-  const payload: Record<string, unknown> = { sendAudio: state.audio.sendAudio, audioTranscript: state.audio.audioTranscript };
+  const payload: Record<string, unknown> = {
+    sendAudio: isCodexLiveCallSource(d().llm_source) ? false : state.audio.sendAudio,
+    audioTranscript: state.audio.audioTranscript,
+  };
   const p = composeAgentPayload(d(), services(), DEFAULT_PERSONA, AI_GATEWAY_BASE);
   if ('audioTranscriptEndpoint' in p) payload.audioTranscriptEndpoint = p.audioTranscriptEndpoint;
   settingsSet(payload)
@@ -481,7 +531,7 @@ export function saveAudio(): void {
     .then((res) => {
       if (res) {
         const s = rec(res.settings);
-        state.audio.sendAudio = boolish(s.sendAudio);
+        state.audio.sendAudio = isCodexLiveCallSource(d().llm_source) ? false : boolish(s.sendAudio);
         state.audio.audioTranscript = boolish(s.audioTranscript);
       }
       void toastApi().success('Audio settings saved', 'Applies when the receptionist next reconnects.');
@@ -621,7 +671,7 @@ export function doSaveApply(): void {
       }
       // The composed payload NEVER carries a PIN: composeAgentPayload reads
       // only the draft fields (persona/greeting/voice/model/endpoints).
-      return settingsSet(composeAgentPayload(d(), services(), DEFAULT_PERSONA, AI_GATEWAY_BASE))
+      return settingsSet(currentAgentPayload())
         .then(refreshRunning)
         .then(() => {
           void toastApi().success('Applied to the receptionist', 'The very next call uses this configuration.');
@@ -639,6 +689,11 @@ export function doSaveApply(): void {
 // -- edit actions (the original's delegated input/change/click handlers) --
 
 export function draftInput(key: keyof Draft, value: string): void {
+  if (key === 'model' && isCodexLiveCallSource(d().llm_source)) {
+    setDraft({ model: CODEX_LIVE_CALL_MODEL });
+    touch();
+    return;
+  }
   setDraft({ [key]: value } as Partial<Draft>);
   touch();
 }
@@ -676,7 +731,10 @@ export function laneUrlInput(lane: Lane, value: string): void {
 }
 
 export function laneChange(lane: Lane, value: string): void {
-  setDraft({ [lane + '_source']: value } as Partial<Draft>);
+  const patch = { [lane + '_source']: value } as Partial<Draft>;
+  if (lane === 'llm' && isCodexLiveCallSource(value)) patch.model = CODEX_LIVE_CALL_MODEL;
+  setDraft(patch);
+  enforceCodexTextOnly();
   touch();
 }
 
@@ -689,7 +747,7 @@ export function waitChange(key: WaitKey, checked: boolean): void {
 }
 
 export function audioModeChange(v: string): void {
-  state.audio.sendAudio = v === 'direct' || v === 'both';
+  state.audio.sendAudio = !isCodexLiveCallSource(d().llm_source) && (v === 'direct' || v === 'both');
   state.audio.audioTranscript = v === 'corrections' || v === 'both';
   touch();
 }
@@ -725,6 +783,7 @@ export function unblock(num: string): void {
 
 export function discard(): void {
   state.draft = JSON.parse(JSON.stringify(state.saved)) as Draft | null;
+  enforceCodexTextOnly();
   touch();
 }
 

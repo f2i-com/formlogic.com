@@ -8,6 +8,7 @@
 //! (OpenAI / Anthropic / Ollama / LM Studio / Custom HTTP) with the user's
 //! own key. See ADR-008.
 
+pub mod codex;
 pub mod egress;
 pub mod gateway;
 pub mod gateway_token;

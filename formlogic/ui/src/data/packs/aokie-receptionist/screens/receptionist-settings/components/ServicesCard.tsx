@@ -3,7 +3,15 @@
 // desktop services, providers on the LLM lane, Custom URL, Built-in) fed by
 // FormLogic.aiSources(); null listing = no local desktop (saved picks still
 // resolve per call on the desktop).
-import { d, laneChange, laneOptions, laneUrlInput, state, type Lane } from '../store';
+import {
+  codexLiveCallReasoning,
+  d,
+  laneChange,
+  laneOptions,
+  laneUrlInput,
+  state,
+  type Lane,
+} from '../store';
 
 function LaneField(props: { lane: Lane; label: string; source: string; endpoint: string; placeholder: string; hint: string }) {
   const { lane, label, source, endpoint, placeholder, hint } = props;
@@ -46,6 +54,7 @@ function LaneField(props: { lane: Lane; label: string; source: string; endpoint:
 }
 
 export function ServicesCard() {
+  const codexReasoning = codexLiveCallReasoning(d().llm_source);
   return (
     <div class="card">
       <h2>Connected services</h2>
@@ -61,6 +70,14 @@ export function ServicesCard() {
         placeholder="e.g. http://127.0.0.1:8080/v1/chat/completions"
         hint="Built-in = the plugin's configured endpoint (auto-detects a local llama.cpp/Ollama)."
       />
+      {codexReasoning ? (
+        <p class="hint" data-codex-live-call-note="services">
+          {codexReasoning === 'none'
+            ? 'Experimental ChatGPT/Codex live-call mode. Off is the fastest setting and is intended for the shortest reply delay.'
+            : 'Experimental ChatGPT/Codex live-call mode. Low can improve difficult replies, but may add noticeable delay on a phone call.'}
+          {' Live reply requests use transcript text. Aokie keeps using the selected speech-to-text and text-to-speech services.'}
+        </p>
+      ) : null}
       <LaneField
         lane="stt"
         label="Speech to text"

@@ -5,9 +5,16 @@ import { Button } from '../ui/Button';
 import { Switch } from '../ui/Switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { api } from '../../lib/api';
+import type { AIFormGenerationResult } from '../../lib/api';
 import { logger } from '../../lib/logger';
 import { toast } from '../../stores/toastStore';
 import type { FormField } from '../../types/form';
+import { desktopClient } from '../../client-runtime/desktop/desktopClient';
+import {
+  eligibleDesktopFormProviders,
+  generateFormWithDesktopProvider,
+  type DesktopFormProvider,
+} from './desktopFormGeneration';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface AIGenerateResult {
@@ -31,6 +38,7 @@ interface AIFormGeneratorProps {
 }
 
 type TabType = 'prompt' | 'document' | 'image';
+type GenerationSource = 'hosted' | `desktop:${string}`;
 
 export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, existingScript }: AIFormGeneratorProps) {
   const [activeTab, setActiveTab] = useState<TabType>('prompt');
@@ -44,15 +52,49 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
   const [autoScript, setAutoScript] = useState(true);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [aiMessage, setAiMessage] = useState('');
+  // Session-only by design: never leave one account's provider choice in
+  // persistent browser storage for a later authenticated user.
+  const [generationSource, setGenerationSource] = useState<GenerationSource>('hosted');
+  const [desktopProviders, setDesktopProviders] = useState<DesktopFormProvider[]>([]);
+  const [desktopProvidersLoading, setDesktopProvidersLoading] = useState(false);
+  const [desktopProvidersError, setDesktopProvidersError] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const generationAbortRef = useRef<AbortController | null>(null);
 
   // Check AI availability on mount
   useEffect(() => {
     if (isOpen) {
       checkAvailability().catch(() => setIsAvailable(false));
+      let cancelled = false;
+      setDesktopProvidersLoading(true);
+      setDesktopProvidersError('');
+      desktopClient.ai.sources().then((result) => {
+        if (cancelled) return;
+        if (!result.ok) {
+          setDesktopProviders([]);
+          setDesktopProvidersError(result.error.message || 'FormLogic Desktop is not reachable.');
+          return;
+        }
+        try {
+          setDesktopProviders(eligibleDesktopFormProviders(result.data));
+        } catch (error) {
+          setDesktopProviders([]);
+          setDesktopProvidersError(error instanceof Error ? error.message : 'Desktop returned invalid provider details.');
+        }
+      }).catch(() => {
+        if (!cancelled) {
+          setDesktopProviders([]);
+          setDesktopProvidersError('FormLogic Desktop is not reachable.');
+        }
+      }).finally(() => {
+        if (!cancelled) setDesktopProvidersLoading(false);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [isOpen]);
 
@@ -64,6 +106,8 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
       }
     };
   }, [previewUrl]);
+
+  useEffect(() => () => generationAbortRef.current?.abort(), []);
 
   const checkAvailability = async () => {
     const result = await api.getAIStatus();
@@ -124,47 +168,85 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
   };
 
   const handleGenerate = async () => {
-    if (activeTab === 'prompt' && !prompt.trim()) {
+    // Snapshot the route before any async work. A provider/model change in Desktop or a tab
+    // click during the request cannot cause provider mixing part-way through this job.
+    const tabAtStart = activeTab;
+    const promptAtStart = prompt;
+    const additionalPromptAtStart = additionalPrompt;
+    const sourceAtStart: GenerationSource = tabAtStart === 'prompt' ? generationSource : 'hosted';
+    const desktopProviderId = sourceAtStart.startsWith('desktop:')
+      ? sourceAtStart.slice('desktop:'.length)
+      : null;
+    const desktopProvider = desktopProviderId
+      ? desktopProviders.find((provider) => provider.id === desktopProviderId)
+      : undefined;
+    const editMode = tabAtStart === 'prompt' && (existingFields?.length ?? 0) > 0;
+
+    if (tabAtStart === 'prompt' && !promptAtStart.trim()) {
       toast.error('Prompt Required', 'Please enter a description for your form');
       return;
     }
 
-    if ((activeTab === 'document' || activeTab === 'image') && !selectedFile) {
+    if ((tabAtStart === 'document' || tabAtStart === 'image') && !selectedFile) {
       toast.error('File Required', 'Please select a file to analyze');
+      return;
+    }
+
+    if (desktopProviderId && !desktopProvider) {
+      toast.error('Desktop Provider Unavailable', 'Choose an enabled OpenAI-compatible provider from FormLogic Desktop.');
+      return;
+    }
+
+    if (desktopProvider && editMode) {
+      toast.error('Hosted Editing Required', 'Desktop providers can create a new form from text, but cannot safely edit an existing form yet. Select FormLogic Hosted.');
       return;
     }
 
     setIsGenerating(true);
     setGenStage('form');
+    const generationAbort = new AbortController();
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = generationAbort;
 
     try {
-      let result;
+      let generated: AIFormGenerationResult | undefined;
 
-      // Edit mode: a text prompt on a form that already has fields → the AI modifies the existing
-      // form (fields + script) instead of generating from scratch. (Document/image tabs always add.)
-      const editMode = activeTab === 'prompt' && (existingFields?.length ?? 0) > 0;
-
-      if (activeTab === 'prompt') {
-        result = await api.generateFormFromPrompt(
-          prompt,
+      if (desktopProvider) {
+        generated = await generateFormWithDesktopProvider({
+          providerId: desktopProvider.id,
+          model: desktopProvider.model,
+          prompt: promptAtStart,
+          signal: generationAbort.signal,
+        });
+      } else if (tabAtStart === 'prompt') {
+        const result = await api.generateFormFromPrompt(
+          promptAtStart,
           editMode ? existingFields : undefined,
           editMode ? existingScript : undefined,
         );
+        if (generationAbort.signal.aborted) return;
+        if (result.error) {
+          toast.error('Generation Failed', result.error);
+          return;
+        }
+        generated = result.data;
       } else {
-        result = await api.generateFormFromFile(selectedFile!, additionalPrompt || undefined);
+        const result = await api.generateFormFromFile(selectedFile!, additionalPromptAtStart || undefined);
+        if (generationAbort.signal.aborted) return;
+        if (result.error) {
+          toast.error('Generation Failed', result.error);
+          return;
+        }
+        generated = result.data;
       }
 
-      if (result.error) {
-        toast.error('Generation Failed', result.error);
-        return;
-      }
-
-      if (!result.data?.data) {
+      if (generationAbort.signal.aborted) return;
+      if (!generated?.data) {
         toast.error('Generation Failed', 'No form data received');
         return;
       }
 
-      const { title, description, fields, needsScript, suggestedScript } = result.data.data;
+      const { title, description, fields, needsScript, suggestedScript } = generated.data;
 
       const formFields: FormField[] = fields.map((field, index) => ({
         id: field.id || uuidv4(),
@@ -184,7 +266,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
       // form is still created with its fields. The Script section remains available to refine it.
       let logicScript: string | undefined;
       const scriptDesc = (suggestedScript || '').trim();
-      if (autoScript && needsScript && scriptDesc) {
+      if (!desktopProvider && autoScript && needsScript && scriptDesc) {
         setGenStage('script');
         try {
           // Minimal field projection the script generator needs (matches ScriptEditor).
@@ -193,6 +275,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
           const scriptRes = editMode && (existingScript || '').trim()
             ? await api.improveScript(existingScript as string, scriptDesc, fieldProjection)
             : await api.generateScript(scriptDesc, fieldProjection);
+          if (generationAbort.signal.aborted) return;
           if (scriptRes.data?.data?.script) {
             logicScript = scriptRes.data.data.script;
           }
@@ -201,6 +284,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
         }
       }
 
+      if (generationAbort.signal.aborted) return;
       toast.success(
         editMode ? 'Form Updated' : 'Form Generated',
         editMode
@@ -211,22 +295,26 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
         title,
         description: description || '',
         fields: formFields,
-        prompt: activeTab === 'prompt' ? prompt : additionalPrompt,
+        prompt: tabAtStart === 'prompt' ? promptAtStart : additionalPromptAtStart,
         logicScript,
         logicPrompt: logicScript ? scriptDesc : undefined,
         replaceFields: editMode,
       });
       resetAndClose();
     } catch (error) {
+      if (generationAbort.signal.aborted) return;
       logger.error('AI generation error:', error);
       toast.error('Generation Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
+      if (generationAbortRef.current === generationAbort) generationAbortRef.current = null;
       setIsGenerating(false);
       setGenStage(null);
     }
   };
 
   const resetAndClose = () => {
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
     setPrompt('');
     setAdditionalPrompt('');
     setSelectedFile(null);
@@ -240,16 +328,30 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
 
   const tabs: { key: TabType; label: string; icon: React.ElementType }[] = [
     { key: 'prompt', label: 'Prompt', icon: Wand2 },
-    { key: 'document', label: 'Document', icon: FileText },
-    { key: 'image', label: 'Photo', icon: Image },
+    { key: 'document', label: 'Document · Hosted', icon: FileText },
+    { key: 'image', label: 'Photo · Hosted', icon: Image },
   ];
 
   const editing = (existingFields?.length ?? 0) > 0;
+  const selectedDesktopProviderId = generationSource.startsWith('desktop:')
+    ? generationSource.slice('desktop:'.length)
+    : null;
+  const selectedDesktopProvider = selectedDesktopProviderId
+    ? desktopProviders.find((provider) => provider.id === selectedDesktopProviderId)
+    : undefined;
+  const usesDesktopProvider = activeTab === 'prompt' && selectedDesktopProviderId !== null;
+  const usesHostedGeneration = !usesDesktopProvider;
+  const desktopSelectionUnavailable = usesDesktopProvider
+    && !desktopProvidersLoading
+    && !selectedDesktopProvider;
+  const generationAvailable = usesDesktopProvider
+    ? !!selectedDesktopProvider && !editing
+    : isAvailable !== false;
 
   return (
     <Modal isOpen={isOpen} onClose={resetAndClose} title="Create with AI" size="lg">
       {/* Availability warning */}
-      {isAvailable === false && (
+      {usesHostedGeneration && isAvailable === false && (
         <div role="alert" className="mx-6 mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
           <div>
@@ -280,6 +382,48 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
         <div className="p-6 min-h-[280px]">
           <TabsContent value="prompt">{activeTab === 'prompt' && (
           <div className="space-y-4">
+            <div>
+              <label htmlFor="ai-form-generation-source" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
+                AI service
+              </label>
+              <select
+                id="ai-form-generation-source"
+                value={generationSource}
+                onChange={(event) => setGenerationSource(event.target.value as GenerationSource)}
+                disabled={isGenerating}
+                className="w-full px-3 py-2.5 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-gray-900 dark:text-white"
+              >
+                <option value="hosted">FormLogic Hosted</option>
+                {desktopProviders.map((provider) => (
+                  <option key={provider.id} value={`desktop:${provider.id}`} disabled={editing}>
+                    Desktop · {provider.name}{provider.model ? ` (${provider.model})` : ''}{editing ? ' — new forms only' : ''}
+                  </option>
+                ))}
+                {desktopSelectionUnavailable && (
+                  <option value={generationSource} disabled>Desktop provider unavailable</option>
+                )}
+              </select>
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-slate-400">
+                {usesDesktopProvider
+                  ? 'Your prompt goes through the paired Desktop to this exact provider. Credentials never enter the website.'
+                  : 'Uses FormLogic’s hosted form generator and validated logic-generation path.'}
+              </p>
+              {!usesDesktopProvider && !desktopProvidersLoading && desktopProviders.length === 0 && (
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                  {desktopProvidersError || 'Pair FormLogic Desktop and enable an OpenAI-compatible chat provider to use your own account.'}
+                </p>
+              )}
+            </div>
+            {usesDesktopProvider && editing && (
+              <div role="alert" className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg text-sm text-amber-800 dark:text-amber-300">
+                Desktop providers currently create new forms only. Select FormLogic Hosted to safely preserve this form’s field IDs while editing it.
+              </div>
+            )}
+            {desktopSelectionUnavailable && (
+              <div role="alert" className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg text-sm text-amber-800 dark:text-amber-300">
+                That Desktop provider is no longer available. Choose another enabled OpenAI-compatible provider or select FormLogic Hosted.
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
                 {editing ? 'Describe the change' : 'Describe your form'}
@@ -312,6 +456,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
 
           <TabsContent value="document">{activeTab === 'document' && (
           <div className="space-y-4">
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              Document analysis uses FormLogic Hosted. Desktop providers are available only on the Prompt tab.
+            </p>
             <div
               onDrop={(e) => handleDrop(e, 'document')}
               onDragOver={(e) => e.preventDefault()}
@@ -377,6 +524,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
 
           <TabsContent value="image">{activeTab === 'image' && (
           <div className="space-y-4">
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              Photo analysis uses FormLogic Hosted. Desktop providers are available only on the Prompt tab.
+            </p>
             <div
               onDrop={(e) => handleDrop(e, 'image')}
               onDragOver={(e) => e.preventDefault()}
@@ -446,9 +596,13 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
 
       {/* Footer */}
       <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-700">
-        {isAvailable === false ? (
+        {usesHostedGeneration && isAvailable === false ? (
           <p className="text-xs text-amber-700 dark:text-amber-400 min-w-0 leading-snug">
             {aiMessage || 'AI isn’t configured on this instance.'} <span className="text-gray-400 dark:text-slate-500">You can still build forms manually.</span>
+          </p>
+        ) : usesDesktopProvider ? (
+          <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0 leading-snug">
+            Fields only — Desktop output cannot create or run backend logic. Use FormLogic Hosted for validated auto-logic.
           </p>
         ) : (
           <Switch
@@ -466,7 +620,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
         <Button
           size="sm"
           onClick={handleGenerate}
-          disabled={isGenerating || isAvailable === false}
+          disabled={isGenerating || !generationAvailable}
           isLoading={isGenerating}
           leftIcon={!isGenerating ? <Sparkles className="h-4 w-4" /> : undefined}
         >

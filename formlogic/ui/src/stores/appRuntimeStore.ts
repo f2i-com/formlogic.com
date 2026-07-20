@@ -179,6 +179,10 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       reset: () => {
         // Leaving the app tears its pack connectors down with it.
         syncPackConnectors(null);
+        // Capability tokens are principal/session scoped, not just slug
+        // scoped. Purge them on logout, expiry, or app teardown before another
+        // user can enter the same slug in this tab.
+        setConnectorCapabilityContext(null);
         set({
           config: null,
           appSlug: null,

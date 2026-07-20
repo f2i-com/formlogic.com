@@ -2524,6 +2524,16 @@ $flowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'flow_run', 
 // Rate limiter for connector-command enqueue (30 per minute; keyed by user).
 $connectorRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'connector_relay', true);
 
+// Owner service-capability issuance is credential minting: keep a tighter
+// per-user budget and fail closed if the persistent limiter store is down.
+$serviceCapabilityRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'service_capability', true, true);
+
+// Account/workspace service capability for Form/App builders before an app
+// slug exists. Subject and Desktop owner are the authenticated account.
+$app->post('/api/service-capability', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->mintWorkspaceServiceCapability($request, $response);
+})->add($serviceCapabilityRateLimiter)->add($authRequired);
+
 // Desktop connections: the per-user registry of paired FormLogic Desktop installs (upsert on
 // desktop_instance_id; owner-only list/delete).
 $app->get('/api/desktop-connections', function ($request, $response) use ($container) {
@@ -2601,7 +2611,7 @@ $app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($containe
 })->add($cloudWriteGate)->add($authRequired);
 
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $cloudWriteGate) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
@@ -2697,6 +2707,13 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     $group->post('/connector-capability', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->mintCapability($request, $response, $getArgs($request));
     })->add($connectorRelayRateLimiter)->add($authRequired);
+
+    // Owner-only ChatGPT Codex service pilot. This token does not depend on an
+    // installed connector and is accepted only after Desktop pairing + strict
+    // cloud introspection on the three read/assistant routes.
+    $group->post('/service-capability', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->mintServiceCapability($request, $response, $getArgs($request));
+    })->add($serviceCapabilityRateLimiter)->add($authRequired);
 
     // Typed service.invoke for pack-owned sandboxed screens (plan §8.3, APP-503):
     // only operations named in the controller's registry exist; each declares its

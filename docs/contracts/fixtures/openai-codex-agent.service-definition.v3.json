@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 3,
+  "id": "openai-codex-agent",
+  "version": "0.2.0-pilot",
+  "minDesktopVersion": "0.1.0",
+  "publisher": {
+    "id": "formlogic",
+    "name": "FormLogic",
+    "verified": true
+  },
+  "name": "OpenAI Codex Agent — Sign in with ChatGPT",
+  "description": "A local delegated agent using eligible ChatGPT/Codex plan entitlements, with an optional experimental text-only Aokie call lane. It is not an OpenAI API key or Realtime voice provider.",
+  "icon": "codex",
+  "kind": "delegated-agent",
+  "category": { "id": "ai.agents", "label": "AI & Agents" },
+  "tags": ["chatgpt", "codex", "oauth", "forms", "flows", "calls", "experimental"],
+  "capabilities": ["agent.codex", "agent.assistant", "llm.chat", "models.list"],
+  "auth": {
+    "strategies": [
+      {
+        "id": "chatgpt-managed",
+        "kind": "delegated-process",
+        "label": "Sign in with ChatGPT"
+      }
+    ]
+  },
+  "settingsSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "model": { "type": "string" },
+      "reasoningEffort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh"] }
+    }
+  },
+  "ui": {
+    "pilot": true,
+    "settings": {
+      "model": { "widget": "model-picker", "action": "models.list" }
+    }
+  },
+  "permissions": {
+    "network": [
+      { "scheme": "stdio", "host": "codex-app-server" },
+      { "scheme": "https", "host": "auth.openai.com" },
+      { "scheme": "https", "host": "chatgpt.com" },
+      { "scheme": "https", "host": "api.openai.com" }
+    ],
+    "secrets": ["chatgpt-oauth"],
+    "dataClasses": ["prompts", "conversation-history"]
+  },
+  "actions": [
+    {
+      "id": "assistant.chat",
+      "title": "Ask the FormLogic assistant",
+      "description": "Send a prompt to OpenAI through Codex for trusted FormLogic work. File access and agent tool network access are disabled.",
+      "category": { "id": "ai.agents", "label": "AI / Agent" },
+      "tags": ["assistant", "forms", "flows"],
+      "capability": "agent.assistant",
+      "sideEffects": "external-communication",
+      "idempotency": "none",
+      "streaming": { "mode": "none", "cancellable": false },
+      "timeoutMs": 900000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 200000 },
+          "threadId": { "type": "string" },
+          "model": { "type": "string" },
+          "reasoningEffort": {
+            "enum": ["none", "minimal", "low", "medium", "high", "xhigh"]
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["threadId", "turnId", "text"],
+        "properties": {
+          "threadId": { "type": "string" },
+          "turnId": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      },
+      "transport": { "kind": "stdio-jsonrpc", "rpcMethod": "turn/start" },
+      "requiredGrants": ["formlogic.owner", "services.invoke", "agent.readonly"],
+      "dataClasses": ["prompts", "conversation-history"]
+    },
+    {
+      "id": "live-call.chat",
+      "title": "Answer an Aokie call turn",
+      "description": "Generate the next text-only Aokie reply through an ephemeral Codex turn. The pilot supports reasoning off or low, keeps STT/TTS separate, and is not OpenAI Realtime voice.",
+      "category": { "id": "ai.calls", "label": "AI / Calls" },
+      "tags": ["aokie", "calls", "text", "experimental"],
+      "capability": "llm.chat",
+      "sideEffects": "external-communication",
+      "idempotency": "none",
+      "streaming": { "mode": "sse", "cancellable": true },
+      "timeoutMs": 9000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "messages": { "type": "array", "minItems": 1, "maxItems": 64 },
+          "model": { "const": "gpt-5.5" },
+          "stream": { "type": "boolean" }
+        }
+      },
+      "outputSchema": { "type": "object" },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "POST",
+        "path": "/api/ai/providers/openai-codex-agent-none/v1/chat/completions"
+      },
+      "requiredGrants": ["formlogic.owner", "services.invoke", "aokie.calls"],
+      "dataClasses": ["caller-transcript", "conversation-history"]
+    },
+    {
+      "id": "models.list",
+      "title": "List Codex models",
+      "description": "List models currently available to the signed-in ChatGPT workspace.",
+      "category": { "id": "ai.models", "label": "AI / Models" },
+      "tags": ["models", "account"],
+      "capability": "models.list",
+      "sideEffects": "read",
+      "idempotency": "optional",
+      "streaming": { "mode": "none", "cancellable": false },
+      "timeoutMs": 30000,
+      "inputSchema": { "type": "object", "additionalProperties": false },
+      "outputSchema": { "type": "object" },
+      "transport": { "kind": "stdio-jsonrpc", "rpcMethod": "model/list" },
+      "requiredGrants": ["formlogic.owner", "services.read"],
+      "dataClasses": []
+    }
+  ]
+}

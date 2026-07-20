@@ -2,9 +2,10 @@
 // Advanced: raw AI model + custom endpoint URLs behind a native <details>
 // disclosure. The open state is mirrored into the store (onToggle) so it
 // survives re-renders; the disclosure glyph is CSS-driven off [open].
-import { d, draftInput, state, toggleAdvanced } from '../store';
+import { CODEX_LIVE_CALL_MODEL, d, draftInput, isCodexLiveCallSource, state, toggleAdvanced } from '../store';
 
 export function AdvancedCard() {
+  const codexModelFixed = isCodexLiveCallSource(d().llm_source);
   return (
     <details class="card adv" open={state.showAdvanced} onToggle={(e) => toggleAdvanced(e.currentTarget.open)}>
       <summary data-act="toggle-adv">{'Advanced - AI model & endpoints'}</summary>
@@ -17,8 +18,10 @@ export function AdvancedCard() {
             data-d="model"
             value={d().model}
             placeholder="e.g. llama3.1:8b (blank = auto)"
+            disabled={codexModelFixed}
             onInput={(e) => draftInput('model', e.currentTarget.value)}
           />
+          {codexModelFixed ? <span class="hint">{'Fixed to ' + CODEX_LIVE_CALL_MODEL + ' by the selected Codex live-call provider.'}</span> : null}
         </label>
         <label class="f">
           <span class="lbl">Custom LLM endpoint URL</span>

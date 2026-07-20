@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 3,
+  "id": "openai-api",
+  "version": "1.0.0",
+  "minDesktopVersion": "0.1.0",
+  "publisher": {
+    "id": "formlogic",
+    "name": "FormLogic",
+    "verified": true
+  },
+  "name": "OpenAI API — separate API billing",
+  "description": "OpenAI inference using the customer's OpenAI Platform account. API usage is billed separately from ChatGPT.",
+  "icon": "openai",
+  "kind": "remote-provider",
+  "category": { "id": "ai.models", "label": "AI & Models" },
+  "tags": ["llm", "chat", "streaming", "cloud"],
+  "capabilities": ["llm.chat", "llm.chat.stream", "models.list"],
+  "auth": {
+    "strategies": [
+      {
+        "id": "api-key",
+        "kind": "api-key",
+        "label": "OpenAI Platform API key",
+        "secretFields": [{ "id": "api-key", "label": "API key" }]
+      }
+    ]
+  },
+  "settingsSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": { "type": "string", "format": "uri", "default": "https://api.openai.com" },
+      "model": { "type": "string" },
+      "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 120000 }
+    },
+    "required": ["baseUrl"]
+  },
+  "ui": {
+    "settings": {
+      "model": { "widget": "model-picker", "action": "models.list" },
+      "baseUrl": { "section": "Advanced", "lockedByDefault": true }
+    }
+  },
+  "permissions": {
+    "network": [{ "scheme": "https", "host": "api.openai.com" }],
+    "secrets": ["api-key"],
+    "dataClasses": ["prompts", "conversation-history"]
+  },
+  "actions": [
+    {
+      "id": "chat.complete",
+      "title": "Generate a chat response",
+      "description": "Generate one normalized OpenAI-compatible chat response through Desktop-held credentials.",
+      "category": { "id": "ai.chat", "label": "AI / Chat" },
+      "tags": ["chat", "streaming"],
+      "capability": "llm.chat",
+      "sideEffects": "none",
+      "idempotency": "optional",
+      "streaming": { "mode": "sse", "cancellable": true },
+      "timeoutMs": 120000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "model": { "type": "string" },
+          "messages": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "outputSchema": { "type": "object" },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "authInjection": { "kind": "bearer", "secret": "api-key" }
+      },
+      "request": { "body": { "$path": "$.input" } },
+      "response": { "successStatuses": [200], "contentTypes": ["application/json", "text/event-stream"], "output": { "$path": "$.response" } },
+      "requiredGrants": ["services.invoke"],
+      "dataClasses": ["prompts", "conversation-history"]
+    },
+    {
+      "id": "models.list",
+      "title": "List available models",
+      "description": "List models exposed to the connected OpenAI Platform account.",
+      "category": { "id": "ai.models", "label": "AI / Models" },
+      "tags": ["models", "discovery"],
+      "capability": "models.list",
+      "sideEffects": "read",
+      "idempotency": "optional",
+      "streaming": { "mode": "none", "cancellable": false },
+      "timeoutMs": 30000,
+      "inputSchema": { "type": "object", "additionalProperties": false },
+      "outputSchema": { "type": "object" },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "GET",
+        "path": "/v1/models",
+        "authInjection": { "kind": "bearer", "secret": "api-key" }
+      },
+      "response": { "successStatuses": [200], "contentTypes": ["application/json"], "output": { "$path": "$.response" } },
+      "requiredGrants": ["services.read"],
+      "dataClasses": []
+    }
+  ]
+}

@@ -36,6 +36,11 @@ pub struct ServiceTemplate {
     /// "LLM", "Image Generation", "Video Generation", "Speech", "Browser".
     pub category: String,
 
+    /// Optional user-facing labels used to search and filter this service.
+    /// Empty for legacy templates, which keeps every existing template valid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
     /// AI lanes this service serves, declared explicitly by the template
     /// (e.g. ["transcription"], ["speech"], ["chat"], ["image"]). When
     /// non-empty this WINS over the category-substring heuristic that
@@ -231,5 +236,22 @@ mod tests {
             substitute("${binDir}\\ollama.exe", &ctx),
             "C:\\bin\\ollama.exe"
         );
+    }
+
+    #[test]
+    fn template_tags_are_optional_and_round_trip() {
+        let legacy: ServiceTemplate = serde_json::from_str(
+            r#"{"id":"legacy","name":"Legacy","description":"","category":"LLM","defaultPort":8080,"run":{"command":"legacy"}}"#,
+        )
+        .unwrap();
+        assert!(legacy.tags.is_empty());
+
+        let tagged: ServiceTemplate = serde_json::from_str(
+            r#"{"id":"tagged","name":"Tagged","description":"","category":"LLM","tags":["local","chat"],"defaultPort":8081,"run":{"command":"tagged"}}"#,
+        )
+        .unwrap();
+        assert_eq!(tagged.tags, ["local", "chat"]);
+        let encoded = serde_json::to_value(&tagged).unwrap();
+        assert_eq!(encoded["tags"], serde_json::json!(["local", "chat"]));
     }
 }

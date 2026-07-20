@@ -35,6 +35,35 @@ class ConnectorCommandController
     private const CAPABILITY_TTL_SECONDS = 300;
 
     /**
+     * Exact owner-only Desktop service pilot allow-list. Actions are safe
+     * response metadata; grants are the authoritative Desktop permissions.
+     */
+    private const SERVICE_CAPABILITY_DEFINITIONS = [
+        'openai-codex-agent' => [
+            'actions' => [
+                'status.read',
+                'models.list',
+                'assistant.chat',
+            ],
+            'grants' => [
+                'service.openai-codex-agent.status.read',
+                'service.openai-codex-agent.models.list',
+                'service.openai-codex-agent.assistant.chat',
+            ],
+        ],
+        'openai-api' => [
+            'actions' => [
+                'chat.complete',
+                'models.list',
+            ],
+            'grants' => [
+                'service.openai-api.chat.complete',
+                'service.openai-api.models.list',
+            ],
+        ],
+    ];
+
+    /**
      * POST /api/app/{slug}/connector-capability {connectorId} — mint a short-lived
      * capability the DESKTOP verifies before serving this member's LOCAL loopback
      * connector commands (audit SEC-001/C-08). The token encodes the member's
@@ -89,8 +118,139 @@ class ConnectorCommandController
     }
 
     /**
+     * POST /api/app/{slug}/service-capability {serviceId} — mint the
+     * owner-only capability used by a website to call an allowed OpenAI service
+     * through the owner's linked FormLogic Desktop.
+     *
+     * This deliberately requires BOTH app ownership and an active membership;
+     * it cannot be delegated to a role. The token carries only that service's
+     * exact action grants, so it cannot authorize a connector, flow capability,
+     * or another service.
+     */
+    public function mintServiceCapability(Request $request, Response $response, array $args): Response
+    {
+        [$app, $userId, $err] = $this->resolveMember($request, $response, (string) ($args['slug'] ?? ''));
+        if ($err !== null) {
+            return $err;
+        }
+
+        $ownerId = (string) ($app['ownerId'] ?? $app['owner_id'] ?? '');
+        if ($ownerId === '' || !hash_equals($ownerId, (string) $userId)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Only the active app owner may use this Desktop service',
+            ], 403);
+        }
+        if ($this->db === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Capabilities unavailable'], 503);
+        }
+
+        return $this->issueServiceCapability(
+            $request,
+            $response,
+            $ownerId,
+            (string) $userId,
+            (string) $app['id']
+        );
+    }
+
+    /**
+     * POST /api/service-capability {serviceId} — account/workspace variant for
+     * Form/App builders that do not have an app slug yet. The authenticated
+     * account is both subject and Desktop owner; app_id intentionally stays NULL.
+     */
+    public function mintWorkspaceServiceCapability(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        $principal = $request->getAttribute('user');
+        if (
+            !is_string($userId)
+            || $userId === ''
+            || !is_object($principal)
+            || !isset($principal->id)
+            || !is_string($principal->id)
+            || !hash_equals($userId, $principal->id)
+        ) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        // AuthMiddleware currently exposes only active users. Preserve an
+        // explicit fail-closed seam if account suspension is added to User.
+        if (property_exists($principal, 'status') && $principal->status !== 'active') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Account is not active'], 403);
+        }
+        if ($this->db === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Capabilities unavailable'], 503);
+        }
+        // Re-resolve the principal from durable storage. This prevents a stale
+        // session-shaped request from minting after account deletion and also
+        // honors a future users.status column without widening this endpoint.
+        $stmt = $this->db->getConnection()->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $userId]);
+        $user = $stmt->fetch();
+        if (!$user) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (array_key_exists('status', $user) && $user['status'] !== 'active') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Account is not active'], 403);
+        }
+
+        return $this->issueServiceCapability($request, $response, $userId, $userId, null);
+    }
+
+    private function issueServiceCapability(
+        Request $request,
+        Response $response,
+        string $ownerId,
+        string $userId,
+        ?string $appId
+    ): Response
+    {
+        $body = $request->getParsedBody();
+        // No caller-selected actions, grants, owners, or targets in the pilot.
+        // Reject unknown fields instead of silently accepting a misleading
+        // request that appears to select a different capability set.
+        if (!is_array($body) || count($body) !== 1 || !array_key_exists('serviceId', $body)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'serviceId is required and is the only supported field',
+            ], 400);
+        }
+        $serviceId = $body['serviceId'];
+        if (
+            !is_string($serviceId)
+            || strlen($serviceId) > 64
+            || !array_key_exists($serviceId, self::SERVICE_CAPABILITY_DEFINITIONS)
+        ) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Unsupported service id',
+            ], 400);
+        }
+        $definition = self::SERVICE_CAPABILITY_DEFINITIONS[$serviceId];
+
+        // Transitional storage: Desktop already introspects this short-lived,
+        // owner-scoped opaque-token table. The identifier records which pilot
+        // service issued the token; Desktop uses only the verified grants/TTL.
+        $token = $this->storeCapability(
+            $ownerId,
+            $userId,
+            $appId,
+            $serviceId,
+            $definition['grants']
+        );
+
+        return $this->jsonResponse($response, [
+            'token' => $token,
+            'serviceId' => $serviceId,
+            'actions' => $definition['actions'],
+            'expiresInSeconds' => self::CAPABILITY_TTL_SECONDS,
+        ])->withHeader('Cache-Control', 'no-store');
+    }
+
+    /**
      * GET /api/v1/connector-capabilities/{token} — Desktop introspection (flows:read),
-     * owner-scoped: a desktop can only verify capabilities minted for ITS owner's apps.
+     * owner-scoped: a Desktop can verify only capabilities minted for its owner
+     * account (optionally scoped to one app).
      */
     public function introspectCapability(Request $request, Response $response, array $args): Response
     {
@@ -124,6 +284,40 @@ class ConnectorCommandController
             'grants' => json_decode((string) $row['grants_json'], true) ?: [],
             'expiresInSeconds' => max(0, (int) $row['ttl']),
         ]);
+    }
+
+    /** @param list<string> $grants */
+    private function storeCapability(
+        string $ownerId,
+        string $userId,
+        ?string $appId,
+        string $identifier,
+        array $grants
+    ): string {
+        if ($this->db === null) {
+            throw new \LogicException('Capability storage is unavailable');
+        }
+        $token = bin2hex(random_bytes(32));
+        // Expired rows cannot introspect; pruning prevents unbounded growth.
+        $this->db->getConnection()->exec(
+            "DELETE FROM connector_capabilities WHERE expires_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)"
+        );
+        $stmt = $this->db->getConnection()->prepare(
+            "INSERT INTO connector_capabilities
+                (id, token_hash, owner_user_id, user_id, app_id, connector_id, grants_json, expires_at)
+             VALUES (:id, :h, :o, :u, :a, :c, :g, DATE_ADD(NOW(), INTERVAL :ttl SECOND))"
+        );
+        $stmt->execute([
+            'id' => $this->uuidV4(),
+            'h' => hash('sha256', $token),
+            'o' => $ownerId,
+            'u' => $userId,
+            'a' => $appId,
+            'c' => $identifier,
+            'g' => json_encode($grants, JSON_THROW_ON_ERROR),
+            'ttl' => self::CAPABILITY_TTL_SECONDS,
+        ]);
+        return $token;
     }
 
     private function uuidV4(): string

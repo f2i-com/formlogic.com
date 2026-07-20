@@ -217,6 +217,10 @@ pub struct ServiceSnapshot {
     pub name: String,
     pub description: String,
     pub category: String,
+    /// Search/filter labels declared by the service template. Empty is omitted
+    /// so snapshots remain wire-compatible with older Desktop clients.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// AI lanes the template DECLARES this service serves (e.g.
     /// ["transcription"]). Non-empty ⇒ authoritative (wins over the
     /// category-substring heuristic in `/api/ai/sources` + the UI chips);
@@ -1461,6 +1465,7 @@ impl Registry {
                 name: s.template.name.clone(),
                 description: s.template.description.clone(),
                 category: s.template.category.clone(),
+                tags: s.template.tags.clone(),
                 capabilities: s.template.capabilities.clone(),
                 status: s.status,
                 error: s.error.clone(),
@@ -3408,6 +3413,41 @@ mod tests {
         assert_eq!(removed, vec!["aokie-voice"]);
         assert!(reg.snapshot().services.iter().all(|s| s.id != "aokie-voice"));
         assert!(!data.join("templates").join("aokie-voice.json").exists());
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn service_tags_survive_import_snapshot_persistence_and_export() {
+        let data = std::env::temp_dir().join(format!(
+            "fl-service-tags-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(data.join("templates")).unwrap();
+        std::fs::create_dir_all(data.join("scripts")).unwrap();
+        let mut reg = super::Registry::empty(data.clone(), data.join("models"));
+        let tagged: super::ServiceTemplate = serde_json::from_str(
+            r#"{"id":"tagged-service","name":"Tagged","description":"","category":"LLM","tags":["local","chat"],"defaultPort":8181,"run":{"command":"tagged"}}"#,
+        )
+        .unwrap();
+
+        reg.add_template(tagged).unwrap();
+        let snapshot = reg.snapshot();
+        assert_eq!(snapshot.services[0].tags, ["local", "chat"]);
+
+        let persisted: super::ServiceTemplate = serde_json::from_str(
+            &std::fs::read_to_string(data.join("templates/tagged-service.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(persisted.tags, ["local", "chat"]);
+        assert_eq!(
+            reg.export_package("tagged-service").unwrap().tags,
+            ["local", "chat"]
+        );
 
         let _ = std::fs::remove_dir_all(&data);
     }

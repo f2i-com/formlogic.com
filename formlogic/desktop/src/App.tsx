@@ -303,7 +303,7 @@ export default function App() {
               title="formlogic.com"
               onClick={(e) => {
                 e.preventDefault();
-                openExternal('https://formlogic.com');
+                void openExternal('https://formlogic.com').catch(() => undefined);
               }}
             >
               <ExternalLinkIcon size={15} />

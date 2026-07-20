@@ -20,12 +20,23 @@
 use std::time::Duration;
 
 use super::egress;
-use super::providers::{Capability, ProviderProfile, ProviderRegistryHandle, Protocol};
+use super::providers::{
+    Capability, ProviderProfile, ProviderRegistryHandle, Protocol, MAX_PROVIDER_KEY_BYTES,
+};
 
 const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(120);
 /// Size cap on an upstream response — enforced by `read_capped` for buffered
 /// bodies and by the HTTP layer's passthrough adapter for streamed ones.
 pub const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_RENDERED_HEADER_BYTES: usize = 32 * 1024;
+const MAX_RENDERED_CUSTOM_BODY_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CUSTOM_PLACEHOLDERS: usize = 64;
+
+/// Top-level llama.cpp extensions that must not leak into a public
+/// OpenAI-compatible request. Local/on-prem providers keep the canonical body
+/// unchanged because these fields are useful to llama-server and compatible
+/// local runtimes.
+const LLAMA_CPP_ONLY_FIELDS: [&str; 3] = ["repeat_penalty", "cache_prompt", "chat_template_kwargs"];
 
 #[derive(Debug)]
 pub enum GatewayError {
@@ -65,9 +76,27 @@ fn client_for(target: &egress::ValidatedTarget) -> Result<reqwest::Client, Gatew
         .map_err(|e| GatewayError::Upstream(format!("client build failed: {e}")))
 }
 
-/// Render `{{apiKey}}` in a header value.
-fn render_header(value: &str, key: Option<&str>) -> String {
-    value.replace("{{apiKey}}", key.unwrap_or(""))
+/// Render at most one `{{apiKey}}` without permitting a legacy profile or an
+/// oversized keyring value to amplify a header allocation.
+fn render_header(value: &str, key: Option<&str>) -> Result<String, GatewayError> {
+    let count = value.matches("{{apiKey}}").count();
+    let key = key.unwrap_or("");
+    if count > 1 || key.len() > MAX_PROVIDER_KEY_BYTES || key.chars().any(char::is_control) {
+        return Err(GatewayError::BadRequest(
+            "provider credential mapping exceeded the safe header limits".into(),
+        ));
+    }
+    let rendered_len = value
+        .len()
+        .checked_sub(count * "{{apiKey}}".len())
+        .and_then(|len| len.checked_add(count * key.len()))
+        .ok_or_else(|| GatewayError::BadRequest("provider header mapping overflowed".into()))?;
+    if rendered_len > MAX_RENDERED_HEADER_BYTES {
+        return Err(GatewayError::BadRequest(
+            "rendered provider header exceeded the 32 KiB limit".into(),
+        ));
+    }
+    Ok(value.replacen("{{apiKey}}", key, 1))
 }
 
 /// Apply auth + custom headers to a request builder for a provider.
@@ -75,7 +104,7 @@ fn apply_headers(
     mut rb: reqwest::RequestBuilder,
     provider: &ProviderProfile,
     key: Option<&str>,
-) -> reqwest::RequestBuilder {
+) -> Result<reqwest::RequestBuilder, GatewayError> {
     let mut saw_auth = false;
     for h in &provider.headers {
         let lname = h.name.to_ascii_lowercase();
@@ -89,14 +118,23 @@ fn apply_headers(
         if h.name.contains('\n') || h.name.contains('\r') || h.value.contains('\n') || h.value.contains('\r') {
             continue; // header-injection guard
         }
-        if lname == "authorization" || lname == "x-api-key" {
+        if h.value.contains("{{apiKey}}")
+            || matches!(
+            lname.as_str(),
+            "authorization" | "x-api-key" | "api-key" | "x-auth-token" | "x-access-token"
+        ) {
             saw_auth = true;
         }
-        rb = rb.header(&h.name, render_header(&h.value, key));
+        rb = rb.header(&h.name, render_header(&h.value, key)?);
     }
     // Default auth if a key exists and no header referenced it.
     if !saw_auth {
         if let Some(k) = key.filter(|k| !k.is_empty()) {
+            if k.len() > MAX_PROVIDER_KEY_BYTES || k.chars().any(char::is_control) {
+                return Err(GatewayError::BadRequest(
+                    "provider credential exceeded the safe header limits".into(),
+                ));
+            }
             match provider.protocol {
                 Protocol::Anthropic => {
                     rb = rb.header("x-api-key", k).header("anthropic-version", "2023-06-01");
@@ -107,7 +145,7 @@ fn apply_headers(
             }
         }
     }
-    rb
+    Ok(rb)
 }
 
 /// Resolve the provider for a request: an explicit id (`/providers/:id/…`) OR
@@ -134,6 +172,136 @@ pub fn resolve_provider(
     Ok(reg.resolve(alias, cap))
 }
 
+/// True when the provider receives the canonical OpenAI chat body directly.
+/// A Custom profile without a request template is explicitly treated as an
+/// OpenAI-shaped endpoint at a custom path elsewhere in this module, so it
+/// gets the same public-provider hardening.
+fn uses_canonical_openai_chat_body(provider: &ProviderProfile) -> bool {
+    match provider.protocol {
+        Protocol::OpenAi => true,
+        Protocol::Anthropic => false,
+        Protocol::Custom => provider
+            .specs
+            .get(super::providers::capability_key(Capability::Chat))
+            .and_then(|spec| spec.request_template.as_ref())
+            .is_none(),
+    }
+}
+
+fn is_public_openai_compatible(provider: &ProviderProfile) -> bool {
+    !provider.allow_local && uses_canonical_openai_chat_body(provider)
+}
+
+/// Remove local-runtime extensions before a canonical body is sent to a
+/// public provider. Do not recursively strip same-named application data from
+/// messages or tool payloads; only the top-level transport extensions belong
+/// to llama.cpp.
+fn normalize_public_openai_body(provider: &ProviderProfile, body: &mut serde_json::Value) {
+    if !is_public_openai_compatible(provider) {
+        return;
+    }
+    if let Some(object) = body.as_object_mut() {
+        for field in LLAMA_CPP_ONLY_FIELDS {
+            object.remove(field);
+        }
+    }
+}
+
+/// Exact shape emitted by Aokie's `LlmClient::warm_prefix`: one non-streaming
+/// token over a system-led prefix with llama.cpp prompt caching enabled. Keep
+/// this deliberately narrow so an ordinary short customer completion can
+/// never be mistaken for a warm-only request.
+fn is_aokie_prefix_warm(body: &serde_json::Value) -> bool {
+    const ALLOWED_FIELDS: [&str; 7] = [
+        "model",
+        "messages",
+        "stream",
+        "max_tokens",
+        "temperature",
+        "cache_prompt",
+        "chat_template_kwargs",
+    ];
+
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+    if object
+        .keys()
+        .any(|key| !ALLOWED_FIELDS.contains(&key.as_str()))
+        || object.get("stream").and_then(serde_json::Value::as_bool) != Some(false)
+        || object.get("max_tokens").and_then(serde_json::Value::as_u64) != Some(1)
+        || object
+            .get("temperature")
+            .and_then(serde_json::Value::as_f64)
+            != Some(0.0)
+        || object
+            .get("cache_prompt")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+    {
+        return false;
+    }
+    if object.get("model").is_some_and(|model| !model.is_string()) {
+        return false;
+    }
+
+    let Some(first_message) = object
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|messages| messages.first())
+    else {
+        return false;
+    };
+    if first_message
+        .get("role")
+        .and_then(serde_json::Value::as_str)
+        != Some("system")
+        || !first_message
+            .get("content")
+            .is_some_and(serde_json::Value::is_string)
+    {
+        return false;
+    }
+
+    let Some(kwargs) = object
+        .get("chat_template_kwargs")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    kwargs.len() == 1
+        && kwargs
+            .get("enable_thinking")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false)
+}
+
+/// Public providers cannot benefit from Aokie's local llama.cpp KV warm. Give
+/// the fire-and-forget caller an honest successful no-content completion with
+/// zero usage instead of spending tokens upstream.
+fn public_prefix_warm_completion(
+    provider: &ProviderProfile,
+    body: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if !is_public_openai_compatible(provider) || !is_aokie_prefix_warm(body) {
+        return None;
+    }
+    let mut response = serde_json::json!({
+        "id": "formlogic-aokie-prefix-warm-skipped",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": "" },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+    });
+    if let Some(model) = body.get("model") {
+        response["model"] = model.clone();
+    }
+    Some(response)
+}
+
 /// Forward a chat-completions request to a resolved provider and return its
 /// JSON response body. Non-streaming (streaming SSE is an additive follow-up).
 /// `body` is the canonical OpenAI chat-completions request; for a Custom
@@ -144,21 +312,29 @@ pub async fn chat_completions(
     mut body: serde_json::Value,
 ) -> Result<serde_json::Value, GatewayError> {
     let cap = Capability::Chat;
-    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
-    let access = provider.local_access();
-    let path = provider.path_for(cap);
-    let target = egress::validate(&provider.base_url, &path, access)
-        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
-
     // Default the model from the profile when the caller didn't set one.
     if body.get("model").is_none() {
         if let Some(m) = &provider.model {
             body["model"] = serde_json::Value::String(m.clone());
         }
     }
+    // This check intentionally precedes keyring access, DNS validation and
+    // client construction: a public KV-cache warm is a local-only optimization
+    // and must never create an upstream request or billable token usage.
+    if let Some(response) = public_prefix_warm_completion(provider, &body) {
+        return Ok(response);
+    }
+    normalize_public_openai_body(provider, &mut body);
+
+    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
+    let access = provider.local_access();
+    let path = provider.path_for(cap);
+    let target = egress::validate(&provider.base_url, &path, access)
+        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
+
     // For a Custom provider with a request template, render it.
     let out_body = if provider.protocol == Protocol::Custom {
-        render_custom_body(provider, cap, &body, key.as_deref())?
+        render_custom_body(provider, cap, &body)?
     } else if provider.protocol == Protocol::Anthropic {
         openai_chat_to_anthropic(&body)?
     } else {
@@ -167,7 +343,7 @@ pub async fn chat_completions(
 
     let client = client_for(&target)?;
     let rb = client.post(target.url.clone()).json(&out_body);
-    let rb = apply_headers(rb, provider, key.as_deref());
+    let rb = apply_headers(rb, provider, key.as_deref())?;
     let resp = rb
         .send()
         .await
@@ -227,22 +403,23 @@ pub async fn chat_completions_stream(
     mut body: serde_json::Value,
 ) -> Result<reqwest::Response, GatewayError> {
     let cap = Capability::Chat;
-    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
-    let access = provider.local_access();
-    let path = provider.path_for(cap);
-    let target = egress::validate(&provider.base_url, &path, access)
-        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
-
     // Default the model from the profile when the caller didn't set one.
     if body.get("model").is_none() {
         if let Some(m) = &provider.model {
             body["model"] = serde_json::Value::String(m.clone());
         }
     }
+    normalize_public_openai_body(provider, &mut body);
+
+    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
+    let access = provider.local_access();
+    let path = provider.path_for(cap);
+    let target = egress::validate(&provider.base_url, &path, access)
+        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
 
     let client = client_for(&target)?;
     let rb = client.post(target.url.clone()).json(&body);
-    let rb = apply_headers(rb, provider, key.as_deref());
+    let rb = apply_headers(rb, provider, key.as_deref())?;
     let resp = rb
         .send()
         .await
@@ -274,7 +451,7 @@ pub async fn list_models(
     let target = egress::validate(&provider.base_url, "/v1/models", provider.local_access())
         .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
     let client = client_for(&target)?;
-    let rb = apply_headers(client.get(target.url.clone()), provider, key.as_deref());
+    let rb = apply_headers(client.get(target.url.clone()), provider, key.as_deref())?;
     let resp = rb
         .send()
         .await
@@ -323,26 +500,98 @@ async fn read_capped(resp: reqwest::Response) -> Result<Vec<u8>, GatewayError> {
 
 // ---- protocol adapters (small, deliberately explicit) ----
 
+fn render_bounded_template(
+    template: &str,
+    replacements: &[(&str, String)],
+) -> Result<String, GatewayError> {
+    let mut rendered_len = template.len();
+    let mut placeholder_count = 0usize;
+    for (placeholder, value) in replacements {
+        let count = template.matches(placeholder).count();
+        placeholder_count = placeholder_count
+            .checked_add(count)
+            .ok_or_else(|| GatewayError::BadRequest("custom mapping count overflowed".into()))?;
+        rendered_len = rendered_len
+            .checked_sub(
+                count
+                    .checked_mul(placeholder.len())
+                    .ok_or_else(|| GatewayError::BadRequest("custom mapping overflowed".into()))?,
+            )
+            .and_then(|len| len.checked_add(count.checked_mul(value.len())?))
+            .ok_or_else(|| GatewayError::BadRequest("custom mapping overflowed".into()))?;
+    }
+    if placeholder_count > MAX_CUSTOM_PLACEHOLDERS {
+        return Err(GatewayError::BadRequest(format!(
+            "custom request templates are limited to {MAX_CUSTOM_PLACEHOLDERS} data placeholders"
+        )));
+    }
+    if rendered_len > MAX_RENDERED_CUSTOM_BODY_BYTES {
+        return Err(GatewayError::BadRequest(
+            "rendered custom request exceeded the 4 MiB limit".into(),
+        ));
+    }
+
+    // Render in one bounded allocation. This avoids the repeated global
+    // replacement amplification that a legacy on-disk profile could trigger.
+    let mut out = String::with_capacity(rendered_len);
+    let mut cursor = 0usize;
+    while cursor < template.len() {
+        let next = replacements
+            .iter()
+            .filter_map(|(placeholder, value)| {
+                template[cursor..]
+                    .find(placeholder)
+                    .map(|offset| (cursor + offset, *placeholder, value.as_str()))
+            })
+            .min_by_key(|(position, _, _)| *position);
+        let Some((position, placeholder, value)) = next else {
+            out.push_str(&template[cursor..]);
+            break;
+        };
+        out.push_str(&template[cursor..position]);
+        out.push_str(value);
+        cursor = position + placeholder.len();
+    }
+    debug_assert_eq!(out.len(), rendered_len);
+    Ok(out)
+}
+
 fn render_custom_body(
     provider: &ProviderProfile,
     cap: Capability,
     canonical: &serde_json::Value,
-    key: Option<&str>,
 ) -> Result<serde_json::Value, GatewayError> {
     let spec = provider.specs.get(super::providers::capability_key(cap));
     let Some(template) = spec.and_then(|s| s.request_template.as_ref()) else {
         // No template → pass the canonical body through unchanged.
         return Ok(canonical.clone());
     };
+    if template.contains("{{apiKey}}") {
+        return Err(GatewayError::BadRequest(
+            "custom request templates cannot reference {{apiKey}}; credentials are injected into HTTP headers by the Desktop host"
+                .into(),
+        ));
+    }
     let model = canonical.get("model").and_then(|v| v.as_str()).unwrap_or("");
-    let messages = canonical.get("messages").cloned().unwrap_or(serde_json::json!([]));
     let prompt = last_user_text(canonical);
-    let rendered = template
-        .replace("{{model}}", &json_escape(model))
-        .replace("{{messages}}", &messages.to_string())
-        .replace("{{prompt}}", &json_escape(&prompt))
-        .replace("{{input}}", &json_escape(&prompt))
-        .replace("{{apiKey}}", &json_escape(key.unwrap_or("")));
+    let messages = if template.contains("{{messages}}") {
+        canonical
+            .get("messages")
+            .cloned()
+            .unwrap_or(serde_json::json!([]))
+            .to_string()
+    } else {
+        String::new()
+    };
+    let rendered = render_bounded_template(
+        template,
+        &[
+            ("{{model}}", json_escape(model)),
+            ("{{messages}}", messages),
+            ("{{prompt}}", json_escape(&prompt)),
+            ("{{input}}", json_escape(&prompt)),
+        ],
+    )?;
     serde_json::from_str(&rendered)
         .map_err(|e| GatewayError::BadRequest(format!("custom request template did not render to JSON: {e}")))
 }
@@ -435,6 +684,23 @@ fn dot_path<'a>(v: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::
 mod tests {
     use super::*;
 
+    fn profile(protocol: Protocol, allow_local: bool) -> ProviderProfile {
+        ProviderProfile {
+            id: "test-provider".into(),
+            name: "Test provider".into(),
+            category: None,
+            tags: vec![],
+            protocol,
+            base_url: "https://example.com".into(),
+            model: Some("test-model".into()),
+            capabilities: vec![Capability::Chat],
+            headers: vec![],
+            specs: Default::default(),
+            allow_local,
+            enabled: true,
+        }
+    }
+
     #[test]
     fn openai_to_anthropic_moves_system_and_maps_messages() {
         let body = serde_json::json!({
@@ -474,6 +740,8 @@ mod tests {
         let provider = ProviderProfile {
             id: "custom".into(),
             name: "Custom".into(),
+            category: None,
+            tags: vec![],
             protocol: Protocol::Custom,
             base_url: "https://example.com".into(),
             model: Some("m1".into()),
@@ -487,11 +755,167 @@ mod tests {
             "model": "m1",
             "messages": [{ "role": "user", "content": "say \"hi\"" }]
         });
-        let body = render_custom_body(&provider, Capability::Chat, &canonical, None).unwrap();
+        let body = render_custom_body(&provider, Capability::Chat, &canonical).unwrap();
         assert_eq!(body["q"], "say \"hi\"", "prompt escaped + substituted");
         assert_eq!(body["m"], "m1");
         let resp = serde_json::json!({ "result": { "text": "done" } });
         assert_eq!(extract_custom_text(&provider, Capability::Chat, &resp), "done");
+    }
+
+    #[test]
+    fn custom_template_refuses_placeholder_amplification_before_rendering() {
+        let mut provider = profile(Protocol::Custom, false);
+        provider.specs.insert(
+            "chat".into(),
+            super::super::providers::CapabilitySpec {
+                request_template: Some(format!(
+                    r#"{{"q":"{}"}}"#,
+                    "{{prompt}}".repeat(MAX_CUSTOM_PLACEHOLDERS + 1)
+                )),
+                ..super::super::providers::CapabilitySpec::default()
+            },
+        );
+        let canonical = serde_json::json!({
+            "messages": [{ "role": "user", "content": "large customer prompt" }]
+        });
+        let error = render_custom_body(&provider, Capability::Chat, &canonical)
+            .expect_err("placeholder amplification must be refused");
+        assert!(error.message().contains("data placeholders"));
+    }
+
+    #[test]
+    fn public_openai_normalization_strips_llama_fields_but_local_preserves_them() {
+        let original = serde_json::json!({
+            "model": "m1",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "stream": true,
+            "temperature": 0.35,
+            "repeat_penalty": 1.15,
+            "cache_prompt": true,
+            "chat_template_kwargs": { "enable_thinking": false },
+            "metadata": { "cache_prompt": "application data is untouched" }
+        });
+
+        let mut public_body = original.clone();
+        normalize_public_openai_body(&profile(Protocol::OpenAi, false), &mut public_body);
+        for field in LLAMA_CPP_ONLY_FIELDS {
+            assert!(
+                public_body.get(field).is_none(),
+                "{field} reached a public provider"
+            );
+        }
+        assert_eq!(public_body["temperature"], 0.35);
+        assert_eq!(
+            public_body["metadata"]["cache_prompt"],
+            "application data is untouched"
+        );
+
+        let mut local_body = original.clone();
+        normalize_public_openai_body(&profile(Protocol::OpenAi, true), &mut local_body);
+        assert_eq!(
+            local_body, original,
+            "local llama-compatible request changed"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_aokie_prefix_warm_short_circuits_before_egress() {
+        let mut provider = profile(Protocol::OpenAi, false);
+        // If the warm request reaches egress validation this URL is rejected;
+        // success therefore locks the no-upstream branch ahead of transport.
+        provider.base_url = "not a provider URL".into();
+        let body = serde_json::json!({
+            "model": "m1",
+            "messages": [{ "role": "system", "content": "You are Aokie." }],
+            "stream": false,
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "cache_prompt": true,
+            "chat_template_kwargs": { "enable_thinking": false }
+        });
+        let reg = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::providers::ProviderRegistry::load(std::path::Path::new(
+                "__formlogic_gateway_warm_test_missing__",
+            )),
+        ));
+
+        let response = chat_completions(&reg, &provider, body.clone())
+            .await
+            .expect("public warm is a successful local no-op");
+        assert_eq!(response["id"], "formlogic-aokie-prefix-warm-skipped");
+        assert_eq!(response["choices"][0]["message"]["content"], "");
+        assert_eq!(response["usage"]["total_tokens"], 0);
+
+        assert!(public_prefix_warm_completion(&profile(Protocol::OpenAi, true), &body).is_none());
+        let mut ordinary_short_completion = body;
+        ordinary_short_completion["cache_prompt"] = serde_json::Value::Bool(false);
+        assert!(public_prefix_warm_completion(
+            &profile(Protocol::OpenAi, false),
+            &ordinary_short_completion
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn custom_body_rejects_api_key_placeholder_and_header_auth_remains_host_side() {
+        let mut provider = profile(Protocol::Custom, false);
+        provider.specs.insert(
+            "chat".into(),
+            super::super::providers::CapabilitySpec {
+                path: Some("/generate".into()),
+                request_template: Some(r#"{"prompt":"{{prompt}}","key":"{{apiKey}}"}"#.into()),
+                response_path: None,
+            },
+        );
+        let canonical = serde_json::json!({
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+        let err = render_custom_body(&provider, Capability::Chat, &canonical)
+            .expect_err("body mappings must not receive credentials");
+        assert!(matches!(err, GatewayError::BadRequest(_)));
+        assert!(err.message().contains("cannot reference {{apiKey}}"));
+
+        let openai = profile(Protocol::OpenAi, false);
+        let request = apply_headers(
+            reqwest::Client::new().post("https://example.com/v1/chat/completions"),
+            &openai,
+            Some("sk-host-only"),
+        )
+        .expect("header mapping is valid")
+        .build()
+        .expect("request builds");
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer sk-host-only")
+        );
+
+        let mut vendor = profile(Protocol::Custom, false);
+        vendor.headers.push(super::super::providers::HeaderKv {
+            name: "X-Goog-Api-Key".into(),
+            value: "{{apiKey}}".into(),
+        });
+        let request = apply_headers(
+            reqwest::Client::new().post("https://example.com/generate"),
+            &vendor,
+            Some("vendor-host-only"),
+        )
+        .expect("vendor header mapping")
+        .build()
+        .expect("request builds");
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-api-key")
+                .and_then(|value| value.to_str().ok()),
+            Some("vendor-host-only")
+        );
+        assert!(
+            request.headers().get(reqwest::header::AUTHORIZATION).is_none(),
+            "a custom credential header must suppress default Bearer duplication"
+        );
     }
 
     /// AI-405 decision table: which protocols may proxy `stream:true` SSE.
@@ -502,6 +926,8 @@ mod tests {
         let base = |protocol: Protocol, specs: std::collections::HashMap<String, super::super::providers::CapabilitySpec>| ProviderProfile {
             id: "p".into(),
             name: "p".into(),
+            category: None,
+            tags: vec![],
             protocol,
             base_url: "https://example.com".into(),
             model: None,

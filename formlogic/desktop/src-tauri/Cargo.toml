@@ -143,11 +143,19 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # DESK-PROC-001: Job Object (kill-on-close) so the whole service tree dies with
 # the desktop, and SetHandleInformation to make the API listener socket
 # non-inheritable so children never wedge :17872 (see src/proc.rs).
+#
+# CODEX-AUTH-001: the managed Codex 0.124 runtime exceeds Credential Manager's
+# per-entry size limit for some ChatGPT sessions. Its dedicated profile is
+# therefore protected with an exact Windows DACL and EFS before file-backed
+# Codex auth is enabled (see src/ai/codex.rs).
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
     "Win32_System_JobObjects",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
 ] }

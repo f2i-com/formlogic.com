@@ -13,11 +13,12 @@ export const API_BASE = 'http://127.0.0.1:17872';
 async function request<T>(
   path: string,
   init?: RequestInit,
+  timeoutMs = 15000,
 ): Promise<T> {
   // Bound every call so a wedged companion handler (TCP accepted but no response)
   // can't leave the promise pending forever and stack up under the 1.5-2s pollers.
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 15000);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const resp = await fetch(`${API_BASE}${path}`, {
       headers: { 'Content-Type': 'application/json' },
@@ -69,6 +70,8 @@ export interface ServiceSnapshot {
   name: string;
   description: string;
   category: string;
+  /** User-defined search/filter labels. */
+  tags?: string[];
   /** AI lanes the template DECLARES this service serves (e.g. ["transcription"]).
    *  Non-empty ⇒ authoritative (wins over the category heuristic in the
    *  capability chips + /api/ai/sources); absent/empty ⇒ legacy heuristic. */
@@ -142,6 +145,7 @@ export interface ServiceTemplateInput {
   name: string;
   description: string;
   category: string;
+  tags?: string[];
   defaultPort: number;
   install?: { kind: 'none' } | {
     kind: 'script';
@@ -237,6 +241,102 @@ export const services = {
     ),
 };
 
+// ----- ServiceDefinition catalog + delegated Codex account -----
+
+export interface ServiceDefinitionSummary {
+  schemaVersion: number;
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  kind: string;
+  category: { id: string; label: string };
+  tags: string[];
+  capabilities: string[];
+  ui?: { pilot?: boolean };
+}
+
+export interface ServiceDefinitionCatalog {
+  schemaVersion: number;
+  definitions: ServiceDefinitionSummary[];
+}
+
+export interface CodexAccountView {
+  accountType: string;
+  email?: string;
+  planType?: string;
+}
+
+export interface CodexServiceStatus {
+  available: boolean;
+  running: boolean;
+  version?: string;
+  requiresOpenaiAuth: boolean;
+  account?: CodexAccountView;
+  safeDefaults: {
+    fileSystem: string;
+    network: string;
+    approvals: string;
+    credentials: string;
+  };
+  error?: string;
+}
+
+export interface CodexLoginStart {
+  method: string;
+  loginId: string;
+  authUrl?: string;
+  verificationUrl?: string;
+  userCode?: string;
+}
+
+export interface CodexModelView {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  isDefault: boolean;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: unknown[];
+}
+
+export interface CodexChatRequest {
+  prompt: string;
+  threadId?: string;
+  model?: string;
+  reasoningEffort?: string;
+}
+
+export interface CodexChatResponse {
+  threadId: string;
+  turnId: string;
+  text: string;
+}
+
+export const servicePlatform = {
+  catalog: () => request<ServiceDefinitionCatalog>('/api/services/catalog'),
+  codexStatus: () => request<CodexServiceStatus>('/api/services/codex/status'),
+  startCodexLogin: (deviceCode = false) =>
+    request<CodexLoginStart>('/api/services/codex/auth/start', {
+      method: 'POST',
+      body: JSON.stringify({ deviceCode }),
+    }),
+  cancelCodexLogin: (loginId: string) =>
+    request<{ ok: boolean }>('/api/services/codex/auth/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ loginId }),
+    }),
+  logoutCodex: () =>
+    request<{ ok: boolean }>('/api/services/codex/auth/logout', { method: 'POST' }),
+  codexModels: () =>
+    request<{ models: CodexModelView[] }>('/api/services/codex/models'),
+  codexChat: (body: CodexChatRequest) =>
+    request<CodexChatResponse>('/api/services/codex/actions/assistant.chat', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }, 15 * 60 * 1000),
+};
+
 // ----- AI providers (AI-401..404) -----
 
 export type AiCapability =
@@ -250,6 +350,8 @@ export type AiProtocol = 'openai' | 'anthropic' | 'custom';
 export interface AiProviderProfile {
   id: string;
   name: string;
+  category?: string;
+  tags?: string[];
   protocol: AiProtocol;
   baseUrl: string;
   model?: string;
@@ -952,16 +1054,37 @@ export function openInExplorer(path: string): Promise<void> {
  * invokes the native `open_url` command; in a plain dev browser (vite :1420)
  * it falls back to window.open so the link works there too.
  */
-export function openExternal(url: string): void {
+export async function openExternal(url: string): Promise<void> {
   const internals = (
     window as unknown as {
       __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> };
     }
   ).__TAURI_INTERNALS__;
   if (internals?.invoke) {
-    internals.invoke('open_url', { url }).catch(() => window.open(url, '_blank', 'noopener,noreferrer'));
-  } else {
-    window.open(url, '_blank', 'noopener,noreferrer');
+    try {
+      await internals.invoke('open_url', { url });
+      return;
+    } catch {
+      // A dev/browser fallback is still useful when the native command is not
+      // registered, but report a blocked popup to callers such as OAuth flows.
+    }
+  }
+  // Opening with the `noopener` feature returns null even when it succeeds in
+  // several browsers, which makes launch failures impossible to distinguish.
+  // Create a same-origin blank page first, sever its opener, apply no-referrer,
+  // then navigate it to the already caller-validated external URL.
+  const opened = window.open('', '_blank');
+  if (!opened) throw new Error('The browser could not be opened.');
+  try {
+    opened.opener = null;
+    const referrerPolicy = opened.document.createElement('meta');
+    referrerPolicy.name = 'referrer';
+    referrerPolicy.content = 'no-referrer';
+    opened.document.head.append(referrerPolicy);
+    opened.location.replace(url);
+  } catch (error) {
+    opened.close();
+    throw error;
   }
 }
 

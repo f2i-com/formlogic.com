@@ -45,8 +45,9 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::collections::HashMap;
+use std::future::Future;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};
 use tower_http::cors::{Any, CorsLayer};
 
@@ -119,6 +120,10 @@ struct AppState {
     flow_runtime: Option<Arc<FlowRuntime>>,
     /// AI-401: the provider registry backing the AI gateway (`/api/ai/*`).
     ai_providers: crate::ai::providers::ProviderRegistryHandle,
+    /// Delegated ChatGPT OAuth + read-only agent surface. This is deliberately
+    /// separate from the OpenAI-compatible provider registry because a
+    /// ChatGPT subscription is not an OpenAI Platform API credential.
+    codex_agent: crate::ai::codex::CodexAgentHandle,
 }
 
 /// Current companion id, reported by `/api/health` + `/api/desktop/info`.
@@ -282,10 +287,7 @@ async fn list_services(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-async fn start_service(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn start_service(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let result = state
         .registry
         .lock()
@@ -363,10 +365,7 @@ async fn set_service_extra_args(
     }
 }
 
-async fn stop_service(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn stop_service(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let result = state
         .registry
         .lock()
@@ -530,6 +529,88 @@ async fn list_ai_providers(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({ "providers": reg.list(), "aliases": reg.aliases() })).into_response()
 }
 
+// ------- ServiceDefinition v3 catalog + OpenAI Codex delegated agent -------
+
+async fn list_service_definition_catalog() -> impl IntoResponse {
+    Json(crate::services::platform::builtin_catalog())
+}
+
+fn codex_agent_error(error: crate::ai::codex::CodexAgentError) -> Response {
+    let status = match error.code() {
+        "invalid_request" => StatusCode::BAD_REQUEST,
+        // The Desktop caller is authenticated; it is the delegated Codex
+        // account that is missing. Do not return 401, because paired website
+        // clients correctly interpret 401 as an expired Desktop bearer and
+        // would otherwise erase a still-valid pairing token.
+        "codex_not_authenticated" => StatusCode::PRECONDITION_REQUIRED,
+        "codex_unavailable" | "codex_incompatible" => StatusCode::SERVICE_UNAVAILABLE,
+        "codex_busy" | "codex_rate_limited" => StatusCode::TOO_MANY_REQUESTS,
+        "codex_timeout" => StatusCode::GATEWAY_TIMEOUT,
+        "codex_interrupted" => StatusCode::CONFLICT,
+        "codex_response_too_large" => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    desktop_err(status, error.code(), error.message())
+}
+
+async fn codex_status(State(state): State<AppState>) -> impl IntoResponse {
+    (StatusCode::OK, Json(state.codex_agent.status().await)).into_response()
+}
+
+async fn codex_login_start(
+    State(state): State<AppState>,
+    Json(body): Json<crate::ai::codex::CodexLoginRequest>,
+) -> Response {
+    match state.codex_agent.start_login(body).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(error) => codex_agent_error(error),
+    }
+}
+
+async fn codex_login_cancel(
+    State(state): State<AppState>,
+    Json(body): Json<crate::ai::codex::CodexCancelLoginRequest>,
+) -> Response {
+    match state.codex_agent.cancel_login(body).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(error) => codex_agent_error(error),
+    }
+}
+
+async fn codex_logout(State(state): State<AppState>) -> Response {
+    match state.codex_agent.logout().await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(error) => codex_agent_error(error),
+    }
+}
+
+async fn codex_models(State(state): State<AppState>) -> Response {
+    match state.codex_agent.models().await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(error) => codex_agent_error(error),
+    }
+}
+
+async fn codex_assistant_chat(
+    State(state): State<AppState>,
+    Json(body): Json<crate::ai::codex::CodexChatRequest>,
+) -> Response {
+    match state.codex_agent.assistant_chat(body).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(error) => codex_agent_error(error),
+    }
+}
+
+async fn codex_interrupt(
+    State(state): State<AppState>,
+    Json(body): Json<crate::ai::codex::CodexInterruptRequest>,
+) -> Response {
+    match state.codex_agent.interrupt(body).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(error) => codex_agent_error(error),
+    }
+}
+
 /// Capability hint per service — which AI lanes a local service can serve.
 /// A template-DECLARED capability list (non-empty) is authoritative; else the
 /// legacy category-substring heuristic applies UNCHANGED (existing templates
@@ -606,6 +687,39 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
                 "hasKey": v["hasKey"],
                 "enabled": v["enabled"],
                 "model": v["model"],
+            }));
+        }
+    }
+    // The subscription-backed call adapters are virtual provider rows, never
+    // editable registry profiles. Expose them only while the managed Codex
+    // service has a verified ChatGPT account so a picker cannot save a source
+    // that is already known to need sign-in.
+    let codex_status = state.codex_agent.status().await;
+    if codex_status.available
+        && codex_status.running
+        && !codex_status.requires_openai_auth
+        && matches!(
+            codex_status.account.as_ref(),
+            Some(account) if account.account_type == "chatgpt"
+        )
+    {
+        for variant in [
+            crate::ai::codex::CodexLiveCallVariant::ReasoningNone,
+            crate::ai::codex::CodexLiveCallVariant::ReasoningLow,
+        ] {
+            sources.push(serde_json::json!({
+                "id": format!("provider:{}", variant.provider_id()),
+                "kind": "provider",
+                "providerId": variant.provider_id(),
+                "name": variant.display_name(),
+                "category": "ChatGPT / Codex",
+                "protocol": "openai",
+                "capabilities": ["chat"],
+                "hasKey": true,
+                "enabled": true,
+                "model": crate::ai::codex::LIVE_CALL_MODEL,
+                "reasoningEffort": variant.reasoning_effort(),
+                "subscriptionBacked": true,
             }));
         }
     }
@@ -704,15 +818,25 @@ async fn ai_gateway_models(State(state): State<AppState>) -> Response {
     ai_models_impl(&state, None).await
 }
 
-async fn ai_gateway_models_for(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+async fn ai_gateway_models_for(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     ai_models_impl(&state, Some(&id)).await
 }
 
 async fn ai_models_impl(state: &AppState, provider_id: Option<&str>) -> Response {
     use crate::ai::providers::Capability;
+    if provider_id
+        .and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
+        .is_some()
+    {
+        return match state.codex_agent.require_live_call_ready().await {
+            Ok(()) => (
+                StatusCode::OK,
+                Json(crate::ai::codex::live_call_models_response()),
+            )
+                .into_response(),
+            Err(error) => codex_agent_error(error),
+        };
+    }
     let provider = match crate::ai::gateway::resolve_provider(
         &state.ai_providers,
         provider_id,
@@ -753,10 +877,60 @@ async fn ai_gateway_chat_for(
     ai_chat_impl(&state, Some(&id), body).await
 }
 
-async fn ai_chat_impl(state: &AppState, provider_id: Option<&str>, body: serde_json::Value) -> Response {
+async fn ai_chat_impl(
+    state: &AppState,
+    provider_id: Option<&str>,
+    body: serde_json::Value,
+) -> Response {
     use crate::ai::providers::Capability;
     // An optional `provider` field in the body is a capability alias.
-    let alias = body.get("provider").and_then(|v| v.as_str()).map(str::to_string);
+    let alias = body
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    // The Codex call adapters are legal only through their exact named
+    // provider route. Letting the default route's body alias select them would
+    // make middleware see an OpenAI-API action while the request actually
+    // spends the connected ChatGPT/Codex account.
+    if provider_id.is_none()
+        && alias
+            .as_deref()
+            .is_some_and(crate::ai::codex::is_live_call_provider_id)
+    {
+        return desktop_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Use the named Codex call-provider URL; virtual Codex providers cannot be selected through the default provider alias.",
+        );
+    }
+    if let Some(variant) =
+        provider_id.and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
+    {
+        let mut body = body;
+        if let Some(object) = body.as_object_mut() {
+            object.remove("provider");
+        }
+        if let Some(warm) = crate::ai::codex::live_call_prefix_warm_completion(&body) {
+            if let Err(error) = state.codex_agent.require_live_call_ready().await {
+                return codex_agent_error(error);
+            }
+            return (StatusCode::OK, Json(warm)).into_response();
+        }
+        let wants_stream = body
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if wants_stream {
+            let agent = state.codex_agent.clone();
+            return codex_live_call_sse(async move { agent.live_call_chat(variant, &body).await });
+        }
+        return match state.codex_agent.live_call_chat(variant, &body).await {
+            Ok(result) => {
+                (StatusCode::OK, Json(codex_live_call_completion(&result))).into_response()
+            }
+            Err(error) => codex_agent_error(error),
+        };
+    }
     let provider = match crate::ai::gateway::resolve_provider(
         &state.ai_providers,
         provider_id,
@@ -782,7 +956,10 @@ async fn ai_chat_impl(state: &AppState, provider_id: Option<&str>, body: serde_j
     // incrementally when the provider's wire dialect is OpenAI-compatible;
     // refuse honestly (never a mangled translation) when it isn't. The
     // non-stream path below is byte-for-byte unchanged.
-    let wants_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let wants_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if wants_stream {
         if !crate::ai::gateway::protocol_streamable(&provider) {
             return desktop_err(
@@ -794,8 +971,12 @@ async fn ai_chat_impl(state: &AppState, provider_id: Option<&str>, body: serde_j
                 ),
             );
         }
-        return match crate::ai::gateway::chat_completions_stream(&state.ai_providers, &provider, body)
-            .await
+        return match crate::ai::gateway::chat_completions_stream(
+            &state.ai_providers,
+            &provider,
+            body,
+        )
+        .await
         {
             Ok(upstream) => stream_passthrough_response(upstream),
             Err(e) => ai_gateway_error(e),
@@ -805,6 +986,178 @@ async fn ai_chat_impl(state: &AppState, provider_id: Option<&str>, body: serde_j
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => ai_gateway_error(e),
     }
+}
+
+fn codex_live_call_created() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn codex_live_call_completion(
+    result: &crate::ai::codex::CodexLiveCallResponse,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": format!("chatcmpl-formlogic-codex-{}", result.turn_id),
+        "object": "chat.completion",
+        "created": codex_live_call_created(),
+        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": result.text },
+            "finish_reason": "stop"
+        }]
+    })
+}
+
+/// Keep one channel slot permanently available for the terminal payload/error.
+/// Heartbeats are best-effort and are never allowed to queue behind each other.
+const CODEX_LIVE_CALL_SSE_CHANNEL_CAPACITY: usize = 2;
+const CODEX_LIVE_CALL_SSE_HEARTBEAT: std::time::Duration = std::time::Duration::from_millis(500);
+const CODEX_LIVE_CALL_SSE_WAIT_COMMENT: &[u8] = b": formlogic-codex-wait\n\n";
+
+type CodexLiveCallSseItem = Result<axum::body::Bytes, std::io::Error>;
+
+/// Codex App Server produces deltas internally, but this safety adapter first
+/// buffers a complete, bounded, terminally-confirmed turn. Aokie still accepts
+/// a standards-shaped SSE response, so serialize that checked text as one
+/// content delta followed by the ordinary stop + [DONE] markers.
+fn codex_live_call_sse_payload(
+    result: crate::ai::codex::CodexLiveCallResponse,
+) -> axum::body::Bytes {
+    let id = format!("chatcmpl-formlogic-codex-{}", result.turn_id);
+    let created = codex_live_call_created();
+    let role = serde_json::json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "choices": [{ "index": 0, "delta": { "role": "assistant" }, "finish_reason": null }]
+    });
+    let content = serde_json::json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "choices": [{ "index": 0, "delta": { "content": result.text }, "finish_reason": null }]
+    });
+    let stop = serde_json::json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
+    });
+    let payload = format!("data: {role}\n\ndata: {content}\n\ndata: {stop}\n\ndata: [DONE]\n\n");
+    axum::body::Bytes::from(payload)
+}
+
+async fn send_codex_live_call_terminal(
+    sender: &tokio::sync::mpsc::Sender<CodexLiveCallSseItem>,
+    item: CodexLiveCallSseItem,
+) {
+    match sender.try_send(item) {
+        Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(item)) => {
+            // The heartbeat policy reserves a slot, so this is defensive. If
+            // an invariant changes, wait only while the receiver is alive;
+            // disconnect always wins and cannot strand this body task.
+            tokio::select! {
+                biased;
+                _ = sender.closed() => {}
+                permit = sender.reserve() => {
+                    if let Ok(permit) = permit {
+                        permit.send(item);
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn drive_codex_live_call_sse<F>(
+    sender: tokio::sync::mpsc::Sender<CodexLiveCallSseItem>,
+    turn: F,
+) where
+    F: Future<
+            Output = Result<
+                crate::ai::codex::CodexLiveCallResponse,
+                crate::ai::codex::CodexAgentError,
+            >,
+        > + Send,
+{
+    let mut heartbeat = tokio::time::interval(CODEX_LIVE_CALL_SSE_HEARTBEAT);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    tokio::pin!(turn);
+
+    loop {
+        tokio::select! {
+            // Completion and disconnect are checked before a ready heartbeat.
+            // Thus a full/slow client cannot starve either terminal handling
+            // or cancellation of the still-armed Codex future.
+            biased;
+            _ = sender.closed() => return,
+            result = &mut turn => {
+                let terminal = match result {
+                    Ok(result) => Ok(codex_live_call_sse_payload(result)),
+                    Err(error) => Err(std::io::Error::other(format!(
+                        "Codex live-call stream failed ({}): {}",
+                        error.code(),
+                        error.message()
+                    ))),
+                };
+                send_codex_live_call_terminal(&sender, terminal).await;
+                return;
+            }
+            _ = heartbeat.tick() => {
+                // `try_send` plus the reserved terminal slot makes heartbeats
+                // purely best-effort. They can never block model completion.
+                if sender.capacity() == CODEX_LIVE_CALL_SSE_CHANNEL_CAPACITY {
+                    match sender.try_send(Ok(axum::body::Bytes::from_static(
+                        CODEX_LIVE_CALL_SSE_WAIT_COMMENT,
+                    ))) {
+                        Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Return the 200/SSE response immediately, then own the bounded Codex turn in
+/// the body task. Dropping the response body closes the receiver; the select in
+/// `drive_codex_live_call_sse` then drops the armed future, which hands its turn
+/// permit to the existing cancellation-safe interrupt guard.
+fn codex_live_call_sse<F>(turn: F) -> Response
+where
+    F: Future<
+            Output = Result<
+                crate::ai::codex::CodexLiveCallResponse,
+                crate::ai::codex::CodexAgentError,
+            >,
+        > + Send
+        + 'static,
+{
+    let (sender, receiver) =
+        tokio::sync::mpsc::channel::<CodexLiveCallSseItem>(CODEX_LIVE_CALL_SSE_CHANNEL_CAPACITY);
+    tokio::spawn(drive_codex_live_call_sse(sender, turn));
+    let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|item| (item, receiver))
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/event-stream")
+        .header(CACHE_CONTROL, "no-cache")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap_or_else(|_| {
+            desktop_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_error",
+                "Could not encode the Codex call response.",
+            )
+        })
 }
 
 /// Pipe an upstream streaming response (SSE chat completions) through to the
@@ -824,7 +1177,9 @@ fn stream_passthrough_response(upstream: reqwest::Response) -> Response {
         Ok(c) => {
             total += c.len() as u64;
             if total > crate::ai::gateway::MAX_RESPONSE_BYTES {
-                Err(std::io::Error::other("upstream stream exceeded the size cap"))
+                Err(std::io::Error::other(
+                    "upstream stream exceeded the size cap",
+                ))
             } else {
                 Ok(c)
             }
@@ -911,8 +1266,11 @@ async fn start_model_download(
     };
     let catalog_pin = {
         let cat = state.catalog.current();
-        catalog::find_by_url(&cat, &normalised)
-            .and_then(|m| m.sha256.clone().map(|sha| (sha.to_lowercase(), m.size_bytes)))
+        catalog::find_by_url(&cat, &normalised).and_then(|m| {
+            m.sha256
+                .clone()
+                .map(|sha| (sha.to_lowercase(), m.size_bytes))
+        })
     };
     let expected = match catalog_pin {
         Some((pin, size)) => {
@@ -932,11 +1290,16 @@ async fn start_model_download(
         }),
     };
 
-    match state
-        .downloads
-        .start(&req.url, req.filename.as_deref(), req.subdir.as_deref(), expected)
-    {
-        Ok(id) => (StatusCode::ACCEPTED, Json(serde_json::json!({ "downloadId": id })))
+    match state.downloads.start(
+        &req.url,
+        req.filename.as_deref(),
+        req.subdir.as_deref(),
+        expected,
+    ) {
+        Ok(id) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "downloadId": id })),
+        )
             .into_response(),
         Err(e) => err400(&e),
     }
@@ -949,9 +1312,11 @@ async fn verify_models(State(state): State<AppState>) -> Response {
     let downloads = state.downloads.clone();
     match tokio::task::spawn_blocking(move || downloads.verify_all()).await {
         Ok(Ok(report)) => (StatusCode::OK, Json(report)).into_response(),
-        Ok(Err(e)) if e.contains("already running") => {
-            (StatusCode::CONFLICT, Json(serde_json::json!({ "error": e }))).into_response()
-        }
+        Ok(Err(e)) if e.contains("already running") => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
         Ok(Err(e)) => err500(&e),
         Err(e) => err500(&format!("verify task failed: {e}")),
     }
@@ -1067,16 +1432,16 @@ async fn create_venv(
     State(state): State<AppState>,
     Json(req): Json<VenvRequest>,
 ) -> impl IntoResponse {
-    match state.python.create_or_reuse_venv(&req.name, &req.requirements) {
+    match state
+        .python
+        .create_or_reuse_venv(&req.name, &req.requirements)
+    {
         Ok(path) => (StatusCode::OK, Json(serde_json::json!({ "path": path }))).into_response(),
         Err(e) => err400(&e),
     }
 }
 
-async fn delete_venv(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> impl IntoResponse {
+async fn delete_venv(State(state): State<AppState>, Path(name): Path<String>) -> impl IntoResponse {
     match state.python.delete_venv(&name) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => err400(&e),
@@ -1103,12 +1468,14 @@ struct DesktopState {
     /// Verified connector capabilities (audit SEC-001): token → (grant
     /// patterns, valid-until). Bounds server introspection to one call per
     /// token lifetime.
-    capability_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
+    capability_cache:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
     /// Last-known VERIFIED grants per capability token (grants, verified_at) — the offline-grace
     /// source of truth (audit DESK-CAP-001). Unlike `capability_cache` (a short positive-TTL
     /// cache), entries here outlive the token TTL but are only honoured while the cloud is
     /// unreachable AND the verification is younger than `OFFLINE_GRACE_MAX_AGE`.
-    capability_last_known: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
+    capability_last_known:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
 }
 
 /// `{ok:false, error:{code, message}}` — the contract error envelope.
@@ -1195,8 +1562,8 @@ async fn plugin_auth_guard(
         (st.auth.token.as_deref(), bearer_token(&req)),
         (Some(want), Some(got)) if token_eq(want, &got)
     );
-    let gui_webview_ok = st.auth.gui_mode
-        && matches!(origin.as_deref(), Some(o) if is_gui_webview_origin(o));
+    let gui_webview_ok =
+        st.auth.gui_mode && matches!(origin.as_deref(), Some(o) if is_gui_webview_origin(o));
     let presented = bearer_token(&req);
     let pairing = presented
         .as_deref()
@@ -1626,8 +1993,7 @@ async fn plugin_ui_asset(
         _ => {}
     }
     let screens = p.ui.as_ref().map(|u| u.screens.as_slice()).unwrap_or(&[]);
-    let Some(rel) = crate::plugins::manifest::resolve_screen_asset(screens, &screen, &path)
-    else {
+    let Some(rel) = crate::plugins::manifest::resolve_screen_asset(screens, &screen, &path) else {
         return desktop_err(
             StatusCode::NOT_FOUND,
             "command_failed",
@@ -1645,9 +2011,10 @@ async fn plugin_ui_asset(
         )
     };
     let plugin_dir = std::path::PathBuf::from(&p.dir);
-    let (Ok(dir_canon), Ok(file_canon)) =
-        (plugin_dir.canonicalize(), plugin_dir.join(rel).canonicalize())
-    else {
+    let (Ok(dir_canon), Ok(file_canon)) = (
+        plugin_dir.canonicalize(),
+        plugin_dir.join(rel).canonicalize(),
+    ) else {
         return not_found();
     };
     if !file_canon.starts_with(&dir_canon) {
@@ -1812,7 +2179,10 @@ async fn plugin_ui_rendered(Path((id, nonce)): Path<(String, String)>) -> impl I
         Some(html) => (
             [
                 (CONTENT_TYPE, "text/html; charset=utf-8"),
-                (axum::http::header::CONTENT_SECURITY_POLICY, RENDERED_SCREEN_CSP),
+                (
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    RENDERED_SCREEN_CSP,
+                ),
                 (CACHE_CONTROL, "no-store"),
             ],
             html,
@@ -1947,10 +2317,18 @@ fn capability_grants_allow(grants: &[String], connector_id: &str, command: &str)
 /// minutes even if they cut the desktop's connectivity on purpose.
 const OFFLINE_GRACE_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CapabilityOfflinePolicy {
+    BoundedGrace,
+    FailClosed,
+}
+
 /// The DESK-CAP-001 offline-grace decision, factored pure for tests: a token is honoured
 /// during a cloud outage ONLY when this desktop verified it before AND that verification
 /// is younger than the grace window — and then only with its recorded grants.
-fn offline_grace_grants(last_known: Option<&(Vec<String>, std::time::Instant)>) -> Option<Vec<String>> {
+fn offline_grace_grants(
+    last_known: Option<&(Vec<String>, std::time::Instant)>,
+) -> Option<Vec<String>> {
     last_known
         .filter(|(_, at)| at.elapsed() < OFFLINE_GRACE_MAX_AGE)
         .map(|(g, _)| g.clone())
@@ -1962,7 +2340,9 @@ async fn check_connector_capability(
     connector_id: &str,
     command: &str,
 ) -> Result<(), axum::response::Response> {
-    let grants = match resolve_capability_grants(st, headers).await? {
+    let grants = match resolve_capability_grants(st, headers, CapabilityOfflinePolicy::BoundedGrace)
+        .await?
+    {
         None => return Ok(()), // unlinked — legacy local gating
         Some(g) => g,
     };
@@ -1986,6 +2366,7 @@ async fn check_connector_capability(
 async fn resolve_capability_grants(
     st: &DesktopState,
     headers: &axum::http::HeaderMap,
+    offline_policy: CapabilityOfflinePolicy,
 ) -> Result<Option<Vec<String>>, axum::response::Response> {
     let Some(client) = st.flow_runtime.as_ref().and_then(|rt| rt.api_client()) else {
         return Ok(None); // unlinked — legacy local gating
@@ -2001,7 +2382,8 @@ async fn resolve_capability_grants(
         .filter(|t| {
             !t.is_empty()
                 && t.len() <= 128
-                && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                && t.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
         .map(str::to_string)
     else {
@@ -2012,80 +2394,96 @@ async fn resolve_capability_grants(
         ));
     };
 
-    let cached = st
-        .capability_cache
-        .lock()
-        .ok()
-        .and_then(|c| c.get(&token).filter(|(_, until)| *until > std::time::Instant::now()).cloned());
+    let cached = st.capability_cache.lock().ok().and_then(|c| {
+        c.get(&token)
+            .filter(|(_, until)| *until > std::time::Instant::now())
+            .cloned()
+    });
     let grants = match cached {
         Some((grants, _)) => grants,
-        None => match client.introspect_capability(&token).await {
-            Ok(Some((grants, ttl_secs))) => {
-                if let Ok(mut c) = st.capability_cache.lock() {
-                    // Opportunistic prune so the map stays bounded.
-                    c.retain(|_, (_, until)| *until > std::time::Instant::now());
-                    c.insert(
-                        token.clone(),
-                        (grants.clone(), std::time::Instant::now() + std::time::Duration::from_secs(ttl_secs.min(300))),
-                    );
+        None => {
+            match client.introspect_capability(&token).await {
+                Ok(Some((grants, ttl_secs))) => {
+                    if let Ok(mut c) = st.capability_cache.lock() {
+                        // Opportunistic prune so the map stays bounded.
+                        c.retain(|_, (_, until)| *until > std::time::Instant::now());
+                        c.insert(
+                            token.clone(),
+                            (
+                                grants.clone(),
+                                std::time::Instant::now()
+                                    + std::time::Duration::from_secs(ttl_secs.min(300)),
+                            ),
+                        );
+                    }
+                    if let Ok(mut lk) = st.capability_last_known.lock() {
+                        lk.retain(|_, (_, at)| at.elapsed() < OFFLINE_GRACE_MAX_AGE);
+                        lk.insert(token.clone(), (grants.clone(), std::time::Instant::now()));
+                    }
+                    grants
                 }
-                if let Ok(mut lk) = st.capability_last_known.lock() {
-                    lk.retain(|_, (_, at)| at.elapsed() < OFFLINE_GRACE_MAX_AGE);
-                    lk.insert(token.clone(), (grants.clone(), std::time::Instant::now()));
+                Ok(None) => {
+                    if let Ok(mut lk) = st.capability_last_known.lock() {
+                        lk.remove(&token);
+                    }
+                    return Err(desktop_err(
+                        StatusCode::FORBIDDEN,
+                        "capability_denied",
+                        "this connector capability is expired or invalid — reload the app page",
+                    ));
                 }
-                grants
-            }
-            Ok(None) => {
-                if let Ok(mut lk) = st.capability_last_known.lock() {
-                    lk.remove(&token);
-                }
-                return Err(desktop_err(
-                    StatusCode::FORBIDDEN,
-                    "capability_denied",
-                    "this connector capability is expired or invalid — reload the app page",
-                ));
-            }
-            // Offline grace applies ONLY to a genuine transport failure, and even then
-            // ONLY to a token this desktop has previously VERIFIED (audit DESK-CAP-001):
-            // the old blanket allow meant any well-formed token — revoked, forged, or a
-            // low-privilege member's — could run privileged local commands for as long
-            // as the cloud stayed unreachable. Now the last-known verified grants are
-            // reused for a bounded window (revocation lag ≤ OFFLINE_GRACE_MAX_AGE) and
-            // the per-command grant check below still applies; a cache miss fails
-            // CLOSED. A server that ANSWERS with a definitive non-grant is not
-            // "offline" — that denies outright (audit SEC-001).
-            Err(crate::formlogic_client::FlError::Network(e)) => {
-                let last_known = st
-                    .capability_last_known
-                    .lock()
-                    .ok()
-                    .and_then(|lk| lk.get(&token).cloned());
-                match offline_grace_grants(last_known.as_ref()) {
-                    Some(grants) => {
+                // Offline grace applies ONLY to a genuine transport failure, and even then
+                // ONLY to a token this desktop has previously VERIFIED (audit DESK-CAP-001):
+                // the old blanket allow meant any well-formed token — revoked, forged, or a
+                // low-privilege member's — could run privileged local commands for as long
+                // as the cloud stayed unreachable. Now the last-known verified grants are
+                // reused for a bounded window (revocation lag ≤ OFFLINE_GRACE_MAX_AGE) and
+                // the per-command grant check below still applies; a cache miss fails
+                // CLOSED. A server that ANSWERS with a definitive non-grant is not
+                // "offline" — that denies outright (audit SEC-001).
+                Err(crate::formlogic_client::FlError::Network(e)) => {
+                    if offline_policy == CapabilityOfflinePolicy::FailClosed {
                         eprintln!(
+                        "[desktop] spend-bearing capability introspection unreachable (network: {e}) — denying"
+                    );
+                        return Err(desktop_err(
+                        StatusCode::FORBIDDEN,
+                        "capability_denied",
+                        "Your owner access could not be verified. Try again once FormLogic Cloud is reachable.",
+                    ));
+                    }
+                    let last_known = st
+                        .capability_last_known
+                        .lock()
+                        .ok()
+                        .and_then(|lk| lk.get(&token).cloned());
+                    match offline_grace_grants(last_known.as_ref()) {
+                        Some(grants) => {
+                            eprintln!(
                             "[desktop] capability introspection unreachable (network: {e}) — using previously verified grants (bounded offline grace)"
                         );
-                        grants
-                    }
-                    None => {
-                        eprintln!("[desktop] capability introspection unreachable (network: {e}) and no recent verification for this token — denying (fail closed)");
-                        return Err(desktop_err(
+                            grants
+                        }
+                        None => {
+                            eprintln!("[desktop] capability introspection unreachable (network: {e}) and no recent verification for this token — denying (fail closed)");
+                            return Err(desktop_err(
                             StatusCode::FORBIDDEN,
                             "capability_denied",
                             "your access could not be verified while the cloud is unreachable — try again once the connection is back",
                         ));
+                        }
                     }
                 }
+                Err(e) => {
+                    eprintln!("[desktop] capability introspection refused ({e:?}) — denying (fail closed)");
+                    return Err(desktop_err(
+                        StatusCode::FORBIDDEN,
+                        "capability_denied",
+                        "your connector capability could not be verified — reload the app page",
+                    ));
+                }
             }
-            Err(e) => {
-                eprintln!("[desktop] capability introspection refused ({e:?}) — denying (fail closed)");
-                return Err(desktop_err(
-                    StatusCode::FORBIDDEN,
-                    "capability_denied",
-                    "your connector capability could not be verified — reload the app page",
-                ));
-            }
-        },
+        }
     };
     Ok(Some(grants))
 }
@@ -2094,13 +2492,15 @@ async fn resolve_capability_grants(
 /// (audit FLOW-SEC-001). `*` (owner) covers everything. `connector.<id>...`
 /// requests map onto the same pattern semantics as the direct connector
 /// gateway (`capability_grants_allow`), so a wildcard request needs a
-/// wildcard/whole-connector grant. Every non-connector capability
-/// (formlogic.kv.write, formlogic.responses.*, model.*) requires the owner
-/// grant — no member role mints those today, and an unknown capability must
-/// never be covered by accident.
+/// wildcard/whole-connector grant. Exact `service.*` grants cover only their
+/// exact action. Every other non-connector capability requires the owner grant,
+/// and an unknown capability must never be covered by accident.
 fn grant_covers_capability(grants: &[String], cap: &str) -> bool {
     if grants.iter().any(|g| g == "*") {
         return true;
+    }
+    if cap.starts_with("service.") {
+        return grants.iter().any(|grant| grant == cap);
     }
     if let Some(rest) = cap.strip_prefix("connector.") {
         let (id, command) = match rest.split_once('.') {
@@ -2162,9 +2562,16 @@ async fn issue_plugin_consent(
             "consent issuance requires the Desktop window (or the server token) — a paired page cannot grant consent",
         );
     }
-    let scopes = body.get("scopes").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let scopes = body
+        .get("scopes")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     if !scopes.is_object() {
-        return desktop_err(StatusCode::BAD_REQUEST, "command_failed", "scopes must be an object");
+        return desktop_err(
+            StatusCode::BAD_REQUEST,
+            "command_failed",
+            "scopes must be an object",
+        );
     }
     let version = body.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
     let accepted_by = body
@@ -2413,11 +2820,7 @@ async fn revoke_aokie_mobile(
             "Aokie mobile revocation requires the local Desktop owner",
         );
     }
-    match st
-        .host
-        .aokie_endpoint_identity
-        .revoke_mobile(&thumbprint)
-    {
+    match st.host.aokie_endpoint_identity.revoke_mobile(&thumbprint) {
         Ok(()) => match refresh_running_aokie_private_bootstrap(&st).await {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(error) => aokie_roster_changed_but_refresh_failed("revocation", &error),
@@ -2625,27 +3028,50 @@ async fn flows_run(
             )
         }
     };
-    let correlation = v.get("correlationId").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let idem = v.get("idempotencyKey").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let correlation = v
+        .get("correlationId")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let idem = v
+        .get("idempotencyKey")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     if correlation.is_empty() || idem.is_empty() {
-        return desktop_err(StatusCode::BAD_REQUEST, "invalid_flow", "correlationId and idempotencyKey are required");
+        return desktop_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_flow",
+            "correlationId and idempotencyKey are required",
+        );
     }
     let flow_json = v.get("flowJson").filter(|x| x.is_object()).cloned();
     let flow_slug = v.get("flowId").and_then(|x| x.as_str()).map(str::to_string);
     if flow_json.is_none() && flow_slug.is_none() {
-        return desktop_err(StatusCode::BAD_REQUEST, "invalid_flow", "either flowId or flowJson is required");
+        return desktop_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_flow",
+            "either flowId or flowJson is required",
+        );
     }
     let app_slug = v
         .get("appContext")
         .and_then(|a| a.get("appSlug"))
         .and_then(|x| x.as_str())
         .map(str::to_string);
-    let inputs = v.get("inputs").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let inputs = v
+        .get("inputs")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     let timeout = v.get("timeoutMs").and_then(|x| x.as_u64());
     let caps: Vec<String> = v
         .get("capabilities")
         .and_then(|x| x.as_array())
-        .map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| c.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     // FLOW-SEC-001: the request's capability vector is a REQUEST, not a grant.
     // On a linked desktop every requested capability must be covered by the
@@ -2656,7 +3082,8 @@ async fn flows_run(
     // nodes without declared capabilities anyway. Unlinked desktops keep the
     // legacy local single-user gating (pairing stands alone).
     if !caps.is_empty() {
-        match resolve_capability_grants(&st, &headers).await {
+        match resolve_capability_grants(&st, &headers, CapabilityOfflinePolicy::BoundedGrace).await
+        {
             Err(resp) => return resp,
             Ok(None) => {} // unlinked — local single-user machine
             Ok(Some(grants)) => {
@@ -2678,7 +3105,19 @@ async fn flows_run(
             }
         }
     }
-    match rt.run_flow_direct(flow_json, flow_slug, app_slug, inputs, correlation, idem, timeout, caps).await {
+    match rt
+        .run_flow_direct(
+            flow_json,
+            flow_slug,
+            app_slug,
+            inputs,
+            correlation,
+            idem,
+            timeout,
+            caps,
+        )
+        .await
+    {
         Ok(body) => (StatusCode::OK, Json(body)).into_response(),
         Err(msg) => {
             let code = if msg.contains("not configured") {
@@ -2699,7 +3138,10 @@ async fn flows_run(
 
 /// `GET /api/flows/runs/{id}` — status/result of a recent run this runtime
 /// executed, per `flow-run-result.schema.json`.
-async fn flows_run_status(State(st): State<DesktopState>, Path(id): Path<String>) -> impl IntoResponse {
+async fn flows_run_status(
+    State(st): State<DesktopState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     match st.flow_runtime.as_ref().and_then(|r| r.cached_run(&id)) {
         Some(mut body) => {
             if let Some(obj) = body.as_object_mut() {
@@ -2746,7 +3188,11 @@ async fn flows_event_work_redrive(
         .ok()
         .and_then(|v| v.get("key").and_then(|k| k.as_str()).map(str::to_string));
     let revived = rt.redrive_event_work(key.as_deref());
-    (StatusCode::OK, Json(serde_json::json!({ "revived": revived }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "revived": revived })),
+    )
+        .into_response()
 }
 
 /// `GET /api/flows/runtime-errors` — the inspectable history behind the bare
@@ -2858,10 +3304,29 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
                     // them over authenticated loopback.)
                     | "/api/ai/providers"
                     | "/api/ai/aliases"
+                    // Starts/cancels delegated OAuth or clears the dedicated
+                    // account. Native no-Origin processes must not mutate the
+                    // user's ChatGPT connection implicitly.
+                    | "/api/services/codex/auth/start"
+                    | "/api/services/codex/auth/cancel"
+                    | "/api/services/codex/auth/logout"
+                    // Subscription-backed agent work is allowed only from the
+                    // Desktop webview, an exact-origin paired site, or the
+                    // explicit server bearer. It is never an anonymous native
+                    // loopback or Aokie plugin-gateway surface.
+                    | "/api/services/codex/actions/assistant.chat"
+                    | "/api/services/codex/actions/turn.interrupt"
             ) || (path.starts_with("/api/services/") && path.ends_with("/uninstall"))
                 || (path.starts_with("/api/ai/providers/")
                     && (path.ends_with("/key") || path.ends_with("/test")))
         }
+        Method::GET => matches!(
+            path,
+            // Both endpoints start/read the managed child and status may
+            // expose account metadata. Browser GETs and anonymous no-Origin
+            // local processes must not use them as a work-trigger/CSRF lane.
+            "/api/services/codex/status" | "/api/services/codex/models"
+        ),
         Method::DELETE => {
             path.starts_with("/api/services/")
                 || path.starts_with("/api/models/")
@@ -2892,6 +3357,123 @@ fn is_ai_inference_path(path: &str) -> bool {
         }
     }
     false
+}
+
+/// Website access to the delegated ChatGPT account is an owner-only pilot.
+/// The cloud issuer mints only these exact action grants; it never gives the
+/// website a reusable owner wildcard.
+fn codex_owner_capability(method: &Method, path: &str) -> Option<&'static str> {
+    match (method, path) {
+        (&Method::GET, "/api/services/codex/status") => {
+            Some("service.openai-codex-agent.status.read")
+        }
+        (&Method::GET, "/api/services/codex/models") => {
+            Some("service.openai-codex-agent.models.list")
+        }
+        (&Method::POST, "/api/services/codex/actions/assistant.chat") => {
+            Some("service.openai-codex-agent.assistant.chat")
+        }
+        _ => None,
+    }
+}
+
+/// Strictly percent-decode one URI path segment. Axum's `Path<String>` does
+/// this before the handler sees a provider id, so authorization must make the
+/// same one-pass decoding decision. Invalid/truncated escapes and invalid UTF-8
+/// are errors, never a reason to fall through to a different capability.
+fn strict_percent_decode_path_segment(raw: &str) -> Result<String, ()> {
+    fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let raw = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(raw.len());
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] != b'%' {
+            decoded.push(raw[index]);
+            index += 1;
+            continue;
+        }
+        let high = *raw.get(index + 1).ok_or(())?;
+        let low = *raw.get(index + 2).ok_or(())?;
+        decoded.push(hex(high).ok_or(())? << 4 | hex(low).ok_or(())?);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| ())
+}
+
+fn decoded_provider_inference_route(path: &str) -> Result<Option<(String, &str)>, ()> {
+    let Some(rest) = path.strip_prefix("/api/ai/providers/") else {
+        return Ok(None);
+    };
+    let Some((raw_provider_id, tail)) = rest.split_once('/') else {
+        return Ok(None);
+    };
+    let Some(action) = tail.strip_prefix("v1/").filter(|action| !action.is_empty()) else {
+        return Ok(None);
+    };
+    Ok(Some((
+        strict_percent_decode_path_segment(raw_provider_id)?,
+        action,
+    )))
+}
+
+/// The two virtual Aokie providers spend the connected ChatGPT/Codex account,
+/// not an OpenAI Platform API provider. Decode the provider segment exactly as
+/// Axum does, then match it before the generic provider mapping so encoded
+/// unreserved characters cannot downgrade a Codex request to an OpenAI grant.
+fn codex_call_owner_capability(method: &Method, path: &str) -> Result<Option<&'static str>, ()> {
+    let Some((provider_id, action)) = decoded_provider_inference_route(path)? else {
+        return Ok(None);
+    };
+    if !crate::ai::codex::is_live_call_provider_id(&provider_id) {
+        return Ok(None);
+    }
+    Ok(Some(match (method, action) {
+        (&Method::POST, "chat/completions") => "service.openai-codex-agent.call.chat.complete",
+        (&Method::GET, "models") => "service.openai-codex-agent.call.models.list",
+        _ => "service.openai-codex-agent.call.unsupported",
+    }))
+}
+
+/// Spend-bearing OpenAI-compatible gateway actions require an exact
+/// owner-minted service grant when called by a paired website. GUI/server
+/// administration and the separate per-install Aokie gateway token are checked
+/// independently by the middleware. Any future inference action is denied to a
+/// website until it receives a declared grant here.
+fn openai_api_owner_capability(method: &Method, path: &str) -> Option<&'static str> {
+    if !is_ai_inference_path(path) {
+        return None;
+    }
+    let action_path = path
+        .strip_prefix("/api/ai/v1/")
+        .or_else(|| path.split_once("/v1/").map(|(_, action)| action));
+    match (method, action_path) {
+        (&Method::POST, Some("chat/completions")) => Some("service.openai-api.chat.complete"),
+        (&Method::GET, Some("models")) => Some("service.openai-api.models.list"),
+        _ => Some("service.openai-api.unsupported"),
+    }
+}
+
+fn website_service_capability(method: &Method, path: &str) -> Result<Option<&'static str>, ()> {
+    if let Some(capability) = codex_owner_capability(method, path) {
+        return Ok(Some(capability));
+    }
+    if let Some(capability) = codex_call_owner_capability(method, path)? {
+        return Ok(Some(capability));
+    }
+    Ok(openai_api_owner_capability(method, path))
+}
+
+fn codex_desktop_admin_path(path: &str) -> bool {
+    path.starts_with("/api/services/codex/auth/")
+        || path == "/api/services/codex/actions/turn.interrupt"
 }
 
 /// The companion's OWN webview — the only browser-ish origin trusted WITHOUT a
@@ -3053,8 +3635,8 @@ async fn management_auth_guard(
         (st.auth.token.as_deref(), bearer_token(&req)),
         (Some(want), Some(got)) if token_eq(want, &got)
     );
-    let gui_webview_ok = st.auth.gui_mode
-        && matches!(origin.as_deref(), Some(o) if is_gui_webview_origin(o));
+    let gui_webview_ok =
+        st.auth.gui_mode && matches!(origin.as_deref(), Some(o) if is_gui_webview_origin(o));
     let pairing = bearer_token(&req)
         .as_deref()
         .map(|t| st.pairing.check(t, origin.as_deref()));
@@ -3066,7 +3648,7 @@ async fn management_auth_guard(
             (crate::ai::gateway_token::token(), bearer_token(&req)),
             (Some(want), Some(got)) if token_eq(&want, &got)
         );
-    match management_auth_decision(
+    let base_decision = management_auth_decision(
         server_token_ok,
         gui_webview_ok,
         plugin_gateway_ok,
@@ -3076,10 +3658,66 @@ async fn management_auth_guard(
         mutating,
         origin.is_some(),
         pairing,
-    ) {
-        Ok(()) => next.run(req).await,
-        Err((status, code, msg)) => desktop_err(status, code, msg),
+    );
+    if let Err((status, code, msg)) = base_decision {
+        return desktop_err(status, code, msg);
     }
+
+    // Connecting/disconnecting the shared account, and interrupting a turn
+    // without a principal-bound invocation handle, are Desktop administration.
+    // Do this only AFTER base auth so missing/invalid bearers retain their
+    // precise auth_required/origin_denied responses.
+    if codex_desktop_admin_path(req.uri().path()) && !(server_token_ok || gui_webview_ok) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "owner_required",
+            "Manage this ChatGPT operation in FormLogic Desktop.",
+        );
+    }
+
+    // Axum percent-decodes `Path<String>` before the inference handler sees
+    // the provider id. Select the service capability from that same decoded
+    // identity; malformed escapes must never fall through to the generic
+    // OpenAI grant (or bypass this check under another trusted principal).
+    let website_capability = match website_service_capability(&m, req.uri().path()) {
+        Ok(capability) => capability,
+        Err(()) => {
+            return desktop_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "The AI provider path contains malformed percent-encoding.",
+            )
+        }
+    };
+    if let Some(required) = website_capability {
+        if !(server_token_ok || gui_webview_ok || plugin_gateway_ok) {
+            let grants =
+                match resolve_capability_grants(
+                    &st,
+                    req.headers(),
+                    CapabilityOfflinePolicy::FailClosed,
+                )
+                .await
+                {
+                    Ok(Some(grants)) => grants,
+                    Ok(None) => return desktop_err(
+                        StatusCode::FORBIDDEN,
+                        "capability_denied",
+                        "Link FormLogic Desktop and use an owner-authorized service capability.",
+                    ),
+                    Err(response) => return response,
+                };
+            if !grant_covers_capability(&grants, required) {
+                return desktop_err(
+                    StatusCode::FORBIDDEN,
+                    "capability_denied",
+                    "Only the linked FormLogic owner may use this AI service from a website.",
+                );
+            }
+        }
+    }
+
+    next.run(req).await
 }
 
 pub async fn serve(
@@ -3133,6 +3771,10 @@ pub async fn serve(
         // CORS preflight, it does not grant access.
         .allow_private_network(true);
 
+    let codex_agent = {
+        let registry = registry.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ai::codex::CodexAgent::new(registry.data_dir().to_path_buf())
+    };
     let state = AppState {
         config,
         registry,
@@ -3141,6 +3783,7 @@ pub async fn serve(
         catalog,
         flow_runtime: flow_runtime.clone(),
         ai_providers,
+        codex_agent,
     };
 
     let desktop_state = DesktopState {
@@ -3162,7 +3805,10 @@ pub async fn serve(
         // One-shot staged screen documents (see plugin_ui_render_doc): the
         // 128-bit single-use nonce is the auth — an iframe navigation cannot
         // send headers, and the response carries its own sandbox CSP.
-        .route("/api/plugins/:id/ui/rendered/:nonce", get(plugin_ui_rendered))
+        .route(
+            "/api/plugins/:id/ui/rendered/:nonce",
+            get(plugin_ui_rendered),
+        )
         .with_state(state.clone());
 
     // Management plane (services / models / python / config / desktop-info):
@@ -3175,6 +3821,25 @@ pub async fn serve(
         .route("/api/config", get(get_config))
         // services
         .route("/api/services", get(list_services).post(add_service))
+        // ServiceDefinition v3 is the cross-runtime catalog. Static routes are
+        // kept before `:id` for clarity even though axum ranks them correctly.
+        .route(
+            "/api/services/catalog",
+            get(list_service_definition_catalog),
+        )
+        .route("/api/services/codex/status", get(codex_status))
+        .route("/api/services/codex/auth/start", post(codex_login_start))
+        .route("/api/services/codex/auth/cancel", post(codex_login_cancel))
+        .route("/api/services/codex/auth/logout", post(codex_logout))
+        .route("/api/services/codex/models", get(codex_models))
+        .route(
+            "/api/services/codex/actions/assistant.chat",
+            post(codex_assistant_chat),
+        )
+        .route(
+            "/api/services/codex/actions/turn.interrupt",
+            post(codex_interrupt),
+        )
         .route("/api/services/ensure-by-port", post(ensure_service_by_port))
         .route("/api/services/:id", delete(delete_service))
         .route("/api/services/:id/start", post(start_service))
@@ -3212,7 +3877,10 @@ pub async fn serve(
         // is_privileged_path so a no-Origin native caller cannot reconfigure
         // providers or set keys.
         .route("/api/ai/sources", get(list_ai_sources))
-        .route("/api/ai/providers", get(list_ai_providers).post(upsert_ai_provider))
+        .route(
+            "/api/ai/providers",
+            get(list_ai_providers).post(upsert_ai_provider),
+        )
         .route("/api/ai/providers/:id", delete(delete_ai_provider))
         .route("/api/ai/providers/:id/key", post(set_ai_provider_key))
         .route("/api/ai/providers/:id/test", post(test_ai_provider))
@@ -3220,8 +3888,14 @@ pub async fn serve(
         // Gateway (default provider + named provider).
         .route("/api/ai/v1/models", get(ai_gateway_models))
         .route("/api/ai/v1/chat/completions", post(ai_gateway_chat))
-        .route("/api/ai/providers/:id/v1/models", get(ai_gateway_models_for))
-        .route("/api/ai/providers/:id/v1/chat/completions", post(ai_gateway_chat_for))
+        .route(
+            "/api/ai/providers/:id/v1/models",
+            get(ai_gateway_models_for),
+        )
+        .route(
+            "/api/ai/providers/:id/v1/chat/completions",
+            post(ai_gateway_chat_for),
+        )
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
             management_auth_guard,
@@ -3267,10 +3941,7 @@ pub async fn serve(
         // phase. Under /api/plugins* so the SAME management-plane auth guard
         // applies (webview | server token | pairing token).
         .route("/api/plugins/realtime", get(realtime_sse))
-        .route(
-            "/api/aokie/companion/pairing",
-            get(aokie_pairing_status),
-        )
+        .route("/api/aokie/companion/pairing", get(aokie_pairing_status))
         .route(
             "/api/aokie/companion/pairing/offers",
             post(create_aokie_pairing_offer),
@@ -3303,9 +3974,15 @@ pub async fn serve(
         // Durable event-work DLQ (audit CROSS-EVENT-001): dead-lettered
         // plugin events with reason/age + the operator redrive.
         .route("/api/flows/event-work", get(flows_event_work))
-        .route("/api/flows/event-work/redrive", post(flows_event_work_redrive))
+        .route(
+            "/api/flows/event-work/redrive",
+            post(flows_event_work_redrive),
+        )
         .route("/api/flows/runtime-errors", get(flows_runtime_errors))
-        .route("/api/flows/runtime-errors/clear", post(flows_runtime_errors_clear))
+        .route(
+            "/api/flows/runtime-errors/clear",
+            post(flows_runtime_errors_clear),
+        )
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
             plugin_auth_guard,
@@ -3320,7 +3997,10 @@ pub async fn serve(
             "/api/desktop/pairing-requests",
             post(create_pairing_request).get(list_pairing_requests),
         )
-        .route("/api/desktop/pairing-requests/:id", get(poll_pairing_request))
+        .route(
+            "/api/desktop/pairing-requests/:id",
+            get(poll_pairing_request),
+        )
         .route(
             "/api/desktop/pairing-requests/:id/approve",
             post(approve_pairing_request),
@@ -3359,10 +4039,13 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::{
-        connector_failure_status, desktop_auth_decision, desktop_info_body,
-        direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
-        is_gui_webview_origin, is_privileged_path, management_auth_decision, offline_grace_grants,
-        screen_asset_content_type, service_source_capabilities, OFFLINE_GRACE_MAX_AGE,
+        codex_call_owner_capability, codex_desktop_admin_path, codex_live_call_completion,
+        codex_owner_capability, connector_failure_status, decoded_provider_inference_route,
+        desktop_auth_decision, desktop_info_body, direct_command_request_id,
+        grant_covers_capability, health_body, is_ai_inference_path, is_gui_webview_origin,
+        is_privileged_path, management_auth_decision, offline_grace_grants,
+        openai_api_owner_capability, screen_asset_content_type, service_source_capabilities,
+        strict_percent_decode_path_segment, website_service_capability, OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::{Method, StatusCode};
@@ -3376,7 +4059,10 @@ mod tests {
             service_source_capabilities(&none, "Speech"),
             vec!["transcription", "speech"]
         );
-        assert_eq!(service_source_capabilities(&none, "Image Generation"), vec!["image"]);
+        assert_eq!(
+            service_source_capabilities(&none, "Image Generation"),
+            vec!["image"]
+        );
         assert!(service_source_capabilities(&none, "Browser").is_empty());
         // ⚠️ The substring trap the declared field exists for: without a
         // declaration, "Speech-to-Text" would be granted BOTH lanes.
@@ -3402,7 +4088,10 @@ mod tests {
             let t: crate::services::template::ServiceTemplate =
                 serde_json::from_str(json).expect("split template deserializes");
             assert_eq!(t.category, category);
-            assert_eq!(service_source_capabilities(&t.capabilities, &t.category), expected);
+            assert_eq!(
+                service_source_capabilities(&t.capabilities, &t.category),
+                expected
+            );
         }
     }
 
@@ -3445,7 +4134,10 @@ mod tests {
 
         // Normal round trip + single use.
         let n2 = stage_screen_doc_in(&mut map, "aokie", "<html>y</html>".into(), t0).unwrap();
-        assert_eq!(take_screen_doc_in(&mut map, "aokie", &n2, t0).as_deref(), Some("<html>y</html>"));
+        assert_eq!(
+            take_screen_doc_in(&mut map, "aokie", &n2, t0).as_deref(),
+            Some("<html>y</html>")
+        );
         assert!(take_screen_doc_in(&mut map, "aokie", &n2, t0).is_none());
 
         // Expiry: a doc staged at t0 is dead after the TTL.
@@ -3477,9 +4169,9 @@ mod tests {
         let generated = direct_command_request_id(None);
         assert!(generated.starts_with("desktop-admin:"));
         assert_eq!(generated.len(), "desktop-admin:".len() + 32);
-        assert!(generated.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':')
-        }));
+        assert!(generated
+            .bytes()
+            .all(|b| { b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':') }));
     }
 
     #[test]
@@ -3490,30 +4182,59 @@ mod tests {
 
         // Owner grant covers everything, including non-connector capabilities.
         let owner = g(&["*"]);
-        for cap in ["connector.aokie.call.answer", "connector.aokie.*", "formlogic.kv.write", "model.llm.local"] {
+        for cap in [
+            "connector.aokie.call.answer",
+            "connector.aokie.*",
+            "formlogic.kv.write",
+            "model.llm.local",
+        ] {
             assert!(grant_covers_capability(&owner, cap), "owner covers {cap}");
         }
 
         // Whole-connector grants cover exact commands and the wildcard request.
         for grants in [g(&["connector.aokie"]), g(&["connector.aokie.*"])] {
-            assert!(grant_covers_capability(&grants, "connector.aokie.call.answer"));
+            assert!(grant_covers_capability(
+                &grants,
+                "connector.aokie.call.answer"
+            ));
             assert!(grant_covers_capability(&grants, "connector.aokie.*"));
             assert!(grant_covers_capability(&grants, "connector.aokie"));
-            assert!(!grant_covers_capability(&grants, "connector.other.thing"), "no cross-connector bleed");
+            assert!(
+                !grant_covers_capability(&grants, "connector.other.thing"),
+                "no cross-connector bleed"
+            );
         }
 
         // An exact-command grant covers exactly that command — never the wildcard.
         let exact = g(&["connector.aokie.call.answer"]);
-        assert!(grant_covers_capability(&exact, "connector.aokie.call.answer"));
-        assert!(!grant_covers_capability(&exact, "connector.aokie.*"), "wildcard request needs a wildcard grant");
-        assert!(!grant_covers_capability(&exact, "connector.aokie.call.reject"));
+        assert!(grant_covers_capability(
+            &exact,
+            "connector.aokie.call.answer"
+        ));
+        assert!(
+            !grant_covers_capability(&exact, "connector.aokie.*"),
+            "wildcard request needs a wildcard grant"
+        );
+        assert!(!grant_covers_capability(
+            &exact,
+            "connector.aokie.call.reject"
+        ));
         assert!(!grant_covers_capability(&exact, "connector.aokie"));
 
         // Non-connector capabilities require the owner grant; unknown shapes
         // are never covered by accident. Forged/enlarged vectors die here.
         for grants in [g(&["connector.aokie.*"]), g(&["connector.aokie"]), g(&[])] {
-            for cap in ["formlogic.kv.write", "formlogic.responses.write", "model.llm.local", "connector.", ""] {
-                assert!(!grant_covers_capability(&grants, cap), "{cap} must not be covered by {grants:?}");
+            for cap in [
+                "formlogic.kv.write",
+                "formlogic.responses.write",
+                "model.llm.local",
+                "connector.",
+                "",
+            ] {
+                assert!(
+                    !grant_covers_capability(&grants, cap),
+                    "{cap} must not be covered by {grants:?}"
+                );
             }
         }
     }
@@ -3528,10 +4249,15 @@ mod tests {
         assert_eq!(offline_grace_grants(None), None);
 
         // Recently verified → the RECORDED grants apply (the per-command check still runs).
-        assert_eq!(offline_grace_grants(Some(&(grants.clone(), now))), Some(grants.clone()));
+        assert_eq!(
+            offline_grace_grants(Some(&(grants.clone(), now))),
+            Some(grants.clone())
+        );
 
         // Verified too long ago → the grace window has lapsed; fail closed.
-        if let Some(stale) = now.checked_sub(OFFLINE_GRACE_MAX_AGE + std::time::Duration::from_secs(1)) {
+        if let Some(stale) =
+            now.checked_sub(OFFLINE_GRACE_MAX_AGE + std::time::Duration::from_secs(1))
+        {
             assert_eq!(offline_grace_grants(Some(&(grants, stale))), None);
         }
     }
@@ -3571,7 +4297,11 @@ mod tests {
         // pairing token. formlogic.com — and EVERY subdomain — must pair like
         // any other page, so a compromised subdomain / site XSS can't reach
         // the local management plane. 'null' and garbage origins never pass.
-        for o in ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"] {
+        for o in [
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+        ] {
             assert!(is_gui_webview_origin(o), "{o} is the desktop's own UI");
         }
         for o in [
@@ -3591,7 +4321,9 @@ mod tests {
     }
 
     /// Shorthand: management decision for a browser caller (Origin present).
-    fn browser(pairing: Option<TokenCheck>) -> Result<(), (StatusCode, &'static str, &'static str)> {
+    fn browser(
+        pairing: Option<TokenCheck>,
+    ) -> Result<(), (StatusCode, &'static str, &'static str)> {
         management_auth_decision(false, false, false, true, false, false, true, true, pairing)
     }
 
@@ -3600,19 +4332,40 @@ mod tests {
         // LOCAL-SEC-001 acceptance: an unpaired browser origin cannot touch the
         // management plane at all — reads included — regardless of which origin
         // it is. Exact-origin pairing is the only browser path in.
-        assert!(browser(Some(TokenCheck::Ok)).is_ok(), "paired origin passes");
+        assert!(
+            browser(Some(TokenCheck::Ok)).is_ok(),
+            "paired origin passes"
+        );
         let (s, c, _) = browser(None).unwrap_err();
-        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "no token → 401");
+        assert_eq!(
+            (s, c),
+            (StatusCode::UNAUTHORIZED, "auth_required"),
+            "no token → 401"
+        );
         let (s, c, _) = browser(Some(TokenCheck::Invalid)).unwrap_err();
-        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "bogus token → 401");
+        assert_eq!(
+            (s, c),
+            (StatusCode::UNAUTHORIZED, "auth_required"),
+            "bogus token → 401"
+        );
         // A REAL token stolen by (or minted for) a different origin — e.g. a
         // formlogic.com subdomain replaying another page's pairing — dies here.
         let (s, c, _) = browser(Some(TokenCheck::WrongOrigin)).unwrap_err();
-        assert_eq!((s, c), (StatusCode::FORBIDDEN, "origin_denied"), "cross-origin replay → 403");
+        assert_eq!(
+            (s, c),
+            (StatusCode::FORBIDDEN, "origin_denied"),
+            "cross-origin replay → 403"
+        );
 
         // The desktop's own webview and the server token still administer.
-        assert!(management_auth_decision(true, false, false, false, true, true, true, true, None).is_ok());
-        assert!(management_auth_decision(false, true, false, true, false, true, true, true, None).is_ok());
+        assert!(
+            management_auth_decision(true, false, false, false, true, true, true, true, None)
+                .is_ok()
+        );
+        assert!(
+            management_auth_decision(false, true, false, true, false, true, true, true, None)
+                .is_ok()
+        );
     }
 
     /// AI-405: the plugin gateway token — the guard-computed `plugin_gateway_ok`
@@ -3651,6 +4404,8 @@ mod tests {
             "/api/ai/v1/chat/completions",
             "/api/ai/providers/openai/v1/models",
             "/api/ai/providers/my-llama/v1/chat/completions",
+            "/api/ai/providers/openai-codex-agent-none/v1/models",
+            "/api/ai/providers/openai-codex-agent-low/v1/chat/completions",
         ] {
             assert!(is_ai_inference_path(p), "{p} is an inference route");
         }
@@ -3678,25 +4433,36 @@ mod tests {
         // Native callers (no Origin header — curl, scripts, the CLI) keep their
         // legacy posture on a GUI / no-token box…
         assert!(
-            management_auth_decision(false, false, false, true, false, false, false, false, None).is_ok(),
+            management_auth_decision(false, false, false, true, false, false, false, false, None)
+                .is_ok(),
             "GUI box: native read/mutation passes"
         );
         assert!(
-            management_auth_decision(false, false, false, false, false, false, true, false, None).is_ok(),
+            management_auth_decision(false, false, false, false, false, false, true, false, None)
+                .is_ok(),
             "headless no-token: native non-privileged mutation passes"
         );
         // …but the exec surface (define/install code, destroy data) stays
         // CLOSED without the server token, exactly as before.
         let (s, c, _) =
-            management_auth_decision(false, false, false, true, false, true, true, false, None).unwrap_err();
-        assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"), "privileged native → token only");
+            management_auth_decision(false, false, false, true, false, true, true, false, None)
+                .unwrap_err();
+        assert_eq!(
+            (s, c),
+            (StatusCode::UNAUTHORIZED, "auth_required"),
+            "privileged native → token only"
+        );
         // Headless WITH a token: every mutation requires the token (a native
         // caller could otherwise forge/omit Origin to sidestep the lockdown).
         let (s, c, _) =
-            management_auth_decision(false, false, false, false, true, false, true, false, None).unwrap_err();
+            management_auth_decision(false, false, false, false, true, false, true, false, None)
+                .unwrap_err();
         assert_eq!((s, c), (StatusCode::UNAUTHORIZED, "auth_required"));
         // Headless+token GETs stay open to native callers (local diagnosis).
-        assert!(management_auth_decision(false, false, false, false, true, false, false, false, None).is_ok());
+        assert!(management_auth_decision(
+            false, false, false, false, true, false, false, false, None
+        )
+        .is_ok());
     }
 
     #[test]
@@ -3708,6 +4474,13 @@ mod tests {
             (Method::POST, "/api/python/install"),
             (Method::POST, "/api/python/venvs"),
             (Method::POST, "/api/services/x/uninstall"),
+            (Method::POST, "/api/services/codex/auth/start"),
+            (Method::POST, "/api/services/codex/auth/cancel"),
+            (Method::POST, "/api/services/codex/auth/logout"),
+            (Method::POST, "/api/services/codex/actions/assistant.chat"),
+            (Method::POST, "/api/services/codex/actions/turn.interrupt"),
+            (Method::GET, "/api/services/codex/status"),
+            (Method::GET, "/api/services/codex/models"),
             (Method::DELETE, "/api/services/x"),
             (Method::DELETE, "/api/models/some.gguf"),
             (Method::DELETE, "/api/python/venvs/v"),
@@ -3722,6 +4495,353 @@ mod tests {
         ] {
             assert!(!is_privileged_path(&m, p), "{m} {p} is not privileged");
         }
+    }
+
+    #[test]
+    fn codex_route_policy_separates_account_admin_from_owner_use() {
+        for path in [
+            "/api/services/codex/auth/start",
+            "/api/services/codex/auth/cancel",
+            "/api/services/codex/auth/logout",
+            "/api/services/codex/actions/turn.interrupt",
+        ] {
+            assert!(
+                codex_desktop_admin_path(path),
+                "{path} is Desktop-admin only"
+            );
+        }
+        assert_eq!(
+            codex_owner_capability(&Method::GET, "/api/services/codex/status"),
+            Some("service.openai-codex-agent.status.read")
+        );
+        assert_eq!(
+            codex_owner_capability(&Method::GET, "/api/services/codex/models"),
+            Some("service.openai-codex-agent.models.list")
+        );
+        let chat =
+            codex_owner_capability(&Method::POST, "/api/services/codex/actions/assistant.chat")
+                .expect("chat capability");
+        assert!(grant_covers_capability(&["*".into()], chat));
+        assert!(grant_covers_capability(&[chat.into()], chat));
+        assert!(!grant_covers_capability(
+            &["service.openai-codex-agent.status.read".into()],
+            chat
+        ));
+        assert!(!grant_covers_capability(
+            &["connector.aokie.*".into()],
+            chat
+        ));
+        assert!(!grant_covers_capability(
+            &[chat.into()],
+            "connector.aokie.answer"
+        ));
+        assert!(!grant_covers_capability(
+            &[chat.into()],
+            "formlogic.responses.write"
+        ));
+        assert_eq!(
+            codex_owner_capability(&Method::POST, "/api/services/codex/actions/turn.interrupt"),
+            None
+        );
+    }
+
+    #[test]
+    fn website_ai_gateway_requires_exact_service_action_grants() {
+        let chat = openai_api_owner_capability(&Method::POST, "/api/ai/v1/chat/completions")
+            .expect("default chat capability");
+        assert_eq!(chat, "service.openai-api.chat.complete");
+        assert_eq!(
+            openai_api_owner_capability(
+                &Method::POST,
+                "/api/ai/providers/openai/v1/chat/completions"
+            ),
+            Some(chat)
+        );
+        let models =
+            openai_api_owner_capability(&Method::GET, "/api/ai/providers/openai/v1/models")
+                .expect("models capability");
+        assert_eq!(models, "service.openai-api.models.list");
+        assert!(grant_covers_capability(&[chat.into()], chat));
+        assert!(!grant_covers_capability(&[models.into()], chat));
+        assert!(!grant_covers_capability(
+            &[chat.into()],
+            "service.openai-codex-agent.assistant.chat"
+        ));
+        assert_eq!(
+            openai_api_owner_capability(&Method::POST, "/api/ai/v1/embeddings"),
+            Some("service.openai-api.unsupported")
+        );
+        assert_eq!(
+            openai_api_owner_capability(&Method::GET, "/api/ai/sources"),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_call_provider_grants_are_distinct_from_openai_api_grants() {
+        for provider_id in [
+            crate::ai::codex::LIVE_CALL_PROVIDER_NONE_ID,
+            crate::ai::codex::LIVE_CALL_PROVIDER_LOW_ID,
+        ] {
+            let chat_path = format!("/api/ai/providers/{provider_id}/v1/chat/completions");
+            let models_path = format!("/api/ai/providers/{provider_id}/v1/models");
+            let chat = codex_call_owner_capability(&Method::POST, &chat_path)
+                .expect("valid provider path")
+                .expect("Codex call chat grant");
+            let models = codex_call_owner_capability(&Method::GET, &models_path)
+                .expect("valid provider path")
+                .expect("Codex call models grant");
+            assert_eq!(chat, "service.openai-codex-agent.call.chat.complete");
+            assert_eq!(models, "service.openai-codex-agent.call.models.list");
+            assert_ne!(
+                openai_api_owner_capability(&Method::POST, &chat_path),
+                Some(chat),
+                "generic path parsing must not erase the distinct Codex grant"
+            );
+            assert_eq!(
+                website_service_capability(&Method::POST, &chat_path),
+                Ok(Some(chat)),
+                "Codex mapping must win before the generic OpenAI path mapping"
+            );
+            assert!(!grant_covers_capability(
+                &["service.openai-api.chat.complete".into()],
+                chat
+            ));
+        }
+        assert_eq!(
+            codex_call_owner_capability(
+                &Method::POST,
+                "/api/ai/providers/openai/v1/chat/completions"
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn codex_call_grants_follow_axums_decoded_provider_identity() {
+        let encoded_provider_ids = [
+            "openai%2Dcodex-agent-none",
+            "openai%2dcodex-agent-none",
+            "%6Fpenai-codex-agent-none",
+            "%6fpenai-codex-agent-low",
+            "openai-codex%2Dagent%2Dlow",
+        ];
+        for provider_id in encoded_provider_ids {
+            for (method, action, expected) in [
+                (
+                    Method::POST,
+                    "chat/completions",
+                    "service.openai-codex-agent.call.chat.complete",
+                ),
+                (
+                    Method::GET,
+                    "models",
+                    "service.openai-codex-agent.call.models.list",
+                ),
+                (
+                    Method::POST,
+                    "embeddings",
+                    "service.openai-codex-agent.call.unsupported",
+                ),
+            ] {
+                let path = format!("/api/ai/providers/{provider_id}/v1/{action}");
+                assert_eq!(
+                    codex_call_owner_capability(&method, &path),
+                    Ok(Some(expected)),
+                    "decoded Codex identity must select its own capability for {path}"
+                );
+                assert_eq!(
+                    website_service_capability(&method, &path),
+                    Ok(Some(expected)),
+                    "Codex capability must win before generic OpenAI matching for {path}"
+                );
+            }
+        }
+
+        // Percent-escape hex is case-insensitive; the decoded provider id is
+        // not. Axum also delivers this uppercase id to the handler, so it must
+        // not invoke the lowercase host-owned adapter.
+        let uppercase_id = "/api/ai/providers/%4Fpenai-codex-agent-none/v1/chat/completions";
+        assert_eq!(
+            codex_call_owner_capability(&Method::POST, uppercase_id),
+            Ok(None)
+        );
+        assert_eq!(
+            website_service_capability(&Method::POST, uppercase_id),
+            Ok(Some("service.openai-api.chat.complete"))
+        );
+    }
+
+    #[test]
+    fn malformed_provider_percent_encoding_never_falls_through_to_openai_grants() {
+        for provider_id in ["openai%", "openai%2", "openai%GG", "%FF"] {
+            let path = format!("/api/ai/providers/{provider_id}/v1/chat/completions");
+            assert_eq!(decoded_provider_inference_route(&path), Err(()), "{path}");
+            assert_eq!(
+                codex_call_owner_capability(&Method::POST, &path),
+                Err(()),
+                "{path}"
+            );
+            assert_eq!(
+                website_service_capability(&Method::POST, &path),
+                Err(()),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            strict_percent_decode_path_segment("openai+codex"),
+            Ok("openai+codex".into()),
+            "URI path decoding must not apply form-urlencoded '+' semantics"
+        );
+    }
+
+    #[test]
+    fn codex_live_call_completion_is_openai_shaped_and_pinned() {
+        let completion = codex_live_call_completion(&crate::ai::codex::CodexLiveCallResponse {
+            turn_id: "turn-1".into(),
+            text: "How may I help?".into(),
+        });
+        assert_eq!(completion["object"], "chat.completion");
+        assert_eq!(completion["model"], crate::ai::codex::LIVE_CALL_MODEL);
+        assert_eq!(
+            completion["choices"][0]["message"]["content"],
+            "How may I help?"
+        );
+        assert_eq!(completion["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[tokio::test]
+    async fn codex_live_call_sse_matches_aokies_data_line_parser() {
+        let response = super::codex_live_call_sse(async {
+            Ok::<_, crate::ai::codex::CodexAgentError>(crate::ai::codex::CodexLiveCallResponse {
+                turn_id: "turn-sse".into(),
+                text: "Hello, how may I help?".into(),
+            })
+        });
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 32 * 1024)
+            .await
+            .expect("bounded SSE body");
+        let body = String::from_utf8(bytes.to_vec()).expect("UTF-8 SSE");
+        let data = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:").map(str::trim))
+            .collect::<Vec<_>>();
+        assert_eq!(data.last().copied(), Some("[DONE]"));
+        let mut text = String::new();
+        for event in &data[..data.len() - 1] {
+            let event: serde_json::Value = serde_json::from_str(event).expect("JSON SSE event");
+            if let Some(delta) = event["choices"][0]["delta"]["content"].as_str() {
+                text.push_str(delta);
+            }
+        }
+        assert_eq!(text, "Hello, how may I help?");
+        assert!(body.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[tokio::test]
+    async fn codex_live_call_sse_heartbeats_immediately_without_model_content() {
+        use futures_util::StreamExt;
+
+        let response = super::codex_live_call_sse(std::future::pending::<
+            Result<crate::ai::codex::CodexLiveCallResponse, crate::ai::codex::CodexAgentError>,
+        >());
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        let first = tokio::time::timeout(std::time::Duration::from_millis(200), body.next())
+            .await
+            .expect("the first SSE heartbeat must be immediate")
+            .expect("heartbeat frame")
+            .expect("heartbeat bytes");
+        assert_eq!(first.as_ref(), super::CODEX_LIVE_CALL_SSE_WAIT_COMMENT);
+        assert!(!String::from_utf8_lossy(&first).contains("data:"));
+
+        let second = tokio::time::timeout(std::time::Duration::from_millis(800), body.next())
+            .await
+            .expect("the next heartbeat must arrive at about 500ms")
+            .expect("second heartbeat frame")
+            .expect("second heartbeat bytes");
+        assert_eq!(second.as_ref(), super::CODEX_LIVE_CALL_SSE_WAIT_COMMENT);
+        drop(body);
+    }
+
+    #[tokio::test]
+    async fn codex_live_call_sse_turn_error_is_a_body_error_without_done() {
+        use futures_util::StreamExt;
+
+        // Missing messages is rejected synchronously by `live_call_prompt`,
+        // before this test agent can start a child process or touch OAuth.
+        let agent = crate::ai::codex::CodexAgent::new(std::env::temp_dir());
+        let response = super::codex_live_call_sse(async move {
+            agent
+                .live_call_chat(
+                    crate::ai::codex::CodexLiveCallVariant::ReasoningNone,
+                    &serde_json::json!({}),
+                )
+                .await
+        });
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        let mut body = response.into_body().into_data_stream();
+        let error = tokio::time::timeout(std::time::Duration::from_millis(200), body.next())
+            .await
+            .expect("turn failure must reach the body promptly")
+            .expect("one terminal body item")
+            .expect_err("turn failure must be a stream error, not SSE data");
+        assert!(error.to_string().contains("invalid_request"), "{error}");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), body.next())
+                .await
+                .expect("errored body must close")
+                .is_none(),
+            "an errored stream must not append [DONE]"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_codex_live_call_body_drops_the_owned_turn_future() {
+        struct DropNotice(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for DropNotice {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let turn = async move {
+            let _drop_notice = DropNotice(Some(dropped_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<
+                Result<crate::ai::codex::CodexLiveCallResponse, crate::ai::codex::CodexAgentError>,
+            >()
+            .await
+        };
+        let response = super::codex_live_call_sse(turn);
+        tokio::time::timeout(std::time::Duration::from_millis(200), started_rx)
+            .await
+            .expect("body task must poll the turn immediately")
+            .expect("turn start signal");
+        drop(response);
+        tokio::time::timeout(std::time::Duration::from_millis(200), dropped_rx)
+            .await
+            .expect("dropping the body must cancel the owned turn future")
+            .expect("turn drop signal");
     }
 
     #[test]
@@ -3744,17 +4864,31 @@ mod tests {
         assert_eq!((status, code), (StatusCode::UNAUTHORIZED, "auth_required"));
     }
 
-
     #[test]
     fn connector_failure_statuses_match_codes() {
-        assert_eq!(connector_failure_status("auth_required"), StatusCode::UNAUTHORIZED);
-        assert_eq!(connector_failure_status("origin_denied"), StatusCode::FORBIDDEN);
-        assert_eq!(connector_failure_status("capability_denied"), StatusCode::FORBIDDEN);
-        assert_eq!(connector_failure_status("connector_missing"), StatusCode::NOT_FOUND);
+        assert_eq!(
+            connector_failure_status("auth_required"),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            connector_failure_status("origin_denied"),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            connector_failure_status("capability_denied"),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            connector_failure_status("connector_missing"),
+            StatusCode::NOT_FOUND
+        );
         assert_eq!(
             connector_failure_status("connector_unavailable"),
             StatusCode::SERVICE_UNAVAILABLE
         );
-        assert_eq!(connector_failure_status("command_failed"), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            connector_failure_status("command_failed"),
+            StatusCode::BAD_GATEWAY
+        );
     }
 }
