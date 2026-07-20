@@ -864,7 +864,7 @@ fn realtime_tools(allow_business_lookup: bool, allow_finish_call: bool) -> Vec<V
         tools.push(json!({
             "type": "function",
             "name": AllowedTool::FinishCall.name(),
-            "description": "Request a safe end to the phone call only after the caller has clearly finished and no question or task remains. The system will require a separate brief audible farewell before hanging up.",
+            "description": "Request a safe end to the phone call only after the caller has clearly finished and no question or task remains. Invoke this function without speaking first; the system generates and verifies the separate audible farewell before hanging up.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": false,
@@ -1355,7 +1355,6 @@ fn translate_server_event(
                     if !state.begun
                         || state.tool_candidate.is_some()
                         || state.pending_tool_result.is_some()
-                        || state.output.as_ref().is_some_and(|output| !output.done)
                     {
                         return Err((
                             "upstream_protocol",
@@ -1381,24 +1380,37 @@ fn translate_server_event(
                         ));
                     }
                     let provider_call_id = safe_id(event.pointer("/item/call_id"))?;
-                    let preamble_item_id = match state
-                        .output
-                        .as_ref()
-                        .filter(|output| output.response_id == response_id)
-                    {
+                    // Realtime can announce an index-one lookup while its
+                    // same-response index-zero spoken preamble is still
+                    // streaming. Link that exact pair now, but authorize the
+                    // lookup only from the fully completed terminal response.
+                    // `finish_call` stays function-only so a question-like
+                    // preamble can never lead into the hangup flow.
+                    let preamble_item_id = match state.output.as_ref() {
                         Some(output)
-                            if output_index == 1
+                            if output.response_id == response_id
+                                && tool == AllowedTool::LookupBusinessData
+                                && output_index == 1
                                 && output.output_index == 0
-                                && output.done
-                                && output.completed
-                                && !output.terminal =>
+                                && !output.terminal
+                                && (!output.done || output.completed) =>
                         {
                             Some(output.item_id.clone())
+                        }
+                        Some(output) if output.response_id != response_id && output.terminal => {
+                            if output_index == 0 {
+                                None
+                            } else {
+                                return Err((
+                                    "upstream_protocol",
+                                    "Realtime function call had an unsupported output order.",
+                                ));
+                            }
                         }
                         Some(_) => {
                             return Err((
                                 "upstream_protocol",
-                                "Realtime tool preamble was not one completed index-zero assistant message.",
+                                "Realtime tool preamble was not one same-response index-zero assistant message.",
                             ));
                         }
                         None if output_index == 0 => None,
@@ -1632,16 +1644,43 @@ fn translate_server_event(
                     ));
                 }
                 if status != Some("completed") {
-                    return Ok(if matches!(status, Some("failed" | "incomplete")) {
-                        vec![local_error(
+                    let mut messages = Vec::with_capacity(2);
+                    if let Some(preamble_item_id) = candidate.preamble_item_id.as_deref() {
+                        let output = state.output.as_mut().ok_or((
+                            "upstream_protocol",
+                            "Realtime terminal tool response lost its assistant preamble.",
+                        ))?;
+                        if output.item_id != preamble_item_id
+                            || output.response_id != response_id
+                            || output.output_index != 0
+                        {
+                            return Err((
+                                "upstream_protocol",
+                                "Realtime terminal tool response crossed its assistant preamble fence.",
+                            ));
+                        }
+                        if !output.done {
+                            output.done = true;
+                            output.completed = false;
+                            messages.push(fenced_json(
+                                fence,
+                                "formlogic.realtime.output_item_done",
+                                json!({
+                                    "itemId": output.item_id,
+                                    "responseId": output.response_id,
+                                }),
+                            ));
+                        }
+                    }
+                    if matches!(status, Some("failed" | "incomplete")) {
+                        messages.push(local_error(
                             fence,
                             "response_failed",
                             "The Realtime provider could not complete the tool request.",
                             false,
-                        )]
-                    } else {
-                        Vec::new()
-                    });
+                        ));
+                    }
+                    return Ok(messages);
                 }
                 if !candidate.item_done || !candidate.item_completed {
                     return Err((
@@ -2164,6 +2203,9 @@ mod tests {
             500
         );
         assert_eq!(tools[1]["name"], "finish_call");
+        assert!(tools[1]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("without speaking first")));
         assert_eq!(tools[1]["parameters"]["additionalProperties"], false);
         assert_eq!(tools[1]["parameters"]["properties"], json!({}));
         assert_eq!(value["session"]["tool_choice"], "auto");
@@ -2352,6 +2394,629 @@ mod tests {
         assert_eq!(call["type"], "formlogic.realtime.tool_call");
         assert_eq!(call["toolCallId"], "mixed-provider-call-1");
         assert_eq!(call["arguments"]["question"], "availability");
+    }
+
+    #[test]
+    fn same_response_streaming_preamble_may_finish_after_tool_item_is_added() {
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+
+        let started = translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "overlapped-response-1",
+                "output_index": 0,
+                "item": {
+                    "id": "overlapped-preamble-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(
+            text_event(&started[0])["type"],
+            "formlogic.realtime.output_item_started"
+        );
+        let pcm = translate_server_event(
+            &json!({
+                "type": "response.output_audio.delta",
+                "response_id": "overlapped-response-1",
+                "item_id": "overlapped-preamble-1",
+                "delta": base64::engine::general_purpose::STANDARD.encode([0_u8, 0]),
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert!(matches!(&pcm[0], LocalMessage::Binary(bytes) if !bytes.is_empty()));
+
+        assert!(translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "overlapped-response-1",
+                "output_index": 1,
+                "item": {
+                    "id": "overlapped-tool-item-1",
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "name": "lookup_business_data",
+                    "call_id": "overlapped-provider-call-1",
+                    "arguments": "",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap()
+        .is_empty());
+        assert!(state.pending_tool_result.is_none());
+
+        let transcript = translate_server_event(
+            &json!({
+                "type": "response.output_audio_transcript.done",
+                "response_id": "overlapped-response-1",
+                "item_id": "overlapped-preamble-1",
+                "transcript": "Let me check that for you.",
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(
+            text_event(&transcript[0])["type"],
+            "formlogic.realtime.output_transcript"
+        );
+        let preamble_done = translate_server_event(
+            &json!({
+                "type": "response.output_item.done",
+                "response_id": "overlapped-response-1",
+                "output_index": 0,
+                "item": {
+                    "id": "overlapped-preamble-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(
+            text_event(&preamble_done[0])["type"],
+            "formlogic.realtime.output_item_done"
+        );
+        assert!(translate_server_event(
+            &json!({
+                "type": "response.output_item.done",
+                "response_id": "overlapped-response-1",
+                "output_index": 1,
+                "item": {
+                    "id": "overlapped-tool-item-1",
+                    "type": "function_call",
+                    "status": "completed",
+                    "name": "lookup_business_data",
+                    "call_id": "overlapped-provider-call-1",
+                    "arguments": "{\"question\":\"availability\"}",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap()
+        .is_empty());
+        assert!(state.pending_tool_result.is_none());
+
+        let calls = translate_server_event(
+            &json!({
+                "type": "response.done",
+                "response": {
+                    "id": "overlapped-response-1",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "overlapped-preamble-1",
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "overlapped-tool-item-1",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": "lookup_business_data",
+                            "call_id": "overlapped-provider-call-1",
+                            "arguments": "{\"question\":\"availability\"}",
+                        }
+                    ],
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 1);
+        let call = text_event(&calls[0]);
+        assert_eq!(call["type"], "formlogic.realtime.tool_call");
+        assert_eq!(call["toolCallId"], "overlapped-provider-call-1");
+        assert_eq!(call["arguments"]["question"], "availability");
+    }
+
+    #[test]
+    fn tool_item_may_finish_before_its_same_response_preamble_stream() {
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        let events = [
+            json!({
+                "type": "response.output_item.added",
+                "response_id": "reverse-done-response",
+                "output_index": 0,
+                "item": {
+                    "id": "reverse-done-preamble",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            json!({
+                "type": "response.output_item.added",
+                "response_id": "reverse-done-response",
+                "output_index": 1,
+                "item": {
+                    "id": "reverse-done-tool",
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "name": "lookup_business_data",
+                    "call_id": "reverse-done-provider-call",
+                    "arguments": "",
+                },
+            }),
+            json!({
+                "type": "response.output_item.done",
+                "response_id": "reverse-done-response",
+                "output_index": 1,
+                "item": {
+                    "id": "reverse-done-tool",
+                    "type": "function_call",
+                    "status": "completed",
+                    "name": "lookup_business_data",
+                    "call_id": "reverse-done-provider-call",
+                    "arguments": "{\"question\":\"availability\"}",
+                },
+            }),
+            json!({
+                "type": "response.output_audio.delta",
+                "response_id": "reverse-done-response",
+                "item_id": "reverse-done-preamble",
+                "delta": base64::engine::general_purpose::STANDARD.encode([0_u8, 0]),
+            }),
+            json!({
+                "type": "response.output_audio_transcript.done",
+                "response_id": "reverse-done-response",
+                "item_id": "reverse-done-preamble",
+                "transcript": "I will check that now.",
+            }),
+            json!({
+                "type": "response.output_item.done",
+                "response_id": "reverse-done-response",
+                "output_index": 0,
+                "item": {
+                    "id": "reverse-done-preamble",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                },
+            }),
+            json!({
+                "type": "response.done",
+                "response": {
+                    "id": "reverse-done-response",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "reverse-done-preamble",
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "reverse-done-tool",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": "lookup_business_data",
+                            "call_id": "reverse-done-provider-call",
+                            "arguments": "{\"question\":\"availability\"}",
+                        }
+                    ],
+                },
+            }),
+        ];
+
+        let mut messages = Vec::new();
+        for event in events {
+            messages.extend(translate_server_event(&event, &fence, &mut state).unwrap());
+        }
+        let calls = messages
+            .iter()
+            .filter(|message| {
+                matches!(message, LocalMessage::Text(_))
+                    && text_event(message)["type"] == "formlogic.realtime.tool_call"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            text_event(calls[0])["toolCallId"],
+            "reverse-done-provider-call"
+        );
+    }
+
+    #[test]
+    fn streaming_preamble_tool_exception_rejects_every_other_order() {
+        let fence = call_fence();
+
+        let mut crossed = tool_state(true, false);
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "preamble-response",
+                "output_index": 0,
+                "item": {
+                    "id": "preamble-item",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut crossed,
+        )
+        .unwrap();
+        let crossed_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "different-response",
+            "output_index": 0,
+            "item": {
+                "id": "crossed-tool-item",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "lookup_business_data",
+                "call_id": "crossed-provider-call",
+                "arguments": "",
+            },
+        });
+        assert_eq!(
+            translate_server_event(&crossed_tool, &fence, &mut crossed)
+                .unwrap_err()
+                .0,
+            "upstream_protocol"
+        );
+        assert!(crossed.tool_candidate.is_none());
+
+        let mut skipped_index = tool_state(true, false);
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "skipped-index-response",
+                "output_index": 0,
+                "item": {
+                    "id": "skipped-index-preamble",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut skipped_index,
+        )
+        .unwrap();
+        let skipped_index_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "skipped-index-response",
+            "output_index": 2,
+            "item": {
+                "id": "skipped-index-tool",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "lookup_business_data",
+                "call_id": "skipped-index-provider-call",
+                "arguments": "",
+            },
+        });
+        assert_eq!(
+            translate_server_event(&skipped_index_tool, &fence, &mut skipped_index)
+                .unwrap_err()
+                .0,
+            "upstream_protocol"
+        );
+        assert!(skipped_index.tool_candidate.is_none());
+
+        let mut mixed_finish = tool_state(false, true);
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "mixed-finish-response",
+                "output_index": 0,
+                "item": {
+                    "id": "mixed-finish-preamble",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut mixed_finish,
+        )
+        .unwrap();
+        let mixed_finish_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "mixed-finish-response",
+            "output_index": 1,
+            "item": {
+                "id": "mixed-finish-tool",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "finish_call",
+                "call_id": "mixed-finish-provider-call",
+                "arguments": "",
+            },
+        });
+        assert_eq!(
+            translate_server_event(&mixed_finish_tool, &fence, &mut mixed_finish)
+                .unwrap_err()
+                .0,
+            "upstream_protocol"
+        );
+        assert!(mixed_finish.tool_candidate.is_none());
+        assert!(mixed_finish.pending_tool_result.is_none());
+        assert_eq!(mixed_finish.tool_call_count, 0);
+
+        let mut second_tool = tool_state(true, false);
+        let first_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "two-tool-response",
+            "output_index": 0,
+            "item": {
+                "id": "first-tool-item",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "lookup_business_data",
+                "call_id": "first-provider-call",
+                "arguments": "",
+            },
+        });
+        translate_server_event(&first_tool, &fence, &mut second_tool).unwrap();
+        let extra_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "two-tool-response",
+            "output_index": 1,
+            "item": {
+                "id": "extra-tool-item",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "lookup_business_data",
+                "call_id": "extra-provider-call",
+                "arguments": "",
+            },
+        });
+        assert_eq!(
+            translate_server_event(&extra_tool, &fence, &mut second_tool)
+                .unwrap_err()
+                .0,
+            "upstream_protocol"
+        );
+        assert_eq!(
+            second_tool
+                .tool_candidate
+                .as_ref()
+                .map(|candidate| candidate.provider_call_id.as_str()),
+            Some("first-provider-call")
+        );
+
+        let mut incomplete = tool_state(true, false);
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "incomplete-preamble-response",
+                "output_index": 0,
+                "item": {
+                    "id": "incomplete-preamble-item",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut incomplete,
+        )
+        .unwrap();
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "incomplete-preamble-response",
+                "output_index": 1,
+                "item": {
+                    "id": "incomplete-preamble-tool",
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "name": "lookup_business_data",
+                    "call_id": "incomplete-preamble-provider-call",
+                    "arguments": "",
+                },
+            }),
+            &fence,
+            &mut incomplete,
+        )
+        .unwrap();
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.done",
+                "response_id": "incomplete-preamble-response",
+                "output_index": 0,
+                "item": {
+                    "id": "incomplete-preamble-item",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "incomplete",
+                },
+            }),
+            &fence,
+            &mut incomplete,
+        )
+        .unwrap();
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.done",
+                "response_id": "incomplete-preamble-response",
+                "output_index": 1,
+                "item": {
+                    "id": "incomplete-preamble-tool",
+                    "type": "function_call",
+                    "status": "completed",
+                    "name": "lookup_business_data",
+                    "call_id": "incomplete-preamble-provider-call",
+                    "arguments": "{\"question\":\"availability\"}",
+                },
+            }),
+            &fence,
+            &mut incomplete,
+        )
+        .unwrap();
+        let terminal = json!({
+            "type": "response.done",
+            "response": {
+                "id": "incomplete-preamble-response",
+                "status": "completed",
+                "output": [
+                    {
+                        "id": "incomplete-preamble-item",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "incomplete",
+                    },
+                    {
+                        "id": "incomplete-preamble-tool",
+                        "type": "function_call",
+                        "status": "completed",
+                        "name": "lookup_business_data",
+                        "call_id": "incomplete-preamble-provider-call",
+                        "arguments": "{\"question\":\"availability\"}",
+                    }
+                ],
+            },
+        });
+        assert_eq!(
+            translate_server_event(&terminal, &fence, &mut incomplete)
+                .unwrap_err()
+                .0,
+            "upstream_protocol"
+        );
+        assert!(incomplete.pending_tool_result.is_none());
+        assert_eq!(incomplete.tool_call_count, 0);
+    }
+
+    #[test]
+    fn cancelled_or_incomplete_mixed_tool_response_retires_its_audio_lane() {
+        let fence = call_fence();
+        for status in ["cancelled", "incomplete"] {
+            let mut state = tool_state(true, false);
+            translate_server_event(
+                &json!({
+                    "type": "response.output_item.added",
+                    "response_id": "terminal-mixed-response",
+                    "output_index": 0,
+                    "item": {
+                        "id": "terminal-mixed-preamble",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "in_progress",
+                    },
+                }),
+                &fence,
+                &mut state,
+            )
+            .unwrap();
+            translate_server_event(
+                &json!({
+                    "type": "response.output_item.added",
+                    "response_id": "terminal-mixed-response",
+                    "output_index": 1,
+                    "item": {
+                        "id": "terminal-mixed-tool",
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "name": "lookup_business_data",
+                        "call_id": "terminal-mixed-provider-call",
+                        "arguments": "",
+                    },
+                }),
+                &fence,
+                &mut state,
+            )
+            .unwrap();
+            translate_server_event(
+                &json!({
+                    "type": "response.output_item.done",
+                    "response_id": "terminal-mixed-response",
+                    "output_index": 1,
+                    "item": {
+                        "id": "terminal-mixed-tool",
+                        "type": "function_call",
+                        "status": "completed",
+                        "name": "lookup_business_data",
+                        "call_id": "terminal-mixed-provider-call",
+                        "arguments": "{\"question\":\"availability\"}",
+                    },
+                }),
+                &fence,
+                &mut state,
+            )
+            .unwrap();
+
+            let messages = translate_server_event(
+                &json!({
+                    "type": "response.done",
+                    "response": {
+                        "id": "terminal-mixed-response",
+                        "status": status,
+                        "output": [
+                            {
+                                "id": "terminal-mixed-preamble",
+                                "type": "message",
+                                "role": "assistant",
+                                "status": "incomplete",
+                            },
+                            {
+                                "id": "terminal-mixed-tool",
+                                "type": "function_call",
+                                "status": "completed",
+                                "name": "lookup_business_data",
+                                "call_id": "terminal-mixed-provider-call",
+                                "arguments": "{\"question\":\"availability\"}",
+                            }
+                        ],
+                    },
+                }),
+                &fence,
+                &mut state,
+            )
+            .unwrap();
+            assert!(messages.iter().any(|message| {
+                text_event(message)["type"] == "formlogic.realtime.output_item_done"
+            }));
+            assert!(messages
+                .iter()
+                .all(|message| text_event(message)["type"] != "formlogic.realtime.tool_call"));
+            assert!(state
+                .output
+                .as_ref()
+                .is_some_and(|output| { output.done && output.terminal && !output.completed }));
+            assert!(state.pending_tool_result.is_none());
+            assert_eq!(state.tool_call_count, 0);
+        }
     }
 
     #[test]
