@@ -297,7 +297,7 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
         }
     };
 
-    let update = match session_update(&start) {
+    let update = match session_update(&start, &prepared.model) {
         Ok(update) => update,
         Err(message) => {
             let _ = local
@@ -624,7 +624,7 @@ async fn receive_start(local: &mut WebSocket) -> Result<StartFrame, &'static str
     Ok(start)
 }
 
-fn session_update(start: &StartFrame) -> Result<UpstreamMessage, &'static str> {
+fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'static str> {
     let voice = start.voice.as_deref().unwrap_or("marin").trim();
     if voice.is_empty() || voice.len() > 128 || voice.chars().any(|ch| ch.is_control()) {
         return Err("Realtime voice is invalid");
@@ -639,6 +639,10 @@ fn session_update(start: &StartFrame) -> Result<UpstreamMessage, &'static str> {
             "type": "session.update",
             "session": {
                 "type": "realtime",
+                // The query and session field are injected from the same
+                // persisted provider profile; the local caller cannot choose
+                // or override the upstream model.
+                "model": model,
                 "instructions": start.instructions,
                 "max_output_tokens": max_output_tokens,
                 "output_modalities": ["audio"],
@@ -1191,7 +1195,9 @@ mod tests {
 
     #[test]
     fn session_update_forces_pcm_audio_vad_and_no_tools() {
-        let UpstreamMessage::Text(text) = session_update(&start(None)).unwrap() else {
+        let UpstreamMessage::Text(text) =
+            session_update(&start(None), "gpt-realtime-2.1-mini").unwrap()
+        else {
             panic!("text event expected");
         };
         let value: Value = serde_json::from_str(&text).unwrap();
@@ -1215,10 +1221,7 @@ mod tests {
         );
         assert_eq!(value["session"]["tools"], json!([]));
         assert_eq!(value["session"]["tool_choice"], "none");
-        assert!(
-            value["session"].get("model").is_none(),
-            "model is forced by the WSS query, not mutable session.update"
-        );
+        assert_eq!(value["session"]["model"], "gpt-realtime-2.1-mini");
     }
 
     #[test]
