@@ -154,11 +154,13 @@ struct StartFrame {
     turn_detection: Option<TurnDetectionInput>,
     #[serde(default)]
     max_output_tokens: Option<u16>,
-    /// The signed Aokie plugin may request only these two fixed Desktop-owned
+    /// The signed Aokie plugin may request only these fixed Desktop-owned
     /// tools. It never supplies a function name, schema, transport, or service
     /// binding, so this cannot become a generic execution surface.
     #[serde(default)]
     allow_business_lookup: bool,
+    #[serde(default)]
+    allow_request_appointment: bool,
     #[serde(default)]
     allow_finish_call: bool,
 }
@@ -217,7 +219,13 @@ enum LocalControl {
         name: String,
         ok: bool,
         output: Value,
+        #[serde(rename = "continueResponse", default = "default_continue_response")]
+        continue_response: bool,
     },
+}
+
+fn default_continue_response() -> bool {
+    true
 }
 
 struct OutputItemState {
@@ -234,6 +242,7 @@ struct OutputItemState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AllowedTool {
     LookupBusinessData,
+    RequestAppointment,
     FinishCall,
 }
 
@@ -241,6 +250,7 @@ impl AllowedTool {
     fn name(self) -> &'static str {
         match self {
             Self::LookupBusinessData => "lookup_business_data",
+            Self::RequestAppointment => "request_appointment",
             Self::FinishCall => "finish_call",
         }
     }
@@ -267,6 +277,7 @@ struct PendingToolResult {
 enum ForcedResponsePurpose {
     Greeting,
     LookupContinuation,
+    AppointmentContinuation,
     FinishCallFarewell,
     FinishCallRejected,
 }
@@ -276,6 +287,7 @@ impl ForcedResponsePurpose {
         match self {
             Self::Greeting => "greeting",
             Self::LookupContinuation => "lookup_business_data_continuation",
+            Self::AppointmentContinuation => "request_appointment_continuation",
             Self::FinishCallFarewell => "finish_call_farewell",
             Self::FinishCallRejected => "finish_call_rejected",
         }
@@ -294,6 +306,7 @@ struct SessionState {
     greeting: Option<String>,
     output: Option<OutputItemState>,
     allow_business_lookup: bool,
+    allow_request_appointment: bool,
     allow_finish_call: bool,
     tool_candidate: Option<ToolCandidate>,
     pending_tool_result: Option<PendingToolResult>,
@@ -315,12 +328,27 @@ impl SessionState {
         allow_business_lookup: bool,
         allow_finish_call: bool,
     ) -> Self {
+        Self::new_with_capabilities(
+            greeting,
+            allow_business_lookup,
+            false,
+            allow_finish_call,
+        )
+    }
+
+    fn new_with_capabilities(
+        greeting: String,
+        allow_business_lookup: bool,
+        allow_request_appointment: bool,
+        allow_finish_call: bool,
+    ) -> Self {
         Self {
             ready: false,
             begun: false,
             greeting: (!greeting.is_empty()).then_some(greeting),
             output: None,
             allow_business_lookup,
+            allow_request_appointment,
             allow_finish_call,
             tool_candidate: None,
             pending_tool_result: None,
@@ -335,6 +363,7 @@ impl SessionState {
     fn tool_allowed(&self, tool: AllowedTool) -> bool {
         match tool {
             AllowedTool::LookupBusinessData => self.allow_business_lookup,
+            AllowedTool::RequestAppointment => self.allow_request_appointment,
             AllowedTool::FinishCall => self.allow_finish_call,
         }
     }
@@ -446,9 +475,10 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
     let destination_origin = prepared.destination_origin;
     let (mut local_tx, mut local_rx) = local.split();
     let (mut upstream_tx, mut upstream_rx) = upstream.split();
-    let mut state = SessionState::new_with_tools(
+    let mut state = SessionState::new_with_capabilities(
         start.greeting,
         start.allow_business_lookup,
+        start.allow_request_appointment,
         start.allow_finish_call,
     );
     let mut audio_rate = AudioRateWindow::new();
@@ -585,6 +615,7 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                                 name,
                                 ok,
                                 output,
+                                continue_response,
                             }) => {
                                 if !exact_fence_matches(&fence, &call_id, generation)
                                     || !state.ready
@@ -607,6 +638,7 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                                     &name,
                                     ok,
                                     output,
+                                    continue_response,
                                 ) {
                                     Ok(events) => {
                                         for event in events {
@@ -805,7 +837,11 @@ fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'
         return Err("Realtime maxOutputTokens must be between 1 and 4096");
     }
     let turn_detection = normalized_turn_detection(start.turn_detection.as_ref())?;
-    let tools = realtime_tools(start.allow_business_lookup, start.allow_finish_call);
+    let tools = realtime_tools(
+        start.allow_business_lookup,
+        start.allow_request_appointment,
+        start.allow_finish_call,
+    );
     let tool_choice = if tools.is_empty() { "none" } else { "auto" };
     Ok(UpstreamMessage::Text(
         json!({
@@ -839,8 +875,12 @@ fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'
     ))
 }
 
-fn realtime_tools(allow_business_lookup: bool, allow_finish_call: bool) -> Vec<Value> {
-    let mut tools = Vec::with_capacity(2);
+fn realtime_tools(
+    allow_business_lookup: bool,
+    allow_request_appointment: bool,
+    allow_finish_call: bool,
+) -> Vec<Value> {
+    let mut tools = Vec::with_capacity(3);
     if allow_business_lookup {
         tools.push(json!({
             "type": "function",
@@ -857,6 +897,46 @@ fn realtime_tools(allow_business_lookup: bool, allow_finish_call: bool) -> Vec<V
                     }
                 },
                 "required": ["question"]
+            }
+        }));
+    }
+    if allow_request_appointment {
+        tools.push(json!({
+            "type": "function",
+            "name": AllowedTool::RequestAppointment.name(),
+            "description": "Record a new appointment REQUEST for staff confirmation after the caller has explicitly asked to book, supplied their name, service, date and time, and clearly selected that slot. Selecting a concrete slot in direct response to your appointment question is clear agreement; do not ask a redundant second confirmation. Invoke this function without speaking first. It never confirms a booking and cannot change an existing appointment.",
+            "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "callerName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                    },
+                    "service": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "The requested local date in YYYY-MM-DD form.",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "The requested local time in 24-hour HH:MM form.",
+                        "pattern": "^[0-9]{2}:[0-9]{2}$"
+                    },
+                    "agreementPhrase": {
+                        "type": "string",
+                        "description": "Copy the caller's latest agreement turn verbatim; the host matches it to the trusted final transcript.",
+                        "minLength": 1,
+                        "maxLength": 500
+                    }
+                },
+                "required": ["callerName", "service", "date", "time", "agreementPhrase"]
             }
         }));
     }
@@ -986,6 +1066,7 @@ fn truncate_event(state: &SessionState, item_id: &str, played_ms: u64) -> Option
 fn allowed_tool(name: &str) -> Option<AllowedTool> {
     match name {
         "lookup_business_data" => Some(AllowedTool::LookupBusinessData),
+        "request_appointment" => Some(AllowedTool::RequestAppointment),
         "finish_call" => Some(AllowedTool::FinishCall),
         _ => None,
     }
@@ -1035,6 +1116,59 @@ fn validate_tool_arguments(
                 ))?;
             Ok(json!({ "question": question }))
         }
+        AllowedTool::RequestAppointment => {
+            const FIELDS: [(&str, usize); 5] = [
+                ("callerName", 120),
+                ("service", 160),
+                ("date", 10),
+                ("time", 5),
+                ("agreementPhrase", 500),
+            ];
+            if object.len() != FIELDS.len()
+                || !FIELDS.iter().all(|(field, _)| object.contains_key(*field))
+            {
+                return Err((
+                    "invalid_tool_arguments",
+                    "Appointment request fields did not match the fixed schema.",
+                ));
+            }
+            let mut normalized = serde_json::Map::new();
+            for (field, max_chars) in FIELDS {
+                let value = object
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| {
+                        !value.is_empty()
+                            && value.chars().count() <= max_chars
+                            && !value.chars().any(char::is_control)
+                    })
+                    .ok_or((
+                        "invalid_tool_arguments",
+                        "Appointment request contains an invalid text field.",
+                    ))?;
+                normalized.insert(field.to_string(), Value::String(value.to_string()));
+            }
+            let date = normalized["date"].as_str().unwrap_or_default().as_bytes();
+            let time = normalized["time"].as_str().unwrap_or_default().as_bytes();
+            let date_shape = date.len() == 10
+                && date[0..4].iter().all(u8::is_ascii_digit)
+                && date[4] == b'-'
+                && date[5..7].iter().all(u8::is_ascii_digit)
+                && date[7] == b'-'
+                && date[8..10].iter().all(u8::is_ascii_digit);
+            let time_shape = time.len() == 5
+                && time[0..2].iter().all(u8::is_ascii_digit)
+                && time[2] == b':'
+                && time[3..5].iter().all(u8::is_ascii_digit);
+            if !date_shape || !time_shape {
+                return Err((
+                    "invalid_tool_arguments",
+                    "Appointment date or time did not match the fixed format.",
+                ));
+            }
+            Ok(Value::Object(normalized))
+        }
         AllowedTool::FinishCall => {
             if !object.is_empty() {
                 return Err((
@@ -1053,6 +1187,7 @@ fn tool_result_events(
     name: &str,
     ok: bool,
     output: Value,
+    continue_response: bool,
 ) -> Result<Vec<UpstreamMessage>, (&'static str, &'static str)> {
     if safe_token(tool_call_id, 512).is_none() || safe_token(name, 96).is_none() {
         return Err((
@@ -1091,6 +1226,17 @@ fn tool_result_events(
             "Realtime tool result did not match the pending call.",
         ));
     }
+    if !continue_response
+        && (!matches!(
+            pending.tool,
+            AllowedTool::LookupBusinessData | AllowedTool::RequestAppointment
+        ) || ok)
+    {
+        return Err((
+            "invalid_tool_result",
+            "Only an interrupted lookup or appointment request may defer its continuation response.",
+        ));
+    }
 
     let output_envelope = json!({ "ok": ok, "output": output });
     let output = serde_json::to_string(&output_envelope).map_err(|_| {
@@ -1112,6 +1258,25 @@ fn tool_result_events(
         .expect("pending tool identity was validated");
     state.used_tool_call_ids.push(tool_call_id.to_string());
 
+    let output_event = UpstreamMessage::Text(
+        json!({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": pending.provider_call_id,
+                "output": output,
+            }
+        })
+        .to_string(),
+    );
+    if !continue_response {
+        // The caller spoke while the host lookup was in flight. Consume the
+        // exact function call but let Aokie replay that withheld caller PCM
+        // before server VAD creates the next response; speaking the stale
+        // lookup continuation first would race or talk over the caller.
+        return Ok(vec![output_event]);
+    }
+
     let mut response = json!({
         "output_modalities": ["audio"],
         "tools": [],
@@ -1124,6 +1289,20 @@ fn tool_result_events(
                     .into(),
             );
             ForcedResponsePurpose::LookupContinuation
+        }
+        (AllowedTool::RequestAppointment, true) => {
+            response["instructions"] = Value::String(
+                "Tell the caller briefly that the appointment request was recorded for staff confirmation. Read back the exact requested service, date and time from the function result. Never say booked or confirmed, and do not ask for the same details again."
+                    .into(),
+            );
+            ForcedResponsePurpose::AppointmentContinuation
+        }
+        (AllowedTool::RequestAppointment, false) => {
+            response["instructions"] = Value::String(
+                "Say briefly that you could not record the appointment request just now and that staff will need to follow up. Do not claim it was booked or confirmed."
+                    .into(),
+            );
+            ForcedResponsePurpose::AppointmentContinuation
         }
         (AllowedTool::FinishCall, true) => {
             response["instructions"] = Value::String(
@@ -1151,17 +1330,7 @@ fn tool_result_events(
     });
 
     Ok(vec![
-        UpstreamMessage::Text(
-            json!({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "function_call_output",
-                    "call_id": pending.provider_call_id,
-                    "output": output,
-                }
-            })
-            .to_string(),
-        ),
+        output_event,
         UpstreamMessage::Text(
             json!({
                 "type": "response.create",
@@ -1990,6 +2159,7 @@ mod tests {
             turn_detection,
             max_output_tokens: Some(256),
             allow_business_lookup: false,
+            allow_request_appointment: false,
             allow_finish_call: false,
         }
     }
@@ -2033,6 +2203,14 @@ mod tests {
 
     fn tool_state(lookup: bool, finish: bool) -> SessionState {
         let mut state = SessionState::new_with_tools(String::new(), lookup, finish);
+        state.ready = true;
+        state.begun = true;
+        state
+    }
+
+    fn appointment_tool_state() -> SessionState {
+        let mut state =
+            SessionState::new_with_capabilities(String::new(), false, true, false);
         state.ready = true;
         state.begun = true;
         state
@@ -2187,6 +2365,7 @@ mod tests {
     fn session_tools_are_fixed_and_enabled_only_by_signed_start_booleans() {
         let mut configured = start(None);
         configured.allow_business_lookup = true;
+        configured.allow_request_appointment = true;
         configured.allow_finish_call = true;
         let UpstreamMessage::Text(text) =
             session_update(&configured, "gpt-realtime-2.1-mini").unwrap()
@@ -2195,20 +2374,86 @@ mod tests {
         };
         let value: Value = serde_json::from_str(&text).unwrap();
         let tools = value["session"]["tools"].as_array().expect("tool array");
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0]["name"], "lookup_business_data");
         assert_eq!(tools[0]["parameters"]["additionalProperties"], false);
         assert_eq!(
             tools[0]["parameters"]["properties"]["question"]["maxLength"],
             500
         );
-        assert_eq!(tools[1]["name"], "finish_call");
-        assert!(tools[1]["description"]
+        assert_eq!(tools[1]["name"], "request_appointment");
+        assert_eq!(
+            tools[1]["parameters"]["required"],
+            json!(["callerName", "service", "date", "time", "agreementPhrase"])
+        );
+        assert_eq!(tools[1]["parameters"]["additionalProperties"], false);
+        assert_eq!(tools[2]["name"], "finish_call");
+        assert!(tools[2]["description"]
             .as_str()
             .is_some_and(|description| description.contains("without speaking first")));
-        assert_eq!(tools[1]["parameters"]["additionalProperties"], false);
-        assert_eq!(tools[1]["parameters"]["properties"], json!({}));
+        assert_eq!(tools[2]["parameters"]["additionalProperties"], false);
+        assert_eq!(tools[2]["parameters"]["properties"], json!({}));
         assert_eq!(value["session"]["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn appointment_tool_is_function_only_fixed_schema_and_forces_requested_language() {
+        let arguments = r#"{"callerName":"Lance","service":"Lawn mowing","date":"2026-07-22","time":"10:00","agreementPhrase":"I'll be Wednesday at 10 o'clock."}"#;
+        let fence = call_fence();
+        let mut state = appointment_tool_state();
+        let calls = complete_tool_response(
+            &mut state,
+            &fence,
+            "request_appointment",
+            arguments,
+            "completed",
+            "completed",
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 1);
+        let call = text_event(&calls[0]);
+        assert_eq!(call["type"], "formlogic.realtime.tool_call");
+        assert_eq!(call["name"], "request_appointment");
+        assert_eq!(call["arguments"]["date"], "2026-07-22");
+
+        let continuation = tool_result_events(
+            &mut state,
+            "provider-tool-call-1",
+            "request_appointment",
+            true,
+            json!({
+                "recorded": true,
+                "status": "requested",
+                "service": "Lawn mowing",
+                "date": "2026-07-22",
+                "time": "10:00"
+            }),
+            true,
+        )
+        .unwrap();
+        assert_eq!(continuation.len(), 2);
+        let UpstreamMessage::Text(create) = &continuation[1] else {
+            panic!("appointment continuation must be text");
+        };
+        let create: Value = serde_json::from_str(create).unwrap();
+        assert_eq!(
+            create["response"]["metadata"]["formlogic_purpose"],
+            "request_appointment_continuation"
+        );
+        assert!(create["response"]["instructions"]
+            .as_str()
+            .is_some_and(|instructions| {
+                instructions.contains("staff confirmation")
+                    && instructions.contains("Never say booked or confirmed")
+            }));
+        assert_eq!(create["response"]["tools"], json!([]));
+
+        let invalid = validate_tool_arguments(
+            AllowedTool::RequestAppointment,
+            r#"{"callerName":"Lance","service":"Lawn mowing","date":"2026-07-22","time":"10:00","agreementPhrase":"yes","status":"confirmed"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(invalid.0, "invalid_tool_arguments");
     }
 
     #[test]
@@ -3125,6 +3370,7 @@ mod tests {
             "lookup_business_data",
             true,
             json!({ "digest": "Open at 10 AM" }),
+            true,
         )
         .unwrap();
         assert_eq!(events.len(), 2);
@@ -3154,9 +3400,150 @@ mod tests {
             "lookup_business_data",
             true,
             json!({ "digest": "must not be sent twice" }),
+            true,
         )
         .unwrap_err();
         assert_eq!(replay.0, "duplicate_tool_result");
+    }
+
+    #[test]
+    fn interrupted_lookup_outputs_function_result_before_caller_vad_without_stale_response() {
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        complete_tool_response(
+            &mut state,
+            &fence,
+            "lookup_business_data",
+            r#"{"question":"availability"}"#,
+            "completed",
+            "completed",
+        )
+        .unwrap();
+
+        let events = tool_result_events(
+            &mut state,
+            "provider-tool-call-1",
+            "lookup_business_data",
+            false,
+            json!({ "error": "caller continued speaking" }),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "no stale response.create may precede replayed PCM"
+        );
+        let UpstreamMessage::Text(output_text) = &events[0] else {
+            panic!("function output must be JSON text");
+        };
+        let output: Value = serde_json::from_str(output_text).unwrap();
+        assert_eq!(output["type"], "conversation.item.create");
+        assert_eq!(output["item"]["type"], "function_call_output");
+        assert!(state.pending_tool_result.is_none());
+        assert!(state.pending_forced_response.is_none());
+
+        // Aokie's socket worker drains controls before audio. Once this exact
+        // output has cleared the pending function fence, replayed caller PCM
+        // can let automatic VAD create the response for the caller's latest
+        // utterance without tripping the overlap guard.
+        assert!(translate_server_event(
+            &json!({
+                "type": "response.created",
+                "response": { "id": "caller-after-tool", "status": "in_progress" }
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap()
+        .is_empty());
+
+        let mut successful_lookup = tool_state(true, false);
+        complete_tool_response(
+            &mut successful_lookup,
+            &fence,
+            "lookup_business_data",
+            r#"{"question":"availability"}"#,
+            "completed",
+            "completed",
+        )
+        .unwrap();
+        assert_eq!(
+            tool_result_events(
+                &mut successful_lookup,
+                "provider-tool-call-1",
+                "lookup_business_data",
+                true,
+                json!({ "digest": "open" }),
+                false,
+            )
+            .unwrap_err()
+            .0,
+            "invalid_tool_result"
+        );
+
+        let mut finish = tool_state(false, true);
+        complete_tool_response(
+            &mut finish,
+            &fence,
+            "finish_call",
+            r#"{}"#,
+            "completed",
+            "completed",
+        )
+        .unwrap();
+        assert_eq!(
+            tool_result_events(
+                &mut finish,
+                "provider-tool-call-1",
+                "finish_call",
+                false,
+                json!({ "accepted": false }),
+                false,
+            )
+            .unwrap_err()
+            .0,
+            "invalid_tool_result"
+        );
+    }
+
+    #[test]
+    fn tool_result_continue_response_defaults_true_for_previous_signed_plugin() {
+        for (control, expected) in [
+            (
+                json!({
+                    "type": "formlogic.realtime.tool_result",
+                    "callId": "call_1",
+                    "generation": 7,
+                    "toolCallId": "tool_1",
+                    "name": "lookup_business_data",
+                    "ok": true,
+                    "output": {}
+                }),
+                true,
+            ),
+            (
+                json!({
+                    "type": "formlogic.realtime.tool_result",
+                    "callId": "call_1",
+                    "generation": 7,
+                    "toolCallId": "tool_1",
+                    "name": "lookup_business_data",
+                    "ok": false,
+                    "output": {},
+                    "continueResponse": false
+                }),
+                false,
+            ),
+        ] {
+            let LocalControl::ToolResult {
+                continue_response, ..
+            } = serde_json::from_value(control).unwrap()
+            else {
+                panic!("tool result control expected");
+            };
+            assert_eq!(continue_response, expected);
+        }
     }
 
     #[test]
@@ -3221,6 +3608,7 @@ mod tests {
             "lookup_business_data",
             true,
             json!({ "answer": "Open" }),
+            true,
         )
         .unwrap();
         let UpstreamMessage::Text(continuation_create) = &continuation[1] else {
@@ -3289,6 +3677,7 @@ mod tests {
             "finish_call",
             true,
             json!({ "accepted": true }),
+            true,
         )
         .unwrap();
         let UpstreamMessage::Text(create_text) = &continuation[1] else {

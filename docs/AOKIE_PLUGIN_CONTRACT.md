@@ -66,6 +66,7 @@ aokie.call.incoming          aokie.call.ringing             aokie.call.answered 
 aokie.call.audio.connected   aokie.call.audio.disconnected
 aokie.call.turn.partial      aokie.call.turn.final          aokie.call.turn.corrected
 aokie.call.ended             aokie.call.waiting             aokie.call.outbound.dialing
+aokie.appointment.requested
 aokie.sms.received           aokie.sms.sent                 aokie.sms.failed
 aokie.manager.action
 aokie.hardware.error
@@ -103,6 +104,11 @@ Conventions:
   corrections use the main reply model). `audioTranscriptModel` still exists as a plugin setting
   but is RETIRED from the console and never pushed by the flow — the chosen service owns its
   model (picked on the desktop's service card).
+- `aokie.appointment.requested` data is exactly `{requestId, callId, from, callerName,
+  service, date, time, agreementTurn, at}`. The plugin emits it through the essential outbox only
+  after the exact live caller turn has been fenced and the date/time validated. The pack's
+  no-LLM apply flow deduplicates `requestId` + `callId`, writes an Appointment with
+  `status: requested` first, then a human confirmation task. It never means confirmed.
 - `aokie.call.ended` data: `{callId, from, callerPhone, durationSeconds, durationMs, outcome,
   reason, direction, manager, at}`. `manager: true` marks an inbound call whose caller id
   digit-matched the `managerNumbers` setting — the after-call booking extractor skips those

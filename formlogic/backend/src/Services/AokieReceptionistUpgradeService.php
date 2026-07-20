@@ -28,6 +28,12 @@ final class AokieReceptionistUpgradeService
         'sms-auto-reply-draft',
         'sms-followup-conversation',
         'after-call-actions',
+        'appointment-request-apply',
+    ];
+
+    /** @var string[] */
+    private const ADDITIVE_FLOW_SLUGS = [
+        'appointment-request-apply',
     ];
 
     /** @var string[] */
@@ -40,6 +46,12 @@ final class AokieReceptionistUpgradeService
     private const BACKGROUND_FIELD_IDS = [
         'background_ai_source',
         'background_ai_model',
+    ];
+
+    /** @var array<string,string[]> */
+    private const ADDITIVE_FORM_FIELD_IDS = [
+        'appointments' => ['request_id'],
+        'follow-up-tasks' => ['request_id'],
     ];
 
     /**
@@ -95,7 +107,21 @@ final class AokieReceptionistUpgradeService
         $installed = $this->resolveInstalledApp($appId, $source['packFormIds']);
         $desiredFlows = $this->prepareDesiredFlows($source['flows'], $installed['formMap']);
         $installedFlows = $this->resolveInstalledFlows($appId, $installed['ownerId']);
-        $bindings = $this->resolveSettledBindings($appId, $installedFlows);
+        foreach (self::ADDITIVE_FLOW_SLUGS as $slug) {
+            if ($installedFlows[$slug] !== null
+                && !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug])) {
+                throw new \RuntimeException("Installed additive flow '{$slug}' collides with an owner-authored flow");
+            }
+        }
+        $desiredAppointmentBinding = $this->prepareAppointmentBinding(
+            $source['appointmentBinding'],
+            $installed['formMap']
+        );
+        $bindings = $this->resolveBindings(
+            $appId,
+            $installedFlows,
+            $desiredAppointmentBinding
+        );
 
         $settingsForm = $this->forms->getForm($installed['formMap'][self::SETTINGS_FORM_ID]);
         if ($settingsForm === null) {
@@ -124,12 +150,46 @@ final class AokieReceptionistUpgradeService
             }
         }
 
+        $recordForms = [];
+        $missingRecordFields = [];
+        foreach (self::ADDITIVE_FORM_FIELD_IDS as $packFormId => $wantedFieldIds) {
+            $recordForm = $this->forms->getForm($installed['formMap'][$packFormId]);
+            if ($recordForm === null) {
+                throw new \RuntimeException("Installed pack form '{$packFormId}' is missing");
+            }
+            $recordForms[$packFormId] = $recordForm;
+            $byId = [];
+            foreach ($recordForm['fields'] as $field) {
+                $fieldId = is_array($field) ? ($field['id'] ?? null) : null;
+                if (!is_string($fieldId)) {
+                    continue;
+                }
+                if (isset($byId[$fieldId])) {
+                    throw new \RuntimeException("Installed pack form '{$packFormId}' contains duplicate field IDs");
+                }
+                $byId[$fieldId] = $field;
+            }
+            foreach ($wantedFieldIds as $fieldId) {
+                $desiredField = $source['additiveFields'][$packFormId][$fieldId];
+                if (!isset($byId[$fieldId])) {
+                    $missingRecordFields[$packFormId][] = $fieldId;
+                    continue;
+                }
+                if (!$this->packFieldMatches($byId[$fieldId], $desiredField)) {
+                    throw new \RuntimeException(
+                        "Installed pack field '{$packFormId}.{$fieldId}' is owner-authored or incompatible"
+                    );
+                }
+            }
+        }
+
         $currentScreen = $this->screenWithoutMetadata($settingsForm['customScreen'] ?? []);
         $screenChanges = !$this->sameValue($currentScreen, $source['settingsScreen']);
 
         $flowChanges = [];
         foreach (self::FLOW_SLUGS as $slug) {
-            if (!$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug])) {
+            if ($installedFlows[$slug] === null
+                || !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug])) {
                 $flowChanges[] = $slug;
             }
         }
@@ -138,6 +198,9 @@ final class AokieReceptionistUpgradeService
             if ($bindings[$slug]['event'] !== 'aokie.call.transcript.settled') {
                 $bindingChanges[] = $slug;
             }
+        }
+        if ($bindings['appointment-request-apply'] === null) {
+            $bindingChanges[] = 'appointment-request-apply';
         }
 
         $summary = [
@@ -148,11 +211,13 @@ final class AokieReceptionistUpgradeService
             'legacyScreenAccepted' => $legacyScreenAccepted,
             'changes' => [
                 'settingsFields' => $missingFields,
+                'recordFields' => $missingRecordFields,
                 'customScreen' => $screenChanges,
                 'flows' => $flowChanges,
                 'bindingEvents' => $bindingChanges,
             ],
             'snapshot' => null,
+            'fieldSnapshots' => [],
             'applied' => false,
         ];
 
@@ -214,16 +279,38 @@ final class AokieReceptionistUpgradeService
             }
         }
 
+        foreach ($missingRecordFields as $packFormId => $fieldIdsToAdd) {
+            $original = $recordForms[$packFormId];
+            $fresh = $this->forms->getForm($original['id']);
+            if ($fresh === null || !$this->sameValue($original['fields'], $fresh['fields'])) {
+                throw new \RuntimeException("Installed pack form '{$packFormId}' changed during upgrade; retry from dry-run");
+            }
+            $version = $this->versions->createVersion(
+                $original['id'],
+                $installed['ownerId'],
+                "Before Aokie Receptionist {$packFormId} request-id upgrade"
+            );
+            $summary['fieldSnapshots'][$packFormId] = ['version' => $version['version']];
+            $fields = $fresh['fields'];
+            foreach ($fieldIdsToAdd as $fieldId) {
+                $fields[] = $source['additiveFields'][$packFormId][$fieldId];
+            }
+            if ($this->forms->updateForm($original['id'], ['fields' => $fields]) === null) {
+                throw new \RuntimeException("Installed pack form '{$packFormId}' update failed");
+            }
+        }
+
         [$updatedFlows, $updatedBindings] = $this->applyFlowChanges(
             $appId,
             $installed['ownerId'],
             $desiredFlows,
             $installedFlows,
-            $bindings
+            $bindings,
+            $desiredAppointmentBinding
         );
         $summary['changes']['flows'] = $updatedFlows;
         $summary['changes']['bindingEvents'] = $updatedBindings;
-        $summary['applied'] = $missingFields !== [] || $screenChanges
+        $summary['applied'] = $missingFields !== [] || $missingRecordFields !== [] || $screenChanges
             || $updatedFlows !== [] || $updatedBindings !== [];
 
         return $summary;
@@ -234,9 +321,11 @@ final class AokieReceptionistUpgradeService
      *   packVersion:string,
      *   packFormIds:string[],
      *   backgroundFields:array<string,array<string,mixed>>,
+     *   additiveFields:array<string,array<string,array<string,mixed>>>,
      *   settingsScreen:array<string,mixed>,
      *   screenTrust:array{trust:string,provenance:array<string,mixed>},
-     *   flows:array<string,array<string,mixed>>
+     *   flows:array<string,array<string,mixed>>,
+     *   appointmentBinding:array<string,mixed>
      * }
      */
     private function validateSourcePack(array $record): array
@@ -303,6 +392,36 @@ final class AokieReceptionistUpgradeService
             }
         }
 
+        $additiveFields = [];
+        foreach (self::ADDITIVE_FORM_FIELD_IDS as $packFormId => $fieldIds) {
+            $packForm = $formsById[$packFormId] ?? null;
+            if (!is_array($packForm)) {
+                throw new \RuntimeException("Pack is missing form '{$packFormId}'");
+            }
+            $fields = [];
+            foreach (is_array($packForm['fields'] ?? null) ? $packForm['fields'] : [] as $field) {
+                $fieldId = is_array($field) ? ($field['id'] ?? null) : null;
+                if (!is_string($fieldId) || !in_array($fieldId, $fieldIds, true)) {
+                    continue;
+                }
+                if (isset($fields[$fieldId])) {
+                    throw new \RuntimeException("Pack field '{$packFormId}.{$fieldId}' is ambiguous");
+                }
+                if (FormService::fieldIdError($fieldId) !== null
+                    || ($field['type'] ?? null) !== 'short_text'
+                    || ($field['required'] ?? null) !== false) {
+                    throw new \RuntimeException("Pack field '{$packFormId}.{$fieldId}' is invalid");
+                }
+                $fields[$fieldId] = $field;
+            }
+            foreach ($fieldIds as $fieldId) {
+                if (!isset($fields[$fieldId])) {
+                    throw new \RuntimeException("Pack is missing field '{$packFormId}.{$fieldId}'");
+                }
+            }
+            $additiveFields[$packFormId] = $fields;
+        }
+
         $flows = [];
         foreach (is_array($pack['flows'] ?? null) ? $pack['flows'] : [] as $flow) {
             $slug = is_array($flow) ? ($flow['slug'] ?? null) : null;
@@ -331,11 +450,22 @@ final class AokieReceptionistUpgradeService
                 throw new \RuntimeException("Pack binding for '{$slug}' is missing or ambiguous");
             }
         }
+        $appointmentBindings = array_values(array_filter(
+            is_array($pack['flowBindings'] ?? null) ? $pack['flowBindings'] : [],
+            static fn ($binding): bool => is_array($binding)
+                && ($binding['flow'] ?? null) === 'appointment-request-apply'
+                && ($binding['connectorId'] ?? null) === 'aokie'
+                && ($binding['event'] ?? null) === 'aokie.appointment.requested'
+        ));
+        if (count($appointmentBindings) !== 1) {
+            throw new \RuntimeException('Pack appointment-request binding is missing or ambiguous');
+        }
 
         return [
             'packVersion' => $packVersion,
             'packFormIds' => array_keys($formsById),
             'backgroundFields' => $backgroundFields,
+            'additiveFields' => $additiveFields,
             'settingsScreen' => $settingsScreen,
             'screenTrust' => $this->packs->verifyVendorSignedScreenComponent(
                 $pack,
@@ -343,6 +473,7 @@ final class AokieReceptionistUpgradeService
                 $settingsScreen
             ),
             'flows' => $flows,
+            'appointmentBinding' => $appointmentBindings[0],
         ];
     }
 
@@ -472,6 +603,39 @@ final class AokieReceptionistUpgradeService
         return $desired;
     }
 
+    /** @return array<string,mixed> */
+    private function prepareAppointmentBinding(array $packBinding, array $formMap): array
+    {
+        $clean = FlowService::sanitizeBinding($packBinding);
+        if ($clean['flow'] !== 'appointment-request-apply'
+            || $clean['event'] !== 'aokie.appointment.requested'
+            || ($packBinding['connectorId'] ?? null) !== 'aokie') {
+            throw new \RuntimeException('Pack appointment-request binding is invalid');
+        }
+        $actions = $clean['outputActions'];
+        if (!is_array($actions) || $actions === []) {
+            throw new \RuntimeException('Pack appointment-request binding has no output actions');
+        }
+        foreach ($actions as &$action) {
+            $ref = $action['form'] ?? null;
+            if (is_string($ref) && str_starts_with($ref, '@pack:')) {
+                $packFormId = substr($ref, 6);
+                $action['form'] = $formMap[$packFormId]
+                    ?? throw new \RuntimeException(
+                        "Pack appointment-request binding references unknown pack form '{$packFormId}'"
+                    );
+            } elseif ($ref !== null) {
+                throw new \RuntimeException('Pack appointment-request binding contains a raw form reference');
+            }
+        }
+        unset($action);
+        $clean['outputActions'] = $actions;
+        $clean['connectorId'] = 'aokie';
+        $clean['formId'] = null;
+        $clean['sortOrder'] = (int) ($packBinding['sortOrder'] ?? 0);
+        return $clean;
+    }
+
     /** @return array<string,mixed>|null */
     private function validateFlowSchema(array $packFlow, string $key, string $slug): ?array
     {
@@ -506,7 +670,7 @@ final class AokieReceptionistUpgradeService
         return $caps === [] ? null : array_values($caps);
     }
 
-    /** @return array<string,array<string,mixed>> */
+    /** @return array<string,array<string,mixed>|null> */
     private function resolveInstalledFlows(string $appId, string $ownerId): array
     {
         $resolved = [];
@@ -525,6 +689,10 @@ final class AokieReceptionistUpgradeService
         }
         foreach (self::FLOW_SLUGS as $slug) {
             if (!isset($resolved[$slug])) {
+                if (in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
+                    $resolved[$slug] = null;
+                    continue;
+                }
                 throw new \RuntimeException("Installed flow '{$slug}' is missing");
             }
         }
@@ -535,10 +703,15 @@ final class AokieReceptionistUpgradeService
      * @param array<string,array<string,mixed>> $installedFlows
      * @return array<string,array<string,mixed>>
      */
-    private function resolveSettledBindings(string $appId, array $installedFlows): array
+    private function resolveBindings(
+        string $appId,
+        array $installedFlows,
+        array $desiredAppointmentBinding
+    ): array
     {
         $candidates = array_fill_keys(self::SETTLED_BINDING_FLOWS, []);
-        foreach ($this->flows->listBindings($appId) as $binding) {
+        $allBindings = $this->flows->listBindings($appId);
+        foreach ($allBindings as $binding) {
             $slug = $binding['flow'] ?? null;
             if (!is_string($slug) || !isset($candidates[$slug])) {
                 continue;
@@ -556,6 +729,29 @@ final class AokieReceptionistUpgradeService
                 throw new \RuntimeException("Installed binding for '{$slug}' is missing or ambiguous");
             }
             $resolved[$slug] = $candidates[$slug][0];
+        }
+        $appointmentFlow = $installedFlows['appointment-request-apply'];
+        $appointmentCandidates = [];
+        if (is_array($appointmentFlow)) {
+            foreach ($allBindings as $binding) {
+                if (($binding['flowDefinitionId'] ?? null) === $appointmentFlow['id']) {
+                    $appointmentCandidates[] = $binding;
+                }
+            }
+        }
+        if (count($appointmentCandidates) > 1) {
+            throw new \RuntimeException("Installed binding for 'appointment-request-apply' is ambiguous");
+        }
+        if ($appointmentCandidates === []) {
+            $resolved['appointment-request-apply'] = null;
+        } else {
+            $candidate = $appointmentCandidates[0];
+            if (!$this->bindingMatches($candidate, $desiredAppointmentBinding)) {
+                throw new \RuntimeException(
+                    "Installed binding for 'appointment-request-apply' is owner-authored or incompatible"
+                );
+            }
+            $resolved['appointment-request-apply'] = $candidate;
         }
         return $resolved;
     }
@@ -633,9 +829,51 @@ final class AokieReceptionistUpgradeService
     }
 
     /**
+     * FormService expands stored fields with order/default metadata. Compare
+     * the pack-owned semantic shape while allowing only those normal defaults.
+     */
+    private function packFieldMatches(array $current, array $desired): bool
+    {
+        foreach (['id', 'type', 'label', 'required', 'properties'] as $key) {
+            if (!$this->sameValue($current[$key] ?? null, $desired[$key] ?? null)) {
+                return false;
+            }
+        }
+        return ($current['description'] ?? null) === ($desired['description'] ?? null)
+            && ($current['placeholder'] ?? null) === ($desired['placeholder'] ?? null)
+            && $this->sameValue($current['validation'] ?? [], $desired['validation'] ?? [])
+            && $this->sameValue($current['conditionalLogic'] ?? null, $desired['conditionalLogic'] ?? null);
+    }
+
+    /** @param array<string,mixed> $current @param array<string,mixed> $desired */
+    private function bindingMatches(array $current, array $desired): bool
+    {
+        foreach ([
+            'formId',
+            'connectorId',
+            'flow',
+            'event',
+            'mode',
+            'condition',
+            'inputMap',
+            'outputActions',
+            'timeoutMs',
+            'retryPolicy',
+            'fallbackPolicy',
+            'enabled',
+            'sortOrder',
+        ] as $key) {
+            if (!$this->sameValue($current[$key] ?? null, $desired[$key] ?? null)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * @param array<string,array<string,mixed>> $desiredFlows
-     * @param array<string,array<string,mixed>> $installedFlows
-     * @param array<string,array<string,mixed>> $bindings
+     * @param array<string,array<string,mixed>|null> $installedFlows
+     * @param array<string,array<string,mixed>|null> $bindings
      * @return array{0:string[],1:string[]}
      */
     private function applyFlowChanges(
@@ -643,17 +881,21 @@ final class AokieReceptionistUpgradeService
         string $ownerId,
         array $desiredFlows,
         array $installedFlows,
-        array $bindings
+        array $bindings,
+        array $desiredAppointmentBinding
     ): array {
         $needsFlowTransaction = false;
         foreach (self::FLOW_SLUGS as $slug) {
             $needsFlowTransaction = $needsFlowTransaction
+                || $installedFlows[$slug] === null
                 || !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug]);
         }
         foreach (self::SETTLED_BINDING_FLOWS as $slug) {
             $needsFlowTransaction = $needsFlowTransaction
                 || $bindings[$slug]['event'] !== 'aokie.call.transcript.settled';
         }
+        $needsFlowTransaction = $needsFlowTransaction
+            || $bindings['appointment-request-apply'] === null;
         if (!$needsFlowTransaction) {
             return [[], []];
         }
@@ -676,6 +918,23 @@ final class AokieReceptionistUpgradeService
                   WHERE id = :id AND app_id = :app AND slug = :slug FOR UPDATE'
             );
             foreach (self::FLOW_SLUGS as $slug) {
+                if ($installedFlows[$slug] === null) {
+                    if (!in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
+                        throw new \RuntimeException("Installed flow '{$slug}' disappeared during upgrade");
+                    }
+                    $collisionLock = $this->mysql->prepare(
+                        'SELECT id FROM flow_definitions WHERE app_id = :app AND slug = :slug FOR UPDATE'
+                    );
+                    $collisionLock->execute(['app' => $appId, 'slug' => $slug]);
+                    if ($collisionLock->fetchColumn() !== false) {
+                        throw new \RuntimeException("Installed additive flow '{$slug}' appeared during upgrade");
+                    }
+                    $create = $desiredFlows[$slug];
+                    $create['slug'] = $slug;
+                    $installedFlows[$slug] = $this->flows->createFlow($appId, $ownerId, $create);
+                    $updatedFlows[] = $slug;
+                    continue;
+                }
                 $flowLock->execute([
                     'id' => $installedFlows[$slug]['id'],
                     'app' => $appId,
@@ -690,6 +949,9 @@ final class AokieReceptionistUpgradeService
                     throw new \RuntimeException("Installed flow '{$slug}' disappeared during upgrade");
                 }
                 if (!$this->flowMatches($current, $desiredFlows[$slug])) {
+                    if (in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
+                        throw new \RuntimeException("Installed additive flow '{$slug}' changed during upgrade");
+                    }
                     if ($this->flows->updateFlow($appId, $current['id'], $desiredFlows[$slug]) === null) {
                         throw new \RuntimeException("Installed flow '{$slug}' could not be updated");
                     }
@@ -731,6 +993,14 @@ final class AokieReceptionistUpgradeService
                     }
                     $updatedBindings[] = $slug;
                 }
+            }
+
+            if ($bindings['appointment-request-apply'] === null) {
+                $newBinding = $this->flows->createBinding($appId, $desiredAppointmentBinding);
+                if (!$this->bindingMatches($newBinding, $desiredAppointmentBinding)) {
+                    throw new \RuntimeException("Installed binding for 'appointment-request-apply' could not be created");
+                }
+                $updatedBindings[] = 'appointment-request-apply';
             }
 
             $this->mysql->commit();

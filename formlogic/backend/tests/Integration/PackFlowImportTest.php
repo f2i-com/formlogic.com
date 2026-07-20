@@ -265,7 +265,8 @@ class PackFlowImportTest extends TestCase
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 
-        // 17 flows / 16 bindings: callback-drain (2026-07-15 — dials the oldest
+        // 18 flows / 17 bindings: deterministic Realtime appointment apply
+        // (no LLM, requested-not-confirmed) plus callback-drain (2026-07-15 — dials the oldest
         // queued callback whenever an inbound call ends and the line is free)
         // and hold-lost-apology (2026-07-15 Phase 4
         // hold queue — apology SMS to a caller who hung up while parked
@@ -281,9 +282,9 @@ class PackFlowImportTest extends TestCase
         // eight. The live-reply binding ships DISABLED (the in-plugin
         // receptionist owns replies) but still imports as a row.
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(17, $flows);
+        $this->assertCount(18, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(16, $bindings);
+        $this->assertCount(17, $bindings);
         $this->assertStringNotContainsString('@pack:', json_encode($flows));
         $this->assertStringNotContainsString('@pack:', json_encode($bindings));
 

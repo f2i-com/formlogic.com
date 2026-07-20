@@ -52,6 +52,17 @@ const CALL_ASSISTANCE_HINTS = [
   '$event.data.urgency',
   '$event.data.at',
 ] as const;
+const APPOINTMENT_REQUEST_HINTS = [
+  '$event.data.requestId',
+  '$event.data.callId',
+  '$event.data.from',
+  '$event.data.callerName',
+  '$event.data.service',
+  '$event.data.date',
+  '$event.data.time',
+  '$event.data.agreementTurn',
+  '$event.data.at',
+] as const;
 const DONGLE_HINTS = ['$event.data.dongleId'] as const;
 const DEVICE_ERROR_HINTS = ['$event.data.dongleId', '$event.data.severity', '$event.data.message'] as const;
 const SMS_RECEIVED_HINTS = ['$event.data.messageId', '$event.data.from', '$event.data.phone', '$event.data.body', '$event.data.text', '$event.data.receivedAt'] as const;
@@ -84,6 +95,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.assistance.resolved',
   'aokie.call.waiting',
   'aokie.call.outbound.dialing',
+  'aokie.appointment.requested',
   'aokie.sms.received',
   'aokie.sms.sent',
   'aokie.sms.failed',
@@ -245,6 +257,16 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Call ended',
     description: 'A call finished with an outcome and optional duration.',
     payloadHints: CALL_ENDED_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'aokie.appointment.requested',
+    group: 'aokie.calls',
+    event: 'aokie.appointment.requested',
+    label: 'Appointment requested',
+    description:
+      'The live receptionist recorded a caller-agreed appointment request. This means requested, not confirmed; bind a durable record write and human confirmation task here.',
+    payloadHints: APPOINTMENT_REQUEST_HINTS,
   },
   {
     kind: 'event',

@@ -114,6 +114,26 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $settingsId = $formMap[AokieReceptionistUpgradeService::SETTINGS_FORM_ID];
         $desiredSettings = $this->packForm($pack, AokieReceptionistUpgradeService::SETTINGS_FORM_ID);
 
+        // Model an installation from before the deterministic Realtime
+        // appointment slice: neither request_id field nor the additive
+        // appointment flow/binding existed yet.
+        foreach (['appointments', 'follow-up-tasks'] as $packFormId) {
+            $form = self::$forms->getForm($formMap[$packFormId]);
+            self::$forms->updateForm($formMap[$packFormId], [
+                'fields' => array_values(array_filter(
+                    $form['fields'],
+                    static fn (array $field): bool => ($field['id'] ?? null) !== 'request_id'
+                )),
+            ]);
+        }
+        self::$pdo->prepare(
+            'DELETE b FROM app_flow_bindings b
+              JOIN flow_definitions f ON f.id = b.flow_definition_id
+             WHERE b.app_id = ? AND f.slug = ?'
+        )->execute([$appId, 'appointment-request-apply']);
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE app_id = ? AND slug = ?')
+            ->execute([$appId, 'appointment-request-apply']);
+
         $settings = self::$forms->getForm($settingsId);
         $legacyFields = array_values(array_filter(
             $settings['fields'],
@@ -143,7 +163,11 @@ final class AokieReceptionistUpgradeTest extends TestCase
             'nodes' => [['id' => 'legacy', 'type' => 'logic_block', 'data' => ['expr' => 'return {};']]],
             'edges' => [],
         ]);
-        foreach (AokieReceptionistUpgradeService::FLOW_SLUGS as $index => $slug) {
+        $legacyFlowSlugs = array_values(array_filter(
+            AokieReceptionistUpgradeService::FLOW_SLUGS,
+            static fn (string $slug): bool => $slug !== 'appointment-request-apply'
+        ));
+        foreach ($legacyFlowSlugs as $index => $slug) {
             $enabled = $index % 2;
             self::$pdo->prepare(
                 'UPDATE flow_definitions
@@ -169,13 +193,24 @@ final class AokieReceptionistUpgradeTest extends TestCase
 
         $installationsBefore = $this->installationCount();
         $versionsBefore = count(self::$versions->getVersions($settingsId));
+        $recordVersionsBefore = [
+            'appointments' => count(self::$versions->getVersions($formMap['appointments'])),
+            'follow-up-tasks' => count(self::$versions->getVersions($formMap['follow-up-tasks'])),
+        ];
         $dryRun = self::$upgrade->run($appId, $record, false);
         $this->assertSame('dry-run', $dryRun['mode']);
         $this->assertFalse($dryRun['legacyScreenAccepted']);
         $this->assertSame(['background_ai_source', 'background_ai_model'], $dryRun['changes']['settingsFields']);
+        $this->assertSame([
+            'appointments' => ['request_id'],
+            'follow-up-tasks' => ['request_id'],
+        ], $dryRun['changes']['recordFields']);
         $this->assertTrue($dryRun['changes']['customScreen']);
         $this->assertSame(AokieReceptionistUpgradeService::FLOW_SLUGS, $dryRun['changes']['flows']);
-        $this->assertSame(['call-summary-follow-up', 'after-call-actions'], $dryRun['changes']['bindingEvents']);
+        $this->assertSame(
+            ['call-summary-follow-up', 'after-call-actions', 'appointment-request-apply'],
+            $dryRun['changes']['bindingEvents']
+        );
         $this->assertCount($versionsBefore, self::$versions->getVersions($settingsId));
         $this->assertSame('Legacy configure-receptionist', $this->flowRow($appId, 'configure-receptionist')['name']);
 
@@ -183,8 +218,15 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $this->assertTrue($applied['applied']);
         $this->assertFalse($applied['legacyScreenAccepted']);
         $this->assertSame(['version' => $versionsBefore + 1], $applied['snapshot']);
+        $this->assertSame([
+            'appointments' => ['version' => $recordVersionsBefore['appointments'] + 1],
+            'follow-up-tasks' => ['version' => $recordVersionsBefore['follow-up-tasks'] + 1],
+        ], $applied['fieldSnapshots']);
         $this->assertSame(AokieReceptionistUpgradeService::FLOW_SLUGS, $applied['changes']['flows']);
-        $this->assertSame(['call-summary-follow-up', 'after-call-actions'], $applied['changes']['bindingEvents']);
+        $this->assertSame(
+            ['call-summary-follow-up', 'after-call-actions', 'appointment-request-apply'],
+            $applied['changes']['bindingEvents']
+        );
         $this->assertSame($installationsBefore, $this->installationCount(), 'upgrade must not create a second installation');
 
         $upgradedSettings = self::$forms->getForm($settingsId);
@@ -201,10 +243,26 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $retained = self::$responses->getResponse($settingsId, $response['id']);
         $this->assertSame('RETAIN-ME', $retained['answers']['business_name']);
 
+        foreach (['appointments', 'follow-up-tasks'] as $packFormId) {
+            $upgraded = self::$forms->getForm($formMap[$packFormId]);
+            $this->assertContains('request_id', array_column($upgraded['fields'], 'id'));
+            $snapshot = self::$versions->getVersion(
+                $formMap[$packFormId],
+                $recordVersionsBefore[$packFormId] + 1
+            );
+            $this->assertNotNull($snapshot);
+            $this->assertNotContains('request_id', array_column($snapshot['data']['fields'], 'id'));
+        }
+
         foreach (AokieReceptionistUpgradeService::FLOW_SLUGS as $slug) {
             $flow = $this->flowRow($appId, $slug);
-            $this->assertSame($flowEnabled[$slug], (int) $flow['enabled'], "{$slug} enabled state");
-            $this->assertSame($flowVersions[$slug] + 1, (int) $flow['version'], "{$slug} version bump");
+            if ($slug === 'appointment-request-apply') {
+                $this->assertSame(1, (int) $flow['enabled'], "{$slug} enabled state");
+                $this->assertSame(1, (int) $flow['version'], "{$slug} initial version");
+            } else {
+                $this->assertSame($flowEnabled[$slug], (int) $flow['enabled'], "{$slug} enabled state");
+                $this->assertSame($flowVersions[$slug] + 1, (int) $flow['version'], "{$slug} version bump");
+            }
             $this->assertStringNotContainsString('@pack:', (string) $flow['flow_json']);
         }
         foreach (['call-summary-follow-up', 'after-call-actions'] as $slug) {
@@ -212,6 +270,10 @@ final class AokieReceptionistUpgradeTest extends TestCase
             $this->assertSame('aokie.call.transcript.settled', $binding['event_name']);
             $this->assertSame($bindingEnabled[$slug], (int) $binding['enabled'], "{$slug} binding enabled state");
         }
+        $appointmentBinding = $this->bindingRow($appId, 'appointment-request-apply');
+        $this->assertSame('aokie.appointment.requested', $appointmentBinding['event_name']);
+        $this->assertSame('aokie', $appointmentBinding['connector_id']);
+        $this->assertStringNotContainsString('@pack:', (string) $appointmentBinding['output_actions_json']);
 
         $snapshot = self::$versions->getVersion($settingsId, $versionsBefore + 1);
         $this->assertNotNull($snapshot);
@@ -227,10 +289,12 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $this->assertFalse($second['applied']);
         $this->assertFalse($second['legacyScreenAccepted']);
         $this->assertSame([], $second['changes']['settingsFields']);
+        $this->assertSame([], $second['changes']['recordFields']);
         $this->assertFalse($second['changes']['customScreen']);
         $this->assertSame([], $second['changes']['flows']);
         $this->assertSame([], $second['changes']['bindingEvents']);
         $this->assertNull($second['snapshot']);
+        $this->assertSame([], $second['fieldSnapshots']);
         $this->assertCount($versionsBefore + 1, self::$versions->getVersions($settingsId));
         foreach (AokieReceptionistUpgradeService::FLOW_SLUGS as $slug) {
             $this->assertSame($flowVersionsAfter[$slug], (int) $this->flowRow($appId, $slug)['version']);
@@ -318,6 +382,52 @@ final class AokieReceptionistUpgradeTest extends TestCase
             [],
             true
         ));
+    }
+
+    public function testRefusesOwnerAuthoredAdditiveFlowCollision(): void
+    {
+        $record = $this->aokieRecord();
+        $import = self::$packs->importPack($record['pack'], $this->userId);
+        $appId = (string) $import['apps'][0]['id'];
+        self::$pdo->prepare(
+            'DELETE b FROM app_flow_bindings b
+              JOIN flow_definitions f ON f.id = b.flow_definition_id
+             WHERE b.app_id = ? AND f.slug = ?'
+        )->execute([$appId, 'appointment-request-apply']);
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE app_id = ? AND slug = ?')
+            ->execute([$appId, 'appointment-request-apply']);
+        self::$flows->createFlow($appId, $this->userId, [
+            'name' => 'Owner appointment automation',
+            'slug' => 'appointment-request-apply',
+            'flowJson' => [
+                'nodes' => [['id' => 'owner', 'type' => 'logic_block', 'data' => ['expr' => '({})']]],
+                'edges' => [],
+            ],
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('collides with an owner-authored flow');
+        self::$upgrade->run($appId, $record, false);
+    }
+
+    public function testRefusesIncompatibleRequestIdField(): void
+    {
+        $record = $this->aokieRecord();
+        $import = self::$packs->importPack($record['pack'], $this->userId);
+        $appId = (string) $import['apps'][0]['id'];
+        $formMap = $this->formMap($appId);
+        $appointments = self::$forms->getForm($formMap['appointments']);
+        foreach ($appointments['fields'] as &$field) {
+            if (($field['id'] ?? null) === 'request_id') {
+                $field['label'] = 'Owner correlation';
+            }
+        }
+        unset($field);
+        self::$forms->updateForm($formMap['appointments'], ['fields' => $appointments['fields']]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('owner-authored or incompatible');
+        self::$upgrade->run($appId, $record, false);
     }
 
     /** @return array<string,mixed> */

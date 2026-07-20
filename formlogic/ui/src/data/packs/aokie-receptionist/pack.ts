@@ -817,14 +817,43 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   // (b) still-pending ('requested') bookings from earlier calls FOLD into
   // this loop's confirmation text, so the caller gets ONE thread covering
   // everything instead of parallel competing loops.
-  var exRows = ((nodes.appts && nodes.appts.responses) || []);
+  var exRows = ((nodes.appts && nodes.appts.responses) || []).slice();
+  // Realtime appointment requests are correlated by call_id. Include those
+  // rows even if caller-id formatting made the phone_eq lookup miss them.
+  var directRows = ((nodes.direct_appts && nodes.direct_appts.responses) || []);
+  var seenResponseIds = {};
+  for (var sx = 0; sx < exRows.length; sx++) {
+    if (exRows[sx] && exRows[sx].id) seenResponseIds[String(exRows[sx].id)] = true;
+  }
+  for (var dx = 0; dx < directRows.length; dx++) {
+    var directId = directRows[dx] && directRows[dx].id ? String(directRows[dx].id) : '';
+    if (!directId || !seenResponseIds[directId]) exRows.push(directRows[dx]);
+  }
   var existingUpcoming = [];
+  var directAppointmentExists = false;
+  var directRequestId = '';
   for (var x0 = 0; x0 < exRows.length; x0++) {
     var xa = (exRows[x0] && exRows[x0].answers) || {};
     var xst = String(xa.status || '');
     var xd = String(xa.date || '');
     if ((xst === 'requested' || xst === 'confirmed') && /^\\d{4}-\\d{2}-\\d{2}$/.test(xd) && xd >= todayIso) {
-      existingUpcoming.push({ date: xd, time: String(xa.time || ''), service: String(xa.service || 'Appointment'), status: xst });
+      var xr = String(xa.request_id || '');
+      var xc = String(xa.call_id || '');
+      existingUpcoming.push({ date: xd, time: String(xa.time || ''), service: String(xa.service || 'Appointment'), status: xst, requestId: xr, callId: xc });
+      if (xr && xc === callId) {
+        directAppointmentExists = true;
+        if (!directRequestId) directRequestId = xr;
+      }
+    }
+  }
+  var directTaskRows = ((nodes.direct_tasks && nodes.direct_tasks.responses) || []);
+  var directTaskExists = false;
+  for (var dtr = 0; dtr < directTaskRows.length; dtr++) {
+    var dta = (directTaskRows[dtr] && directTaskRows[dtr].answers) || {};
+    var dtrid = String(dta.request_id || '');
+    if (dtrid && String(dta.call_id || '') === callId) {
+      directTaskExists = true;
+      if (!directRequestId) directRequestId = dtrid;
     }
   }
   var created = [];
@@ -870,12 +899,16 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   for (var p0 = 0; p0 < appointments.length; p0++) {
     appointments[p0].phone = custPhone;
     appointments[p0].call_id = callId;
+    if (directRequestId) appointments[p0].request_id = directRequestId;
   }
   var hasCustomerCreate = !knownId && !!name && !!custPhone && ctx.hasTranscript === true;
   // Audit AK-009/C-16: the receptionist tells callers 'someone will confirm
   // with you' - so EVERY booking intent leaves a human a confirmation task,
   // including the ones that DID create an appointment (status 'requested').
-  var needTask = callback || intent === 'message' || wantsBooking;
+  // The direct Realtime path already owns its confirmation task. Keep this
+  // LLM path for summary/order/message enrichment, but do not duplicate that
+  // task. If a partial write left only the appointment, this repairs the task.
+  var needTask = intent === 'message' || (!directTaskExists && (callback || wantsBooking));
   var createdLabels = [];
   for (var l0 = 0; l0 < created.length; l0++) {
     createdLabels.push((created[l0].service || service || 'Appointment') + ' on ' + created[l0].date + (created[l0].time ? ' at ' + created[l0].time : ''));
@@ -918,7 +951,9 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   }
   // No SMS when the call only RE-confirmed bookings that are already
   // confirmed on record - there is nothing left to ask the caller.
-  var wantsSmsBase = wantsBooking && custPhone !== ''
+  // A direct appointment request was truthfully recorded as "requested" on
+  // the call. Do not start a second, surprise SMS confirmation loop for it.
+  var wantsSmsBase = wantsBooking && !directAppointmentExists && !directTaskExists && custPhone !== ''
     && !(created.length === 0 && skippedExisting > 0 && pendingRequested === 0);
   // PHASE 0.5 sms_capable gate (call-policy spec): a customer marked 'No'
   // for SMS (landline) - or blocked - never gets an automated text; the
@@ -934,6 +969,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
     taskSummary = taskSummary + ' [customer cannot receive SMS - call them to confirm]';
   }
   var task = { summary: taskSummary.slice(0, 500), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium', phone: custPhone, call_id: callId };
+  if (directRequestId && wantsBooking) task.request_id = directRequestId;
   if (knownId) task.customer_link = knownId;
   if (callResponseId) task.call_link = callResponseId;
   if (wantsSms) { task.sms_state = 'active'; task.sms_exchanges = 1; }
@@ -1778,6 +1814,146 @@ const FLOW_MANAGER_APPLY = `(function () {
     summaryLine: String(inputs.summary || 'Manager change applied.'),
   };
 })()`;
+
+// Durable write half for the live Realtime appointment tool. The plugin emits
+// only after it has fenced the request to the exact live call and caller turn;
+// this flow still treats every event field as untrusted input, validates it,
+// and deduplicates by both the stable request id and call id. It deliberately
+// contains no LLM node and never claims that a request is confirmed.
+const FLOW_APPOINTMENT_REQUEST_APPLY = `(function () {
+  function text(v, max) {
+    return String(v == null ? '' : v).replace(/[\\x00-\\x1F\\x7F]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, max);
+  }
+  function rowsOf(node) {
+    return (node && node.responses) || (Array.isArray(node) ? node : []);
+  }
+  function realDate(value) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+    var p = value.split('-');
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return d.getFullYear() === Number(p[0]) && d.getMonth() + 1 === Number(p[1]) && d.getDate() === Number(p[2]);
+  }
+  function validTime(value) {
+    return /^\\d{2}:\\d{2}$/.test(value) && Number(value.slice(0, 2)) <= 23 && Number(value.slice(3, 5)) <= 59;
+  }
+  function sameService(left, right) {
+    return text(left, 200).toLowerCase() === text(right, 200).toLowerCase();
+  }
+
+  var requestId = text(inputs.requestId, 128);
+  var callId = text(inputs.callId, 128);
+  var callerName = text(inputs.callerName, 200);
+  var service = text(inputs.service, 200);
+  var date = text(inputs.date, 10);
+  var time = text(inputs.time, 5);
+  var at = text(inputs.at, 40);
+  var phoneRaw = text(inputs.from, 40);
+  var phone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phoneRaw) ? phoneRaw : '';
+  var agreementNumber = Number(inputs.agreementTurn);
+  var agreementTurn = Number.isFinite(agreementNumber) && Math.floor(agreementNumber) === agreementNumber
+    ? agreementNumber : -1;
+  var now = new Date();
+  var today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+  var atMs = Date.parse(at);
+
+  var reason = '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(requestId)) reason = 'invalid request id';
+  else if (!/^call_[A-Za-z0-9_-]{8,120}$/.test(callId)) reason = 'invalid call id';
+  else if (!callerName) reason = 'caller name is required';
+  else if (!service) reason = 'service is required';
+  else if (!realDate(date) || date < today) reason = 'appointment date is invalid or in the past';
+  else if (!validTime(time)) reason = 'appointment time is invalid';
+  else if (agreementTurn < 0 || agreementTurn > 1000000) reason = 'agreement turn is invalid';
+  else if (!at || !Number.isFinite(atMs) || atMs > Date.now() + 5 * 60 * 1000) reason = 'event time is invalid';
+
+  var requestAppointments = rowsOf(nodes.requestAppointments);
+  var callAppointments = rowsOf(nodes.callAppointments);
+  var requestTasks = rowsOf(nodes.requestTasks);
+  var callTasks = rowsOf(nodes.callTasks);
+  var appointmentExists = false;
+  var taskExists = false;
+  var collision = false;
+  function sameAppointment(row) {
+    var a = (row && row.answers) || {};
+    return String(a.call_id || '') === callId
+      && String(a.date || '') === date
+      && String(a.time || '') === time
+      && sameService(a.service, service);
+  }
+  for (var ar = 0; ar < requestAppointments.length; ar++) {
+    if (sameAppointment(requestAppointments[ar])) appointmentExists = true;
+    else collision = true;
+  }
+  for (var ac = 0; ac < callAppointments.length; ac++) {
+    var aca = (callAppointments[ac] && callAppointments[ac].answers) || {};
+    if (sameAppointment(callAppointments[ac])) {
+      // A legacy row from the same call/slot is also the same request even if
+      // it predates request_id. Never mint a second appointment for it.
+      appointmentExists = true;
+      var existingRequest = String(aca.request_id || '');
+      if (existingRequest && existingRequest !== requestId) collision = true;
+    }
+  }
+  for (var tr = 0; tr < requestTasks.length; tr++) {
+    var tra = (requestTasks[tr] && requestTasks[tr].answers) || {};
+    if (String(tra.call_id || '') === callId) taskExists = true;
+    else collision = true;
+  }
+  for (var tc = 0; tc < callTasks.length; tc++) {
+    var tca = (callTasks[tc] && callTasks[tc].answers) || {};
+    if (String(tca.request_id || '') === requestId) taskExists = true;
+  }
+  if (collision && !reason) reason = 'request id collides with different appointment data';
+
+  var calls = rowsOf(nodes.calls);
+  var callRow = null;
+  for (var cr = 0; cr < calls.length; cr++) {
+    if (String(((calls[cr] && calls[cr].answers) || {}).call_id || '') === callId) {
+      callRow = calls[cr];
+      break;
+    }
+  }
+  var ok = reason === '';
+  var whenLabel = date + ' at ' + time;
+  var appointment = {
+    request_id: requestId,
+    call_id: callId,
+    service: service,
+    date: date,
+    time: time,
+    status: 'requested',
+    source: 'call',
+    notes: ('Booking request recorded during call ' + callId + ' from caller agreement turn ' + agreementTurn
+      + '. Caller: ' + callerName + '. This is a request only; the team must confirm it.').slice(0, 1200)
+  };
+  if (phone) appointment.phone = phone;
+  var task = {
+    request_id: requestId,
+    call_id: callId,
+    phone: phone,
+    summary: ('Confirm requested ' + service + ' appointment for ' + callerName + ' on ' + whenLabel
+      + ' (requested during the call; NOT yet confirmed to the caller)').slice(0, 500),
+    status: 'open',
+    priority: 'high'
+  };
+  if (callRow) task.call_link = callRow.id;
+  return {
+    ok: ok,
+    requestId: requestId,
+    hasAppointment: ok && !appointmentExists,
+    appointment: appointment,
+    hasTask: ok && !taskExists,
+    task: task,
+    hasCall: ok && !!callRow,
+    callResponseId: callRow ? callRow.id : null,
+    callUpdate: { intent: 'booking', follow_up_required: ['yes'] },
+    duplicate: ok && appointmentExists && taskExists,
+    summaryLine: ok
+      ? (appointmentExists ? 'Appointment request already recorded; ' : 'Appointment request recorded; ')
+        + (taskExists ? 'confirmation task already present.' : 'confirmation task created.')
+      : 'Appointment request refused: ' + reason + '.'
+  };
+})()`;
 const FLOW_PERSONALIZE_CALLER = `(function () {
   var phone = String(inputs.from || '');
   // The customers node pre-filters with the phone_eq op (digits-only last-9
@@ -2501,7 +2677,7 @@ export const aokieReceptionistPack: PackData = {
     name: 'Aokie Receptionist',
     description:
       'An AI phone receptionist over FormLogic Desktop: raw call and SMS records land automatically from the Aokie Bluetooth phone bridge, starter FormLogic Flows look up callers, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.',
-    version: '1.0.1',
+    version: '1.0.2',
     author: 'FormLogic',
     tags: ['receptionist', 'phone', 'aokie', 'desktop', 'flows'],
   },
@@ -2922,6 +3098,7 @@ export const aokieReceptionistPack: PackData = {
         // number (phone_eq) and matches it to its task via the shared call_id.
         { id: 'phone', type: 'phone', label: 'Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
+        { id: 'request_id', type: 'short_text', label: 'Request ID', required: false, properties: {} },
         { id: 'service', type: 'short_text', label: 'Service', required: true, properties: { placeholder: 'What is being booked' } },
         { id: 'date', type: 'date', label: 'Date', required: true, properties: {} },
         { id: 'time', type: 'time', label: 'Time', required: false, properties: {} },
@@ -3053,6 +3230,7 @@ export const aokieReceptionistPack: PackData = {
         // call_id ties it to the appointment the same call created.
         { id: 'phone', type: 'phone', label: 'Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
         { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
+        { id: 'request_id', type: 'short_text', label: 'Request ID', required: false, properties: {} },
         { id: 'summary', type: 'short_text', label: 'Task', required: true, properties: { placeholder: 'What needs to happen' } },
         { id: 'due_at', type: 'date', label: 'Due', required: false, properties: {} },
         {
@@ -4373,6 +4551,68 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Apply Realtime Appointment Request',
+      slug: 'appointment-request-apply',
+      description:
+        'Durable no-LLM write path for a Realtime receptionist booking request. Validates the plugin-fenced event, deduplicates by request ID and call ID, creates the Appointment as requested (never confirmed), then raises the human confirmation task.',
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: {
+              inputs: [
+                { name: 'requestId', example: 'apptreq_0123456789abcdef' },
+                { name: 'callId', example: 'call_0123456789abcdef' },
+                { name: 'from', example: '+61400000000' },
+                { name: 'callerName', example: 'Lance' },
+                { name: 'service', example: 'Lawn mowing' },
+                { name: 'date', example: '2026-07-22' },
+                { name: 'time', example: '10:00' },
+                { name: 'agreementTurn', example: 6 },
+                { name: 'at', example: '2026-07-20T03:30:00.000Z' },
+              ],
+            },
+          },
+          { id: 'requestAppointments', type: 'formlogic_list_responses', data: { form: '@pack:appointments', return: 'all', limit: 5, filters: [{ field: 'request_id', op: 'eq', value: '$inputs.requestId' }] } },
+          { id: 'callAppointments', type: 'formlogic_list_responses', data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          { id: 'requestTasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 5, filters: [{ field: 'request_id', op: 'eq', value: '$inputs.requestId' }] } },
+          { id: 'callTasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 20, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 2, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_APPOINTMENT_REQUEST_APPLY } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                ok: '$nodes.plan.ok',
+                requestId: '$nodes.plan.requestId',
+                duplicate: '$nodes.plan.duplicate',
+                hasAppointment: '$nodes.plan.hasAppointment',
+                appointment: '$nodes.plan.appointment',
+                hasTask: '$nodes.plan.hasTask',
+                task: '$nodes.plan.task',
+                hasCall: '$nodes.plan.hasCall',
+                callResponseId: '$nodes.plan.callResponseId',
+                callUpdate: '$nodes.plan.callUpdate',
+                summaryLine: '$nodes.plan.summaryLine',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'requestAppointments' },
+          { source: 'requestAppointments', target: 'callAppointments' },
+          { source: 'callAppointments', target: 'requestTasks' },
+          { source: 'requestTasks', target: 'callTasks' },
+          { source: 'callTasks', target: 'calls' },
+          { source: 'calls', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'After-Call Actions (Auto-Book)',
       slug: 'after-call-actions',
       description:
@@ -4403,6 +4643,9 @@ export const aokieReceptionistPack: PackData = {
             type: 'formlogic_list_responses',
             data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
           },
+          // Exact-call reads detect the deterministic Realtime request even
+          // when caller-id formatting makes the phone lookup miss it.
+          { id: 'direct_appts', type: 'formlogic_list_responses', data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           // Any still-active SMS loop for this number (phone_eq): the new loop
           // supersedes it, so a YES is never ambiguous between two threads.
           {
@@ -4410,6 +4653,7 @@ export const aokieReceptionistPack: PackData = {
             type: 'formlogic_list_responses',
             data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
           },
+          { id: 'direct_tasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 20, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           // Business name for the kickoff SMS the plan block composes.
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },
@@ -4465,8 +4709,10 @@ export const aokieReceptionistPack: PackData = {
           { source: 'customers', target: 'turns' },
           { source: 'turns', target: 'calls' },
           { source: 'calls', target: 'appts' },
-          { source: 'appts', target: 'tasks' },
-          { source: 'tasks', target: 'settings' },
+          { source: 'appts', target: 'direct_appts' },
+          { source: 'direct_appts', target: 'tasks' },
+          { source: 'tasks', target: 'direct_tasks' },
+          { source: 'direct_tasks', target: 'settings' },
           { source: 'settings', target: 'ctx' },
           { source: 'ctx', target: 'extract' },
           { source: 'extract', target: 'plan' },
@@ -4683,6 +4929,35 @@ export const aokieReceptionistPack: PackData = {
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 3,
+    },
+    {
+      flow: 'appointment-request-apply',
+      event: 'aokie.appointment.requested',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 20000,
+      inputMap: {
+        requestId: '$event.data.requestId',
+        callId: '$event.data.callId',
+        from: '$event.data.from',
+        callerName: '$event.data.callerName',
+        service: '$event.data.service',
+        date: '$event.data.date',
+        time: '$event.data.time',
+        agreementTurn: '$event.data.agreementTurn',
+        at: '$event.data.at',
+      },
+      // Records before notification. Appointment is deliberately first so a
+      // later task/toast failure never loses the caller's actual request.
+      outputActions: [
+        { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
+        { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
+        { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCall', responseId: '$result.callResponseId', answers: '$result.callUpdate' },
+        { type: 'formlogic.toast', message: 'Realtime booking: {{result.summaryLine}}' },
+      ],
+      retryPolicy: { maxAttempts: 3, backoff: 'exponential' },
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 7,
     },
     {
       flow: 'after-call-actions',

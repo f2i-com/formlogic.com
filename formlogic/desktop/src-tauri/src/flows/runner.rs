@@ -1323,6 +1323,27 @@ fn named_ai_provider_endpoint(provider: &str) -> Result<String, String> {
     ))
 }
 
+const CODEX_BUSY_MAX_ATTEMPTS: usize = 7;
+const CODEX_BUSY_BACKOFF_MS: [u64; CODEX_BUSY_MAX_ATTEMPTS - 1] =
+    [250, 500, 750, 1_000, 1_250, 1_500];
+const MAX_PROVIDER_ERROR_BODY_BYTES: usize = 8 * 1024;
+
+fn is_typed_codex_busy(using_provider_gateway: bool, status: u16, body: &[u8]) -> bool {
+    if !using_provider_gateway || status != 429 || body.len() > MAX_PROVIDER_ERROR_BODY_BYTES {
+        return false;
+    }
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|payload| {
+            payload
+                .pointer("/error/code")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("codex_busy")
+}
+
 async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node);
     let tctx = scope_to_context(scope);
@@ -1412,17 +1433,22 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
             obj.insert(k.clone(), v.clone());
         }
     }
-    // One bounded retry (seen live: the call-summary flow hit the LLM
-    // concurrently with the after-call extractor and got an EMPTY completion).
-    // Transport errors, non-2xx and empty replies each get exactly one more
-    // attempt; a still-empty SECOND completion returns Ok so flow-level
-    // fallback text applies (failing the node would fail the whole flow over
-    // a cosmetic field). Mirrored in the browser executor (nodes.ts).
+    // One bounded retry remains the default for transport errors, non-2xx and
+    // empty replies. The Desktop Codex provider has a single-flight lane, so
+    // its typed `codex_busy` response gets a separate bounded 5.25 s backoff
+    // window. Generic 429s and arbitrary endpoints never enter that lane.
     let mut failure: Option<FlowError> = None;
-    for attempt in 0..2u32 {
-        if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+    let mut extended_busy_lane = false;
+    let mut next_delay_ms = 0;
+    let mut busy_retry_count = 0;
+    for attempt in 0..CODEX_BUSY_MAX_ATTEMPTS {
+        if attempt >= 2 && !extended_busy_lane {
+            break;
         }
+        if next_delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(next_delay_ms)).await;
+        }
+        next_delay_ms = 750;
         let mut request = deps
             .http
             .post(&endpoint)
@@ -1445,14 +1471,48 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
             Ok(r) => r,
             Err(e) => {
                 failure = Some(client_err(node, format!("llm_chat endpoint unreachable: {e}")));
+                extended_busy_lane = false;
+                if attempt > 0 {
+                    break;
+                }
                 continue;
             }
         };
         if !resp.status().is_success() {
             let s = resp.status();
+            let mut resp = resp;
+            let mut error_body = Vec::new();
+            while error_body.len() <= MAX_PROVIDER_ERROR_BODY_BYTES {
+                match resp.chunk().await {
+                    Ok(Some(chunk))
+                        if error_body.len().saturating_add(chunk.len())
+                            <= MAX_PROVIDER_ERROR_BODY_BYTES =>
+                    {
+                        error_body.extend_from_slice(&chunk);
+                    }
+                    Ok(Some(_)) | Err(_) => {
+                        error_body.clear();
+                        break;
+                    }
+                    Ok(None) => break,
+                }
+            }
             failure = Some(FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' llm_chat responded {}", node.id, s.as_u16()), Some(node.id.clone())));
+            if is_typed_codex_busy(using_provider_gateway, s.as_u16(), &error_body)
+                && attempt + 1 < CODEX_BUSY_MAX_ATTEMPTS
+            {
+                extended_busy_lane = true;
+                next_delay_ms = CODEX_BUSY_BACKOFF_MS[busy_retry_count];
+                busy_retry_count += 1;
+                continue;
+            }
+            extended_busy_lane = false;
+            if attempt > 0 {
+                break;
+            }
             continue;
         }
+        extended_busy_lane = false;
         let text = resp.text().await.unwrap_or_default();
         let payload: Value = match serde_json::from_str(&text) {
             Ok(p) => p,
@@ -1923,6 +1983,25 @@ mod tests {
         for invalid in ["", "Provider:openai", "https://example.com", "../openai", "open_ai"] {
             assert!(named_ai_provider_endpoint(invalid).is_err(), "accepted {invalid:?}");
         }
+    }
+
+    #[test]
+    fn only_typed_desktop_codex_busy_gets_the_extended_retry_lane() {
+        let typed = br#"{"error":{"code":"codex_busy","message":"busy"}}"#;
+        assert!(is_typed_codex_busy(true, 429, typed));
+        assert!(!is_typed_codex_busy(false, 429, typed));
+        assert!(!is_typed_codex_busy(true, 503, typed));
+        assert!(!is_typed_codex_busy(
+            true,
+            429,
+            br#"{"error":{"code":"rate_limited"}}"#
+        ));
+        assert!(!is_typed_codex_busy(true, 429, b"not-json"));
+        assert!(!is_typed_codex_busy(
+            true,
+            429,
+            &vec![b'x'; MAX_PROVIDER_ERROR_BODY_BYTES + 1]
+        ));
     }
 
     /// `deps` carrying the real bundled Aokie manifest, so the journalled

@@ -53,6 +53,16 @@ const EVENT_QUEUE_IDLE: Duration = Duration::from_secs(120);
 const CLAIM_BATCH_LIMIT: u32 = 10;
 const MAX_RETRY_ATTEMPTS: u32 = 5;
 const RETRY_BASE_DELAY_MS: u64 = 500;
+/// Record-writing output actions get a short in-process retry window before
+/// the durable event ledger schedules a later re-drive. The action's stable
+/// effect key is reused on every attempt, so an ambiguous POST cannot create a
+/// duplicate response when the first request reached the server.
+const OUTPUT_ACTION_MAX_ATTEMPTS: u32 = 3;
+const OUTPUT_ACTION_RETRY_BASE_DELAY_MS: u64 = 100;
+/// Internal run-result member recording only the output-action indexes still
+/// owed after the bounded retry window. A later event-ledger pass resumes those
+/// exact actions from the run's persisted `outputActions` snapshot.
+const OUTPUT_ACTION_RETRY_INDEXES: &str = "outputActionRetryIndexes";
 /// How many times the relay retries `complete` after a side effect already ran
 /// (a transient blip must not strand the enqueuing web member's result).
 const RELAY_COMPLETE_ATTEMPTS: u32 = 3;
@@ -214,6 +224,61 @@ enum BindingRunOutcome {
     Retryable(String),
     /// Deterministic rejection — dead-lettered, visible, manually redrivable.
     Permanent(String),
+}
+
+/// Typed output-action failure. Only failures whose outcome can change on a
+/// retry enter the event ledger's retry path; malformed selectors, auth
+/// failures, conflicts, and deterministic 4xx responses fail closed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OutputActionError {
+    Retryable(String),
+    Permanent(String),
+}
+
+#[derive(Debug, Default)]
+struct OutputActionRunSummary {
+    errors: Vec<String>,
+    retryable_indexes: Vec<usize>,
+    permanent_failure: bool,
+    reply_action_failed: bool,
+}
+
+impl OutputActionRunSummary {
+    fn binding_outcome(&self) -> BindingRunOutcome {
+        let message = self.errors.join("; ");
+        if self.permanent_failure {
+            BindingRunOutcome::Permanent(message)
+        } else if !self.retryable_indexes.is_empty() {
+            BindingRunOutcome::Retryable(message)
+        } else {
+            BindingRunOutcome::Done
+        }
+    }
+}
+
+impl OutputActionError {
+    fn message(&self) -> &str {
+        match self {
+            Self::Retryable(message) | Self::Permanent(message) => message,
+        }
+    }
+
+    fn is_retryable(&self) -> bool {
+        matches!(self, Self::Retryable(_))
+    }
+}
+
+impl std::fmt::Display for OutputActionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+fn retryable_output_action_error(error: &FlError) -> bool {
+    matches!(
+        error,
+        FlError::Network(_) | FlError::NotConfigured | FlError::Http { status: 408 | 429, .. }
+    ) || matches!(error, FlError::Http { status, .. } if *status >= 500)
 }
 
 /// The desktop flow runtime. Cheaply cloneable via `Arc`.
@@ -1655,6 +1720,26 @@ impl FlowRuntime {
             }
         };
         if !created {
+            let flow_slug_for_kv = flow
+                .get("slug")
+                .and_then(Value::as_str)
+                .unwrap_or(&flow_slug);
+            if let Some(outcome) = self
+                .resume_retryable_output_actions(
+                    binding,
+                    event,
+                    &run,
+                    client,
+                    app_ctx,
+                    app_id.as_deref(),
+                    flow_slug_for_kv,
+                    &inputs,
+                    &idempotency_key,
+                )
+                .await
+            {
+                return outcome;
+            }
             // Duplicate: another runtime owns it — or OUR OWN reservation from
             // a crashed pass; the server's stale-run reclaim requeues that for
             // the claim loop, so the work is not lost either way.
@@ -1669,40 +1754,46 @@ impl FlowRuntime {
             .execute_with_retry(&flow, &run_id, &inputs, Some(event.clone()), app_ctx.clone(), binding_id_opt(binding), binding.get("timeoutMs").and_then(Value::as_u64), binding.get("retryPolicy"), client)
             .await;
 
-        // outputActions (browser parity) on success.
-        let mut action_errors: Vec<String> = Vec::new();
+        // outputActions (browser parity) on success. Retryable record-write
+        // failures retain their exact action indexes in the completed run, so
+        // the durable event ledger can resume only those missing effects.
+        let mut action_summary = OutputActionRunSummary::default();
         // Only a failed REPLY-CARRYING action (call.speak / connector.request) can
         // leave the caller reply-less. A failed record write (updateResponse /
         // submitResponse / store) must never make a sync binding SPEAK its
         // fallbackReply over a reply the flow already delivered — e.g. the
         // personalize-caller binding's caller_name backfill failing would
         // otherwise inject a second, generic greeting into the live call.
-        let mut reply_action_failed = false;
+        let output_actions = binding.get("outputActions").and_then(Value::as_array);
         if outcome.status == "done" {
             let result = outcome.result.clone().unwrap_or(Value::Null);
             let scope = SelectorScope { event: Some(event.clone()), app: app_ctx.clone(), result: Some(result), inputs: Some(inputs.clone()), ..Default::default() };
-            if let Some(actions) = binding.get("outputActions").and_then(Value::as_array) {
+            if let Some(actions) = output_actions {
                 let flow_slug_for_kv = flow.get("slug").and_then(Value::as_str).unwrap_or(&flow_slug).to_string();
-                for (action_idx, action) in actions.iter().enumerate() {
-                    let ekey = Self::output_effect_key(Some(&event), &binding_id, action_idx);
-                    let action_idx = action_idx.to_string();
-                    let request_id = crate::connectors::stable_request_id(
-                        "flow-output",
-                        &[&run_id, &binding_id, &action_idx],
-                    );
-                    if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref(), &request_id).await {
-                        if matches!(
-                            action.get("type").and_then(Value::as_str).unwrap_or(""),
-                            "call.speak" | "connector.request"
-                        ) {
-                            reply_action_failed = true;
-                        }
-                        action_errors.push(e);
-                    }
-                }
+                action_summary = self
+                    .apply_binding_output_actions(
+                        actions,
+                        None,
+                        &scope,
+                        client,
+                        app_id.as_deref(),
+                        &flow_slug_for_kv,
+                        &binding_id,
+                        &run_id,
+                        Some(event),
+                    )
+                    .await;
             }
         }
-        self.complete(client, &run_id, &outcome, &action_errors).await;
+        self.complete_with_output_actions(
+            client,
+            &run_id,
+            &outcome,
+            &action_summary.errors,
+            &action_summary.retryable_indexes,
+            output_actions.map(Vec::as_slice),
+        )
+        .await;
 
         // fallbackPolicy (browser `applyFallback` parity, docs/FORMLOGIC_FLOWS.md
         // §fallbackPolicy): fires when the flow graph itself failed OR it succeeded but a
@@ -1713,23 +1804,27 @@ impl FlowRuntime {
         // claim loop below), so this is the only place fallbackPolicy needs to apply.
         // The SPOKEN half of the fallback additionally requires the failure to be
         // reply-relevant (flow failed, or a reply-carrying action failed).
-        if outcome.status != "done" || !action_errors.is_empty() {
+        if outcome.status != "done" || !action_summary.errors.is_empty() {
             self.apply_fallback(
                 binding,
                 event,
                 &outcome,
-                &action_errors,
+                &action_summary.errors,
                 &run_id,
-                outcome.status != "done" || reply_action_failed,
+                outcome.status != "done" || action_summary.reply_action_failed,
             )
             .await;
         }
 
-        // Executed to a durable server-side run row (success OR flow-level
-        // failure — both are recorded; flow retryPolicy already ran inside
-        // execute_with_retry). From the ledger's perspective this binding is
-        // done: re-running it could double the flow's side effects.
-        BindingRunOutcome::Done
+        // The flow graph itself is now durably terminal. Successful output
+        // actions settle the binding; deterministic action failures dead-letter
+        // it; transient record-write failures leave it pending so a later pass
+        // resumes only the persisted missing actions (never the flow graph).
+        if outcome.status == "done" {
+            action_summary.binding_outcome()
+        } else {
+            BindingRunOutcome::Done
+        }
     }
 
     /// The Rust twin of the browser dispatcher's `applyFallback` — same trigger, same
@@ -1952,29 +2047,43 @@ impl FlowRuntime {
         let retry = binding.as_ref().and_then(|b| b.get("retryPolicy"));
         let outcome = self.execute_with_retry(&flow, run_id, &inputs, event.clone(), app_ctx.clone(), None, timeout, retry, client).await;
 
-        let mut action_errors = Vec::new();
+        let mut action_summary = OutputActionRunSummary::default();
+        let output_actions = binding
+            .as_ref()
+            .and_then(|binding| binding.get("outputActions"))
+            .and_then(Value::as_array);
         if outcome.status == "done" {
             if let Some(b) = &binding {
                 let result = outcome.result.clone().unwrap_or(Value::Null);
                 let scope = SelectorScope { event: event.clone(), app: app_ctx.clone(), result: Some(result), inputs: Some(inputs.clone()), ..Default::default() };
-                if let Some(actions) = b.get("outputActions").and_then(Value::as_array) {
+                if let Some(actions) = output_actions {
                     let flow_slug_for_kv = flow.get("slug").and_then(Value::as_str).unwrap_or(&flow_slug).to_string();
-                    for (action_idx, action) in actions.iter().enumerate() {
-                        let binding_id = b.get("id").and_then(Value::as_str).unwrap_or("binding");
-                        let ekey = Self::output_effect_key(event.as_ref(), binding_id, action_idx);
-                        let action_idx = action_idx.to_string();
-                        let request_id = crate::connectors::stable_request_id(
-                            "flow-output",
-                            &[run_id, binding_id, &action_idx],
-                        );
-                        if let Err(e) = self.apply_output_action(action, &scope, client, app_id.as_deref(), &flow_slug_for_kv, ekey.as_deref(), &request_id).await {
-                            action_errors.push(e);
-                        }
-                    }
+                    let binding_id = b.get("id").and_then(Value::as_str).unwrap_or("binding");
+                    action_summary = self
+                        .apply_binding_output_actions(
+                            actions,
+                            None,
+                            &scope,
+                            client,
+                            app_id.as_deref(),
+                            &flow_slug_for_kv,
+                            binding_id,
+                            run_id,
+                            event.as_ref(),
+                        )
+                        .await;
                 }
             }
         }
-        self.complete(client, run_id, &outcome, &action_errors).await;
+        self.complete_with_output_actions(
+            client,
+            run_id,
+            &outcome,
+            &action_summary.errors,
+            &action_summary.retryable_indexes,
+            output_actions.map(Vec::as_slice),
+        )
+        .await;
     }
 
     // ── execution helpers ────────────────────────────────────────────────────────
@@ -2083,7 +2192,33 @@ impl FlowRuntime {
         None
     }
 
-    async fn complete(&self, client: &FormLogicClient, run_id: &str, outcome: &FlowOutcome, action_errors: &[String]) {
+    async fn complete(
+        &self,
+        client: &FormLogicClient,
+        run_id: &str,
+        outcome: &FlowOutcome,
+        action_errors: &[String],
+    ) {
+        self.complete_with_output_actions(
+            client,
+            run_id,
+            outcome,
+            action_errors,
+            &[],
+            None,
+        )
+        .await;
+    }
+
+    async fn complete_with_output_actions(
+        &self,
+        client: &FormLogicClient,
+        run_id: &str,
+        outcome: &FlowOutcome,
+        action_errors: &[String],
+        retryable_action_indexes: &[usize],
+        output_actions: Option<&[Value]>,
+    ) {
         let mut payload = Map::new();
         payload.insert("status".into(), json!(outcome.status));
         // Claimant binding (FL-AUTH-001): the server only accepts a claimed run's completion
@@ -2102,9 +2237,18 @@ impl FlowRuntime {
             if !action_errors.is_empty() {
                 result.insert("outputActionErrors".into(), json!(action_errors));
             }
+            if !retryable_action_indexes.is_empty() {
+                result.insert(
+                    OUTPUT_ACTION_RETRY_INDEXES.into(),
+                    json!(retryable_action_indexes),
+                );
+            }
             payload.insert("result".into(), Value::Object(result));
         } else if let Some(e) = &outcome.error {
             payload.insert("error".into(), e.to_json());
+        }
+        if let Some(actions) = output_actions {
+            payload.insert("outputActions".into(), json!(actions));
         }
         self.cache_run(run_id, &Value::Object(payload.clone()));
         if let Err(e) = client.complete_run(run_id, &Value::Object(payload)).await {
@@ -2131,6 +2275,201 @@ impl FlowRuntime {
         Some(format!("flowout:h{:016x}:{binding_id}:{action_idx}", h.finish()))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_binding_output_actions(
+        &self,
+        actions: &[Value],
+        only_indexes: Option<&[usize]>,
+        scope: &SelectorScope,
+        client: &FormLogicClient,
+        app_id: Option<&str>,
+        flow_slug: &str,
+        binding_id: &str,
+        run_id: &str,
+        event: Option<&Value>,
+    ) -> OutputActionRunSummary {
+        let indexes: Vec<usize> = only_indexes
+            .map(<[usize]>::to_vec)
+            .unwrap_or_else(|| (0..actions.len()).collect());
+        let mut summary = OutputActionRunSummary::default();
+
+        for action_idx in indexes {
+            let Some(action) = actions.get(action_idx) else {
+                summary.permanent_failure = true;
+                summary.errors.push(format!(
+                    "output action {action_idx} is missing from the persisted run snapshot"
+                ));
+                continue;
+            };
+            let action_type = action
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let effect_key = Self::output_effect_key(event, binding_id, action_idx);
+            let action_idx_string = action_idx.to_string();
+            let request_id = crate::connectors::stable_request_id(
+                "flow-output",
+                &[run_id, binding_id, &action_idx_string],
+            );
+            if let Err(error) = self
+                .apply_output_action(
+                    action,
+                    scope,
+                    client,
+                    app_id,
+                    flow_slug,
+                    effect_key.as_deref(),
+                    &request_id,
+                )
+                .await
+            {
+                if matches!(action_type, "call.speak" | "connector.request") {
+                    summary.reply_action_failed = true;
+                }
+                if error.is_retryable() {
+                    summary.retryable_indexes.push(action_idx);
+                } else {
+                    summary.permanent_failure = true;
+                }
+                summary.errors.push(format!(
+                    "output action {action_idx} ({action_type}): {error}"
+                ));
+            }
+        }
+
+        // A deterministic failure dead-letters the binding. Do not leave a
+        // resumable marker behind that could later run a subset of an action
+        // list whose overall outcome was intentionally fail-closed.
+        if summary.permanent_failure {
+            summary.retryable_indexes.clear();
+        }
+
+        summary
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn resume_retryable_output_actions(
+        &self,
+        binding: &Value,
+        event: &Value,
+        run: &Value,
+        client: &FormLogicClient,
+        app_ctx: Option<Value>,
+        app_id: Option<&str>,
+        flow_slug: &str,
+        inputs: &Value,
+        expected_run_key: &str,
+    ) -> Option<BindingRunOutcome> {
+        let result = run.get("result")?.as_object()?;
+        let retryable_value = result.get(OUTPUT_ACTION_RETRY_INDEXES)?;
+        let Some(retryable_array) = retryable_value.as_array() else {
+            return Some(BindingRunOutcome::Permanent(
+                "persisted retryable output-action indexes are malformed".into(),
+            ));
+        };
+        let mut seen_indexes = HashSet::new();
+        let mut retryable_indexes = Vec::with_capacity(retryable_array.len());
+        for value in retryable_array {
+            let Some(index) = value
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                return Some(BindingRunOutcome::Permanent(
+                    "persisted retryable output-action index is invalid".into(),
+                ));
+            };
+            if !seen_indexes.insert(index) {
+                return Some(BindingRunOutcome::Permanent(
+                    "persisted retryable output-action indexes contain a duplicate".into(),
+                ));
+            }
+            retryable_indexes.push(index);
+        }
+        if retryable_indexes.is_empty() {
+            return Some(BindingRunOutcome::Permanent(
+                "persisted retryable output-action index list is empty".into(),
+            ));
+        }
+
+        let binding_id = binding.get("id").and_then(Value::as_str).unwrap_or_default();
+        let exact_run = run.get("status").and_then(Value::as_str) == Some("done")
+            && run.get("bindingId").and_then(Value::as_str) == Some(binding_id)
+            && run.get("idempotencyKey").and_then(Value::as_str) == Some(expected_run_key);
+        if !exact_run {
+            return Some(BindingRunOutcome::Permanent(
+                "retryable output actions did not match the persisted binding run".into(),
+            ));
+        }
+        let Some(run_id) = run
+            .get("runId")
+            .or_else(|| run.get("id"))
+            .and_then(Value::as_str)
+            .filter(|run_id| !run_id.is_empty())
+        else {
+            return Some(BindingRunOutcome::Permanent(
+                "retryable output actions have no persisted run id".into(),
+            ));
+        };
+        let Some(actions) = run.get("outputActions").and_then(Value::as_array) else {
+            return Some(BindingRunOutcome::Permanent(
+                "retryable output actions have no persisted action snapshot".into(),
+            ));
+        };
+
+        let mut clean_result = result.clone();
+        clean_result.remove("outputActionErrors");
+        clean_result.remove(OUTPUT_ACTION_RETRY_INDEXES);
+        let scope = SelectorScope {
+            event: Some(event.clone()),
+            app: app_ctx,
+            result: Some(Value::Object(clean_result)),
+            inputs: Some(inputs.clone()),
+            ..Default::default()
+        };
+        let summary = self
+            .apply_binding_output_actions(
+                actions,
+                Some(&retryable_indexes),
+                &scope,
+                client,
+                app_id,
+                flow_slug,
+                binding_id,
+                run_id,
+                Some(event),
+            )
+            .await;
+        Some(summary.binding_outcome())
+    }
+
+    async fn retry_formlogic_output_action<T, F, Fut>(
+        &self,
+        mut operation: F,
+    ) -> Result<T, OutputActionError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T, FlError>>,
+    {
+        for attempt in 1..=OUTPUT_ACTION_MAX_ATTEMPTS {
+            match operation().await {
+                Ok(value) => return Ok(value),
+                Err(error)
+                    if retryable_output_action_error(&error)
+                        && attempt < OUTPUT_ACTION_MAX_ATTEMPTS =>
+                {
+                    let delay_ms = OUTPUT_ACTION_RETRY_BASE_DELAY_MS
+                        .saturating_mul(1_u64 << (attempt - 1));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+                Err(error) if retryable_output_action_error(&error) => {
+                    return Err(OutputActionError::Retryable(error.to_string()));
+                }
+                Err(error) => return Err(OutputActionError::Permanent(error.to_string())),
+            }
+        }
+        unreachable!("the bounded output-action retry loop always returns")
+    }
+
     async fn apply_output_action(
         &self,
         action: &Value,
@@ -2140,7 +2479,7 @@ impl FlowRuntime {
         flow_slug: &str,
         effect_key: Option<&str>,
         connector_request_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutputActionError> {
         let ty = action.get("type").and_then(Value::as_str).unwrap_or("");
         let when = action.get("when").and_then(Value::as_str);
         if !when_passes(when, scope) {
@@ -2150,40 +2489,75 @@ impl FlowRuntime {
         match ty {
             "formlogic.store" => {
                 let key = resolve_selector(action.get("key").unwrap_or(&Value::Null), scope);
-                let key = key.as_str().filter(|s| !s.is_empty()).ok_or("store key did not resolve")?;
+                let key = key
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| OutputActionError::Permanent("store key did not resolve".into()))?;
                 let sc = action.get("scope").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
                     .unwrap_or_else(|| format!("flow:{flow_slug}"));
                 let value = resolve_deep(action.get("value").unwrap_or(&Value::Null), scope);
-                client.flow_kv_set(&sc, key, &value, app_id).await.map_err(|e| e.to_string())
+                client
+                    .flow_kv_set(&sc, key, &value, app_id)
+                    .await
+                    .map_err(|error| OutputActionError::Permanent(error.to_string()))
             }
             "formlogic.toast" => Ok(()), // headless: no UI (logged via status only)
             "formlogic.submitResponse" => {
-                let form = action.get("form").and_then(Value::as_str).ok_or("submitResponse missing form")?;
+                let form = action
+                    .get("form")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| OutputActionError::Permanent("submitResponse missing form".into()))?;
                 let answers = resolve_deep(action.get("answers").unwrap_or(&Value::Null), scope);
                 if !answers.is_object() {
-                    return Err("answers did not resolve to an object".into());
+                    return Err(OutputActionError::Permanent(
+                        "answers did not resolve to an object".into(),
+                    ));
                 }
-                client.submit_response(form, &answers, effect_key).await.map(|_| self.note_records(1)).map_err(|e| e.to_string())
+                self.retry_formlogic_output_action(|| {
+                    client.submit_response(form, &answers, effect_key)
+                })
+                .await
+                .map(|_| self.note_records(1))
             }
             "formlogic.updateResponse" => {
-                let form = action.get("form").and_then(Value::as_str).ok_or("updateResponse missing form")?;
+                let form = action
+                    .get("form")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| OutputActionError::Permanent("updateResponse missing form".into()))?;
                 let rid = resolve_selector(action.get("responseId").unwrap_or(&Value::Null), scope);
-                let rid = rid.as_str().filter(|s| !s.is_empty()).ok_or("responseId did not resolve")?;
+                let rid = rid
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| OutputActionError::Permanent("responseId did not resolve".into()))?;
                 let answers = resolve_deep(action.get("answers").unwrap_or(&Value::Null), scope);
                 if !answers.is_object() {
-                    return Err("answers did not resolve to an object".into());
+                    return Err(OutputActionError::Permanent(
+                        "answers did not resolve to an object".into(),
+                    ));
                 }
-                client.update_response(form, rid, &answers).await.map(|_| self.note_records(1)).map_err(|e| e.to_string())
+                self.retry_formlogic_output_action(|| {
+                    client.update_response(form, rid, &answers)
+                })
+                .await
+                .map(|_| self.note_records(1))
             }
             "connector.request" => {
-                let cid = action.get("connectorId").and_then(Value::as_str).ok_or("connector.request missing connectorId")?;
-                let cmd = action.get("command").and_then(Value::as_str).ok_or("connector.request missing command")?;
+                let cid = action
+                    .get("connectorId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| OutputActionError::Permanent("connector.request missing connectorId".into()))?;
+                let cmd = action
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| OutputActionError::Permanent("connector.request missing command".into()))?;
                 let payload = resolve_deep(action.get("payload").unwrap_or(&Value::Null), scope);
                 let request_id = self
                     .host
                     .command_is_journalled(cid, cmd)
                     .then_some(connector_request_id);
-                self.connector(cid, cmd, Some(payload), request_id).await
+                self.connector(cid, cmd, Some(payload), request_id)
+                    .await
+                    .map_err(OutputActionError::Permanent)
             }
             "call.speak" => {
                 let msg = interpolate_template(action.get("message").and_then(Value::as_str).unwrap_or(""), &tctx);
@@ -2209,6 +2583,7 @@ impl FlowRuntime {
                     Some(connector_request_id),
                 )
                 .await
+                .map_err(OutputActionError::Permanent)
             }
             _ => Ok(()),
         }
@@ -3831,6 +4206,315 @@ mod tests {
             let status = rt.status();
             assert_eq!(status.errors, 1);
             assert!(status.last_error.as_deref().unwrap_or_default().contains("binding b-async surfaced"));
+        }
+    }
+
+    mod output_action_retry {
+        use super::*;
+        use axum::{
+            extract::{Path, State},
+            http::StatusCode,
+            response::{IntoResponse, Response},
+            routing::{patch, post, put},
+            Json, Router,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Default)]
+        struct RetryStub {
+            reserve_calls: AtomicUsize,
+            submit_statuses: Mutex<VecDeque<StatusCode>>,
+            update_statuses: Mutex<VecDeque<StatusCode>>,
+            submit_bodies: Mutex<Vec<Value>>,
+            update_bodies: Mutex<Vec<Value>>,
+            completed: Mutex<Vec<Value>>,
+        }
+
+        fn response(status: StatusCode, body: Value) -> Response {
+            (status, Json(body)).into_response()
+        }
+
+        async fn reserve(
+            State(stub): State<Arc<RetryStub>>,
+            Json(_body): Json<Value>,
+        ) -> Response {
+            let call = stub.reserve_calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return response(
+                    StatusCode::OK,
+                    json!({ "run": { "runId": "run-retry-1" }, "created": true }),
+                );
+            }
+            let completed = stub
+                .completed
+                .lock()
+                .unwrap()
+                .last()
+                .cloned()
+                .unwrap_or(Value::Null);
+            response(
+                StatusCode::OK,
+                json!({
+                    "run": {
+                        "runId": "run-retry-1",
+                        "bindingId": "b-retry",
+                        "idempotencyKey": "flow:b-retry:idem-1",
+                        "status": completed.get("status").cloned().unwrap_or(json!("done")),
+                        "result": completed.get("result").cloned().unwrap_or(Value::Null),
+                        "outputActions": completed.get("outputActions").cloned().unwrap_or(Value::Null),
+                    },
+                    "created": false,
+                    "idempotent": true,
+                }),
+            )
+        }
+
+        async fn complete(
+            State(stub): State<Arc<RetryStub>>,
+            Path(_run_id): Path<String>,
+            Json(body): Json<Value>,
+        ) -> Response {
+            stub.completed.lock().unwrap().push(body);
+            response(StatusCode::OK, json!({}))
+        }
+
+        async fn submit(
+            State(stub): State<Arc<RetryStub>>,
+            Path(_form_id): Path<String>,
+            Json(body): Json<Value>,
+        ) -> Response {
+            stub.submit_bodies.lock().unwrap().push(body);
+            let status = stub
+                .submit_statuses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(StatusCode::OK);
+            if status.is_success() {
+                response(status, json!({ "response": { "id": "response-1" } }))
+            } else {
+                response(status, json!({ "message": "temporary write failure" }))
+            }
+        }
+
+        async fn update(
+            State(stub): State<Arc<RetryStub>>,
+            Path((_form_id, _response_id)): Path<(String, String)>,
+            Json(body): Json<Value>,
+        ) -> Response {
+            stub.update_bodies.lock().unwrap().push(body);
+            let status = stub
+                .update_statuses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(StatusCode::OK);
+            if status.is_success() {
+                response(status, json!({ "response": { "id": "response-1" } }))
+            } else {
+                response(status, json!({ "message": "temporary update failure" }))
+            }
+        }
+
+        async fn harness(
+            submit_statuses: impl IntoIterator<Item = StatusCode>,
+            update_statuses: impl IntoIterator<Item = StatusCode>,
+        ) -> (Arc<FlowRuntime>, Arc<FormLogicClient>, Arc<RetryStub>) {
+            let stub = Arc::new(RetryStub {
+                submit_statuses: Mutex::new(submit_statuses.into_iter().collect()),
+                update_statuses: Mutex::new(update_statuses.into_iter().collect()),
+                ..Default::default()
+            });
+            let app = Router::new()
+                .route("/api/v1/flow-runs", post(reserve))
+                .route("/api/v1/flow-runs/:run_id", patch(complete))
+                .route("/api/v1/forms/:form_id/responses", post(submit))
+                .route(
+                    "/api/v1/forms/:form_id/responses/:response_id",
+                    put(update),
+                )
+                .with_state(stub.clone());
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let base_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+            tokio::spawn(async move {
+                let _ = axum::serve(listener, app).await;
+            });
+
+            let rt = runtime();
+            *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+                assignments: HashMap::new(),
+                flows: vec![json!({
+                    "slug": "retry-flow",
+                    "flowJson": {
+                        "nodes": [
+                            { "id": "in", "type": "input" },
+                            { "id": "out", "type": "output", "data": { "value": { "answer": "ok" } } }
+                        ],
+                        "edges": [ { "source": "in", "target": "out" } ]
+                    },
+                    "enabled": true,
+                })],
+                bindings: vec![],
+                applogic: vec![],
+                fetched_at: Instant::now(),
+            });
+            let client = Arc::new(
+                FormLogicClient::new(&FormLogicConfig {
+                    base_url,
+                    api_key: "test-key".into(),
+                })
+                .unwrap(),
+            );
+            (rt, client, stub)
+        }
+
+        fn event() -> Value {
+            json!({
+                "name": "aokie.appointment.requested",
+                "correlationId": "call-1",
+                "idempotencyKey": "idem-1",
+                "connectorId": "aokie",
+                "data": { "callId": "call-1" },
+            })
+        }
+
+        #[test]
+        fn retry_classification_is_limited_to_transient_write_failures() {
+            for error in [
+                FlError::NotConfigured,
+                FlError::Network("offline".into()),
+                FlError::Http { status: 408, message: "timeout".into() },
+                FlError::Http { status: 429, message: "limited".into() },
+                FlError::Http { status: 503, message: "unavailable".into() },
+            ] {
+                assert!(retryable_output_action_error(&error), "{error}");
+            }
+            for error in [
+                FlError::Unauthorized("bad key".into()),
+                FlError::Conflict,
+                FlError::Http { status: 400, message: "invalid".into() },
+            ] {
+                assert!(!retryable_output_action_error(&error), "{error}");
+            }
+        }
+
+        #[tokio::test]
+        async fn transient_submit_is_not_done_and_resumes_only_the_persisted_action() {
+            let (rt, client, stub) = harness(
+                [
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    StatusCode::OK,
+                ],
+                [],
+            )
+            .await;
+            let action = json!({
+                "type": "formlogic.submitResponse",
+                "form": "appointments",
+                "answers": { "status": "requested", "call_id": "$event.data.callId" },
+            });
+            let binding = json!({
+                "id": "b-retry",
+                "flow": "retry-flow",
+                "mode": "async",
+                "outputActions": [action.clone()],
+            });
+
+            let first = rt
+                .run_binding(
+                    &binding,
+                    &event(),
+                    &client,
+                    &ConnectorRouting::Unrestricted,
+                )
+                .await;
+            assert!(matches!(first, BindingRunOutcome::Retryable(_)));
+            {
+                let completed = stub.completed.lock().unwrap();
+                assert_eq!(completed.len(), 1);
+                assert_eq!(completed[0]["status"], "done");
+                assert_eq!(completed[0]["result"][OUTPUT_ACTION_RETRY_INDEXES], json!([0]));
+                assert_eq!(completed[0]["outputActions"], json!([action]));
+            }
+
+            let second = rt
+                .run_binding(
+                    &binding,
+                    &event(),
+                    &client,
+                    &ConnectorRouting::Unrestricted,
+                )
+                .await;
+            assert_eq!(second, BindingRunOutcome::Done);
+            assert_eq!(stub.completed.lock().unwrap().len(), 1);
+
+            let bodies = stub.submit_bodies.lock().unwrap();
+            assert_eq!(bodies.len(), 4);
+            assert!(bodies.iter().all(|body| {
+                body["idempotencyKey"] == "flowout:idem-1:b-retry:0"
+            }));
+        }
+
+        #[tokio::test]
+        async fn transient_update_retries_but_deterministic_400_fails_once() {
+            let (rt, client, stub) = harness(
+                [StatusCode::BAD_REQUEST],
+                [
+                    StatusCode::TOO_MANY_REQUESTS,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StatusCode::OK,
+                ],
+            )
+            .await;
+            let scope = SelectorScope {
+                result: Some(json!({ "responseId": "response-1" })),
+                ..Default::default()
+            };
+
+            let submit_error = rt
+                .apply_output_action(
+                    &json!({
+                        "type": "formlogic.submitResponse",
+                        "form": "appointments",
+                        "answers": { "status": "requested" },
+                    }),
+                    &scope,
+                    &client,
+                    None,
+                    "retry-flow",
+                    Some("flowout:idem-1:b-retry:0"),
+                    "request-submit",
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(submit_error, OutputActionError::Permanent(_)));
+            assert_eq!(stub.submit_bodies.lock().unwrap().len(), 1);
+
+            rt.apply_output_action(
+                &json!({
+                    "type": "formlogic.updateResponse",
+                    "form": "appointments",
+                    "responseId": "$result.responseId",
+                    "answers": { "status": "requested" },
+                }),
+                &scope,
+                &client,
+                None,
+                "retry-flow",
+                None,
+                "request-update",
+            )
+            .await
+            .unwrap();
+            let updates = stub.update_bodies.lock().unwrap();
+            assert_eq!(updates.len(), 3);
+            assert!(updates
+                .iter()
+                .all(|body| body["answers"]["status"] == "requested"));
         }
     }
 }

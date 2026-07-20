@@ -83,6 +83,7 @@ const AOKIE_EVENTS = new Set([
   'aokie.phone.pairing_started', 'aokie.phone.paired', 'aokie.phone.disconnected',
   'aokie.call.incoming', 'aokie.call.answered', 'aokie.call.caller_id', 'aokie.call.rejected',
   'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.turn.corrected', 'aokie.call.transcript.settled', 'aokie.call.ended',
+  'aokie.appointment.requested',
   'aokie.sms.received', 'aokie.sms.sent', 'aokie.sms.failed',
   'aokie.manager.action',
   'aokie.hardware.error',
@@ -364,6 +365,7 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
   it('ships the starter flows on valid v0 graphs', () => {
     expect([...FLOW_SLUGS].sort()).toEqual([
       'after-call-actions',
+      'appointment-request-apply',
       'business-lookup',
       'call-summary-follow-up',
       'callback-drain',
@@ -406,7 +408,7 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(16);
+    expect(pack.flowBindings?.length).toBe(17);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding â†’ flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -430,6 +432,136 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
       expect(action.type).not.toBe('formlogic.submitResponse');
       expect(action.type).not.toBe('formlogic.updateResponse');
     }
+  });
+});
+
+describe('aokieReceptionistPack â€” deterministic Realtime appointment requests', () => {
+  const exprFor = (slug: string, nodeId: string): string => {
+    const flow = (pack.flows ?? []).find((f) => f.slug === slug)!;
+    const node = flow.flowJson.nodes.find((n) => n.id === nodeId)!;
+    return (node.data as { expr: string }).expr;
+  };
+  const evaluate = (expr: string, inputs: Record<string, unknown>, nodes: Record<string, unknown>): any =>
+    new Function('inputs', 'nodes', `return ${expr};`)(inputs, nodes);
+  const futureDate = (): string => {
+    const d = new Date(Date.now() + 5 * 86400000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const baseInput = () => ({
+    requestId: 'apptreq_0123456789abcdef0123456789abcdef',
+    callId: 'call_5685374790b241a1a48dd8549c0c6a4c',
+    from: '+61400000000',
+    callerName: 'Lance',
+    service: 'Lawn mowing',
+    date: futureDate(),
+    time: '10:00',
+    agreementTurn: 6,
+    at: new Date().toISOString(),
+  });
+  const emptyNodes = (callId: string) => ({
+    requestAppointments: { responses: [] },
+    callAppointments: { responses: [] },
+    requestTasks: { responses: [] },
+    callTasks: { responses: [] },
+    calls: { responses: [{ id: 'call-response-1', answers: { call_id: callId } }] },
+  });
+
+  it('uses no LLM and writes Appointment before its confirmation task', () => {
+    const flow = (pack.flows ?? []).find((f) => f.slug === 'appointment-request-apply')!;
+    expect(flow.flowJson.nodes.some((node) => node.type === 'llm_chat')).toBe(false);
+    const binding = (pack.flowBindings ?? []).find((item) => item.flow === 'appointment-request-apply')!;
+    expect(binding.event).toBe('aokie.appointment.requested');
+    expect(binding.outputActions?.slice(0, 2)).toMatchObject([
+      { type: 'formlogic.submitResponse', form: '@pack:appointments' },
+      { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks' },
+    ]);
+  });
+
+  it('validates and creates a requested appointment first-class, never a confirmed booking', () => {
+    const input = baseInput();
+    const result = evaluate(exprFor('appointment-request-apply', 'plan'), input, emptyNodes(input.callId));
+    expect(result.ok).toBe(true);
+    expect(result.hasAppointment).toBe(true);
+    expect(result.appointment).toMatchObject({
+      request_id: input.requestId,
+      call_id: input.callId,
+      service: 'Lawn mowing',
+      date: input.date,
+      time: '10:00',
+      status: 'requested',
+      source: 'call',
+    });
+    expect(result.appointment.notes).toContain('request only');
+    expect(result.hasTask).toBe(true);
+    expect(result.task).toMatchObject({ request_id: input.requestId, call_id: input.callId, status: 'open', priority: 'high' });
+    expect(result.task.summary).toContain('NOT yet confirmed');
+  });
+
+  it('deduplicates exact replays by request_id and call_id', () => {
+    const input = baseInput();
+    const appt = { request_id: input.requestId, call_id: input.callId, service: input.service, date: input.date, time: input.time, status: 'requested' };
+    const task = { request_id: input.requestId, call_id: input.callId, status: 'open' };
+    const nodes = emptyNodes(input.callId);
+    nodes.requestAppointments.responses = [{ id: 'appt-1', answers: appt }];
+    nodes.callAppointments.responses = [{ id: 'appt-1', answers: appt }];
+    nodes.requestTasks.responses = [{ id: 'task-1', answers: task }];
+    nodes.callTasks.responses = [{ id: 'task-1', answers: task }];
+    const result = evaluate(exprFor('appointment-request-apply', 'plan'), input, nodes);
+    expect(result.ok).toBe(true);
+    expect(result.duplicate).toBe(true);
+    expect(result.hasAppointment).toBe(false);
+    expect(result.hasTask).toBe(false);
+  });
+
+  it('fails closed on malformed dates and request-id collisions', () => {
+    const malformed = baseInput();
+    malformed.date = '2026-02-31';
+    let result = evaluate(exprFor('appointment-request-apply', 'plan'), malformed, emptyNodes(malformed.callId));
+    expect(result.ok).toBe(false);
+    expect(result.hasAppointment).toBe(false);
+    expect(result.hasTask).toBe(false);
+
+    const input = baseInput();
+    const nodes = emptyNodes(input.callId);
+    nodes.requestAppointments.responses = [{ id: 'appt-other', answers: { request_id: input.requestId, call_id: 'call_someone_else', service: input.service, date: input.date, time: input.time } }];
+    result = evaluate(exprFor('appointment-request-apply', 'plan'), input, nodes);
+    expect(result.ok).toBe(false);
+    expect(result.summaryLine).toContain('collides');
+  });
+
+  it('after-call enrichment sees the direct request and skips duplicate appointment, task, and SMS', () => {
+    const input = baseInput();
+    const apptRow = {
+      id: 'appt-direct',
+      answers: {
+        request_id: input.requestId,
+        call_id: input.callId,
+        phone: input.from,
+        service: input.service,
+        date: input.date,
+        time: input.time,
+        status: 'requested',
+      },
+    };
+    const taskRow = { id: 'task-direct', answers: { request_id: input.requestId, call_id: input.callId, phone: input.from, status: 'open' } };
+    const result = evaluate(exprFor('after-call-actions', 'plan'), { callId: input.callId }, {
+      ctx: { hasTranscript: true, phone: input.from, customerId: null, customerName: '' },
+      extract: { content: JSON.stringify({
+        intent: 'appointment', sentiment: 'positive', caller_name: input.callerName,
+        service: input.service, appointments: [{ service: input.service, date: input.date, time: input.time }],
+        summary: 'Caller requested lawn mowing.', callback_requested: false,
+      }) },
+      calls: { responses: [{ id: 'call-response-1', answers: {} }] },
+      appts: { responses: [apptRow] },
+      direct_appts: { responses: [apptRow] },
+      tasks: { responses: [taskRow] },
+      direct_tasks: { responses: [taskRow] },
+      settings: { responses: [] },
+      customers: { responses: [] },
+    });
+    expect(result.hasAppointment).toBe(false);
+    expect(result.hasTask).toBe(false);
+    expect(result.hasKickoffSms).toBe(false);
   });
 });
 
