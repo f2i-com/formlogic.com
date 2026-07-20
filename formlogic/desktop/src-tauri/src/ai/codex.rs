@@ -2913,7 +2913,6 @@ const DISABLED_CODEX_AGENT_FEATURES: &[&str] = &[
     "shell_snapshot",
     "shell_tool",
     "skill_mcp_dependency_install",
-    "skill_search",
     "standalone_web_search",
     "tool_call_mcp_elicitation",
     "tool_suggest",
