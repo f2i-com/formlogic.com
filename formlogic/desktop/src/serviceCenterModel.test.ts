@@ -5,8 +5,10 @@ import {
   CODEX_LOGIN_TIMEOUT_MS,
   DEFAULT_SERVICE_CENTER_QUERY,
   formatCodexReasoningEffort,
+  formatCodexResponseDuration,
   getPersistedServiceCenterQuery,
   getCodexReasoningEfforts,
+  getCodexTryoutDefaults,
   isSafeBrowserAuthUrl,
   isSafeDeviceVerificationUrl,
   isCodexLoginExpired,
@@ -233,4 +235,80 @@ test('derives bounded reasoning choices from string and object model metadata', 
   }), ['xhigh']);
   assert.equal(formatCodexReasoningEffort('none'), 'Off (fastest)');
   assert.equal(formatCodexReasoningEffort('xhigh'), 'Extra high');
+});
+
+test('Try assistant mirrors Aokie phone model, effort and Fast service tier exactly', () => {
+  const models = [
+    {
+      model: 'gpt-5.5',
+      isDefault: true,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: ['none', 'low', 'medium'],
+    },
+    {
+      model: 'gpt-5.6-luna',
+      isDefault: false,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: [{ reasoningEffort: 'low' }, 'medium'],
+    },
+  ];
+  assert.deepEqual(
+    getCodexTryoutDefaults(models, {
+      configured: true,
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+      serviceTier: 'priority',
+    }),
+    {
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+      serviceTier: 'priority',
+      matchesPhoneConfiguration: true,
+    },
+  );
+  assert.deepEqual(
+    getCodexTryoutDefaults(models, {
+      configured: true,
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+    }),
+    {
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+      serviceTier: undefined,
+      matchesPhoneConfiguration: true,
+    },
+  );
+});
+
+test('Try assistant never silently substitutes a stale phone configuration', () => {
+  const models = [{
+    model: 'gpt-5.5',
+    isDefault: true,
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: ['low'],
+  }];
+  const unavailable = getCodexTryoutDefaults(models, {
+    configured: true,
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'low',
+    serviceTier: 'priority',
+  });
+  assert.equal(unavailable.matchesPhoneConfiguration, false);
+  assert.equal(unavailable.model, 'gpt-5.5');
+  assert.match(unavailable.configurationError ?? '', /phone model gpt-5\.6-luna is not available/i);
+
+  const fallback = getCodexTryoutDefaults(models, { configured: false });
+  assert.deepEqual(fallback, {
+    model: 'gpt-5.5',
+    reasoningEffort: 'low',
+    matchesPhoneConfiguration: false,
+  });
+});
+
+test('formats live and final Codex response durations consistently', () => {
+  assert.equal(formatCodexResponseDuration(0), '0.00 s');
+  assert.equal(formatCodexResponseDuration(2_534), '2.53 s');
+  assert.equal(formatCodexResponseDuration(12_540), '12.5 s');
+  assert.equal(formatCodexResponseDuration(Number.NaN), '0.00 s');
 });

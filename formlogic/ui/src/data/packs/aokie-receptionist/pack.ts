@@ -1129,14 +1129,16 @@ ${BUSINESS_INFO_BLOCK_JS}
   // service lookup — emitted even when the desktop_services node lists
   // nothing. On the STT/TTS lanes provider: picks resolve to '' (plugin
   // default): the gateway has no audio routes yet — un-gate when it does.
-  // 'custom' or blank -> the legacy endpoint field (blank field = plugin
-  // default).
+  // 'custom' or blank -> the legacy endpoint field. On the LLM lane only, a
+  // completely blank source + endpoint preserves an explicit Desktop/plugin
+  // choice; an explicit custom/service/provider pick still applies.
   var svcNode = nodes.svc || {};
   var svcList = svcNode.services || [];
-  function laneUrl(source, customUrl, path, providerOk) {
+  function laneUrl(source, customUrl, path, providerOk, preserveBlank) {
     source = String(source || '').trim();
     var custom = String(customUrl || '').trim();
-    if (!source || source === 'custom') return custom;
+    if (!source) return preserveBlank && !custom ? undefined : custom;
+    if (source === 'custom') return custom;
     if (source.indexOf('service:') === 0) {
       var sid = source.slice(8);
       for (var i = 0; i < svcList.length; i++) {
@@ -1150,23 +1152,49 @@ ${BUSINESS_INFO_BLOCK_JS}
     }
     return custom;
   }
+  var voice = String(cfg.voice || '').trim();
+  var model = String(cfg.model || '').trim();
+  var applyAiEndpoint = String(cfg.llm_source || '').trim() !== '' || String(cfg.llm_endpoint || '').trim() !== '';
+  var applyAiModel = applyAiEndpoint || model !== '';
+  var aiEndpoint = laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true, true);
+  var sttEndpoint = laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false, false);
+  var ttsEndpoint = laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false, false);
+  var correctionEndpoint = laneUrl(cfg.correction_source, cfg.correction_endpoint, '/v1/chat/completions', true, false);
+  // connector_request accepts a selector for its WHOLE payload. Build that
+  // object here so absent keys stay absent in both the TS and Rust runners;
+  // resolving an undefined field inside a static payload would become null in
+  // the Rust runner and overwrite the plugin setting.
+  var settingsPayload = {
+    persona: persona,
+    greeting: greeting,
+    ttsVoice: voice,
+    sttEndpoint: sttEndpoint,
+    ttsEndpoint: ttsEndpoint,
+    audioTranscriptEndpoint: correctionEndpoint,
+    aiReceptionist: replyMode !== 'flow'
+  };
+  if (applyAiEndpoint) settingsPayload.aiEndpoint = aiEndpoint;
+  if (applyAiModel) settingsPayload.aiModel = model;
   return {
     persona: persona,
     greeting: greeting,
-    voice: String(cfg.voice || '').trim(),
-    model: String(cfg.model || '').trim(),
+    voice: voice,
+    model: model,
     // AI plumbing, all flow-configurable: blank = the plugin's default behaviour
     // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).
-    aiEndpoint: laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true),
-    sttEndpoint: laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false),
-    ttsEndpoint: laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false),
+    aiEndpoint: aiEndpoint,
+    applyAiEndpoint: applyAiEndpoint,
+    applyAiModel: applyAiModel,
+    sttEndpoint: sttEndpoint,
+    ttsEndpoint: ttsEndpoint,
     // Correction lane (audioTranscript side runs): the plugin's correction
     // client is the SAME LlmClient as the reply lane, so it wants a full
     // /v1/chat/completions URL. Blank source resolves '' = corrections use
     // the main reply model; audioTranscriptModel is never pushed (the chosen
     // service owns its model).
-    audioTranscriptEndpoint: laneUrl(cfg.correction_source, cfg.correction_endpoint, '/v1/chat/completions', true),
-    aiReceptionist: replyMode !== 'flow'
+    audioTranscriptEndpoint: correctionEndpoint,
+    aiReceptionist: replyMode !== 'flow',
+    settingsPayload: settingsPayload
   };
 })()`;
 
@@ -3651,28 +3679,9 @@ export const aokieReceptionistPack: PackData = {
             data: {
               connectorId: 'aokie',
               command: 'settings.set',
-              // Keys the plugin maps to the live voice agent (persona/greeting/voice/model
-              // live-reconfigure immediately). aiReceptionist is the odd one out: the plugin
-              // only reads it once at radio start, so this persists to settings.json but
-              // only takes effect on the next Aokie reconnect (see the flow description).
-              payload: {
-                persona: '$nodes.cfg.persona',
-                greeting: '$nodes.cfg.greeting',
-                ttsVoice: '$nodes.cfg.voice',
-                aiModel: '$nodes.cfg.model',
-                // AI plumbing, also live-reconfigured: which LLM endpoint the agent
-                // streams from, and which speech engines it uses (blank = LLM
-                // auto-detect / built-in on-device STT+TTS; set the Aokie Voice
-                // service URLs to share the desktop's speech service).
-                aiEndpoint: '$nodes.cfg.aiEndpoint',
-                sttEndpoint: '$nodes.cfg.sttEndpoint',
-                ttsEndpoint: '$nodes.cfg.ttsEndpoint',
-                // Where the audioTranscript correction side runs go: a chat
-                // URL resolved from the record's correction_source per call
-                // ('' = the main reply model).
-                audioTranscriptEndpoint: '$nodes.cfg.audioTranscriptEndpoint',
-                aiReceptionist: '$nodes.cfg.aiReceptionist',
-              },
+              // The cfg block builds the WHOLE dynamic payload so blank LLM
+              // keys are truly absent (not null) in both flow runners.
+              payload: '$nodes.cfg.settingsPayload',
             },
           },
           { id: 'out', type: 'output', data: { value: { persona: '$nodes.cfg.persona', greeting: '$nodes.cfg.greeting' } } },

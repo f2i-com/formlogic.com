@@ -305,12 +305,23 @@ export interface CodexChatRequest {
   threadId?: string;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: 'priority';
 }
 
 export interface CodexChatResponse {
   threadId: string;
   turnId: string;
   text: string;
+}
+
+/** Field-minimized readback of Aokie's configured ChatGPT/Codex phone lane. */
+export interface AokieCodexPhoneConfiguration {
+  configured: boolean;
+  providerId?: string;
+  model?: string;
+  reasoningEffort?: string;
+  serviceTier?: 'priority';
+  displayName?: string;
 }
 
 export const servicePlatform = {
@@ -330,6 +341,10 @@ export const servicePlatform = {
     request<{ ok: boolean }>('/api/services/codex/auth/logout', { method: 'POST' }),
   codexModels: () =>
     request<{ models: CodexModelView[] }>('/api/services/codex/models'),
+  aokieCodexPhoneConfiguration: () =>
+    request<AokieCodexPhoneConfiguration>(
+      '/api/plugins/aokie/receptionist/codex-configuration',
+    ),
   codexChat: (body: CodexChatRequest) =>
     request<CodexChatResponse>('/api/services/codex/actions/assistant.chat', {
       method: 'POST',

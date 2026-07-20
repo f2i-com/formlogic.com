@@ -1,28 +1,15 @@
 /** @jsxImportSource preact */
-// Advanced: raw AI model + custom endpoint URLs behind a native <details>
+// Advanced: custom endpoint URLs behind a native <details>
 // disclosure. The open state is mirrored into the store (onToggle) so it
 // survives re-renders; the disclosure glyph is CSS-driven off [open].
-import { CODEX_LIVE_CALL_MODEL, d, draftInput, isCodexLiveCallSource, state, toggleAdvanced } from '../store';
+import { d, draftInput, state, toggleAdvanced } from '../store';
 
 export function AdvancedCard() {
-  const codexModelFixed = isCodexLiveCallSource(d().llm_source);
   return (
     <details class="card adv" open={state.showAdvanced} onToggle={(e) => toggleAdvanced(e.currentTarget.open)}>
-      <summary data-act="toggle-adv">{'Advanced - AI model & endpoints'}</summary>
+      <summary data-act="toggle-adv">{'Advanced - endpoint URLs'}</summary>
       <div style="margin-top:10px">
         <p class="hint" style="margin-top:0">The raw AI plumbing. Custom URL fields are used when a lane is set to Custom URL (or left on Built-in with a URL entered).</p>
-        <label class="f">
-          <span class="lbl">LLM model</span>
-          <input
-            type="text"
-            data-d="model"
-            value={d().model}
-            placeholder="e.g. llama3.1:8b (blank = auto)"
-            disabled={codexModelFixed}
-            onInput={(e) => draftInput('model', e.currentTarget.value)}
-          />
-          {codexModelFixed ? <span class="hint">{'Fixed to ' + CODEX_LIVE_CALL_MODEL + ' by the selected Codex live-call provider.'}</span> : null}
-        </label>
         <label class="f">
           <span class="lbl">Custom LLM endpoint URL</span>
           <input

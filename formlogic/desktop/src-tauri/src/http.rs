@@ -691,22 +691,11 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
         }
     }
     // The subscription-backed call adapters are virtual provider rows, never
-    // editable registry profiles. Expose them only while the managed Codex
-    // service has a verified ChatGPT account so a picker cannot save a source
-    // that is already known to need sign-in.
-    let codex_status = state.codex_agent.status().await;
-    if codex_status.available
-        && codex_status.running
-        && !codex_status.requires_openai_auth
-        && matches!(
-            codex_status.account.as_ref(),
-            Some(account) if account.account_type == "chatgpt"
-        )
-    {
-        for variant in [
-            crate::ai::codex::CodexLiveCallVariant::ReasoningNone,
-            crate::ai::codex::CodexLiveCallVariant::ReasoningLow,
-        ] {
+    // editable registry profiles. Expose only variants whose exact model and
+    // effort are in the connected account's fully paginated Codex catalog.
+    // Catalog/auth errors fail closed without hiding ordinary local sources.
+    if let Ok(variants) = state.codex_agent.available_live_call_variants().await {
+        for variant in variants {
             sources.push(serde_json::json!({
                 "id": format!("provider:{}", variant.provider_id()),
                 "kind": "provider",
@@ -717,8 +706,9 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
                 "capabilities": ["chat"],
                 "hasKey": true,
                 "enabled": true,
-                "model": crate::ai::codex::LIVE_CALL_MODEL,
+                "model": variant.model(),
                 "reasoningEffort": variant.reasoning_effort(),
+                "serviceTier": variant.service_tier(),
                 "subscriptionBacked": true,
             }));
         }
@@ -824,14 +814,13 @@ async fn ai_gateway_models_for(State(state): State<AppState>, Path(id): Path<Str
 
 async fn ai_models_impl(state: &AppState, provider_id: Option<&str>) -> Response {
     use crate::ai::providers::Capability;
-    if provider_id
-        .and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
-        .is_some()
+    if let Some(variant) =
+        provider_id.and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
     {
-        return match state.codex_agent.require_live_call_ready().await {
+        return match state.codex_agent.require_live_call_ready(variant).await {
             Ok(()) => (
                 StatusCode::OK,
-                Json(crate::ai::codex::live_call_models_response()),
+                Json(crate::ai::codex::live_call_models_response(variant)),
             )
                 .into_response(),
             Err(error) => codex_agent_error(error),
@@ -910,8 +899,8 @@ async fn ai_chat_impl(
         if let Some(object) = body.as_object_mut() {
             object.remove("provider");
         }
-        if let Some(warm) = crate::ai::codex::live_call_prefix_warm_completion(&body) {
-            if let Err(error) = state.codex_agent.require_live_call_ready().await {
+        if let Some(warm) = crate::ai::codex::live_call_prefix_warm_completion(variant, &body) {
+            if let Err(error) = state.codex_agent.require_live_call_ready(variant).await {
                 return codex_agent_error(error);
             }
             return (StatusCode::OK, Json(warm)).into_response();
@@ -922,7 +911,9 @@ async fn ai_chat_impl(
             .unwrap_or(false);
         if wants_stream {
             let agent = state.codex_agent.clone();
-            return codex_live_call_sse(async move { agent.live_call_chat(variant, &body).await });
+            return codex_live_call_sse(variant.model(), move |deltas| async move {
+                agent.live_call_chat_stream(variant, &body, deltas).await
+            });
         }
         return match state.codex_agent.live_call_chat(variant, &body).await {
             Ok(result) => {
@@ -1002,7 +993,7 @@ fn codex_live_call_completion(
         "id": format!("chatcmpl-formlogic-codex-{}", result.turn_id),
         "object": "chat.completion",
         "created": codex_live_call_created(),
-        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "model": result.model,
         "choices": [{
             "index": 0,
             "message": { "role": "assistant", "content": result.text },
@@ -1013,44 +1004,48 @@ fn codex_live_call_completion(
 
 /// Keep one channel slot permanently available for the terminal payload/error.
 /// Heartbeats are best-effort and are never allowed to queue behind each other.
-const CODEX_LIVE_CALL_SSE_CHANNEL_CAPACITY: usize = 2;
+const CODEX_LIVE_CALL_SSE_CHANNEL_CAPACITY: usize = 4;
 const CODEX_LIVE_CALL_SSE_HEARTBEAT: std::time::Duration = std::time::Duration::from_millis(500);
 const CODEX_LIVE_CALL_SSE_WAIT_COMMENT: &[u8] = b": formlogic-codex-wait\n\n";
 
 type CodexLiveCallSseItem = Result<axum::body::Bytes, std::io::Error>;
 
-/// Codex App Server produces deltas internally, but this safety adapter first
-/// buffers a complete, bounded, terminally-confirmed turn. Aokie still accepts
-/// a standards-shaped SSE response, so serialize that checked text as one
-/// content delta followed by the ordinary stop + [DONE] markers.
-fn codex_live_call_sse_payload(
-    result: crate::ai::codex::CodexLiveCallResponse,
-) -> axum::body::Bytes {
-    let id = format!("chatcmpl-formlogic-codex-{}", result.turn_id);
-    let created = codex_live_call_created();
+fn codex_live_call_sse_role(id: &str, created: u64, model: &'static str) -> axum::body::Bytes {
     let role = serde_json::json!({
         "id": id,
         "object": "chat.completion.chunk",
         "created": created,
-        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "model": model,
         "choices": [{ "index": 0, "delta": { "role": "assistant" }, "finish_reason": null }]
     });
+    axum::body::Bytes::from(format!("data: {role}\n\n"))
+}
+
+fn codex_live_call_sse_content(
+    id: &str,
+    created: u64,
+    model: &'static str,
+    delta: String,
+) -> axum::body::Bytes {
     let content = serde_json::json!({
         "id": id,
         "object": "chat.completion.chunk",
         "created": created,
-        "model": crate::ai::codex::LIVE_CALL_MODEL,
-        "choices": [{ "index": 0, "delta": { "content": result.text }, "finish_reason": null }]
+        "model": model,
+        "choices": [{ "index": 0, "delta": { "content": delta }, "finish_reason": null }]
     });
+    axum::body::Bytes::from(format!("data: {content}\n\n"))
+}
+
+fn codex_live_call_sse_stop(id: &str, created: u64, model: &'static str) -> axum::body::Bytes {
     let stop = serde_json::json!({
         "id": id,
         "object": "chat.completion.chunk",
         "created": created,
-        "model": crate::ai::codex::LIVE_CALL_MODEL,
+        "model": model,
         "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
     });
-    let payload = format!("data: {role}\n\ndata: {content}\n\ndata: {stop}\n\ndata: [DONE]\n\n");
-    axum::body::Bytes::from(payload)
+    axum::body::Bytes::from(format!("data: {stop}\n\ndata: [DONE]\n\n"))
 }
 
 async fn send_codex_live_call_terminal(
@@ -1076,39 +1071,106 @@ async fn send_codex_live_call_terminal(
     }
 }
 
-async fn drive_codex_live_call_sse<F>(
+async fn send_codex_live_call_frame(
+    sender: &tokio::sync::mpsc::Sender<CodexLiveCallSseItem>,
+    item: CodexLiveCallSseItem,
+) -> bool {
+    sender.send(item).await.is_ok()
+}
+
+async fn drive_codex_live_call_sse<F, Fut>(
     sender: tokio::sync::mpsc::Sender<CodexLiveCallSseItem>,
+    model: &'static str,
     turn: F,
 ) where
-    F: Future<
+    F: FnOnce(tokio::sync::mpsc::UnboundedSender<String>) -> Fut + Send + 'static,
+    Fut: Future<
             Output = Result<
                 crate::ai::codex::CodexLiveCallResponse,
                 crate::ai::codex::CodexAgentError,
             >,
-        > + Send,
+        > + Send
+        + 'static,
 {
+    // The model task is deliberately separate from the response-body queue.
+    // A slow local SSE reader can back-pressure HTTP delivery without making
+    // App Server's bounded broadcast receiver lag. The model can enqueue at
+    // most LIVE_CALL_MAX_OUTPUT_BYTES through this private channel.
+    let (delta_sender, mut delta_receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut turn_task = tokio::spawn(turn(delta_sender));
+    let id = format!("chatcmpl-formlogic-codex-{}", uuid::Uuid::new_v4().simple());
+    let created = codex_live_call_created();
     let mut heartbeat = tokio::time::interval(CODEX_LIVE_CALL_SSE_HEARTBEAT);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    tokio::pin!(turn);
+    // Preserve the existing immediate-progress contract for Aokie's reader,
+    // then identify the assistant stream before its first content delta.
+    let _ = sender.try_send(Ok(axum::body::Bytes::from_static(
+        CODEX_LIVE_CALL_SSE_WAIT_COMMENT,
+    )));
+    if !send_codex_live_call_frame(&sender, Ok(codex_live_call_sse_role(&id, created, model))).await
+    {
+        turn_task.abort();
+        let _ = turn_task.await;
+        return;
+    }
+    // `interval`'s first tick is immediate; the explicit frame above already
+    // fulfilled that role, so consume it before entering the 500 ms cadence.
+    heartbeat.tick().await;
+
+    let mut terminal: Option<Result<crate::ai::codex::CodexLiveCallResponse, String>> = None;
+    let mut deltas_closed = false;
 
     loop {
-        tokio::select! {
-            // Completion and disconnect are checked before a ready heartbeat.
-            // Thus a full/slow client cannot starve either terminal handling
-            // or cancellation of the still-armed Codex future.
-            biased;
-            _ = sender.closed() => return,
-            result = &mut turn => {
+        if deltas_closed {
+            if let Some(result) = terminal.take() {
                 let terminal = match result {
-                    Ok(result) => Ok(codex_live_call_sse_payload(result)),
-                    Err(error) => Err(std::io::Error::other(format!(
-                        "Codex live-call stream failed ({}): {}",
-                        error.code(),
-                        error.message()
-                    ))),
+                    Ok(result) => {
+                        debug_assert_eq!(result.model, model);
+                        Ok(codex_live_call_sse_stop(&id, created, model))
+                    }
+                    Err(error) => Err(std::io::Error::other(error)),
                 };
                 send_codex_live_call_terminal(&sender, terminal).await;
                 return;
+            }
+        }
+
+        tokio::select! {
+            biased;
+            _ = sender.closed() => {
+                turn_task.abort();
+                let _ = turn_task.await;
+                return;
+            }
+            delta = delta_receiver.recv(), if !deltas_closed => {
+                match delta {
+                    Some(delta) => {
+                        if !send_codex_live_call_frame(
+                            &sender,
+                            Ok(codex_live_call_sse_content(&id, created, model, delta)),
+                        ).await {
+                            turn_task.abort();
+                            let _ = turn_task.await;
+                            return;
+                        }
+                    }
+                    None => deltas_closed = true,
+                }
+            }
+            result = &mut turn_task, if terminal.is_none() => {
+                terminal = Some(match result {
+                    Ok(Ok(result)) => Ok(result),
+                    Ok(Err(error)) => Err(format!(
+                        "Codex live-call stream failed ({}): {}",
+                        error.code(),
+                        error.message()
+                    )),
+                    Err(error) => Err(if error.is_panic() {
+                        "Codex live-call stream failed (codex_unavailable): The managed Codex streaming task stopped unexpectedly.".to_owned()
+                    } else {
+                        "Codex live-call stream failed (codex_unavailable): The managed Codex streaming task was cancelled.".to_owned()
+                    }),
+                });
             }
             _ = heartbeat.tick() => {
                 // `try_send` plus the reserved terminal slot makes heartbeats
@@ -1130,9 +1192,10 @@ async fn drive_codex_live_call_sse<F>(
 /// the body task. Dropping the response body closes the receiver; the select in
 /// `drive_codex_live_call_sse` then drops the armed future, which hands its turn
 /// permit to the existing cancellation-safe interrupt guard.
-fn codex_live_call_sse<F>(turn: F) -> Response
+fn codex_live_call_sse<F, Fut>(model: &'static str, turn: F) -> Response
 where
-    F: Future<
+    F: FnOnce(tokio::sync::mpsc::UnboundedSender<String>) -> Fut + Send + 'static,
+    Fut: Future<
             Output = Result<
                 crate::ai::codex::CodexLiveCallResponse,
                 crate::ai::codex::CodexAgentError,
@@ -1142,7 +1205,7 @@ where
 {
     let (sender, receiver) =
         tokio::sync::mpsc::channel::<CodexLiveCallSseItem>(CODEX_LIVE_CALL_SSE_CHANNEL_CAPACITY);
-    tokio::spawn(drive_codex_live_call_sse(sender, turn));
+    tokio::spawn(drive_codex_live_call_sse(sender, model, turn));
     let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
         receiver.recv().await.map(|item| (item, receiver))
     });
@@ -1633,6 +1696,114 @@ async fn get_plugin(State(st): State<DesktopState>, Path(id): Path<String>) -> i
             "command_failed",
             &format!("unknown plugin {id:?}"),
         ),
+    }
+}
+
+/// The exact subscription-backed Codex configuration currently selected for
+/// Aokie's phone replies. This is intentionally narrower than the generic
+/// plugin-command bridge: it asks the plugin for only `aiEndpoint`, maps an
+/// exact local virtual-provider route onto the host-owned variant metadata,
+/// and never returns the endpoint or any other receptionist setting.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AokieCodexPhoneConfiguration {
+    configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_id: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<&'static str>,
+}
+
+impl AokieCodexPhoneConfiguration {
+    fn not_codex() -> Self {
+        Self {
+            configured: false,
+            provider_id: None,
+            model: None,
+            reasoning_effort: None,
+            service_tier: None,
+            display_name: None,
+        }
+    }
+}
+
+fn aokie_codex_variant_from_endpoint(
+    endpoint: &str,
+) -> Option<crate::ai::codex::CodexLiveCallVariant> {
+    use url::Host;
+
+    let url = url::Url::parse(endpoint).ok()?;
+    let loopback = match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        Some(Host::Ipv6(ip)) => {
+            let mapped_v4_loopback_or_unspecified = ip
+                .to_ipv4_mapped()
+                .is_some_and(|mapped| mapped.is_loopback() || mapped.is_unspecified());
+            ip.is_loopback() || ip.is_unspecified() || mapped_v4_loopback_or_unspecified
+        }
+        None => false,
+    };
+    if !matches!(url.scheme(), "http" | "https")
+        || !loopback
+        || url.port_or_known_default() != Some(17872)
+    {
+        return None;
+    }
+    let (provider_id, action) = decoded_provider_inference_route(url.path()).ok()??;
+    if action != "chat/completions" {
+        return None;
+    }
+    crate::ai::codex::CodexLiveCallVariant::for_provider_id(&provider_id)
+}
+
+fn aokie_codex_phone_configuration(
+    settings_get_response: &serde_json::Value,
+) -> AokieCodexPhoneConfiguration {
+    let Some(variant) = settings_get_response
+        .pointer("/data/value")
+        .and_then(serde_json::Value::as_str)
+        .and_then(aokie_codex_variant_from_endpoint)
+    else {
+        return AokieCodexPhoneConfiguration::not_codex();
+    };
+    AokieCodexPhoneConfiguration {
+        configured: true,
+        provider_id: Some(variant.provider_id()),
+        model: Some(variant.model()),
+        reasoning_effort: Some(variant.reasoning_effort()),
+        service_tier: variant.service_tier(),
+        display_name: Some(variant.display_name()),
+    }
+}
+
+async fn aokie_receptionist_codex_configuration(
+    State(st): State<DesktopState>,
+) -> impl IntoResponse {
+    let request = ConnectorRequestBody {
+        connector_id: Some("aokie".to_owned()),
+        command: "settings.get".to_owned(),
+        payload: Some(serde_json::json!({ "key": "aiEndpoint" })),
+        timeout_ms: Some(3_000),
+        request_id: Some(format!(
+            "desktop-codex-config:{}",
+            uuid::Uuid::new_v4().simple()
+        )),
+        ..Default::default()
+    };
+    match connectors::dispatch(&st.host, "aokie", &request).await {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(aokie_codex_phone_configuration(&response)),
+        )
+            .into_response(),
+        Err(failure) => connector_failure_response(&failure),
     }
 }
 
@@ -3424,7 +3595,7 @@ fn decoded_provider_inference_route(path: &str) -> Result<Option<(String, &str)>
     )))
 }
 
-/// The two virtual Aokie providers spend the connected ChatGPT/Codex account,
+/// The virtual Aokie providers spend the connected ChatGPT/Codex account,
 /// not an OpenAI Platform API provider. Decode the provider segment exactly as
 /// Axum does, then match it before the generic provider mapping so encoded
 /// unreserved characters cannot downgrade a Codex request to an OpenAI grant.
@@ -3905,6 +4076,12 @@ pub async fn serve(
     // Plugin-API routes: everything behind the pairing-token guard.
     let plugin_api = Router::new()
         .route("/api/plugins", get(list_plugins))
+        // Read-only, field-minimized bridge used by Services -> Try assistant
+        // to mirror the exact Codex model/effort/tier selected for phone calls.
+        .route(
+            "/api/plugins/aokie/receptionist/codex-configuration",
+            get(aokie_receptionist_codex_configuration),
+        )
         // PLG-102: UI-driven install from a folder path or an uploaded archive.
         // Registered before the `:id` routes so `install` is not captured as an
         // id (axum prefers a static segment, but keep the ordering explicit).
@@ -4039,13 +4216,14 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::{
-        codex_call_owner_capability, codex_desktop_admin_path, codex_live_call_completion,
-        codex_owner_capability, connector_failure_status, decoded_provider_inference_route,
-        desktop_auth_decision, desktop_info_body, direct_command_request_id,
-        grant_covers_capability, health_body, is_ai_inference_path, is_gui_webview_origin,
-        is_privileged_path, management_auth_decision, offline_grace_grants,
+        aokie_codex_phone_configuration, codex_call_owner_capability, codex_desktop_admin_path,
+        codex_live_call_completion, codex_owner_capability, connector_failure_status,
+        decoded_provider_inference_route, desktop_auth_decision, desktop_info_body,
+        direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
+        is_gui_webview_origin, is_privileged_path, management_auth_decision, offline_grace_grants,
         openai_api_owner_capability, screen_asset_content_type, service_source_capabilities,
-        strict_percent_decode_path_segment, website_service_capability, OFFLINE_GRACE_MAX_AGE,
+        strict_percent_decode_path_segment, website_service_capability,
+        AokieCodexPhoneConfiguration, OFFLINE_GRACE_MAX_AGE,
     };
     use crate::pairing::TokenCheck;
     use axum::http::{Method, StatusCode};
@@ -4172,6 +4350,81 @@ mod tests {
         assert!(generated
             .bytes()
             .all(|b| { b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':') }));
+    }
+
+    #[test]
+    fn aokie_codex_configuration_exposes_only_canonical_variant_metadata() {
+        let normal = aokie_codex_phone_configuration(&serde_json::json!({
+            "ok": true,
+            "data": {
+                "key": "aiEndpoint",
+                "value": "http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions"
+            }
+        }));
+        assert!(normal.configured);
+        assert_eq!(normal.provider_id, Some("openai-codex-agent-luna-low"));
+        assert_eq!(normal.model, Some("gpt-5.6-luna"));
+        assert_eq!(normal.reasoning_effort, Some("low"));
+        assert_eq!(normal.service_tier, None);
+
+        let fast = aokie_codex_phone_configuration(&serde_json::json!({
+            "ok": true,
+            "data": {
+                "key": "aiEndpoint",
+                "value": "http://localhost:17872/api/ai/providers/openai-codex-agent-luna-low-fast/v1/chat/completions"
+            }
+        }));
+        assert_eq!(fast.provider_id, Some("openai-codex-agent-luna-low-fast"));
+        assert_eq!(fast.model, Some("gpt-5.6-luna"));
+        assert_eq!(fast.reasoning_effort, Some("low"));
+        assert_eq!(fast.service_tier, Some("priority"));
+
+        for equivalent in [
+            "https://[::1]:17872/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions?request=1#ignored",
+            "http://user:pass@0.0.0.0:17872/api/ai/providers/openai-codex-agent-luna-low-fast/v1/chat/completions",
+            "http://[::ffff:127.0.0.1]:17872/api/ai/providers/openai-codex-agent-luna-low-fast/v1/chat/completions",
+        ] {
+            let equivalent = aokie_codex_phone_configuration(&serde_json::json!({
+                "ok": true,
+                "data": { "key": "aiEndpoint", "value": equivalent }
+            }));
+            assert!(equivalent.configured);
+        }
+
+        let serialized = serde_json::to_value(fast).expect("configuration serializes");
+        assert_eq!(serialized["configured"], true);
+        assert!(serialized.get("endpoint").is_none());
+        assert!(serialized.get("aiEndpoint").is_none());
+    }
+
+    #[test]
+    fn aokie_codex_configuration_rejects_nonlocal_and_near_miss_routes() {
+        for endpoint in [
+            "https://example.com/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions",
+            "http://127.0.0.1:17873/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions",
+            "http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-luna-low/v1/models",
+            "http://127.0.0.1:17872/api/ai/providers/not-codex/v1/chat/completions",
+            "http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions/",
+        ] {
+            let result = aokie_codex_phone_configuration(&serde_json::json!({
+                "ok": true,
+                "data": { "key": "aiEndpoint", "value": endpoint }
+            }));
+            assert_eq!(
+                result,
+                AokieCodexPhoneConfiguration::not_codex(),
+                "must reject {endpoint}"
+            );
+        }
+
+        let encoded = aokie_codex_phone_configuration(&serde_json::json!({
+            "ok": true,
+            "data": {
+                "key": "aiEndpoint",
+                "value": "http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-luna-low%2Dfast/v1/chat/completions"
+            }
+        }));
+        assert_eq!(encoded.service_tier, Some("priority"));
     }
 
     #[test]
@@ -4406,6 +4659,7 @@ mod tests {
             "/api/ai/providers/my-llama/v1/chat/completions",
             "/api/ai/providers/openai-codex-agent-none/v1/models",
             "/api/ai/providers/openai-codex-agent-low/v1/chat/completions",
+            "/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions",
         ] {
             assert!(is_ai_inference_path(p), "{p} is an inference route");
         }
@@ -4579,10 +4833,8 @@ mod tests {
 
     #[test]
     fn codex_call_provider_grants_are_distinct_from_openai_api_grants() {
-        for provider_id in [
-            crate::ai::codex::LIVE_CALL_PROVIDER_NONE_ID,
-            crate::ai::codex::LIVE_CALL_PROVIDER_LOW_ID,
-        ] {
+        for variant in crate::ai::codex::CodexLiveCallVariant::ALL {
+            let provider_id = variant.provider_id();
             let chat_path = format!("/api/ai/providers/{provider_id}/v1/chat/completions");
             let models_path = format!("/api/ai/providers/{provider_id}/v1/models");
             let chat = codex_call_owner_capability(&Method::POST, &chat_path)
@@ -4625,6 +4877,7 @@ mod tests {
             "%6Fpenai-codex-agent-none",
             "%6fpenai-codex-agent-low",
             "openai-codex%2Dagent%2Dlow",
+            "openai-codex-agent-luna%2Dlow",
         ];
         for provider_id in encoded_provider_ids {
             for (method, action, expected) in [
@@ -4700,9 +4953,10 @@ mod tests {
         let completion = codex_live_call_completion(&crate::ai::codex::CodexLiveCallResponse {
             turn_id: "turn-1".into(),
             text: "How may I help?".into(),
+            model: crate::ai::codex::LUNA_LIVE_CALL_MODEL,
         });
         assert_eq!(completion["object"], "chat.completion");
-        assert_eq!(completion["model"], crate::ai::codex::LIVE_CALL_MODEL);
+        assert_eq!(completion["model"], crate::ai::codex::LUNA_LIVE_CALL_MODEL);
         assert_eq!(
             completion["choices"][0]["message"]["content"],
             "How may I help?"
@@ -4712,12 +4966,21 @@ mod tests {
 
     #[tokio::test]
     async fn codex_live_call_sse_matches_aokies_data_line_parser() {
-        let response = super::codex_live_call_sse(async {
-            Ok::<_, crate::ai::codex::CodexAgentError>(crate::ai::codex::CodexLiveCallResponse {
-                turn_id: "turn-sse".into(),
-                text: "Hello, how may I help?".into(),
-            })
-        });
+        let response = super::codex_live_call_sse(
+            crate::ai::codex::LUNA_LIVE_CALL_MODEL,
+            |deltas| async move {
+                deltas.send("Hello, ".into()).expect("open stream");
+                tokio::task::yield_now().await;
+                deltas.send("how may I help?".into()).expect("open stream");
+                Ok::<_, crate::ai::codex::CodexAgentError>(
+                    crate::ai::codex::CodexLiveCallResponse {
+                        turn_id: "turn-sse".into(),
+                        text: "Hello, how may I help?".into(),
+                        model: crate::ai::codex::LUNA_LIVE_CALL_MODEL,
+                    },
+                )
+            },
+        );
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response
@@ -4750,9 +5013,16 @@ mod tests {
     async fn codex_live_call_sse_heartbeats_immediately_without_model_content() {
         use futures_util::StreamExt;
 
-        let response = super::codex_live_call_sse(std::future::pending::<
-            Result<crate::ai::codex::CodexLiveCallResponse, crate::ai::codex::CodexAgentError>,
-        >());
+        let response =
+            super::codex_live_call_sse(crate::ai::codex::LUNA_LIVE_CALL_MODEL, |_deltas| async {
+                std::future::pending::<
+                    Result<
+                        crate::ai::codex::CodexLiveCallResponse,
+                        crate::ai::codex::CodexAgentError,
+                    >,
+                >()
+                .await
+            });
         assert_eq!(response.status(), StatusCode::OK);
         let mut body = response.into_body().into_data_stream();
         let first = tokio::time::timeout(std::time::Duration::from_millis(200), body.next())
@@ -4762,6 +5032,13 @@ mod tests {
             .expect("heartbeat bytes");
         assert_eq!(first.as_ref(), super::CODEX_LIVE_CALL_SSE_WAIT_COMMENT);
         assert!(!String::from_utf8_lossy(&first).contains("data:"));
+
+        let role = tokio::time::timeout(std::time::Duration::from_millis(200), body.next())
+            .await
+            .expect("the role frame must be immediate")
+            .expect("role frame")
+            .expect("role bytes");
+        assert!(String::from_utf8_lossy(&role).contains("\"role\":\"assistant\""));
 
         let second = tokio::time::timeout(std::time::Duration::from_millis(800), body.next())
             .await
@@ -4779,14 +5056,17 @@ mod tests {
         // Missing messages is rejected synchronously by `live_call_prompt`,
         // before this test agent can start a child process or touch OAuth.
         let agent = crate::ai::codex::CodexAgent::new(std::env::temp_dir());
-        let response = super::codex_live_call_sse(async move {
-            agent
-                .live_call_chat(
-                    crate::ai::codex::CodexLiveCallVariant::ReasoningNone,
-                    &serde_json::json!({}),
-                )
-                .await
-        });
+        let response = super::codex_live_call_sse(
+            crate::ai::codex::LUNA_LIVE_CALL_MODEL,
+            move |_deltas| async move {
+                agent
+                    .live_call_chat(
+                        crate::ai::codex::CodexLiveCallVariant::LunaReasoningLow,
+                        &serde_json::json!({}),
+                    )
+                    .await
+            },
+        );
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response
@@ -4796,6 +5076,14 @@ mod tests {
             Some("text/event-stream")
         );
         let mut body = response.into_body().into_data_stream();
+        let heartbeat = body
+            .next()
+            .await
+            .expect("heartbeat")
+            .expect("heartbeat bytes");
+        assert_eq!(heartbeat.as_ref(), super::CODEX_LIVE_CALL_SSE_WAIT_COMMENT);
+        let role = body.next().await.expect("role").expect("role bytes");
+        assert!(String::from_utf8_lossy(&role).contains("\"role\":\"assistant\""));
         let error = tokio::time::timeout(std::time::Duration::from_millis(200), body.next())
             .await
             .expect("turn failure must reach the body promptly")
@@ -4824,15 +5112,20 @@ mod tests {
 
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
-        let turn = async move {
-            let _drop_notice = DropNotice(Some(dropped_tx));
-            let _ = started_tx.send(());
-            std::future::pending::<
-                Result<crate::ai::codex::CodexLiveCallResponse, crate::ai::codex::CodexAgentError>,
-            >()
-            .await
-        };
-        let response = super::codex_live_call_sse(turn);
+        let response = super::codex_live_call_sse(
+            crate::ai::codex::LUNA_LIVE_CALL_MODEL,
+            move |_deltas| async move {
+                let _drop_notice = DropNotice(Some(dropped_tx));
+                let _ = started_tx.send(());
+                std::future::pending::<
+                    Result<
+                        crate::ai::codex::CodexLiveCallResponse,
+                        crate::ai::codex::CodexAgentError,
+                    >,
+                >()
+                .await
+            },
+        );
         tokio::time::timeout(std::time::Duration::from_millis(200), started_rx)
             .await
             .expect("body task must poll the turn immediately")

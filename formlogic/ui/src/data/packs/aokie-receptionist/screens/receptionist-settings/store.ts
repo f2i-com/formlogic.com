@@ -276,15 +276,17 @@ export interface LaneOption {
 }
 
 export const CODEX_LIVE_CALL_MODEL = 'gpt-5.5';
+export const CODEX_LUNA_MODEL = 'gpt-5.6-luna';
 const CODEX_LIVE_CALL_SOURCES = [
+  'provider:openai-codex-agent-luna-low',
+  'provider:openai-codex-agent-luna-low-fast',
   'provider:openai-codex-agent-none',
   'provider:openai-codex-agent-low',
 ];
 
-/** The two Desktop-owned Codex pseudo-providers are text-only live-call
- *  adapters. They deliberately share a fixed model; their source id selects
- *  the reasoning/latency profile. Keep this exact allow-list narrow so an
- *  ordinary provider whose id merely contains "codex" is never constrained. */
+/** The Desktop-owned Codex pseudo-providers are text-only live-call adapters.
+ *  Keep this exact allow-list narrow so an ordinary provider whose id merely
+ *  contains "codex" is never constrained. */
 export function isCodexLiveCallSource(source: string): boolean {
   return CODEX_LIVE_CALL_SOURCES.indexOf(source.trim()) >= 0;
 }
@@ -292,12 +294,34 @@ export function isCodexLiveCallSource(source: string): boolean {
 export function codexLiveCallReasoning(source: string): 'none' | 'low' | null {
   if (source.trim() === 'provider:openai-codex-agent-none') return 'none';
   if (source.trim() === 'provider:openai-codex-agent-low') return 'low';
+  if (
+    source.trim() === 'provider:openai-codex-agent-luna-low'
+    || source.trim() === 'provider:openai-codex-agent-luna-low-fast'
+  ) return 'low';
   return null;
 }
 
+export function codexLiveCallModel(source: string): string | null {
+  if (
+    source.trim() === 'provider:openai-codex-agent-luna-low'
+    || source.trim() === 'provider:openai-codex-agent-luna-low-fast'
+  ) return CODEX_LUNA_MODEL;
+  return isCodexLiveCallSource(source) ? CODEX_LIVE_CALL_MODEL : null;
+}
+
+export function isCodexLunaSource(source: string): boolean {
+  return source.trim() === 'provider:openai-codex-agent-luna-low'
+    || source.trim() === 'provider:openai-codex-agent-luna-low-fast';
+}
+
+export function isCodexFastSource(source: string): boolean {
+  return source.trim() === 'provider:openai-codex-agent-luna-low-fast';
+}
+
 function enforceCodexTextOnly(): void {
-  if (!isCodexLiveCallSource(d().llm_source)) return;
-  if (d().model !== CODEX_LIVE_CALL_MODEL) setDraft({ model: CODEX_LIVE_CALL_MODEL });
+  const model = codexLiveCallModel(d().llm_source);
+  if (!model) return;
+  if (d().model !== model) setDraft({ model });
   state.audio.sendAudio = false;
 }
 
@@ -689,8 +713,9 @@ export function doSaveApply(): void {
 // -- edit actions (the original's delegated input/change/click handlers) --
 
 export function draftInput(key: keyof Draft, value: string): void {
-  if (key === 'model' && isCodexLiveCallSource(d().llm_source)) {
-    setDraft({ model: CODEX_LIVE_CALL_MODEL });
+  const codexModel = codexLiveCallModel(d().llm_source);
+  if (key === 'model' && codexModel) {
+    setDraft({ model: codexModel });
     touch();
     return;
   }
@@ -732,7 +757,8 @@ export function laneUrlInput(lane: Lane, value: string): void {
 
 export function laneChange(lane: Lane, value: string): void {
   const patch = { [lane + '_source']: value } as Partial<Draft>;
-  if (lane === 'llm' && isCodexLiveCallSource(value)) patch.model = CODEX_LIVE_CALL_MODEL;
+  const codexModel = lane === 'llm' ? codexLiveCallModel(value) : null;
+  if (codexModel) patch.model = codexModel;
   setDraft(patch);
   enforceCodexTextOnly();
   touch();

@@ -457,19 +457,9 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
     expect(replyModeField!.description ?? '').not.toMatch(/next caller turn/);
   });
 
-  it("Configure Receptionist flow's push node payload sends aiReceptionist alongside the existing keys", () => {
+  it("Configure Receptionist resolves the cfg block's whole dynamic settings payload", () => {
     const push = configureFlow.flowJson.nodes.find((n) => n.id === 'push')!;
-    const payload = (push.data as { payload?: Record<string, unknown> }).payload ?? {};
-    expect(payload.aiReceptionist).toBe('$nodes.cfg.aiReceptionist');
-    expect(payload.persona).toBe('$nodes.cfg.persona');
-    expect(payload.greeting).toBe('$nodes.cfg.greeting');
-    expect(payload.ttsVoice).toBe('$nodes.cfg.voice');
-    expect(payload.aiModel).toBe('$nodes.cfg.model');
-    // Correction lane: the flow resolves the record's correction_source into
-    // the plugin's audioTranscriptEndpoint per call. The MODEL key is retired
-    // from the console â€” the flow must never push audioTranscriptModel.
-    expect(payload.audioTranscriptEndpoint).toBe('$nodes.cfg.audioTranscriptEndpoint');
-    expect('audioTranscriptModel' in payload).toBe(false);
+    expect((push.data as { payload?: unknown }).payload).toBe('$nodes.cfg.settingsPayload');
   });
 
   it('declares connector.aokie.settings.set â€” the same command, so no capability change is needed for the richer payload', () => {
@@ -488,10 +478,13 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
     services?: Array<Record<string, unknown>>,
   ): {
     aiReceptionist: boolean;
-    aiEndpoint: string;
+    aiEndpoint?: string;
+    applyAiEndpoint: boolean;
+    applyAiModel: boolean;
     sttEndpoint: string;
     ttsEndpoint: string;
     audioTranscriptEndpoint: string;
+    settingsPayload: Record<string, unknown>;
   } {
     const cfgNode = configureFlow.flowJson.nodes.find((n) => n.id === 'cfg')!;
     const expr = (cfgNode.data as { expr: string }).expr;
@@ -538,15 +531,36 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
     expect(runAgentConfig({ llm_source: 'service:llama-cpp' }, []).aiEndpoint).toBe('');
   });
 
-  it('blank/custom source keeps the legacy endpoint-field behaviour byte-for-byte', () => {
+  it('blank LLM preserves Desktop ownership, while legacy URL/custom selections still apply', () => {
     const r = runAgentConfig({ llm_endpoint: ' http://127.0.0.1:9999/v1/chat/completions ' }, RUNNING_SVCS);
     expect(r.aiEndpoint).toBe('http://127.0.0.1:9999/v1/chat/completions');
+    expect(r.applyAiEndpoint).toBe(true);
+    expect(r.applyAiModel).toBe(true);
+    expect(r.settingsPayload.aiEndpoint).toBe(r.aiEndpoint);
+    expect(r.settingsPayload.aiModel).toBe('');
     const c = runAgentConfig(
       { stt_source: 'custom', stt_endpoint: 'http://127.0.0.1:17920/v1/audio/transcriptions' },
       RUNNING_SVCS,
     );
     expect(c.sttEndpoint).toBe('http://127.0.0.1:17920/v1/audio/transcriptions');
-    expect(runAgentConfig({}, RUNNING_SVCS).aiEndpoint).toBe('');
+    const blank = runAgentConfig({}, RUNNING_SVCS);
+    expect(blank.aiEndpoint).toBeUndefined();
+    expect(blank.applyAiEndpoint).toBe(false);
+    expect(blank.applyAiModel).toBe(false);
+    expect('aiEndpoint' in blank.settingsPayload).toBe(false);
+    expect('aiModel' in blank.settingsPayload).toBe(false);
+    const modelOnly = runAgentConfig({ model: 'desktop-compatible-model' }, RUNNING_SVCS);
+    expect(modelOnly.aiEndpoint).toBeUndefined();
+    expect(modelOnly.applyAiEndpoint).toBe(false);
+    expect(modelOnly.applyAiModel).toBe(true);
+    expect('aiEndpoint' in modelOnly.settingsPayload).toBe(false);
+    expect(modelOnly.settingsPayload.aiModel).toBe('desktop-compatible-model');
+    const clear = runAgentConfig({ llm_source: 'custom' }, RUNNING_SVCS);
+    expect(clear.aiEndpoint).toBe('');
+    expect(clear.applyAiEndpoint).toBe(true);
+    expect(clear.applyAiModel).toBe(true);
+    expect(clear.settingsPayload.aiEndpoint).toBe('');
+    expect(clear.settingsPayload.aiModel).toBe('');
   });
 
   // â”€â”€ provider: picks (SRC-203): the desktop AI gateway's per-provider OpenAI base â”€â”€
@@ -555,7 +569,9 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
     //   POST /api/ai/providers/:id/v1/chat/completions (and GET .../v1/models,
     //   which the plugin's LlmClient derives by replacing /chat/completions).
     const url = 'http://127.0.0.1:17872/api/ai/providers/my-openai/v1/chat/completions';
-    expect(runAgentConfig({ llm_source: 'provider:my-openai' }, RUNNING_SVCS).aiEndpoint).toBe(url);
+    const configured = runAgentConfig({ llm_source: 'provider:my-openai' }, RUNNING_SVCS);
+    expect(configured.aiEndpoint).toBe(url);
+    expect(configured.settingsPayload.aiEndpoint).toBe(url);
     // The gateway port is fixed â€” no desktop_services lookup is needed, so the
     // URL is emitted even when the svc node lists nothing / is absent.
     expect(runAgentConfig({ llm_source: 'provider:my-openai' }, []).aiEndpoint).toBe(url);

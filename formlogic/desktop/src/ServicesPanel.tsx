@@ -9,6 +9,7 @@ import {
   type AiProviderProfile,
   type AiProviderView,
   type AiProtocol,
+  type AokieCodexPhoneConfiguration,
   type CodexLoginStart,
   type CodexModelView,
   type CodexServiceStatus,
@@ -31,8 +32,10 @@ import {
   buildServiceCenterItems,
   CODEX_LOGIN_TIMEOUT_MS,
   formatCodexReasoningEffort,
+  formatCodexResponseDuration,
   getPersistedServiceCenterQuery,
   getCodexReasoningEfforts,
+  getCodexTryoutDefaults,
   getServiceCenterFacetOptions,
   isSafeBrowserAuthUrl,
   isSafeDeviceVerificationUrl,
@@ -1042,27 +1045,60 @@ function CodexAssistantTryout() {
   const [models, setModels] = useState<CodexModelView[] | null>(null);
   const [selectedModel, setSelectedModel] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState('');
+  const [serviceTier, setServiceTier] = useState<'' | 'priority'>('');
+  const [phoneConfiguration, setPhoneConfiguration] =
+    useState<AokieCodexPhoneConfiguration | null>(null);
+  const [matchesPhoneConfiguration, setMatchesPhoneConfiguration] = useState(false);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
-  const [answer, setAnswer] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<{ text: string; durationMs: number } | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelsAttempted, setModelsAttempted] = useState(false);
   const [sending, setSending] = useState(false);
+  const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const laneSignatureRef = useRef<string | null>(null);
 
   const loadModels = useCallback(async () => {
     if (loadingModels) return;
     setLoadingModels(true);
     setModelsAttempted(true);
     setError(null);
+    setConfigurationError(null);
     try {
-      const response = await servicePlatform.codexModels();
+      const [modelsResult, phoneResult] = await Promise.allSettled([
+        servicePlatform.codexModels(),
+        servicePlatform.aokieCodexPhoneConfiguration(),
+      ]);
+      if (modelsResult.status === 'rejected') throw modelsResult.reason;
+      const response = modelsResult.value;
       const available = response.models.filter((model) => model.model.trim() !== '');
+      const phone = phoneResult.status === 'fulfilled' ? phoneResult.value : null;
+      const defaults = getCodexTryoutDefaults(available, phone);
       setModels(available);
-      setSelectedModel((current) => {
-        if (available.some((model) => model.model === current)) return current;
-        return (available.find((model) => model.isDefault) ?? available[0])?.model ?? '';
-      });
+      setPhoneConfiguration(phone);
+      setMatchesPhoneConfiguration(defaults.matchesPhoneConfiguration);
+      setSelectedModel(defaults.model);
+      setReasoningEffort(defaults.reasoningEffort);
+      setServiceTier(defaults.serviceTier ?? '');
+      setConfigurationError(
+        phoneResult.status === 'rejected'
+          ? 'Could not read Aokie receptionist phone settings. Retry before testing so the model is not silently different.'
+          : defaults.configurationError ?? null,
+      );
+
+      const laneSignature = [
+        defaults.model,
+        defaults.reasoningEffort,
+        defaults.serviceTier ?? 'default',
+      ].join('\u0000');
+      if (laneSignatureRef.current !== null && laneSignatureRef.current !== laneSignature) {
+        setThreadId(null);
+        setAnswer(null);
+      }
+      laneSignatureRef.current = laneSignature;
     } catch (modelError) {
       setModels(null);
       setError(modelError instanceof Error ? modelError.message : String(modelError));
@@ -1074,6 +1110,14 @@ function CodexAssistantTryout() {
   useEffect(() => {
     if (open && !modelsAttempted && !loadingModels) void loadModels();
   }, [loadModels, loadingModels, modelsAttempted, open]);
+
+  useEffect(() => {
+    if (!sending || requestStartedAt === null) return undefined;
+    const update = () => setElapsedMs(performance.now() - requestStartedAt);
+    update();
+    const timer = window.setInterval(update, 50);
+    return () => window.clearInterval(timer);
+  }, [requestStartedAt, sending]);
 
   const selectedModelInfo = useMemo(
     () => models?.find((model) => model.model === selectedModel) ?? null,
@@ -1097,7 +1141,10 @@ function CodexAssistantTryout() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || !selectedModel || sending) return;
+    if (!cleanPrompt || !selectedModel || sending || configurationError) return;
+    const startedAt = performance.now();
+    setRequestStartedAt(startedAt);
+    setElapsedMs(0);
     setSending(true);
     setError(null);
     try {
@@ -1106,13 +1153,18 @@ function CodexAssistantTryout() {
         threadId: threadId ?? undefined,
         model: selectedModel,
         reasoningEffort: reasoningEffort || undefined,
+        serviceTier: serviceTier || undefined,
       });
+      const durationMs = performance.now() - startedAt;
       setThreadId(response.threadId);
-      setAnswer(response.text);
+      setAnswer({ text: response.text, durationMs });
+      setElapsedMs(durationMs);
       setPrompt('');
     } catch (chatError) {
       setError(chatError instanceof Error ? chatError.message : String(chatError));
+      setElapsedMs(performance.now() - startedAt);
     } finally {
+      setRequestStartedAt(null);
       setSending(false);
     }
   };
@@ -1121,7 +1173,11 @@ function CodexAssistantTryout() {
     <details
       className="service-center-try"
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        setOpen(nextOpen);
+        if (!nextOpen) setModelsAttempted(false);
+      }}
     >
       <summary>Try assistant</summary>
       <div className="service-center-try__body">
@@ -1135,10 +1191,24 @@ function CodexAssistantTryout() {
         )}
         {models && models.length > 0 && (
           <form className="service-center-try__form" onSubmit={submit}>
+            {matchesPhoneConfiguration && phoneConfiguration && (
+              <div className="service-center-try__phone-config" role="status">
+                Using receptionist phone settings: {selectedModel}
+                {' · '}{formatCodexReasoningEffort(reasoningEffort)} reasoning
+                {' · '}{serviceTier === 'priority' ? 'Fast mode' : 'Default mode'}
+              </div>
+            )}
             <div className="service-center-try__options">
               <label>
                 <span>Model</span>
-                <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                <select
+                  value={selectedModel}
+                  disabled={matchesPhoneConfiguration}
+                  onChange={(event) => {
+                    setSelectedModel(event.target.value);
+                    setServiceTier('');
+                  }}
+                >
                   {models.map((model) => (
                     <option key={model.id} value={model.model}>
                       {model.displayName}{model.isDefault ? ' (default)' : ''}
@@ -1151,6 +1221,7 @@ function CodexAssistantTryout() {
                   <span>Reasoning</span>
                   <select
                     value={reasoningEffort}
+                    disabled={matchesPhoneConfiguration}
                     onChange={(event) => setReasoningEffort(event.target.value)}
                   >
                     {reasoningChoices.map((effort) => (
@@ -1177,10 +1248,15 @@ function CodexAssistantTryout() {
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={sending || !prompt.trim() || !selectedModel}
+                disabled={sending || !prompt.trim() || !selectedModel || configurationError !== null}
               >
                 {sending ? 'Thinking…' : threadId ? 'Continue' : 'Ask assistant'}
               </button>
+              {sending && (
+                <output className="service-center-try__timer" aria-label="Elapsed response time">
+                  Elapsed {formatCodexResponseDuration(elapsedMs)}
+                </output>
+              )}
               {threadId && (
                 <button
                   type="button"
@@ -1191,6 +1267,7 @@ function CodexAssistantTryout() {
                     setAnswer(null);
                     setPrompt('');
                     setError(null);
+                    setElapsedMs(0);
                   }}
                 >
                   New conversation
@@ -1198,6 +1275,17 @@ function CodexAssistantTryout() {
               )}
             </div>
           </form>
+        )}
+        {configurationError && (
+          <div className="service-error">
+            <AlertTriangleIcon className="inline-icon icon-leading" size={14} />
+            {configurationError}{' '}
+            {!loadingModels && (
+              <button type="button" className="btn-tiny" onClick={() => void loadModels()}>
+                Retry
+              </button>
+            )}
+          </div>
         )}
         {error && (
           <div className="service-error">
@@ -1210,8 +1298,11 @@ function CodexAssistantTryout() {
         )}
         {answer !== null && (
           <div className="service-center-try__answer" role="region" aria-label="Assistant response">
-            <div>Assistant</div>
-            <pre>{answer}</pre>
+            <div>
+              <span>Assistant</span>
+              <span>Response time {formatCodexResponseDuration(answer.durationMs)}</span>
+            </div>
+            <pre>{answer.text}</pre>
           </div>
         )}
       </div>

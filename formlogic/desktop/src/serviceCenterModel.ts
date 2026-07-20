@@ -356,7 +356,7 @@ export function isCodexLoginExpired(startedAt: number, now = Date.now()): boolea
   return Number.isFinite(startedAt) && now - startedAt >= CODEX_LOGIN_TIMEOUT_MS;
 }
 
-const CODEX_REASONING_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+const CODEX_REASONING_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 
 export function formatCodexReasoningEffort(value: string): string {
   const labels: Record<string, string> = {
@@ -366,6 +366,8 @@ export function formatCodexReasoningEffort(value: string): string {
     medium: 'Medium',
     high: 'High',
     xhigh: 'Extra high',
+    max: 'Maximum',
+    ultra: 'Ultra',
   };
   return labels[value] ?? value;
 }
@@ -395,4 +397,86 @@ export function getCodexReasoningEfforts(model: {
     values.unshift(model.defaultReasoningEffort);
   }
   return Array.from(new Set(values));
+}
+
+export interface CodexTryoutModelLike {
+  model: string;
+  isDefault: boolean;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: unknown[];
+}
+
+export interface CodexPhoneConfigurationLike {
+  configured: boolean;
+  model?: string;
+  reasoningEffort?: string;
+  serviceTier?: string;
+}
+
+export interface CodexTryoutDefaults {
+  model: string;
+  reasoningEffort: string;
+  serviceTier?: 'priority';
+  matchesPhoneConfiguration: boolean;
+  configurationError?: string;
+}
+
+/**
+ * Pick the Service Center tryout lane. An exact Aokie Codex phone selection
+ * wins over Codex's general catalog default; malformed/stale phone metadata
+ * fails visibly instead of silently testing a different model or effort.
+ */
+export function getCodexTryoutDefaults(
+  models: CodexTryoutModelLike[],
+  phone: CodexPhoneConfigurationLike | null | undefined,
+): CodexTryoutDefaults {
+  const fallbackModel = models.find((model) => model.isDefault) ?? models[0];
+  const fallbackEfforts = getCodexReasoningEfforts(fallbackModel);
+  const fallback: CodexTryoutDefaults = {
+    model: fallbackModel?.model ?? '',
+    reasoningEffort:
+      fallbackModel && fallbackEfforts.includes(fallbackModel.defaultReasoningEffort)
+        ? fallbackModel.defaultReasoningEffort
+        : fallbackEfforts[0] ?? '',
+    matchesPhoneConfiguration: false,
+  };
+  if (!phone?.configured) return fallback;
+
+  if (!phone.model || !phone.reasoningEffort) {
+    return {
+      ...fallback,
+      configurationError: 'Aokie returned an incomplete ChatGPT phone configuration.',
+    };
+  }
+  if (phone.serviceTier !== undefined && phone.serviceTier !== 'priority') {
+    return {
+      ...fallback,
+      configurationError: 'Aokie returned an unsupported ChatGPT service tier.',
+    };
+  }
+  const configuredModel = models.find((model) => model.model === phone.model);
+  if (!configuredModel) {
+    return {
+      ...fallback,
+      configurationError: `The phone model ${phone.model} is not available to this ChatGPT account.`,
+    };
+  }
+  if (!getCodexReasoningEfforts(configuredModel).includes(phone.reasoningEffort)) {
+    return {
+      ...fallback,
+      configurationError: `${phone.model} does not offer the phone's ${phone.reasoningEffort} reasoning setting.`,
+    };
+  }
+  return {
+    model: phone.model,
+    reasoningEffort: phone.reasoningEffort,
+    serviceTier: phone.serviceTier,
+    matchesPhoneConfiguration: true,
+  };
+}
+
+/** Stable, compact wall-clock display shared by the live and final timer. */
+export function formatCodexResponseDuration(elapsedMs: number): string {
+  const seconds = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0) / 1_000;
+  return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)} s`;
 }

@@ -167,6 +167,20 @@ describe('agentPayload.ts parity with the canonical modules', () => {
     expect(p.aiEndpoint).toBe('http://127.0.0.1:17872/api/ai/providers/my%20openai/v1/chat/completions');
   });
 
+  it('fully blank LLM fields preserve Desktop endpoint+model, while explicit ownership still applies', () => {
+    const blank = screenCompose(draftFor({}), SVCS, SCREEN_PERSONA, SCREEN_BASE);
+    expect('aiEndpoint' in blank).toBe(false);
+    expect('aiModel' in blank).toBe(false);
+
+    const modelOnly = screenCompose(draftFor({ model: 'legacy-model' }), SVCS, SCREEN_PERSONA, SCREEN_BASE);
+    expect('aiEndpoint' in modelOnly).toBe(false);
+    expect(modelOnly.aiModel).toBe('legacy-model');
+
+    const explicitClear = screenCompose(draftFor({ llm_source: 'custom' }), SVCS, SCREEN_PERSONA, SCREEN_BASE);
+    expect(explicitClear.aiEndpoint).toBe('');
+    expect(explicitClear.aiModel).toBe('');
+  });
+
   it('the composed payload NEVER carries a manager PIN key (PIN present or absent in the UI, the composer cannot see one)', () => {
     for (const [, over, svcs] of MATRIX) {
       const p = screenCompose(draftFor(over), svcs, SCREEN_PERSONA, SCREEN_BASE);
@@ -182,6 +196,18 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
   const CODEX_SOURCES = [
     {
       kind: 'provider',
+      id: 'provider:openai-codex-agent-luna-low',
+      refId: 'openai-codex-agent-luna-low',
+      name: 'ChatGPT / Codex - GPT-5.6 Luna, low reasoning',
+      category: 'AI',
+      status: 'running',
+      url: '',
+      capabilities: ['chat'],
+      enabled: true,
+      model: 'gpt-5.6-luna',
+    },
+    {
+      kind: 'provider',
       id: 'provider:openai-codex-agent-none',
       refId: 'openai-codex-agent-none',
       name: 'ChatGPT/Codex - Off (fastest, experimental)',
@@ -191,6 +217,18 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
       capabilities: ['chat'],
       enabled: true,
       model: 'gpt-5.5',
+    },
+    {
+      kind: 'provider',
+      id: 'provider:openai-codex-agent-luna-low-fast',
+      refId: 'openai-codex-agent-luna-low-fast',
+      name: 'ChatGPT / Codex - GPT-5.6 Luna, low reasoning, Fast mode',
+      category: 'AI',
+      status: 'running',
+      url: '',
+      capabilities: ['chat'],
+      enabled: true,
+      model: 'gpt-5.6-luna',
     },
     {
       kind: 'provider',
@@ -226,7 +264,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     },
   ];
 
-  it('offers both experimental Codex reply modes, fixes gpt-5.5, and blocks direct caller audio', async () => {
+  it('offers all four Codex reply modes, pins their models, and blocks direct caller audio', async () => {
     const { fl, calls } = makeFl({
       records: [{
         id: 'r1',
@@ -246,14 +284,29 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     const values = Array.from(reply.options).map((option) => option.value);
     expect(values).toContain('provider:openai-codex-agent-none');
     expect(values).toContain('provider:openai-codex-agent-low');
+    expect(values).toContain('provider:openai-codex-agent-luna-low');
+    expect(values).toContain('provider:openai-codex-agent-luna-low-fast');
+    expect(values.some((value) => value.includes('nano'))).toBe(false);
+
+    const editableModel = root.querySelector('[data-d="model"]') as HTMLInputElement;
+    expect(editableModel.value).toBe('local-model');
+    expect(
+      reply.compareDocumentPosition(editableModel) & res.dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+
+    reply.value = 'provider:openai-codex-agent-luna-low-fast';
+    reply.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+    expect(root.querySelector('[data-d="model"]')).toBeNull();
+    expect(root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain(
+      'priority service',
+    );
 
     reply.value = 'provider:openai-codex-agent-low';
     reply.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
     await flush(30);
 
-    const model = root.querySelector('[data-d="model"]') as HTMLInputElement;
-    expect(model.value).toBe('gpt-5.5');
-    expect(model.disabled).toBe(true);
+    expect(root.querySelector('[data-d="model"]')).toBeNull();
     expect((root.querySelector('[data-lane="stt"]') as HTMLSelectElement).value).toBe('service:aokie-stt');
     expect((root.querySelector('[data-lane="tts"]') as HTMLSelectElement).value).toBe('service:aokie-tts');
     expect(root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain('may add noticeable delay');
@@ -282,6 +335,64 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     expect(calls.set[1].aiEndpoint).toBe(
       'http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-low/v1/chat/completions',
     );
+    // The picker is record-owned, not merely a transient settings.set choice:
+    // Save & apply writes the exact provider id so a fresh screen round-trips it.
+    expect(calls.update[1].answers.llm_source).toBe('provider:openai-codex-agent-low');
+    expect(calls.update[1].answers.model).toBe('gpt-5.5');
+  });
+
+  it('defaults ChatGPT via Codex to Luna low, hides its fixed model input, and hydrates exactly', async () => {
+    const { fl, calls } = makeFl({
+      records: [{ id: 'r1', answers: { model: 'local-model' } }],
+      settings: { sendAudio: true, audioTranscript: false },
+      aiSources: CODEX_SOURCES,
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const reply = res.root.querySelector('[data-lane="llm"]') as HTMLSelectElement;
+    expect(reply.options[0].value).toBe('provider:openai-codex-agent-luna-low');
+    reply.value = 'provider:openai-codex-agent-luna-low';
+    reply.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+
+    expect(res.root.querySelector('[data-d="model"]')).toBeNull();
+    expect(res.root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain(
+      'low reasoning, its fastest supported reasoning setting',
+    );
+    expect(res.root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain('streams into Aokie');
+
+    (res.root.querySelector('[data-act="save-apply"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(calls.set[0].sendAudio).toBe(false);
+    expect(calls.set[0].aiModel).toBe('gpt-5.6-luna');
+    expect(calls.set[0].aiEndpoint).toBe(
+      'http://127.0.0.1:17872/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions',
+    );
+    expect(calls.update[0].answers.llm_source).toBe('provider:openai-codex-agent-luna-low');
+    expect(calls.update[0].answers.model).toBe('gpt-5.6-luna');
+
+    const hydrated = await runScreen(
+      AOKIE_RECEPTIONIST_SETTINGS_SCREEN,
+      makeFl({
+        records: [
+          {
+            id: 'r2',
+            answers: {
+              llm_source: 'provider:openai-codex-agent-luna-low',
+              model: 'gpt-5.6-luna',
+            },
+          },
+        ],
+        settings: { sendAudio: true, audioTranscript: false },
+        aiSources: CODEX_SOURCES,
+      }).fl,
+    );
+    await flush(60);
+    expect((hydrated.root.querySelector('[data-lane="llm"]') as HTMLSelectElement).value).toBe(
+      'provider:openai-codex-agent-luna-low',
+    );
+    expect(hydrated.root.querySelector('[data-d="model"]')).toBeNull();
+    expect((hydrated.root.querySelector('[data-audio="mode"]') as HTMLSelectElement).value).toBe('off');
   });
 
   it('normalizes a previously saved Codex source and never restores stale sendAudio=true', async () => {
@@ -302,7 +413,10 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     await flush(60);
     const root = res.root;
 
-    expect((root.querySelector('[data-d="model"]') as HTMLInputElement).value).toBe('gpt-5.5');
+    expect((root.querySelector('[data-lane="llm"]') as HTMLSelectElement).value).toBe(
+      'provider:openai-codex-agent-none',
+    );
+    expect(root.querySelector('[data-d="model"]')).toBeNull();
     expect((root.querySelector('[data-audio="mode"]') as HTMLSelectElement).value).toBe('off');
     expect(root.querySelector('.savebar .dirty')?.textContent).toBe('Unsaved changes');
     expect(root.querySelector('[data-codex-live-call-note="services"]')?.textContent).toContain('fastest setting');

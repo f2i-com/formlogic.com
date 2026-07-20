@@ -75,11 +75,14 @@ export function composeAgentPayload(
   //    caller OMITS the key and the per-call flow owns it;
   //  - 'provider:<id>' composes the fixed AI-gateway base (LLM lane only via
   //    providerOk - the gateway has no audio routes yet, speech lanes get '');
-  //  - blank/'custom' falls back to the legacy custom-endpoint field.
-  function lane(source: string, custom: string, path: string, providerOk: boolean): string | undefined {
+  //  - blank/'custom' falls back to the legacy custom-endpoint field. On the
+  //    LLM lane only, completely blank preserves the plugin's current
+  //    Desktop-selected LLM rather than clearing it.
+  function lane(source: string, custom: string, path: string, providerOk: boolean, preserveBlank: boolean): string | undefined {
     const src = source.trim();
     const url = custom.trim();
-    if (!src || src === 'custom') return url;
+    if (!src) return preserveBlank && !url ? undefined : url;
+    if (src === 'custom') return url;
     if (src.indexOf('service:') === 0) {
       if (!services) return undefined;
       const sid = src.slice(8);
@@ -109,26 +112,32 @@ export function composeAgentPayload(
       ? 'Thank you for calling ' + business + '! How can I help you today?'
       : 'Thanks for calling! How can I help you today?';
   }
+  const ownsAiEndpoint = d.llm_source.trim() !== '' || d.llm_endpoint.trim() !== '';
+  const ownsAiModel = ownsAiEndpoint || d.model.trim() !== '';
   const payload: Record<string, unknown> = {
     persona,
     greeting,
     ttsVoice: d.voice.trim(),
-    aiModel: d.model.trim(),
-    aiEndpoint: lane(d.llm_source, d.llm_endpoint, '/v1/chat/completions', true),
+    // A fully blank/default record preserves Desktop's model too. A legacy
+    // model-only record and every explicit endpoint/source still apply.
+    aiModel: ownsAiModel ? d.model.trim() : undefined,
+    // Blank means this pack record does not own the Desktop/plugin LLM choice.
+    // Explicit provider/service/custom picks still return a value and apply.
+    aiEndpoint: lane(d.llm_source, d.llm_endpoint, '/v1/chat/completions', true, true),
     // provider: picks are GATED off the speech lanes (providerOk=false) - the
     // gateway serves no audio routes yet; they resolve to '' (plugin default).
-    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', false),
-    ttsEndpoint: lane(d.tts_source, d.tts_endpoint, '/v1/audio/speech', false),
+    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', false, false),
+    ttsEndpoint: lane(d.tts_source, d.tts_endpoint, '/v1/audio/speech', false, false),
     // Correction lane (audioTranscript): a CHAT endpoint, so it composes with
     // the LLM lane's path. Blank source resolves to '' (corrections use the
     // main reply model). audioTranscriptModel is deliberately NOT pushed -
     // the chosen service owns its model.
-    audioTranscriptEndpoint: lane(d.correction_source, d.correction_endpoint, '/v1/chat/completions', true),
+    audioTranscriptEndpoint: lane(d.correction_source, d.correction_endpoint, '/v1/chat/completions', true, false),
     aiReceptionist: d.reply_mode !== 'flow',
   };
   // An unresolvable service pick (no Desktop list here - remote console)
   // omits its key: the per-call Configure flow resolves it on the desktop.
-  for (const k of ['aiEndpoint', 'sttEndpoint', 'ttsEndpoint', 'audioTranscriptEndpoint']) {
+  for (const k of ['aiModel', 'aiEndpoint', 'sttEndpoint', 'ttsEndpoint', 'audioTranscriptEndpoint']) {
     if (payload[k] === undefined) delete payload[k];
   }
   return payload;

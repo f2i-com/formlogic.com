@@ -71,8 +71,9 @@ Two separate definitions are exposed:
    - auth: managed by a supervised, stdio-only `codex app-server`
    - capabilities: `agent.codex`, `agent.assistant`, and an explicitly
      experimental text-only `llm.chat` Aokie adapter
-   - defaults to no filesystem access, no approvals, and no agent/tool network
-     access; the prompt and response still travel to OpenAI through Codex
+   - exposes no model-visible file, command, browser, app, MCP, or network tools
+     and permits no approvals; the managed process still reads its own private
+     OAuth profile and the prompt/response travel to OpenAI through Codex
    - on Windows, uses Codex file-backed auth only inside a fresh versioned
      profile with a protected Owner Rights/SYSTEM/Administrators DACL and
      verified EFS; the OAuth `auth.json` file remains logically plaintext to
@@ -81,9 +82,10 @@ Two separate definitions are exposed:
    - retains operating-system keyring auth on non-Windows builds
    - is never advertised as `voice.realtime`; the Aokie adapter is a bounded
      STT → text turn → TTS lane, not a raw-audio or Realtime voice provider
-   - exposes separate reasoning-off and low-reasoning pseudo-provider routes,
-     fixed to the live-tested `gpt-5.5` model; every call turn is ephemeral and
-     the exact reserved routes cannot be shadowed by provider profiles
+   - exposes GPT-5.6 Luna low-reasoning routes in default and priority Fast
+     modes, plus the existing GPT-5.5 reasoning-off/low compatibility routes;
+     every call turn is ephemeral and the exact reserved routes cannot be
+     shadowed by provider profiles
 
 Raw ChatGPT tokens and raw App Server JSON-RPC are never returned through the
 Desktop HTTP API, plugin UI bridge, website relay, logs, or exports.

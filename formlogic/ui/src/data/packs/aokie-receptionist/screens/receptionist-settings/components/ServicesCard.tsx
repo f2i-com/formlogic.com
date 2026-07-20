@@ -4,8 +4,12 @@
 // FormLogic.aiSources(); null listing = no local desktop (saved picks still
 // resolve per call on the desktop).
 import {
+  codexLiveCallModel,
   codexLiveCallReasoning,
   d,
+  draftInput,
+  isCodexFastSource,
+  isCodexLunaSource,
   laneChange,
   laneOptions,
   laneUrlInput,
@@ -55,6 +59,9 @@ function LaneField(props: { lane: Lane; label: string; source: string; endpoint:
 
 export function ServicesCard() {
   const codexReasoning = codexLiveCallReasoning(d().llm_source);
+  const codexModel = codexLiveCallModel(d().llm_source);
+  const luna = isCodexLunaSource(d().llm_source);
+  const fast = isCodexFastSource(d().llm_source);
   return (
     <div class="card">
       <h2>Connected services</h2>
@@ -64,18 +71,37 @@ export function ServicesCard() {
       </p>
       <LaneField
         lane="llm"
-        label="Reply model (LLM)"
+        label="LLM source"
         source={d().llm_source}
         endpoint={d().llm_endpoint}
         placeholder="e.g. http://127.0.0.1:8080/v1/chat/completions"
         hint="Built-in = the plugin's configured endpoint (auto-detects a local llama.cpp/Ollama)."
       />
+      {codexModel === null ? (
+        <label class="f">
+          <span class="lbl">LLM model</span>
+          <input
+            type="text"
+            data-d="model"
+            value={d().model}
+            placeholder="e.g. llama3.1:8b (blank = auto)"
+            onInput={(e) => draftInput('model', e.currentTarget.value)}
+          />
+          <span class="hint">Leave blank to use the model currently loaded by the selected service.</span>
+        </label>
+      ) : null}
       {codexReasoning ? (
         <p class="hint" data-codex-live-call-note="services">
-          {codexReasoning === 'none'
+          {luna
+            ? 'GPT-5.6 Luna is selected with low reasoning, its fastest supported reasoning setting. '
+              + (fast
+                ? 'Fast mode requests Codex priority service; actual latency can still vary by load. '
+                : 'Default service mode avoids spending Fast-mode priority quota. ')
+              + 'The model is fixed automatically and its response streams into Aokie sentence by sentence.'
+            : codexReasoning === 'none'
             ? 'Experimental ChatGPT/Codex live-call mode. Off is the fastest setting and is intended for the shortest reply delay.'
             : 'Experimental ChatGPT/Codex live-call mode. Low can improve difficult replies, but may add noticeable delay on a phone call.'}
-          {' Live reply requests use transcript text. Aokie keeps using the selected speech-to-text and text-to-speech services.'}
+          {' Live reply requests use transcript text and the fixed ' + codexModel + ' model. Aokie keeps using the selected speech-to-text and text-to-speech services.'}
         </p>
       ) : null}
       <LaneField

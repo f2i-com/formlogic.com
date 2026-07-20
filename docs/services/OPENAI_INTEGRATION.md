@@ -40,19 +40,22 @@ text-only LLM for Aokie calls. It is not an OpenAI API key or an OpenAI
 Realtime voice connection.
 
 1. Install the compatible Codex runtime (the pilot accepts exactly the tested
-   `codex-cli 0.124.0` executable).
+   official `codex-cli 0.144.6` executable).
 2. Open the Codex card in **Service Center** and choose **Sign in with ChatGPT**.
 3. Finish the browser or device-code ceremony. Login, cancel, and logout are
    Desktop-owner operations and are not exposed to paired websites.
 4. After connection, **Try assistant** loads the account's current models and
-   reasoning options dynamically. A returned thread can be continued or reset.
-   On the live-tested `gpt-5.5` route, **Off (fastest)** requests no extended
-   reasoning; Low and the model's other advertised levels remain optional.
+   reasoning options dynamically. When Aokie is configured for a ChatGPT/Codex
+   call route, Try assistant mirrors that exact model, effort, and default or
+   priority service tier. It shows a running elapsed timer and the completed
+   response duration. A returned thread can be continued or reset.
 
 Desktop runs `codex app-server` as a managed child with a dedicated
 `CODEX_HOME`, ChatGPT-only authentication, no inherited API/access tokens or
-endpoint overrides, no filesystem access, no approvals, and no agent/tool
-network access. On Windows, Desktop uses a fresh, versioned profile directory,
+endpoint overrides, no approvals, and no model-visible file, command, browser,
+app, MCP, or network tools. The managed process can read its own protected OAuth
+profile, but raw App Server command RPC is not exposed by FormLogic. On Windows,
+Desktop uses a fresh, versioned profile directory,
 atomically applies a protected DACL granting full control only to its owner,
 SYSTEM, and local Administrators, and enables and verifies EFS before Codex can
 create `auth.json`. The prior profile is left untouched. The OAuth file remains
@@ -96,23 +99,28 @@ egress. Aokie's exact one-token prefix warm-up is answered locally and never
 sent to a billable cloud provider. API keys remain Desktop-held.
 
 When ChatGPT sign-in is connected, the Aokie **Reply model (LLM)** picker also
-offers two experimental delegated-agent sources:
+offers four delegated-agent sources, with Luna first:
 
-- **ChatGPT/Codex — reasoning off (fastest)**
-- **ChatGPT/Codex — low reasoning**
+- **ChatGPT/Codex — GPT-5.6 Luna, low reasoning** (default)
+- **ChatGPT/Codex — GPT-5.6 Luna, low reasoning, Fast mode**
+- **ChatGPT/Codex — GPT-5.5, reasoning off** (saved-setting compatibility)
+- **ChatGPT/Codex — GPT-5.5, low reasoning** (saved-setting compatibility)
 
-Both use the live-tested `gpt-5.5` route. Each call turn is text-only,
-ephemeral, bounded, and runs with files, tools, approvals, and agent network
-access disabled. Aokie's existing STT and TTS lanes still hear and speak. Raw
-caller audio is refused on the Codex lane, the warm-up request is answered
-locally, and a saved local-model name is replaced with `gpt-5.5` when the
-source is selected. The call adapter is turn-based and may be slower or busier
-than a production inference or Realtime service, so Aokie labels it
-experimental and preserves its normal failure handling. A call turn is stopped
-after nine seconds so Aokie can fail over before its ten-second first-response
-watchdog expires.
+Luna uses the CLI/App Server wire value `low`, which is the fastest reasoning
+effort Luna advertises. Fast mode keeps the same model and reasoning effort but
+requests Codex's `priority` service tier; actual latency can still vary. Each
+call turn is text-only, ephemeral, bounded, and runs without model-visible
+files, commands, tools, approvals, or agent network access. Aokie's existing
+STT and TTS lanes still hear and speak. Raw caller audio is refused on the Codex
+lane, the warm-up request is answered locally, and a saved local-model name is
+replaced with the exact model owned by the selected route. Codex App Server is
+kept alive and reused between turns. Exact text deltas stream immediately into
+Aokie's existing sentence/clause TTS pipeline; the adapter does not wait for
+the whole answer before forwarding its first safe spoken span. A call turn is
+stopped after nine seconds so Aokie can fail over before its ten-second
+first-response watchdog expires.
 
-The two gateway paths are reserved for the delegated service and cannot be
+The four gateway paths are reserved for the delegated service and cannot be
 shadowed by a user-created API provider. A paired website's OpenAI API grant
 does not authorize them; Aokie's per-install inference credential and renewed
 destination consent are required.

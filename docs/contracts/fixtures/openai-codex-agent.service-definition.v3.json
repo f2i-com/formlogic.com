@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "id": "openai-codex-agent",
-  "version": "0.2.0-pilot",
+  "version": "0.3.0-pilot",
   "minDesktopVersion": "0.1.0",
   "publisher": {
     "id": "formlogic",
@@ -30,7 +30,8 @@
     "additionalProperties": false,
     "properties": {
       "model": { "type": "string" },
-      "reasoningEffort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh"] }
+      "reasoningEffort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] },
+      "serviceTier": { "enum": ["priority"] }
     }
   },
   "ui": {
@@ -69,8 +70,9 @@
           "threadId": { "type": "string" },
           "model": { "type": "string" },
           "reasoningEffort": {
-            "enum": ["none", "minimal", "low", "medium", "high", "xhigh"]
-          }
+            "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+          },
+          "serviceTier": { "enum": ["priority"] }
         }
       },
       "outputSchema": {
@@ -89,7 +91,7 @@
     {
       "id": "live-call.chat",
       "title": "Answer an Aokie call turn",
-      "description": "Generate the next text-only Aokie reply through an ephemeral Codex turn. The pilot supports reasoning off or low, keeps STT/TTS separate, and is not OpenAI Realtime voice.",
+      "description": "Generate the next text-only Aokie reply through an ephemeral Codex turn. GPT-5.6 Luna uses low reasoning, with an optional priority Fast mode; STT/TTS remain separate and this is not OpenAI Realtime voice.",
       "category": { "id": "ai.calls", "label": "AI / Calls" },
       "tags": ["aokie", "calls", "text", "experimental"],
       "capability": "llm.chat",
@@ -102,7 +104,7 @@
         "required": ["messages"],
         "properties": {
           "messages": { "type": "array", "minItems": 1, "maxItems": 64 },
-          "model": { "const": "gpt-5.5" },
+          "model": { "const": "gpt-5.6-luna" },
           "stream": { "type": "boolean" }
         }
       },
@@ -110,7 +112,7 @@
       "transport": {
         "kind": "openai-compatible",
         "method": "POST",
-        "path": "/api/ai/providers/openai-codex-agent-none/v1/chat/completions"
+        "path": "/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions"
       },
       "requiredGrants": ["formlogic.owner", "services.invoke", "aokie.calls"],
       "dataClasses": ["caller-transcript", "conversation-history"]

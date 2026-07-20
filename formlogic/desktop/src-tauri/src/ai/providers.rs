@@ -673,10 +673,8 @@ mod tests {
     fn virtual_codex_call_provider_ids_cannot_be_persisted() {
         let dir = tmp();
         let mut reg = ProviderRegistry::load(&dir);
-        for id in [
-            super::super::codex::LIVE_CALL_PROVIDER_NONE_ID,
-            super::super::codex::LIVE_CALL_PROVIDER_LOW_ID,
-        ] {
+        for variant in super::super::codex::CodexLiveCallVariant::ALL {
+            let id = variant.provider_id();
             let error = reg
                 .upsert(profile(id, vec![Capability::Chat]))
                 .expect_err("virtual Codex provider id must stay host-owned");
@@ -711,6 +709,7 @@ mod tests {
         let dir = tmp();
         let encoded_none = "openai%2Dcodex-agent-none";
         let encoded_low = "%6fpenai-codex-agent-low";
+        let encoded_luna = "openai-codex-agent-luna%2Dlow";
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("ai-providers.json"),
@@ -720,6 +719,7 @@ mod tests {
                     profile("openai", vec![Capability::Chat]),
                     profile(encoded_none, vec![Capability::Chat]),
                     profile(encoded_low, vec![Capability::Chat]),
+                    profile(encoded_luna, vec![Capability::Chat]),
                     profile("OpenAI", vec![Capability::Chat]),
                     profile("malformed%GG", vec![Capability::Chat]),
                 ],
@@ -738,6 +738,11 @@ mod tests {
                         alias: "shadow-low".into(),
                         capability: Capability::Chat,
                         provider_id: encoded_low.into(),
+                    },
+                    AliasBinding {
+                        alias: "shadow-luna".into(),
+                        capability: Capability::Chat,
+                        provider_id: encoded_luna.into(),
                     },
                     AliasBinding {
                         alias: "invalid".into(),
@@ -767,7 +772,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["valid"]
         );
-        for id in [encoded_none, encoded_low] {
+        for id in [encoded_none, encoded_low, encoded_luna] {
             let error = reloaded
                 .upsert(profile(id, vec![Capability::Chat]))
                 .expect_err("a once-decoded Codex shadow must be reserved");
