@@ -39,7 +39,11 @@ const CAP_INFO: Record<AiCapability, { label: string; desc: string; served: bool
   transcription: { label: 'Transcription', desc: 'Speech-to-text.', served: true },
   speech: { label: 'Speech', desc: 'Text-to-speech.', served: false },
   embeddings: { label: 'Embeddings', desc: 'Vector embeddings.', served: false },
-  realtime: { label: 'Realtime', desc: 'Realtime voice sessions.', served: true },
+  realtime: {
+    label: 'Realtime',
+    desc: 'Browser WebRTC and signed Aokie speech-to-speech sessions.',
+    served: true,
+  },
 };
 
 const PRESETS: Record<string, Partial<AiProviderProfile>> = {
@@ -65,7 +69,7 @@ const PRESETS: Record<string, Partial<AiProviderProfile>> = {
   'openai-gpt-realtime-2-1-mini': {
     name: 'OpenAI GPT-Realtime-2.1 mini',
     category: 'Cloud AI APIs',
-    tags: ['openai', 'realtime', 'voice', 'webrtc'],
+    tags: ['openai', 'realtime', 'voice', 'webrtc', 'websocket', 'aokie'],
     protocol: 'openai',
     baseUrl: 'https://api.openai.com',
     model: 'gpt-realtime-2.1-mini',
@@ -675,7 +679,12 @@ export function ProviderForm({
   const capabilitySpec = (capability: string) => p.specs?.[capability] ?? {};
   const setCapabilitySpec = (
     capability: string,
-    patch: Partial<{ path: string; requestTemplate: string; responsePath: string }>,
+    patch: Partial<{
+      path: string;
+      websocketPath: string;
+      requestTemplate: string;
+      responsePath: string;
+    }>,
   ) =>
     setP((cur) => {
       const next = { ...(cur.specs?.[capability] ?? {}), ...patch };
@@ -1034,7 +1043,7 @@ export function ProviderForm({
       )}
       {p.capabilities.includes('realtime') && (
         <details className="custom-mapping">
-          <summary>Realtime WebRTC endpoint (advanced)</summary>
+          <summary>Realtime endpoints (advanced)</summary>
           <label className="form-row">
             <span>Realtime session endpoint path</span>
             <input
@@ -1047,6 +1056,22 @@ export function ProviderForm({
             <span className="form-hint">
               Leave blank for the protocol default. The endpoint must accept SDP and session JSON as
               OpenAI-compatible multipart fields; Desktop returns the SDP answer without exposing the key.
+            </span>
+          </label>
+          <label className="form-row">
+            <span>Realtime server WebSocket path</span>
+            <input
+              type="text"
+              spellCheck={false}
+              value={capabilitySpec('realtime').websocketPath ?? ''}
+              onChange={(e) =>
+                setCapabilitySpec('realtime', { websocketPath: e.target.value })
+              }
+              placeholder="/v1/realtime"
+            />
+            <span className="form-hint">
+              Used only by the signed Aokie phone-audio bridge. Desktop pins the provider address,
+              holds the reusable API secret, and relays bounded 24 kHz PCM without exposing the key.
             </span>
           </label>
         </details>

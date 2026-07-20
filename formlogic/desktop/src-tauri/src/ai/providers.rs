@@ -72,6 +72,10 @@ pub struct CapabilitySpec {
     /// Dot-path into the JSON response for the text/result (Custom chat only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_path: Option<String>,
+    /// Server-to-server WebSocket path for Realtime audio. This is distinct
+    /// from `path`, which remains the browser WebRTC SDP endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub websocket_path: Option<String>,
 }
 
 /// A header sent to the provider; the value may contain `{{apiKey}}`, expanded
@@ -162,6 +166,34 @@ impl ProviderProfile {
             (Protocol::Anthropic, _) => "/v1/messages".into(),
             (Protocol::Custom, _) => "/".into(),
         }
+    }
+
+    /// The server-to-server WebSocket endpoint for a Realtime provider.
+    /// Provider base URLs stay HTTP(S) in the persisted schema; the egress
+    /// layer converts the validated target to WS(S) after DNS pinning.
+    pub fn realtime_websocket_path(&self) -> String {
+        self.specs
+            .get(capability_key(Capability::Realtime))
+            .and_then(|spec| spec.websocket_path.as_ref())
+            .cloned()
+            .unwrap_or_else(|| "/v1/realtime".into())
+    }
+
+    /// Secret-free provider origin disclosed to Aokie's consent UI. It is the
+    /// canonical HTTP(S) service origin behind the derived WS(S) connection,
+    /// never the loopback bridge URL, and deliberately excludes credentials,
+    /// path, query, and fragment.
+    pub fn realtime_destination_origin(&self) -> Option<String> {
+        let url = url::Url::parse(&self.base_url).ok()?;
+        if !url.username().is_empty() || url.password().is_some() {
+            return None;
+        }
+        match url.scheme() {
+            "https" | "http" => {}
+            _ => return None,
+        }
+        let origin = url.origin().ascii_serialization();
+        (origin != "null").then_some(origin)
     }
 }
 
@@ -802,6 +834,19 @@ fn normalize_provider_metadata(profile: &mut ProviderProfile) -> Result<(), Stri
                 );
             }
         }
+        if let Some(path) = spec.websocket_path.as_deref() {
+            if path.len() > 2048
+                || !path.starts_with('/')
+                || path.starts_with("//")
+                || path.contains(['?', '#'])
+                || path.chars().any(char::is_control)
+            {
+                return Err(
+                    "Realtime WebSocket paths must be relative paths beginning with one / and cannot contain a query or fragment"
+                        .into(),
+                );
+            }
+        }
         if let Some(template) = spec.request_template.as_deref() {
             if template.len() > MAX_MAPPING_TEMPLATE_BYTES {
                 return Err("custom request templates are limited to 256 KiB".into());
@@ -1104,6 +1149,7 @@ mod tests {
                 path: Some("/generate".into()),
                 request_template: Some(r#"{"prompt":"{{prompt}}"}"#.into()),
                 response_path: Some("result.text".into()),
+                websocket_path: None,
             },
         );
         reg.upsert(safe).unwrap();
@@ -1380,6 +1426,47 @@ mod tests {
         assert_eq!(p.path_for(Capability::Chat), "/v1/chat/completions");
         assert_eq!(p.path_for(Capability::Speech), "/v1/audio/speech");
         assert_eq!(p.path_for(Capability::Realtime), "/v1/realtime/calls");
+        assert_eq!(p.realtime_websocket_path(), "/v1/realtime");
+        assert_eq!(
+            p.realtime_destination_origin().as_deref(),
+            Some("https://api.openai.com")
+        );
         assert!(p.supports(Capability::Chat), "empty caps = all");
+    }
+
+    #[test]
+    fn realtime_websocket_path_is_independent_and_bounded() {
+        let dir = tmp();
+        let mut registry = ProviderRegistry::load(&dir);
+        let mut provider = profile("realtime", vec![Capability::Realtime]);
+        provider.specs.insert(
+            "realtime".into(),
+            CapabilitySpec {
+                path: Some("/v1/realtime/calls".into()),
+                websocket_path: Some("/custom/realtime".into()),
+                ..CapabilitySpec::default()
+            },
+        );
+        registry.upsert(provider.clone()).unwrap();
+        assert_eq!(
+            registry.get("realtime").unwrap().realtime_websocket_path(),
+            "/custom/realtime"
+        );
+        provider.specs.get_mut("realtime").unwrap().websocket_path =
+            Some("/v1/realtime?model=smuggled".into());
+        assert!(registry.upsert(provider).unwrap_err().contains("WebSocket"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn destination_origin_drops_paths_queries_and_credentials() {
+        let mut provider = profile("realtime", vec![Capability::Realtime]);
+        provider.base_url = "https://api.example.test:8443/customer/path?token=hidden".into();
+        assert_eq!(
+            provider.realtime_destination_origin().as_deref(),
+            Some("https://api.example.test:8443")
+        );
+        provider.base_url = "https://user:secret@api.example.test/v1".into();
+        assert!(provider.realtime_destination_origin().is_none());
     }
 }

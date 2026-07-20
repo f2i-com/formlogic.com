@@ -31,7 +31,7 @@
 //! Phase 4 (after Playwright sidecar): /api/browser/*
 
 use axum::{
-    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State},
+    extract::{DefaultBodyLimit, Extension, Multipart, Path, Query, Request, State, WebSocketUpgrade},
     http::{
         header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, ORIGIN},
         HeaderMap, HeaderValue, Method, StatusCode,
@@ -124,6 +124,9 @@ struct AppState {
     /// separate from the OpenAI-compatible provider registry because a
     /// ChatGPT subscription is not an OpenAI Platform API credential.
     codex_agent: crate::ai::codex::CodexAgentHandle,
+    /// At most two simultaneous server-to-server voice sessions (one live
+    /// call plus a bounded preconnect/waiting call).
+    realtime_sessions: Arc<tokio::sync::Semaphore>,
 }
 
 /// Current companion id, reported by `/api/health` + `/api/desktop/info`.
@@ -750,6 +753,11 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
     {
         let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
         for view in reg.list() {
+            let destination_origin = view
+                .profile
+                .supports(crate::ai::providers::Capability::Realtime)
+                .then(|| view.profile.realtime_destination_origin())
+                .flatten();
             let v = serde_json::to_value(&view).unwrap_or_default();
             sources.push(serde_json::json!({
                 "id": format!("provider:{}", v["id"].as_str().unwrap_or_default()),
@@ -763,6 +771,9 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
                 "hasKey": v["hasKey"],
                 "enabled": v["enabled"],
                 "model": v["model"],
+                // Consent binds Aokie's caller audio to the actual provider
+                // origin, never the loopback bridge or a credential-bearing path.
+                "destinationOrigin": destination_origin,
                 "useCases": ["background", "forms", "flows", "live-call"],
             }));
         }
@@ -1596,6 +1607,88 @@ async fn ai_gateway_realtime_session_for(
     Json(body): Json<RealtimeSessionBody>,
 ) -> Response {
     ai_realtime_session_impl(&state, Some(&id), body).await
+}
+
+/// Signed-plugin-only server-to-server Realtime audio stream. The middleware
+/// records which trust anchor admitted the request; this handler checks it
+/// again so an ordinary website service grant never becomes caller-audio
+/// authority. Binary local frames are raw PCM16LE mono 24 kHz.
+async fn ai_realtime_stream_impl(
+    state: &AppState,
+    authority: Option<Extension<RequestAuthority>>,
+    provider_id: Option<&str>,
+    websocket: WebSocketUpgrade,
+) -> Response {
+    let Some(Extension(authority)) = authority else {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "plugin_required",
+            "Realtime phone audio requires the signed Aokie plugin.",
+        );
+    };
+    if !(authority.plugin_gateway || authority.desktop_admin) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "plugin_required",
+            "Realtime phone audio requires the signed Aokie plugin.",
+        );
+    }
+    let provider = match crate::ai::gateway::resolve_provider(
+        &state.ai_providers,
+        provider_id,
+        None,
+        crate::ai::providers::Capability::Realtime,
+    ) {
+        Ok(Some(provider)) => provider,
+        Ok(None) => {
+            return desktop_err(
+                StatusCode::NOT_FOUND,
+                "no_provider",
+                "No enabled Realtime provider is configured.",
+            )
+        }
+        Err(error) => return ai_gateway_error(error),
+    };
+    let prepared = match crate::ai::realtime_bridge::prepare(&state.ai_providers, &provider) {
+        Ok(prepared) => prepared,
+        Err(error) => return ai_gateway_error(error),
+    };
+    let permit = match state.realtime_sessions.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return desktop_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "realtime_busy",
+                "The Desktop Realtime bridge already has two active sessions.",
+            )
+        }
+    };
+    websocket
+        .max_message_size(crate::ai::realtime_bridge::MAX_LOCAL_MESSAGE_BYTES)
+        .max_frame_size(crate::ai::realtime_bridge::MAX_LOCAL_FRAME_BYTES)
+        .max_write_buffer_size(1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            crate::ai::realtime_bridge::run(socket, prepared).await;
+        })
+        .into_response()
+}
+
+async fn ai_gateway_realtime_stream(
+    State(state): State<AppState>,
+    authority: Option<Extension<RequestAuthority>>,
+    websocket: WebSocketUpgrade,
+) -> Response {
+    ai_realtime_stream_impl(&state, authority, None, websocket).await
+}
+
+async fn ai_gateway_realtime_stream_for(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    authority: Option<Extension<RequestAuthority>>,
+    websocket: WebSocketUpgrade,
+) -> Response {
+    ai_realtime_stream_impl(&state, authority, Some(&id), websocket).await
 }
 
 fn codex_live_call_created() -> u64 {
@@ -4153,6 +4246,27 @@ fn is_ai_inference_path(path: &str) -> bool {
     false
 }
 
+/// Exact server Realtime lanes. They remain inference paths so the signed
+/// plugin gateway token reaches the middleware, but paired websites are denied
+/// regardless of ordinary OpenAI service grants.
+fn is_ai_realtime_stream_path(path: &str) -> bool {
+    if path == "/api/ai/v1/realtime/stream" {
+        return true;
+    }
+    decoded_provider_inference_route(path)
+        .ok()
+        .flatten()
+        .is_some_and(|(_provider_id, action)| action == "realtime/stream")
+}
+
+fn realtime_stream_principal_allowed(
+    server_token_ok: bool,
+    gui_webview_ok: bool,
+    plugin_gateway_ok: bool,
+) -> bool {
+    server_token_ok || gui_webview_ok || plugin_gateway_ok
+}
+
 /// Website access to the delegated ChatGPT account is an owner-only pilot.
 /// The cloud issuer mints only these exact action grants; it never gives the
 /// website a reusable owner wildcard.
@@ -4268,6 +4382,9 @@ fn openai_api_owner_capability(method: &Method, path: &str) -> Option<&'static s
         (&Method::POST, Some("realtime/sessions")) => {
             Some("service.openai-api.realtime.session.create")
         }
+        (&Method::GET, Some("realtime/stream")) => {
+            Some("service.openai-api.realtime.stream.connect")
+        }
         (&Method::GET, Some("models")) => Some("service.openai-api.models.list"),
         _ => Some("service.openai-api.unsupported"),
     }
@@ -4368,6 +4485,15 @@ struct AuthConfig {
     gui_mode: bool,
 }
 
+/// Auth facts carried from middleware into high-risk inference handlers. A
+/// paired site can use ordinary spend-bearing actions, but never receives the
+/// signed plugin's caller-audio authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RequestAuthority {
+    desktop_admin: bool,
+    plugin_gateway: bool,
+}
+
 /// Pure decision core of [`management_auth_guard`] (LOCAL-SEC-001), split out
 /// for tests.
 ///
@@ -4451,7 +4577,7 @@ fn management_auth_decision(
 /// native no-Origin posture described on [`management_auth_decision`].
 async fn management_auth_guard(
     State(st): State<DesktopState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> axum::response::Response {
     if req.method() == Method::OPTIONS {
@@ -4516,6 +4642,18 @@ async fn management_auth_guard(
         );
     }
 
+    // Caller audio is materially different from ordinary website inference:
+    // only the signed Aokie token or Desktop administration may open this lane.
+    if is_ai_realtime_stream_path(req.uri().path())
+        && !realtime_stream_principal_allowed(server_token_ok, gui_webview_ok, plugin_gateway_ok)
+    {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "plugin_required",
+            "Realtime phone audio requires the signed Aokie plugin.",
+        );
+    }
+
     // Axum percent-decodes `Path<String>` before the inference handler sees
     // the provider id. Select the service capability from that same decoded
     // identity; malformed escapes must never fall through to the generic
@@ -4557,6 +4695,11 @@ async fn management_auth_guard(
             }
         }
     }
+
+    req.extensions_mut().insert(RequestAuthority {
+        desktop_admin: server_token_ok || gui_webview_ok,
+        plugin_gateway: plugin_gateway_ok,
+    });
 
     next.run(req).await
 }
@@ -4625,6 +4768,7 @@ pub async fn serve(
         flow_runtime: flow_runtime.clone(),
         ai_providers,
         codex_agent,
+        realtime_sessions: Arc::new(tokio::sync::Semaphore::new(2)),
     };
 
     let desktop_state = DesktopState {
@@ -4755,6 +4899,10 @@ pub async fn serve(
             post(ai_gateway_realtime_session).layer(DefaultBodyLimit::max(3 * 1024 * 1024)),
         )
         .route(
+            "/api/ai/v1/realtime/stream",
+            get(ai_gateway_realtime_stream),
+        )
+        .route(
             "/api/ai/providers/:id/v1/models",
             get(ai_gateway_models_for),
         )
@@ -4776,6 +4924,10 @@ pub async fn serve(
             "/api/ai/providers/:id/v1/realtime/sessions",
             post(ai_gateway_realtime_session_for)
                 .layer(DefaultBodyLimit::max(3 * 1024 * 1024)),
+        )
+        .route(
+            "/api/ai/providers/:id/v1/realtime/stream",
+            get(ai_gateway_realtime_stream_for),
         )
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
@@ -4930,8 +5082,9 @@ mod tests {
         codex_live_call_completion, codex_owner_capability, connector_failure_status,
         decoded_provider_inference_route, desktop_auth_decision, desktop_info_body,
         direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
-        is_gui_webview_origin, is_privileged_path, management_auth_decision, offline_grace_grants,
-        openai_api_owner_capability, screen_asset_content_type, service_source_capabilities,
+        is_ai_realtime_stream_path, is_gui_webview_origin, is_privileged_path,
+        management_auth_decision, offline_grace_grants, openai_api_owner_capability,
+        realtime_stream_principal_allowed, screen_asset_content_type, service_source_capabilities,
         strict_percent_decode_path_segment, website_service_capability,
         AokieCodexPhoneConfiguration, OFFLINE_GRACE_MAX_AGE,
     };
@@ -5368,10 +5521,12 @@ mod tests {
             "/api/ai/v1/audio/transcriptions",
             "/api/ai/v1/audio/chat/completions",
             "/api/ai/v1/realtime/sessions",
+            "/api/ai/v1/realtime/stream",
             "/api/ai/providers/openai/v1/models",
             "/api/ai/providers/my-llama/v1/chat/completions",
             "/api/ai/providers/openai-stt/v1/audio/transcriptions",
             "/api/ai/providers/openai-realtime/v1/realtime/sessions",
+            "/api/ai/providers/openai-realtime/v1/realtime/stream",
             "/api/ai/providers/openai-codex-agent/v1/chat/completions",
             "/api/ai/providers/openai-codex-agent-none/v1/models",
             "/api/ai/providers/openai-codex-agent-low/v1/chat/completions",
@@ -5580,6 +5735,13 @@ mod tests {
                 "exact website action for {path}"
             );
         }
+        assert_eq!(
+            openai_api_owner_capability(
+                &Method::GET,
+                "/api/ai/providers/openai-realtime/v1/realtime/stream",
+            ),
+            Some("service.openai-api.realtime.stream.connect")
+        );
         assert!(grant_covers_capability(&[chat.into()], chat));
         assert!(!grant_covers_capability(&[models.into()], chat));
         assert!(!grant_covers_capability(
@@ -5593,6 +5755,26 @@ mod tests {
         assert_eq!(
             openai_api_owner_capability(&Method::GET, "/api/ai/sources"),
             None
+        );
+    }
+
+    #[test]
+    fn realtime_stream_is_plugin_or_desktop_only_even_for_paired_websites() {
+        for path in [
+            "/api/ai/v1/realtime/stream",
+            "/api/ai/providers/openai-realtime/v1/realtime/stream",
+        ] {
+            assert!(is_ai_realtime_stream_path(path));
+        }
+        assert!(!is_ai_realtime_stream_path(
+            "/api/ai/providers/openai-realtime/v1/realtime/sessions"
+        ));
+        assert!(realtime_stream_principal_allowed(true, false, false));
+        assert!(realtime_stream_principal_allowed(false, true, false));
+        assert!(realtime_stream_principal_allowed(false, false, true));
+        assert!(
+            !realtime_stream_principal_allowed(false, false, false),
+            "pairing/grants are intentionally not inputs to caller-audio authority"
         );
     }
 

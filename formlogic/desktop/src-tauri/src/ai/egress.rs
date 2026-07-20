@@ -198,6 +198,27 @@ pub fn validate(base_url: &str, path: &str, access: LocalAccess) -> Result<Valid
     })
 }
 
+/// Validate and DNS-pin the HTTP(S) provider target, then convert only its
+/// transport scheme to WS(S). The socket is opened directly to `pinned`; the
+/// original hostname remains in the URI for TLS SNI and Host.
+pub fn validate_websocket(
+    base_url: &str,
+    path: &str,
+    access: LocalAccess,
+) -> Result<ValidatedTarget, EgressError> {
+    let mut target = validate(base_url, path, access)?;
+    let websocket_scheme = match target.url.scheme() {
+        "https" => "wss",
+        "http" => "ws",
+        _ => unreachable!("validate only accepts HTTP(S)"),
+    };
+    target
+        .url
+        .set_scheme(websocket_scheme)
+        .map_err(|_| EgressError("could not construct the provider WebSocket URL".into()))?;
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +256,33 @@ mod tests {
         assert!(validate("http://1.1.1.1", "x", LocalAccess::PublicOnly).is_err());
         assert!(validate("https://user:pw@1.1.1.1", "x", LocalAccess::PublicOnly).is_err());
         assert!(validate("ftp://1.1.1.1", "x", LocalAccess::PublicOnly).is_err());
+    }
+
+    #[test]
+    fn websocket_validation_preserves_the_pinned_host_and_tls_name() {
+        let target = validate_websocket("https://1.1.1.1", "/v1/realtime", LocalAccess::PublicOnly)
+            .expect("public WSS target");
+        assert_eq!(target.url.as_str(), "wss://1.1.1.1/v1/realtime");
+        assert_eq!(target.host, "1.1.1.1");
+        assert_eq!(target.port, 443);
+        assert_eq!(target.pinned.ip(), "1.1.1.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn websocket_plaintext_is_local_opt_in_only() {
+        assert!(validate_websocket(
+            "http://127.0.0.1:8080",
+            "/v1/realtime",
+            LocalAccess::PublicOnly,
+        )
+        .is_err());
+        let target = validate_websocket(
+            "http://127.0.0.1:8080",
+            "/v1/realtime",
+            LocalAccess::AllowLocal,
+        )
+        .expect("explicit local WS target");
+        assert_eq!(target.url.as_str(), "ws://127.0.0.1:8080/v1/realtime");
+        assert!(target.is_loopback);
     }
 }

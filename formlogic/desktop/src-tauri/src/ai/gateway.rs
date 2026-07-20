@@ -116,19 +116,31 @@ fn render_header(value: &str, key: Option<&str>) -> Result<String, GatewayError>
     Ok(value.replacen("{{apiKey}}", key, 1))
 }
 
-/// Apply auth + custom headers to a request builder for a provider.
-fn apply_headers(
-    mut rb: reqwest::RequestBuilder,
+/// Render auth + custom provider headers for both HTTP and WebSocket
+/// transports. Credentials remain in headers and never enter a URL or body.
+pub(crate) fn provider_headers(
     provider: &ProviderProfile,
     key: Option<&str>,
-) -> Result<reqwest::RequestBuilder, GatewayError> {
+) -> Result<reqwest::header::HeaderMap, GatewayError> {
+    let mut headers = reqwest::header::HeaderMap::new();
     let mut saw_auth = false;
     for h in &provider.headers {
         let lname = h.name.to_ascii_lowercase();
-        // Never forward hop-by-hop / host-spoofing headers from config.
+        // Never forward hop-by-hop, host-spoofing, or WebSocket handshake
+        // headers from config. tungstenite mints its own nonce/version and the
+        // pinned target retains the validated Host/SNI identity.
         if matches!(
             lname.as_str(),
-            "host" | "content-length" | "connection" | "proxy-authorization" | "transfer-encoding"
+            "host"
+                | "content-length"
+                | "connection"
+                | "proxy-authorization"
+                | "transfer-encoding"
+                | "upgrade"
+                | "sec-websocket-key"
+                | "sec-websocket-version"
+                | "sec-websocket-extensions"
+                | "sec-websocket-protocol"
         ) {
             continue;
         }
@@ -142,7 +154,12 @@ fn apply_headers(
         ) {
             saw_auth = true;
         }
-        rb = rb.header(&h.name, render_header(&h.value, key)?);
+        let name = reqwest::header::HeaderName::from_bytes(h.name.as_bytes())
+            .map_err(|_| GatewayError::BadRequest("provider header name is invalid".into()))?;
+        let rendered = render_header(&h.value, key)?;
+        let value = reqwest::header::HeaderValue::from_str(&rendered)
+            .map_err(|_| GatewayError::BadRequest("provider header value is invalid".into()))?;
+        headers.insert(name, value);
     }
     // Default auth if a key exists and no header referenced it.
     if !saw_auth {
@@ -154,15 +171,43 @@ fn apply_headers(
             }
             match provider.protocol {
                 Protocol::Anthropic => {
-                    rb = rb.header("x-api-key", k).header("anthropic-version", "2023-06-01");
+                    headers.insert(
+                        reqwest::header::HeaderName::from_static("x-api-key"),
+                        reqwest::header::HeaderValue::from_str(k).map_err(|_| {
+                            GatewayError::BadRequest(
+                                "provider credential exceeded the safe header limits".into(),
+                            )
+                        })?,
+                    );
+                    headers.insert(
+                        reqwest::header::HeaderName::from_static("anthropic-version"),
+                        reqwest::header::HeaderValue::from_static("2023-06-01"),
+                    );
                 }
                 _ => {
-                    rb = rb.header("authorization", format!("Bearer {k}"));
+                    let bearer = format!("Bearer {k}");
+                    headers.insert(
+                        reqwest::header::AUTHORIZATION,
+                        reqwest::header::HeaderValue::from_str(&bearer).map_err(|_| {
+                            GatewayError::BadRequest(
+                                "provider credential exceeded the safe header limits".into(),
+                            )
+                        })?,
+                    );
                 }
             }
         }
     }
-    Ok(rb)
+    Ok(headers)
+}
+
+/// Apply the shared provider headers to an ordinary HTTP request.
+fn apply_headers(
+    rb: reqwest::RequestBuilder,
+    provider: &ProviderProfile,
+    key: Option<&str>,
+) -> Result<reqwest::RequestBuilder, GatewayError> {
+    Ok(rb.headers(provider_headers(provider, key)?))
 }
 
 /// Resolve the provider for a request: an explicit id (`/providers/:id/…`) OR
@@ -901,6 +946,7 @@ mod tests {
                 path: Some("/generate".into()),
                 request_template: Some(r#"{"q":"{{prompt}}","m":"{{model}}"}"#.into()),
                 response_path: Some("result.text".into()),
+                websocket_path: None,
             },
         );
         let provider = ProviderProfile {
@@ -1122,6 +1168,7 @@ mod tests {
                 path: Some("/generate".into()),
                 request_template: Some(r#"{"prompt":"{{prompt}}","key":"{{apiKey}}"}"#.into()),
                 response_path: None,
+                websocket_path: None,
             },
         );
         let canonical = serde_json::json!({
@@ -1209,6 +1256,7 @@ mod tests {
                 path: Some("/api/chat".into()),
                 request_template: None,
                 response_path: None,
+                websocket_path: None,
             },
         );
         assert!(protocol_streamable(&base(Protocol::Custom, path_only)));
@@ -1221,6 +1269,7 @@ mod tests {
                     path: None,
                     request_template: tpl,
                     response_path: rp,
+                    websocket_path: None,
                 },
             );
             assert!(!protocol_streamable(&base(Protocol::Custom, specs)));

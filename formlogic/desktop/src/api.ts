@@ -374,7 +374,10 @@ export interface AiProviderProfile {
   headers: { name: string; value: string }[];
   /** Reusable API-secret id; the value remains in the OS credential store. */
   secretRef?: string;
-  specs?: Record<string, { path?: string; requestTemplate?: string; responsePath?: string }>;
+  specs?: Record<
+    string,
+    { path?: string; websocketPath?: string; requestTemplate?: string; responsePath?: string }
+  >;
   allowLocal: boolean;
   enabled: boolean;
 }
@@ -483,6 +486,8 @@ export interface AiSourceEntry {
   hasKey?: boolean;
   enabled?: boolean;
   protocol?: string;
+  /** Canonical provider origin used for caller-audio consent; never contains credentials/path/query. */
+  destinationOrigin?: string | null;
 }
 
 export const aiSources = {

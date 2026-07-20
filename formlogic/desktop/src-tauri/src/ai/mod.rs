@@ -13,3 +13,4 @@ pub mod egress;
 pub mod gateway;
 pub mod gateway_token;
 pub mod providers;
+pub mod realtime_bridge;

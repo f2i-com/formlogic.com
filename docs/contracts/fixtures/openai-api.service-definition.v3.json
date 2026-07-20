@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "id": "openai-api",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minDesktopVersion": "0.1.0",
   "publisher": {
     "id": "formlogic",
@@ -235,6 +235,45 @@
         "output": { "sdp": { "$path": "$.response" } }
       },
       "requiredGrants": ["services.invoke"],
+      "dataClasses": ["prompts", "conversation-history", "audio", "transcripts"]
+    },
+    {
+      "id": "realtime.stream.connect",
+      "title": "Connect Aokie Realtime phone audio",
+      "description": "Open one Desktop-brokered, provider-authenticated Realtime WebSocket for a consent-bound Aokie call. This action is restricted to the signed Aokie plugin and is never granted to a paired website.",
+      "category": { "id": "ai.realtime", "label": "AI / Realtime" },
+      "tags": ["audio", "realtime", "websocket", "aokie", "phone"],
+      "capability": "voice.realtime",
+      "sideEffects": "external-communication",
+      "idempotency": "none",
+      "streaming": { "mode": "events", "cancellable": true },
+      "timeoutMs": 900000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["callId", "generation", "destinationOrigin"],
+        "properties": {
+          "callId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "generation": { "type": "integer", "minimum": 0 },
+          "destinationOrigin": { "type": "string", "format": "uri" },
+          "voice": { "type": "string" },
+          "instructions": { "type": "string" },
+          "greeting": { "type": "string" },
+          "turnDetection": { "type": ["string", "object"] },
+          "maxOutputTokens": { "type": "integer", "minimum": 1, "maximum": 4096 }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Fenced ready/item/transcript/error controls plus raw PCM16LE mono 24 kHz binary frames."
+      },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "GET",
+        "path": "/v1/realtime",
+        "authInjection": { "kind": "bearer", "secret": "api-key" }
+      },
+      "request": { "query": { "model": { "$path": "$.settings.model" } } },
+      "requiredGrants": ["aokie.realtime"],
       "dataClasses": ["prompts", "conversation-history", "audio", "transcripts"]
     }
   ]
