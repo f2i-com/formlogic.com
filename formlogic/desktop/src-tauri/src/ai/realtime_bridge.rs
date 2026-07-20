@@ -305,6 +305,7 @@ struct SessionState {
 }
 
 impl SessionState {
+    #[cfg(test)]
     fn new(greeting: String) -> Self {
         Self::new_with_tools(greeting, false, false)
     }
