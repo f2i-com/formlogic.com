@@ -171,6 +171,7 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $versionsBefore = count(self::$versions->getVersions($settingsId));
         $dryRun = self::$upgrade->run($appId, $record, false);
         $this->assertSame('dry-run', $dryRun['mode']);
+        $this->assertFalse($dryRun['legacyScreenAccepted']);
         $this->assertSame(['background_ai_source', 'background_ai_model'], $dryRun['changes']['settingsFields']);
         $this->assertTrue($dryRun['changes']['customScreen']);
         $this->assertSame(AokieReceptionistUpgradeService::FLOW_SLUGS, $dryRun['changes']['flows']);
@@ -180,6 +181,7 @@ final class AokieReceptionistUpgradeTest extends TestCase
 
         $applied = self::$upgrade->run($appId, $record, true);
         $this->assertTrue($applied['applied']);
+        $this->assertFalse($applied['legacyScreenAccepted']);
         $this->assertSame(['version' => $versionsBefore + 1], $applied['snapshot']);
         $this->assertSame(AokieReceptionistUpgradeService::FLOW_SLUGS, $applied['changes']['flows']);
         $this->assertSame(['call-summary-follow-up', 'after-call-actions'], $applied['changes']['bindingEvents']);
@@ -223,6 +225,7 @@ final class AokieReceptionistUpgradeTest extends TestCase
         }
         $second = self::$upgrade->run($appId, $record, true);
         $this->assertFalse($second['applied']);
+        $this->assertFalse($second['legacyScreenAccepted']);
         $this->assertSame([], $second['changes']['settingsFields']);
         $this->assertFalse($second['changes']['customScreen']);
         $this->assertSame([], $second['changes']['flows']);
@@ -272,6 +275,49 @@ final class AokieReceptionistUpgradeTest extends TestCase
         } catch (\RuntimeException $e) {
             $this->assertStringContainsString('owner-authored', $e->getMessage());
         }
+
+        $ownerScreen = self::$forms->getForm($settingsId)['customScreen'];
+        try {
+            self::$upgrade->run($appId, $record, false, $this->screenDigest($ownerScreen));
+            $this->fail('An arbitrary owner screen was accepted by supplying its own digest');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('not a known legacy', $e->getMessage());
+        }
+
+        $knownLegacyDigest = 'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7';
+        try {
+            self::$upgrade->run($appId, $record, false, strtoupper($knownLegacyDigest));
+            $this->fail('A current owner-authored screen was accepted as the known legacy screen');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('not the accepted known legacy', $e->getMessage());
+        }
+    }
+
+    public function testKnownLegacyScreenAcceptancePolicyIsPinnedAndExact(): void
+    {
+        $known = 'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7';
+        $method = new \ReflectionMethod(AokieReceptionistUpgradeService::class, 'acceptsKnownLegacyScreen');
+
+        $this->assertTrue($method->invoke(self::$upgrade, $known, $known, 'owner', [], true));
+        $this->assertFalse($method->invoke(self::$upgrade, $known, 'b' . substr($known, 1), 'owner', [], true));
+        $this->assertFalse($method->invoke(self::$upgrade, $known, $known, 'verified', [], true));
+        $this->assertFalse($method->invoke(
+            self::$upgrade,
+            $known,
+            $known,
+            'owner',
+            ['source' => 'owner'],
+            true
+        ));
+        $this->assertFalse($method->invoke(self::$upgrade, $known, $known, 'owner', [], false));
+        $this->assertFalse($method->invoke(
+            self::$upgrade,
+            str_repeat('0', 64),
+            str_repeat('0', 64),
+            'owner',
+            [],
+            true
+        ));
     }
 
     /** @return array<string,mixed> */
@@ -349,6 +395,30 @@ final class AokieReceptionistUpgradeTest extends TestCase
     {
         unset($screen['_trust'], $screen['_provenance']);
         return $screen;
+    }
+
+    /** @param array<string,mixed> $screen */
+    private function screenDigest(array $screen): string
+    {
+        return hash('sha256', json_encode(
+            $this->canonicalValue($this->withoutScreenMetadata($screen)),
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+        ));
+    }
+
+    private function canonicalValue(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            return array_map(fn (mixed $item): mixed => $this->canonicalValue($item), $value);
+        }
+        ksort($value, SORT_STRING);
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->canonicalValue($item);
+        }
+        return $value;
     }
 
     private function uuid(): string

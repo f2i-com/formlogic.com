@@ -42,6 +42,18 @@ final class AokieReceptionistUpgradeService
         'background_ai_model',
     ];
 
+    /**
+     * Full canonical-screen digests from legacy, publisher-signed Aokie packs.
+     * The sole value below is anchored by repository releases 8ec5f400 and
+     * bd3cb1e5 under publisher fl-packs-2026a. It covers the exact historical
+     * screen, not merely its executable files or structural shape.
+     *
+     * @var string[]
+     */
+    private const KNOWN_LEGACY_SCREEN_SHA256 = [
+        'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7',
+    ];
+
     private PDO $mysql;
 
     public function __construct(
@@ -59,10 +71,24 @@ final class AokieReceptionistUpgradeService
      *
      * @return array<string,mixed> bounded, content-free operator summary
      */
-    public function run(string $appId, array $marketplaceRecord, bool $apply): array
+    public function run(
+        string $appId,
+        array $marketplaceRecord,
+        bool $apply,
+        ?string $acceptedLegacyScreenSha256 = null
+    ): array
     {
         if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $appId)) {
             throw new \InvalidArgumentException('A canonical app UUID is required');
+        }
+        if ($acceptedLegacyScreenSha256 !== null) {
+            $acceptedLegacyScreenSha256 = strtolower(trim($acceptedLegacyScreenSha256));
+            if (!preg_match('/^[0-9a-f]{64}$/', $acceptedLegacyScreenSha256)) {
+                throw new \InvalidArgumentException('Accepted legacy screen SHA-256 must be 64 hexadecimal characters');
+            }
+            if (!in_array($acceptedLegacyScreenSha256, self::KNOWN_LEGACY_SCREEN_SHA256, true)) {
+                throw new \InvalidArgumentException('Accepted screen SHA-256 is not a known legacy Aokie screen');
+            }
         }
 
         $source = $this->validateSourcePack($marketplaceRecord);
@@ -75,10 +101,11 @@ final class AokieReceptionistUpgradeService
         if ($settingsForm === null) {
             throw new \RuntimeException('Receptionist Settings form is missing');
         }
-        $this->assertPackOwnedScreen(
+        $legacyScreenAccepted = $this->assertPackOwnedScreen(
             $settingsForm,
             $installed['installationCatalogId'],
-            $source['settingsScreen']
+            $source['settingsScreen'],
+            $acceptedLegacyScreenSha256
         );
 
         $fieldIds = [];
@@ -118,6 +145,7 @@ final class AokieReceptionistUpgradeService
             'packId' => self::PACK_ID,
             'packVersion' => $source['packVersion'],
             'appId' => $appId,
+            'legacyScreenAccepted' => $legacyScreenAccepted,
             'changes' => [
                 'settingsFields' => $missingFields,
                 'customScreen' => $screenChanges,
@@ -133,6 +161,28 @@ final class AokieReceptionistUpgradeService
         }
 
         if ($missingFields !== [] || $screenChanges) {
+            // Re-read immediately before the snapshot/write so a concurrent
+            // owner edit cannot ride on the earlier ownership decision.
+            $freshSettingsForm = $this->forms->getForm($settingsForm['id']);
+            if ($freshSettingsForm === null
+                || !$this->sameValue($settingsForm['fields'], $freshSettingsForm['fields'])
+                || !$this->sameValue(
+                    $currentScreen,
+                    $this->screenWithoutMetadata($freshSettingsForm['customScreen'] ?? [])
+                )) {
+                throw new \RuntimeException('Receptionist Settings changed during upgrade; retry from dry-run');
+            }
+            if ($screenChanges) {
+                $freshLegacyAccepted = $this->assertPackOwnedScreen(
+                    $freshSettingsForm,
+                    $installed['installationCatalogId'],
+                    $source['settingsScreen'],
+                    $acceptedLegacyScreenSha256
+                );
+                if ($freshLegacyAccepted !== $legacyScreenAccepted) {
+                    throw new \RuntimeException('Receptionist Settings screen ownership changed during upgrade');
+                }
+            }
             $version = $this->versions->createVersion(
                 $settingsForm['id'],
                 $installed['ownerId'],
@@ -518,11 +568,15 @@ final class AokieReceptionistUpgradeService
      * @param array<string,mixed> $form
      * @param array<string,mixed> $desiredScreen
      */
-    private function assertPackOwnedScreen(array $form, ?string $installationCatalogId, array $desiredScreen): void
-    {
+    private function assertPackOwnedScreen(
+        array $form,
+        ?string $installationCatalogId,
+        array $desiredScreen,
+        ?string $acceptedLegacyScreenSha256
+    ): bool {
         $current = $this->screenWithoutMetadata($form['customScreen'] ?? []);
         if ($this->sameValue($current, $desiredScreen)) {
-            return;
+            return false;
         }
         $screen = is_array($form['customScreen'] ?? null) ? $form['customScreen'] : [];
         $provenance = is_array($screen['_provenance'] ?? null) ? $screen['_provenance'] : [];
@@ -531,9 +585,37 @@ final class AokieReceptionistUpgradeService
         $catalogOwned = $installationCatalogId !== null
             && ($provenance['source'] ?? null) === 'catalog'
             && ($provenance['catalogId'] ?? null) === $installationCatalogId;
-        if (!$vendorOwned && !$catalogOwned) {
-            throw new \RuntimeException('Receptionist Settings custom screen is owner-authored or not pack-owned');
+        if ($vendorOwned || $catalogOwned) {
+            return false;
         }
+        if ($acceptedLegacyScreenSha256 !== null) {
+            if ($this->acceptsKnownLegacyScreen(
+                $acceptedLegacyScreenSha256,
+                $this->screenDigest($current),
+                $screen['_trust'] ?? null,
+                $provenance,
+                array_key_exists('_provenance', $screen) && is_array($screen['_provenance'])
+            )) {
+                return true;
+            }
+            throw new \RuntimeException('Installed custom screen is not the accepted known legacy Aokie screen');
+        }
+        throw new \RuntimeException('Receptionist Settings custom screen is owner-authored or not pack-owned');
+    }
+
+    /** @param array<string,mixed> $provenance */
+    private function acceptsKnownLegacyScreen(
+        string $acceptedDigest,
+        string $installedDigest,
+        mixed $trust,
+        array $provenance,
+        bool $hasProvenanceMarker
+    ): bool {
+        return in_array($acceptedDigest, self::KNOWN_LEGACY_SCREEN_SHA256, true)
+            && hash_equals($acceptedDigest, $installedDigest)
+            && $trust === 'owner'
+            && $hasProvenanceMarker
+            && $provenance === [];
     }
 
     /**
@@ -669,6 +751,30 @@ final class AokieReceptionistUpgradeService
         }
         unset($screen['_trust'], $screen['_provenance']);
         return $screen;
+    }
+
+    /** @param array<string,mixed> $screen */
+    private function screenDigest(array $screen): string
+    {
+        return hash('sha256', json_encode(
+            $this->canonicalValue($screen),
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+        ));
+    }
+
+    private function canonicalValue(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            return array_map(fn (mixed $item): mixed => $this->canonicalValue($item), $value);
+        }
+        ksort($value, SORT_STRING);
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->canonicalValue($item);
+        }
+        return $value;
     }
 
     private function sameValue(mixed $left, mixed $right): bool

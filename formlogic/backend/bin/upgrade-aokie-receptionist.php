@@ -8,6 +8,8 @@ declare(strict_types=1);
  * Usage (from backend/):
  *   php bin/upgrade-aokie-receptionist.php --app=<uuid> --dry-run
  *   php bin/upgrade-aokie-receptionist.php --app=<uuid> --apply
+ *   Add --accept-known-legacy-screen-sha256=<sha256> only for a compiled-in,
+ *   publisher-anchored legacy pack screen fingerprint.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -28,10 +30,11 @@ $usage = static function (int $exitCode): never {
     fwrite($stream, "Usage:\n");
     fwrite($stream, "  php bin/upgrade-aokie-receptionist.php --app=<uuid> --dry-run\n");
     fwrite($stream, "  php bin/upgrade-aokie-receptionist.php --app=<uuid> --apply\n");
+    fwrite($stream, "  Optional: --accept-known-legacy-screen-sha256=<sha256>\n");
     exit($exitCode);
 };
 
-$options = getopt('', ['app:', 'dry-run', 'apply', 'help']);
+$options = getopt('', ['app:', 'dry-run', 'apply', 'accept-known-legacy-screen-sha256:', 'help']);
 if (!is_array($options)) {
     $options = [];
 }
@@ -41,7 +44,13 @@ if (isset($options['help'])) {
 $appId = is_string($options['app'] ?? null) ? trim($options['app']) : '';
 $dryRun = array_key_exists('dry-run', $options);
 $apply = array_key_exists('apply', $options);
-if ($appId === '' || $dryRun === $apply) {
+$acceptedLegacyScreenSha256 = null;
+if (array_key_exists('accept-known-legacy-screen-sha256', $options)) {
+    $acceptedLegacyScreenSha256 = is_string($options['accept-known-legacy-screen-sha256'])
+        ? trim($options['accept-known-legacy-screen-sha256'])
+        : '';
+}
+if ($appId === '' || $dryRun === $apply || $acceptedLegacyScreenSha256 === '') {
     $usage(2);
 }
 
@@ -69,7 +78,7 @@ try {
         new FlowService($mysql),
         $packs
     );
-    $result = $service->run($appId, $record, $apply);
+    $result = $service->run($appId, $record, $apply, $acceptedLegacyScreenSha256);
     fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     exit(0);
 } catch (\PDOException $e) {
