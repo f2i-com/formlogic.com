@@ -288,7 +288,11 @@ pub fn spawn_plugin(spec: &SpawnSpec<'_>, logs: LogRing) -> std::io::Result<Plug
     cmd.env_clear();
     let mut allow: Vec<&str> = vec!["PATH"];
     if cfg!(windows) {
-        allow.extend(["SystemRoot", "TEMP", "TMP"]);
+        // AOKIE_ALLOW_SELF_SIGNED_DRIVER is the operator's runtime opt-in for
+        // the managed-beta WinUSB self-signing path (aokie-dongle
+        // dev_self_sign_allowed). env_clear would otherwise strip it and the
+        // elevated driver install always degrades to a refused production job.
+        allow.extend(["SystemRoot", "TEMP", "TMP", "AOKIE_ALLOW_SELF_SIGNED_DRIVER"]);
     }
     for key in allow {
         if let Some(v) = std::env::var_os(key) {
