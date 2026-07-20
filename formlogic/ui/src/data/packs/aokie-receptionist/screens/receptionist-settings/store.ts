@@ -135,6 +135,8 @@ export const EMPTY: Draft = {
   tts_source: '',
   correction_source: '',
   correction_endpoint: '',
+  background_ai_source: '',
+  background_ai_model: '',
   voice: '',
   reply_mode: 'agent',
   active: 'yes',
@@ -350,16 +352,42 @@ export function laneOptions(lane: Lane): LaneOption[] {
     if (def && s.refId === def.refId) continue;
     opts.push({ value: s.id, label: 'This computer: ' + s.name + withStatus(s) });
   }
-  if (lane === 'llm') {
+  // Named Desktop providers can currently serve chat and transcription. TTS
+  // remains service/custom-only until the gateway exposes an audio/speech
+  // route with a compatible response shape.
+  if (lane === 'llm' || lane === 'stt') {
     for (let p = 0; p < all.length; p++) {
       const pr = all[p];
       if (pr.kind !== 'provider' || !pr.enabled) continue;
-      if (pr.capabilities.length > 0 && pr.capabilities.indexOf('chat') < 0) continue;
+      if (pr.capabilities.length > 0 && pr.capabilities.indexOf(cap) < 0) continue;
+      // The generic Codex route is buffered for background work. Only its four
+      // call-bounded variants belong in the live receptionist LLM picker.
+      if (lane === 'llm' && pr.id === 'provider:openai-codex-agent') continue;
       opts.push({ value: pr.id, label: 'Provider: ' + pr.name });
     }
   }
   opts.push({ value: 'custom', label: 'Custom URL...' });
   opts.push({ value: '', label: 'Built-in (plugin fallback)' });
+  return opts;
+}
+
+/** Chat providers available to asynchronous work. This is deliberately a
+ * separate picker from the live-call LLM lane: a slower delegated ChatGPT /
+ * Codex account is useful for drafts and analysis without adding caller delay.
+ * API credentials remain in Desktop Services; the pack stores only the
+ * provider reference. */
+export function backgroundAiOptions(): LaneOption[] {
+  const opts: LaneOption[] = [{ value: '', label: 'Automatic (flow default)' }];
+  const all = state.aiSources || [];
+  for (let i = 0; i < all.length; i++) {
+    const provider = all[i];
+    if (provider.kind !== 'provider' || !provider.enabled) continue;
+    if (provider.capabilities.length > 0 && provider.capabilities.indexOf('chat') < 0) continue;
+    // The four live-call adapters carry call-specific prompt and output bounds.
+    // Background work uses the generic provider route instead.
+    if (isCodexLiveCallSource(provider.id)) continue;
+    opts.push({ value: provider.id, label: 'Provider: ' + provider.name });
+  }
   return opts;
 }
 
@@ -761,6 +789,15 @@ export function laneChange(lane: Lane, value: string): void {
   if (codexModel) patch.model = codexModel;
   setDraft(patch);
   enforceCodexTextOnly();
+  touch();
+}
+
+export function backgroundAiChange(value: string): void {
+  const patch: Partial<Draft> = { background_ai_source: value };
+  // Desktop-owned Codex routes pin their own supported model. Never carry a
+  // stale generic override into one of those routes.
+  if (isCodexLiveCallSource(value)) patch.background_ai_model = '';
+  setDraft(patch);
   touch();
 }
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "id": "openai-api",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minDesktopVersion": "0.1.0",
   "publisher": {
     "id": "formlogic",
@@ -13,8 +13,15 @@
   "icon": "openai",
   "kind": "remote-provider",
   "category": { "id": "ai.models", "label": "AI & Models" },
-  "tags": ["llm", "chat", "streaming", "cloud"],
-  "capabilities": ["llm.chat", "llm.chat.stream", "models.list"],
+  "tags": ["llm", "chat", "streaming", "cloud", "audio", "transcription", "realtime"],
+  "capabilities": [
+    "llm.chat",
+    "llm.chat.stream",
+    "models.list",
+    "speech.transcribe",
+    "audio.chat",
+    "voice.realtime"
+  ],
   "auth": {
     "strategies": [
       {
@@ -45,7 +52,7 @@
   "permissions": {
     "network": [{ "scheme": "https", "host": "api.openai.com" }],
     "secrets": ["api-key"],
-    "dataClasses": ["prompts", "conversation-history"]
+    "dataClasses": ["prompts", "conversation-history", "audio", "transcripts"]
   },
   "actions": [
     {
@@ -101,6 +108,134 @@
       "response": { "successStatuses": [200], "contentTypes": ["application/json"], "output": { "$path": "$.response" } },
       "requiredGrants": ["services.read"],
       "dataClasses": []
+    },
+    {
+      "id": "audio.transcribe",
+      "title": "Transcribe audio",
+      "description": "Transcribe an uploaded audio recording with gpt-4o-mini-transcribe or another compatible model through Desktop-held credentials.",
+      "category": { "id": "ai.audio", "label": "AI / Audio" },
+      "tags": ["audio", "transcription", "speech-to-text"],
+      "capability": "speech.transcribe",
+      "sideEffects": "external-communication",
+      "idempotency": "optional",
+      "streaming": { "mode": "none", "cancellable": true },
+      "timeoutMs": 120000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["file"],
+        "properties": {
+          "file": { "type": "string", "format": "binary" },
+          "model": { "type": "string", "default": "gpt-4o-mini-transcribe" },
+          "language": { "type": "string" },
+          "prompt": { "type": "string" },
+          "responseFormat": { "type": "string", "default": "json" },
+          "temperature": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": { "text": { "type": "string" } }
+      },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "POST",
+        "path": "/v1/audio/transcriptions",
+        "authInjection": { "kind": "bearer", "secret": "api-key" }
+      },
+      "request": { "body": { "$path": "$.input" } },
+      "response": { "successStatuses": [200], "contentTypes": ["application/json"], "output": { "$path": "$.response" } },
+      "requiredGrants": ["services.invoke"],
+      "dataClasses": ["audio", "transcripts"]
+    },
+    {
+      "id": "audio.chat",
+      "title": "Generate an audio response",
+      "description": "Send text or audio messages to gpt-audio-1.5 or another compatible audio model and receive a typed text/audio chat response.",
+      "category": { "id": "ai.audio", "label": "AI / Audio" },
+      "tags": ["audio", "chat", "speech"],
+      "capability": "audio.chat",
+      "sideEffects": "external-communication",
+      "idempotency": "optional",
+      "streaming": { "mode": "none", "cancellable": true },
+      "timeoutMs": 120000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "model": { "type": "string", "default": "gpt-audio-1.5" },
+          "messages": { "type": "array", "items": { "type": "object" } },
+          "modalities": { "type": "array", "items": { "enum": ["text", "audio"] } },
+          "audio": { "type": "object" }
+        }
+      },
+      "outputSchema": { "type": "object" },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "authInjection": { "kind": "bearer", "secret": "api-key" }
+      },
+      "request": { "body": { "$path": "$.input" } },
+      "response": { "successStatuses": [200], "contentTypes": ["application/json"], "output": { "$path": "$.response" } },
+      "requiredGrants": ["services.invoke"],
+      "dataClasses": ["prompts", "conversation-history", "audio", "transcripts"]
+    },
+    {
+      "id": "realtime.session.create",
+      "title": "Create a Realtime WebRTC session",
+      "description": "Exchange a browser WebRTC SDP offer for an answer using gpt-realtime-2.1-mini or another compatible Realtime model without exposing the API key.",
+      "category": { "id": "ai.realtime", "label": "AI / Realtime" },
+      "tags": ["audio", "realtime", "webrtc"],
+      "capability": "voice.realtime",
+      "sideEffects": "external-communication",
+      "idempotency": "none",
+      "streaming": { "mode": "events", "cancellable": true },
+      "timeoutMs": 30000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["sdp"],
+        "properties": {
+          "sdp": { "type": "string", "minLength": 1 },
+          "model": { "type": "string", "default": "gpt-realtime-2.1-mini" },
+          "voice": { "type": "string" },
+          "instructions": { "type": "string" },
+          "session": {
+            "type": "object",
+            "description": "Optional full Realtime session configuration. Desktop forces type=realtime, applies the shortcut fields above, and injects the configured provider model when absent."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["sdp"],
+        "properties": { "sdp": { "type": "string" } }
+      },
+      "transport": {
+        "kind": "openai-compatible",
+        "method": "POST",
+        "path": "/v1/realtime/calls",
+        "authInjection": { "kind": "bearer", "secret": "api-key" }
+      },
+      "request": {
+        "multipart": {
+          "sdp": {
+            "value": { "$path": "$.input.sdp" },
+            "contentType": "application/sdp"
+          },
+          "session": {
+            "value": { "$path": "$.context.realtimeSession" },
+            "contentType": "application/json"
+          }
+        }
+      },
+      "response": {
+        "successStatuses": [200, 201],
+        "contentTypes": ["application/sdp"],
+        "output": { "sdp": { "$path": "$.response" } }
+      },
+      "requiredGrants": ["services.invoke"],
+      "dataClasses": ["prompts", "conversation-history", "audio", "transcripts"]
     }
   ]
 }

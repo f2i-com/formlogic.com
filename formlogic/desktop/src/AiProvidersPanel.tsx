@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  apiSecrets,
   aiProviders,
+  type ApiSecretInput,
+  type ApiSecretView,
   type AiCapability,
   type AiProviderProfile,
   type AiProviderView,
@@ -26,17 +29,17 @@ import { useToast } from './Toasts';
 const CAPS: AiCapability[] = ['chat', 'transcription', 'speech', 'embeddings', 'realtime'];
 
 /**
- * What each capability means to the GATEWAY (it routes a request to the first
- * enabled provider whose capability set matches). Only chat (+ model listing)
- * has routes today — the rest are persisted and light up when the streaming/
- * audio routes land (AI-405/406), so they're shown but marked dormant.
+ * What each capability means to the gateway (it routes a request to the first
+ * enabled provider whose capability set matches). Chat, transcription, and
+ * Realtime WebRTC session creation have concrete routes. Speech synthesis and
+ * embeddings remain persisted configuration until their adapters land.
  */
 const CAP_INFO: Record<AiCapability, { label: string; desc: string; served: boolean }> = {
   chat: { label: 'Chat', desc: 'Text generation — flows and receptionist replies.', served: true },
-  transcription: { label: 'Transcription', desc: 'Speech-to-text.', served: false },
+  transcription: { label: 'Transcription', desc: 'Speech-to-text.', served: true },
   speech: { label: 'Speech', desc: 'Text-to-speech.', served: false },
   embeddings: { label: 'Embeddings', desc: 'Vector embeddings.', served: false },
-  realtime: { label: 'Realtime', desc: 'Realtime voice sessions.', served: false },
+  realtime: { label: 'Realtime', desc: 'Realtime voice sessions.', served: true },
 };
 
 const PRESETS: Record<string, Partial<AiProviderProfile>> = {
@@ -47,6 +50,38 @@ const PRESETS: Record<string, Partial<AiProviderProfile>> = {
     protocol: 'openai',
     baseUrl: 'https://api.openai.com',
     capabilities: ['chat', 'transcription', 'speech', 'embeddings', 'realtime'],
+    allowLocal: false,
+  },
+  'openai-gpt-4o-mini-transcribe': {
+    name: 'OpenAI GPT-4o mini Transcribe',
+    category: 'Cloud AI APIs',
+    tags: ['openai', 'speech-to-text', 'transcription'],
+    protocol: 'openai',
+    baseUrl: 'https://api.openai.com',
+    model: 'gpt-4o-mini-transcribe',
+    capabilities: ['transcription'],
+    allowLocal: false,
+  },
+  'openai-gpt-realtime-2-1-mini': {
+    name: 'OpenAI GPT-Realtime-2.1 mini',
+    category: 'Cloud AI APIs',
+    tags: ['openai', 'realtime', 'voice', 'webrtc'],
+    protocol: 'openai',
+    baseUrl: 'https://api.openai.com',
+    model: 'gpt-realtime-2.1-mini',
+    capabilities: ['realtime'],
+    allowLocal: false,
+  },
+  'openai-gpt-audio-1-5': {
+    name: 'OpenAI GPT Audio 1.5',
+    category: 'Cloud AI APIs',
+    tags: ['openai', 'audio-input', 'audio-output', 'chat'],
+    protocol: 'openai',
+    baseUrl: 'https://api.openai.com',
+    model: 'gpt-audio-1.5',
+    // GPT Audio uses Chat Completions for audio input/output. Do not mark it
+    // as the separate /audio/speech capability unless that adapter is chosen.
+    capabilities: ['chat'],
     allowLocal: false,
   },
   anthropic: {
@@ -110,6 +145,7 @@ export default function AiProvidersPanel() {
   );
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AiProviderProfile | null>(null);
+  const [showSecrets, setShowSecrets] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const toast = useToast();
   const { confirm } = useConfirm();
@@ -162,11 +198,28 @@ export default function AiProvidersPanel() {
     <section className="service-section">
       <div className="section-title-row">
         <h3 className="section-title">AI Providers</h3>
-        {!editing && (
-          <button className="btn btn-secondary" onClick={() => setEditing(createBlankAiProviderProfile())}>
-            + Add provider
+        <div className="service-actions">
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setEditing(null);
+              setShowSecrets((shown) => !shown);
+            }}
+          >
+            API Secrets
           </button>
-        )}
+          {!editing && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowSecrets(false);
+                setEditing(createBlankAiProviderProfile());
+              }}
+            >
+              + Add provider
+            </button>
+          )}
+        </div>
       </div>
       <div className="datadir-note">
         Connect an external AI service — OpenAI, Anthropic, a local Ollama/LM Studio, or a fully
@@ -176,6 +229,7 @@ export default function AiProvidersPanel() {
       {error && (
         <div className="banner banner-err">Couldn't load AI providers: {error}</div>
       )}
+      {showSecrets && <ApiSecretsPanel onClose={() => setShowSecrets(false)} onChanged={() => void refresh()} />}
       {editing && (
         <ProviderForm
           // Keyed on the edited provider so switching Edit targets REMOUNTS the
@@ -203,11 +257,16 @@ export default function AiProvidersPanel() {
           provider={p}
           testing={testing === p.id}
           onTest={() => void onTest(p.id, p.protocol)}
-          onEdit={() => setEditing(p)}
+          onEdit={() => {
+            setShowSecrets(false);
+            setEditing(p);
+          }}
           onRemove={async () => {
             const ok = await confirm({
               title: `Remove "${p.name}"?`,
-              body: 'The provider config and its stored API key are deleted.',
+              body: p.secretRef
+                ? 'The provider config is deleted. Its reusable API secret is retained.'
+                : 'The provider config and its legacy provider-specific API key are deleted.',
               confirmLabel: 'Remove',
               danger: true,
             });
@@ -263,7 +322,7 @@ export function AiProviderCard({
               </span>
             )}
             {provider.hasKey ? (
-              <span className="badge badge-ok" title="An API key is stored for this provider">
+              <span className="badge badge-ok" title="An API key is available to this provider">
                 <CheckIcon className="inline-icon icon-leading" size={11} />
                 key set
               </span>
@@ -275,6 +334,7 @@ export function AiProviderCard({
           {description && <div className="service-desc">{description}</div>}
           <div className="service-meta">
             {provider.baseUrl}
+            {provider.secretRef && <> · secret {provider.secretRef}</>}
             {provider.model && <> · model {provider.model}</>}
             <> · {provider.capabilities.length > 0 ? provider.capabilities.join(', ') : 'all capabilities'}</>
           </div>
@@ -318,6 +378,226 @@ export function createBlankAiProviderProfile(): AiProviderProfile {
   };
 }
 
+interface ApiSecretsPanelProps {
+  onClose?: () => void;
+  onChanged?: () => void;
+}
+
+type ApiSecretDraft = ApiSecretInput & { value: string; isNew: boolean };
+
+/** Desktop-owner UI for reusable API-key metadata and write-only values. */
+export function ApiSecretsPanel({ onClose, onChanged }: ApiSecretsPanelProps) {
+  const [secrets, setSecrets] = useState<ApiSecretView[] | null>(null);
+  const [draft, setDraft] = useState<ApiSecretDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+  const { confirm } = useConfirm();
+
+  const refresh = useCallback(async () => {
+    try {
+      const response = await apiSecrets.list();
+      setSecrets(response.secrets);
+      setError(null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!draft || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const input: ApiSecretInput = {
+        id: draft.id.trim().toLowerCase(),
+        name: draft.name.trim(),
+        kind: 'api-key',
+      };
+      const result = await apiSecrets.upsert(input);
+      if (draft.value.trim()) await apiSecrets.setValue(result.id, draft.value.trim());
+      setDraft(null);
+      await refresh();
+      onChanged?.();
+      toast.push({
+        kind: 'success',
+        title: draft.isNew ? 'API secret created' : 'API secret updated',
+        body: draft.value.trim()
+          ? 'The value was verified in the operating-system credential store.'
+          : 'The existing stored value was left unchanged.',
+      });
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="service-card">
+      <div className="section-title-row">
+        <div>
+          <h3 className="section-title">API Secrets</h3>
+          <div className="service-desc">
+            Store an API key once and reuse it across chat, transcription, realtime, audio, and custom providers.
+          </div>
+        </div>
+        <div className="service-actions">
+          {!draft && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDraft({ id: '', name: '', kind: 'api-key', value: '', isNew: true })}
+            >
+              + Add secret
+            </button>
+          )}
+          {onClose && <button type="button" className="btn-tiny" onClick={onClose}>close</button>}
+        </div>
+      </div>
+      <div className="datadir-note">
+        Values are write-only: Desktop stores them in the OS credential store and returns only a name,
+        presence indicator, and provider references. ChatGPT/Codex sign-in remains a separate connection.
+      </div>
+      {error && <div className="banner banner-err">{error}</div>}
+      {draft && (
+        <form className="dl-form" onSubmit={(event) => void save(event)}>
+          <div className="form-row-pair">
+            <label className="form-row">
+              <span>ID (lowercase)</span>
+              <input
+                type="text"
+                value={draft.id}
+                disabled={!draft.isNew}
+                required
+                placeholder="openai-production"
+                onChange={(event) => setDraft({ ...draft, id: event.target.value })}
+              />
+            </label>
+            <label className="form-row">
+              <span>Display name</span>
+              <input
+                type="text"
+                value={draft.name}
+                required
+                placeholder="Company OpenAI key"
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+              />
+            </label>
+          </div>
+          <label className="form-row">
+            <span>API key {draft.isNew ? '' : '(leave blank to keep the stored value)'}</span>
+            <input
+              type="password"
+              spellCheck={false}
+              autoComplete="off"
+              value={draft.value}
+              placeholder="sk-…"
+              onChange={(event) => setDraft({ ...draft, value: event.target.value })}
+            />
+          </label>
+          <div className="form-actions">
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={busy || !draft.id.trim() || !draft.name.trim()}
+            >
+              {busy ? 'Saving…' : 'Save secret'}
+            </button>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+      {secrets?.length === 0 && !draft && (
+        <div className="empty-state">No reusable API secrets yet.</div>
+      )}
+      {(secrets ?? []).map((secret) => (
+        <div key={secret.id} className="service-row service-secret-row">
+          <div className="service-info">
+            <div className="service-name">
+              {secret.name}
+              <span className="badge badge-neutral">API key</span>
+              <span className={`badge ${secret.hasValue ? 'badge-ok' : 'badge-neutral'}`}>
+                {secret.hasValue ? 'value stored' : 'needs value'}
+              </span>
+            </div>
+            <div className="service-meta">
+              {secret.id}
+              {secret.usedBy.length > 0
+                ? ` · used by ${secret.usedBy.join(', ')}`
+                : ' · not assigned to a provider'}
+            </div>
+          </div>
+          <div className="service-actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setDraft({ ...secret, value: '', isNew: false })}
+            >
+              Edit / rotate
+            </button>
+            {secret.hasValue && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-danger"
+                onClick={() => void (async () => {
+                  const approved = await confirm({
+                    title: `Clear the value for "${secret.name}"?`,
+                    body: 'Providers can keep referencing it, but requests will fail until a new value is stored.',
+                    confirmLabel: 'Clear value',
+                    danger: true,
+                  });
+                  if (!approved) return;
+                  try {
+                    await apiSecrets.clearValue(secret.id);
+                    await refresh();
+                    onChanged?.();
+                  } catch (clearError) {
+                    setError(clearError instanceof Error ? clearError.message : String(clearError));
+                  }
+                })()}
+              >
+                Clear value
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost btn-danger"
+              disabled={secret.usedBy.length > 0}
+              title={secret.usedBy.length > 0 ? 'Remove provider references first' : undefined}
+              onClick={() => void (async () => {
+                const approved = await confirm({
+                  title: `Delete "${secret.name}"?`,
+                  body: 'This removes its OS credential-store value. It cannot be recovered.',
+                  confirmLabel: 'Delete secret',
+                  danger: true,
+                });
+                if (!approved) return;
+                try {
+                  await apiSecrets.remove(secret.id);
+                  await refresh();
+                  onChanged?.();
+                } catch (removeError) {
+                  setError(removeError instanceof Error ? removeError.message : String(removeError));
+                }
+              })()}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ProviderForm({
   initial,
   onCancel,
@@ -331,9 +611,12 @@ export function ProviderForm({
 }) {
   const isNew = !initial.id;
   // Editing an existing provider passes the AiProviderView through, so hasKey
-  // is available; a new profile never has a stored key.
+  // is available; a new profile never has a stored key. A referenced secret's
+  // hasKey describes that shared secret, not the legacy provider-specific
+  // credential. Keep those states distinct so temporarily selecting "none"
+  // cannot expose a button that would clear a shared secret for every user.
   const [hasStoredKey, setHasStoredKey] = useState(
-    (initial as Partial<AiProviderView>).hasKey === true,
+    !initial.secretRef && (initial as Partial<AiProviderView>).hasKey === true,
   );
   // A legacy provider saved with an EMPTY capability set matches everything
   // (supports() rule) — seed the form with the explicit equivalent so the
@@ -343,6 +626,8 @@ export function ProviderForm({
     capabilities: initial.capabilities.length > 0 ? initial.capabilities : [...CAPS],
   });
   const [key, setKey] = useState('');
+  const [secretOptions, setSecretOptions] = useState<ApiSecretView[] | null>(null);
+  const [secretLoadError, setSecretLoadError] = useState<string | null>(null);
   const [tagsText, setTagsText] = useState((initial.tags ?? []).join(', '));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -352,6 +637,20 @@ export function ProviderForm({
   const [fetchingModels, setFetchingModels] = useState(false);
   const toast = useToast();
   const { confirm } = useConfirm();
+
+  const loadSecrets = useCallback(async () => {
+    try {
+      const response = await apiSecrets.list();
+      setSecretOptions(response.secrets);
+      setSecretLoadError(null);
+    } catch (loadError) {
+      setSecretLoadError(loadError instanceof Error ? loadError.message : String(loadError));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSecrets();
+  }, [loadSecrets]);
 
   const applyPreset = (preset: string) => {
     const base = PRESETS[preset];
@@ -373,22 +672,28 @@ export function ProviderForm({
         : [...cur.capabilities, c],
     }));
 
-  const spec = p.specs?.chat ?? {};
-  const setSpec = (patch: Partial<{ path: string; requestTemplate: string; responsePath: string }>) =>
+  const capabilitySpec = (capability: string) => p.specs?.[capability] ?? {};
+  const setCapabilitySpec = (
+    capability: string,
+    patch: Partial<{ path: string; requestTemplate: string; responsePath: string }>,
+  ) =>
     setP((cur) => {
-      const next = { ...(cur.specs?.chat ?? {}), ...patch };
+      const next = { ...(cur.specs?.[capability] ?? {}), ...patch };
       // Drop empty fields; an all-empty mapping means "use the defaults".
       const cleaned = Object.fromEntries(
         Object.entries(next).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
       );
       const specs = { ...(cur.specs ?? {}) };
       if (Object.keys(cleaned).length === 0) {
-        delete specs.chat;
+        delete specs[capability];
       } else {
-        specs.chat = cleaned;
+        specs[capability] = cleaned;
       }
       return { ...cur, specs: Object.keys(specs).length > 0 ? specs : undefined };
     });
+  const spec = capabilitySpec('chat');
+  const setSpec = (patch: Partial<{ path: string; requestTemplate: string; responsePath: string }>) =>
+    setCapabilitySpec('chat', patch);
 
   const setHeader = (index: number, patch: Partial<{ name: string; value: string }>) =>
     setP((current) => ({
@@ -449,6 +754,7 @@ export function ProviderForm({
   // form requires at least one explicit pick.
   const noCaps = p.capabilities.length === 0;
   const plainHttpWarning = !p.allowLocal && p.baseUrl.trim().toLowerCase().startsWith('http://');
+  const selectedSecret = secretOptions?.find((secret) => secret.id === p.secretRef);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -461,7 +767,7 @@ export function ProviderForm({
         category: p.category?.trim() || undefined,
         tags: parseProviderTags(tagsText),
       });
-      if (key.trim()) {
+      if (!p.secretRef && key.trim()) {
         await aiProviders.setKey(id, key.trim());
       }
       toast.push({ kind: 'success', title: `Provider "${p.name || id}" saved` });
@@ -489,6 +795,9 @@ export function ProviderForm({
               — choose —
             </option>
             <option value="openai">OpenAI API (Platform billing; separate from ChatGPT)</option>
+            <option value="openai-gpt-4o-mini-transcribe">OpenAI · GPT-4o mini Transcribe</option>
+            <option value="openai-gpt-realtime-2-1-mini">OpenAI · GPT-Realtime-2.1 mini</option>
+            <option value="openai-gpt-audio-1-5">OpenAI · GPT Audio 1.5</option>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="ollama">Ollama (local)</option>
             <option value="lmstudio">LM Studio (local)</option>
@@ -585,23 +894,57 @@ export function ProviderForm({
         )}
       </label>
       <label className="form-row">
-        <span>API key {hasStoredKey && '(leave blank to keep the stored key)'}</span>
+        <span>Reusable API secret</span>
         <div className="input-with-action">
-          <input
-            type="password"
-            spellCheck={false}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder={hasStoredKey ? '•••••• (unchanged)' : 'sk-…'}
-            autoComplete="off"
-          />
-          {hasStoredKey && (
-            <button type="button" className="btn-tiny btn-danger" onClick={() => void onRemoveKey()}>
-              Remove stored key
-            </button>
-          )}
+          <select
+            value={p.secretRef ?? ''}
+            onChange={(e) => setP({ ...p, secretRef: e.target.value || undefined })}
+          >
+            <option value="">
+              {hasStoredKey ? 'Existing provider-specific key (legacy)' : 'No reusable secret'}
+            </option>
+            {(secretOptions ?? []).map((secret) => (
+              <option key={secret.id} value={secret.id}>
+                {secret.name} ({secret.hasValue ? 'value stored' : 'needs value'})
+              </option>
+            ))}
+          </select>
+          <button type="button" className="btn-tiny" onClick={() => void loadSecrets()}>
+            Refresh
+          </button>
         </div>
+        <span className="form-hint">
+          Named secrets can be reused by transcription, realtime, audio, chat, and custom providers.
+          Values stay in the operating-system credential store. Manage them from API Secrets in Service Center.
+        </span>
+        {secretLoadError && <span className="form-hint warn">Couldn't load API secrets: {secretLoadError}</span>}
+        {p.secretRef && selectedSecret && !selectedSecret.hasValue && (
+          <span className="form-hint warn">This secret has no stored value yet.</span>
+        )}
       </label>
+      {!p.secretRef && (
+        <label className="form-row">
+          <span>Provider-specific API key {hasStoredKey && '(leave blank to keep the stored key)'}</span>
+          <div className="input-with-action">
+            <input
+              type="password"
+              spellCheck={false}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={hasStoredKey ? '•••••• (unchanged)' : 'sk-…'}
+              autoComplete="off"
+            />
+            {hasStoredKey && (
+              <button type="button" className="btn-tiny btn-danger" onClick={() => void onRemoveKey()}>
+                Remove stored key
+              </button>
+            )}
+          </div>
+          <span className="form-hint">
+            Legacy compatibility only. New setups should select a named reusable secret above.
+          </span>
+        </label>
+      )}
       <div className="form-row">
         <span>Capabilities</span>
         <div className="cap-checks cap-checks--stacked">
@@ -666,6 +1009,44 @@ export function ProviderForm({
             />
             <span className="form-hint">
               Dotted path to the reply text in the endpoint's JSON response.
+            </span>
+          </label>
+        </details>
+      )}
+      {p.capabilities.includes('transcription') && (
+        <details className="custom-mapping">
+          <summary>Transcription endpoint (advanced)</summary>
+          <label className="form-row">
+            <span>Transcription endpoint path</span>
+            <input
+              type="text"
+              spellCheck={false}
+              value={capabilitySpec('transcription').path ?? ''}
+              onChange={(e) => setCapabilitySpec('transcription', { path: e.target.value })}
+              placeholder="/v1/audio/transcriptions"
+            />
+            <span className="form-hint">
+              Leave blank for the protocol default. The endpoint must accept the OpenAI-compatible
+              multipart transcription shape; Desktop still injects the selected model and credential.
+            </span>
+          </label>
+        </details>
+      )}
+      {p.capabilities.includes('realtime') && (
+        <details className="custom-mapping">
+          <summary>Realtime WebRTC endpoint (advanced)</summary>
+          <label className="form-row">
+            <span>Realtime session endpoint path</span>
+            <input
+              type="text"
+              spellCheck={false}
+              value={capabilitySpec('realtime').path ?? ''}
+              onChange={(e) => setCapabilitySpec('realtime', { path: e.target.value })}
+              placeholder="/v1/realtime/calls"
+            />
+            <span className="form-hint">
+              Leave blank for the protocol default. The endpoint must accept SDP and session JSON as
+              OpenAI-compatible multipart fields; Desktop returns the SDP answer without exposing the key.
             </span>
           </label>
         </details>

@@ -1128,8 +1128,15 @@ fn set_formlogic_config(
     base_url: String,
     api_key: String,
 ) -> Result<(), String> {
-    let base = base_url.trim();
-    write_config_str(&app, "formlogicBaseUrl", if base.is_empty() { None } else { Some(base) })?;
+    // Persist the same canonical base the HTTP client uses. In particular, the
+    // local WAMP SPA host (`formlogic.local`) must resolve to its split PHP host
+    // (`api.formlogic.local`) instead of becoming a durable source of 404s.
+    let base = formlogic_client::normalize_base(&base_url);
+    write_config_str(
+        &app,
+        "formlogicBaseUrl",
+        if base.is_empty() { None } else { Some(base.as_str()) },
+    )?;
     let key = api_key.trim();
     if !key.is_empty() {
         write_api_key(&app, Some(key))?;

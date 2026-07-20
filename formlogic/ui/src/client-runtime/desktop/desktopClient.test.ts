@@ -140,6 +140,29 @@ describe('desktopClient.ai gateway', () => {
     });
   });
 
+  it('uses the delegated Codex capability for the generic ChatGPT background provider', async () => {
+    storeDesktopToken('pair_tok');
+    const completion = { choices: [{ message: { content: 'Background result' } }] };
+    const fetchMock = serviceAwareFetch('openai-codex-agent', () => jsonResponse(completion));
+
+    const result = await desktopClient.ai.chat(
+      { messages: [{ role: 'user', content: 'Draft an SMS' }] },
+      'openai-codex-agent'
+    );
+
+    expect(result).toEqual({ ok: true, data: completion });
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      serviceId: 'openai-codex-agent',
+    });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe(
+      'http://127.0.0.1:17872/api/ai/providers/openai-codex-agent/v1/chat/completions'
+    );
+    expect((init.headers as Record<string, string>)['X-FormLogic-Capability']).toBe(
+      'cap_openai_codex_agent'
+    );
+  });
+
   it('lists public model metadata through the authenticated provider gateway', async () => {
     storeDesktopToken('pair_tok');
     const fetchMock = serviceAwareFetch('openai-api', () => jsonResponse({ object: 'list', data: [{ id: 'model-a' }] }));
@@ -151,6 +174,85 @@ describe('desktopClient.ai gateway', () => {
     expect(url).toBe('http://127.0.0.1:17872/api/ai/providers/openai/v1/models');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer pair_tok');
     expect((init.headers as Record<string, string>)['X-FormLogic-Capability']).toBe('cap_openai_api');
+  });
+
+  it('uploads transcription audio as multipart without overriding the browser boundary', async () => {
+    storeDesktopToken('pair_tok');
+    const fetchMock = serviceAwareFetch('openai-api', () => jsonResponse({ text: 'Hello from audio' }));
+
+    const res = await desktopClient.ai.transcribe({
+      file: new Blob(['wave-bytes'], { type: 'audio/wav' }),
+      filename: 'sample.wav',
+      model: 'gpt-4o-mini-transcribe',
+      language: 'en',
+      responseFormat: 'json',
+      timestampGranularities: ['word'],
+    }, 'speech/provider');
+
+    expect(res).toEqual({ ok: true, data: { text: 'Hello from audio' } });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:17872/api/ai/providers/speech%2Fprovider/v1/audio/transcriptions');
+    expect(init.method).toBe('POST');
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer pair_tok');
+    expect(headers['X-FormLogic-Capability']).toBe('cap_openai_api');
+    expect(headers['Content-Type']).toBeUndefined();
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect((form.get('file') as File).name).toBe('sample.wav');
+    expect(form.get('model')).toBe('gpt-4o-mini-transcribe');
+    expect(form.get('language')).toBe('en');
+    expect(form.get('response_format')).toBe('json');
+    expect(form.getAll('timestamp_granularities[]')).toEqual(['word']);
+  });
+
+  it('sends a typed audio chat request through a named provider', async () => {
+    storeDesktopToken('pair_tok');
+    const completion = {
+      choices: [{ message: { audio: { data: 'response-audio', transcript: 'Hello' } } }],
+    };
+    const fetchMock = serviceAwareFetch('openai-api', () => jsonResponse(completion));
+    const body = {
+      model: 'gpt-audio-1.5',
+      modalities: ['text', 'audio'] as Array<'text' | 'audio'>,
+      audio: { voice: 'alloy', format: 'wav' },
+      messages: [{
+        role: 'user',
+        content: [{ type: 'input_audio' as const, input_audio: { data: 'request-audio', format: 'wav' } }],
+      }],
+    };
+
+    const res = await desktopClient.ai.audioChat(body, 'audio/provider');
+
+    expect(res).toEqual({ ok: true, data: completion });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:17872/api/ai/providers/audio%2Fprovider/v1/audio/chat/completions');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    expect(JSON.parse(init.body as string)).toEqual(body);
+  });
+
+  it('brokers a Realtime WebRTC SDP offer through a pinned provider', async () => {
+    storeDesktopToken('pair_tok');
+    const fetchMock = serviceAwareFetch('openai-api', () => jsonResponse({ sdp: 'v=0\r\nanswer' }));
+    const offer = {
+      sdp: 'v=0\r\noffer',
+      model: 'gpt-realtime-2.1-mini',
+      voice: 'marin',
+      instructions: 'Be concise.',
+      session: {
+        output_modalities: ['audio'],
+        audio: { input: { transcription: { model: 'gpt-4o-mini-transcribe' } } },
+      },
+    };
+
+    const res = await desktopClient.ai.createRealtimeSession(offer, 'realtime/provider');
+
+    expect(res).toEqual({ ok: true, data: { sdp: 'v=0\r\nanswer' } });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:17872/api/ai/providers/realtime%2Fprovider/v1/realtime/sessions');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual(offer);
   });
 
   it('purges a cached owner token when the same app slug receives a new principal epoch', async () => {
@@ -190,7 +292,8 @@ describe('desktopClient.ai gateway', () => {
           const content = chunk.choices?.[0]?.delta?.content;
           if (content) seen.push(content);
         },
-      }
+      },
+      'stream/provider'
     );
 
     expect(res.ok && res.data).toEqual({
@@ -200,7 +303,7 @@ describe('desktopClient.ai gateway', () => {
     });
     expect(seen).toEqual(['Hel', 'lo']);
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(url).toBe('http://127.0.0.1:17872/api/ai/v1/chat/completions');
+    expect(url).toBe('http://127.0.0.1:17872/api/ai/providers/stream%2Fprovider/v1/chat/completions');
     expect((init.headers as Record<string, string>).Accept).toBe('text/event-stream');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer pair_tok');
     expect((init.headers as Record<string, string>)['X-FormLogic-Capability']).toBe('cap_openai_api');

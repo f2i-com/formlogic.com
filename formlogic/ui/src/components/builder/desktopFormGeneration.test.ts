@@ -103,6 +103,8 @@ describe('Desktop form provider routing', () => {
   it('offers only enabled OpenAI-compatible chat providers', () => {
     const sources: DesktopAiSource[] = [
       { id: 'provider:openai', kind: 'provider', providerId: 'openai', name: 'OpenAI', protocol: 'openai', enabled: true, capabilities: ['chat'], model: 'gpt-5' },
+      { id: 'provider:openai-codex-agent', kind: 'provider', providerId: 'openai-codex-agent', name: 'ChatGPT via Codex', protocol: 'openai', enabled: true, capabilities: ['chat'], useCases: ['background', 'forms', 'flows'], model: 'gpt-5.6-luna' },
+      { id: 'provider:openai-codex-agent-luna-low', kind: 'provider', providerId: 'openai-codex-agent-luna-low', name: 'ChatGPT live-call adapter', protocol: 'openai', enabled: true, capabilities: ['chat'], useCases: ['live-call', 'try-assistant'], model: 'gpt-5.6-luna' },
       { id: 'provider:legacy', kind: 'provider', providerId: 'legacy', name: 'Legacy', protocol: 'openai', enabled: true, capabilities: [] },
       { id: 'provider:disabled', kind: 'provider', providerId: 'disabled', name: 'Disabled', protocol: 'openai', enabled: false, capabilities: ['chat'] },
       { id: 'provider:anthropic', kind: 'provider', providerId: 'anthropic', name: 'Anthropic', protocol: 'anthropic', enabled: true, capabilities: ['chat'] },
@@ -111,6 +113,7 @@ describe('Desktop form provider routing', () => {
 
     expect(eligibleDesktopFormProviders(sources)).toEqual([
       { id: 'openai', name: 'OpenAI', model: 'gpt-5' },
+      { id: 'openai-codex-agent', name: 'ChatGPT via Codex', model: 'gpt-5.6-luna' },
       { id: 'legacy', name: 'Legacy' },
     ]);
   });

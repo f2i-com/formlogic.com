@@ -55,10 +55,16 @@ class ConnectorCommandController
             'actions' => [
                 'chat.complete',
                 'models.list',
+                'audio.transcribe',
+                'audio.chat',
+                'realtime.session.create',
             ],
             'grants' => [
                 'service.openai-api.chat.complete',
                 'service.openai-api.models.list',
+                'service.openai-api.audio.transcribe',
+                'service.openai-api.audio.chat',
+                'service.openai-api.realtime.session.create',
             ],
         ],
     ];

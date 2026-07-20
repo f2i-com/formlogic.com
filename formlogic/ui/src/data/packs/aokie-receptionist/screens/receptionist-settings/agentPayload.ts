@@ -31,6 +31,12 @@ export interface Draft {
    *  correction_endpoint URL. Composed into `audioTranscriptEndpoint`. */
   correction_source: string;
   correction_endpoint: string;
+  /** Independent chat provider used only after/between calls for summaries,
+   *  follow-up extraction and SMS drafting. The stored value is the desktop
+   *  source id (`provider:<id>`); blank keeps the flow runner's default. */
+  background_ai_source: string;
+  /** Optional per-flow model override. Blank lets the provider profile choose. */
+  background_ai_model: string;
   voice: string;
   reply_mode: string;
   active: string;
@@ -73,8 +79,10 @@ export function composeAgentPayload(
   //  - 'service:<id>' resolves the running service's URL + the lane path ('' while
   //    stopped); undefined services (no Desktop listing) resolves undefined so the
   //    caller OMITS the key and the per-call flow owns it;
-  //  - 'provider:<id>' composes the fixed AI-gateway base (LLM lane only via
-  //    providerOk - the gateway has no audio routes yet, speech lanes get '');
+  //  - 'provider:<id>' composes the fixed AI-gateway base when providerOk.
+  //    Desktop supports chat and transcription providers; it injects the
+  //    transcription profile's credential and configured model. TTS remains
+  //    gated until a compatible audio/speech gateway route exists;
   //  - blank/'custom' falls back to the legacy custom-endpoint field. On the
   //    LLM lane only, completely blank preserves the plugin's current
   //    Desktop-selected LLM rather than clearing it.
@@ -124,9 +132,11 @@ export function composeAgentPayload(
     // Blank means this pack record does not own the Desktop/plugin LLM choice.
     // Explicit provider/service/custom picks still return a value and apply.
     aiEndpoint: lane(d.llm_source, d.llm_endpoint, '/v1/chat/completions', true, true),
-    // provider: picks are GATED off the speech lanes (providerOk=false) - the
-    // gateway serves no audio routes yet; they resolve to '' (plugin default).
-    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', false, false),
+    // A transcription provider is a complete Desktop-owned lane: the plugin
+    // sends multipart audio and Desktop injects the provider profile's model
+    // and credential. There is intentionally no separate Aokie STT-model key.
+    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', true, false),
+    // TTS provider picks are still gated to the plugin fallback.
     ttsEndpoint: lane(d.tts_source, d.tts_endpoint, '/v1/audio/speech', false, false),
     // Correction lane (audioTranscript): a CHAT endpoint, so it composes with
     // the LLM lane's path. Blank source resolves to '' (corrections use the

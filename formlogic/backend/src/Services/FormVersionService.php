@@ -29,6 +29,11 @@ class FormVersionService
         }
 
         // Snapshot form data
+        $customScreen = is_array($form['customScreen'] ?? null) ? $form['customScreen'] : [];
+        $customScreenTrust = is_string($customScreen['_trust'] ?? null)
+            ? $customScreen['_trust'] : 'untrusted';
+        $customScreenProvenance = is_array($customScreen['_provenance'] ?? null)
+            ? $customScreen['_provenance'] : [];
         $data = [
             'title' => $form['title'],
             'description' => $form['description'],
@@ -38,6 +43,14 @@ class FormVersionService
             'logicScript' => $form['logicScript'] ?? null,
             'icon' => $form['icon'] ?? null,
             'logicPrompt' => $form['logicPrompt'] ?? null,
+            // Version snapshots must cover executable form surfaces too. This
+            // lets a pack migration restore both the previous screen bytes and
+            // their server-derived trust provenance instead of silently
+            // converting a signed screen into owner-authored content.
+            'customScreen' => $customScreen,
+            'customScreenTrust' => $customScreenTrust,
+            'customScreenProvenance' => $customScreenProvenance,
+            'customLogic' => $form['customLogic'] ?? [],
         ];
 
         // Use FOR UPDATE lock to prevent concurrent version number collisions
@@ -144,9 +157,11 @@ class FormVersionService
         // Auto-snapshot current state before restoring
         $this->createVersion($formId, $userId, "Auto-snapshot before restoring to v{$version}");
 
-        // Apply the version data via FormService
+        // Apply the version data via FormService. Older snapshots predate
+        // customScreen/customLogic, so omit those keys rather than clearing the
+        // current executable surfaces during an unrelated historical restore.
         $data = $versionData['data'];
-        return $this->formService->updateForm($formId, [
+        $update = [
             'title' => $data['title'] ?? null,
             'description' => $data['description'] ?? null,
             'fields' => $data['fields'] ?? null,
@@ -155,7 +170,25 @@ class FormVersionService
             'logicScript' => $data['logicScript'] ?? null,
             'icon' => $data['icon'] ?? null,
             'logicPrompt' => $data['logicPrompt'] ?? null,
-        ]);
+        ];
+        if (array_key_exists('customScreen', $data)) {
+            $update['customScreen'] = $data['customScreen'];
+        }
+        if (array_key_exists('customLogic', $data)) {
+            $update['customLogic'] = $data['customLogic'];
+        }
+        $restored = $this->formService->updateForm($formId, $update);
+        if ($restored !== null && !empty($data['customScreen'])
+            && is_string($data['customScreenTrust'] ?? null)
+            && is_array($data['customScreenProvenance'] ?? null)) {
+            $this->formService->setCustomScreenTrust(
+                $formId,
+                $data['customScreenTrust'],
+                $data['customScreenProvenance']
+            );
+            $restored = $this->formService->getForm($formId);
+        }
+        return $restored;
     }
 
     private function generateUuid(): string

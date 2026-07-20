@@ -13,6 +13,7 @@ import { isBrowserConnectorRegistered } from '../connectors/nativeConnectorClien
 import { shouldDeferEventToDesktop } from '../flows/flowDispatcher';
 import { logger } from '../../lib/logger';
 import { subscribeDesktopEvents } from './desktopEvents';
+import { enqueueBrowserConnectorEvent } from './browserEventQueue';
 import type { DesktopEventEnvelope } from './desktopTypes';
 import type { AppLogicHookOutcome } from '../logic/appLogicHost';
 
@@ -64,7 +65,7 @@ export function useDesktopConnectorEvents({
       // browser connector (aokie, vehicle, …) keyed by connectorId or source.
       const id = envelope.connectorId ?? envelope.source;
       if (!id || !isBrowserConnectorRegistered(id)) return;
-      void (async () => {
+      void enqueueBrowserConnectorEvent(envelope, async () => {
         // Single-writer rule (audit FL-001/C-04): while a cloud-linked desktop
         // flow runtime is heartbeating, IT runs the raw onConnectorEvent
         // record writes — the browser is a viewer. The exact gate the flow
@@ -76,7 +77,7 @@ export function useDesktopConnectorEvents({
           return;
         }
         await runRef.current(toLogicEvent(envelope));
-      })();
+      }).catch((error) => logger.warn('[app-logic] browser event queue task failed:', error));
     });
   }, [appSlug, enabled]);
 }

@@ -276,6 +276,16 @@ const FLOW_MATCH_CUSTOMER = `(function () {
 
 const FLOW_CALL_CONTEXT = `(function () {
   var callId = String(inputs.callId || '');
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var s = 0; s < sRows.length; s++) {
+    var sa = (sRows[s] && sRows[s].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var backgroundSource = String(cfg.background_ai_source || '').trim();
+  var backgroundProvider = backgroundSource.indexOf('provider:') === 0 ? backgroundSource : '';
+  var backgroundModel = String(cfg.background_ai_model || '').trim();
   var callRows = (nodes.calls && nodes.calls.responses) || [];
   var call = null;
   for (var i = 0; i < callRows.length; i++) {
@@ -290,7 +300,12 @@ const FLOW_CALL_CONTEXT = `(function () {
       lines.push(String(t.speaker || 'caller') + ': ' + String(t.text || ''));
     }
   }
-  return { responseId: call ? call.id : null, transcript: lines.join('\\n') };
+  return {
+    responseId: call ? call.id : null,
+    transcript: lines.join('\\n'),
+    backgroundProvider: backgroundProvider,
+    backgroundModel: backgroundModel
+  };
 })()`;
 
 const FLOW_SUMMARY_DECIDE = `(function () {
@@ -324,6 +339,26 @@ const FLOW_SMS_DRAFT_BUILD = `(function () {
       is_ai_reply: ['yes'],
       approval_status: 'pending_approval'
     }
+  };
+})()`;
+
+// Shared provider selector for the simple SMS-draft graph. More involved
+// background flows already read Receptionist Settings in their own context
+// blocks. Only a provider REFERENCE crosses the flow boundary; Desktop owns
+// the endpoint and credential. Blank deliberately preserves the runner's
+// current default provider for pre-feature settings records.
+const FLOW_BACKGROUND_AI_CTX = `(function () {
+  var sNode = nodes.settings;
+  var rows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var i = 0; i < rows.length; i++) {
+    var a = (rows[i] && rows[i].answers) || {};
+    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }
+  }
+  var source = String(cfg.background_ai_source || '').trim();
+  return {
+    backgroundProvider: source.indexOf('provider:') === 0 ? source : '',
+    backgroundModel: String(cfg.background_ai_model || '').trim()
   };
 })()`;
 
@@ -668,6 +703,14 @@ const FLOW_CALLBACK_DRAIN = `(function () {
 const FLOW_AFTER_CALL_CTX = `(function () {
   var callId = String(inputs.callId || '');
   var phone = String(inputs.callerPhone || inputs.from || '');
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var s = 0; s < sRows.length; s++) {
+    var sa = (sRows[s] && sRows[s].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var backgroundSource = String(cfg.background_ai_source || '').trim();
   // The customers node pre-filters with the phone_eq op (digits-only last-9
   // suffix, matched in the DATABASE) - no client-side scan, no 200-row cap.
   var custNode = nodes.customers || {};
@@ -693,6 +736,8 @@ const FLOW_AFTER_CALL_CTX = `(function () {
     phone: phone,
     customerId: hit ? hit.id : null,
     customerName: hit ? String((hit.answers || {}).name || '') : '',
+    backgroundProvider: backgroundSource.indexOf('provider:') === 0 ? backgroundSource : '',
+    backgroundModel: String(cfg.background_ai_model || '').trim(),
     today: now.toDateString() + ' (' + isoLocal + ')'
   };
 })()`;
@@ -1121,14 +1166,16 @@ ${BUSINESS_INFO_BLOCK_JS}
   // conventional path ('' when not running: the plugin then falls back to
   // auto-detect / its built-in engine, which is where a dead URL would have
   // ended up anyway, minus the timeout).
-  // 'provider:<id>' (LLM lane only) -> the desktop AI gateway's per-provider
+  // 'provider:<id>' (chat and transcription lanes) -> the desktop AI gateway's
+  // per-provider
   // OpenAI base (http://127.0.0.1:17872/api/ai/providers/<id> + the lane
   // path — the gateway's routes are /api/ai/providers/:id/v1/chat/completions
   // and .../v1/models, which is exactly what the plugin's LlmClient derives
   // from a chat URL). The gateway port is FIXED, so this composes with NO
   // service lookup — emitted even when the desktop_services node lists
-  // nothing. On the STT/TTS lanes provider: picks resolve to '' (plugin
-  // default): the gateway has no audio routes yet — un-gate when it does.
+  // nothing. Transcription provider picks use the gateway's multipart route;
+  // Desktop injects the configured model and credential. TTS provider picks
+  // still resolve to '' (plugin default) until audio/speech is exposed.
   // 'custom' or blank -> the legacy endpoint field. On the LLM lane only, a
   // completely blank source + endpoint preserves an explicit Desktop/plugin
   // choice; an explicit custom/service/provider pick still applies.
@@ -1157,7 +1204,9 @@ ${BUSINESS_INFO_BLOCK_JS}
   var applyAiEndpoint = String(cfg.llm_source || '').trim() !== '' || String(cfg.llm_endpoint || '').trim() !== '';
   var applyAiModel = applyAiEndpoint || model !== '';
   var aiEndpoint = laneUrl(cfg.llm_source, cfg.llm_endpoint, '/v1/chat/completions', true, true);
-  var sttEndpoint = laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', false, false);
+  // Desktop injects the selected transcription provider profile's model and
+  // credential into the plugin's multipart request. TTS stays gated below.
+  var sttEndpoint = laneUrl(cfg.stt_source, cfg.stt_endpoint, '/v1/audio/transcriptions', true, false);
   var ttsEndpoint = laneUrl(cfg.tts_source, cfg.tts_endpoint, '/v1/audio/speech', false, false);
   var correctionEndpoint = laneUrl(cfg.correction_source, cfg.correction_endpoint, '/v1/chat/completions', true, false);
   // connector_request accepts a selector for its WHOLE payload. Build that
@@ -1917,6 +1966,7 @@ const FLOW_SMS_CONVO_CTX = `(function () {
   }
   var business = String(cfg.business_name || '').trim();
   var model = String(cfg.model || '').trim();
+  var backgroundSource = String(cfg.background_ai_source || '').trim();
   // Newest open task in the SMS loop for this sender (rows arrive newest-first).
   var tRows = (nodes.tasks && nodes.tasks.responses) || [];
   var task = null;
@@ -2032,6 +2082,8 @@ const FLOW_SMS_CONVO_CTX = `(function () {
     appts: loopAppts,
     business: business,
     model: model,
+    backgroundProvider: backgroundSource.indexOf('provider:') === 0 ? backgroundSource : '',
+    backgroundModel: String(cfg.background_ai_model || '').trim(),
     today: now.toDateString() + ' (' + isoLocal + ')',
     llmContext: llmContext,
     phone: from,
@@ -3274,7 +3326,7 @@ export const aokieReceptionistPack: PackData = {
         // custom-endpoint field wins when set, else the plugin default),
         // 'service:<id>' = a FormLogic Desktop service resolved to its live
         // loopback URL at CONFIGURE time (per call, so a port change
-        // self-heals on the next call), 'provider:<id>' (LLM lane only) = a
+        // self-heals on the next call), 'provider:<id>' (chat/transcription) = a
         // configured AI provider routed through the desktop AI gateway's
         // fixed per-provider OpenAI base, 'custom' = use the matching
         // *_endpoint field verbatim.
@@ -3288,9 +3340,9 @@ export const aokieReceptionistPack: PackData = {
         {
           id: 'stt_source',
           type: 'short_text',
-          label: 'Speech-to-text source (blank = automatic)',
+          label: 'Speech-to-text provider/source (blank = automatic)',
           required: false,
-          properties: { placeholder: 'e.g. service:aokie-stt, custom' },
+          properties: { placeholder: 'e.g. provider:openai-transcribe, service:aokie-stt, custom' },
         },
         {
           id: 'tts_source',
@@ -3318,6 +3370,25 @@ export const aokieReceptionistPack: PackData = {
           label: 'Transcript-correction endpoint (custom URL)',
           required: false,
           properties: { placeholder: 'e.g. http://127.0.0.1:8081/v1/chat/completions' },
+        },
+        // Background tasks are intentionally independent of the call LLM. A
+        // delegated ChatGPT/Codex account can therefore draft SMS and analyse
+        // completed calls without putting its latency on the live audio path.
+        // Store only the Desktop provider reference - never an endpoint/key.
+        // These fields are appended for live pack-upgrade field-order safety.
+        {
+          id: 'background_ai_source',
+          type: 'short_text',
+          label: 'Background AI provider (blank = flow default)',
+          required: false,
+          properties: { placeholder: 'e.g. provider:openai-codex-agent' },
+        },
+        {
+          id: 'background_ai_model',
+          type: 'short_text',
+          label: 'Background AI model override (blank = provider default)',
+          required: false,
+          properties: { placeholder: 'e.g. gpt-5-mini' },
         },
       ],
       // The section IS the settings console: grouped cards, a live "what the
@@ -4001,7 +4072,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Call Summary + Follow-up',
       slug: 'call-summary-follow-up',
       description:
-        'Async after aokie.call.ended: summarise the transcript turns with the local LLM, write the summary onto the Calls row, and raise a Follow-up Task when the model asks for one. Raw status/duration updates are done by the app logic, not this flow.',
+        'Async after aokie.call.transcript.settled: summarise the final transcript (including any detached audio correction) with the independently selected Background AI provider, write the summary onto the Calls row, and raise a Follow-up Task when the model asks for one. Raw status/duration updates remain immediate on call.ended and are done by app logic, not this flow.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read', 'formlogic.responses.write'],
       flowJson: {
         nodes: [
@@ -4011,6 +4082,7 @@ export const aokieReceptionistPack: PackData = {
           // found. The context script's own scan stays as belt-and-braces.
           { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'context', type: 'logic_block', data: { expr: FLOW_CALL_CONTEXT } },
           {
             id: 'summary',
@@ -4019,6 +4091,8 @@ export const aokieReceptionistPack: PackData = {
               system: 'You are the note-taker for a small-business phone receptionist. Be brief and factual.',
               prompt:
                 'Summarise this phone call in at most two sentences. Then on a new line write "FOLLOW-UP: yes" if the business must contact the caller again, otherwise "FOLLOW-UP: no".\n\nTranscript:\n{{nodes.context.transcript}}',
+              provider: '{{nodes.context.backgroundProvider}}',
+              model: '{{nodes.context.backgroundModel}}',
               maxTokens: 400,
               // Qwen3-class models otherwise burn the WHOLE budget in a hidden
               // <think> block and return empty content — seen as 'no transcript
@@ -4045,7 +4119,8 @@ export const aokieReceptionistPack: PackData = {
         edges: [
           { source: 'in', target: 'calls' },
           { source: 'calls', target: 'turns' },
-          { source: 'turns', target: 'context' },
+          { source: 'turns', target: 'settings' },
+          { source: 'settings', target: 'context' },
           { source: 'context', target: 'summary' },
           { source: 'summary', target: 'decide' },
           { source: 'decide', target: 'out' },
@@ -4056,7 +4131,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'SMS Auto Reply Draft',
       slug: 'sms-auto-reply-draft',
       description:
-        'Async after aokie.sms.received: draft a reply with the local LLM and store it as an outbound Messages row with approval_status pending_approval — a human approves before anything is sent. Defers to the SMS Follow-up Conversation flow: while the sender has an open SMS-managed follow-up task (sms_state active), that loop answers autonomously and no draft is produced; a STOP opt-out suppresses drafting too.',
+        'Async after aokie.sms.received: draft a reply with the independently selected Background AI provider and store it as an outbound Messages row with approval_status pending_approval — a human approves before anything is sent. Defers to the SMS Follow-up Conversation flow: while the sender has an open SMS-managed follow-up task (sms_state active), that loop answers autonomously and no draft is produced; a STOP opt-out suppresses drafting too.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read', 'formlogic.responses.write'],
       flowJson: {
         nodes: [
@@ -4069,6 +4144,8 @@ export const aokieReceptionistPack: PackData = {
             type: 'formlogic_list_responses',
             data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] },
           },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'ai', type: 'logic_block', data: { expr: FLOW_BACKGROUND_AI_CTX } },
           {
             id: 'gate',
             type: 'condition',
@@ -4082,6 +4159,8 @@ export const aokieReceptionistPack: PackData = {
             data: {
               system: 'You draft short, friendly SMS replies for a small-business receptionist. Reply with the SMS text only — no preamble.',
               prompt: 'Draft a reply to this SMS from {{inputs.from}}:\n\n{{inputs.body}}',
+              provider: '{{nodes.ai.backgroundProvider}}',
+              model: '{{nodes.ai.backgroundModel}}',
               maxTokens: 120,
               // Same Qwen3 thinking-mode guard as every other llm_chat node.
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
@@ -4094,7 +4173,9 @@ export const aokieReceptionistPack: PackData = {
         ],
         edges: [
           { source: 'in', target: 'tasks' },
-          { source: 'tasks', target: 'gate' },
+          { source: 'tasks', target: 'settings' },
+          { source: 'settings', target: 'ai' },
+          { source: 'ai', target: 'gate' },
           { source: 'gate', target: 'draft', sourceHandle: 'true' },
           { source: 'gate', target: 'build', sourceHandle: 'false' },
           { source: 'draft', target: 'build' },
@@ -4106,7 +4187,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'SMS Follow-up Conversation',
       slug: 'sms-followup-conversation',
       description:
-        "The autonomous half of the SMS follow-up loop: async on aokie.sms.received, match the sender to their open SMS-managed follow-up task (phone_eq, sms_state 'active') and to the appointment that task is about (shared call_id). STOP always opts the customer out, a plain YES confirms without a model call, and a hard cap of 6 outbound texts per task hands off to a human. Everything else goes to the local LLM, which decides confirm / reschedule / cancel / ask / handoff — the binding's guarded output actions then update the Appointment, update + close the task ('done'), send the reply (sms.send) and log it in Messages. Confirm/reschedule/cancel replies are composed from the records, never model prose. Senders with no active task are untouched — the SMS Auto Reply Draft flow keeps its human-approval path for them.",
+        "The autonomous half of the SMS follow-up loop: async on aokie.sms.received, match the sender to their open SMS-managed follow-up task (phone_eq, sms_state 'active') and to the appointment that task is about (shared call_id). STOP always opts the customer out, a plain YES confirms without a model call, and a hard cap of 6 outbound texts per task hands off to a human. Everything else goes to the independently selected Background AI provider, which decides confirm / reschedule / cancel / ask / handoff — the binding's guarded output actions then update the Appointment, update + close the task ('done'), send the reply (sms.send) and log it in Messages. Confirm/reschedule/cancel replies are composed from the records, never model prose. Senders with no active task are untouched — the SMS Auto Reply Draft flow keeps its human-approval path for them.",
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -4153,7 +4234,8 @@ export const aokieReceptionistPack: PackData = {
                 'You manage SMS follow-ups for a small-business receptionist: confirming, moving or cancelling booking requests. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
                 'Today is {{nodes.ctx.today}}.\n\n{{nodes.ctx.llmContext}}\n\nReturn ONLY this JSON:\n{"action": "confirm" | "reschedule" | "cancel" | "ask" | "handoff", "target_date": "YYYY-MM-DD" or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "service": string or null, "actions": null or [{"action": "confirm" | "reschedule" | "cancel", "target_date": "YYYY-MM-DD", "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null}], "reply": "one short friendly SMS (under 300 characters, plain text, no emoji)"}\n\nRules: "confirm" only when the customer clearly agrees to the listed booking(s) — a confirm covers ALL of them; when MORE THAN ONE booking is listed and they want to change or cancel one, set "target_date" to the EXISTING date of the booking they mean (from the list) — if you cannot tell which one, use "ask"; when ONE message asks DIFFERENT things for different bookings (example: "yes to Thursday and 6pm for Sunday" = confirm Thursday\'s booking AND move Sunday\'s to 18:00), fill the "actions" array with one entry per booking — each entry\'s "target_date" is that booking\'s EXISTING date from the list, and "date"/"time" are its NEW slot for a reschedule; otherwise set "actions" to null; "reschedule" when they propose a different day/time — "date"/"time" are the NEW slot; resolve relative dates ("next Tuesday", "tomorrow") from today\'s date and use 24-hour time; "cancel" only when they clearly no longer want a booking; "ask" when you need one clarifying detail (your reply is the question); "handoff" for anything else — complaints, other requests, or anything unclear. Never invent prices, opening hours or services; never promise anything except booking changes; use null when unsure — never guess.',
-              model: '{{nodes.ctx.model}}',
+              provider: '{{nodes.ctx.backgroundProvider}}',
+              model: '{{nodes.ctx.backgroundModel}}',
               maxTokens: 350,
               temperature: 0,
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
@@ -4294,7 +4376,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'After-Call Actions (Auto-Book)',
       slug: 'after-call-actions',
       description:
-        'The automation that makes it a real receptionist: async after aokie.call.ended, read this call\'s transcript turns, have the local LLM extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Booking-intent tasks with a real caller number also kick off the SMS follow-up loop: a confirmation text goes out immediately (sms.send) and the SMS Follow-up Conversation flow drives the replies until the task closes. Malformed model output degrades to a follow-up task, never a bad record.',
+        'The automation that makes it a real receptionist: async after aokie.call.transcript.settled, read this call\'s final transcript (including any detached audio correction), have the independently selected Background AI provider extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Booking-intent tasks with a real caller number also kick off the SMS follow-up loop: a confirmation text goes out immediately (sms.send) and the SMS Follow-up Conversation flow drives the replies until the task closes. Malformed model output degrades to a follow-up task, never a bad record.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -4339,6 +4421,8 @@ export const aokieReceptionistPack: PackData = {
                 'You extract structured booking data from phone-call transcripts for a small business. Reply with ONLY one JSON object — no prose, no markdown fences.',
               prompt:
                 'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "sentiment": "positive" | "neutral" | "negative", "caller_name": string or null, "service": string or null, "appointments": [{"service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null}], "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: "appointments" lists EVERY separate booking the caller agreed to on THIS call (most calls have one; use [] when none was agreed); do NOT list a booking the caller merely mentioned already having; each entry\'s time must be one the caller explicitly said FOR THAT booking — never copy a time from one booking to another, use null when no time was stated; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; judge sentiment from the caller\'s tone; use null when unsure — never guess.',
+              provider: '{{nodes.ctx.backgroundProvider}}',
+              model: '{{nodes.ctx.backgroundModel}}',
               maxTokens: 700,
               temperature: 0,
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
@@ -4568,7 +4652,7 @@ export const aokieReceptionistPack: PackData = {
     },
     {
       flow: 'call-summary-follow-up',
-      event: 'aokie.call.ended',
+      event: 'aokie.call.transcript.settled',
       connectorId: 'aokie',
       mode: 'async',
       timeoutMs: 60000,
@@ -4602,7 +4686,7 @@ export const aokieReceptionistPack: PackData = {
     },
     {
       flow: 'after-call-actions',
-      event: 'aokie.call.ended',
+      event: 'aokie.call.transcript.settled',
       connectorId: 'aokie',
       mode: 'async',
       // Generous budget: reads two forms + one local-LLM extraction. Async, so it

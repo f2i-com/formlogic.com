@@ -53,7 +53,10 @@ async function desktopFetch<T>(path: string, init: RequestInit = {}): Promise<De
       ...init,
       headers: {
         Accept: 'application/json',
-        ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        // Let fetch add multipart boundaries for FormData (and the correct
+        // media type for other native body types). All JSON callers in this
+        // client pass a serialized string and may still override this header.
+        ...(typeof init.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
         ...desktopAuthHeaders(),
         ...(init.headers as Record<string, string> | undefined),
       },
@@ -184,6 +187,11 @@ export interface DesktopAiSource {
   model?: string | null;
   /** NOTE: an EMPTY provider capability set means "all" (legacy profiles). */
   capabilities?: string[];
+  /**
+   * Surfaces this source is intended to serve. Older Desktop builds omit this
+   * field, which consumers treat as unrestricted for compatibility.
+   */
+  useCases?: string[];
   protocol?: string;
   hasKey?: boolean;
   enabled?: boolean;
@@ -205,6 +213,89 @@ export interface DesktopAiChatRequest {
   model?: string;
   temperature?: number;
   max_tokens?: number;
+  [key: string]: unknown;
+}
+
+/** Multipart transcription input; the audio bytes never pass through FormLogic Cloud. */
+export interface DesktopAiTranscriptionRequest {
+  file: Blob;
+  /** Overrides File.name; used when a recorder supplies an unnamed Blob. */
+  filename?: string;
+  model?: string;
+  language?: string;
+  prompt?: string;
+  /** JSON formats retain the typed `{text}` response contract used by this client. */
+  responseFormat?: 'json' | 'verbose_json' | 'diarized_json';
+  temperature?: number;
+  timestampGranularities?: string[];
+  /** OpenAI multipart value, for example `auto` or a JSON-encoded strategy. */
+  chunkingStrategy?: string;
+}
+
+export interface DesktopAiTranscriptionResponse {
+  text: string;
+  [key: string]: unknown;
+}
+
+export interface DesktopAiAudioInput {
+  /** Base64-encoded audio; provider credentials remain Desktop-only. */
+  data: string;
+  format: string;
+}
+
+export type DesktopAiAudioChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'input_audio'; input_audio: DesktopAiAudioInput };
+
+export interface DesktopAiAudioChatMessage {
+  role: string;
+  content: string | DesktopAiAudioChatContentPart[];
+}
+
+export interface DesktopAiAudioChatRequest {
+  messages: DesktopAiAudioChatMessage[];
+  model?: string;
+  modalities?: Array<'text' | 'audio'>;
+  audio?: { voice?: string; format?: string; [key: string]: unknown };
+  /** The typed client returns one buffered JSON response; use Realtime for streaming audio. */
+  stream?: false;
+  [key: string]: unknown;
+}
+
+export interface DesktopAiAudioChatResponse {
+  choices?: Array<{
+    index?: number;
+    message?: {
+      role?: string;
+      content?: string | null;
+      audio?: {
+        id?: string;
+        data?: string;
+        transcript?: string;
+        expires_at?: number;
+        [key: string]: unknown;
+      };
+      [key: string]: unknown;
+    };
+    finish_reason?: string | null;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+}
+
+/** Browser SDP offer brokered by Desktop so the OpenAI API key is never exposed. */
+export interface DesktopAiRealtimeSessionRequest {
+  sdp: string;
+  /** Optional full Realtime session object; shortcuts below are merged into it. */
+  session?: Record<string, unknown>;
+  model?: string;
+  voice?: string;
+  instructions?: string;
+  [key: string]: unknown;
+}
+
+export interface DesktopAiRealtimeSessionResponse {
+  sdp: string;
   [key: string]: unknown;
 }
 
@@ -323,6 +414,52 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function aiGatewayPath(providerId: string | undefined, suffix: string): string {
+  return providerId
+    ? `/api/ai/providers/${encodeURIComponent(providerId)}/v1/${suffix}`
+    : `/api/ai/v1/${suffix}`;
+}
+
+function aiCapabilityService(providerId?: string): 'openai-api' | 'openai-codex-agent' {
+  // The generic background adapter spends the linked ChatGPT/Codex account,
+  // not an OpenAI Platform key. Ask the server for that service's exact grant
+  // so middleware cannot mistake one billing/auth domain for the other.
+  return providerId === 'openai-codex-agent' ? 'openai-codex-agent' : 'openai-api';
+}
+
+function mapRequiredStringObject<T extends Record<string, unknown>>(
+  result: DesktopClientResult<unknown>,
+  field: string,
+  invalidMessage: string
+): DesktopClientResult<T> {
+  if (!result.ok) return result;
+  const value = asRecord(result.data);
+  if (!value || typeof value[field] !== 'string') {
+    return { ok: false, error: { code: 'command_failed', message: invalidMessage } };
+  }
+  return { ok: true, data: value as T };
+}
+
+function transcriptionFormData(input: DesktopAiTranscriptionRequest): FormData {
+  const form = new FormData();
+  const namedBlob = input.file as Blob & { name?: unknown };
+  const inheritedName = typeof namedBlob.name === 'string' && namedBlob.name.trim() !== ''
+    ? namedBlob.name.trim()
+    : 'audio.wav';
+  const filename = input.filename?.trim() || inheritedName;
+  form.append('file', input.file, filename);
+  if (input.model) form.append('model', input.model);
+  if (input.language) form.append('language', input.language);
+  if (input.prompt) form.append('prompt', input.prompt);
+  if (input.responseFormat) form.append('response_format', input.responseFormat);
+  if (input.temperature !== undefined) form.append('temperature', String(input.temperature));
+  if (input.chunkingStrategy) form.append('chunking_strategy', input.chunkingStrategy);
+  for (const granularity of input.timestampGranularities ?? []) {
+    form.append('timestamp_granularities[]', granularity);
+  }
+  return form;
 }
 
 function stringArray(value: unknown): string[] {
@@ -522,7 +659,8 @@ function streamFailure(message: string, transportFailure = false): DesktopClient
 async function desktopChatStream(
   body: DesktopAiChatRequest,
   opts: DesktopAiChatStreamOptions,
-  capabilityToken: string
+  capabilityToken: string,
+  providerId?: string
 ): Promise<DesktopClientResult<DesktopAiChatStreamSummary>> {
   const controller = new AbortController();
   let abortKind: 'external' | 'timeout' | null = null;
@@ -543,7 +681,7 @@ async function desktopChatStream(
 
   let response: Response;
   try {
-    response = await fetch(`${getDesktopBaseUrl()}/api/ai/v1/chat/completions`, {
+    response = await fetch(`${getDesktopBaseUrl()}${aiGatewayPath(providerId, 'chat/completions')}`, {
       method: 'POST',
       credentials: 'omit',
       cache: 'no-store',
@@ -914,10 +1052,8 @@ export const desktopClient = {
       providerId?: string,
       opts?: { signal?: AbortSignal }
     ): Promise<DesktopClientResult<Record<string, unknown>>> {
-      const path = providerId
-        ? `/api/ai/providers/${encodeURIComponent(providerId)}/v1/chat/completions`
-        : '/api/ai/v1/chat/completions';
-      return withServiceCapability('openai-api', (capabilityToken) =>
+      const path = aiGatewayPath(providerId, 'chat/completions');
+      return withServiceCapability(aiCapabilityService(providerId), (capabilityToken) =>
         desktopFetch<Record<string, unknown>>(path, {
           method: 'POST',
           body: JSON.stringify(body),
@@ -929,10 +1065,8 @@ export const desktopClient = {
 
     /** List models through the same authenticated, credential-hiding gateway. */
     async models(providerId?: string): Promise<DesktopClientResult<DesktopAiModel[]>> {
-      const path = providerId
-        ? `/api/ai/providers/${encodeURIComponent(providerId)}/v1/models`
-        : '/api/ai/v1/models';
-      const result = await withServiceCapability<unknown>('openai-api', (capabilityToken) =>
+      const path = aiGatewayPath(providerId, 'models');
+      const result = await withServiceCapability<unknown>(aiCapabilityService(providerId), (capabilityToken) =>
         desktopFetch<unknown>(path, {
           headers: { 'X-FormLogic-Capability': capabilityToken },
         })
@@ -946,10 +1080,69 @@ export const desktopClient = {
      */
     chatStream(
       body: DesktopAiChatRequest,
-      opts: DesktopAiChatStreamOptions
+      opts: DesktopAiChatStreamOptions,
+      providerId?: string
     ): Promise<DesktopClientResult<DesktopAiChatStreamSummary>> {
+      return withServiceCapability(aiCapabilityService(providerId), (capabilityToken) =>
+        desktopChatStream(body, opts, capabilityToken, providerId)
+      );
+    },
+
+    /** Multipart speech-to-text through a default or explicitly pinned provider. */
+    async transcribe(
+      body: DesktopAiTranscriptionRequest,
+      providerId?: string,
+      opts?: { signal?: AbortSignal }
+    ): Promise<DesktopClientResult<DesktopAiTranscriptionResponse>> {
+      const result = await withServiceCapability<unknown>('openai-api', (capabilityToken) =>
+        desktopFetch<unknown>(aiGatewayPath(providerId, 'audio/transcriptions'), {
+          method: 'POST',
+          body: transcriptionFormData(body),
+          signal: opts?.signal ?? timeoutSignal(125_000),
+          headers: { 'X-FormLogic-Capability': capabilityToken },
+        })
+      );
+      return mapRequiredStringObject<DesktopAiTranscriptionResponse>(
+        result,
+        'text',
+        'Desktop returned an invalid transcription response.'
+      );
+    },
+
+    /** Typed audio-capable Chat Completions request through Desktop-held credentials. */
+    async audioChat(
+      body: DesktopAiAudioChatRequest,
+      providerId?: string,
+      opts?: { signal?: AbortSignal }
+    ): Promise<DesktopClientResult<DesktopAiAudioChatResponse>> {
       return withServiceCapability('openai-api', (capabilityToken) =>
-        desktopChatStream(body, opts, capabilityToken)
+        desktopFetch<DesktopAiAudioChatResponse>(aiGatewayPath(providerId, 'audio/chat/completions'), {
+          method: 'POST',
+          body: JSON.stringify(body),
+          signal: opts?.signal ?? timeoutSignal(125_000),
+          headers: { 'X-FormLogic-Capability': capabilityToken },
+        })
+      );
+    },
+
+    /** Exchange a WebRTC offer for an SDP answer without exposing the provider key. */
+    async createRealtimeSession(
+      body: DesktopAiRealtimeSessionRequest,
+      providerId?: string,
+      opts?: { signal?: AbortSignal }
+    ): Promise<DesktopClientResult<DesktopAiRealtimeSessionResponse>> {
+      const result = await withServiceCapability<unknown>('openai-api', (capabilityToken) =>
+        desktopFetch<unknown>(aiGatewayPath(providerId, 'realtime/sessions'), {
+          method: 'POST',
+          body: JSON.stringify(body),
+          signal: opts?.signal ?? timeoutSignal(35_000),
+          headers: { 'X-FormLogic-Capability': capabilityToken },
+        })
+      );
+      return mapRequiredStringObject<DesktopAiRealtimeSessionResponse>(
+        result,
+        'sdp',
+        'Desktop returned an invalid Realtime SDP response.'
       );
     },
   },

@@ -20,6 +20,7 @@ import {
   type ServiceTemplateInput,
 } from './api';
 import {
+  ApiSecretsPanel,
   AiProviderCard,
   createBlankAiProviderProfile,
   ProviderForm,
@@ -79,6 +80,7 @@ export default function ServicesPanel() {
   );
   const [providerError, setProviderError] = useState<string | null>(null);
   const [editingProvider, setEditingProvider] = useState<AiProviderProfile | null>(null);
+  const [showApiSecrets, setShowApiSecrets] = useState(false);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
   const [serviceDefinitions, setServiceDefinitions] = useState<ServiceDefinitionSummary[]>([]);
   const [codexStatus, setCodexStatus] = useState<CodexServiceStatus | null>(null);
@@ -640,9 +642,21 @@ export default function ServicesPanel() {
           </button>
           <button
             className="btn btn-secondary"
-            onClick={() => setEditingProvider(createBlankAiProviderProfile())}
+            onClick={() => {
+              setShowApiSecrets(false);
+              setEditingProvider(createBlankAiProviderProfile());
+            }}
           >
             + Add API provider
+          </button>
+          <button
+            className={`btn btn-secondary${showApiSecrets ? ' btn-active' : ''}`}
+            onClick={() => {
+              setEditingProvider(null);
+              setShowApiSecrets((shown) => !shown);
+            }}
+          >
+            API Secrets
           </button>
           <button
             className="btn btn-secondary"
@@ -713,6 +727,14 @@ export default function ServicesPanel() {
               setEditingProvider(null);
               void refreshProviders();
             }}
+          />
+        </section>
+      )}
+      {showApiSecrets && (
+        <section className="service-section service-center-editor">
+          <ApiSecretsPanel
+            onClose={() => setShowApiSecrets(false)}
+            onChanged={() => void refreshProviders()}
           />
         </section>
       )}
@@ -842,11 +864,16 @@ export default function ServicesPanel() {
                   tags={item.tags}
                   testing={testingProvider === provider.id}
                   onTest={() => void testProvider(provider.id, provider.protocol)}
-                  onEdit={() => setEditingProvider(provider)}
+                  onEdit={() => {
+                    setShowApiSecrets(false);
+                    setEditingProvider(provider);
+                  }}
                   onRemove={async () => {
                     const confirmed = await requestConfirm({
                       title: `Remove "${provider.name}"?`,
-                      body: 'The provider config and its stored API key are deleted.',
+                      body: provider.secretRef
+                        ? 'The provider config is deleted. Its reusable API secret is retained.'
+                        : 'The provider config and its legacy provider-specific API key are deleted.',
                       confirmLabel: 'Remove',
                       danger: true,
                     });

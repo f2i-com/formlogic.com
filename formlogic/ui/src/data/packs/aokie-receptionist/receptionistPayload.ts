@@ -27,6 +27,8 @@ export interface Draft {
    *  correction_endpoint URL. Composed into `audioTranscriptEndpoint`. */
   correction_source: string;
   correction_endpoint: string;
+  background_ai_source: string;
+  background_ai_model: string;
   voice: string;
   reply_mode: string;
   active: string;
@@ -46,6 +48,8 @@ export const EMPTY_DRAFT: Draft = {
   tts_source: '',
   correction_source: '',
   correction_endpoint: '',
+  background_ai_source: '',
+  background_ai_model: '',
   voice: '',
   reply_mode: 'agent',
   active: 'yes',
@@ -80,9 +84,10 @@ export const AI_GATEWAY_BASE = 'http://127.0.0.1:17872/api/ai/providers/';
  *  - 'provider:<id>' → the desktop AI gateway's per-provider OpenAI base +
  *    the lane path. The gateway port is FIXED (:17872), so this composes
  *    deterministically with NO listing — identical on remote consoles and in
- *    the per-call flow. LLM lane only (`providerOk`): the gateway has no
- *    audio routes yet, so STT/TTS provider picks resolve to '' (plugin
- *    default) until those exist.
+ *    the per-call flow. Chat and transcription lanes opt in with
+ *    `providerOk`; Desktop injects the selected transcription provider's
+ *    configured model and credential. TTS remains gated to '' (plugin
+ *    default) until a compatible audio/speech route exists.
  *  - blank/'custom' → the legacy custom-endpoint field. For the LLM lane
  *    only, a completely blank source + endpoint means "leave the plugin's
  *    current LLM choice alone"; an explicit `custom` selection (including an
@@ -203,9 +208,10 @@ export function composeAgentPayload(
     // Save & apply and the per-call Configure Receptionist flow. Any explicit
     // provider/service/custom selection still returns a value and applies.
     aiEndpoint: lane(d.llm_source, d.llm_endpoint, '/v1/chat/completions', true, true),
-    // provider: picks are GATED off the speech lanes (providerOk=false) - the
-    // gateway serves no audio routes yet; they resolve to '' (plugin default).
-    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', false, false),
+    // Desktop owns the selected transcription provider's model + credential;
+    // Aokie only stores and applies the named provider endpoint.
+    sttEndpoint: lane(d.stt_source, d.stt_endpoint, '/v1/audio/transcriptions', true, false),
+    // TTS remains gated until the provider gateway serves audio/speech.
     ttsEndpoint: lane(d.tts_source, d.tts_endpoint, '/v1/audio/speech', false, false),
     // Correction lane (audioTranscript): a CHAT endpoint, so it composes with
     // the LLM lane's path. Blank source resolves to '' (corrections use the

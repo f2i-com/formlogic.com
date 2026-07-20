@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { api } from '../../lib/api';
 import type { AIFormGenerationResult } from '../../lib/api';
 import { logger } from '../../lib/logger';
+import { resolveWebsiteAiRoute, type WebsiteAiOperation } from '../../lib/websiteAiRouting';
 import { toast } from '../../stores/toastStore';
 import type { FormField } from '../../types/form';
 import { desktopClient } from '../../client-runtime/desktop/desktopClient';
@@ -174,13 +175,25 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
     const promptAtStart = prompt;
     const additionalPromptAtStart = additionalPrompt;
     const sourceAtStart: GenerationSource = tabAtStart === 'prompt' ? generationSource : 'hosted';
-    const desktopProviderId = sourceAtStart.startsWith('desktop:')
+    const editMode = tabAtStart === 'prompt' && (existingFields?.length ?? 0) > 0;
+    const operationAtStart: WebsiteAiOperation = tabAtStart === 'document'
+      ? 'form.create.document'
+      : tabAtStart === 'image'
+        ? 'form.create.photo'
+        : editMode
+          ? 'form.edit.text'
+          : 'form.create.text';
+    const requestedDesktopProviderId = sourceAtStart.startsWith('desktop:')
       ? sourceAtStart.slice('desktop:'.length)
       : null;
+    const routeAtStart = resolveWebsiteAiRoute(
+      operationAtStart,
+      requestedDesktopProviderId ? 'desktop-provider' : 'hosted',
+    );
+    const desktopProviderId = routeAtStart === 'desktop-provider' ? requestedDesktopProviderId : null;
     const desktopProvider = desktopProviderId
       ? desktopProviders.find((provider) => provider.id === desktopProviderId)
       : undefined;
-    const editMode = tabAtStart === 'prompt' && (existingFields?.length ?? 0) > 0;
 
     if (tabAtStart === 'prompt' && !promptAtStart.trim()) {
       toast.error('Prompt Required', 'Please enter a description for your form');
@@ -197,7 +210,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
       return;
     }
 
-    if (desktopProvider && editMode) {
+    if (requestedDesktopProviderId && routeAtStart === 'unsupported') {
       toast.error('Hosted Editing Required', 'Desktop providers can create a new form from text, but cannot safely edit an existing form yet. Select FormLogic Hosted.');
       return;
     }
@@ -340,12 +353,16 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
     ? desktopProviders.find((provider) => provider.id === selectedDesktopProviderId)
     : undefined;
   const usesDesktopProvider = activeTab === 'prompt' && selectedDesktopProviderId !== null;
+  const desktopRouteSupported = resolveWebsiteAiRoute(
+    editing ? 'form.edit.text' : 'form.create.text',
+    'desktop-provider',
+  ) === 'desktop-provider';
   const usesHostedGeneration = !usesDesktopProvider;
   const desktopSelectionUnavailable = usesDesktopProvider
     && !desktopProvidersLoading
     && !selectedDesktopProvider;
   const generationAvailable = usesDesktopProvider
-    ? !!selectedDesktopProvider && !editing
+    ? !!selectedDesktopProvider && desktopRouteSupported
     : isAvailable !== false;
 
   return (

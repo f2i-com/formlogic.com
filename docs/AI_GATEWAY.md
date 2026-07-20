@@ -1,92 +1,90 @@
-# Desktop AI Gateway + provider registry (Phase 4 — AI-401..407)
+# Desktop AI Gateway + provider registry (AI-401..407)
 
-Bring your own AI: point the receptionist or a flow at OpenAI (ChatGPT API),
-Anthropic, a local Ollama/LM Studio, or any custom HTTP endpoint — run everything
-in the cloud on your own key with nothing local, or mix local + cloud freely.
-Backed by ADR-008.
+Bring your own AI: FormLogic can use cloud, local, or custom providers while
+keeping provider credentials inside FormLogic Desktop. ChatGPT/Codex sign-in and
+OpenAI Platform API keys are separate connections and billing domains.
 
-## Provider registry (AI-401)
+## Provider registry and reusable secrets
 
-`<data_dir>/ai-providers.json` holds provider **profiles** (id, name, protocol,
-baseUrl, model, capabilities, custom headers, per-capability specs for Custom,
-`allowLocal`, `enabled`). **API keys are never in this file** — they live in the OS
-credential store under `ai-provider:<id>`; the API and UI only ever see a `hasKey`
-boolean. Managed at `Services → AI Providers` and over `/api/ai/providers*`.
+`<data_dir>/ai-providers.json` holds provider profiles (id, name, protocol,
+base URL, model, capabilities, custom headers/mappings, `secretRef`, local-access
+policy, and enabled state) plus non-secret reusable-secret metadata.
 
-A **capability alias** (`receptionist-chat`, `speech-to-text`, …) maps a logical
-capability to a provider profile. Flows/exports reference the alias; the device owner
-maps it to a machine-local provider. Exports carry the alias + requirements, never a
-machine provider id or a secret.
+Secret values are never written to that file or returned by an API. Named values
+live in the OS credential store under `api-secret:<id>` and can be shared by
+multiple providers. Existing provider-specific values under `ai-provider:<id>`
+remain compatible. The UI exposes only presence and reference metadata at
+`Services -> AI Providers -> API Secrets`.
 
-Presets: OpenAI, Anthropic, Ollama (local), LM Studio (local), Custom HTTP.
+Presets include OpenAI Platform, `gpt-4o-mini-transcribe`,
+`gpt-realtime-2.1-mini`, `gpt-audio-1.5`, Anthropic, Ollama, LM Studio, and
+Custom HTTP.
 
-## Gateway (AI-402/403)
+An optional capability alias maps a logical role to a provider. Explicit aliases
+and provider ids fail closed: an unknown/disabled/incompatible selection never
+falls through and spends another provider's secret.
 
-An OpenAI-compatible loopback surface on the management plane:
+## Gateway routes
 
-- `GET  /api/ai/v1/models` — default provider's models (empty list if none configured).
-- `POST /api/ai/v1/chat/completions` — canonical OpenAI chat request; a `provider`
-  field selects a capability alias/provider id.
-- `GET  /api/ai/providers/:id/v1/models`, `POST /api/ai/providers/:id/v1/chat/completions`
-  — a named provider.
+The authenticated loopback gateway has default-provider routes and corresponding
+named routes under `/api/ai/providers/:id/v1/*`:
 
-The gateway attaches the key server-side and normalizes the response back to the
-OpenAI shape, so a consumer speaks one dialect regardless of the upstream:
+- `GET /api/ai/v1/models`
+- `POST /api/ai/v1/chat/completions`
+- `POST /api/ai/v1/audio/transcriptions`
+- `POST /api/ai/v1/audio/chat/completions`
+- `POST /api/ai/v1/realtime/sessions`
 
-- **OpenAI protocol** — pass-through (llama.cpp / Ollama / LM Studio `/v1` are this).
-- **Anthropic** — OpenAI chat → Messages (system extracted, `x-api-key` +
-  `anthropic-version`), response text unwrapped back to OpenAI choices.
-- **Custom HTTP** — a `requestTemplate` (`{{model}} {{messages}} {{prompt}} {{input}}
-  {{apiKey}}` placeholders, JSON-escaped) and a dot-path `responsePath` let a user wire
-  essentially any service.
+The transcription adapter accepts a bounded multipart upload and injects the
+provider profile's model when the caller omits it. The audio-chat adapter keeps
+the OpenAI Chat Completions audio shape. The Realtime adapter combines a browser
+SDP offer with a bounded session configuration and calls the unified upstream
+`/v1/realtime/calls` interface, returning only the SDP answer.
 
-Streaming SSE, the audio (STT/TTS) routes, embeddings, and OpenAI Realtime (WS) are
-additive follow-ups on this same surface (audio + realtime land with the Aokie
-gateway wiring / Phase 7).
+OpenAI-shaped chat SSE is passed through incrementally where the provider dialect
+does not need translation. Anthropic chat is mapped to/from Messages. Custom HTTP
+may map paths, JSON request bodies, response paths, and credential headers;
+credentials are deliberately unavailable to request-body templates.
 
-## Auth (ADR-008 — inference is NEVER anonymous)
+Speech generation (`/audio/speech`), embeddings, and a native Aokie Realtime
+WebSocket/SCO bridge remain separate follow-ups. The current Realtime route is a
+website WebRTC session broker, not an Aokie phone-call transport.
 
-Every `/api/ai/*` route sits behind the management-plane auth guard (webview | server
-token | pairing token). There is no anonymous tier, so a drive-by web page in the
-user's browser cannot spend their keys. Provider **config** + **key** routes are
-additionally in `is_privileged_path`, so a no-Origin native caller cannot reconfigure
-providers or set keys (only drive inference). The per-session native-plugin credential
-(issued at `plugin.init`) is layered on when the Aokie plugin is wired to the gateway;
-today the plugin reaches inference over the same authenticated loopback surface.
+## Authentication and secret boundaries
 
-## Egress hardening (AI-404)
+Inference is never anonymous. A paired website presents a short-lived,
+owner-minted grant for the exact action: chat, model listing, transcription,
+audio chat, or Realtime session creation. Provider/alias/secret configuration,
+secret rotation, and connection tests require the Desktop webview or server
+token; a paired site cannot rewire the destination it is allowed to invoke.
 
-Every outbound provider call is validated + address-pinned (`ai/egress.rs`):
+The per-install plugin inference token is injected only into the signed `aokie`
+plugin, never into ordinary plugins or services. Provider credentials are added
+only to the validated outbound request and are never logged or returned.
 
-- HTTPS required unless the provider is explicitly marked **local** (the only way a
-  plaintext/loopback/private endpoint is allowed);
-- no embedded credentials, no control/whitespace in the URL;
-- DNS resolved once and the socket **pinned** to the resolved address (rebinding
-  protection); a non-local provider must resolve to a **public unicast** IP —
-  loopback, RFC-1918 private, CGNAT (100.64/10), link-local + metadata
-  (169.254.169.254), unique-local, and multicast are refused;
-- redirects **disabled** at the client (a 3xx is surfaced, never followed to a fresh
-  host);
-- hop-by-hop / host-spoofing headers from config are dropped; header values with
-  newlines are refused (injection guard); the key is never logged.
+Every outbound target is address-pinned with redirects disabled. Public providers
+must use HTTPS and resolve only to public unicast addresses. Loopback/private/http
+targets require an explicit local-provider opt-in; metadata/link-local addresses,
+embedded credentials, control characters, and host-spoofing headers are refused.
 
-## Consumer wiring (AI-405/406 — follow-ups)
+## Consumers
 
-- **Aokie plugin**: point `aiEndpoint/sttEndpoint/ttsEndpoint` at the gateway's
-  loopback URLs — loopback passes the plugin's own endpoint validation + consent
-  gates. The gateway must serve `/v1/models` (it does) so the plugin's discovery
-  probe doesn't fall back to `:8080`. The consent-destination mapping + the readiness
-  probes that gate auto-answer (AI-406A) land with the Aokie wiring slice.
-- **Desktop flow runner**: gains a resolution step so `data.provider` on nodes works
-  desktop-side (today it's ignored) — provider id → gateway route.
-- **Browser runner**: the gateway appears as a loopback provider/base URL; requests
-  carry the pairing token.
+- Aokie's live LLM and transcription lanes can select named gateway providers.
+- Receptionist Settings has a separate Background AI provider/model for SMS
+  drafts, SMS follow-up decisions, call summaries, and after-call extraction.
+- The virtual `openai-codex-agent` provider uses ChatGPT/Codex OAuth for text-only
+  background/forms/flow work. It defaults to GPT-5.6 Luna with low reasoning and
+  is distinct from both Platform API providers and the call-specific adapters.
+- Desktop and browser flow runners interpolate `data.provider` and call the named
+  Desktop route. Once a Desktop provider matches, failure is terminal rather than
+  silently switching accounts/vendors.
+- Paired website AI can call the same named routes. The intentionally explicit
+  hosted-vs-Desktop feature matrix is in `WEBSITE_AI_DESKTOP_ROUTING.md`.
 
-## Tests
+## Verification
 
-`ai::egress` (private/metadata/CGNAT refusal, public-IP allow, loopback-when-local,
-plaintext/credentials refusal), `ai::providers` (upsert/persist/reload, alias +
-capability resolution, delete cascades aliases, default paths), `ai::gateway`
-(OpenAI↔Anthropic mapping, custom template render + response-path extraction,
-dot-path). 12 unit tests; the whole thing compiles into both the GUI and headless
-binaries.
+Coverage includes egress/DNS hardening, reusable-secret lifecycle and legacy
+compatibility, fail-closed resolution, virtual-provider reservation, protocol
+mapping, exact website grants, Codex background normalization, multipart handling,
+Realtime session paths, and browser/Desktop flow provider routing. The GUI and
+headless server compile the same gateway implementation.

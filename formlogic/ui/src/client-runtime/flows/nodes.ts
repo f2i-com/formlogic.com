@@ -161,10 +161,22 @@ export interface FlowExecutorDeps {
    */
   resolveDesktopLlmEndpoint?(): Promise<{ endpoint: string; service: string } | null>;
   /**
-   * Browser-only AI provider registry lookup. `data.provider` is a browser-execution routing
-   * hint; the desktop Rust runner intentionally ignores it and uses its own service resolution.
+   * Browser-local AI provider registry lookup. Used as a compatibility fallback
+   * when a selected provider is not available through paired Desktop.
    */
   resolveAiProvider?(capability: AiCapability, providerId: string): Promise<ResolvedAiProvider | null>;
+  /**
+   * Invoke a named chat provider through paired FormLogic Desktop. Desktop
+   * attaches the credential; the browser sends only the provider id and request
+   * body. `null` means no matching paired provider, so legacy browser/local
+   * resolution may continue. A thrown error means a matched provider failed and
+   * must not silently fall through to a different model.
+   */
+  invokeDesktopAiChat?(
+    providerId: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown> | null>;
   /** Configured app-level OpenAI-compatible AI base URL, when the app provides one. */
   getAppAiBase?(): string | null;
   /**
@@ -519,9 +531,30 @@ async function discoverDefaultModel(
   }
 }
 
-async function resolveNodeAiProvider(ctx: FlowNodeContext, capability: AiCapability): Promise<ResolvedAiProvider | null> {
-  const data = nodeData(ctx.node);
-  const providerId = typeof data.provider === 'string' ? data.provider.trim() : '';
+interface NodeProviderSelection {
+  id: string;
+  /** `provider:<id>` is an explicit Desktop-owned reference. Bare ids retain
+   * the legacy browser-provider compatibility path. */
+  desktopOnly: boolean;
+}
+
+function nodeProviderSelection(ctx: FlowNodeContext): NodeProviderSelection {
+  const raw = nodeData(ctx.node).provider;
+  if (typeof raw !== 'string' || raw.trim() === '') return { id: '', desktopOnly: false };
+  const resolved = interpolateTemplate(raw, scopeToContext(ctx.scope)).trim();
+  const desktopOnly = resolved.indexOf('provider:') === 0;
+  return { id: desktopOnly ? resolved.slice(9) : resolved, desktopOnly };
+}
+
+function nodeProviderId(ctx: FlowNodeContext): string {
+  return nodeProviderSelection(ctx).id;
+}
+
+async function resolveNodeAiProvider(
+  ctx: FlowNodeContext,
+  capability: AiCapability,
+  providerId = nodeProviderId(ctx)
+): Promise<ResolvedAiProvider | null> {
   if (providerId === '' || !ctx.deps.resolveAiProvider) return null;
   const provider = await ctx.deps.resolveAiProvider(capability, providerId);
   if (!provider) {
@@ -548,9 +581,9 @@ function appendProviderKeyBlockedHint(message: string, provider: ResolvedAiProvi
 async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   const { node, deps } = ctx;
   const data = nodeData(node);
-  const provider = await resolveNodeAiProvider(ctx, 'chat');
-  const endpoint = provider?.url ?? await resolveLlmChatEndpoint(ctx);
   const templateCtx = scopeToContext(ctx.scope);
+  const providerSelection = nodeProviderSelection(ctx);
+  const providerId = providerSelection.id;
   const messages: Array<{ role: string; content: string }> = [];
   let systemText = '';
   if (typeof data.system === 'string' && data.system !== '') {
@@ -574,20 +607,9 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
     throw new FlowExecError('invalid_flow', `Node '${node.id}' llm_chat has no prompt/messages`, node.id);
   }
   const body: Record<string, unknown> = { messages };
-  const doFetch = deps.fetchFn ?? fetch;
   // Model may be templated ({{...}}) so a config record / upstream node can drive it.
   const modelStr = typeof data.model === 'string' ? interpolateTemplate(data.model, templateCtx).trim() : '';
-  if (modelStr) {
-    body.model = modelStr;
-  } else if (provider?.model) {
-    body.model = provider.model;
-  } else {
-    // Ollama (and other strict OpenAI-compatible servers) reject a model-less
-    // request. If the flow didn't pin a model, use the first the service
-    // advertises so model-less flows work out of the box.
-    const fallback = await discoverDefaultModel(endpoint, doFetch, ctx.signal, provider?.headers);
-    if (fallback) body.model = fallback;
-  }
+  if (modelStr) body.model = modelStr;
   if (typeof data.temperature === 'number') body.temperature = data.temperature;
   // Match the Rust runner's as_u64: only a non-negative integer is forwarded;
   // a float/negative is dropped (server default) rather than silently diverging.
@@ -598,6 +620,69 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   // chat_template_kwargs:{enable_thinking:false} to skip the reasoning block).
   if (data.extraBody && typeof data.extraBody === 'object') {
     Object.assign(body, data.extraBody as Record<string, unknown>);
+  }
+
+  // A named provider first routes through paired Desktop. This is the safe
+  // website -> Desktop -> provider path: the browser never receives or
+  // forwards the provider credential. `null` means Desktop has no such
+  // provider. Bare provider ids preserve the existing browser-provider/local
+  // compatibility path; an explicit `provider:<id>` reference fails closed so
+  // a saved Desktop choice can never silently switch models or expose a key.
+  if (providerId && deps.invokeDesktopAiChat) {
+    let matchedDesktop = false;
+    let desktopFailure: FlowExecError | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
+      let payload: Record<string, unknown> | null;
+      try {
+        payload = await deps.invokeDesktopAiChat(providerId, body, ctx.signal);
+      } catch (err) {
+        if (ctx.signal?.aborted) throw err;
+        matchedDesktop = true;
+        desktopFailure = new FlowExecError(
+          'node_failed',
+          `Node '${node.id}' Desktop AI provider '${providerId}' failed: ${err instanceof Error ? err.message : String(err)}`,
+          node.id
+        );
+        continue;
+      }
+      if (payload === null) {
+        if (!matchedDesktop) break;
+        desktopFailure = new FlowExecError('node_failed', `Node '${node.id}' Desktop AI provider '${providerId}' became unavailable`, node.id);
+        continue;
+      }
+      matchedDesktop = true;
+      const content = extractByPath(payload, 'choices.0.message.content');
+      const text = typeof content === 'string' ? content : null;
+      if (attempt === 0 && (text === null || text.trim() === '')) continue;
+      return { content: text, raw: payload };
+    }
+    if (matchedDesktop) {
+      throw desktopFailure ?? new FlowExecError('node_failed', `Node '${node.id}' Desktop AI provider '${providerId}' failed`, node.id);
+    }
+  }
+
+  if (providerSelection.desktopOnly) {
+    throw new FlowExecError(
+      'node_failed',
+      `Node '${node.id}' Desktop AI provider '${providerId}' is not available on the paired Desktop`,
+      node.id
+    );
+  }
+
+  const provider = await resolveNodeAiProvider(ctx, 'chat', providerId);
+  const endpoint = provider?.url ?? await resolveLlmChatEndpoint(ctx);
+  const doFetch = deps.fetchFn ?? fetch;
+  if (!modelStr) {
+    if (provider?.model) {
+      body.model = provider.model;
+    } else {
+      // Ollama (and other strict OpenAI-compatible servers) reject a model-less
+      // request. If the flow didn't pin a model, use the first the service
+      // advertises so model-less flows work out of the box.
+      const fallback = await discoverDefaultModel(endpoint, doFetch, ctx.signal, provider?.headers);
+      if (fallback) body.model = fallback;
+    }
   }
 
   const requestBody = provider?.requestTemplate

@@ -379,6 +379,10 @@ export function eligibleDesktopFormProviders(sources: DesktopAiSource[]): Deskto
       && source.enabled !== false
       && source.protocol === 'openai'
       && (source.capabilities?.length === 0 || source.capabilities?.includes('chat'))
+      // Newer Desktop builds distinguish background/form providers from
+      // call-only virtual adapters. An omitted field keeps older builds
+      // compatible; an advertised list must explicitly include forms.
+      && (source.useCases === undefined || source.useCases.includes('forms'))
       && typeof source.providerId === 'string'
       && /^[a-z0-9-]{1,64}$/.test(source.providerId)
     ))

@@ -279,10 +279,33 @@
     "requestMapping": {
       "type": "object",
       "additionalProperties": false,
+      "not": { "required": ["body", "multipart"] },
       "properties": {
         "query": { "type": "object", "additionalProperties": { "$ref": "#/$defs/mappingExpression" } },
         "headers": { "type": "object", "additionalProperties": { "$ref": "#/$defs/mappingExpression" } },
-        "body": { "$ref": "#/$defs/mappingExpression" }
+        "body": { "$ref": "#/$defs/mappingExpression" },
+        "multipart": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+          "additionalProperties": { "$ref": "#/$defs/multipartPartMapping" }
+        }
+      }
+    },
+    "multipartPartMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "contentType"],
+      "properties": {
+        "value": { "$ref": "#/$defs/mappingExpression" },
+        "contentType": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"
+        },
+        "filename": { "$ref": "#/$defs/mappingExpression" }
       }
     },
     "responseMapping": {

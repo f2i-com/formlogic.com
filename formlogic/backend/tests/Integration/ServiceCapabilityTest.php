@@ -31,6 +31,9 @@ class ServiceCapabilityTest extends TestCase
     private const OPENAI_API_GRANTS = [
         'service.openai-api.chat.complete',
         'service.openai-api.models.list',
+        'service.openai-api.audio.transcribe',
+        'service.openai-api.audio.chat',
+        'service.openai-api.realtime.session.create',
     ];
 
     private static ?MySQLConnection $mysql = null;
@@ -251,7 +254,13 @@ class ServiceCapabilityTest extends TestCase
         $this->assertSame(200, $result['status'], json_encode($result['body']));
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', (string) ($result['body']['token'] ?? ''));
         $this->assertSame(self::OPENAI_API_SERVICE_ID, $result['body']['serviceId'] ?? null);
-        $this->assertSame(['chat.complete', 'models.list'], $result['body']['actions'] ?? null);
+        $this->assertSame([
+            'chat.complete',
+            'models.list',
+            'audio.transcribe',
+            'audio.chat',
+            'realtime.session.create',
+        ], $result['body']['actions'] ?? null);
         $this->assertSame(300, $result['body']['expiresInSeconds'] ?? null);
         $this->assertSame('no-store', $result['cacheControl']);
 
@@ -286,7 +295,13 @@ class ServiceCapabilityTest extends TestCase
             ],
             [
                 'id' => self::OPENAI_API_SERVICE_ID,
-                'actions' => ['chat.complete', 'models.list'],
+                'actions' => [
+                    'chat.complete',
+                    'models.list',
+                    'audio.transcribe',
+                    'audio.chat',
+                    'realtime.session.create',
+                ],
                 'grants' => self::OPENAI_API_GRANTS,
             ],
         ];

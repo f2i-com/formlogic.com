@@ -459,7 +459,7 @@ class PackService
             $flowJson = FlowService::sanitizeFlowJson($packFlow['flowJson'] ?? ['nodes' => [], 'edges' => []]);
             // Node-level form refs (formlogic_list/submit/update nodes carry data.form/formId as
             // '@pack:<packFormId>') are remapped like binding formIds; an unknown ref fails loudly.
-            $flowJson = $this->remapFlowJsonFormRefs($flowJson, $formIdMap, $slug);
+            $flowJson = $this->resolveFlowJsonFormRefs($flowJson, $formIdMap, $slug);
             $nodeCaps = null;
             if (is_array($packFlow['nodeCapabilities'] ?? null)) {
                 $caps = array_values(array_filter($packFlow['nodeCapabilities'], static fn ($c) => is_string($c) && $c !== '' && strlen($c) <= 128));
@@ -559,7 +559,7 @@ class PackService
      *
      * @param array<string,string> $formIdMap packFormId => new form id
      */
-    private function remapFlowJsonFormRefs(array $flowJson, array $formIdMap, string $flowSlug): array
+    public function resolveFlowJsonFormRefs(array $flowJson, array $formIdMap, string $flowSlug): array
     {
         foreach ($flowJson['nodes'] as &$node) {
             if (!is_array($node) || !is_array($node['data'] ?? null)) {
@@ -580,7 +580,7 @@ class PackService
     }
 
     /**
-     * Inverse of remapFlowJsonFormRefs for export: rewrite real form ids in flow node data to
+     * Inverse of resolveFlowJsonFormRefs for export: rewrite real form ids in flow node data to
      * portable '@pack:<key>' refs. A ref to a form outside the exported set is left for the
      * caller's leak scrub only if unknown — since flows are app-scoped and the export covers
      * every member form, unknown refs are dropped to avoid leaking foreign UUIDs.
@@ -2366,6 +2366,42 @@ class PackService
             'publisher' => base64_encode($pub),
             'digests' => $components,
         ];
+    }
+
+    /**
+     * Verify one custom-screen component against a trusted vendor-signed pack.
+     *
+     * In-place pack migrations use this public seam before replacing executable
+     * screen content. It intentionally accepts neither catalog trust nor an
+     * embedded public key on its own: the publisher must be pinned, the pack
+     * signature must verify, and this component's executable bytes must match
+     * its signed digest.
+     *
+     * @return array{trust:string,provenance:array<string,mixed>}
+     */
+    public function verifyVendorSignedScreenComponent(
+        array $packData,
+        string $componentKey,
+        array $screen
+    ): array {
+        if (!preg_match('/^(form|app):[a-z0-9][a-z0-9-]{0,99}$/', $componentKey)) {
+            throw new \InvalidArgumentException('Invalid signed screen component key');
+        }
+        $signing = $this->verifyPackSigning($packData);
+        if ($signing === null) {
+            throw new \RuntimeException('Pack vendor signature is missing or untrusted');
+        }
+        [$trust, $provenance] = $this->componentScreenTrust(
+            $componentKey,
+            $signing,
+            $screen,
+            'untrusted',
+            ['source' => 'migration']
+        );
+        if ($trust !== 'verified') {
+            throw new \RuntimeException("Pack screen component '{$componentKey}' does not match its signed digest");
+        }
+        return ['trust' => $trust, 'provenance' => $provenance];
     }
 
     /**

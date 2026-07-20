@@ -334,6 +334,7 @@ describe('demo event simulation (the simulate-call ceremony)', () => {
       'aokie.call.turn.final',
       'aokie.call.turn.final',
       'aokie.call.ended',
+      'aokie.call.transcript.settled',
       'aokie.sms.received',
     ]);
     // Contract-shaped correlation + host-forced provenance (FL-CONN-001). The host

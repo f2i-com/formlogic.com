@@ -51,6 +51,7 @@
     "aokie.call.answered",
     "aokie.call.rejected",
     "aokie.call.ended",
+    "aokie.call.transcript.settled",
     "aokie.call.turn.final",
     "aokie.call.outbound.dialing",
     "aokie.sms.sent",

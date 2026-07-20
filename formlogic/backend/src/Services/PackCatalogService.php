@@ -395,6 +395,79 @@ class PackCatalogService
     }
 
     /**
+     * Synchronize an emitted pack into an existing catalog entry without ever
+     * making a version row lie about the packMeta.version it contains.
+     *
+     * Same source version: refresh that latest row in place (useful for a
+     * rebuilt/signature-refreshed artifact). Different source version: publish
+     * a new immutable version row through the normal ownership/size gates.
+     *
+     * @return array{versionId:string,version:string,action:string}
+     */
+    public function syncPublishedPackVersion(
+        string $catalogId,
+        array $packData,
+        string $userId,
+        ?string $changelog = null
+    ): array {
+        $meta = is_array($packData['packMeta'] ?? null) ? $packData['packMeta'] : [];
+        $sourceVersion = trim((string) ($meta['version'] ?? ''));
+        if ($sourceVersion === '' || strlen($sourceVersion) > 50) {
+            throw new \RuntimeException('packMeta.version is required (max 50 chars)');
+        }
+        $this->verifyOwnership($catalogId, $userId);
+        $latest = $this->getPackVersion($catalogId);
+        $exactStmt = $this->mysql->prepare(
+            'SELECT * FROM pack_versions WHERE catalog_id = :catalog_id AND version = :version LIMIT 1'
+        );
+        $exactStmt->execute(['catalog_id' => $catalogId, 'version' => $sourceVersion]);
+        $exact = $exactStmt->fetch() ?: null;
+        // created_at has second precision. A just-published row can tie the
+        // previous row, so getPackVersion() may return either one during this
+        // process. An exact source-version row at the maximum timestamp is a
+        // current row and is safe to refresh. An OLDER exact row means the
+        // source is a downgrade; refuse rather than rewriting history.
+        if ($exact !== null && $latest !== null
+            && strcmp((string) $exact['created_at'], (string) $latest['created_at']) < 0) {
+            throw new \RuntimeException('Source pack version is older than the current catalog version');
+        }
+        if ($exact !== null) {
+            $latest = $exact;
+        }
+        if ($latest === null) {
+            $published = $this->publishVersion($catalogId, $sourceVersion, $packData, $changelog, $userId);
+            return $published + ['action' => 'published'];
+        }
+        if ((string) $latest['version'] !== $sourceVersion) {
+            $published = $this->publishVersion($catalogId, $sourceVersion, $packData, $changelog, $userId);
+            return $published + ['action' => 'published'];
+        }
+
+        $packJson = $this->encodePackDataWithCap($packData);
+        $stmt = $this->mysql->prepare(
+            'UPDATE pack_versions
+                SET pack_data = :pack_data, form_count = :form_count, app_count = :app_count
+              WHERE id = :id AND catalog_id = :catalog_id AND version = :version'
+        );
+        $stmt->execute([
+            'pack_data' => $packJson,
+            'form_count' => count($packData['forms'] ?? []),
+            'app_count' => count($packData['apps'] ?? []),
+            'id' => $latest['id'],
+            'catalog_id' => $catalogId,
+            'version' => $sourceVersion,
+        ]);
+        if ($stmt->rowCount() > 1) {
+            throw new \RuntimeException('Catalog version refresh was ambiguous');
+        }
+        return [
+            'versionId' => (string) $latest['id'],
+            'version' => $sourceVersion,
+            'action' => 'refreshed',
+        ];
+    }
+
+    /**
      * JSON-encode pack data and reject it if it exceeds the maximum stored size,
      * so a single publish/version can't persist an unbounded blob (DoS / storage).
      */

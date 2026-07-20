@@ -84,12 +84,13 @@ share one mint request, cached authority is cleared on every session/context
 assignment, and a response crossing a logout/login epoch is discarded.
 
 The Form Builder's **Create with AI** prompt tab can explicitly select one
-enabled Desktop OpenAI-compatible provider for a new, standalone form. The
+enabled Desktop OpenAI-compatible provider for a new, standalone form. This
+includes the bounded generic `openai-codex-agent` background provider when
+ChatGPT/Codex is connected; the call-only Codex variants are excluded. The
 provider id and model are pinned for the request, output is parsed through a
 strict fields-only schema, and there is no default-provider fallback. Existing
 form editing, document/photo input, App generation, and executable logic or
-script generation remain on the hosted path. The Codex/ChatGPT subscription
-service is not exposed as this generic form-generation provider.
+script generation remain on the hosted path.
 
 ## Aokie behavior
 

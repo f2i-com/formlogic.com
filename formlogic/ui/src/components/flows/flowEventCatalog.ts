@@ -78,6 +78,7 @@ export const AOKIE_EVENT_NAMES = [
   'aokie.call.turn.partial',
   'aokie.call.turn.final',
   'aokie.call.turn.corrected',
+  'aokie.call.transcript.settled',
   'aokie.call.ended',
   'aokie.call.assistance.requested',
   'aokie.call.assistance.resolved',
@@ -221,6 +222,20 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     description:
       'The audio-capable model corrected an already-stored caller turn from its audio (optional audioTranscript feature). Updates that turn — never treat it as a fresh caller turn.',
     payloadHints: ['$event.data.callId', '$event.data.turn', '$event.data.text', '$event.data.sttText'],
+  },
+  {
+    kind: 'event',
+    id: 'aokie.call.transcript.settled',
+    group: 'aokie.calls',
+    event: 'aokie.call.transcript.settled',
+    label: 'Call transcript settled',
+    description:
+      'The call has ended and all pending transcript corrections have finished, or their bounded wait timed out. Use this for summaries and follow-up analysis that need the final transcript.',
+    payloadHints: [
+      ...CALL_ENDED_HINTS,
+      '$event.data.transcriptSettledAt',
+      '$event.data.transcriptCorrectionTimedOut',
+    ],
   },
   {
     kind: 'event',

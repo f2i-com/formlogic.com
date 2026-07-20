@@ -20,6 +20,27 @@ describe('aokie pack flows', () => {
     );
   });
 
+  it('routes async SMS and post-call model work through the independent Background AI selection', () => {
+    const expected = new Map([
+      ['call-summary-follow-up', 'summary'],
+      ['sms-auto-reply-draft', 'draft'],
+      ['sms-followup-conversation', 'decide'],
+      ['after-call-actions', 'extract'],
+    ]);
+    for (const [slug, nodeId] of expected) {
+      const flow = flows.find((item) => item.slug === slug)!;
+      const node = flow.flowJson.nodes.find((item) => item.id === nodeId)!;
+      expect(String(node.data?.provider), slug).toMatch(/backgroundProvider/);
+      expect(String(node.data?.model), slug).toMatch(/backgroundModel/);
+    }
+
+    // Caller-waiting model work remains on the live-call provider/model lane.
+    const live = flows.find((item) => item.slug === 'live-reply')!;
+    expect(live.flowJson.nodes.find((item) => item.id === 'reply')?.data?.provider).toBeUndefined();
+    const manager = flows.find((item) => item.slug === 'manager-action-plan')!;
+    expect(manager.flowJson.nodes.find((item) => item.id === 'decide')?.data?.provider).toBeUndefined();
+  });
+
   it('every flow is a valid WorkflowGraph', () => {
     for (const f of flows) expect(validateWorkflowGraph(f.flowJson), f.slug).toBeNull();
   });

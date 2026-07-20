@@ -1301,10 +1301,50 @@ async fn discover_default_model(chat_endpoint: &str, http: &reqwest::Client) -> 
     None
 }
 
+fn named_ai_provider_endpoint(provider: &str) -> Result<String, String> {
+    let provider = provider
+        .trim()
+        .strip_prefix("provider:")
+        .unwrap_or(provider.trim());
+    if provider.is_empty()
+        || provider.len() > 64
+        || !provider
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(
+            "llm_chat provider must be a provider id (lowercase letters, digits, and dashes)"
+                .into(),
+        );
+    }
+    Ok(format!(
+        "http://127.0.0.1:{}/api/ai/providers/{provider}/v1/chat/completions",
+        crate::COMPANION_PORT
+    ))
+}
+
 async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node);
+    let tctx = scope_to_context(scope);
+    // A provider is an opaque Desktop reference, never a URL or credential.
+    // It takes precedence over a legacy endpoint so the Background AI picker
+    // has deterministic effect on an older saved flow.
+    let provider = data
+        .get("provider")
+        .and_then(Value::as_str)
+        .map(|value| interpolate_template(value, &tctx).trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let using_provider_gateway = provider.is_some();
     // Endpoint resolution: node.data.endpoint (allow-listed) → resolved local service.
-    let endpoint = if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+    let endpoint = if let Some(provider) = provider.as_deref() {
+        named_ai_provider_endpoint(provider).map_err(|message| {
+            FlowError::new(
+                FlowErrorCode::InvalidFlow,
+                format!("Node '{}' {message}", node.id),
+                Some(node.id.clone()),
+            )
+        })?
+    } else if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
         if !is_allowed_flow_url(ep, &deps.base_url) {
             return Err(FlowError::new(
                 FlowErrorCode::CapabilityDenied,
@@ -1322,7 +1362,6 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
             Some(node.id.clone()),
         ));
     };
-    let tctx = scope_to_context(scope);
     let mut messages: Vec<Value> = Vec::new();
     if let Some(sys) = data.get("system").and_then(Value::as_str).filter(|s| !s.is_empty()) {
         messages.push(json!({ "role": "system", "content": interpolate_template(sys, &tctx) }));
@@ -1349,11 +1388,12 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
         .filter(|m| !m.is_empty());
     if let Some(model) = model_str {
         body["model"] = json!(model);
-    } else if let Some(m) = discover_default_model(&endpoint, &deps.http).await {
-        // Ollama (and other strict OpenAI-compatible servers) reject a request
-        // with no model. If the flow didn't pin one, use the first model the
-        // local service advertises so model-less flows work out of the box.
-        body["model"] = json!(m);
+    } else if !using_provider_gateway {
+        if let Some(m) = discover_default_model(&endpoint, &deps.http).await {
+            // Ollama (and other strict OpenAI-compatible servers) reject a
+            // model-less request. Named providers use their configured model.
+            body["model"] = json!(m);
+        }
     }
     if let Some(t) = data.get("temperature").and_then(Value::as_f64) {
         body["temperature"] = json!(t);
@@ -1383,14 +1423,25 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         }
-        let resp = match deps
+        let mut request = deps
             .http
             .post(&endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(serde_json::to_vec(&body).unwrap_or_default())
-            .send()
-            .await
-        {
+            .body(serde_json::to_vec(&body).unwrap_or_default());
+        if using_provider_gateway {
+            let token = crate::ai::gateway_token::token().ok_or_else(|| {
+                FlowError::new(
+                    FlowErrorCode::NodeFailed,
+                    format!(
+                        "Node '{}' cannot use the Desktop AI provider because the internal gateway credential is unavailable",
+                        node.id
+                    ),
+                    Some(node.id.clone()),
+                )
+            })?;
+            request = request.bearer_auth(token);
+        }
+        let resp = match request.send().await {
             Ok(r) => r,
             Err(e) => {
                 failure = Some(client_err(node, format!("llm_chat endpoint unreachable: {e}")));
@@ -1856,6 +1907,21 @@ mod tests {
             capabilities: vec![],
             flow_slug: "t".into(),
             request_id_seed: "test-run-1".into(),
+        }
+    }
+
+    #[test]
+    fn named_provider_endpoint_accepts_opaque_refs_and_rejects_url_shapes() {
+        assert_eq!(
+            named_ai_provider_endpoint("provider:openai-codex-agent").unwrap(),
+            format!(
+                "http://127.0.0.1:{}/api/ai/providers/openai-codex-agent/v1/chat/completions",
+                crate::COMPANION_PORT
+            )
+        );
+        assert!(named_ai_provider_endpoint("openai-platform-audio").is_ok());
+        for invalid in ["", "Provider:openai", "https://example.com", "../openai", "open_ai"] {
+            assert!(named_ai_provider_endpoint(invalid).is_err(), "accepted {invalid:?}");
         }
     }
 

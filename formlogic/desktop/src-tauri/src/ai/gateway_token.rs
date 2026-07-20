@@ -1,11 +1,11 @@
-//! AI-405 — the per-install AI-gateway token handed to PLUGINS.
+//! AI-405 — the per-install AI-gateway token handed only to Aokie.
 //!
-//! Native plugins (Aokie) reach the loopback AI gateway's INFERENCE routes
+//! The signed Aokie plugin reaches the loopback AI gateway's INFERENCE routes
 //! (`/api/ai/v1/*`, `/api/ai/providers/:id/v1/*`) without a webview origin or
 //! a pairing ceremony: the Desktop mints ONE random per-install token, stores
 //! it in the OS credential store (`ai-gateway-token`, hex — same tiering as
 //! the consent-signing key, with a key-file fallback beside the plugin data),
-//! and injects it into every plugin child's environment as
+//! and injects it only into the Aokie plugin child's environment as
 //! `FORMLOGIC_AI_GATEWAY_TOKEN`. The HTTP guard accepts it — via a
 //! constant-time compare — for the inference routes ONLY; provider config,
 //! key management and aliases stay management-plane (webview | server token |
@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 const TOKEN_NAME: &str = "ai-gateway-token";
 const TOKEN_FILE: &str = "ai-gateway-token.key";
 
-/// The environment variable the token rides into plugin children on.
+/// The environment variable the token rides into the Aokie child on.
 pub const ENV_NAME: &str = "FORMLOGIC_AI_GATEWAY_TOKEN";
 
 static TOKEN: OnceLock<Option<String>> = OnceLock::new();
@@ -91,8 +91,8 @@ fn load_or_create(fallback_dir: &Path, use_store: bool) -> Option<String> {
     Some(token)
 }
 
-/// Initialise once at startup — BEFORE any plugin spawns, so the token rides
-/// in every child's environment (same call site as `consent_signing::init`).
+/// Initialise once at startup — BEFORE Aokie can spawn, so its narrowly scoped
+/// environment is ready (same call site as `consent_signing::init`).
 pub fn init(fallback_dir: &Path) {
     let _ = TOKEN.get_or_init(|| load_or_create(fallback_dir, crate::secrets::available()));
 }

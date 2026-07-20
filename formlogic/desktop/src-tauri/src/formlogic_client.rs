@@ -12,8 +12,9 @@
 use serde_json::{json, Value};
 use std::time::Duration;
 
-/// Where + how to reach FormLogic Cloud. `base_url` is the SITE root (e.g.
-/// `https://formlogic.com` or `http://formlogic.local`); `/api/v1` is appended.
+/// Where + how to reach FormLogic Cloud. `base_url` is the API origin (normally
+/// the SITE root, e.g. `https://formlogic.com`; the split-host local install uses
+/// `http://api.formlogic.local`); `/api/v1` is appended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FormLogicConfig {
     pub base_url: String,
@@ -689,11 +690,31 @@ pub async fn exchange_oauth_code(
 
 /// Normalize a user-entered base URL: trim, drop a trailing slash, and strip a
 /// trailing `/api/v1` if the user pasted the full API base.
+///
+/// The checked-in WAMP development layout deliberately splits the SPA and PHP
+/// backend across `formlogic.local` and `api.formlogic.local`. Canonicalize only
+/// those exact local SPA hosts so a copied browser origin cannot send Desktop's
+/// `/api/v1` traffic to the static vhost. Public/custom hosts are untouched.
 pub(crate) fn normalize_base(raw: &str) -> String {
     let mut s = raw.trim().trim_end_matches('/').to_string();
     for suffix in ["/api/v1", "/api"] {
         if let Some(stripped) = s.strip_suffix(suffix) {
             s = stripped.trim_end_matches('/').to_string();
+        }
+    }
+    if let Ok(mut parsed) = url::Url::parse(&s) {
+        let local_spa_host = parsed
+            .host_str()
+            .map(|host| {
+                host.eq_ignore_ascii_case("formlogic.local")
+                    || host.eq_ignore_ascii_case("www.formlogic.local")
+            })
+            .unwrap_or(false);
+        if matches!(parsed.scheme(), "http" | "https")
+            && local_spa_host
+            && parsed.set_host(Some("api.formlogic.local")).is_ok()
+        {
+            s = parsed.to_string().trim_end_matches('/').to_string();
         }
     }
     s
@@ -738,7 +759,12 @@ mod tests {
         assert_eq!(normalize_base("https://formlogic.com/"), "https://formlogic.com");
         assert_eq!(normalize_base("https://formlogic.com/api/v1"), "https://formlogic.com");
         assert_eq!(normalize_base("https://formlogic.com/api/v1/"), "https://formlogic.com");
-        assert_eq!(normalize_base("http://formlogic.local/api"), "http://formlogic.local");
+        assert_eq!(normalize_base("http://formlogic.local/api"), "http://api.formlogic.local");
+        assert_eq!(normalize_base("http://formlogic.local"), "http://api.formlogic.local");
+        assert_eq!(normalize_base("https://www.formlogic.local:8443/api/v1/"), "https://api.formlogic.local:8443");
+        assert_eq!(normalize_base("https://www.formlogic.com/api"), "https://www.formlogic.com");
+        assert_eq!(normalize_base("http://notformlogic.local/api"), "http://notformlogic.local");
+        assert_eq!(normalize_base("http://formlogic.local.example/api"), "http://formlogic.local.example");
         assert_eq!(normalize_base("  http://x:8080  "), "http://x:8080");
     }
 

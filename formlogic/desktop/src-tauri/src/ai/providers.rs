@@ -2,8 +2,9 @@
 //!
 //! One versioned provider-profile schema (mirrors the web `aiProviders.ts`)
 //! persisted to `<data_dir>/ai-providers.json`. API KEYS ARE NEVER IN THIS FILE
-//! — they live in the OS credential store under `ai-provider:<id>`; only a
-//! `hasKey` boolean is exposed. Application flows bind to logical capability
+//! — legacy keys live under `ai-provider:<id>` and reusable named keys under
+//! `api-secret:<id>` in the OS credential store; only presence is exposed.
+//! Application flows bind to logical capability
 //! aliases (`receptionist-chat`, `speech-to-text`, …); the device owner maps an
 //! alias to a provider profile. Exports carry the alias + requirements, never a
 //! machine-specific provider id or a secret (ADR-008).
@@ -18,6 +19,15 @@ use super::egress::LocalAccess;
 /// Credential-store name for a provider's key.
 fn key_secret_name(id: &str) -> String {
     format!("ai-provider:{id}")
+}
+
+/// Credential-store name for a reusable, user-named API secret.
+///
+/// This namespace is deliberately separate from the legacy one-key-per-provider
+/// entries above. Existing providers keep working without a migration, while
+/// new profiles can share one credential by storing only its non-secret id.
+fn api_secret_name(id: &str) -> String {
+    format!("api-secret:{id}")
 }
 
 /// A capability a provider can serve.
@@ -72,8 +82,8 @@ pub struct HeaderKv {
     pub value: String,
 }
 
-/// One provider profile. NO secret material — the key lives in the credential
-/// store keyed by `id`.
+/// One provider profile. NO secret material — only an optional reusable-secret
+/// reference or the legacy provider id used to resolve OS credentials.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderProfile {
@@ -96,6 +106,12 @@ pub struct ProviderProfile {
     pub capabilities: Vec<Capability>,
     #[serde(default)]
     pub headers: Vec<HeaderKv>,
+    /// Optional reusable API-secret id. The value itself remains in the OS
+    /// credential store under `api-secret:<id>` and is never serialized here.
+    /// An absent reference retains the legacy `ai-provider:<provider-id>` key
+    /// behavior for profiles created before reusable secrets existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<String>,
     /// Per-capability specs (Custom providers). Keyed by capability name.
     #[serde(default)]
     pub specs: HashMap<String, CapabilitySpec>,
@@ -138,7 +154,10 @@ impl ProviderProfile {
             (Protocol::OpenAi, Capability::Transcription) => "/v1/audio/transcriptions".into(),
             (Protocol::OpenAi, Capability::Speech) => "/v1/audio/speech".into(),
             (Protocol::OpenAi, Capability::Embeddings) => "/v1/embeddings".into(),
-            (Protocol::OpenAi, Capability::Realtime) => "/v1/realtime".into(),
+            // Official unified WebRTC session creation. Desktop combines the
+            // caller's SDP with the validated session configuration here; it
+            // never hands the reusable Platform API key to the browser.
+            (Protocol::OpenAi, Capability::Realtime) => "/v1/realtime/calls".into(),
             (Protocol::Anthropic, Capability::Chat) => "/v1/messages".into(),
             (Protocol::Anthropic, _) => "/v1/messages".into(),
             (Protocol::Custom, _) => "/".into(),
@@ -167,6 +186,40 @@ pub struct AliasBinding {
     pub provider_id: String,
 }
 
+/// The non-secret kind of a reusable credential. Keep this enum narrow until
+/// a concrete second authentication mechanism is implemented; accepting
+/// arbitrary labels would make it too easy for the UI to imply unsupported
+/// OAuth/client-certificate behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApiSecretKind {
+    #[default]
+    ApiKey,
+}
+
+/// Persisted metadata for one reusable API secret. No value is ever written to
+/// this document; `id` is only a stable reference into the OS credential store.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiSecretMeta {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub kind: ApiSecretKind,
+}
+
+/// Public/admin view of secret metadata. Presence and references are safe to
+/// show in the Desktop window; the secret value is intentionally impossible to
+/// represent in this type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiSecretView {
+    #[serde(flatten)]
+    pub meta: ApiSecretMeta,
+    pub has_value: bool,
+    pub used_by: Vec<String>,
+}
+
 /// The persisted registry document (keys excluded — those are in the keyring).
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +230,8 @@ pub struct RegistryDoc {
     pub providers: Vec<ProviderProfile>,
     #[serde(default)]
     pub aliases: Vec<AliasBinding>,
+    #[serde(default)]
+    pub secrets: Vec<ApiSecretMeta>,
 }
 
 fn one() -> u32 {
@@ -210,7 +265,31 @@ impl ProviderRegistry {
         // the host-owned Codex adapters) must never reach the public list or
         // URL composer. Drop aliases whose provider was filtered as well.
         doc.providers
-            .retain(|profile| valid_id(&profile.id) && !shadows_live_call_provider_id(&profile.id));
+            .retain(|profile| valid_id(&profile.id) && !shadows_virtual_provider_id(&profile.id));
+        // Secret metadata is filesystem data and therefore untrusted. Keep the
+        // first valid id and discard malformed/duplicate rows. Providers whose
+        // reference no longer resolves are disabled while the reference is
+        // cleared: falling back silently to an unrelated legacy key would send
+        // customer data with the wrong account. A dangling or path-shaped id
+        // must never become a credential-store lookup key.
+        let mut secret_ids = HashSet::new();
+        doc.secrets.retain_mut(|secret| {
+            if normalize_api_secret_meta(secret).is_err() || !secret_ids.insert(secret.id.clone()) {
+                return false;
+            }
+            true
+        });
+        for profile in &mut doc.providers {
+            let Some(raw_secret_ref) = profile.secret_ref.take() else {
+                continue;
+            };
+            let secret_ref = raw_secret_ref.trim().to_string();
+            if valid_id(&secret_ref) && secret_ids.contains(&secret_ref) {
+                profile.secret_ref = Some(secret_ref);
+            } else {
+                profile.enabled = false;
+            }
+        }
         let provider_ids = doc
             .providers
             .iter()
@@ -241,9 +320,41 @@ impl ProviderRegistry {
             .iter()
             .map(|p| ProviderView {
                 profile: p.clone(),
-                has_key: has_key(&p.id),
+                has_key: self.provider_has_key(p),
             })
             .collect()
+    }
+
+    /// Reusable secret metadata + presence/reference state. The secret value
+    /// never enters the returned type.
+    pub fn list_secrets(&self) -> Vec<ApiSecretView> {
+        self.doc
+            .secrets
+            .iter()
+            .map(|secret| {
+                let mut used_by = self
+                    .doc
+                    .providers
+                    .iter()
+                    .filter(|provider| provider.secret_ref.as_deref() == Some(secret.id.as_str()))
+                    .map(|provider| provider.id.clone())
+                    .collect::<Vec<_>>();
+                used_by.sort();
+                ApiSecretView {
+                    meta: secret.clone(),
+                    has_value: reusable_secret_has_value(&secret.id),
+                    used_by,
+                }
+            })
+            .collect()
+    }
+
+    pub fn get_secret_meta(&self, id: &str) -> Option<ApiSecretMeta> {
+        self.doc
+            .secrets
+            .iter()
+            .find(|secret| secret.id == id)
+            .cloned()
     }
 
     pub fn aliases(&self) -> Vec<AliasBinding> {
@@ -258,7 +369,7 @@ impl ProviderRegistry {
     /// first enabled provider that supports the capability. `None` = nothing
     /// configured (the caller falls back to the local services registry).
     pub fn resolve(&self, alias_or_none: Option<&str>, cap: Capability) -> Option<ProviderProfile> {
-        if let Some(alias) = alias_or_none {
+        if let Some(alias) = alias_or_none.filter(|alias| !alias.trim().is_empty()) {
             if let Some(binding) = self
                 .doc
                 .aliases
@@ -277,6 +388,11 @@ impl ProviderRegistry {
                     return Some(p);
                 }
             }
+            // A caller that selected a concrete provider/alias must never
+            // spill into the default provider. Besides hiding configuration
+            // errors, fallback here could spend a different reusable secret
+            // and send customer data to the wrong vendor/account.
+            return None;
         }
         self.doc
             .providers
@@ -287,9 +403,9 @@ impl ProviderRegistry {
 
     /// Upsert a provider profile (validates id + baseUrl shape). Returns the id.
     pub fn upsert(&mut self, mut profile: ProviderProfile) -> Result<String, String> {
-        if shadows_live_call_provider_id(&profile.id) {
+        if shadows_virtual_provider_id(&profile.id) {
             return Err(
-                "this provider id is reserved for FormLogic's connected ChatGPT/Codex call adapter"
+                "this provider id is reserved for FormLogic's connected ChatGPT/Codex delegated adapter"
                     .into(),
             );
         }
@@ -299,6 +415,26 @@ impl ProviderRegistry {
         if profile.base_url.trim().is_empty() {
             return Err("provider base URL is required".into());
         }
+        profile.secret_ref = match profile.secret_ref.take() {
+            Some(secret_ref) => {
+                let secret_ref = secret_ref.trim();
+                if secret_ref.is_empty() {
+                    None
+                } else {
+                    if !valid_id(secret_ref) {
+                        return Err(
+                            "provider secretRef must be lowercase letters/digits/dash (1–64 chars)"
+                                .into(),
+                        );
+                    }
+                    if self.get_secret_meta(secret_ref).is_none() {
+                        return Err(format!("unknown reusable API secret {secret_ref:?}"));
+                    }
+                    Some(secret_ref.to_string())
+                }
+            }
+            None => None,
+        };
         normalize_provider_metadata(&mut profile)?;
         let id = profile.id.clone();
         match self.doc.providers.iter_mut().find(|p| p.id == id) {
@@ -309,7 +445,10 @@ impl ProviderRegistry {
         Ok(id)
     }
 
-    /// Delete a provider + its key + any aliases bound to it.
+    /// Delete a provider + its legacy private key + any aliases bound to it.
+    /// A referenced reusable secret is retained because other providers may
+    /// share it (and because connection deletion must never imply credential
+    /// deletion).
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         let before = self.doc.providers.len();
         self.doc.providers.retain(|p| p.id != id);
@@ -322,18 +461,86 @@ impl ProviderRegistry {
         Ok(())
     }
 
+    /// Create or rename reusable API-secret metadata. The value is managed by
+    /// [`set_secret_value`] and never crosses this persistence boundary.
+    pub fn upsert_secret(&mut self, mut secret: ApiSecretMeta) -> Result<String, String> {
+        normalize_api_secret_meta(&mut secret)?;
+        let id = secret.id.clone();
+        match self
+            .doc
+            .secrets
+            .iter_mut()
+            .find(|existing| existing.id == id)
+        {
+            Some(existing) => *existing = secret,
+            None => self.doc.secrets.push(secret),
+        }
+        self.persist();
+        Ok(id)
+    }
+
+    /// Delete an unreferenced reusable secret and its credential-store value.
+    /// Refuse while any provider uses it so shared credentials cannot vanish as
+    /// a side effect of editing another connection.
+    pub fn delete_secret(&mut self, id: &str) -> Result<(), String> {
+        if self.get_secret_meta(id).is_none() {
+            return Err(format!("unknown reusable API secret {id:?}"));
+        }
+        let mut used_by = self
+            .doc
+            .providers
+            .iter()
+            .filter(|provider| provider.secret_ref.as_deref() == Some(id))
+            .map(|provider| provider.id.clone())
+            .collect::<Vec<_>>();
+        if !used_by.is_empty() {
+            used_by.sort();
+            return Err(format!(
+                "reusable API secret {id:?} is used by provider(s): {}",
+                used_by.join(", ")
+            ));
+        }
+        crate::secrets::delete(&api_secret_name(id))?;
+        self.doc.secrets.retain(|secret| secret.id != id);
+        self.persist();
+        Ok(())
+    }
+
+    /// Store, rotate, or clear one reusable API-secret value. The registry must
+    /// already contain its non-secret metadata, which prevents arbitrary HTTP
+    /// path values from becoming keyring entry names.
+    pub fn set_secret_value(&self, id: &str, value: Option<&str>) -> Result<(), String> {
+        if self.get_secret_meta(id).is_none() {
+            return Err(format!("unknown reusable API secret {id:?}"));
+        }
+        match value {
+            Some(value) if !value.is_empty() => {
+                validate_secret_value(value)?;
+                if !crate::secrets::store_verified(&api_secret_name(id), value)? {
+                    return Err(
+                        "no OS credential store on this platform — cannot store the API secret safely"
+                            .into(),
+                    );
+                }
+                Ok(())
+            }
+            _ => crate::secrets::delete(&api_secret_name(id)),
+        }
+    }
+
     /// Set (or clear with `None`) a provider's API key in the credential store.
     pub fn set_key(&self, id: &str, key: Option<&str>) -> Result<(), String> {
-        if self.get(id).is_none() {
+        let Some(provider) = self.get(id) else {
             return Err(format!("unknown provider {id:?}"));
+        };
+        if let Some(secret_ref) = provider.secret_ref.as_deref() {
+            return Err(format!(
+                "provider {id:?} uses reusable API secret {secret_ref:?}; rotate or clear it through the API Secrets endpoint"
+            ));
         }
         match key {
             Some(k) if !k.is_empty() => {
-                if k.len() > MAX_PROVIDER_KEY_BYTES || k.chars().any(char::is_control) {
-                    return Err(format!(
-                        "provider API keys must be single-line values no larger than {MAX_PROVIDER_KEY_BYTES} bytes"
-                    ));
-                }
+                validate_secret_value(k)?;
                 if !crate::secrets::store_verified(&key_secret_name(id), k)? {
                     return Err(
                         "no OS credential store on this platform — cannot store the API key safely"
@@ -349,7 +556,16 @@ impl ProviderRegistry {
     /// Read a provider's key (for the gateway's outbound request only — never
     /// returned over HTTP).
     pub fn key(&self, id: &str) -> Option<String> {
-        crate::secrets::get(&key_secret_name(id)).ok().flatten()
+        let provider = self.get(id)?;
+        match provider.secret_ref.as_deref() {
+            Some(secret_ref) if self.get_secret_meta(secret_ref).is_some() => {
+                crate::secrets::get(&api_secret_name(secret_ref))
+                    .ok()
+                    .flatten()
+            }
+            Some(_) => None,
+            None => crate::secrets::get(&key_secret_name(id)).ok().flatten(),
+        }
     }
 
     /// Set an alias→provider binding.
@@ -364,10 +580,27 @@ impl ProviderRegistry {
         self.persist();
         Ok(())
     }
+
+    fn provider_has_key(&self, provider: &ProviderProfile) -> bool {
+        match provider.secret_ref.as_deref() {
+            Some(secret_ref) if self.get_secret_meta(secret_ref).is_some() => {
+                reusable_secret_has_value(secret_ref)
+            }
+            Some(_) => false,
+            None => legacy_provider_has_key(&provider.id),
+        }
+    }
 }
 
-fn has_key(id: &str) -> bool {
+fn legacy_provider_has_key(id: &str) -> bool {
     crate::secrets::get(&key_secret_name(id))
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+fn reusable_secret_has_value(id: &str) -> bool {
+    crate::secrets::get(&api_secret_name(id))
         .ok()
         .flatten()
         .is_some()
@@ -385,8 +618,8 @@ fn valid_id(id: &str) -> bool {
 /// provider. Keep a persisted/custom id from becoming one of the host-owned
 /// virtual providers after that same single decoding pass. This is deliberately
 /// not form decoding: `+` remains a literal plus in URI path segments.
-fn shadows_live_call_provider_id(id: &str) -> bool {
-    if super::codex::is_live_call_provider_id(id) {
+fn shadows_virtual_provider_id(id: &str) -> bool {
+    if super::codex::is_virtual_provider_id(id) {
         return true;
     }
 
@@ -419,7 +652,7 @@ fn shadows_live_call_provider_id(id: &str) -> bool {
     }
     std::str::from_utf8(&decoded)
         .ok()
-        .is_some_and(super::codex::is_live_call_provider_id)
+        .is_some_and(super::codex::is_virtual_provider_id)
 }
 
 const MAX_CATEGORY_CHARS: usize = 64;
@@ -430,7 +663,51 @@ const MAX_HEADER_NAME_CHARS: usize = 128;
 const MAX_HEADER_VALUE_CHARS: usize = 4096;
 const MAX_MAPPING_TEMPLATE_BYTES: usize = 256 * 1024;
 const MAX_MAPPING_PLACEHOLDERS: usize = 64;
-pub(crate) const MAX_PROVIDER_KEY_BYTES: usize = 16 * 1024;
+const MAX_SECRET_NAME_CHARS: usize = 96;
+/// Windows Generic Credentials cap the credential blob at 2,560 bytes. The
+/// current keyring backend stores passwords as UTF-16, so validation below
+/// checks both the UTF-8 input size and its encoded UTF-16 byte count before a
+/// platform call. OpenAI/vendor API keys are far smaller; refusing larger
+/// values gives a useful error instead of the keyring's opaque platform-limit
+/// failure.
+pub(crate) const MAX_PROVIDER_KEY_BYTES: usize = 2_560;
+
+fn normalize_api_secret_meta(secret: &mut ApiSecretMeta) -> Result<(), String> {
+    secret.id = secret.id.trim().to_ascii_lowercase();
+    if !valid_id(&secret.id) {
+        return Err("API secret id must be lowercase letters/digits/dash (1–64 chars)".into());
+    }
+    secret.name = secret.name.trim().to_string();
+    if secret.name.is_empty() {
+        return Err("API secret display name is required".into());
+    }
+    if secret.name.chars().any(char::is_control) {
+        return Err("API secret display name must be a single-line label".into());
+    }
+    if secret.name.chars().count() > MAX_SECRET_NAME_CHARS {
+        return Err(format!(
+            "API secret display name must be at most {MAX_SECRET_NAME_CHARS} characters"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_secret_value(value: &str) -> Result<(), String> {
+    let utf16_bytes = value
+        .encode_utf16()
+        .count()
+        .checked_mul(2)
+        .ok_or_else(|| "API secret is too large".to_string())?;
+    if value.len() > MAX_PROVIDER_KEY_BYTES || utf16_bytes > MAX_PROVIDER_KEY_BYTES {
+        return Err(format!(
+            "API secrets must fit the Windows credential-store limit of {MAX_PROVIDER_KEY_BYTES} bytes (including UTF-16 encoding)"
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err("API secrets must be single-line values without control characters".into());
+    }
+    Ok(())
+}
 
 /// Keep service-browser metadata useful and bounded without imposing an ASCII
 /// vocabulary: customer categories and tags may be localized. Legacy profiles
@@ -619,6 +896,7 @@ mod tests {
             model: Some("gpt-4o-mini".into()),
             capabilities: caps,
             headers: vec![],
+            secret_ref: None,
             specs: HashMap::new(),
             allow_local: false,
             enabled: true,
@@ -670,9 +948,15 @@ mod tests {
     }
 
     #[test]
-    fn virtual_codex_call_provider_ids_cannot_be_persisted() {
+    fn virtual_codex_provider_ids_cannot_be_persisted() {
         let dir = tmp();
         let mut reg = ProviderRegistry::load(&dir);
+        let async_id = super::super::codex::ASYNC_PROVIDER_ID;
+        let error = reg
+            .upsert(profile(async_id, vec![Capability::Chat]))
+            .expect_err("async Codex provider id must stay host-owned");
+        assert!(error.contains("reserved"), "{error}");
+        assert!(reg.get(async_id).is_none());
         for variant in super::super::codex::CodexLiveCallVariant::ALL {
             let id = variant.provider_id();
             let error = reg
@@ -694,6 +978,7 @@ mod tests {
                     capability: Capability::Chat,
                     provider_id: reserved.into(),
                 }],
+                secrets: vec![],
             })
             .unwrap(),
         )
@@ -750,6 +1035,7 @@ mod tests {
                         provider_id: "OpenAI".into(),
                     },
                 ],
+                secrets: vec![],
             })
             .unwrap(),
         )
@@ -876,7 +1162,7 @@ mod tests {
         assert!(reg
             .set_key("key-limit", Some(&"x".repeat(MAX_PROVIDER_KEY_BYTES + 1)))
             .unwrap_err()
-            .contains("single-line"));
+            .contains("credential-store limit"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -903,10 +1189,34 @@ mod tests {
                 .id,
             "openai"
         );
+        // A direct provider id is also an explicit, fail-closed selection.
+        assert_eq!(
+            reg.resolve(Some("whisper"), Capability::Transcription)
+                .unwrap()
+                .id,
+            "whisper"
+        );
+        assert!(
+            reg.resolve(Some("missing-provider"), Capability::Chat)
+                .is_none(),
+            "a stale named selection must not spend the default provider's key"
+        );
+        assert!(
+            reg.resolve(Some("receptionist-chat"), Capability::Transcription)
+                .is_none(),
+            "an alias for the wrong capability must not fall through"
+        );
         // No alias → first enabled provider that supports the capability.
         assert_eq!(
             reg.resolve(None, Capability::Transcription).unwrap().id,
             "whisper"
+        );
+        assert_eq!(
+            reg.resolve(Some("  "), Capability::Transcription)
+                .unwrap()
+                .id,
+            "whisper",
+            "a blank selector retains default-provider behavior"
         );
         // A capability nobody serves → None (caller falls back to local).
         assert!(reg.resolve(None, Capability::Realtime).is_none());
@@ -936,10 +1246,140 @@ mod tests {
     }
 
     #[test]
+    fn reusable_secret_metadata_round_trips_without_a_value() {
+        let dir = tmp();
+        let mut reg = ProviderRegistry::load(&dir);
+        reg.upsert_secret(ApiSecretMeta {
+            id: "  Shared-OpenAI  ".into(),
+            name: "  Company OpenAI key  ".into(),
+            kind: ApiSecretKind::ApiKey,
+        })
+        .unwrap();
+
+        let reloaded = ProviderRegistry::load(&dir);
+        let secret = reloaded.get_secret_meta("shared-openai").unwrap();
+        assert_eq!(secret.name, "Company OpenAI key");
+        let persisted = std::fs::read_to_string(dir.join("ai-providers.json")).unwrap();
+        assert!(persisted.contains("shared-openai"));
+        assert!(!persisted.contains("secretValue"));
+        assert!(!persisted.contains("apiKey"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn providers_can_share_a_secret_and_provider_delete_retains_it() {
+        let dir = tmp();
+        let mut reg = ProviderRegistry::load(&dir);
+        reg.upsert_secret(ApiSecretMeta {
+            id: "shared-openai".into(),
+            name: "Shared OpenAI key".into(),
+            kind: ApiSecretKind::ApiKey,
+        })
+        .unwrap();
+
+        for id in ["transcriber", "audio-chat"] {
+            let mut provider = profile(id, vec![Capability::Chat]);
+            provider.secret_ref = Some("shared-openai".into());
+            reg.upsert(provider).unwrap();
+        }
+        let view = reg
+            .list_secrets()
+            .into_iter()
+            .find(|view| view.meta.id == "shared-openai")
+            .unwrap();
+        assert_eq!(view.used_by, ["audio-chat", "transcriber"]);
+        assert!(reg
+            .delete_secret("shared-openai")
+            .unwrap_err()
+            .contains("audio-chat"));
+
+        reg.delete("transcriber").unwrap();
+        assert!(reg.get_secret_meta("shared-openai").is_some());
+        let view = reg
+            .list_secrets()
+            .into_iter()
+            .find(|view| view.meta.id == "shared-openai")
+            .unwrap();
+        assert_eq!(view.used_by, ["audio-chat"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_provider_key_endpoint_cannot_mutate_a_shared_secret() {
+        let dir = tmp();
+        let mut reg = ProviderRegistry::load(&dir);
+        reg.upsert_secret(ApiSecretMeta {
+            id: "shared-openai".into(),
+            name: "Shared OpenAI key".into(),
+            kind: ApiSecretKind::ApiKey,
+        })
+        .unwrap();
+        let mut provider = profile("audio-chat", vec![Capability::Chat]);
+        provider.secret_ref = Some("shared-openai".into());
+        reg.upsert(provider).unwrap();
+
+        let error = reg
+            .set_key("audio-chat", Some("must-not-write"))
+            .unwrap_err();
+        assert!(error.contains("API Secrets endpoint"));
+        assert!(!reg.list_secrets()[0].has_value);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn provider_secret_reference_must_resolve() {
+        let dir = tmp();
+        let mut reg = ProviderRegistry::load(&dir);
+        let mut provider = profile("openai", vec![Capability::Chat]);
+        provider.secret_ref = Some("missing".into());
+        assert!(reg
+            .upsert(provider)
+            .unwrap_err()
+            .contains("unknown reusable API secret"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persisted_dangling_secret_reference_disables_provider_instead_of_falling_back() {
+        let dir = tmp();
+        let mut provider = profile("openai", vec![Capability::Chat]);
+        provider.secret_ref = Some("missing-secret".into());
+        std::fs::write(
+            dir.join("ai-providers.json"),
+            serde_json::to_vec(&RegistryDoc {
+                version: 1,
+                providers: vec![provider],
+                aliases: vec![],
+                secrets: vec![],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let reg = ProviderRegistry::load(&dir);
+        let loaded = reg.get("openai").unwrap();
+        assert!(!loaded.enabled, "credential ambiguity must fail closed");
+        assert_eq!(loaded.secret_ref, None);
+        assert!(reg.resolve(None, Capability::Chat).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_secret_limits_match_windows_keyring_encoding() {
+        assert!(validate_secret_value(&"x".repeat(MAX_PROVIDER_KEY_BYTES / 2)).is_ok());
+        // UTF-8 still fits (1,281 bytes), but Windows keyring encodes the
+        // value as UTF-16 (2,562 bytes), just over its 2,560-byte limit.
+        assert!(validate_secret_value(&"x".repeat(MAX_PROVIDER_KEY_BYTES / 2 + 1)).is_err());
+        assert!(validate_secret_value("sk-valid_single-line").is_ok());
+        assert!(validate_secret_value("sk-invalid\nline").is_err());
+    }
+
+    #[test]
     fn default_paths_follow_protocol() {
         let p = profile("openai", vec![]);
         assert_eq!(p.path_for(Capability::Chat), "/v1/chat/completions");
         assert_eq!(p.path_for(Capability::Speech), "/v1/audio/speech");
+        assert_eq!(p.path_for(Capability::Realtime), "/v1/realtime/calls");
         assert!(p.supports(Capability::Chat), "empty caps = all");
     }
 }

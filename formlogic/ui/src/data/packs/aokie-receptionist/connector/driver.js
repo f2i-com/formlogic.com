@@ -306,6 +306,16 @@ function handleRequest(ctx, state) {
           reason: 'operator_hangup',
           durationSeconds: durationSeconds,
           outcome: 'completed'
+        }),
+        ev('aokie.call.transcript.settled', call.callId, 'transcript.settled', {
+          callId: call.callId,
+          from: call.from,
+          callerPhone: call.from,
+          reason: 'operator_hangup',
+          durationSeconds: durationSeconds,
+          outcome: 'completed',
+          transcriptSettledAt: iso(ctx.now),
+          transcriptCorrectionTimedOut: false
         })
       ]
     };
@@ -457,7 +467,8 @@ function handleRequest(ctx, state) {
 
 // The contract's scripted call lifecycle (dongle.detected -> dongle.ready ->
 // call.incoming -> call.answered -> 2x call.turn.final -> call.ended ->
-// sms.received; AOKIE_PLUGIN_CONTRACT.md section 4), one host-paced step per
+// call.transcript.settled -> sms.received; AOKIE_PLUGIN_CONTRACT.md section
+// 4), one host-paced step per
 // call. The operator can reject/hang up mid-script through the demo call
 // controls; a dead call must stay dead - the script stops instead of
 // resurrecting it (the callStillLive guard below).
@@ -543,6 +554,13 @@ function handleCeremonyStep(ctx, state) {
       state: state,
       events: [
         ev('aokie.call.ended', id, 'ended', { callId: id, durationSeconds: 42, outcome: 'completed' }),
+        ev('aokie.call.transcript.settled', id, 'transcript.settled', {
+          callId: id,
+          durationSeconds: 42,
+          outcome: 'completed',
+          transcriptSettledAt: iso(ctx.now),
+          transcriptCorrectionTimedOut: false
+        }),
         ev('aokie.sms.received', id, 'sms.received', {
           from: endedFrom,
           body: 'Perfect, 9:30am works. Thanks!',

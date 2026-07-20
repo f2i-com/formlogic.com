@@ -696,6 +696,111 @@ describe('llm_chat endpoint resolution', () => {
     expect(body.messages).toEqual([{ role: 'user', content: 'hi Ada' }]);
   });
 
+  it('templates a provider reference and invokes the paired Desktop named provider without exposing a key', async () => {
+    const invokeDesktopAiChat = vi.fn(async () => ({
+      choices: [{ message: { content: 'desktop pong' } }],
+    }));
+    const resolveAiProvider = vi.fn(async () => {
+      throw new Error('browser provider fallback must not run');
+    });
+    const fetchFn = vi.fn(async () => {
+      throw new Error('direct fetch must not run');
+    }) as unknown as typeof fetch;
+    const deps = fakeDeps({ invokeDesktopAiChat, resolveAiProvider, fetchFn });
+
+    const out = await executeNode(ctxFor(llmNode({
+      provider: '{{nodes.config.provider}}',
+      model: '{{nodes.config.model}}',
+      prompt: 'Summarise {{inputs.topic}}',
+    }), deps, {
+      scope: {
+        inputs: { topic: 'the call' },
+        nodes: { config: { provider: 'provider:desktop-openai', model: 'gpt-5-mini' } },
+      },
+    }));
+
+    expect(out).toEqual({
+      content: 'desktop pong',
+      raw: { choices: [{ message: { content: 'desktop pong' } }] },
+    });
+    expect(invokeDesktopAiChat).toHaveBeenCalledWith(
+      'desktop-openai',
+      expect.objectContaining({
+        model: 'gpt-5-mini',
+        messages: [{ role: 'user', content: 'Summarise the call' }],
+      }),
+      expect.anything(),
+    );
+    expect(resolveAiProvider).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('keeps browser-provider fallback for a legacy bare id when paired Desktop has no matching named provider', async () => {
+    const provider: ResolvedAiProvider = {
+      name: 'Browser fallback',
+      kind: 'openai',
+      url: 'https://api.openai.test/v1/chat/completions',
+      headers: { 'Content-Type': 'application/json' },
+      responsePath: 'choices.0.message.content',
+    };
+    const invokeDesktopAiChat = vi.fn(async () => null);
+    const resolveAiProvider = vi.fn(async () => provider);
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: 'browser fallback reply' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ) as unknown as typeof fetch;
+
+    const out = await executeNode(ctxFor(
+      llmNode({ provider: 'p1', model: 'm', prompt: 'hi' }),
+      fakeDeps({ invokeDesktopAiChat, resolveAiProvider, fetchFn }),
+    ));
+
+    expect(out).toMatchObject({ content: 'browser fallback reply' });
+    expect(invokeDesktopAiChat).toHaveBeenCalledWith('p1', expect.any(Object), expect.anything());
+    expect(resolveAiProvider).toHaveBeenCalledWith('chat', 'p1');
+  });
+
+  it('fails closed when an explicit Desktop provider reference is not advertised', async () => {
+    const invokeDesktopAiChat = vi.fn(async () => null);
+    const resolveAiProvider = vi.fn(async () => ({
+      name: 'wrong browser fallback',
+      kind: 'openai' as const,
+      url: 'https://wrong.test/v1/chat/completions',
+      headers: {},
+    }));
+
+    await expect(executeNode(ctxFor(
+      llmNode({ provider: 'provider:desktop-openai', prompt: 'hi' }),
+      fakeDeps({ invokeDesktopAiChat, resolveAiProvider }),
+    ))).rejects.toMatchObject({
+      code: 'node_failed',
+      message: expect.stringMatching(/not available on the paired Desktop/),
+    });
+    expect(invokeDesktopAiChat).toHaveBeenCalledWith('desktop-openai', expect.any(Object), expect.anything());
+    expect(resolveAiProvider).not.toHaveBeenCalled();
+  });
+
+  it('never silently falls through when a matched Desktop provider invocation fails', async () => {
+    const invokeDesktopAiChat = vi.fn(async () => {
+      throw new Error('provider unavailable');
+    });
+    const resolveAiProvider = vi.fn(async () => ({
+      name: 'wrong fallback',
+      kind: 'openai' as const,
+      url: 'https://wrong.test/v1/chat/completions',
+      headers: {},
+    }));
+
+    await expect(executeNode(ctxFor(
+      llmNode({ provider: 'provider:desktop-openai', prompt: 'hi' }),
+      fakeDeps({ invokeDesktopAiChat, resolveAiProvider }),
+    ))).rejects.toMatchObject({ code: 'node_failed', message: expect.stringMatching(/provider unavailable/) });
+    expect(invokeDesktopAiChat).toHaveBeenCalledTimes(2);
+    expect(resolveAiProvider).not.toHaveBeenCalled();
+  });
+
   it('renders a browser provider requestTemplate instead of the default chat body', async () => {
     const provider: ResolvedAiProvider = {
       name: 'Custom',

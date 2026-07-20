@@ -149,7 +149,7 @@ describe('agentPayload.ts parity with the canonical modules', () => {
     ['reply_mode flow (aiReceptionist false)', { reply_mode: 'flow' }, SVCS],
     ['service picks: running resolves URL+path, stopped resolves empty', { llm_source: 'service:llama-cpp', stt_source: 'service:aokie-stt', tts_source: 'service:aokie-voice', tts_endpoint: 'http://x/legacy' }, SVCS],
     ['service pick UNRESOLVABLE (no desktop listing) omits its key', { llm_source: 'service:llama-cpp', correction_source: 'service:llama-cpp' }, undefined],
-    ['provider pick: LLM lane composes the gateway URL, speech lanes are gated', { llm_source: 'provider:my openai', stt_source: 'provider:my openai', tts_source: 'provider:my openai' }, SVCS],
+    ['provider pick: chat + transcription compose gateway URLs while TTS stays gated', { llm_source: 'provider:my openai', stt_source: 'provider:my openai', tts_source: 'provider:my openai' }, SVCS],
     ['custom URL lanes', { llm_source: 'custom', llm_endpoint: 'http://127.0.0.1:9999/v1/chat/completions', correction_source: 'custom', correction_endpoint: 'http://127.0.0.1:8081/v1/chat/completions' }, SVCS],
     ['blank source + legacy endpoint field', { stt_endpoint: 'http://127.0.0.1:17920/v1/audio/transcriptions' }, SVCS],
     ['voice + model + persona + greeting all set', { voice: 'amy', model: 'llama3.1:8b', business_name: 'B', instructions: 'I', greeting: 'G' }, SVCS],
@@ -165,6 +165,14 @@ describe('agentPayload.ts parity with the canonical modules', () => {
   it('sanity: the provider LLM pick composes the fixed gateway URL', () => {
     const p = screenCompose(draftFor({ llm_source: 'provider:my openai' }), SVCS, SCREEN_PERSONA, SCREEN_BASE);
     expect(p.aiEndpoint).toBe('http://127.0.0.1:17872/api/ai/providers/my%20openai/v1/chat/completions');
+  });
+
+  it('sanity: the provider transcription pick composes the fixed multipart gateway URL without a model key', () => {
+    const p = screenCompose(draftFor({ stt_source: 'provider:openai-transcribe' }), SVCS, SCREEN_PERSONA, SCREEN_BASE);
+    expect(p.sttEndpoint).toBe(
+      'http://127.0.0.1:17872/api/ai/providers/openai-transcribe/v1/audio/transcriptions',
+    );
+    expect('sttModel' in p).toBe(false);
   });
 
   it('fully blank LLM fields preserve Desktop endpoint+model, while explicit ownership still applies', () => {
@@ -194,6 +202,19 @@ describe('agentPayload.ts parity with the canonical modules', () => {
 
 describe('receptionist settings screen (TSX, compiled artifact)', () => {
   const CODEX_SOURCES = [
+    {
+      kind: 'provider',
+      id: 'provider:openai-codex-agent',
+      refId: 'openai-codex-agent',
+      name: 'ChatGPT via Codex - Background AI',
+      category: 'AI',
+      status: 'running',
+      url: '',
+      capabilities: ['chat'],
+      enabled: true,
+      model: 'gpt-5.6-luna',
+      useCases: ['background', 'forms', 'flows'],
+    },
     {
       kind: 'provider',
       id: 'provider:openai-codex-agent-luna-low',
@@ -243,6 +264,18 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
       model: 'gpt-5.5',
     },
     {
+      kind: 'provider',
+      id: 'provider:openai-transcribe',
+      refId: 'openai-transcribe',
+      name: 'OpenAI - GPT-4o mini Transcribe',
+      category: 'Speech-to-Text',
+      status: 'configured',
+      url: '',
+      capabilities: ['transcription'],
+      enabled: true,
+      model: 'gpt-4o-mini-transcribe',
+    },
+    {
       kind: 'service',
       id: 'service:aokie-stt',
       refId: 'aokie-stt',
@@ -263,6 +296,85 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
       capabilities: ['speech'],
     },
   ];
+
+  it('keeps Background AI independent from the live-call LLM and stores only a Desktop provider reference', async () => {
+    const { fl, calls } = makeFl({
+      records: [{
+        id: 'r1',
+        answers: {
+          llm_source: 'service:llama-cpp',
+          model: 'live-model',
+          background_ai_model: 'stale-generic-model',
+        },
+      }],
+      aiSources: CODEX_SOURCES,
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+
+    const live = res.root.querySelector('[data-lane="llm"]') as HTMLSelectElement;
+    const background = res.root.querySelector('[data-d="background_ai_source"]') as HTMLSelectElement;
+    expect(live.value).toBe('service:llama-cpp');
+    const backgroundValues = Array.from(background.options).map((o) => o.value);
+    expect(backgroundValues).toContain('provider:openai-codex-agent');
+    expect(backgroundValues).not.toContain('provider:openai-codex-agent-none');
+    expect(backgroundValues).not.toContain('provider:openai-codex-agent-low');
+    expect(backgroundValues).not.toContain('provider:openai-codex-agent-luna-low');
+    expect(backgroundValues).not.toContain('provider:openai-codex-agent-luna-low-fast');
+    expect(Array.from(background.options).some((o) => o.value.indexOf('service:') === 0)).toBe(false);
+
+    background.value = 'provider:openai-codex-agent';
+    background.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+
+    expect(live.value).toBe('service:llama-cpp');
+    const backgroundModel = res.root.querySelector('[data-d="background_ai_model"]') as HTMLInputElement;
+    expect(backgroundModel.value).toBe('stale-generic-model');
+    expect(res.root.querySelector('[data-background-codex-note]')).toBeNull();
+    typeInto(res, backgroundModel, 'gpt-5.6-luna');
+    await flush(30);
+
+    (res.root.querySelector('[data-act="save"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(calls.update).toHaveLength(1);
+    expect(calls.update[0].answers.background_ai_source).toBe(
+      'provider:openai-codex-agent',
+    );
+    expect(calls.update[0].answers.background_ai_model).toBe('gpt-5.6-luna');
+    expect(calls.update[0].answers.llm_source).toBe('service:llama-cpp');
+  });
+
+  it('offers transcription-capable Desktop providers and applies their named multipart route', async () => {
+    const { fl, calls } = makeFl({
+      records: [{ id: 'r1', answers: { stt_source: 'service:aokie-stt', tts_source: 'service:aokie-tts' } }],
+      aiSources: CODEX_SOURCES,
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+
+    const stt = res.root.querySelector('[data-lane="stt"]') as HTMLSelectElement;
+    const tts = res.root.querySelector('[data-lane="tts"]') as HTMLSelectElement;
+    const sttValues = Array.from(stt.options).map((option) => option.value);
+    expect(sttValues).toContain('provider:openai-transcribe');
+    expect(sttValues).not.toContain('provider:openai-codex-agent');
+    expect(Array.from(tts.options).map((option) => option.value)).not.toContain('provider:openai-transcribe');
+    expect(stt.parentElement?.textContent).toContain('models and API credentials are configured once');
+
+    stt.value = 'provider:openai-transcribe';
+    stt.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
+    (res.root.querySelector('[data-act="save-apply"]') as HTMLButtonElement).click();
+    await flush(80);
+
+    expect(calls.set).toHaveLength(1);
+    expect(calls.set[0].sttEndpoint).toBe(
+      'http://127.0.0.1:17872/api/ai/providers/openai-transcribe/v1/audio/transcriptions',
+    );
+    expect('sttModel' in calls.set[0]).toBe(false);
+    expect(calls.update).toHaveLength(1);
+    expect(calls.update[0].answers.stt_source).toBe('provider:openai-transcribe');
+    expect('stt_model' in calls.update[0].answers).toBe(false);
+  });
 
   it('offers all four Codex reply modes, pins their models, and blocks direct caller audio', async () => {
     const { fl, calls } = makeFl({
@@ -286,6 +398,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     expect(values).toContain('provider:openai-codex-agent-low');
     expect(values).toContain('provider:openai-codex-agent-luna-low');
     expect(values).toContain('provider:openai-codex-agent-luna-low-fast');
+    expect(values).not.toContain('provider:openai-codex-agent');
     expect(values.some((value) => value.includes('nano'))).toBe(false);
 
     const editableModel = root.querySelector('[data-d="model"]') as HTMLInputElement;
@@ -551,7 +664,8 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     for (const k of [
       'business_name', 'instructions', 'business_info', 'greeting', 'model',
       'llm_endpoint', 'stt_endpoint', 'tts_endpoint', 'llm_source', 'stt_source', 'tts_source',
-      'correction_source', 'correction_endpoint', 'voice', 'reply_mode', 'active',
+      'correction_source', 'correction_endpoint', 'background_ai_source', 'background_ai_model',
+      'voice', 'reply_mode', 'active',
     ]) {
       expect(k in created, `create payload missing draft key ${k}`).toBe(true);
     }

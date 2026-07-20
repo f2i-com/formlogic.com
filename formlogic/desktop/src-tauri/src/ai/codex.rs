@@ -3,8 +3,10 @@
 //! This is intentionally not a generic editable inference provider. The child
 //! process owns ChatGPT OAuth and its refresh tokens inside a dedicated
 //! `CODEX_HOME`; callers receive only account metadata, login URLs/codes, model
-//! metadata, and normalized agent output. Aokie may opt into one of four
-//! fixed, text-only OpenAI-shaped live-call aliases: the supported GPT-5.5
+//! metadata, and normalized agent output. FormLogic also exposes a generic,
+//! text-only OpenAI-shaped background adapter for forms, SMS drafts and flow
+//! analysis. Aokie may separately opt into one of four fixed live-call aliases:
+//! the supported GPT-5.5
 //! reasoning-off/low routes, or GPT-5.6 Luna with its fastest supported
 //! reasoning effort in default or priority service mode. All run an ephemeral
 //! turn with no model-visible file,
@@ -68,6 +70,11 @@ pub const LIVE_CALL_PROVIDER_NONE_ID: &str = "openai-codex-agent-none";
 pub const LIVE_CALL_PROVIDER_LOW_ID: &str = "openai-codex-agent-low";
 pub const LIVE_CALL_PROVIDER_LUNA_LOW_ID: &str = "openai-codex-agent-luna-low";
 pub const LIVE_CALL_PROVIDER_LUNA_LOW_FAST_ID: &str = "openai-codex-agent-luna-low-fast";
+/// Generic, text-only ChatGPT/Codex provider for background FormLogic work
+/// such as SMS drafts, form generation, and post-call analysis. Unlike the
+/// fixed live-call aliases this route accepts a caller-selected catalog model,
+/// but it retains the same deny-all tools/files/network safety profile.
+pub const ASYNC_PROVIDER_ID: &str = "openai-codex-agent";
 const TURN_BURST_LIMIT: usize = 6;
 const TURN_BURST_WINDOW: Duration = Duration::from_secs(60);
 const TURN_HOURLY_LIMIT: usize = 60;
@@ -627,6 +634,10 @@ impl CodexLiveCallVariant {
 
 pub fn is_live_call_provider_id(id: &str) -> bool {
     CodexLiveCallVariant::for_provider_id(id).is_some()
+}
+
+pub fn is_virtual_provider_id(id: &str) -> bool {
+    id == ASYNC_PROVIDER_ID || is_live_call_provider_id(id)
 }
 
 #[derive(Debug, Clone)]

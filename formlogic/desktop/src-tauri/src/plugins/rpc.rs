@@ -312,11 +312,14 @@ pub fn spawn_plugin(spec: &SpawnSpec<'_>, logs: LogRing) -> std::io::Result<Plug
     if let Some(key) = crate::consent_signing::verify_key_b64() {
         cmd.env("FORMLOGIC_CONSENT_VERIFY_KEY", key);
     }
-    // AI-405: the per-install AI-gateway token — PLUGINS ONLY (never in any
-    // service's env). Unlocks the gateway's /api/ai/v1/* INFERENCE routes;
-    // provider config/key routes stay management-plane.
-    if let Some(tok) = crate::ai::gateway_token::token() {
-        cmd.env(crate::ai::gateway_token::ENV_NAME, tok);
+    // AI-405: the per-install AI-gateway token — AOKIE ONLY (never in another
+    // plugin or service env). It is injected into the signed connector and
+    // unlocks gateway INFERENCE routes; provider config/key routes stay on the
+    // Desktop-only management plane.
+    if spec.plugin_id == "aokie" {
+        if let Some(tok) = crate::ai::gateway_token::token() {
+            cmd.env(crate::ai::gateway_token::ENV_NAME, tok);
+        }
     }
     if spec.dev_mode {
         cmd.env("FORMLOGIC_DEV_MODE", "1");

@@ -31,17 +31,17 @@
 //! Phase 4 (after Playwright sidecar): /api/browser/*
 
 use axum::{
-    extract::{Path, Query, Request, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State},
     http::{
         header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, ORIGIN},
-        HeaderMap, Method, StatusCode,
+        HeaderMap, HeaderValue, Method, StatusCode,
     },
     middleware::{self, Next},
     response::{
         sse::{Event as SseEvent, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -529,6 +529,81 @@ async fn list_ai_providers(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({ "providers": reg.list(), "aliases": reg.aliases() })).into_response()
 }
 
+async fn list_ai_secrets(State(state): State<AppState>) -> impl IntoResponse {
+    let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    Json(serde_json::json!({ "secrets": reg.list_secrets() })).into_response()
+}
+
+async fn create_ai_secret(
+    State(state): State<AppState>,
+    Json(secret): Json<crate::ai::providers::ApiSecretMeta>,
+) -> impl IntoResponse {
+    let mut reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.upsert_secret(secret) {
+        Ok(id) => (StatusCode::OK, Json(serde_json::json!({ "id": id }))).into_response(),
+        Err(error) => err400(&error),
+    }
+}
+
+async fn update_ai_secret(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(mut secret): Json<crate::ai::providers::ApiSecretMeta>,
+) -> impl IntoResponse {
+    if secret.id.is_empty() {
+        secret.id = id.clone();
+    }
+    if secret.id != id {
+        return err400("API secret id in the path and request body must match");
+    }
+    let mut reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.upsert_secret(secret) {
+        Ok(id) => (StatusCode::OK, Json(serde_json::json!({ "id": id }))).into_response(),
+        Err(error) => err400(&error),
+    }
+}
+
+async fn delete_ai_secret(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.delete_secret(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => err400(&error),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetSecretValueBody {
+    /// The API secret; null/empty clears it. It is never returned by an API.
+    #[serde(default)]
+    value: Option<String>,
+}
+
+async fn set_ai_secret_value(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetSecretValueBody>,
+) -> impl IntoResponse {
+    let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.set_secret_value(&id, body.value.as_deref()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => err400(&error),
+    }
+}
+
+async fn clear_ai_secret_value(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let reg = state.ai_providers.lock().unwrap_or_else(|e| e.into_inner());
+    match reg.set_secret_value(&id, None) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => err400(&error),
+    }
+}
+
 // ------- ServiceDefinition v3 catalog + OpenAI Codex delegated agent -------
 
 async fn list_service_definition_catalog() -> impl IntoResponse {
@@ -669,6 +744,7 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
             "url": format!("http://127.0.0.1:{}", s.port),
             "model": s.model,
             "capabilities": capabilities,
+            "useCases": ["background", "forms", "flows", "live-call"],
         }));
     }
     {
@@ -687,8 +763,30 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
                 "hasKey": v["hasKey"],
                 "enabled": v["enabled"],
                 "model": v["model"],
+                "useCases": ["background", "forms", "flows", "live-call"],
             }));
         }
+    }
+    // A generic delegated provider for background text work. It deliberately
+    // does not advertise live-call use: SMS drafts, form generation and
+    // post-call analysis can tolerate an agent turn, whereas a phone caller
+    // needs the separately bounded streaming adapters below.
+    if state.codex_agent.models().await.is_ok() {
+        sources.push(serde_json::json!({
+            "id": format!("provider:{}", crate::ai::codex::ASYNC_PROVIDER_ID),
+            "kind": "provider",
+            "providerId": crate::ai::codex::ASYNC_PROVIDER_ID,
+            "name": "ChatGPT via Codex (background tasks)",
+            "category": "ChatGPT / Codex",
+            "protocol": "openai",
+            "capabilities": ["chat"],
+            "hasKey": true,
+            "enabled": true,
+            "model": crate::ai::codex::LUNA_LIVE_CALL_MODEL,
+            "reasoningEffort": "low",
+            "subscriptionBacked": true,
+            "useCases": ["background", "forms", "flows"],
+        }));
     }
     // The subscription-backed call adapters are virtual provider rows, never
     // editable registry profiles. Expose only variants whose exact model and
@@ -710,6 +808,7 @@ async fn list_ai_sources(State(state): State<AppState>) -> impl IntoResponse {
                 "reasoningEffort": variant.reasoning_effort(),
                 "serviceTier": variant.service_tier(),
                 "subscriptionBacked": true,
+                "useCases": ["live-call", "try-assistant"],
             }));
         }
     }
@@ -812,8 +911,160 @@ async fn ai_gateway_models_for(State(state): State<AppState>, Path(id): Path<Str
     ai_models_impl(&state, Some(&id)).await
 }
 
+fn codex_background_models_response(
+    models: crate::ai::codex::CodexModelsResponse,
+) -> serde_json::Value {
+    serde_json::json!({
+        "object": "list",
+        "data": models.models.into_iter().map(|model| serde_json::json!({
+            "id": model.model,
+            "object": "model",
+            "owned_by": "chatgpt-codex",
+            "display_name": model.display_name,
+            "description": model.description,
+            "is_default": model.is_default,
+            "default_reasoning_effort": model.default_reasoning_effort,
+            "supported_reasoning_efforts": model.supported_reasoning_efforts,
+            "service_tiers": model.service_tiers,
+        })).collect::<Vec<_>>()
+    })
+}
+
+fn codex_background_text(content: &serde_json::Value) -> Result<String, String> {
+    if let Some(text) = content.as_str() {
+        return Ok(text.to_owned());
+    }
+    let parts = content
+        .as_array()
+        .ok_or_else(|| "Codex background messages must contain text only".to_string())?;
+    let mut text = String::new();
+    for part in parts {
+        let kind = part.get("type").and_then(serde_json::Value::as_str);
+        if !matches!(kind, Some("text" | "input_text" | "output_text")) {
+            return Err("Codex background messages cannot contain image, audio, file, or tool parts".into());
+        }
+        let value = part
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "Codex background text parts require a text value".to_string())?;
+        text.push_str(value);
+    }
+    Ok(text)
+}
+
+fn codex_background_request(
+    body: &serde_json::Value,
+) -> Result<(crate::ai::codex::CodexChatRequest, String), String> {
+    const MAX_MESSAGES: usize = 64;
+    const MAX_PROMPT_BYTES: usize = 180_000;
+    for field in [
+        "tools",
+        "tool_choice",
+        "functions",
+        "function_call",
+        "modalities",
+        "audio",
+    ] {
+        if body.get(field).is_some() {
+            return Err(format!(
+                "The background Codex provider is text-only and does not support {field:?}"
+            ));
+        }
+    }
+    if body.get("stream").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Err("The background Codex provider is buffered; retry without stream=true".into());
+    }
+    let messages = body
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .filter(|messages| !messages.is_empty())
+        .ok_or_else(|| "Codex background requests require a non-empty messages array".to_string())?;
+    if messages.len() > MAX_MESSAGES {
+        return Err(format!("Codex background requests allow at most {MAX_MESSAGES} messages"));
+    }
+    let mut prompt = String::from(
+        "You are handling a background FormLogic AI task. Do not use tools, files, commands, browsers, or external services. Follow the supplied conversation and return only the requested result.\n\n",
+    );
+    for message in messages {
+        let role = message
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "each Codex background message requires a role".to_string())?;
+        if !matches!(role, "system" | "developer" | "user" | "assistant") {
+            return Err(format!("unsupported Codex background message role {role:?}"));
+        }
+        let text = codex_background_text(
+            message
+                .get("content")
+                .ok_or_else(|| "each Codex background message requires content".to_string())?,
+        )?;
+        prompt.push('[');
+        prompt.push_str(role);
+        prompt.push_str("]\n");
+        prompt.push_str(&text);
+        prompt.push_str("\n\n");
+        if prompt.len() > MAX_PROMPT_BYTES {
+            return Err(format!(
+                "Codex background prompt exceeded the {MAX_PROMPT_BYTES}-byte limit"
+            ));
+        }
+    }
+    if let Some(response_format) = body.get("response_format") {
+        let rendered = serde_json::to_string(response_format)
+            .map_err(|_| "response_format is invalid".to_string())?;
+        if rendered.len() > 32 * 1024 {
+            return Err("response_format exceeded the 32 KiB limit".into());
+        }
+        prompt.push_str("[output format]\nFollow this response-format request exactly: ");
+        prompt.push_str(&rendered);
+        prompt.push_str("\n");
+    }
+    // The output-format instruction is part of the actual delegated prompt.
+    // Re-check after appending it so a request that is individually under the
+    // message and response-format limits cannot overflow the turn-wide bound.
+    if prompt.len() > MAX_PROMPT_BYTES {
+        return Err(format!(
+            "Codex background prompt exceeded the {MAX_PROMPT_BYTES}-byte limit"
+        ));
+    }
+    let model = body
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .filter(|model| !model.trim().is_empty())
+        .unwrap_or(crate::ai::codex::LUNA_LIVE_CALL_MODEL)
+        .trim()
+        .to_owned();
+    let reasoning_effort = body
+        .get("reasoning_effort")
+        .or_else(|| body.get("reasoningEffort"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("low")
+        .to_owned();
+    let service_tier = body
+        .get("service_tier")
+        .or_else(|| body.get("serviceTier"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    Ok((
+        crate::ai::codex::CodexChatRequest {
+            prompt,
+            thread_id: None,
+            model: Some(model.clone()),
+            reasoning_effort: Some(reasoning_effort),
+            service_tier,
+        },
+        model,
+    ))
+}
+
 async fn ai_models_impl(state: &AppState, provider_id: Option<&str>) -> Response {
     use crate::ai::providers::Capability;
+    if provider_id == Some(crate::ai::codex::ASYNC_PROVIDER_ID) {
+        return match state.codex_agent.models().await {
+            Ok(models) => (StatusCode::OK, Json(codex_background_models_response(models))).into_response(),
+            Err(error) => codex_agent_error(error),
+        };
+    }
     if let Some(variant) =
         provider_id.and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
     {
@@ -855,7 +1106,7 @@ async fn ai_gateway_chat(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    ai_chat_impl(&state, None, body).await
+    ai_chat_impl(&state, None, body, true).await
 }
 
 async fn ai_gateway_chat_for(
@@ -863,13 +1114,51 @@ async fn ai_gateway_chat_for(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    ai_chat_impl(&state, Some(&id), body).await
+    ai_chat_impl(&state, Some(&id), body, true).await
+}
+
+async fn ai_gateway_audio_chat(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    ai_audio_chat_impl(&state, None, body).await
+}
+
+async fn ai_gateway_audio_chat_for(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    ai_audio_chat_impl(&state, Some(&id), body).await
+}
+
+async fn ai_audio_chat_impl(
+    state: &AppState,
+    provider_id: Option<&str>,
+    body: serde_json::Value,
+) -> Response {
+    // This typed route and its browser client return one JSON completion. Raw
+    // SSE is available through the generic chat-stream API, but allowing it
+    // here would make the client try to parse an event stream as JSON.
+    if audio_chat_requests_streaming(&body) {
+        return desktop_err(
+            StatusCode::BAD_REQUEST,
+            "streaming_unsupported",
+            "The audio chat route is buffered; retry without stream=true.",
+        );
+    }
+    ai_chat_impl(state, provider_id, body, false).await
+}
+
+fn audio_chat_requests_streaming(body: &serde_json::Value) -> bool {
+    body.get("stream").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
 async fn ai_chat_impl(
     state: &AppState,
     provider_id: Option<&str>,
     body: serde_json::Value,
+    allow_codex: bool,
 ) -> Response {
     use crate::ai::providers::Capability;
     // An optional `provider` field in the body is a capability alias.
@@ -884,43 +1173,80 @@ async fn ai_chat_impl(
     if provider_id.is_none()
         && alias
             .as_deref()
-            .is_some_and(crate::ai::codex::is_live_call_provider_id)
+            .is_some_and(crate::ai::codex::is_virtual_provider_id)
     {
         return desktop_err(
             StatusCode::BAD_REQUEST,
             "invalid_request",
-            "Use the named Codex call-provider URL; virtual Codex providers cannot be selected through the default provider alias.",
+            "Use the named Codex provider URL; virtual Codex providers cannot be selected through the default provider alias.",
         );
     }
-    if let Some(variant) =
-        provider_id.and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
+    if !allow_codex
+        && provider_id.is_some_and(crate::ai::codex::is_virtual_provider_id)
     {
-        let mut body = body;
-        if let Some(object) = body.as_object_mut() {
-            object.remove("provider");
-        }
-        if let Some(warm) = crate::ai::codex::live_call_prefix_warm_completion(variant, &body) {
-            if let Err(error) = state.codex_agent.require_live_call_ready(variant).await {
-                return codex_agent_error(error);
+        return desktop_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "ChatGPT/Codex OAuth is text-only on this route. Configure an OpenAI Platform audio provider and reusable API secret.",
+        );
+    }
+    if allow_codex && provider_id == Some(crate::ai::codex::ASYNC_PROVIDER_ID) {
+        let (request, model) = match codex_background_request(&body) {
+            Ok(request) => request,
+            Err(message) => {
+                return desktop_err(StatusCode::BAD_REQUEST, "invalid_request", &message)
             }
-            return (StatusCode::OK, Json(warm)).into_response();
-        }
-        let wants_stream = body
-            .get("stream")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        if wants_stream {
-            let agent = state.codex_agent.clone();
-            return codex_live_call_sse(variant.model(), move |deltas| async move {
-                agent.live_call_chat_stream(variant, &body, deltas).await
-            });
-        }
-        return match state.codex_agent.live_call_chat(variant, &body).await {
-            Ok(result) => {
-                (StatusCode::OK, Json(codex_live_call_completion(&result))).into_response()
-            }
+        };
+        return match state.codex_agent.assistant_chat(request).await {
+            Ok(result) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "id": format!("chatcmpl-formlogic-codex-{}", result.turn_id),
+                    "object": "chat.completion",
+                    "created": codex_live_call_created(),
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "message": { "role": "assistant", "content": result.text },
+                        "finish_reason": "stop"
+                    }]
+                })),
+            )
+                .into_response(),
             Err(error) => codex_agent_error(error),
         };
+    }
+    if allow_codex {
+        if let Some(variant) =
+        provider_id.and_then(crate::ai::codex::CodexLiveCallVariant::for_provider_id)
+        {
+            let mut body = body;
+            if let Some(object) = body.as_object_mut() {
+                object.remove("provider");
+            }
+            if let Some(warm) = crate::ai::codex::live_call_prefix_warm_completion(variant, &body) {
+                if let Err(error) = state.codex_agent.require_live_call_ready(variant).await {
+                    return codex_agent_error(error);
+                }
+                return (StatusCode::OK, Json(warm)).into_response();
+            }
+            let wants_stream = body
+                .get("stream")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if wants_stream {
+                let agent = state.codex_agent.clone();
+                return codex_live_call_sse(variant.model(), move |deltas| async move {
+                    agent.live_call_chat_stream(variant, &body, deltas).await
+                });
+            }
+            return match state.codex_agent.live_call_chat(variant, &body).await {
+                Ok(result) => {
+                    (StatusCode::OK, Json(codex_live_call_completion(&result))).into_response()
+                }
+                Err(error) => codex_agent_error(error),
+            };
+        }
     }
     let provider = match crate::ai::gateway::resolve_provider(
         &state.ai_providers,
@@ -977,6 +1303,299 @@ async fn ai_chat_impl(
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => ai_gateway_error(e),
     }
+}
+
+const MAX_TRANSCRIPTION_FILE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_TRANSCRIPTION_FIELD_BYTES: usize = 64 * 1024;
+
+async fn parse_transcription_multipart(
+    mut multipart: Multipart,
+) -> Result<
+    (
+        crate::ai::gateway::TranscriptionFile,
+        Vec<(String, String)>,
+        Option<String>,
+    ),
+    Response,
+> {
+    let mut file = None;
+    let mut fields = Vec::new();
+    let mut provider = None;
+    let mut part_count = 0usize;
+    while let Some(field) = multipart.next_field().await.map_err(|error| {
+        desktop_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_multipart",
+            &format!("Could not read transcription upload: {error}"),
+        )
+    })? {
+        part_count += 1;
+        if part_count > 32 {
+            return Err(desktop_err(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request_too_large",
+                "Transcription requests allow at most 32 multipart fields.",
+            ));
+        }
+        let name = field.name().unwrap_or_default().to_owned();
+        let filename = field.file_name().map(str::to_owned);
+        let content_type = field.content_type().map(str::to_owned);
+        let bytes = field.bytes().await.map_err(|error| {
+            desktop_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_multipart",
+                &format!("Could not read transcription field: {error}"),
+            )
+        })?;
+        if name == "file" {
+            if file.is_some() {
+                return Err(desktop_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "Transcription requests must contain exactly one file field.",
+                ));
+            }
+            if bytes.is_empty() || bytes.len() > MAX_TRANSCRIPTION_FILE_BYTES {
+                return Err(desktop_err(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "request_too_large",
+                    "Transcription audio must be non-empty and no larger than 25 MiB.",
+                ));
+            }
+            let filename = filename.unwrap_or_else(|| "audio.wav".into());
+            if filename.len() > 255 || filename.chars().any(char::is_control) {
+                return Err(desktop_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "Transcription filename is invalid.",
+                ));
+            }
+            file = Some(crate::ai::gateway::TranscriptionFile {
+                filename,
+                content_type,
+                bytes: bytes.to_vec(),
+            });
+            continue;
+        }
+        if bytes.len() > MAX_TRANSCRIPTION_FIELD_BYTES {
+            return Err(desktop_err(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request_too_large",
+                "A transcription form field exceeded the 64 KiB limit.",
+            ));
+        }
+        let value = String::from_utf8(bytes.to_vec()).map_err(|_| {
+            desktop_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "Transcription form fields must be UTF-8 text.",
+            )
+        })?;
+        if name == "provider" {
+            if value.len() > 64 || value.chars().any(char::is_control) {
+                return Err(desktop_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "Transcription provider reference is invalid.",
+                ));
+            }
+            provider = Some(value);
+            continue;
+        }
+        if !matches!(
+            name.as_str(),
+            "model"
+                | "language"
+                | "prompt"
+                | "response_format"
+                | "temperature"
+                | "timestamp_granularities[]"
+                | "chunking_strategy"
+        ) {
+            return Err(desktop_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("Unsupported transcription form field {name:?}."),
+            ));
+        }
+        fields.push((name, value));
+    }
+    let file = file.ok_or_else(|| {
+        desktop_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Transcription requests require a file field.",
+        )
+    })?;
+    Ok((file, fields, provider))
+}
+
+async fn ai_transcription_impl(
+    state: &AppState,
+    provider_id: Option<&str>,
+    multipart: Multipart,
+) -> Response {
+    let (file, fields, alias) = match parse_transcription_multipart(multipart).await {
+        Ok(upload) => upload,
+        Err(response) => return response,
+    };
+    let provider = match crate::ai::gateway::resolve_provider(
+        &state.ai_providers,
+        provider_id,
+        alias.as_deref(),
+        crate::ai::providers::Capability::Transcription,
+    ) {
+        Ok(Some(provider)) => provider,
+        Ok(None) => {
+            return desktop_err(
+                StatusCode::NOT_FOUND,
+                "no_provider",
+                "No transcription provider is configured in Services.",
+            )
+        }
+        Err(error) => return ai_gateway_error(error),
+    };
+    match crate::ai::gateway::transcribe(&state.ai_providers, &provider, file, fields).await {
+        Ok(payload) => {
+            let mut response = (StatusCode::OK, payload.bytes).into_response();
+            if let Some(value) = payload
+                .content_type
+                .as_deref()
+                .and_then(|value| HeaderValue::from_str(value).ok())
+            {
+                response.headers_mut().insert(CONTENT_TYPE, value);
+            }
+            response
+        }
+        Err(error) => ai_gateway_error(error),
+    }
+}
+
+async fn ai_gateway_transcription(
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> Response {
+    ai_transcription_impl(&state, None, multipart).await
+}
+
+async fn ai_gateway_transcription_for(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    multipart: Multipart,
+) -> Response {
+    ai_transcription_impl(&state, Some(&id), multipart).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RealtimeSessionBody {
+    sdp: String,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
+    #[serde(default)]
+    session: Option<serde_json::Value>,
+}
+
+fn apply_realtime_shortcuts(
+    session: &mut serde_json::Value,
+    body: &RealtimeSessionBody,
+) -> Result<(), String> {
+    let object = session
+        .as_object_mut()
+        .ok_or_else(|| "Realtime session must be a JSON object".to_string())?;
+    if let Some(model) = body.model.as_deref() {
+        if model.is_empty() || model.len() > 160 || model.chars().any(char::is_control) {
+            return Err("Realtime model is invalid".into());
+        }
+        object.insert("model".into(), serde_json::Value::String(model.into()));
+    }
+    if let Some(instructions) = body.instructions.as_deref() {
+        if instructions.len() > 64 * 1024 || instructions.contains('\0') {
+            return Err("Realtime instructions exceeded the safe limit".into());
+        }
+        object.insert(
+            "instructions".into(),
+            serde_json::Value::String(instructions.into()),
+        );
+    }
+    if let Some(voice) = body.voice.as_deref() {
+        if voice.is_empty() || voice.len() > 64 || voice.chars().any(char::is_control) {
+            return Err("Realtime voice is invalid".into());
+        }
+        let audio = object
+            .entry("audio")
+            .or_insert_with(|| serde_json::json!({}));
+        let audio = audio
+            .as_object_mut()
+            .ok_or_else(|| "Realtime session audio must be an object".to_string())?;
+        let output = audio
+            .entry("output")
+            .or_insert_with(|| serde_json::json!({}));
+        let output = output
+            .as_object_mut()
+            .ok_or_else(|| "Realtime session audio.output must be an object".to_string())?;
+        output.insert("voice".into(), serde_json::Value::String(voice.into()));
+    }
+    Ok(())
+}
+
+async fn ai_realtime_session_impl(
+    state: &AppState,
+    provider_id: Option<&str>,
+    body: RealtimeSessionBody,
+) -> Response {
+    let provider = match crate::ai::gateway::resolve_provider(
+        &state.ai_providers,
+        provider_id,
+        body.provider.as_deref(),
+        crate::ai::providers::Capability::Realtime,
+    ) {
+        Ok(Some(provider)) => provider,
+        Ok(None) => {
+            return desktop_err(
+                StatusCode::NOT_FOUND,
+                "no_provider",
+                "No Realtime provider is configured in Services.",
+            )
+        }
+        Err(error) => return ai_gateway_error(error),
+    };
+    let mut session = body.session.clone().unwrap_or_else(|| serde_json::json!({}));
+    if let Err(message) = apply_realtime_shortcuts(&mut session, &body) {
+        return desktop_err(StatusCode::BAD_REQUEST, "invalid_request", &message);
+    }
+    match crate::ai::gateway::realtime_session(
+        &state.ai_providers,
+        &provider,
+        body.sdp,
+        session,
+    )
+    .await
+    {
+        Ok(sdp) => (StatusCode::OK, Json(serde_json::json!({ "sdp": sdp }))).into_response(),
+        Err(error) => ai_gateway_error(error),
+    }
+}
+
+async fn ai_gateway_realtime_session(
+    State(state): State<AppState>,
+    Json(body): Json<RealtimeSessionBody>,
+) -> Response {
+    ai_realtime_session_impl(&state, None, body).await
+}
+
+async fn ai_gateway_realtime_session_for(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<RealtimeSessionBody>,
+) -> Response {
+    ai_realtime_session_impl(&state, Some(&id), body).await
 }
 
 fn codex_live_call_created() -> u64 {
@@ -3475,6 +4094,7 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
                     // them over authenticated loopback.)
                     | "/api/ai/providers"
                     | "/api/ai/aliases"
+                    | "/api/ai/secrets"
                     // Starts/cancels delegated OAuth or clears the dedicated
                     // account. Native no-Origin processes must not mutate the
                     // user's ChatGPT connection implicitly.
@@ -3490,6 +4110,7 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
             ) || (path.starts_with("/api/services/") && path.ends_with("/uninstall"))
                 || (path.starts_with("/api/ai/providers/")
                     && (path.ends_with("/key") || path.ends_with("/test")))
+                || path.starts_with("/api/ai/secrets/")
         }
         Method::GET => matches!(
             path,
@@ -3503,7 +4124,9 @@ fn is_privileged_path(method: &Method, path: &str) -> bool {
                 || path.starts_with("/api/models/")
                 || path.starts_with("/api/python/venvs/")
                 || path.starts_with("/api/ai/providers/")
+                || path.starts_with("/api/ai/secrets/")
         }
+        Method::PUT => path.starts_with("/api/ai/secrets/"),
         _ => false,
     }
 }
@@ -3603,8 +4226,17 @@ fn codex_call_owner_capability(method: &Method, path: &str) -> Result<Option<&'s
     let Some((provider_id, action)) = decoded_provider_inference_route(path)? else {
         return Ok(None);
     };
-    if !crate::ai::codex::is_live_call_provider_id(&provider_id) {
+    if !crate::ai::codex::is_virtual_provider_id(&provider_id) {
         return Ok(None);
+    }
+    if provider_id == crate::ai::codex::ASYNC_PROVIDER_ID {
+        return Ok(Some(match (method, action) {
+            (&Method::POST, "chat/completions") => {
+                "service.openai-codex-agent.assistant.chat"
+            }
+            (&Method::GET, "models") => "service.openai-codex-agent.models.list",
+            _ => "service.openai-codex-agent.unsupported",
+        }));
     }
     Ok(Some(match (method, action) {
         (&Method::POST, "chat/completions") => "service.openai-codex-agent.call.chat.complete",
@@ -3627,6 +4259,15 @@ fn openai_api_owner_capability(method: &Method, path: &str) -> Option<&'static s
         .or_else(|| path.split_once("/v1/").map(|(_, action)| action));
     match (method, action_path) {
         (&Method::POST, Some("chat/completions")) => Some("service.openai-api.chat.complete"),
+        (&Method::POST, Some("audio/transcriptions")) => {
+            Some("service.openai-api.audio.transcribe")
+        }
+        (&Method::POST, Some("audio/chat/completions")) => {
+            Some("service.openai-api.audio.chat")
+        }
+        (&Method::POST, Some("realtime/sessions")) => {
+            Some("service.openai-api.realtime.session.create")
+        }
         (&Method::GET, Some("models")) => Some("service.openai-api.models.list"),
         _ => Some("service.openai-api.unsupported"),
     }
@@ -3645,6 +4286,28 @@ fn website_service_capability(method: &Method, path: &str) -> Result<Option<&'st
 fn codex_desktop_admin_path(path: &str) -> bool {
     path.starts_with("/api/services/codex/auth/")
         || path == "/api/services/codex/actions/turn.interrupt"
+}
+
+/// Provider definitions, aliases, reusable-secret metadata/value operations,
+/// and connection tests are machine administration. A paired website may use
+/// an exact owner-minted inference action, but it must never reconfigure the
+/// destination or rotate the credential that action spends.
+fn ai_desktop_admin_path(path: &str) -> bool {
+    if matches!(
+        path,
+        "/api/ai/providers" | "/api/ai/aliases" | "/api/ai/secrets"
+    ) || path.starts_with("/api/ai/secrets/")
+    {
+        return true;
+    }
+    let Some(rest) = path.strip_prefix("/api/ai/providers/") else {
+        return false;
+    };
+    let Some((_provider_id, tail)) = rest.split_once('/') else {
+        // DELETE /api/ai/providers/:id
+        return true;
+    };
+    !tail.starts_with("v1/")
 }
 
 /// The companion's OWN webview — the only browser-ish origin trusted WITHOUT a
@@ -3843,6 +4506,13 @@ async fn management_auth_guard(
             StatusCode::FORBIDDEN,
             "owner_required",
             "Manage this ChatGPT operation in FormLogic Desktop.",
+        );
+    }
+    if ai_desktop_admin_path(req.uri().path()) && !(server_token_ok || gui_webview_ok) {
+        return desktop_err(
+            StatusCode::FORBIDDEN,
+            "owner_required",
+            "Manage AI providers and reusable API secrets in FormLogic Desktop.",
         );
     }
 
@@ -4052,6 +4722,18 @@ pub async fn serve(
             "/api/ai/providers",
             get(list_ai_providers).post(upsert_ai_provider),
         )
+        .route(
+            "/api/ai/secrets",
+            get(list_ai_secrets).post(create_ai_secret),
+        )
+        .route(
+            "/api/ai/secrets/:id",
+            put(update_ai_secret).delete(delete_ai_secret),
+        )
+        .route(
+            "/api/ai/secrets/:id/value",
+            put(set_ai_secret_value).delete(clear_ai_secret_value),
+        )
         .route("/api/ai/providers/:id", delete(delete_ai_provider))
         .route("/api/ai/providers/:id/key", post(set_ai_provider_key))
         .route("/api/ai/providers/:id/test", post(test_ai_provider))
@@ -4060,12 +4742,40 @@ pub async fn serve(
         .route("/api/ai/v1/models", get(ai_gateway_models))
         .route("/api/ai/v1/chat/completions", post(ai_gateway_chat))
         .route(
+            "/api/ai/v1/audio/transcriptions",
+            post(ai_gateway_transcription)
+                .layer(DefaultBodyLimit::max(27 * 1024 * 1024)),
+        )
+        .route(
+            "/api/ai/v1/audio/chat/completions",
+            post(ai_gateway_audio_chat).layer(DefaultBodyLimit::max(34 * 1024 * 1024)),
+        )
+        .route(
+            "/api/ai/v1/realtime/sessions",
+            post(ai_gateway_realtime_session).layer(DefaultBodyLimit::max(3 * 1024 * 1024)),
+        )
+        .route(
             "/api/ai/providers/:id/v1/models",
             get(ai_gateway_models_for),
         )
         .route(
             "/api/ai/providers/:id/v1/chat/completions",
             post(ai_gateway_chat_for),
+        )
+        .route(
+            "/api/ai/providers/:id/v1/audio/transcriptions",
+            post(ai_gateway_transcription_for)
+                .layer(DefaultBodyLimit::max(27 * 1024 * 1024)),
+        )
+        .route(
+            "/api/ai/providers/:id/v1/audio/chat/completions",
+            post(ai_gateway_audio_chat_for)
+                .layer(DefaultBodyLimit::max(34 * 1024 * 1024)),
+        )
+        .route(
+            "/api/ai/providers/:id/v1/realtime/sessions",
+            post(ai_gateway_realtime_session_for)
+                .layer(DefaultBodyLimit::max(3 * 1024 * 1024)),
         )
         .route_layer(middleware::from_fn_with_state(
             desktop_state.clone(),
@@ -4216,7 +4926,7 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::{
-        aokie_codex_phone_configuration, codex_call_owner_capability, codex_desktop_admin_path,
+        ai_desktop_admin_path, aokie_codex_phone_configuration, codex_call_owner_capability, codex_desktop_admin_path,
         codex_live_call_completion, codex_owner_capability, connector_failure_status,
         decoded_provider_inference_route, desktop_auth_decision, desktop_info_body,
         direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
@@ -4655,8 +5365,14 @@ mod tests {
         for p in [
             "/api/ai/v1/models",
             "/api/ai/v1/chat/completions",
+            "/api/ai/v1/audio/transcriptions",
+            "/api/ai/v1/audio/chat/completions",
+            "/api/ai/v1/realtime/sessions",
             "/api/ai/providers/openai/v1/models",
             "/api/ai/providers/my-llama/v1/chat/completions",
+            "/api/ai/providers/openai-stt/v1/audio/transcriptions",
+            "/api/ai/providers/openai-realtime/v1/realtime/sessions",
+            "/api/ai/providers/openai-codex-agent/v1/chat/completions",
             "/api/ai/providers/openai-codex-agent-none/v1/models",
             "/api/ai/providers/openai-codex-agent-low/v1/chat/completions",
             "/api/ai/providers/openai-codex-agent-luna-low/v1/chat/completions",
@@ -4669,6 +5385,8 @@ mod tests {
             "/api/ai/providers/openai/key",
             "/api/ai/providers/openai/test",
             "/api/ai/aliases",
+            "/api/ai/secrets",
+            "/api/ai/secrets/openai/value",
             "/api/ai/sources",
             "/api/ai/v1/",
             // A provider literally named `v1` must not smuggle its config
@@ -4733,11 +5451,14 @@ mod tests {
             (Method::POST, "/api/services/codex/auth/logout"),
             (Method::POST, "/api/services/codex/actions/assistant.chat"),
             (Method::POST, "/api/services/codex/actions/turn.interrupt"),
+            (Method::POST, "/api/ai/secrets"),
+            (Method::PUT, "/api/ai/secrets/openai/value"),
             (Method::GET, "/api/services/codex/status"),
             (Method::GET, "/api/services/codex/models"),
             (Method::DELETE, "/api/services/x"),
             (Method::DELETE, "/api/models/some.gguf"),
             (Method::DELETE, "/api/python/venvs/v"),
+            (Method::DELETE, "/api/ai/secrets/openai"),
         ] {
             assert!(is_privileged_path(&m, p), "{m} {p} is privileged");
         }
@@ -4748,6 +5469,30 @@ mod tests {
             (Method::GET, "/api/services"),
         ] {
             assert!(!is_privileged_path(&m, p), "{m} {p} is not privileged");
+        }
+    }
+
+    #[test]
+    fn ai_provider_and_secret_administration_is_desktop_only() {
+        for path in [
+            "/api/ai/providers",
+            "/api/ai/providers/openai",
+            "/api/ai/providers/openai/key",
+            "/api/ai/providers/openai/test",
+            "/api/ai/aliases",
+            "/api/ai/secrets",
+            "/api/ai/secrets/openai",
+            "/api/ai/secrets/openai/value",
+        ] {
+            assert!(ai_desktop_admin_path(path), "{path} is Desktop-admin only");
+        }
+        for path in [
+            "/api/ai/sources",
+            "/api/ai/v1/chat/completions",
+            "/api/ai/providers/openai/v1/models",
+            "/api/ai/providers/openai/v1/audio/transcriptions",
+        ] {
+            assert!(!ai_desktop_admin_path(path), "{path} is an inference/read route");
         }
     }
 
@@ -4815,6 +5560,26 @@ mod tests {
             openai_api_owner_capability(&Method::GET, "/api/ai/providers/openai/v1/models")
                 .expect("models capability");
         assert_eq!(models, "service.openai-api.models.list");
+        for (path, expected) in [
+            (
+                "/api/ai/v1/audio/transcriptions",
+                "service.openai-api.audio.transcribe",
+            ),
+            (
+                "/api/ai/providers/openai-audio/v1/audio/chat/completions",
+                "service.openai-api.audio.chat",
+            ),
+            (
+                "/api/ai/providers/openai-realtime/v1/realtime/sessions",
+                "service.openai-api.realtime.session.create",
+            ),
+        ] {
+            assert_eq!(
+                openai_api_owner_capability(&Method::POST, path),
+                Some(expected),
+                "exact website action for {path}"
+            );
+        }
         assert!(grant_covers_capability(&[chat.into()], chat));
         assert!(!grant_covers_capability(&[models.into()], chat));
         assert!(!grant_covers_capability(
@@ -4833,6 +5598,23 @@ mod tests {
 
     #[test]
     fn codex_call_provider_grants_are_distinct_from_openai_api_grants() {
+        let background_chat = "/api/ai/providers/openai-codex-agent/v1/chat/completions";
+        let background_models = "/api/ai/providers/openai-codex-agent/v1/models";
+        assert_eq!(
+            website_service_capability(&Method::POST, background_chat),
+            Ok(Some("service.openai-codex-agent.assistant.chat"))
+        );
+        assert_eq!(
+            website_service_capability(&Method::GET, background_models),
+            Ok(Some("service.openai-codex-agent.models.list"))
+        );
+        assert_eq!(
+            website_service_capability(
+                &Method::POST,
+                "/api/ai/providers/openai-codex-agent/v1/audio/chat/completions"
+            ),
+            Ok(Some("service.openai-codex-agent.unsupported"))
+        );
         for variant in crate::ai::codex::CodexLiveCallVariant::ALL {
             let provider_id = variant.provider_id();
             let chat_path = format!("/api/ai/providers/{provider_id}/v1/chat/completions");
@@ -4962,6 +5744,74 @@ mod tests {
             "How may I help?"
         );
         assert_eq!(completion["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn codex_background_request_is_text_only_and_defaults_to_luna_low() {
+        let (request, model) = super::codex_background_request(&serde_json::json!({
+            "messages": [
+                { "role": "system", "content": "Return JSON." },
+                { "role": "user", "content": [{ "type": "text", "text": "Draft an SMS" }] }
+            ],
+            "response_format": { "type": "json_object" }
+        }))
+        .expect("valid text-only background request");
+        assert_eq!(model, crate::ai::codex::LUNA_LIVE_CALL_MODEL);
+        assert_eq!(request.model.as_deref(), Some(crate::ai::codex::LUNA_LIVE_CALL_MODEL));
+        assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
+        assert!(request.prompt.contains("Draft an SMS"));
+        assert!(request.prompt.contains("json_object"));
+
+        for invalid in [
+            serde_json::json!({ "stream": true, "messages": [{ "role": "user", "content": "x" }] }),
+            serde_json::json!({ "messages": [{ "role": "tool", "content": "x" }] }),
+            serde_json::json!({ "messages": [{ "role": "user", "content": [{ "type": "input_audio", "input_audio": {} }] }] }),
+        ] {
+            assert!(super::codex_background_request(&invalid).is_err());
+        }
+        for field in [
+            "tools",
+            "tool_choice",
+            "functions",
+            "function_call",
+            "modalities",
+            "audio",
+        ] {
+            let mut unsupported = serde_json::json!({
+                "messages": [{ "role": "user", "content": "x" }]
+            });
+            unsupported
+                .as_object_mut()
+                .unwrap()
+                .insert(field.into(), serde_json::json!([]));
+            let error = super::codex_background_request(&unsupported)
+                .expect_err("unsupported Codex semantics must not be ignored");
+            assert!(
+                error.contains(field),
+                "error did not name {field:?}: {error}"
+            );
+        }
+
+        let oversized_after_format = serde_json::json!({
+            "messages": [{ "role": "user", "content": "x".repeat(160_000) }],
+            "response_format": { "schema": "y".repeat(25_000) }
+        });
+        let error = super::codex_background_request(&oversized_after_format)
+            .expect_err("the final delegated prompt must remain within the turn-wide bound");
+        assert!(error.contains("prompt exceeded"));
+    }
+
+    #[test]
+    fn buffered_audio_chat_refuses_event_stream_responses() {
+        assert!(super::audio_chat_requests_streaming(
+            &serde_json::json!({ "stream": true })
+        ));
+        assert!(!super::audio_chat_requests_streaming(
+            &serde_json::json!({ "stream": false })
+        ));
+        assert!(!super::audio_chat_requests_streaming(
+            &serde_json::json!({})
+        ));
     }
 
     #[tokio::test]

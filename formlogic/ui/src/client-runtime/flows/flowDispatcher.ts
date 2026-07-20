@@ -30,10 +30,20 @@ import type {
   RuntimeFlows,
 } from '../../types/flows';
 import { subscribeDesktopEvents } from '../desktop/desktopEvents';
+import {
+  enqueueBrowserConnectorEvent,
+  resetBrowserConnectorEventQueues,
+} from '../desktop/browserEventQueue';
+import { desktopClient, type DesktopAiChatRequest } from '../desktop/desktopClient';
 import type { DesktopEventEnvelope } from '../desktop/desktopTypes';
 import { resolveProviderRequest } from './aiProviders';
 import { resolveDesktopLlmEndpoint } from './desktopLlm';
-import { listDesktopServices, resolveDesktopServiceBase } from './desktopService';
+import {
+  listAiSources,
+  listDesktopServices,
+  resolveDesktopServiceBase,
+  type AiSourceListing,
+} from './desktopService';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
 import type { FlowExecutorDeps } from './nodes';
 import {
@@ -48,6 +58,35 @@ import {
 
 const RETRY_BASE_DELAY_MS = 500;
 const MAX_RETRY_ATTEMPTS = 5;
+
+/** Keep website flow routing on providers that Desktop explicitly advertises
+ * for flows. Missing use-case metadata is accepted only for older builds. */
+export function isDesktopFlowChatProvider(source: AiSourceListing, providerId: string): boolean {
+  return source.kind === 'provider'
+    && source.refId === providerId
+    && source.enabled
+    && (source.capabilities.length === 0 || source.capabilities.includes('chat'))
+    && (source.useCases === undefined || source.useCases.includes('flows'));
+}
+
+/** Invoke an explicitly selected provider through paired Desktop without ever
+ * exposing its credential to the website. Null means this Desktop does not
+ * advertise that provider, allowing the existing browser-provider/local
+ * compatibility path to continue. Once advertised, an invocation error is
+ * terminal so a flow can never silently switch to a different provider. */
+async function invokeDesktopNamedAiChat(
+  providerId: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<Record<string, unknown> | null> {
+  const id = providerId.indexOf('provider:') === 0 ? providerId.slice(9) : providerId;
+  const sources = await listAiSources();
+  const selected = sources.find((source) => isDesktopFlowChatProvider(source, id));
+  if (!selected) return null;
+  const result = await desktopClient.ai.chat(body as DesktopAiChatRequest, id, { signal });
+  if (!result.ok) throw new Error(result.error.message || `Desktop AI provider '${id}' failed`);
+  return result.data;
+}
 
 /** How often an active runtime polls for claimable 'queued' runs (docs §10). */
 export const CLAIM_POLL_INTERVAL_MS = 20_000;
@@ -236,6 +275,7 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
     ...buildKvDeps(),
     resolveDesktopLlmEndpoint: () => resolveDesktopLlmEndpoint(),
     resolveAiProvider: (capability, providerId) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId),
+    invokeDesktopAiChat: (providerId, body, signal) => invokeDesktopNamedAiChat(providerId, body, signal),
     getAppAiBase: () => {
       const v = appContext.aiBaseUrl;
       return typeof v === 'string' && v !== '' ? v : null;
@@ -311,6 +351,7 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     },
     resolveDesktopLlmEndpoint: () => resolveDesktopLlmEndpoint(),
     resolveAiProvider: (capability, providerId) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId),
+    invokeDesktopAiChat: (providerId, body, signal) => invokeDesktopNamedAiChat(providerId, body, signal),
     getAppAiBase: () => null,
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
     listDesktopServices: () => listDesktopServices(),
@@ -420,6 +461,7 @@ export function __resetFlowDispatcherForTests(): void {
   currentSlug = null;
   appContext = {};
   startToken += 1;
+  resetBrowserConnectorEventQueues();
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +518,7 @@ export function startFlowDispatcher(
     runtime = null;
     currentSlug = null;
     appContext = {};
+    resetBrowserConnectorEventQueues();
   };
 }
 
@@ -564,15 +607,17 @@ async function deferToDesktop(eventName: string): Promise<boolean> {
 }
 
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
-  void handleEvent({
-    name: envelope.name,
-    correlationId: envelope.correlationId,
-    idempotencyKey: envelope.idempotencyKey,
-    data: envelope.data,
-    connectorId: envelope.connectorId ?? envelope.source,
-    source: envelope.source,
-    occurredAt: envelope.occurredAt,
-  });
+  void enqueueBrowserConnectorEvent(envelope, () =>
+    handleEvent({
+      name: envelope.name,
+      correlationId: envelope.correlationId,
+      idempotencyKey: envelope.idempotencyKey,
+      data: envelope.data,
+      connectorId: envelope.connectorId ?? envelope.source,
+      source: envelope.source,
+      occurredAt: envelope.occurredAt,
+    })
+  ).catch((error) => logger.warn('[flows] browser event queue task failed:', error));
 }
 
 /**

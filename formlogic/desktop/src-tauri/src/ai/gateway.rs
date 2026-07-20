@@ -9,10 +9,10 @@
 //! AUTH (ADR-008): inference is NEVER anonymous. The route layer that mounts
 //! these handlers requires the management-plane auth (webview | server token |
 //! pairing token) exactly like every other `/api/…` route — there is no
-//! anonymous tier, so a drive-by web page cannot spend the user's keys. (The
-//! per-session native-plugin credential is layered on when the Aokie plugin is
-//! wired to the gateway in a later slice; today the plugin reaches it over the
-//! same authenticated loopback surface.)
+//! anonymous tier, so a drive-by web page cannot spend the user's keys. The
+//! signed Aokie plugin additionally receives one per-install bearer scoped to
+//! inference routes; provider and credential administration remains Desktop-
+//! only.
 //!
 //! EGRESS (AI-404): every outbound call is validated + address-pinned by
 //! `egress`, and the reqwest client is built with redirects DISABLED.
@@ -31,6 +31,7 @@ pub const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_RENDERED_HEADER_BYTES: usize = 32 * 1024;
 const MAX_RENDERED_CUSTOM_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CUSTOM_PLACEHOLDERS: usize = 64;
+const MAX_REALTIME_SDP_BYTES: usize = 2 * 1024 * 1024;
 
 /// Top-level llama.cpp extensions that must not leak into a public
 /// OpenAI-compatible request. Local/on-prem providers keep the canonical body
@@ -47,6 +48,22 @@ pub enum GatewayError {
     BadRequest(String),
     /// The upstream call failed.
     Upstream(String),
+}
+
+/// A bounded non-JSON upstream payload whose media type must survive the
+/// Desktop gateway (transcription can return JSON, plain text, SRT, or VTT).
+pub struct GatewayPayload {
+    pub content_type: Option<String>,
+    pub bytes: Vec<u8>,
+}
+
+/// One caller-supplied file for the OpenAI-compatible transcription adapter.
+/// The HTTP layer owns multipart parsing and limits; this type is deliberately
+/// free of Axum so the outbound adapter stays testable in isolation.
+pub struct TranscriptionFile {
+    pub filename: String,
+    pub content_type: Option<String>,
+    pub bytes: Vec<u8>,
 }
 
 impl GatewayError {
@@ -365,6 +382,154 @@ pub async fn chat_completions(
         Protocol::Anthropic => Ok(wrap_text_as_openai_chat(extract_anthropic_text(&value))),
         Protocol::OpenAi => Ok(value),
     }
+}
+
+/// Forward an OpenAI-compatible multipart transcription request. Credentials
+/// and the configured default model are injected by Desktop; neither is ever
+/// exposed to the website or plugin. Custom providers may override only the
+/// transcription path and must otherwise accept the OpenAI multipart shape.
+pub async fn transcribe(
+    reg: &ProviderRegistryHandle,
+    provider: &ProviderProfile,
+    file: TranscriptionFile,
+    mut fields: Vec<(String, String)>,
+) -> Result<GatewayPayload, GatewayError> {
+    if provider.protocol == Protocol::Anthropic {
+        return Err(GatewayError::BadRequest(
+            "Anthropic providers do not support the OpenAI transcription adapter".into(),
+        ));
+    }
+    if !fields.iter().any(|(name, _)| name == "model") {
+        if let Some(model) = provider.model.as_deref() {
+            fields.push(("model".into(), model.into()));
+        }
+    }
+
+    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
+    let path = provider.path_for(Capability::Transcription);
+    let target = egress::validate(&provider.base_url, &path, provider.local_access())
+        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
+    let mut part = reqwest::multipart::Part::bytes(file.bytes).file_name(file.filename);
+    if let Some(content_type) = file.content_type.as_deref() {
+        part = part
+            .mime_str(content_type)
+            .map_err(|_| GatewayError::BadRequest("audio file has an invalid content type".into()))?;
+    }
+    let mut form = reqwest::multipart::Form::new().part("file", part);
+    for (name, value) in fields {
+        form = form.text(name, value);
+    }
+    let client = client_for(&target)?;
+    let request = apply_headers(client.post(target.url.clone()).multipart(form), provider, key.as_deref())?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| GatewayError::Upstream(format!("transcription request failed: {e}")))?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let bytes = read_capped(response).await?;
+    if !status.is_success() {
+        return Err(GatewayError::Upstream(format!(
+            "upstream {status}: {}",
+            String::from_utf8_lossy(&bytes).chars().take(500).collect::<String>()
+        )));
+    }
+    Ok(GatewayPayload { content_type, bytes })
+}
+
+/// Create a WebRTC Realtime session through OpenAI's unified server-side
+/// interface. The caller supplies an SDP offer plus a bounded session object;
+/// Desktop supplies the reusable API secret and returns only the SDP answer.
+pub async fn realtime_session(
+    reg: &ProviderRegistryHandle,
+    provider: &ProviderProfile,
+    sdp: String,
+    mut session: serde_json::Value,
+) -> Result<String, GatewayError> {
+    if provider.protocol != Protocol::OpenAi {
+        return Err(GatewayError::BadRequest(
+            "Realtime WebRTC sessions currently require an OpenAI-protocol provider".into(),
+        ));
+    }
+    if sdp.is_empty() || sdp.len() > MAX_REALTIME_SDP_BYTES || sdp.chars().any(|ch| ch == '\0') {
+        return Err(GatewayError::BadRequest(
+            "Realtime SDP must be non-empty, NUL-free, and no larger than 2 MiB".into(),
+        ));
+    }
+    let object = session.as_object_mut().ok_or_else(|| {
+        GatewayError::BadRequest("Realtime session configuration must be a JSON object".into())
+    })?;
+    object.insert("type".into(), serde_json::Value::String("realtime".into()));
+    if !object.contains_key("model") {
+        let model = provider.model.as_deref().ok_or_else(|| {
+            GatewayError::BadRequest(
+                "Realtime provider has no model configured and the request did not select one".into(),
+            )
+        })?;
+        object.insert("model".into(), serde_json::Value::String(model.into()));
+    }
+    let session_json = serde_json::to_string(&session)
+        .map_err(|_| GatewayError::BadRequest("Realtime session configuration is invalid".into()))?;
+    if session_json.len() > 256 * 1024 {
+        return Err(GatewayError::BadRequest(
+            "Realtime session configuration exceeded the 256 KiB limit".into(),
+        ));
+    }
+
+    let key = reg.lock().unwrap_or_else(|e| e.into_inner()).key(&provider.id);
+    let path = provider.path_for(Capability::Realtime);
+    let target = egress::validate(&provider.base_url, &path, provider.local_access())
+        .map_err(|e| GatewayError::BadRequest(e.to_string()))?;
+    // OpenAI's unified WebRTC endpoint dispatches these parts by media type,
+    // not just by field name. `Form::text` would label both as plain text,
+    // which makes the otherwise-valid offer fail at the upstream boundary.
+    let sdp_part = reqwest::multipart::Part::text(sdp)
+        .mime_str("application/sdp")
+        .map_err(|_| GatewayError::BadRequest("Realtime SDP media type is invalid".into()))?;
+    let session_part = reqwest::multipart::Part::text(session_json)
+        .mime_str("application/json")
+        .map_err(|_| GatewayError::BadRequest("Realtime session media type is invalid".into()))?;
+    let form = reqwest::multipart::Form::new()
+        .part("sdp", sdp_part)
+        .part("session", session_part);
+    let client = client_for(&target)?;
+    let request = apply_headers(client.post(target.url.clone()).multipart(form), provider, key.as_deref())?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| GatewayError::Upstream(format!("Realtime session request failed: {e}")))?;
+    let status = response.status();
+    let bytes = read_capped(response).await?;
+    if !status.is_success() {
+        return Err(GatewayError::Upstream(format!(
+            "upstream {status}: {}",
+            String::from_utf8_lossy(&bytes).chars().take(500).collect::<String>()
+        )));
+    }
+    if bytes.len() > MAX_REALTIME_SDP_BYTES {
+        return Err(GatewayError::Upstream(
+            "Realtime SDP answer exceeded the 2 MiB limit".into(),
+        ));
+    }
+    validate_realtime_sdp_answer(bytes)
+}
+
+fn validate_realtime_sdp_answer(bytes: Vec<u8>) -> Result<String, GatewayError> {
+    let answer = String::from_utf8(bytes)
+        .map_err(|_| GatewayError::Upstream("Realtime upstream returned non-UTF-8 SDP".into()))?;
+    // RFC 8866 requires the version line to be the first SDP line. Checking it
+    // also prevents a 2xx JSON/error page from being handed to RTCPeerConnection
+    // as though it were a successful answer.
+    if answer.contains('\0') || !(answer.starts_with("v=0\r\n") || answer.starts_with("v=0\n")) {
+        return Err(GatewayError::Upstream(
+            "Realtime upstream returned a non-SDP success payload".into(),
+        ));
+    }
+    Ok(answer)
 }
 
 /// AI-405: can `stream:true` be honestly proxied for this provider? Only a
@@ -695,6 +860,7 @@ mod tests {
             model: Some("test-model".into()),
             capabilities: vec![Capability::Chat],
             headers: vec![],
+            secret_ref: None,
             specs: Default::default(),
             allow_local,
             enabled: true,
@@ -747,6 +913,7 @@ mod tests {
             model: Some("m1".into()),
             capabilities: vec![Capability::Chat],
             headers: vec![],
+            secret_ref: None,
             specs,
             allow_local: false,
             enabled: true,
@@ -856,6 +1023,96 @@ mod tests {
         .is_none());
     }
 
+    #[tokio::test]
+    async fn realtime_uses_the_media_types_required_by_the_unified_endpoint() {
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let handler_observed = observed.clone();
+        let app = axum::Router::new().route(
+            "/v1/realtime/calls",
+            axum::routing::post(move |mut multipart: axum::extract::Multipart| {
+                let handler_observed = handler_observed.clone();
+                async move {
+                    let mut parts = Vec::new();
+                    while let Some(field) = multipart
+                        .next_field()
+                        .await
+                        .expect("valid Realtime multipart request")
+                    {
+                        let name = field.name().unwrap_or_default().to_owned();
+                        let content_type = field.content_type().unwrap_or_default().to_owned();
+                        let text = field.text().await.expect("text multipart field");
+                        parts.push((name, content_type, text));
+                    }
+                    *handler_observed.lock().unwrap() = parts;
+                    (
+                        axum::http::StatusCode::CREATED,
+                        [(axum::http::header::CONTENT_TYPE, "application/sdp")],
+                        "v=0\r\nanswer\r\n",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve Realtime fixture");
+        });
+
+        let mut provider = profile(Protocol::OpenAi, true);
+        provider.base_url = format!("http://{address}");
+        provider.capabilities = vec![Capability::Realtime];
+        let registry = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::providers::ProviderRegistry::load(std::path::Path::new(
+                "__formlogic_gateway_realtime_test_missing__",
+            )),
+        ));
+        let answer = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            realtime_session(
+                &registry,
+                &provider,
+                "v=0\r\no=offer\r\n".into(),
+                serde_json::json!({ "instructions": "Be concise." }),
+            ),
+        )
+        .await
+        .expect("Realtime fixture timed out")
+        .expect("Realtime request succeeded");
+        server.abort();
+
+        assert_eq!(answer, "v=0\r\nanswer\r\n");
+        let parts = observed.lock().unwrap();
+        assert_eq!(parts.len(), 2);
+        let sdp = parts
+            .iter()
+            .find(|(name, _, _)| name == "sdp")
+            .expect("SDP part");
+        assert_eq!(sdp.1, "application/sdp");
+        assert!(sdp.2.starts_with("v=0"));
+        let session = parts
+            .iter()
+            .find(|(name, _, _)| name == "session")
+            .expect("session part");
+        assert_eq!(session.1, "application/json");
+        let session_json: serde_json::Value =
+            serde_json::from_str(&session.2).expect("session JSON");
+        assert_eq!(session_json["type"], "realtime");
+        assert_eq!(session_json["model"], "test-model");
+    }
+
+    #[test]
+    fn realtime_refuses_a_non_sdp_success_payload() {
+        let error =
+            validate_realtime_sdp_answer(br#"{"error":"not really an SDP answer"}"#.to_vec())
+                .expect_err("a JSON 2xx payload must not reach RTCPeerConnection");
+        assert!(error.message().contains("non-SDP"));
+        assert!(validate_realtime_sdp_answer(b"v=0\r\no=answer\r\n".to_vec()).is_ok());
+    }
+
     #[test]
     fn custom_body_rejects_api_key_placeholder_and_header_auth_remains_host_side() {
         let mut provider = profile(Protocol::Custom, false);
@@ -933,6 +1190,7 @@ mod tests {
             model: None,
             capabilities: vec![],
             headers: vec![],
+            secret_ref: None,
             specs,
             allow_local: false,
             enabled: true,

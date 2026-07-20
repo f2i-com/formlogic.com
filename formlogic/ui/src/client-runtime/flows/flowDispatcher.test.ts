@@ -5,6 +5,7 @@ import {
   __setRuntimeFlowsForTests,
   defaultDesktopRuntimeFresh,
   dispatchFormEvent,
+  isDesktopFlowChatProvider,
   runFlowBySlug,
   shouldDeferEventToDesktop,
   type FlowDispatcherDeps,
@@ -12,6 +13,7 @@ import {
 import { api } from '../../lib/api';
 import type { FlowExecutorDeps } from './nodes';
 import type { RuntimeFlows } from '../../types/flows';
+import type { AiSourceListing } from './desktopService';
 
 // Dispatcher pipeline (docs/FORMLOGIC_FLOWS.md §5): condition → reserve-first (idempotent
 // replay skips execution) → inputMap → execute → outputActions → complete. All browser
@@ -114,6 +116,33 @@ function installDeps(overrides: Partial<FlowDispatcherDeps> = {}): Harness {
 afterEach(() => {
   __resetFlowDispatcherForTests();
   vi.restoreAllMocks();
+});
+
+describe('Desktop named-provider flow routing', () => {
+  const source = (overrides: Partial<AiSourceListing> = {}): AiSourceListing => ({
+    id: 'provider:openai-codex-agent',
+    kind: 'provider',
+    refId: 'openai-codex-agent',
+    name: 'ChatGPT via Codex',
+    category: 'ChatGPT / Codex',
+    status: 'provider',
+    capabilities: ['chat'],
+    useCases: ['background', 'forms', 'flows'],
+    url: '',
+    model: 'gpt-5.6-luna',
+    enabled: true,
+    ...overrides,
+  });
+
+  it('accepts flow-capable and legacy providers but rejects call-only virtual adapters', () => {
+    expect(isDesktopFlowChatProvider(source(), 'openai-codex-agent')).toBe(true);
+    expect(isDesktopFlowChatProvider(source({ useCases: undefined }), 'openai-codex-agent')).toBe(true);
+    expect(isDesktopFlowChatProvider(source({
+      id: 'provider:openai-codex-agent-luna-low',
+      refId: 'openai-codex-agent-luna-low',
+      useCases: ['live-call', 'try-assistant'],
+    }), 'openai-codex-agent-luna-low')).toBe(false);
+  });
 });
 
 describe('dispatchFormEvent — idempotency', () => {

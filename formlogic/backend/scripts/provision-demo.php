@@ -150,6 +150,7 @@ foreach (glob(__DIR__ . '/../resources/marketplace-packs/*.json') ?: [] as $file
         'icon' => $e['icon'] ?? null,
         'tags' => $tags,
         'category' => niceCategory($slug, $tags),
+        'version' => (string) ($e['pack']['packMeta']['version'] ?? '1.0.0'),
         'pack' => $e['pack'],
     ];
 }
@@ -167,17 +168,20 @@ foreach ($sources as $s) {
     $existing = $catalog->getCatalogBySlug($s['slug']);
     if ($existing) {
         $catalogId = $existing['id'];
-        $ver = $catalog->getPackVersion($catalogId);
-        $versionId = $ver['id'] ?? null;
-        // Refresh the stored pack + metadata so the marketplace serves the current pack (e.g. entries
-        // seeded before custom-screen dashboards were added get updated in place).
-        if ($versionId) {
-            $pdo->prepare("UPDATE pack_versions SET pack_data = ? WHERE id = ?")
-                ->execute([json_encode($s['pack']), $versionId]);
-        }
+        // A version row must never say "1.0.0" while carrying a 1.0.1 pack.
+        // Rebuilt content for the SAME version is refreshed in place; a changed
+        // packMeta.version goes through the normal publishVersion ownership,
+        // uniqueness, and size gates and produces a new version row.
+        $versionSync = $catalog->syncPublishedPackVersion(
+            $catalogId,
+            $s['pack'],
+            $officialId,
+            'Bundled marketplace pack refresh'
+        );
+        $versionId = $versionSync['versionId'];
         $pdo->prepare("UPDATE pack_catalog SET featured = 1, description = ?, icon = ?, tags = ?, category = ? WHERE id = ?")
             ->execute([$s['description'], $s['icon'], json_encode($s['tags']), $s['category'], $catalogId]);
-        out("catalog: '{$s['slug']}' refreshed");
+        out("catalog: '{$s['slug']}' {$versionSync['action']} as {$versionSync['version']}");
     } else {
         $r = $catalog->publishPack($s['pack'], $officialId, [
             'slug' => $s['slug'],
@@ -186,6 +190,7 @@ foreach ($sources as $s) {
             'icon' => $s['icon'],
             'tags' => $s['tags'],
             'category' => $s['category'],
+            'version' => $s['version'],
         ]);
         $catalogId = $r['catalogId'];
         $versionId = $r['versionId'];

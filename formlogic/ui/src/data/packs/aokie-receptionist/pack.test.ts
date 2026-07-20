@@ -82,7 +82,7 @@ const AOKIE_EVENTS = new Set([
   'aokie.dongle.detected', 'aokie.dongle.driver_required', 'aokie.dongle.ready', 'aokie.dongle.error',
   'aokie.phone.pairing_started', 'aokie.phone.paired', 'aokie.phone.disconnected',
   'aokie.call.incoming', 'aokie.call.answered', 'aokie.call.caller_id', 'aokie.call.rejected',
-  'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.turn.corrected', 'aokie.call.ended',
+  'aokie.call.turn.partial', 'aokie.call.turn.final', 'aokie.call.turn.corrected', 'aokie.call.transcript.settled', 'aokie.call.ended',
   'aokie.sms.received', 'aokie.sms.sent', 'aokie.sms.failed',
   'aokie.manager.action',
   'aokie.hardware.error',
@@ -578,13 +578,16 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
     expect(runAgentConfig({ llm_source: 'provider:my-openai' }).aiEndpoint).toBe(url);
   });
 
-  it('provider: picks on the STT/TTS lanes are GATED to blank (no gateway audio routes yet)', () => {
+  it('provider: transcription picks compose the Desktop multipart route while TTS remains gated', () => {
     const r = runAgentConfig(
       { stt_source: 'provider:my-openai', stt_endpoint: 'http://x/legacy', tts_source: 'provider:my-openai' },
       RUNNING_SVCS,
     );
-    expect(r.sttEndpoint).toBe('');
+    expect(r.sttEndpoint).toBe(
+      'http://127.0.0.1:17872/api/ai/providers/my-openai/v1/audio/transcriptions',
+    );
     expect(r.ttsEndpoint).toBe('');
+    expect('sttModel' in r.settingsPayload).toBe(false);
   });
 
   // â”€â”€ Correction lane (audioTranscript side runs): correction_source â†’
@@ -648,7 +651,7 @@ describe('aokieReceptionistPack â€” reply_mode (agent vs flow toggle)', () 
       ['stopped service pick', { tts_source: 'service:aokie-voice', tts_endpoint: 'http://x/legacy' }],
       ['provider pick (LLM lane)', { llm_source: 'provider:my-openai' }],
       ['provider pick with chars needing encoding', { llm_source: 'provider:acme corp' }],
-      ['provider pick gated on speech lanes', { stt_source: 'provider:my-openai', tts_source: 'provider:my-openai' }],
+      ['provider transcription + gated TTS picks', { stt_source: 'provider:my-openai', tts_source: 'provider:my-openai' }],
       ['custom URLs', { llm_source: 'custom', llm_endpoint: 'http://127.0.0.1:9999/v1/chat/completions' }],
       ['blank + legacy endpoint field', { stt_endpoint: 'http://127.0.0.1:17920/v1/audio/transcriptions' }],
       ['correction service pick', { correction_source: 'service:llama-cpp' }],
@@ -880,6 +883,24 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
       expect(r.apptId).toBe('appt-1');
       expect(r.llmContext).toContain('Haircut');
       expect(r.llmContext).toContain('Can we do Friday at 9 instead?');
+    });
+    it('passes the independent Background AI provider/model to the async model node', () => {
+      const r = run('Can we do Friday at 9 instead?', {
+        settings: {
+          responses: [{
+            answers: {
+              business_name: 'Pirate Cuts',
+              active: 'yes',
+              model: 'live-call-model',
+              background_ai_source: 'provider:openai-codex-agent',
+              background_ai_model: 'gpt-5.6-luna',
+            },
+          }],
+        },
+      });
+      expect(r.backgroundProvider).toBe('provider:openai-codex-agent');
+      expect(r.backgroundModel).toBe('gpt-5.6-luna');
+      expect(r.model).toBe('live-call-model');
     });
     it('no active SMS-managed task â†’ verdict none (draft flow owns the reply)', () => {
       expect(run('hello', { tasks: { responses: [] } }).verdict).toBe('none');
@@ -2099,6 +2120,25 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
   });
 
   describe('Phase 1 abuse handling (audit trail + no-SMS guard)', () => {
+    it('waits for transcript settlement only for transcript-consuming background flows', () => {
+      const bindings = pack.flowBindings ?? [];
+      for (const flow of ['call-summary-follow-up', 'after-call-actions']) {
+        expect(bindings.some((binding) => binding.flow === flow && binding.event === 'aokie.call.transcript.settled')).toBe(true);
+        expect(bindings.some((binding) => binding.flow === flow && binding.event === 'aokie.call.ended')).toBe(false);
+      }
+
+      // Lifecycle/queue actions must stay immediate and must not wait for an
+      // optional model correction or its bounded timeout.
+      for (const flow of [
+        'callback-drain',
+        'missed-call-follow-up',
+        'hold-lost-apology',
+        'outbound-callback-result',
+      ]) {
+        expect(bindings.some((binding) => binding.flow === flow && binding.event === 'aokie.call.ended')).toBe(true);
+      }
+    });
+
     it("Calls status offers terminated_abuse and LOGIC_CALL_ENDED passes the plugin's outcome through", () => {
       const calls = pack.forms.find((f) => f.packFormId === 'calls')!;
       const status = calls.fields.find((f) => f.id === 'status')!;
@@ -2115,7 +2155,7 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
 
     it('after-call-actions never runs on an abuse-terminated call (no records/tasks/SMS off an abusive transcript)', () => {
       const binding = (pack.flowBindings ?? []).find(
-        (b) => b.flow === 'after-call-actions' && b.event === 'aokie.call.ended'
+        (b) => b.flow === 'after-call-actions' && b.event === 'aokie.call.transcript.settled'
       )!;
       const expr = String((binding.condition as { expr: string }).expr);
       expect(expr).toContain("!== 'terminated_abuse'");
@@ -2140,7 +2180,7 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
       expect(evalCond({ durationSeconds: 65, outcome: 'completed', direction: 'inbound', manager: undefined })).toBe(true);
       // The summary binding still covers the Calls row for abuse calls.
       const summary = (pack.flowBindings ?? []).find(
-        (b) => b.flow === 'call-summary-follow-up' && b.event === 'aokie.call.ended'
+        (b) => b.flow === 'call-summary-follow-up' && b.event === 'aokie.call.transcript.settled'
       )!;
       const sExpr = String((summary.condition as { expr: string }).expr);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2315,6 +2355,14 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
       const cc = settings.fields.find((f) => f.id === 'default_country_code')!;
       expect(cc.type).toBe('short_text');
     });
+
+    it('Receptionist Settings appends an independent background provider reference and optional model override', () => {
+      const settings = pack.forms.find((f) => f.packFormId === 'receptionist-settings')!;
+      const ids = settings.fields.map((field) => field.id);
+      expect(ids.slice(-2)).toEqual(['background_ai_source', 'background_ai_model']);
+      expect(settings.fields.find((field) => field.id === 'background_ai_source')?.type).toBe('short_text');
+      expect(settings.fields.find((field) => field.id === 'background_ai_model')?.type).toBe('short_text');
+    });
   });
 });
 
@@ -2454,7 +2502,7 @@ describe('aokieReceptionistPack â€” hold-abandonment follow-ups (Phase 4 ho
     });
 
     it('after-call-actions skips both abandonment outcomes (no booking mining off a cut conversation)', () => {
-      const cond = (bindingFor('after-call-actions').condition as { expr: string }).expr;
+      const cond = (bindingFor('after-call-actions', 'aokie.call.transcript.settled').condition as { expr: string }).expr;
       expect(evalCond(cond, { durationSeconds: 60, outcome: 'abandoned_on_hold' })).toBe(false);
       expect(evalCond(cond, { durationSeconds: 60, outcome: 'abandoned_in_queue' })).toBe(false);
       expect(evalCond(cond, { durationSeconds: 60, outcome: 'completed' })).toBe(true);

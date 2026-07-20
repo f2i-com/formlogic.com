@@ -372,6 +372,8 @@ export interface AiProviderProfile {
   model?: string;
   capabilities: AiCapability[];
   headers: { name: string; value: string }[];
+  /** Reusable API-secret id; the value remains in the OS credential store. */
+  secretRef?: string;
   specs?: Record<string, { path?: string; requestTemplate?: string; responsePath?: string }>;
   allowLocal: boolean;
   enabled: boolean;
@@ -386,6 +388,24 @@ export interface AiAliasBinding {
   alias: string;
   capability: AiCapability;
   providerId: string;
+}
+
+export type ApiSecretKind = 'api-key';
+
+/** Secret-safe metadata returned by Desktop. The credential value is never readable. */
+export interface ApiSecretView {
+  id: string;
+  name: string;
+  kind: ApiSecretKind;
+  hasValue: boolean;
+  /** Provider ids currently referencing this secret. */
+  usedBy: string[];
+}
+
+export interface ApiSecretInput {
+  id: string;
+  name: string;
+  kind: ApiSecretKind;
 }
 
 export const aiProviders = {
@@ -418,6 +438,24 @@ export const aiProviders = {
       method: 'POST',
       body: JSON.stringify(binding),
     }),
+};
+
+export const apiSecrets = {
+  list: () => request<{ secrets: ApiSecretView[] }>('/api/ai/secrets'),
+  upsert: (secret: ApiSecretInput) =>
+    request<{ id: string }>('/api/ai/secrets', {
+      method: 'POST',
+      body: JSON.stringify(secret),
+    }),
+  remove: (id: string) =>
+    request<void>(`/api/ai/secrets/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  setValue: (id: string, value: string) =>
+    request<void>(`/api/ai/secrets/${encodeURIComponent(id)}/value`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    }),
+  clearValue: (id: string) =>
+    request<void>(`/api/ai/secrets/${encodeURIComponent(id)}/value`, { method: 'DELETE' }),
 };
 
 /**

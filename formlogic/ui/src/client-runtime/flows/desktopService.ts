@@ -83,6 +83,8 @@ export interface AiSourceListing {
   /** Capability tags ('chat' | 'transcription' | 'speech' | 'image'); an EMPTY
    *  set on a PROVIDER means unrestricted ("all") — legacy profiles. */
   capabilities: string[];
+  /** Intended selector surfaces. Older Desktop builds omit this field. */
+  useCases?: string[];
   /** Loopback base URL while a service is RUNNING (`http://127.0.0.1:<port>`), '' otherwise. */
   url: string;
   model: string;
@@ -117,6 +119,9 @@ export async function listAiSources(): Promise<AiSourceListing[]> {
         category: s.category ?? '',
         status: kind === 'provider' ? 'provider' : (s.status ?? ''),
         capabilities: Array.isArray(s.capabilities) ? s.capabilities.filter((c) => typeof c === 'string') : [],
+        ...(Array.isArray(s.useCases)
+          ? { useCases: s.useCases.filter((useCase) => typeof useCase === 'string') }
+          : {}),
         // Same running-only rule as listDesktopServices — a stopped service
         // must never hand a picker a dead URL.
         url: kind === 'service' && s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
