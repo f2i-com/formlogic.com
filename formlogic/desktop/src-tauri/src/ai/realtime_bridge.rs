@@ -654,7 +654,7 @@ fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'
                         "turn_detection": turn_detection,
                     },
                     "output": {
-                        "format": { "type": "audio/pcm" },
+                        "format": { "type": "audio/pcm", "rate": 24000 },
                         "voice": voice,
                     }
                 },
@@ -937,11 +937,22 @@ fn translate_server_event(
                 .and_then(Value::as_str)
                 .and_then(|code| safe_token(code, 96))
                 .unwrap_or_else(|| "provider_error".into());
-            Ok(vec![local_error(
+            // Preserve only the provider's bounded schema-field identifier for
+            // diagnostics. Never relay its free-form message, request body, or
+            // credential-bearing metadata back to a plugin.
+            let parameter = event
+                .pointer("/error/param")
+                .and_then(Value::as_str)
+                .and_then(|parameter| safe_token(parameter, 192));
+            Ok(vec![fenced_json(
                 fence,
-                &code,
-                "The Realtime provider reported an error.",
-                !state.ready,
+                "formlogic.realtime.error",
+                json!({
+                    "code": code,
+                    "message": "The Realtime provider reported an error.",
+                    "fatal": !state.ready,
+                    "parameter": parameter,
+                }),
             )])
         }
         "response.done" => {
@@ -1208,9 +1219,10 @@ mod tests {
             value["session"]["audio"]["output"]["format"]["type"],
             "audio/pcm"
         );
-        assert!(value["session"]["audio"]["output"]["format"]
-            .get("rate")
-            .is_none());
+        assert_eq!(
+            value["session"]["audio"]["output"]["format"]["rate"],
+            24000
+        );
         assert_eq!(
             value["session"]["audio"]["input"]["noise_reduction"]["type"],
             "near_field"
@@ -1427,6 +1439,35 @@ mod tests {
         assert_eq!(error["type"], "formlogic.realtime.error");
         assert_eq!(error["fatal"], false);
         assert!(state.output.as_ref().is_some_and(|output| output.done));
+    }
+
+    #[test]
+    fn provider_error_exposes_only_a_bounded_parameter_identifier() {
+        let fence = CallFence {
+            call_id: "call-1".into(),
+            generation: 1,
+        };
+        let mut state = SessionState::new(String::new());
+        let messages = translate_server_event(
+            &json!({
+                "type": "error",
+                "error": {
+                    "code": "missing_required_parameter",
+                    "param": "session.audio.output.voice",
+                    "message": "free-form upstream detail must not cross the bridge"
+                }
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+
+        let error = text_event(&messages[0]);
+        assert_eq!(error["type"], "formlogic.realtime.error");
+        assert_eq!(error["code"], "missing_required_parameter");
+        assert_eq!(error["parameter"], "session.audio.output.voice");
+        assert_eq!(error["message"], "The Realtime provider reported an error.");
+        assert!(!error.to_string().contains("free-form upstream detail"));
     }
 
     #[test]
