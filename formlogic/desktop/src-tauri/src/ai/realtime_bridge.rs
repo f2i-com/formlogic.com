@@ -543,12 +543,16 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                         }
 
                         match translate_server_event(&event, &fence, &mut state) {
-                            Ok(Some(message)) => {
-                                if !send_local(&mut local_tx, message).await {
-                                    break 'session;
+                            Ok(messages) => {
+                                // Translation emits at most two messages. A terminal
+                                // response may need to retire an abandoned output item
+                                // before reporting its recoverable failure to Aokie.
+                                for message in messages {
+                                    if !send_local(&mut local_tx, message).await {
+                                        break 'session;
+                                    }
                                 }
                             }
-                            Ok(None) => {}
                             Err((code, message)) => {
                                 let _ = send_local(&mut local_tx, local_error(
                                     &fence,
@@ -800,22 +804,22 @@ fn translate_server_event(
     event: &Value,
     fence: &CallFence,
     state: &mut SessionState,
-) -> Result<Option<LocalMessage>, (&'static str, &'static str)> {
+) -> Result<Vec<LocalMessage>, (&'static str, &'static str)> {
     let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
     match event_type {
-        "session.created" | "session.updated" | "rate_limits.updated" => Ok(None),
-        "input_audio_buffer.speech_started" => Ok(Some(fenced_json(
+        "session.created" | "session.updated" | "rate_limits.updated" => Ok(Vec::new()),
+        "input_audio_buffer.speech_started" => Ok(vec![fenced_json(
             fence,
             "formlogic.realtime.speech_started",
             json!({
                 "itemId": safe_id(event.get("item_id"))?,
                 "audioStartMs": event.get("audio_start_ms").and_then(Value::as_u64),
             }),
-        ))),
+        )]),
         // Aokie's initial contract consumes final transcripts only. Suppress
         // deltas rather than making it accumulate an ambiguous shared type.
-        "conversation.item.input_audio_transcription.delta" => Ok(None),
-        "conversation.item.input_audio_transcription.completed" => Ok(Some(fenced_json(
+        "conversation.item.input_audio_transcription.delta" => Ok(Vec::new()),
+        "conversation.item.input_audio_transcription.completed" => Ok(vec![fenced_json(
             fence,
             "formlogic.realtime.input_transcript",
             json!({
@@ -823,7 +827,7 @@ fn translate_server_event(
                 "transcript": bounded_content(event.get("transcript"), 64 * 1024)?,
                 "final": true,
             }),
-        ))),
+        )]),
         "response.output_item.added" => {
             let item_id = safe_id(event.pointer("/item/id"))?;
             let response_id = safe_id(event.get("response_id"))?;
@@ -841,11 +845,11 @@ fn translate_server_event(
                 response_id: response_id.clone(),
                 done: false,
             });
-            Ok(Some(fenced_json(
+            Ok(vec![fenced_json(
                 fence,
                 "formlogic.realtime.output_item_started",
                 json!({ "itemId": item_id, "responseId": response_id }),
-            )))
+            )])
         }
         "response.output_audio.delta" => {
             let item_id = safe_id(event.get("item_id"))?;
@@ -877,9 +881,9 @@ fn translate_server_event(
                     "Realtime audio was not bounded PCM16LE.",
                 ));
             }
-            Ok(Some(LocalMessage::Binary(pcm)))
+            Ok(vec![LocalMessage::Binary(pcm)])
         }
-        "response.output_audio_transcript.delta" => Ok(None),
+        "response.output_audio_transcript.delta" => Ok(Vec::new()),
         "response.output_audio_transcript.done" => {
             let item_id = safe_id(event.get("item_id"))?;
             let response_id = safe_id(event.get("response_id"))?;
@@ -891,7 +895,7 @@ fn translate_server_event(
                     "Realtime transcript did not match the active assistant item.",
                 ));
             }
-            Ok(Some(fenced_json(
+            Ok(vec![fenced_json(
                 fence,
                 "formlogic.realtime.output_transcript",
                 json!({
@@ -899,7 +903,7 @@ fn translate_server_event(
                     "transcript": bounded_content(event.get("transcript"), 64 * 1024)?,
                     "final": true,
                 }),
-            )))
+            )])
         }
         "response.output_item.done" => {
             let item_id = safe_id(event.pointer("/item/id"))?;
@@ -917,11 +921,11 @@ fn translate_server_event(
                 ));
             }
             output.done = true;
-            Ok(Some(fenced_json(
+            Ok(vec![fenced_json(
                 fence,
                 "formlogic.realtime.output_item_done",
                 json!({ "itemId": item_id, "responseId": response_id }),
-            )))
+            )])
         }
         "error" => {
             let code = event
@@ -929,27 +933,63 @@ fn translate_server_event(
                 .and_then(Value::as_str)
                 .and_then(|code| safe_token(code, 96))
                 .unwrap_or_else(|| "provider_error".into());
-            Ok(Some(local_error(
+            Ok(vec![local_error(
                 fence,
                 &code,
                 "The Realtime provider reported an error.",
                 !state.ready,
-            )))
+            )])
         }
         "response.done" => {
             let status = event.pointer("/response/status").and_then(Value::as_str);
+            if !matches!(
+                status,
+                Some("completed" | "cancelled" | "failed" | "incomplete")
+            ) {
+                return Err((
+                    "upstream_protocol",
+                    "Realtime returned a terminal response with an invalid status.",
+                ));
+            }
+
+            // `response.output_item.done` normally precedes `response.done`.
+            // Recover defensively when an interrupted/terminal response omits
+            // it: retire the exact active item before Aokie sees any error, so
+            // its binary-audio fence cannot remain abandoned. A completed item
+            // stays retained for the normal post-completion playout-tail
+            // truncation path.
+            let mut messages = Vec::with_capacity(2);
+            if let Some(output) = state.output.as_mut().filter(|output| !output.done) {
+                let response_id = safe_id(event.pointer("/response/id"))?;
+                if output.response_id != response_id {
+                    return Err((
+                        "upstream_protocol",
+                        "Realtime terminal response did not match the active assistant item.",
+                    ));
+                }
+                let item_id = output.item_id.clone();
+                let response_id = output.response_id.clone();
+                output.done = true;
+                messages.push(fenced_json(
+                    fence,
+                    "formlogic.realtime.output_item_done",
+                    json!({
+                        "itemId": item_id,
+                        "responseId": response_id,
+                    }),
+                ));
+            }
             if matches!(status, Some("failed" | "incomplete")) {
-                Ok(Some(local_error(
+                messages.push(local_error(
                     fence,
                     "response_failed",
                     "The Realtime provider could not complete the response.",
                     false,
-                )))
-            } else {
-                Ok(None)
+                ));
             }
+            Ok(messages)
         }
-        _ => Ok(None),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -1069,13 +1109,27 @@ mod tests {
             "response_id": "response-1",
             "item": { "id": "item-1", "type": "message", "role": "assistant" },
         });
-        let message = translate_server_event(&event, fence, state)
-            .unwrap()
-            .expect("item-start control");
+        let mut messages = translate_server_event(&event, fence, state).unwrap();
+        assert_eq!(messages.len(), 1, "one item-start control");
+        let message = messages.pop().expect("item-start control");
         let LocalMessage::Text(text) = message else {
             panic!("text item-start expected");
         };
         assert!(text.contains("formlogic.realtime.output_item_started"));
+    }
+
+    fn response_done(response_id: &str, status: &str) -> Value {
+        json!({
+            "type": "response.done",
+            "response": { "id": response_id, "status": status },
+        })
+    }
+
+    fn text_event(message: &LocalMessage) -> Value {
+        let LocalMessage::Text(text) = message else {
+            panic!("text event expected");
+        };
+        serde_json::from_str(text).expect("valid local JSON event")
     }
 
     #[tokio::test]
@@ -1199,9 +1253,9 @@ mod tests {
             "response_id": "response-1",
             "delta": base64::engine::general_purpose::STANDARD.encode(&pcm),
         });
-        let translated = translate_server_event(&event, &fence, &mut state)
-            .unwrap()
-            .expect("binary event");
+        let mut translated = translate_server_event(&event, &fence, &mut state).unwrap();
+        assert_eq!(translated.len(), 1, "one binary event");
+        let translated = translated.pop().expect("binary event");
         assert_eq!(translated, LocalMessage::Binary(pcm));
         assert_eq!(
             state.output.as_ref().map(|output| output.item_id.as_str()),
@@ -1311,6 +1365,135 @@ mod tests {
     }
 
     #[test]
+    fn active_incomplete_response_retires_item_before_recoverable_error() {
+        let fence = CallFence {
+            call_id: "call-1".into(),
+            generation: 1,
+        };
+        let mut state = SessionState::new(String::new());
+        add_output(&mut state, &fence);
+
+        let messages = translate_server_event(
+            &response_done("response-1", "incomplete"),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(messages.len(), 2);
+        let done = text_event(&messages[0]);
+        assert_eq!(done["type"], "formlogic.realtime.output_item_done");
+        assert_eq!(done["itemId"], "item-1");
+        assert_eq!(done["responseId"], "response-1");
+        assert_eq!(done["callId"], "call-1");
+        assert_eq!(done["generation"], 1);
+        let error = text_event(&messages[1]);
+        assert_eq!(error["type"], "formlogic.realtime.error");
+        assert_eq!(error["code"], "response_failed");
+        assert_eq!(error["fatal"], false);
+        assert!(state.output.as_ref().is_some_and(|output| output.done));
+    }
+
+    #[test]
+    fn already_done_incomplete_response_emits_only_recoverable_error() {
+        let fence = CallFence {
+            call_id: "call-1".into(),
+            generation: 1,
+        };
+        let mut state = SessionState::new(String::new());
+        add_output(&mut state, &fence);
+        let item_done = json!({
+            "type": "response.output_item.done",
+            "response_id": "response-1",
+            "item": { "id": "item-1" },
+        });
+        assert_eq!(
+            translate_server_event(&item_done, &fence, &mut state)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let messages = translate_server_event(
+            &response_done("response-1", "incomplete"),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(messages.len(), 1);
+        let error = text_event(&messages[0]);
+        assert_eq!(error["type"], "formlogic.realtime.error");
+        assert_eq!(error["fatal"], false);
+        assert!(state.output.as_ref().is_some_and(|output| output.done));
+    }
+
+    #[test]
+    fn next_output_item_is_accepted_after_synthetic_retirement() {
+        let fence = CallFence {
+            call_id: "call-1".into(),
+            generation: 1,
+        };
+        let mut state = SessionState::new(String::new());
+        add_output(&mut state, &fence);
+        translate_server_event(&response_done("response-1", "failed"), &fence, &mut state).unwrap();
+
+        let next = json!({
+            "type": "response.output_item.added",
+            "response_id": "response-2",
+            "item": { "id": "item-2", "type": "message", "role": "assistant" },
+        });
+        let messages = translate_server_event(&next, &fence, &mut state).unwrap();
+        assert_eq!(messages.len(), 1);
+        let started = text_event(&messages[0]);
+        assert_eq!(started["type"], "formlogic.realtime.output_item_started");
+        assert_eq!(started["itemId"], "item-2");
+        assert!(state.output.as_ref().is_some_and(|output| {
+            !output.done && output.item_id == "item-2" && output.response_id == "response-2"
+        }));
+    }
+
+    #[test]
+    fn completed_and_cancelled_responses_retire_an_active_item_without_error() {
+        let fence = CallFence {
+            call_id: "call-1".into(),
+            generation: 1,
+        };
+        for status in ["completed", "cancelled"] {
+            let mut state = SessionState::new(String::new());
+            add_output(&mut state, &fence);
+            let messages =
+                translate_server_event(&response_done("response-1", status), &fence, &mut state)
+                    .unwrap();
+            assert_eq!(messages.len(), 1, "{status}");
+            assert_eq!(
+                text_event(&messages[0])["type"],
+                "formlogic.realtime.output_item_done",
+                "{status}"
+            );
+            assert!(state.output.as_ref().is_some_and(|output| output.done));
+        }
+    }
+
+    #[test]
+    fn terminal_response_must_match_the_active_output_identity() {
+        let fence = CallFence {
+            call_id: "call-1".into(),
+            generation: 1,
+        };
+        let mut state = SessionState::new(String::new());
+        add_output(&mut state, &fence);
+        assert!(translate_server_event(
+            &response_done("response-other", "cancelled"),
+            &fence,
+            &mut state,
+        )
+        .is_err());
+        assert!(state
+            .output
+            .as_ref()
+            .is_some_and(|output| !output.done && output.response_id == "response-1"));
+    }
+
+    #[test]
     fn controls_require_exact_call_and_generation_fences() {
         for frame in [
             json!({ "type": "formlogic.realtime.begin", "callId": "c" }),
@@ -1359,6 +1542,6 @@ mod tests {
         });
         assert!(translate_server_event(&input_delta, &fence, &mut state)
             .unwrap()
-            .is_none());
+            .is_empty());
     }
 }
