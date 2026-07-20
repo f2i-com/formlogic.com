@@ -234,6 +234,30 @@ pub fn resolve_provider(
     Ok(reg.resolve(alias, cap))
 }
 
+/// Resolve the provider used by an explicit `/v1/models` request.
+///
+/// Model discovery describes the provider account rather than invoking one
+/// inference capability. An explicitly selected transcription-, speech-, or
+/// Realtime-only provider must therefore remain discoverable without falsely
+/// advertising chat support. The unscoped/default models route keeps its
+/// historical chat-provider selection so existing callers are unchanged.
+pub fn resolve_models_provider(
+    reg: &ProviderRegistryHandle,
+    explicit_id: Option<&str>,
+) -> Result<Option<ProviderProfile>, GatewayError> {
+    let Some(id) = explicit_id else {
+        return resolve_provider(reg, None, None, Capability::Chat);
+    };
+    let reg = reg.lock().unwrap_or_else(|error| error.into_inner());
+    match reg.get(id) {
+        Some(provider) if provider.enabled => Ok(Some(provider)),
+        Some(_) => Err(GatewayError::NoProvider(format!(
+            "provider {id:?} is disabled"
+        ))),
+        None => Err(GatewayError::NoProvider(format!("unknown provider {id:?}"))),
+    }
+}
+
 /// True when the provider receives the canonical OpenAI chat body directly.
 /// A Custom profile without a request template is explicitly treated as an
 /// OpenAI-shaped endpoint at a custom path elsewhere in this module, so it
@@ -910,6 +934,37 @@ mod tests {
             allow_local,
             enabled: true,
         }
+    }
+
+    #[test]
+    fn explicit_models_discovery_accepts_realtime_only_provider() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "formlogic-model-resolve-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let registry = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::providers::ProviderRegistry::load(&data_dir),
+        ));
+        let mut realtime = profile(Protocol::OpenAi, false);
+        realtime.id = "realtime-only".into();
+        realtime.capabilities = vec![Capability::Realtime];
+        registry.lock().unwrap().upsert(realtime).unwrap();
+
+        let resolved = resolve_models_provider(&registry, Some("realtime-only"))
+            .unwrap()
+            .expect("explicit Realtime provider");
+        assert_eq!(resolved.id, "realtime-only");
+        assert_eq!(resolved.capabilities, vec![Capability::Realtime]);
+        assert!(resolve_provider(
+            &registry,
+            Some("realtime-only"),
+            None,
+            Capability::Chat
+        )
+        .is_err());
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]

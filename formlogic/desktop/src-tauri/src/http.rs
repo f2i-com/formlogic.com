@@ -1069,7 +1069,6 @@ fn codex_background_request(
 }
 
 async fn ai_models_impl(state: &AppState, provider_id: Option<&str>) -> Response {
-    use crate::ai::providers::Capability;
     if provider_id == Some(crate::ai::codex::ASYNC_PROVIDER_ID) {
         return match state.codex_agent.models().await {
             Ok(models) => (StatusCode::OK, Json(codex_background_models_response(models))).into_response(),
@@ -1088,11 +1087,9 @@ async fn ai_models_impl(state: &AppState, provider_id: Option<&str>) -> Response
             Err(error) => codex_agent_error(error),
         };
     }
-    let provider = match crate::ai::gateway::resolve_provider(
+    let provider = match crate::ai::gateway::resolve_models_provider(
         &state.ai_providers,
         provider_id,
-        None,
-        Capability::Chat,
     ) {
         Ok(Some(p)) => p,
         Ok(None) => {
