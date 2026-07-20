@@ -79,7 +79,18 @@ html.fl-dark #rs .btn.dark:hover { background: var(--fl-surface-2); }
 
 #rs .running .greet { font-size: 13.5px; }
 #rs .running .meta { margin-top: 3px; font-size: 11.5px; color: var(--fl-muted); }
+#rs .running-facts { display: flex; flex-direction: column; margin-top: 8px; border: 1px solid var(--fl-border); border-radius: 10px; overflow: hidden; }
+#rs .running-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 7px 10px; }
+#rs .running-facts > div + div { border-top: 1px solid var(--fl-border); }
+#rs .running-facts span { flex: none; color: var(--fl-faint); font-size: 10.5px; }
+#rs .running-facts strong { min-width: 0; color: var(--fl-text); font-size: 11.5px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+#rs .running-refresh { margin: 7px 0 0; color: var(--fl-muted); font-size: 11px; }
 #rs .running .persona { margin-top: 3px; font-size: 11px; color: var(--fl-faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+@media (max-width: 460px) {
+  #rs .running-facts > div { align-items: flex-start; flex-direction: column; gap: 2px; }
+  #rs .running-facts strong { text-align: left; }
+}
 
 /* Sticky save bar. #rs reserves 88px of bottom padding (more than the bar's
    height) so the last card's footnote always clears it at full scroll, and the

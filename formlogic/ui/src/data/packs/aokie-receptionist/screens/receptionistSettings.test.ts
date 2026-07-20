@@ -44,6 +44,8 @@ afterAll(() => teardownScreenTestEsbuild());
 // ── shared FormLogic mock ────────────────────────────────────────────────────
 
 interface FlCalls {
+  /** settings.get count in call order. */
+  get: number;
   /** settings.set payloads in call order. */
   set: Array<Record<string, unknown>>;
   submit: Array<Record<string, unknown>>;
@@ -56,8 +58,9 @@ function makeFl(opts: {
   getExtra?: Record<string, unknown>;
   aiSources?: Array<Record<string, unknown>> | null;
   submitDelayMs?: number;
+  settingsGet?: (attempt: number) => Promise<Record<string, unknown>>;
 } = {}): { fl: Record<string, unknown>; calls: FlCalls } {
-  const calls: FlCalls = { set: [], submit: [], update: [] };
+  const calls: FlCalls = { get: 0, set: [], submit: [], update: [] };
   const fl: Record<string, unknown> = {
     presence: () => Promise.resolve({ kind: 'local' }),
     can: () => Promise.resolve(true),
@@ -66,6 +69,8 @@ function makeFl(opts: {
     records: () => Promise.resolve(opts.records ?? []),
     connector: (_id: string, cmd: string, payload: Record<string, unknown>) => {
       if (cmd === 'settings.get') {
+        calls.get += 1;
+        if (opts.settingsGet) return opts.settingsGet(calls.get);
         return Promise.resolve({ status: 'done', result: { settings: opts.settings ?? {}, ...(opts.getExtra ?? {}) } });
       }
       calls.set.push(payload);
@@ -545,17 +550,121 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     expect(calls.set[0].sendAudio).toBe(false);
   });
 
-  it('(e) the running-now strip renders greeting/voice/model/mode/configVersion from settings.get', async () => {
+  it('(e) the running-now card renders the authoritative standard voice configuration', async () => {
     const { fl } = makeFl({
       records: [{ id: 'r1', answers: {} }],
-      settings: { greeting: 'Gday mate!', persona: 'Pirate persona', ttsVoice: 'amy', aiModel: 'gemma-4', aiReceptionist: true },
+      settings: {
+        greeting: 'Gday mate!',
+        persona: 'Pirate persona',
+        ttsVoice: 'amy',
+        aiModel: 'gemma-4',
+        aiReceptionist: true,
+        agentHangup: false,
+      },
       getExtra: { configVersion: 7, managerPinSet: false },
     });
     const { root } = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
     await flush(60);
     expect(root.querySelector('.running .greet')?.textContent).toBe('Greeting: "Gday mate!"');
-    expect(root.querySelector('.running .meta')?.textContent).toBe('Voice amy - model gemma-4 - built-in AI agent replies - config v7');
+    expect(root.querySelector('[data-running-mode]')?.textContent).toContain('Standard STT -> LLM -> TTS');
+    expect(root.querySelector('[data-running-provider]')?.textContent).toContain('Automatic / built-in');
+    expect(root.querySelector('[data-running-model]')?.textContent).toContain('gemma-4');
+    expect(root.querySelector('[data-running-voice]')?.textContent).toContain('amy');
+    expect(root.querySelector('[data-running-appointments]')?.textContent).toContain('Lookup + booking requests via FormLogic flows');
+    expect(root.querySelector('[data-running-hangup]')?.textContent).toContain('Off - caller or operator ends the call');
+    expect(root.querySelector('[data-running-version]')?.textContent).toContain('v7');
     expect(root.querySelector('.running .persona')?.getAttribute('title')).toBe('Pirate persona');
+  });
+
+  it('shows Realtime provider/model/voice/tools/hang-up and Refresh recovers after Aokie restarts', async () => {
+    const realtimeSettings = {
+      greeting: 'Hi there',
+      persona: 'Be concise',
+      aiReceptionist: true,
+      realtimeVoiceMode: 'desktop_realtime',
+      realtimeVoiceEndpoint:
+        'ws://127.0.0.1:17872/api/ai/providers/openai-gpt-realtime-2-1-mini/v1/realtime/stream',
+      realtimeVoice: 'cedar',
+      realtimeTurnDetection: 'semantic_vad',
+      agentHangup: true,
+    };
+    const { fl, calls } = makeFl({
+      records: [{ id: 'r1', answers: {} }],
+      settingsGet: (attempt) => Promise.resolve(
+        attempt === 1
+          ? {
+              status: 'failed',
+              error: {
+                code: 'connector_unavailable',
+                message: 'plugin "aokie" is stopped - start it to use this connector',
+              },
+            }
+          : { status: 'done', result: { settings: realtimeSettings, configVersion: 12 } },
+      ),
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+
+    expect(res.root.querySelector('.running .muted')?.textContent).toContain(
+      'Aokie is stopped or restarting in FormLogic Desktop',
+    );
+    const refresh = res.root.querySelector('[data-act="refresh-running"]') as HTMLButtonElement;
+    expect(refresh.disabled).toBe(false);
+    refresh.click();
+    await flush(80);
+
+    expect(calls.get).toBe(2);
+    expect(res.root.querySelector('[data-running-mode]')?.textContent).toContain(
+      'OpenAI Realtime via FormLogic Desktop',
+    );
+    expect(res.root.querySelector('[data-running-provider]')?.textContent).toContain(
+      'OpenAI GPT-Realtime-2.1 mini',
+    );
+    expect(res.root.querySelector('[data-running-model]')?.textContent).toContain('gpt-realtime-2.1-mini');
+    expect(res.root.querySelector('[data-running-voice]')?.textContent).toContain('Cedar - Semantic VAD');
+    expect(res.root.querySelector('[data-running-appointments]')?.textContent).toContain(
+      'Realtime lookup + booking requests via FormLogic',
+    );
+    expect(res.root.querySelector('[data-running-hangup]')?.textContent).toContain(
+      'On - farewell then end the call',
+    );
+    expect(res.root.textContent).not.toContain('the desktop did not respond');
+  });
+
+  it('uses the Marin Realtime default and never echoes custom endpoints or unknown connector detail', async () => {
+    const secretEndpoint = 'wss://operator:secret-token@private.example.test/realtime';
+    const { fl } = makeFl({
+      records: [{ id: 'r1', answers: {} }],
+      settingsGet: (attempt) => Promise.resolve(
+        attempt === 1
+          ? {
+              status: 'done',
+              result: {
+                settings: {
+                  aiReceptionist: true,
+                  realtimeVoiceMode: 'desktop_realtime',
+                  realtimeVoiceEndpoint: secretEndpoint,
+                },
+              },
+            }
+          : {
+              status: 'failed',
+              error: { code: 'unexpected', message: 'failed at ' + secretEndpoint },
+            },
+      ),
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+
+    expect(res.root.querySelector('[data-running-provider]')?.textContent).toContain('Custom endpoint');
+    expect(res.root.querySelector('[data-running-voice]')?.textContent).toContain('Marin - Server VAD');
+    expect(res.root.textContent).not.toContain('secret-token');
+
+    (res.root.querySelector('[data-act="refresh-running"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(res.root.textContent).toContain('Aokie rejected the live settings read');
+    expect(res.root.textContent).not.toContain('secret-token');
+    expect(res.root.textContent).not.toContain('private.example.test');
   });
 
   it('(a) manager PIN: blank-on-save KEEPS (no managerPin key), a typed PIN is sent, Remove PIN sends the explicit clear', async () => {

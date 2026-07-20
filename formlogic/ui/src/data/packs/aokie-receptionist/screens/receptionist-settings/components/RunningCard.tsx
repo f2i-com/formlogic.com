@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
-// "What the receptionist is running now" - the live settings.get strip
-// (greeting / voice / model / agent-vs-flow / configVersion) with Refresh.
+// "What the receptionist is running now" - an authoritative settings.get
+// summary. It never substitutes the saved form record for unavailable live
+// settings, and Refresh can reconcile after Desktop/Aokie restarts.
 import { refreshRunningClick, state } from '../store';
 
 export function RunningCard() {
@@ -9,28 +10,50 @@ export function RunningCard() {
     <div class="card running">
       <div class="hdr">
         <h2>What the receptionist is running now</h2>
-        <button type="button" class="btn sm" data-act="refresh-running" onClick={refreshRunningClick}>Refresh</button>
+        <button
+          type="button"
+          class="btn sm"
+          data-act="refresh-running"
+          disabled={state.runningRefreshing}
+          onClick={refreshRunningClick}
+        >
+          {state.runningRefreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
       {r ? (
         <>
           <p class="greet"><span class="faint">Greeting: </span>"{r.greeting || '-'}"</p>
-          <p class="meta">
-            {'Voice ' + (r.voice || 'default') + ' - model ' + (r.model || 'auto') + ' - '
-              + (r.aiReceptionist ? 'built-in AI agent replies' : 'flow-driven replies')
-              + (typeof r.configVersion === 'number' ? ' - config v' + r.configVersion : '')}
-          </p>
+          <div class="running-facts" aria-label="Live receptionist configuration">
+            <div data-running-mode><span>Live-call voice mode</span><strong>{r.voiceModeLabel}</strong></div>
+            <div data-running-provider><span>Provider</span><strong>{r.providerLabel}</strong></div>
+            <div data-running-model><span>Model</span><strong>{r.model}</strong></div>
+            {r.voiceMode === 'desktop_realtime' ? (
+              <div data-running-voice><span>Realtime voice</span><strong>{r.realtimeVoice + ' - ' + r.realtimeTurnDetection}</strong></div>
+            ) : (
+              <div data-running-voice><span>Voice</span><strong>{r.voice || 'Default'}</strong></div>
+            )}
+            <div data-running-appointments><span>Appointments</span><strong>{r.appointmentToolsLabel}</strong></div>
+            <div data-running-hangup>
+              <span>Agent hang-up</span>
+              <strong>{r.agentHangup ? 'On - farewell then end the call' : 'Off - caller or operator ends the call'}</strong>
+            </div>
+            <div data-running-version><span>Configuration</span><strong>{typeof r.configVersion === 'number' ? 'v' + r.configVersion : 'Current version unavailable'}</strong></div>
+          </div>
+          {state.runningRefreshing ? <p class="running-refresh">Checking the live Desktop configuration...</p> : null}
           {r.persona ? <p class="persona" title={r.persona}>{r.persona}</p> : null}
         </>
       ) : (
         <p class="muted">
-          {state.runningError
-            ? 'Live configuration unavailable - ' + state.runningError
+          {state.runningRefreshing
+            ? 'Reading the live Desktop configuration...'
+            : state.runningError
+              ? 'Live configuration unavailable - ' + state.runningError
             : state.canGet
               ? 'Reading the live configuration...'
               : 'Your role cannot read the live configuration.'}
         </p>
       )}
-      <p class="hint">{'The Configure Receptionist flow re-applies the saved settings on every incoming call, so saving is enough - "Save & apply now" just updates the live line immediately.'}</p>
+      <p class="hint">{'This card is read directly from Aokie through FormLogic Desktop. The Configure Receptionist flow re-applies saved app settings on each incoming call; "Save & apply now" updates the live line immediately.'}</p>
     </div>
   );
 }

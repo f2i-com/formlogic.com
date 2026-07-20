@@ -50,6 +50,13 @@ export interface RunningInfo {
   voice: string;
   model: string;
   aiReceptionist: boolean;
+  voiceMode: 'flow' | 'standard' | 'desktop_realtime';
+  voiceModeLabel: string;
+  providerLabel: string;
+  realtimeVoice: string;
+  realtimeTurnDetection: string;
+  appointmentToolsLabel: string;
+  agentHangup: boolean;
   configVersion: number | undefined;
 }
 
@@ -110,6 +117,7 @@ export interface ScreenState {
   recordId: string | null;
   running: RunningInfo | null;
   runningError: string | null;
+  runningRefreshing: boolean;
   err: string | null;
   aiSources: AiSource[] | null;
   catalog: CatalogEngine[] | null;
@@ -153,6 +161,7 @@ export const state: ScreenState = {
   recordId: null,
   running: null,
   runningError: null,
+  runningRefreshing: false,
   err: null,
   aiSources: null,
   catalog: null,
@@ -250,10 +259,27 @@ function toastApi(): ToastLike {
 
 // -- connector helpers --
 
-function settingsGet(): Promise<Record<string, unknown> | null> {
-  return FormLogic.connector('aokie', 'settings.get', {})
-    .then((o) => (o.status === 'done' ? rec(o.result) : null))
-    .catch(() => null);
+interface ConnectorFailure extends Error {
+  code?: string;
+  status?: string;
+}
+
+function connectorFailure(out: FlConnectorOutcome): ConnectorFailure {
+  const detail = out.error && typeof out.error === 'object' ? out.error : {};
+  const rawMessage = typeof detail.message === 'string' ? detail.message.trim() : '';
+  const error = new Error(rawMessage || out.status || 'connector request failed') as ConnectorFailure;
+  if (typeof detail.code === 'string') error.code = detail.code;
+  error.status = out.status;
+  return error;
+}
+
+/** A settings read is authoritative: a non-done outcome is a typed failure,
+ *  never a null value that gets flattened into "the desktop did not respond". */
+function settingsGet(): Promise<Record<string, unknown>> {
+  return FormLogic.connector('aokie', 'settings.get', {}).then((out) => {
+    if (out.status === 'done') return rec(out.result);
+    throw connectorFailure(out);
+  });
 }
 
 function settingsSet(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -393,6 +419,117 @@ export function backgroundAiOptions(): LaneOption[] {
 
 // -- loaders --
 
+const REALTIME_PROVIDER_LABELS: Record<string, { provider: string; model: string }> = {
+  'openai-gpt-realtime-2-1-mini': {
+    provider: 'OpenAI GPT-Realtime-2.1 mini',
+    model: 'gpt-realtime-2.1-mini',
+  },
+};
+
+/** Extract only the non-secret provider id from an exact Desktop gateway URL.
+ *  Custom URLs are deliberately reported as "Custom endpoint" instead of
+ *  being echoed into the app (they may contain private hosts or credentials). */
+function desktopProviderId(value: unknown, realtime: boolean): string {
+  const endpoint = str(value).trim();
+  if (!endpoint) return '';
+  try {
+    const parsed = new URL(endpoint);
+    const host = parsed.hostname.toLowerCase();
+    const ipHost = host.charAt(0) === '[' && host.charAt(host.length - 1) === ']' ? host.slice(1, -1) : host;
+    const loopback = host === 'localhost' || ipHost === '::1' || /^127(?:\.[0-9]{1,3}){3}$/.test(host);
+    if (!loopback || parsed.port !== '17872' || parsed.username || parsed.password) return '';
+    const suffix = realtime ? '/v1/realtime/stream' : '/v1/chat/completions';
+    const prefix = '/api/ai/providers/';
+    if (!parsed.pathname.startsWith(prefix) || !parsed.pathname.endsWith(suffix)) return '';
+    const encoded = parsed.pathname.slice(prefix.length, -suffix.length);
+    if (!encoded || encoded.indexOf('/') >= 0 || /%(?:2f|5c|00)/i.test(encoded)) return '';
+    const providerId = decodeURIComponent(encoded);
+    return /^[A-Za-z0-9._-]{1,128}$/.test(providerId) ? providerId : '';
+  } catch {
+    return '';
+  }
+}
+
+function sourceForProvider(providerId: string): AiSource | undefined {
+  if (!providerId || !state.aiSources) return undefined;
+  return state.aiSources.find((source) =>
+    source.kind === 'provider'
+      && (source.refId === providerId || source.id === 'provider:' + providerId),
+  );
+}
+
+function sourceForServiceEndpoint(endpoint: string): AiSource | undefined {
+  if (!endpoint || !state.aiSources) return undefined;
+  return state.aiSources.find((source) =>
+    source.kind === 'service'
+      && !!source.url
+      && endpoint.indexOf(source.url.replace(/\/$/, '') + '/') === 0,
+  );
+}
+
+function runningProvider(s: Record<string, unknown>, realtime: boolean): { provider: string; model: string } {
+  const endpoint = str(realtime ? s.realtimeVoiceEndpoint : s.aiEndpoint).trim();
+  const providerId = desktopProviderId(endpoint, realtime);
+  const known = REALTIME_PROVIDER_LABELS[providerId];
+  const source = sourceForProvider(providerId);
+  if (source) {
+    return {
+      provider: source.name || providerId,
+      model: str(source.model).trim() || (known ? known.model : ''),
+    };
+  }
+  if (known) return known;
+  if (providerId) {
+    return {
+      provider: providerId.replace(/[._-]+/g, ' '),
+      model: '',
+    };
+  }
+  const service = !realtime ? sourceForServiceEndpoint(endpoint) : undefined;
+  if (service) return { provider: service.name || 'Local service', model: str(service.model).trim() };
+  if (endpoint) return { provider: 'Custom endpoint', model: '' };
+  return { provider: realtime ? 'Desktop provider not selected' : 'Automatic / built-in', model: '' };
+}
+
+function realtimeVoiceLabel(value: unknown): string {
+  const voice = str(value).trim();
+  return voice ? voice.charAt(0).toUpperCase() + voice.slice(1) : 'Marin';
+}
+
+function realtimeTurnLabel(value: unknown): string {
+  if (value === 'semantic_vad') return 'Semantic VAD';
+  return 'Server VAD';
+}
+
+function friendlyRunningError(error: unknown): string {
+  const failure = error as ConnectorFailure | null;
+  const code = failure && typeof failure.code === 'string' ? failure.code : '';
+  const status = failure && typeof failure.status === 'string' ? failure.status : '';
+  const raw = messageOf(error, '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  const lower = raw.toLowerCase();
+
+  if (code === 'connector_unavailable') {
+    if (lower.indexOf('crash') >= 0) {
+      return 'Aokie has crashed in FormLogic Desktop. Restart it, then press Refresh.';
+    }
+    if (lower.indexOf('stopped') >= 0 || lower.indexOf('not running') >= 0 || lower.indexOf('start it') >= 0) {
+      return 'Aokie is stopped or restarting in FormLogic Desktop. Start it, then press Refresh.';
+    }
+    if (state.presence.kind === 'local') {
+      return 'FormLogic Desktop is connected, but Aokie is not available. Start or restart Aokie, then press Refresh.';
+    }
+    return 'No connected FormLogic Desktop can reach Aokie. Reconnect Desktop, then press Refresh.';
+  }
+  if (status === 'expired') {
+    return 'The Desktop relay timed out before Aokie replied. Check Desktop is online, then press Refresh.';
+  }
+  if (status === 'uncertain') {
+    return 'Desktop accepted the read but its reply was lost. Press Refresh to reconcile the live settings.';
+  }
+  if (raw) return 'Aokie rejected the live settings read. Check it in FormLogic Desktop, then press Refresh.';
+  return 'The live settings could not be read. Check FormLogic Desktop and Aokie, then press Refresh.';
+}
+
 function seedFromSettings(res: Record<string, unknown>): void {
   const s = rec(res.settings);
   if (!state.audio.loaded) {
@@ -428,30 +565,62 @@ function seedFromSettings(res: Record<string, unknown>): void {
     state.engine = { loaded: true, engine: str(s.ttsEngine), modelDir: str(s.ttsModelDir), customDir: false };
   }
   state.catalog = parseCatalog(res.ttsVoiceCatalog);
+  const realtime = str(s.realtimeVoiceMode) === 'desktop_realtime';
+  const aiReceptionist = boolish(s.aiReceptionist);
+  const provider = runningProvider(s, realtime);
   state.running = {
     greeting: str(s.greeting),
     persona: str(s.persona),
-    voice: str(s.ttsVoice),
-    model: str(s.aiModel),
-    aiReceptionist: s.aiReceptionist === true,
+    voice: realtime ? realtimeVoiceLabel(s.realtimeVoice) : str(s.ttsVoice),
+    model: realtime ? (provider.model || 'Managed by Desktop provider') : (str(s.aiModel) || provider.model || 'Automatic'),
+    aiReceptionist,
+    voiceMode: !aiReceptionist ? 'flow' : realtime ? 'desktop_realtime' : 'standard',
+    voiceModeLabel: !aiReceptionist
+      ? 'Flow-driven replies'
+      : realtime
+        ? 'OpenAI Realtime via FormLogic Desktop'
+        : 'Standard STT -> LLM -> TTS',
+    providerLabel: !aiReceptionist ? 'Not used for live replies' : provider.provider,
+    realtimeVoice: realtimeVoiceLabel(s.realtimeVoice),
+    realtimeTurnDetection: realtimeTurnLabel(s.realtimeTurnDetection),
+    appointmentToolsLabel: !aiReceptionist
+      ? 'Handled by FormLogic flows'
+      : realtime
+        ? 'Realtime lookup + booking requests via FormLogic'
+        : 'Lookup + booking requests via FormLogic flows',
+    agentHangup: boolish(s.agentHangup),
     configVersion: typeof res.configVersion === 'number' ? res.configVersion : undefined,
   };
 }
 
+let runningReadGeneration = 0;
+
 export function refreshRunning(): Promise<void> {
   if (!state.canGet) return Promise.resolve();
+  const generation = ++runningReadGeneration;
+  state.runningRefreshing = true;
   state.runningError = null;
-  return settingsGet()
+  touch();
+  return FormLogic.presence()
+    .then((presence) => {
+      if (generation === runningReadGeneration && presence) state.presence = presence;
+    })
+    .catch(() => undefined)
+    .then(settingsGet)
     .then((res) => {
-      if (res) {
-        seedFromSettings(res);
-      } else {
-        state.runningError = 'the desktop did not respond';
-      }
+      if (generation !== runningReadGeneration) return;
+      seedFromSettings(res);
+      state.runningError = null;
     })
     .catch((e: unknown) => {
+      if (generation !== runningReadGeneration) return;
       state.running = null;
-      state.runningError = messageOf(e, 'unavailable');
+      state.runningError = friendlyRunningError(e);
+    })
+    .then(() => {
+      if (generation !== runningReadGeneration) return;
+      state.runningRefreshing = false;
+      touch();
     });
 }
 
@@ -858,7 +1027,7 @@ export function toggleAdvanced(open: boolean): void {
 }
 
 export function refreshRunningClick(): void {
-  void refreshRunning().then(touch);
+  void refreshRunning();
 }
 
 // -- boot --
