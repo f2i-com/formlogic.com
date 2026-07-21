@@ -36,6 +36,10 @@ const MAX_TOOL_ARGUMENT_BYTES: usize = 8 * 1024;
 const MAX_TOOL_OUTPUT_BYTES: usize = 8 * 1024;
 const MAX_TOOL_CALLS_PER_SESSION: u8 = 8;
 const MIN_TOOL_CALL_INTERVAL: Duration = Duration::from_millis(250);
+/// Provider-side "failed" terminal responses re-requested per session before
+/// giving up. One failed response otherwise strands the caller in dead air
+/// until they speak again.
+const MAX_RESPONSE_RETRIES: u8 = 3;
 const START_TIMEOUT: Duration = Duration::from_secs(8);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SEND_TIMEOUT: Duration = Duration::from_secs(2);
@@ -192,6 +196,12 @@ enum LocalControl {
         #[serde(rename = "callId")]
         call_id: String,
         generation: u64,
+        /// Call-personalized overrides resolved plugin-side at answer time
+        /// (the session connects at ring with the global configuration).
+        #[serde(default)]
+        instructions: Option<String>,
+        #[serde(default)]
+        greeting: Option<String>,
     },
     #[serde(rename = "formlogic.realtime.cancel_output")]
     CancelOutput {
@@ -298,6 +308,10 @@ struct PendingForcedResponse {
     purpose: ForcedResponsePurpose,
     tool_call_id: Option<String>,
     response_id: Option<String>,
+    /// The exact response.create JSON, retained so one provider-side failure
+    /// ("failed" terminal status) can be retried instead of leaving dead air.
+    request: Option<String>,
+    retried: bool,
 }
 
 struct SessionState {
@@ -315,6 +329,16 @@ struct SessionState {
     last_tool_call_at: Option<Instant>,
     pending_forced_response: Option<PendingForcedResponse>,
     invalid_controls: u8,
+    /// Function calls answered with a synthetic refusal instead of plugin
+    /// execution (overlapping call, disabled tool, finish_call preamble).
+    /// Each entry is flushed as one function_call_output at the terminal
+    /// response.done so the conversation never holds a dangling call while
+    /// the session stays alive.
+    refused_calls: Vec<(String, &'static str)>,
+    /// Provider-side "failed" responses recovered by re-requesting a response
+    /// (bounded per session). Without this a single failed response leaves
+    /// the caller in open-ended dead air until they speak again.
+    response_retries: u8,
 }
 
 impl SessionState {
@@ -357,6 +381,8 @@ impl SessionState {
             last_tool_call_at: None,
             pending_forced_response: None,
             invalid_controls: 0,
+            refused_calls: Vec::new(),
+            response_retries: 0,
         }
     }
 
@@ -554,7 +580,7 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                         }
                         let control = serde_json::from_str::<LocalControl>(&text);
                         match control {
-                            Ok(LocalControl::Begin { call_id, generation }) => {
+                            Ok(LocalControl::Begin { call_id, generation, instructions, greeting }) => {
                                 if !exact_fence_matches(&fence, &call_id, generation)
                                     || !state.ready
                                     || state.begun
@@ -569,6 +595,33 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                                     )).await;
                                     if fatal { break 'session; }
                                     continue;
+                                }
+                                // Apply answer-time personalization before the
+                                // greeting response is created: the caller-
+                                // scoped persona/greeting typically arrives
+                                // between ring (session connect) and answer.
+                                if let Some(instructions) = instructions
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                {
+                                    let update = UpstreamMessage::Text(json!({
+                                        "type": "session.update",
+                                        "session": {
+                                            "type": "realtime",
+                                            "instructions": instructions,
+                                        }
+                                    }).to_string());
+                                    if !send_upstream(&mut upstream_tx, update).await {
+                                        break 'session;
+                                    }
+                                }
+                                if let Some(greeting) = greeting
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                {
+                                    state.greeting = Some(greeting.to_string());
                                 }
                                 if let Some(greeting_event) = begin_response(&mut state) {
                                     if !send_upstream(&mut upstream_tx, greeting_event).await {
@@ -745,13 +798,22 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                             continue;
                         }
 
-                        match translate_server_event(&event, &fence, &mut state) {
+                        let mut synthetic_upstream = Vec::new();
+                        match translate_server_event_full(&event, &fence, &mut state, &mut synthetic_upstream) {
                             Ok(messages) => {
-                                // Translation emits at most two messages. A terminal
+                                // Translation emits at most a few messages. A terminal
                                 // response may need to retire an abandoned output item
                                 // before reporting its recoverable failure to Aokie.
                                 for message in messages {
                                     if !send_local(&mut local_tx, message).await {
+                                        break 'session;
+                                    }
+                                }
+                                // Synthetic tool refusals (function_call_output +
+                                // continuation) keep the session alive where the
+                                // pre-fix bridge tore the whole call down.
+                                for event in synthetic_upstream {
+                                    if !send_upstream(&mut upstream_tx, event).await {
                                         break 'session;
                                     }
                                 }
@@ -859,7 +921,16 @@ fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'
                     "input": {
                         "format": { "type": "audio/pcm", "rate": 24000 },
                         "noise_reduction": { "type": "near_field" },
-                        "transcription": { "model": DEFAULT_TRANSCRIPTION_MODEL },
+                        "transcription": {
+                            "model": DEFAULT_TRANSCRIPTION_MODEL,
+                            // Narrowband telephone audio: bias the separate
+                            // transcription model toward the call domain so
+                            // stored transcripts (and the appointment
+                            // agreement fence built on them) stop drifting
+                            // into unrelated words.
+                            "language": "en",
+                            "prompt": "Telephone call to a business receptionist about appointments, bookings, availability, prices, and services.",
+                        },
                         "turn_detection": turn_detection,
                     },
                     "output": {
@@ -944,7 +1015,7 @@ fn realtime_tools(
         tools.push(json!({
             "type": "function",
             "name": AllowedTool::FinishCall.name(),
-            "description": "Request a safe end to the phone call only after the caller has clearly finished and no question or task remains. Invoke this function without speaking first; the system generates and verifies the separate audible farewell before hanging up.",
+            "description": "Request a safe end to the phone call only after the caller has clearly finished and no question or task remains. Invoke this function without speaking first, and never announce that you are wrapping up or ask the caller to wait — the moment the caller is done, call this function immediately and the system will generate and verify the audible goodbye before hanging up.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": false,
@@ -1022,26 +1093,32 @@ fn normalized_turn_detection(input: Option<&TurnDetectionInput>) -> Result<Value
 fn begin_response(state: &mut SessionState) -> Option<UpstreamMessage> {
     state.begun = true;
     state.greeting.take().map(|greeting| {
+        let request = json!({
+            "type": "response.create",
+            "response": {
+                // The greeting is an instruction to SPEAK, framed explicitly:
+                // passing the bare text made the model occasionally treat it
+                // as something said TO it ("thanks for the warm intro!").
+                "instructions": format!(
+                    "Open the call by speaking this greeting to the caller, warmly and naturally: \"{greeting}\" Say only that greeting; do not respond to it or add anything else."
+                ),
+                "output_modalities": ["audio"],
+                "tools": [],
+                "tool_choice": "none",
+                "metadata": {
+                    "formlogic_purpose": ForcedResponsePurpose::Greeting.metadata_value(),
+                },
+            }
+        })
+        .to_string();
         state.pending_forced_response = Some(PendingForcedResponse {
             purpose: ForcedResponsePurpose::Greeting,
             tool_call_id: None,
             response_id: None,
+            request: Some(request.clone()),
+            retried: false,
         });
-        UpstreamMessage::Text(
-            json!({
-                "type": "response.create",
-                "response": {
-                    "instructions": greeting,
-                    "output_modalities": ["audio"],
-                    "tools": [],
-                    "tool_choice": "none",
-                    "metadata": {
-                        "formlogic_purpose": ForcedResponsePurpose::Greeting.metadata_value(),
-                    },
-                }
-            })
-            .to_string(),
-        )
+        UpstreamMessage::Text(request)
     })
 }
 
@@ -1181,6 +1258,66 @@ fn validate_tool_arguments(
     }
 }
 
+/// Answer one authorized-but-refused function call with a synthetic failed
+/// function output, and — when no other host response is pending — a short
+/// forced continuation so the caller is not left in silence. This is the
+/// liveness-preserving alternative to tearing the whole call session down.
+fn refusal_tool_events(
+    state: &mut SessionState,
+    tool: AllowedTool,
+    provider_call_id: &str,
+    guidance: &str,
+    upstream_out: &mut Vec<UpstreamMessage>,
+) {
+    state.used_tool_call_ids.push(provider_call_id.to_string());
+    state.tool_call_count = state.tool_call_count.saturating_add(1);
+    state.last_tool_call_at = Some(Instant::now());
+    let output = json!({ "ok": false, "output": { "error": guidance } }).to_string();
+    upstream_out.push(UpstreamMessage::Text(
+        json!({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": provider_call_id,
+                "output": output,
+            }
+        })
+        .to_string(),
+    ));
+    if state.pending_forced_response.is_some() || state.pending_tool_result.is_some() {
+        // Another host flow already owns the next response; the refusal
+        // output alone is enough — the model reads it on its next turn.
+        return;
+    }
+    let purpose = match tool {
+        AllowedTool::LookupBusinessData => ForcedResponsePurpose::LookupContinuation,
+        AllowedTool::RequestAppointment => ForcedResponsePurpose::AppointmentContinuation,
+        AllowedTool::FinishCall => ForcedResponsePurpose::FinishCallRejected,
+    };
+    let request = json!({
+        "type": "response.create",
+        "response": {
+            "output_modalities": ["audio"],
+            "tools": [],
+            "tool_choice": "none",
+            "instructions": "The function call was not accepted. Read the error in the function result, follow its guidance, and keep helping the caller. Do not claim any action was completed.",
+            "metadata": {
+                "formlogic_purpose": purpose.metadata_value(),
+                "formlogic_tool_call_id": provider_call_id,
+            },
+        }
+    })
+    .to_string();
+    state.pending_forced_response = Some(PendingForcedResponse {
+        purpose,
+        tool_call_id: Some(provider_call_id.to_string()),
+        response_id: None,
+        request: Some(request.clone()),
+        retried: false,
+    });
+    upstream_out.push(UpstreamMessage::Text(request));
+}
+
 fn tool_result_events(
     state: &mut SessionState,
     tool_call_id: &str,
@@ -1238,6 +1375,21 @@ fn tool_result_events(
         ));
     }
 
+    // Bound the BARE output exactly as the plugin does before sending; the
+    // constant-size {ok,output} envelope must not make a plugin-legal result
+    // unanswerable (a permanently unanswered function call stalls the model).
+    let bare_output = serde_json::to_string(&output).map_err(|_| {
+        (
+            "invalid_tool_result",
+            "Realtime tool result could not be encoded.",
+        )
+    })?;
+    if bare_output.len() > MAX_TOOL_OUTPUT_BYTES || bare_output.contains('\0') {
+        return Err((
+            "invalid_tool_result",
+            "Realtime tool result exceeded the safe limit.",
+        ));
+    }
     let output_envelope = json!({ "ok": ok, "output": output });
     let output = serde_json::to_string(&output_envelope).map_err(|_| {
         (
@@ -1245,7 +1397,7 @@ fn tool_result_events(
             "Realtime tool result could not be encoded.",
         )
     })?;
-    if output.len() > MAX_TOOL_OUTPUT_BYTES || output.contains('\0') {
+    if output.contains('\0') {
         return Err((
             "invalid_tool_result",
             "Realtime tool result exceeded the safe limit.",
@@ -1285,7 +1437,7 @@ fn tool_result_events(
     let purpose = match (pending.tool, ok) {
         (AllowedTool::LookupBusinessData, _) => {
             response["instructions"] = Value::String(
-                "Answer the caller's pending question briefly using the function result. If the lookup failed, say that you could not check it just now. Do not claim any action was completed."
+                "Answer the caller's pending question in one or two short spoken sentences using the function result. Summarize; never read lists, calendars, or every record aloud. If the lookup failed, say that you could not check it just now. Do not claim any action was completed."
                     .into(),
             );
             ForcedResponsePurpose::LookupContinuation
@@ -1323,22 +1475,20 @@ fn tool_result_events(
         "formlogic_purpose": purpose.metadata_value(),
         "formlogic_tool_call_id": tool_call_id,
     });
+    let request = json!({
+        "type": "response.create",
+        "response": response,
+    })
+    .to_string();
     state.pending_forced_response = Some(PendingForcedResponse {
         purpose,
         tool_call_id: Some(tool_call_id.to_string()),
         response_id: None,
+        request: Some(request.clone()),
+        retried: false,
     });
 
-    Ok(vec![
-        output_event,
-        UpstreamMessage::Text(
-            json!({
-                "type": "response.create",
-                "response": response,
-            })
-            .to_string(),
-        ),
-    ])
+    Ok(vec![output_event, UpstreamMessage::Text(request)])
 }
 
 fn is_brief_non_question_farewell(transcript: &str) -> bool {
@@ -1413,21 +1563,34 @@ async fn connect_upstream(
     .map_err(|_| ())
 }
 
+/// Test-compatibility wrapper: the historical single-return shape. Upstream
+/// side effects (synthetic tool refusals) are collected and dropped — tests
+/// that assert on them call `translate_server_event_full` directly.
+#[cfg(test)]
 fn translate_server_event(
     event: &Value,
     fence: &CallFence,
     state: &mut SessionState,
 ) -> Result<Vec<LocalMessage>, (&'static str, &'static str)> {
+    let mut upstream = Vec::new();
+    translate_server_event_full(event, fence, state, &mut upstream)
+}
+
+fn translate_server_event_full(
+    event: &Value,
+    fence: &CallFence,
+    state: &mut SessionState,
+    upstream_out: &mut Vec<UpstreamMessage>,
+) -> Result<Vec<LocalMessage>, (&'static str, &'static str)> {
     let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
     match event_type {
         "session.created" | "session.updated" | "rate_limits.updated" => Ok(Vec::new()),
         "response.created" => {
-            if state.pending_tool_result.is_some() {
-                return Err((
-                    "upstream_protocol",
-                    "Realtime started another response before the pending tool result arrived.",
-                ));
-            }
+            // A response created while a tool result is pending is server VAD
+            // answering caller speech that landed during the tool round trip.
+            // GA Realtime produces this legitimately; it must never end the
+            // call. The pending function output is delivered afterwards and
+            // simply skips its continuation if a response is still active.
             if let Some(forced) = state.pending_forced_response.as_mut() {
                 let response_id = safe_id(event.pointer("/response/id"))?;
                 let metadata_tool_call = event
@@ -1436,16 +1599,22 @@ fn translate_server_event(
                 let purpose = event
                     .pointer("/response/metadata/formlogic_purpose")
                     .and_then(Value::as_str);
-                if forced.response_id.is_some()
-                    || metadata_tool_call != forced.tool_call_id.as_deref()
-                    || purpose != Some(forced.purpose.metadata_value())
+                let metadata_present = metadata_tool_call.is_some() || purpose.is_some();
+                if forced.response_id.is_none()
+                    && metadata_tool_call == forced.tool_call_id.as_deref()
+                    && purpose == Some(forced.purpose.metadata_value())
                 {
+                    forced.response_id = Some(response_id);
+                } else if metadata_present {
+                    // Host-shaped metadata that is not ours: a genuine
+                    // impersonation/confusion condition, still fatal.
                     return Err((
                         "upstream_protocol",
                         "Realtime forced response did not match its host-created request.",
                     ));
                 }
-                forced.response_id = Some(response_id);
+                // Metadata-less responses are VAD interlopers racing the
+                // forced request; tolerate them and keep waiting for ours.
             }
             Ok(Vec::new())
         }
@@ -1478,10 +1647,17 @@ fn translate_server_event(
             ))?;
             match event.pointer("/item/type").and_then(Value::as_str) {
                 Some("message") => {
+                    // An unbound forced response tolerates interloper items:
+                    // a VAD-created response can stream before the forced
+                    // request's own response.created binds its identity.
                     let forced_response_matches =
                         state.pending_forced_response.as_ref().is_none_or(|forced| {
-                            forced.response_id.as_deref() == Some(response_id.as_str())
+                            forced.response_id.is_none()
+                                || forced.response_id.as_deref() == Some(response_id.as_str())
                         });
+                    // pending_tool_result deliberately does NOT gate this arm:
+                    // a VAD response answering caller speech while the plugin
+                    // still executes a tool is legitimate GA behavior.
                     if event.pointer("/item/role").and_then(Value::as_str) != Some("assistant")
                         || output_index != 0
                         || state.output.as_ref().is_some_and(|output| !output.done)
@@ -1490,7 +1666,6 @@ fn translate_server_event(
                             .as_ref()
                             .is_some_and(|output| output.response_id == response_id)
                         || state.tool_candidate.is_some()
-                        || state.pending_tool_result.is_some()
                         || !forced_response_matches
                     {
                         return Err((
@@ -1515,20 +1690,36 @@ fn translate_server_event(
                     )])
                 }
                 Some("function_call") => {
-                    if state.pending_forced_response.is_some() {
+                    let provider_call_id = safe_id(event.pointer("/item/call_id"))?;
+                    if state.refused_calls.len() >= 8 {
                         return Err((
-                            "tool_not_allowed",
-                            "Host-forced Realtime responses may not invoke tools.",
+                            "upstream_protocol",
+                            "Realtime produced too many refused function calls.",
                         ));
                     }
-                    if !state.begun
-                        || state.tool_candidate.is_some()
-                        || state.pending_tool_result.is_some()
-                    {
+                    if !state.begun {
                         return Err((
                             "upstream_protocol",
                             "Realtime function-call ordering was invalid.",
                         ));
+                    }
+                    // Overlapping calls, calls during a host-forced response,
+                    // unknown or disabled tools, and finish_call preambles are
+                    // REFUSED with a synthetic function output at the terminal
+                    // response.done instead of ending the live phone call.
+                    if state.pending_forced_response.is_some() {
+                        state.refused_calls.push((
+                            provider_call_id,
+                            "A host response is already in progress; do not call tools right now.",
+                        ));
+                        return Ok(Vec::new());
+                    }
+                    if state.tool_candidate.is_some() || state.pending_tool_result.is_some() {
+                        state.refused_calls.push((
+                            provider_call_id,
+                            "Another tool call is still in progress; call one tool at a time and wait for its result.",
+                        ));
+                        return Ok(Vec::new());
                     }
                     let name = event
                         .pointer("/item/name")
@@ -1538,68 +1729,88 @@ fn translate_server_event(
                             "upstream_protocol",
                             "Realtime function call omitted a valid name.",
                         ))?;
-                    let tool = allowed_tool(&name).ok_or((
-                        "tool_not_allowed",
-                        "Realtime requested a tool outside the fixed allow-list.",
-                    ))?;
-                    if !state.tool_allowed(tool) {
-                        return Err((
-                            "tool_not_allowed",
-                            "Realtime requested a tool that was not enabled for this call.",
+                    let Some(tool) = allowed_tool(&name) else {
+                        state.refused_calls.push((
+                            provider_call_id,
+                            "That tool does not exist on this call; use only the tools provided.",
                         ));
+                        return Ok(Vec::new());
+                    };
+                    if !state.tool_allowed(tool) {
+                        state.refused_calls.push((
+                            provider_call_id,
+                            "That tool is not enabled for this call.",
+                        ));
+                        return Ok(Vec::new());
                     }
-                    let provider_call_id = safe_id(event.pointer("/item/call_id"))?;
-                    // Realtime can announce an index-one lookup while its
-                    // same-response index-zero spoken preamble is still
-                    // streaming. Link that exact pair now, but authorize the
-                    // lookup only from the fully completed terminal response.
-                    // `finish_call` stays function-only so a question-like
-                    // preamble can never lead into the hangup flow.
-                    let preamble_item_id = match state.output.as_ref() {
+                    // Realtime can announce an index-one lookup or appointment
+                    // request while its same-response index-zero spoken
+                    // preamble is still streaming. Link that exact pair now,
+                    // but authorize the tool only from the fully completed
+                    // terminal response. `finish_call` stays function-only so
+                    // a question-like preamble can never lead into the hangup
+                    // flow — but a violation is refused, never call-fatal.
+                    enum PreambleDecision {
+                        Link(Option<String>),
+                        Refuse(&'static str),
+                    }
+                    let decision = match state.output.as_ref() {
                         Some(output)
                             if output.response_id == response_id
-                                && tool == AllowedTool::LookupBusinessData
+                                && matches!(
+                                    tool,
+                                    AllowedTool::LookupBusinessData
+                                        | AllowedTool::RequestAppointment
+                                )
                                 && output_index == 1
                                 && output.output_index == 0
                                 && !output.terminal
                                 && (!output.done || output.completed) =>
                         {
-                            Some(output.item_id.clone())
+                            PreambleDecision::Link(Some(output.item_id.clone()))
+                        }
+                        Some(output)
+                            if output.response_id == response_id
+                                && tool == AllowedTool::FinishCall =>
+                        {
+                            PreambleDecision::Refuse(
+                                "finish_call must be called alone without speaking in the same response; once the caller is truly finished, call it again by itself.",
+                            )
                         }
                         Some(output) if output.response_id != response_id && output.terminal => {
                             if output_index == 0 {
-                                None
+                                PreambleDecision::Link(None)
                             } else {
-                                return Err((
-                                    "upstream_protocol",
-                                    "Realtime function call had an unsupported output order.",
-                                ));
+                                PreambleDecision::Refuse(
+                                    "The tool call arrived in an unsupported output order and was not executed; call it again on its own.",
+                                )
                             }
                         }
-                        Some(_) => {
-                            return Err((
-                                "upstream_protocol",
-                                "Realtime tool preamble was not one same-response index-zero assistant message.",
-                            ));
-                        }
-                        None if output_index == 0 => None,
-                        None => {
-                            return Err((
-                                "upstream_protocol",
-                                "Realtime function call had an unsupported output order.",
-                            ));
-                        }
+                        Some(_) => PreambleDecision::Refuse(
+                            "The spoken preamble was interrupted or out of order, so the tool was not executed; answer the caller first, then call it again if still needed.",
+                        ),
+                        None if output_index == 0 => PreambleDecision::Link(None),
+                        None => PreambleDecision::Refuse(
+                            "The tool call arrived in an unsupported output order and was not executed; call it again on its own.",
+                        ),
                     };
-                    state.tool_candidate = Some(ToolCandidate {
-                        tool,
-                        response_id,
-                        item_id,
-                        provider_call_id,
-                        output_index,
-                        preamble_item_id,
-                        item_done: false,
-                        item_completed: false,
-                    });
+                    match decision {
+                        PreambleDecision::Link(preamble_item_id) => {
+                            state.tool_candidate = Some(ToolCandidate {
+                                tool,
+                                response_id,
+                                item_id,
+                                provider_call_id,
+                                output_index,
+                                preamble_item_id,
+                                item_done: false,
+                                item_completed: false,
+                            });
+                        }
+                        PreambleDecision::Refuse(guidance) => {
+                            state.refused_calls.push((provider_call_id, guidance));
+                        }
+                    }
                     Ok(Vec::new())
                 }
                 _ => Err((
@@ -1678,6 +1889,18 @@ fn translate_server_event(
         "response.output_item.done" => {
             let item_id = safe_id(event.pointer("/item/id"))?;
             let response_id = safe_id(event.get("response_id"))?;
+            if event.pointer("/item/type").and_then(Value::as_str) == Some("function_call") {
+                if let Some(call_id) = event.pointer("/item/call_id").and_then(Value::as_str) {
+                    if state
+                        .refused_calls
+                        .iter()
+                        .any(|(refused, _)| refused == call_id)
+                    {
+                        // A refused call's terminal item is expected traffic.
+                        return Ok(Vec::new());
+                    }
+                }
+            }
             if state.tool_candidate.as_ref().is_some_and(|candidate| {
                 candidate.item_id == item_id && candidate.response_id == response_id
             }) {
@@ -1745,6 +1968,19 @@ fn translate_server_event(
                 .and_then(Value::as_str)
                 .and_then(|code| safe_token(code, 96))
                 .unwrap_or_else(|| "provider_error".into());
+            // A forced response.create that raced a VAD-created active
+            // response is rejected with this documented, recoverable error.
+            // Clear the never-bound fence so later responses are not judged
+            // against a request the provider refused; the function output is
+            // already in the conversation and the next turn reads it.
+            if code.starts_with("conversation_already_has")
+                && state
+                    .pending_forced_response
+                    .as_ref()
+                    .is_some_and(|forced| forced.response_id.is_none())
+            {
+                state.pending_forced_response = None;
+            }
             // Preserve only the provider's bounded schema-field identifier for
             // diagnostics. Never relay its free-form message, request body, or
             // credential-bearing metadata back to a plugin.
@@ -1775,23 +2011,71 @@ fn translate_server_event(
                 ));
             }
             let response_id = safe_id(event.pointer("/response/id"))?;
-            if let Some(forced) = state.pending_forced_response.as_ref() {
-                let expected_response_id = forced.response_id.as_deref().ok_or((
-                    "upstream_protocol",
-                    "Realtime forced response completed before its identity was established.",
-                ))?;
-                if expected_response_id != response_id {
-                    return Err((
-                        "upstream_protocol",
-                        "Realtime output crossed the pending forced-response fence.",
+            // Preserve the provider's bounded failure diagnostics: "failed"
+            // and "incomplete" carry status_details naming WHY (server error,
+            // rate limit, token cap) — discarding them made live dead-air
+            // incidents undiagnosable.
+            let status_detail = {
+                let mut detail = event
+                    .pointer("/response/status_details")
+                    .map(|details| {
+                        let mut detail = details.to_string();
+                        detail.truncate(300);
+                        detail
+                    })
+                    .unwrap_or_else(|| "no status_details".to_string());
+                if let Some(usage) = event.pointer("/response/usage/output_token_details") {
+                    let mut usage = usage.to_string();
+                    usage.truncate(200);
+                    detail.push_str("; output tokens ");
+                    detail.push_str(&usage);
+                }
+                detail
+            };
+            // Whether THIS response produced any audible output. A failed or
+            // truncated response that spoke nothing is safe to re-request; one
+            // that already spoke must not be repeated (double-speak).
+            let response_spoke_audio = state
+                .output
+                .as_ref()
+                .is_some_and(|output| output.response_id == response_id && output.audio_bytes > 0);
+            // Flush every refusal recorded during this response as one
+            // synthetic function output each, so the conversation never holds
+            // a dangling call while the session stays alive. Non-completed
+            // responses drop their refusals (the items never finalized). The
+            // drained list also excuses those items from the strict output-
+            // sequence validation below.
+            let refused = std::mem::take(&mut state.refused_calls);
+            if status == Some("completed") {
+                for (call_id, guidance) in &refused {
+                    state.used_tool_call_ids.push(call_id.clone());
+                    let output =
+                        json!({ "ok": false, "output": { "error": guidance } }).to_string();
+                    upstream_out.push(UpstreamMessage::Text(
+                        json!({
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": output,
+                            }
+                        })
+                        .to_string(),
                     ));
                 }
-                if state.tool_candidate.is_some() {
-                    return Err((
-                        "tool_not_allowed",
-                        "Host-forced Realtime responses may not invoke tools.",
-                    ));
-                }
+            }
+            // The forced fence engages only for the exact bound response; an
+            // interloper (VAD-created) terminal while ours is still pending or
+            // unbound passes through and leaves the fence armed.
+            let forced_matches_terminal = state
+                .pending_forced_response
+                .as_ref()
+                .is_some_and(|forced| forced.response_id.as_deref() == Some(response_id.as_str()));
+            if forced_matches_terminal && state.tool_candidate.is_some() {
+                return Err((
+                    "tool_not_allowed",
+                    "Host-forced Realtime responses may not invoke tools.",
+                ));
             }
             if let Some(output) = state
                 .output
@@ -1845,8 +2129,26 @@ fn translate_server_event(
                         messages.push(local_error(
                             fence,
                             "response_failed",
-                            "The Realtime provider could not complete the tool request.",
+                            &format!(
+                                "The Realtime provider could not complete the tool request ({status_detail})."
+                            ),
                             false,
+                        ));
+                    }
+                    // A failed or silently-truncated tool response produced no
+                    // audio and no authorized tool. Re-request a response so
+                    // the model can retry or answer instead of stranding the
+                    // caller (a runaway generation hitting max_output_tokens
+                    // surfaces as "incomplete" with zero audio).
+                    if matches!(status, Some("failed" | "incomplete"))
+                        && !response_spoke_audio
+                        && state.pending_forced_response.is_none()
+                        && state.pending_tool_result.is_none()
+                        && state.response_retries < MAX_RESPONSE_RETRIES
+                    {
+                        state.response_retries = state.response_retries.saturating_add(1);
+                        upstream_out.push(UpstreamMessage::Text(
+                            json!({ "type": "response.create" }).to_string(),
                         ));
                     }
                     return Ok(messages);
@@ -1864,19 +2166,31 @@ fn translate_server_event(
                         "upstream_protocol",
                         "Realtime completed a tool response without its output item.",
                     ))?;
+                // Items already answered as refusals are excused from the
+                // strict output-sequence validation.
+                let counted: Vec<&Value> = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("call_id")
+                            .and_then(Value::as_str)
+                            .is_none_or(|call_id| {
+                                !refused.iter().any(|(refused_id, _)| refused_id == call_id)
+                            })
+                    })
+                    .collect();
                 let expected_items = if candidate.preamble_item_id.is_some() {
                     2
                 } else {
                     1
                 };
-                if items.len() != expected_items {
+                if counted.len() != expected_items {
                     return Err((
                         "upstream_protocol",
                         "Realtime tool response contained an unsupported output sequence.",
                     ));
                 }
                 if let Some(preamble_item_id) = candidate.preamble_item_id.as_deref() {
-                    let preamble = &items[0];
+                    let preamble = counted[0];
                     if candidate.output_index != 1
                         || preamble.get("id").and_then(Value::as_str) != Some(preamble_item_id)
                         || preamble.get("type").and_then(Value::as_str) != Some("message")
@@ -1901,41 +2215,84 @@ fn translate_server_event(
                         "Realtime single-item tool response had an invalid output index.",
                     ));
                 }
-                let item = &items[candidate.output_index as usize];
+                let item = counted
+                    .iter()
+                    .find(|item| {
+                        item.get("call_id").and_then(Value::as_str)
+                            == Some(candidate.provider_call_id.as_str())
+                    })
+                    .copied()
+                    .ok_or((
+                        "upstream_protocol",
+                        "Realtime completed a tool response without its output item.",
+                    ))?;
                 if item.get("id").and_then(Value::as_str) != Some(candidate.item_id.as_str())
                     || item.get("type").and_then(Value::as_str) != Some("function_call")
                     || item.get("status").and_then(Value::as_str) != Some("completed")
                     || item.get("name").and_then(Value::as_str) != Some(candidate.tool.name())
-                    || item.get("call_id").and_then(Value::as_str)
-                        != Some(candidate.provider_call_id.as_str())
                 {
                     return Err((
                         "upstream_protocol",
                         "Realtime terminal function-call identity did not match its streamed item.",
                     ));
                 }
-                if state.pending_tool_result.is_some()
-                    || state.tool_call_count >= MAX_TOOL_CALLS_PER_SESSION
-                    || state
-                        .last_tool_call_at
-                        .is_some_and(|last| last.elapsed() < MIN_TOOL_CALL_INTERVAL)
-                    || state
-                        .used_tool_call_ids
-                        .iter()
-                        .any(|used| used == &candidate.provider_call_id)
+                // Limit, rate, replay and argument-shape violations REFUSE the
+                // exact call with a synthetic function output and keep the
+                // phone call alive; only structural protocol breakage above
+                // remains session-fatal.
+                let limit_guidance = if state
+                    .used_tool_call_ids
+                    .iter()
+                    .any(|used| used == &candidate.provider_call_id)
                 {
-                    return Err((
+                    Some("This exact tool call was already answered; do not repeat it.")
+                } else if state.pending_tool_result.is_some() {
+                    Some("Another tool call is still in progress; wait for its result first.")
+                } else if state.tool_call_count >= MAX_TOOL_CALLS_PER_SESSION {
+                    Some("The tool limit for this call was reached; continue helping the caller without tools.")
+                } else if state
+                    .last_tool_call_at
+                    .is_some_and(|last| last.elapsed() < MIN_TOOL_CALL_INTERVAL)
+                {
+                    Some("Tool calls are too rapid; answer the caller first, then call the tool once more if still needed.")
+                } else {
+                    None
+                };
+                if let Some(guidance) = limit_guidance {
+                    refusal_tool_events(
+                        state,
+                        candidate.tool,
+                        &candidate.provider_call_id,
+                        guidance,
+                        upstream_out,
+                    );
+                    return Ok(vec![local_error(
+                        fence,
                         "tool_limit",
                         "Realtime tool call count, rate, or replay limit was exceeded.",
-                    ));
+                        false,
+                    )]);
                 }
-                let arguments = validate_tool_arguments(
-                    candidate.tool,
-                    item.get("arguments").and_then(Value::as_str).ok_or((
+                let raw_arguments = item.get("arguments").and_then(Value::as_str);
+                let arguments = raw_arguments
+                    .ok_or((
                         "invalid_tool_arguments",
                         "Realtime terminal function call omitted its arguments.",
-                    ))?,
-                )?;
+                    ))
+                    .and_then(|raw| validate_tool_arguments(candidate.tool, raw));
+                let arguments = match arguments {
+                    Ok(arguments) => arguments,
+                    Err((code, message)) => {
+                        refusal_tool_events(
+                            state,
+                            candidate.tool,
+                            &candidate.provider_call_id,
+                            message,
+                            upstream_out,
+                        );
+                        return Ok(vec![local_error(fence, code, message, false)]);
+                    }
+                };
                 state.tool_call_count = state.tool_call_count.saturating_add(1);
                 state.last_tool_call_at = Some(Instant::now());
                 state.pending_tool_result = Some(PendingToolResult {
@@ -1960,6 +2317,13 @@ fn translate_server_event(
                 .is_some_and(|items| {
                     items.iter().any(|item| {
                         item.get("type").and_then(Value::as_str) == Some("function_call")
+                            && item.get("call_id").and_then(Value::as_str).is_none_or(
+                                |call_id| {
+                                    !refused
+                                        .iter()
+                                        .any(|(refused_id, _)| refused_id == call_id)
+                                },
+                            )
                     })
                 })
             {
@@ -1996,7 +2360,41 @@ fn translate_server_event(
                     }),
                 ));
             }
-            if let Some(forced) = state.pending_forced_response.take() {
+            if let Some(forced) = forced_matches_terminal
+                .then(|| state.pending_forced_response.take())
+                .flatten()
+            {
+                // A provider-failed host response (greeting, tool
+                // continuation, farewell) is re-requested once with its exact
+                // original request — a failed continuation used to leave the
+                // caller in open-ended silence with the tool result already
+                // in the conversation.
+                if matches!(status, Some("failed" | "incomplete"))
+                    && !response_spoke_audio
+                    && !forced.retried
+                    && state.response_retries < MAX_RESPONSE_RETRIES
+                {
+                    if let Some(request) = forced.request.clone() {
+                        state.response_retries = state.response_retries.saturating_add(1);
+                        state.pending_forced_response = Some(PendingForcedResponse {
+                            purpose: forced.purpose,
+                            tool_call_id: forced.tool_call_id.clone(),
+                            response_id: None,
+                            request: Some(request.clone()),
+                            retried: true,
+                        });
+                        upstream_out.push(UpstreamMessage::Text(request));
+                        messages.push(local_error(
+                            fence,
+                            "response_failed",
+                            &format!(
+                                "The Realtime provider failed the host response; retrying once ({status_detail})."
+                            ),
+                            false,
+                        ));
+                        return Ok(messages);
+                    }
+                }
                 if forced.purpose == ForcedResponsePurpose::FinishCallFarewell {
                     let tool_call_id = forced.tool_call_id.ok_or((
                         "upstream_protocol",
@@ -2041,7 +2439,46 @@ fn translate_server_event(
                 messages.push(local_error(
                     fence,
                     "response_failed",
-                    "The Realtime provider could not complete the response.",
+                    &format!(
+                        "The Realtime provider could not complete the response ({status_detail})."
+                    ),
+                    false,
+                ));
+                // Recover from a failed or silently-truncated conversational
+                // response by requesting another one (session defaults, tools
+                // active). A response that already spoke audio is left alone —
+                // re-requesting it would double-speak.
+                if !response_spoke_audio
+                    && state.pending_forced_response.is_none()
+                    && state.pending_tool_result.is_none()
+                    && state.response_retries < MAX_RESPONSE_RETRIES
+                {
+                    state.response_retries = state.response_retries.saturating_add(1);
+                    upstream_out.push(UpstreamMessage::Text(
+                        json!({ "type": "response.create" }).to_string(),
+                    ));
+                }
+            } else if status == Some("completed")
+                && !response_spoke_audio
+                && state.begun
+                && state.pending_forced_response.is_none()
+                && state.pending_tool_result.is_none()
+                && state.response_retries < MAX_RESPONSE_RETRIES
+            {
+                // A COMPLETED response that produced no audio and authorized
+                // no tool leaves the caller in silence with nothing scheduled
+                // to break it. Re-request speech (bounded by the same budget)
+                // and surface it in the plugin log for diagnosis.
+                state.response_retries = state.response_retries.saturating_add(1);
+                upstream_out.push(UpstreamMessage::Text(
+                    json!({ "type": "response.create" }).to_string(),
+                ));
+                messages.push(local_error(
+                    fence,
+                    "mute_response",
+                    &format!(
+                        "The Realtime response completed without audio; re-requesting speech ({status_detail})."
+                    ),
                     false,
                 ));
             }
@@ -2933,13 +3370,12 @@ mod tests {
                 "arguments": "",
             },
         });
-        assert_eq!(
-            translate_server_event(&crossed_tool, &fence, &mut crossed)
-                .unwrap_err()
-                .0,
-            "upstream_protocol"
-        );
+        assert!(translate_server_event(&crossed_tool, &fence, &mut crossed)
+            .unwrap()
+            .is_empty());
         assert!(crossed.tool_candidate.is_none());
+        assert_eq!(crossed.refused_calls.len(), 1);
+        assert_eq!(crossed.refused_calls[0].0, "crossed-provider-call");
 
         let mut skipped_index = tool_state(true, false);
         translate_server_event(
@@ -2971,13 +3407,17 @@ mod tests {
                 "arguments": "",
             },
         });
-        assert_eq!(
+        assert!(
             translate_server_event(&skipped_index_tool, &fence, &mut skipped_index)
-                .unwrap_err()
-                .0,
-            "upstream_protocol"
+                .unwrap()
+                .is_empty()
         );
         assert!(skipped_index.tool_candidate.is_none());
+        assert_eq!(skipped_index.refused_calls.len(), 1);
+        assert_eq!(
+            skipped_index.refused_calls[0].0,
+            "skipped-index-provider-call"
+        );
 
         let mut mixed_finish = tool_state(false, true);
         translate_server_event(
@@ -3009,15 +3449,19 @@ mod tests {
                 "arguments": "",
             },
         });
-        assert_eq!(
+        assert!(
             translate_server_event(&mixed_finish_tool, &fence, &mut mixed_finish)
-                .unwrap_err()
-                .0,
-            "upstream_protocol"
+                .unwrap()
+                .is_empty()
         );
         assert!(mixed_finish.tool_candidate.is_none());
         assert!(mixed_finish.pending_tool_result.is_none());
         assert_eq!(mixed_finish.tool_call_count, 0);
+        assert_eq!(mixed_finish.refused_calls.len(), 1);
+        assert_eq!(
+            mixed_finish.refused_calls[0].0,
+            "mixed-finish-provider-call"
+        );
 
         let mut second_tool = tool_state(true, false);
         let first_tool = json!({
@@ -3047,12 +3491,9 @@ mod tests {
                 "arguments": "",
             },
         });
-        assert_eq!(
-            translate_server_event(&extra_tool, &fence, &mut second_tool)
-                .unwrap_err()
-                .0,
-            "upstream_protocol"
-        );
+        assert!(translate_server_event(&extra_tool, &fence, &mut second_tool)
+            .unwrap()
+            .is_empty());
         assert_eq!(
             second_tool
                 .tool_candidate
@@ -3060,6 +3501,8 @@ mod tests {
                 .map(|candidate| candidate.provider_call_id.as_str()),
             Some("first-provider-call")
         );
+        assert_eq!(second_tool.refused_calls.len(), 1);
+        assert_eq!(second_tool.refused_calls[0].0, "extra-provider-call");
 
         let mut incomplete = tool_state(true, false);
         translate_server_event(
@@ -3303,15 +3746,19 @@ mod tests {
                 "call_id": "provider-tool-call-1",
             },
         });
-        assert_eq!(
-            translate_server_event(&event, &fence, &mut unknown)
-                .unwrap_err()
-                .0,
-            "tool_not_allowed"
-        );
+        // Unknown tools are refused with a synthetic function output — the
+        // call session survives, the tool is never executed.
+        assert!(translate_server_event(&event, &fence, &mut unknown)
+            .unwrap()
+            .is_empty());
+        assert!(unknown.tool_candidate.is_none());
+        assert_eq!(unknown.refused_calls.len(), 1);
+        assert_eq!(unknown.refused_calls[0].0, "provider-tool-call-1");
 
+        // Argument-shape violations refuse the exact call non-fatally and
+        // never authorize execution.
         let mut extra = tool_state(true, false);
-        let error = complete_tool_response(
+        let messages = complete_tool_response(
             &mut extra,
             &fence,
             "lookup_business_data",
@@ -3319,12 +3766,17 @@ mod tests {
             "completed",
             "completed",
         )
-        .unwrap_err();
-        assert_eq!(error.0, "invalid_tool_arguments");
+        .unwrap();
+        assert_eq!(text_event(&messages[0])["code"], "invalid_tool_arguments");
+        assert_eq!(text_event(&messages[0])["fatal"], false);
         assert!(extra.pending_tool_result.is_none());
+        assert!(extra
+            .used_tool_call_ids
+            .iter()
+            .any(|used| used == "provider-tool-call-1"));
 
         let mut finish_extra = tool_state(false, true);
-        let error = complete_tool_response(
+        let messages = complete_tool_response(
             &mut finish_extra,
             &fence,
             "finish_call",
@@ -3332,13 +3784,14 @@ mod tests {
             "completed",
             "completed",
         )
-        .unwrap_err();
-        assert_eq!(error.0, "invalid_tool_arguments");
+        .unwrap();
+        assert_eq!(text_event(&messages[0])["code"], "invalid_tool_arguments");
+        assert!(finish_extra.pending_tool_result.is_none());
 
         let mut oversized = tool_state(true, false);
         let question = "x".repeat(501);
         let arguments = serde_json::to_string(&json!({ "question": question })).unwrap();
-        let error = complete_tool_response(
+        let messages = complete_tool_response(
             &mut oversized,
             &fence,
             "lookup_business_data",
@@ -3346,8 +3799,505 @@ mod tests {
             "completed",
             "completed",
         )
-        .unwrap_err();
-        assert_eq!(error.0, "invalid_tool_arguments");
+        .unwrap();
+        assert_eq!(text_event(&messages[0])["code"], "invalid_tool_arguments");
+        assert!(oversized.pending_tool_result.is_none());
+    }
+
+    #[test]
+    fn appointment_preamble_in_same_response_is_linked_and_authorized() {
+        // The live disconnect class: "Sure, let me get that booked..." spoken
+        // at index 0 with request_appointment at index 1 of the SAME response
+        // used to be session-fatal (the carve-out only admitted lookups).
+        let fence = call_fence();
+        let mut state = appointment_tool_state();
+        let arguments = serde_json::to_string(&json!({
+            "callerName": "Lance",
+            "service": "Lawn mowing",
+            "date": "2026-07-23",
+            "time": "10:00",
+            "agreementPhrase": "could you book one for Thursday then at 10 a.m.?",
+        }))
+        .unwrap();
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "appt-response-1",
+                "output_index": 0,
+                "item": {
+                    "id": "appt-preamble-item",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "appt-response-1",
+                "output_index": 1,
+                "item": {
+                    "id": "appt-tool-item",
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "name": "request_appointment",
+                    "call_id": "appt-provider-call",
+                    "arguments": "",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(
+            state
+                .tool_candidate
+                .as_ref()
+                .and_then(|candidate| candidate.preamble_item_id.as_deref()),
+            Some("appt-preamble-item")
+        );
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.done",
+                "response_id": "appt-response-1",
+                "output_index": 0,
+                "item": {
+                    "id": "appt-preamble-item",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        translate_server_event(
+            &json!({
+                "type": "response.output_item.done",
+                "response_id": "appt-response-1",
+                "output_index": 1,
+                "item": {
+                    "id": "appt-tool-item",
+                    "type": "function_call",
+                    "status": "completed",
+                    "name": "request_appointment",
+                    "call_id": "appt-provider-call",
+                    "arguments": arguments,
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        let messages = translate_server_event(
+            &json!({
+                "type": "response.done",
+                "response": {
+                    "id": "appt-response-1",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "appt-preamble-item",
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "appt-tool-item",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": "request_appointment",
+                            "call_id": "appt-provider-call",
+                            "arguments": arguments,
+                        }
+                    ],
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        let tool_call = messages
+            .iter()
+            .find(|message| text_event(message)["type"] == "formlogic.realtime.tool_call")
+            .expect("appointment tool call must be authorized");
+        assert_eq!(text_event(tool_call)["toolCallId"], "appt-provider-call");
+        assert_eq!(text_event(tool_call)["name"], "request_appointment");
+        assert!(state.pending_tool_result.is_some());
+    }
+
+    #[test]
+    fn vad_response_during_pending_tool_is_tolerated_not_fatal() {
+        // Caller speech during the plugin's tool round trip auto-creates an
+        // upstream response (create_response:true). That used to be a fatal
+        // "upstream_protocol" error that hung up the call.
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        complete_tool_response(
+            &mut state,
+            &fence,
+            "lookup_business_data",
+            r#"{"question":"availability"}"#,
+            "completed",
+            "completed",
+        )
+        .unwrap();
+        assert!(state.pending_tool_result.is_some());
+
+        translate_server_event(
+            &json!({
+                "type": "response.created",
+                "response": { "id": "vad-interloper-1", "status": "in_progress" },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        let messages = translate_server_event(
+            &json!({
+                "type": "response.output_item.added",
+                "response_id": "vad-interloper-1",
+                "output_index": 0,
+                "item": {
+                    "id": "vad-item-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(
+            text_event(&messages[0])["type"],
+            "formlogic.realtime.output_item_started"
+        );
+        assert!(state.pending_tool_result.is_some());
+    }
+
+    #[test]
+    fn refused_second_tool_call_is_answered_upstream_at_terminal() {
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        let first_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "burst-response",
+            "output_index": 0,
+            "item": {
+                "id": "burst-first-item",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "lookup_business_data",
+                "call_id": "burst-first-call",
+                "arguments": "",
+            },
+        });
+        translate_server_event(&first_tool, &fence, &mut state).unwrap();
+        let second_tool = json!({
+            "type": "response.output_item.added",
+            "response_id": "burst-response",
+            "output_index": 1,
+            "item": {
+                "id": "burst-second-item",
+                "type": "function_call",
+                "status": "in_progress",
+                "name": "lookup_business_data",
+                "call_id": "burst-second-call",
+                "arguments": "",
+            },
+        });
+        translate_server_event(&second_tool, &fence, &mut state).unwrap();
+        for (item_id, call_id) in [
+            ("burst-first-item", "burst-first-call"),
+            ("burst-second-item", "burst-second-call"),
+        ] {
+            translate_server_event(
+                &json!({
+                    "type": "response.output_item.done",
+                    "response_id": "burst-response",
+                    "output_index": if item_id == "burst-first-item" { 0 } else { 1 },
+                    "item": {
+                        "id": item_id,
+                        "type": "function_call",
+                        "status": "completed",
+                        "name": "lookup_business_data",
+                        "call_id": call_id,
+                        "arguments": "{\"question\":\"availability\"}",
+                    },
+                }),
+                &fence,
+                &mut state,
+            )
+            .unwrap();
+        }
+        let mut upstream = Vec::new();
+        let messages = translate_server_event_full(
+            &json!({
+                "type": "response.done",
+                "response": {
+                    "id": "burst-response",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "burst-first-item",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": "lookup_business_data",
+                            "call_id": "burst-first-call",
+                            "arguments": "{\"question\":\"availability\"}",
+                        },
+                        {
+                            "id": "burst-second-item",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": "lookup_business_data",
+                            "call_id": "burst-second-call",
+                            "arguments": "{\"question\":\"availability\"}",
+                        }
+                    ],
+                },
+            }),
+            &fence,
+            &mut state,
+            &mut upstream,
+        )
+        .unwrap();
+        // The tracked first call is authorized and forwarded to the plugin;
+        // the refused second call is answered upstream with a synthetic
+        // failed function output so the conversation never dangles.
+        assert!(messages
+            .iter()
+            .any(|message| text_event(message)["type"] == "formlogic.realtime.tool_call"
+                && text_event(message)["toolCallId"] == "burst-first-call"));
+        assert_eq!(upstream.len(), 1);
+        let UpstreamMessage::Text(refusal) = &upstream[0] else {
+            panic!("refusal output must be text JSON");
+        };
+        let refusal: Value = serde_json::from_str(refusal).unwrap();
+        assert_eq!(refusal["type"], "conversation.item.create");
+        assert_eq!(refusal["item"]["type"], "function_call_output");
+        assert_eq!(refusal["item"]["call_id"], "burst-second-call");
+        let refusal_output: Value =
+            serde_json::from_str(refusal["item"]["output"].as_str().unwrap()).unwrap();
+        assert_eq!(refusal_output["ok"], false);
+        assert!(state.refused_calls.is_empty());
+        assert!(state.pending_tool_result.is_some());
+    }
+
+    #[test]
+    fn rejected_forced_continuation_unwedges_on_active_response_error() {
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        state.pending_forced_response = Some(PendingForcedResponse {
+            purpose: ForcedResponsePurpose::LookupContinuation,
+            tool_call_id: Some("provider-tool-call-1".into()),
+            response_id: None,
+            request: None,
+            retried: false,
+        });
+        let messages = translate_server_event(
+            &json!({
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "conversation_already_has_active_response",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(text_event(&messages[0])["type"], "formlogic.realtime.error");
+        assert_eq!(text_event(&messages[0])["fatal"], false);
+        assert!(state.pending_forced_response.is_none());
+
+        // A bound fence (its response already exists) is never cleared by a
+        // stray error event.
+        state.pending_forced_response = Some(PendingForcedResponse {
+            purpose: ForcedResponsePurpose::LookupContinuation,
+            tool_call_id: Some("provider-tool-call-1".into()),
+            response_id: Some("bound-response".into()),
+            request: None,
+            retried: false,
+        });
+        translate_server_event(
+            &json!({
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "conversation_already_has_active_response",
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        assert!(state.pending_forced_response.is_some());
+    }
+
+    #[test]
+    fn failed_forced_continuation_is_retried_once_with_its_exact_request() {
+        // The live dead-air incident: the lookup ran instantly but the
+        // continuation response FAILED provider-side and nothing retried.
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        complete_tool_response(
+            &mut state,
+            &fence,
+            "lookup_business_data",
+            r#"{"question":"availability"}"#,
+            "completed",
+            "completed",
+        )
+        .unwrap();
+        let events = tool_result_events(
+            &mut state,
+            "provider-tool-call-1",
+            "lookup_business_data",
+            true,
+            json!({ "digest": "Open at 10 AM" }),
+            true,
+        )
+        .unwrap();
+        let UpstreamMessage::Text(original_request) = &events[1] else {
+            panic!("continuation request expected");
+        };
+        let original_request = original_request.clone();
+        translate_server_event(
+            &json!({
+                "type": "response.created",
+                "response": {
+                    "id": "cont-response-1",
+                    "status": "in_progress",
+                    "metadata": {
+                        "formlogic_purpose": "lookup_business_data_continuation",
+                        "formlogic_tool_call_id": "provider-tool-call-1",
+                    },
+                },
+            }),
+            &fence,
+            &mut state,
+        )
+        .unwrap();
+        let mut upstream = Vec::new();
+        let messages = translate_server_event_full(
+            &json!({
+                "type": "response.done",
+                "response": {
+                    "id": "cont-response-1",
+                    "status": "failed",
+                    "status_details": { "type": "failed", "error": { "code": "server_error" } },
+                    "output": [],
+                },
+            }),
+            &fence,
+            &mut state,
+            &mut upstream,
+        )
+        .unwrap();
+        assert_eq!(upstream.len(), 1);
+        assert_eq!(upstream[0], UpstreamMessage::Text(original_request));
+        assert!(state
+            .pending_forced_response
+            .as_ref()
+            .is_some_and(|forced| forced.retried && forced.response_id.is_none()));
+        assert_eq!(state.response_retries, 1);
+        let notice = text_event(&messages[0]);
+        assert_eq!(notice["code"], "response_failed");
+        assert_eq!(notice["fatal"], false);
+        assert!(notice["message"]
+            .as_str()
+            .unwrap()
+            .contains("server_error"));
+    }
+
+    #[test]
+    fn failed_plain_responses_are_re_requested_within_a_session_budget() {
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        for round in 0..4u8 {
+            let mut upstream = Vec::new();
+            translate_server_event_full(
+                &json!({
+                    "type": "response.done",
+                    "response": {
+                        "id": format!("failed-response-{round}"),
+                        "status": "failed",
+                        "output": [],
+                    },
+                }),
+                &fence,
+                &mut state,
+                &mut upstream,
+            )
+            .unwrap();
+            if round < 3 {
+                assert_eq!(upstream.len(), 1, "retry expected on round {round}");
+                let UpstreamMessage::Text(create) = &upstream[0] else {
+                    panic!("retry must be a response.create");
+                };
+                let create: Value = serde_json::from_str(create).unwrap();
+                assert_eq!(create["type"], "response.create");
+            } else {
+                assert!(upstream.is_empty(), "retry budget must cap at 3");
+            }
+        }
+        assert_eq!(state.response_retries, 3);
+    }
+
+    #[test]
+    fn completed_mute_responses_are_re_prompted_within_the_budget() {
+        // A response that COMPLETES with zero audio and no tool leaves the
+        // caller in unbounded silence; the bridge re-requests speech.
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        let mut upstream = Vec::new();
+        let messages = translate_server_event_full(
+            &json!({
+                "type": "response.done",
+                "response": { "id": "mute-response-1", "status": "completed", "output": [] },
+            }),
+            &fence,
+            &mut state,
+            &mut upstream,
+        )
+        .unwrap();
+        assert_eq!(upstream.len(), 1);
+        let UpstreamMessage::Text(create) = &upstream[0] else {
+            panic!("mute recovery must be a response.create");
+        };
+        let create: Value = serde_json::from_str(create).unwrap();
+        assert_eq!(create["type"], "response.create");
+        assert_eq!(text_event(&messages[0])["code"], "mute_response");
+        assert_eq!(text_event(&messages[0])["fatal"], false);
+        assert_eq!(state.response_retries, 1);
+
+        // A completed response that SPOKE is never re-prompted.
+        add_output(&mut state, &fence);
+        if let Some(output) = state.output.as_mut() {
+            output.response_id = "spoken-response-1".into();
+            output.audio_bytes = 4_800;
+            output.done = true;
+        }
+        let mut upstream = Vec::new();
+        translate_server_event_full(
+            &json!({
+                "type": "response.done",
+                "response": { "id": "spoken-response-1", "status": "completed", "output": [] },
+            }),
+            &fence,
+            &mut state,
+            &mut upstream,
+        )
+        .unwrap();
+        assert!(upstream.is_empty());
+        assert_eq!(state.response_retries, 1);
     }
 
     #[test]
@@ -3585,12 +4535,14 @@ mod tests {
                 "call_id": "forbidden-greeting-call",
             },
         });
-        assert_eq!(
-            translate_server_event(&greeting_tool, &fence, &mut greeting)
-                .unwrap_err()
-                .0,
-            "tool_not_allowed"
-        );
+        // A tool call inside a host-forced response never executes — it is
+        // refused with a synthetic function output; the call stays alive.
+        assert!(translate_server_event(&greeting_tool, &fence, &mut greeting)
+            .unwrap()
+            .is_empty());
+        assert!(greeting.tool_candidate.is_none());
+        assert_eq!(greeting.refused_calls.len(), 1);
+        assert_eq!(greeting.refused_calls[0].0, "forbidden-greeting-call");
 
         let mut lookup = tool_state(true, false);
         complete_tool_response(
@@ -3648,12 +4600,12 @@ mod tests {
                 "call_id": "forbidden-continuation-call",
             },
         });
-        assert_eq!(
-            translate_server_event(&continuation_tool, &fence, &mut lookup)
-                .unwrap_err()
-                .0,
-            "tool_not_allowed"
-        );
+        assert!(translate_server_event(&continuation_tool, &fence, &mut lookup)
+            .unwrap()
+            .is_empty());
+        assert!(lookup.tool_candidate.is_none());
+        assert_eq!(lookup.refused_calls.len(), 1);
+        assert_eq!(lookup.refused_calls[0].0, "forbidden-continuation-call");
     }
 
     #[test]
@@ -3816,6 +4768,8 @@ mod tests {
                 purpose: ForcedResponsePurpose::FinishCallFarewell,
                 tool_call_id: Some("provider-tool-call-1".into()),
                 response_id: Some("farewell-response-1".into()),
+                request: None,
+                retried: false,
             });
             state.output = Some(OutputItemState {
                 item_id: "farewell-item-1".into(),
@@ -3862,6 +4816,8 @@ mod tests {
             purpose: ForcedResponsePurpose::FinishCallFarewell,
             tool_call_id: Some("provider-tool-call-1".into()),
             response_id: Some("farewell-response-1".into()),
+            request: None,
+            retried: false,
         });
 
         let added = json!({
@@ -3882,13 +4838,14 @@ mod tests {
             "upstream_protocol"
         );
 
+        // An unrelated terminal response never resolves the bound farewell
+        // fence and never produces a hangup; the fence stays armed for its
+        // own exact response.
         let terminal = response_done("unrelated-response", "cancelled");
-        assert_eq!(
-            translate_server_event(&terminal, &fence, &mut state)
-                .unwrap_err()
-                .0,
-            "upstream_protocol"
-        );
+        let messages = translate_server_event(&terminal, &fence, &mut state).unwrap();
+        assert!(messages.iter().all(|message| {
+            text_event(message)["type"] != "formlogic.realtime.hangup_requested"
+        }));
         assert!(state.pending_forced_response.is_some());
     }
 
