@@ -992,12 +992,12 @@ fn realtime_tools(
                     },
                     "date": {
                         "type": "string",
-                        "description": "The requested local date in YYYY-MM-DD form.",
+                        "description": "The requested local date in YYYY-MM-DD form. Resolve relative phrases like 'this Thursday', 'tomorrow', or 'next Tuesday' using the Today date given in your instructions.",
                         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
                     },
                     "time": {
                         "type": "string",
-                        "description": "The requested local time in 24-hour HH:MM form.",
+                        "description": "The requested local time in 24-hour HH:MM form. Map spoken times to the exact slot: 'around 10am' is 10:00, 'midday' or 'noon' is 12:00, 'half past two' is 14:30.",
                         "pattern": "^[0-9]{2}:[0-9]{2}$"
                     },
                     "agreementPhrase": {
@@ -1451,7 +1451,7 @@ fn tool_result_events(
         }
         (AllowedTool::RequestAppointment, false) => {
             response["instructions"] = Value::String(
-                "Say briefly that you could not record the appointment request just now and that staff will need to follow up. Do not claim it was booked or confirmed."
+                "The appointment request was NOT recorded. Ask the caller ONE short natural confirmation question now (for example: 'So that's Friday at 12 noon — shall I put that request in?'). NEVER ask the caller to repeat exact wording, spell anything, or read a script. When they answer, call request_appointment again quoting their answer. Only if the function error offers no way to retry, say briefly that staff will follow up. Never claim it was booked or confirmed."
                     .into(),
             );
             ForcedResponsePurpose::AppointmentContinuation
