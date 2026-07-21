@@ -981,6 +981,18 @@ export const desktopClient = {
     stop(id: string): Promise<DesktopClientResult<unknown>> {
       return desktopFetch<unknown>(`/api/plugins/${encodeURIComponent(id)}/stop`, { method: 'POST' });
     },
+    /** POST /api/plugins/:id/restart — stop + start one installed plugin in place. */
+    restart(id: string): Promise<DesktopClientResult<unknown>> {
+      return desktopFetch<unknown>(`/api/plugins/${encodeURIComponent(id)}/restart`, { method: 'POST' });
+    },
+    /** POST /api/plugins/:id/enable — clear the operator-disabled flag (does not start it). */
+    enable(id: string): Promise<DesktopClientResult<unknown>> {
+      return desktopFetch<unknown>(`/api/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' });
+    },
+    /** POST /api/plugins/:id/disable — operator-disable a plugin (stops it and blocks autostart). */
+    disable(id: string): Promise<DesktopClientResult<unknown>> {
+      return desktopFetch<unknown>(`/api/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' });
+    },
     logs(id: string, tail = 100): Promise<DesktopClientResult<string[]>> {
       return desktopFetch<unknown>(`/api/plugins/${encodeURIComponent(id)}/logs?tail=${tail}`).then((r) =>
         mapList<string>(r, 'logs')
@@ -992,6 +1004,29 @@ export const desktopClient = {
     /** GET /api/services — local AI/tool services managed by Desktop ({services:[...], dataDir}). */
     list(): Promise<DesktopClientResult<DesktopServiceSnapshot[]>> {
       return desktopFetch<unknown>('/api/services').then((r) => mapList<DesktopServiceSnapshot>(r, 'services'));
+    },
+    /** POST /api/services/:id/start — spawn the service process. */
+    start(id: string): Promise<DesktopClientResult<unknown>> {
+      return desktopFetch<unknown>(`/api/services/${encodeURIComponent(id)}/start`, { method: 'POST' });
+    },
+    /** POST /api/services/:id/stop — terminate the service process. */
+    stop(id: string): Promise<DesktopClientResult<unknown>> {
+      return desktopFetch<unknown>(`/api/services/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+    },
+    /**
+     * Restart = stop then start. The loopback API has no dedicated
+     * /api/services/:id/restart route (desktop http.rs exposes start/stop/repair),
+     * so the client composes it — same operator-facing shape the ops relay
+     * reports for 'desktop.services.restart'.
+     */
+    async restart(id: string): Promise<DesktopClientResult<unknown>> {
+      const stopped = await desktopFetch<unknown>(`/api/services/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+      if (!stopped.ok) return stopped;
+      return desktopFetch<unknown>(`/api/services/${encodeURIComponent(id)}/start`, { method: 'POST' });
+    },
+    /** POST /api/services/:id/repair — reset the crash breaker, kill the tree, fresh start. */
+    repair(id: string): Promise<DesktopClientResult<unknown>> {
+      return desktopFetch<unknown>(`/api/services/${encodeURIComponent(id)}/repair`, { method: 'POST' });
     },
   },
 

@@ -136,6 +136,39 @@ connector client checks — a per-connector wildcard `connector.<connectorId>.*`
 should also call `DesktopCommandService::expireStale()` (no argument = global) to reap commands from
 owners whose desktop never polls.
 
+### Chat tools (site chat, Phase 6)
+
+The floating site chat's tool surface (`docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md` §5.4). The
+handlers are the MCP tool implementations extracted to `ChatToolsService`; the chat surface exposes
+the v1 subset only: `list_apps, list_forms, get_form, create_app, create_app_form, create_form,
+update_form, add_form_to_app, create_flow, list_responses` (`update_form` is non-destructive —
+`status:'archived'` is refused).
+
+| Method | Path | Auth |
+|---|---|---|
+| `POST` | `/api/ai/chat-tool-grant` — `{instanceId?}` → `{data:{grantToken, expiresAt}}` | session (demo → `403 demo_readonly`; rate-limited `chat_tools`, 60/min) |
+| `GET` | `/api/ai/chat-tools/catalog` → **top-level** `{tools:[{name, description, inputSchema}]}` | session OR flk_ key with `ai:relay` (`connector:relay` grandfathered) |
+| `POST` | `/api/ai/chat-tools/execute` — `{grantToken, tool, input}` → `{data:<result>}` | flk_ key ONLY, same either-scope rule |
+
+**Grant lifecycle:** the browser mints ONE grant per chat turn, bound to the minting user + ONE
+desktop instance + the `ai:chat-tools` scope, TTL **10 minutes**; only the sha256 hash is stored
+(`chat_tool_grants`), and expired rows are reaped opportunistically during verification (no cron).
+When `instanceId` is omitted the target desktop resolves exactly like the AI relay enqueue
+(connector-assignment pin → implicit single fresh desktop → `409 ambiguous_desktop`; none →
+`503 desktop_offline`). The grant travels INSIDE the sealed tunnel envelope; the desktop presents
+it to `execute`, which verifies the grant (`401 grant_invalid` / `401 grant_expired`), checks the
+bound instance belongs to the presenting key's owner (`403 grant_instance_mismatch`), and runs the
+tool **as the granting user** — every execution is audit-logged (`chat.tool_execute` + the
+per-write `chat.<tool>` rows). Other typed errors: `400 unknown_tool` (outside the subset),
+`403 tool_denied` (ownership/policy denials incl. the archive refusal), `400/500 tool_failed`.
+
+**Hosted loop:** `POST /api/ai/chat` with `tools:true` (session users only; flk_ callers get
+`400 tools_unsupported`, demo gets `403 demo_readonly`) runs the same subset server-side as the
+session user — a bounded loop of at most 6 model rounds, one `ai_messages` allowance unit per user
+message regardless of rounds. Streaming interleaves data-only SSE events
+`{"type":"tool_call",…,"status":"running"}` / `{"type":"tool_result",…,"status":"done"|"failed"}`
+between content deltas.
+
 ---
 
 ## Submitting a response (with full scripting)

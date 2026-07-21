@@ -213,6 +213,14 @@ class DesktopCommandService
         return $age === null || $age === false ? null : (int) $age;
     }
 
+    /** True when the owner has at least one linked FormLogic Desktop (any freshness). */
+    public function hasLinkedDesktop(string $ownerUserId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM desktop_connections WHERE owner_user_id = :o LIMIT 1");
+        $stmt->execute(['o' => $ownerUserId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     /**
      * Pending, non-expired commands for the owner's runtime, oldest first. Sweeps stale pending
      * rows to 'expired' first. $sinceId, when given, returns only commands created strictly after

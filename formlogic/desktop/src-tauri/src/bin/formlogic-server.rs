@@ -415,6 +415,37 @@ async fn main() {
             formlogic_desktop_lib::ai::providers::ProviderRegistry::load(&data_dir),
         ));
 
+    // Phase-1 Site-AI E2E tunnel (headless parity with the GUI): one shared
+    // Codex agent + the provider registry back the lane; the E2E identity
+    // loads/mints beside the plugin data.
+    let codex_agent = {
+        let reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        formlogic_desktop_lib::ai::codex::CodexAgent::new(reg.data_dir().to_path_buf())
+    };
+    match formlogic_desktop_lib::ai::relay_poller::AiTunnel::new(
+        ai_providers.clone(),
+        codex_agent.clone(),
+        plugin_host.plugin_data_root().to_path_buf(),
+        // service:<id> chat surface (Settings dropdown) — the SAME services
+        // the /api/ai/sources union lists as chat-capable (headless parity).
+        Some(std::sync::Arc::new(
+            formlogic_desktop_lib::ai::relay_poller::RegistryServices(registry.clone()),
+        )),
+    ) {
+        Ok(tunnel) => flow_runtime.set_ai_tunnel(tunnel),
+        Err(e) => eprintln!("[ai-tunnel] E2E tunnel unavailable: {e}"),
+    }
+
+    // Phase-5 flow-run relay lane (plan §5.7, headless parity with the GUI):
+    // the SAME desktop E2E identity, its own independent single-flight lane.
+    match formlogic_desktop_lib::ai::flow_relay_poller::FlowRelay::new(
+        flow_runtime.flow_relay_executor(),
+        plugin_host.plugin_data_root().to_path_buf(),
+    ) {
+        Ok(relay) => flow_runtime.set_flow_relay(relay),
+        Err(e) => eprintln!("[flow-relay] E2E flow lane unavailable: {e}"),
+    }
+
     // gui_mode = false: headless server is token-strict (no webview origin).
     if let Err(e) = http::serve(
         port,
@@ -429,6 +460,7 @@ async fn main() {
         pairing,
         Some(flow_runtime),
         ai_providers,
+        Some(codex_agent),
     )
     .await
     {

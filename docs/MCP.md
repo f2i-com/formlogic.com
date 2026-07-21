@@ -277,6 +277,14 @@ offline). The desktop must be **running and linked** (see [device-link](#formlog
 Everything goes through the same services + ownership checks as the rest of the API, so an MCP token can
 only ever touch the owner's resources (and, when app‑scoped, only that app).
 
+**Implementation note (Phase 6, 2026‑07):** the tool handlers above (everything except the transport
+tools `get_started` / `desktop_status` / `connector_command`) now live in the shared
+`ChatToolsService` (`backend/src/Services/ChatToolsService.php`), which the floating **site chat**
+also uses for its v1 tool subset (`docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md` §5.4). `McpController`
+delegates to it, threading the token session (scopes, app/creator confinement, `mcp.*` audits)
+through an explicit caller context — **MCP behavior, scopes, wire shapes and audit rows are
+unchanged**; the extraction only gives the two surfaces one implementation that cannot drift.
+
 ### Widget dashboards via MCP (the primary home screen)
 
 A dashboard is **data, not code**: a grid of widgets the host renders natively (theming, drill‑down and

@@ -39,6 +39,8 @@ class FlowService
     public const RUN_ACTIVE_STATUSES = ['queued', 'running'];
     public const RUN_TERMINAL_STATUSES = ['done', 'error', 'timeout', 'cancelled'];
     public const RUN_ERROR_CODES = ['node_failed', 'timeout', 'cancelled', 'capability_denied', 'invalid_flow', 'runner_unavailable'];
+    /** Per-flow execution location (plan §5.7): auto = today's behavior, desktop = E2E relay lane, cloud = CloudFlowRunner. */
+    public const EXECUTION_LOCATIONS = ['auto', 'desktop', 'cloud'];
     /** reclaimStuckRuns() default staleness threshold — see that method's docblock for the reasoning. */
     public const STUCK_RUN_DEFAULT_MAX_AGE_SECONDS = 600;
 
@@ -69,6 +71,15 @@ class FlowService
             throw new \InvalidArgumentException('Flow slug must be 2–128 chars: lowercase letters, digits and hyphens, starting with a letter');
         }
         return $slug;
+    }
+
+    /** Validate a flow execution location ('auto'|'desktop'|'cloud'). @throws \InvalidArgumentException */
+    public static function sanitizeExecutionLocation(mixed $location): string
+    {
+        if (!is_string($location) || !in_array($location, self::EXECUTION_LOCATIONS, true)) {
+            throw new \InvalidArgumentException('executionLocation must be one of: ' . implode(', ', self::EXECUTION_LOCATIONS));
+        }
+        return $location;
     }
 
     /**
@@ -333,6 +344,9 @@ class FlowService
         $slug = self::sanitizeSlug($data['slug'] ?? $this->slugify($name));
         $flowJson = self::sanitizeFlowJson($data['flowJson'] ?? ['nodes' => [], 'edges' => []]);
         [$inputSchema, $outputSchema, $nodeCapabilities] = $this->sanitizeFlowMeta($data);
+        $executionLocation = array_key_exists('executionLocation', $data)
+            ? self::sanitizeExecutionLocation($data['executionLocation'])
+            : 'auto';
 
         $countStmt = $this->mysql->prepare("SELECT COUNT(*) FROM flow_definitions WHERE app_id = :a");
         $countStmt->execute(['a' => $appId]);
@@ -345,9 +359,9 @@ class FlowService
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_definitions
-                    (id, owner_user_id, app_id, name, slug, description, engine, flow_json, input_schema, output_schema, node_capabilities, version, enabled)
+                    (id, owner_user_id, app_id, name, slug, description, engine, flow_json, input_schema, output_schema, node_capabilities, version, enabled, execution_location)
                 VALUES
-                    (:id, :owner, :app, :name, :slug, :descr, 'f2i', :flow_json, :input_schema, :output_schema, :node_caps, 1, :enabled)
+                    (:id, :owner, :app, :name, :slug, :descr, 'f2i', :flow_json, :input_schema, :output_schema, :node_caps, 1, :enabled, :exec_loc)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -361,6 +375,7 @@ class FlowService
                 'output_schema' => $outputSchema !== null ? json_encode($outputSchema) : null,
                 'node_caps' => $nodeCapabilities !== null ? json_encode($nodeCapabilities) : null,
                 'enabled' => (array_key_exists('enabled', $data) ? (bool) $data['enabled'] : true) ? 1 : 0,
+                'exec_loc' => $executionLocation,
             ]);
         } catch (\PDOException $e) {
             if ($this->isDuplicateKey($e)) {
@@ -422,6 +437,10 @@ class FlowService
         if (array_key_exists('enabled', $data)) {
             $sets[] = 'enabled = :enabled';
             $params['enabled'] = ((bool) $data['enabled']) ? 1 : 0;
+        }
+        if (array_key_exists('executionLocation', $data)) {
+            $sets[] = 'execution_location = :exec_loc';
+            $params['exec_loc'] = self::sanitizeExecutionLocation($data['executionLocation']);
         }
 
         if (empty($sets)) {
@@ -624,6 +643,7 @@ class FlowService
                 'outputSchema' => $flow['outputSchema'],
                 'nodeCapabilities' => $flow['nodeCapabilities'],
                 'version' => $flow['version'],
+                'executionLocation' => $flow['executionLocation'],
             ];
         }
 
@@ -1038,6 +1058,19 @@ class FlowService
         return $row ? $this->formatFlow($row) : null;
     }
 
+    /**
+     * One flow by id, gated on the caller OWNING it (workspace + app flows alike) — the
+     * ownership check for owner-scoped run surfaces (POST /api/flows/{id}/run and the
+     * desktop flow relay, plan Phase 5). Returns null when the flow is missing or foreign.
+     */
+    public function getOwnedFlow(string $ownerUserId, string $flowId): ?array
+    {
+        $stmt = $this->mysql->prepare("SELECT * FROM flow_definitions WHERE id = :id AND owner_user_id = :o LIMIT 1");
+        $stmt->execute(['id' => $flowId, 'o' => $ownerUserId]);
+        $row = $stmt->fetch();
+        return $row ? $this->formatFlow($row) : null;
+    }
+
     /** @throws \InvalidArgumentException on validation failure / duplicate slug */
     public function createWorkspaceFlow(string $ownerUserId, array $data): array
     {
@@ -1048,6 +1081,9 @@ class FlowService
         $slug = self::sanitizeSlug($data['slug'] ?? $this->slugify($name));
         $flowJson = self::sanitizeFlowJson($data['flowJson'] ?? ['nodes' => [], 'edges' => []]);
         [$inputSchema, $outputSchema, $nodeCapabilities] = $this->sanitizeFlowMeta($data);
+        $executionLocation = array_key_exists('executionLocation', $data)
+            ? self::sanitizeExecutionLocation($data['executionLocation'])
+            : 'auto';
 
         $countStmt = $this->mysql->prepare("SELECT COUNT(*) FROM flow_definitions WHERE owner_user_id = :o AND app_id IS NULL");
         $countStmt->execute(['o' => $ownerUserId]);
@@ -1061,9 +1097,9 @@ class FlowService
         $id = (isset($data['id']) && is_string($data['id']) && $data['id'] !== '') ? $data['id'] : $this->uuidV4();
         $stmt = $this->mysql->prepare("
             INSERT INTO flow_definitions
-                (id, owner_user_id, app_id, name, slug, description, engine, flow_json, input_schema, output_schema, node_capabilities, version, enabled)
+                (id, owner_user_id, app_id, name, slug, description, engine, flow_json, input_schema, output_schema, node_capabilities, version, enabled, execution_location)
             VALUES
-                (:id, :owner, NULL, :name, :slug, :descr, 'f2i', :flow_json, :input_schema, :output_schema, :node_caps, 1, :enabled)
+                (:id, :owner, NULL, :name, :slug, :descr, 'f2i', :flow_json, :input_schema, :output_schema, :node_caps, 1, :enabled, :exec_loc)
         ");
         $stmt->execute([
             'id' => $id,
@@ -1076,6 +1112,7 @@ class FlowService
             'output_schema' => $outputSchema !== null ? json_encode($outputSchema) : null,
             'node_caps' => $nodeCapabilities !== null ? json_encode($nodeCapabilities) : null,
             'enabled' => (array_key_exists('enabled', $data) ? (bool) $data['enabled'] : true) ? 1 : 0,
+            'exec_loc' => $executionLocation,
         ]);
 
         return $this->getWorkspaceFlow($ownerUserId, $id) ?? throw new \RuntimeException('Flow creation failed');
@@ -1135,6 +1172,10 @@ class FlowService
         if (array_key_exists('enabled', $data)) {
             $sets[] = 'enabled = :enabled';
             $params['enabled'] = ((bool) $data['enabled']) ? 1 : 0;
+        }
+        if (array_key_exists('executionLocation', $data)) {
+            $sets[] = 'execution_location = :exec_loc';
+            $params['exec_loc'] = self::sanitizeExecutionLocation($data['executionLocation']);
         }
 
         if (empty($sets)) {
@@ -2295,6 +2336,9 @@ class FlowService
             'nodeCapabilities' => $this->decodeJson($row['node_capabilities']),
             'version' => (int) $row['version'],
             'enabled' => (bool) $row['enabled'],
+            'executionLocation' => is_string($row['execution_location'] ?? null) && $row['execution_location'] !== ''
+                ? $row['execution_location']
+                : 'auto',
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],
         ];
@@ -2339,6 +2383,7 @@ class FlowService
             'idempotencyKey' => $row['idempotency_key'],
             'status' => $row['status'],
             'runtime' => $row['runtime'] ?? null,
+            'executionLocation' => $row['execution_location'] ?? null,
             'claimedBy' => $row['claimed_by'] ?? null,
             'inputSnapshot' => $this->decodeJson($row['input_snapshot_json']),
             'result' => $this->decodeJson($row['result_json']),

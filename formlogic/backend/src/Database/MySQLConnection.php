@@ -586,6 +586,7 @@ class MySQLConnection
                 node_capabilities JSON NULL,
                 version INT NOT NULL DEFAULT 1,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
+                execution_location VARCHAR(8) NOT NULL DEFAULT 'auto',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -644,6 +645,7 @@ class MySQLConnection
                 idempotency_key VARCHAR(255) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'running',
                 runtime VARCHAR(20) NULL,
+                execution_location VARCHAR(8) NULL,
                 claimed_by VARCHAR(120) NULL,
                 input_snapshot_json JSON NULL,
                 result_json JSON NULL,
@@ -699,6 +701,7 @@ class MySQLConnection
                 last_seen_at TIMESTAMP NULL,
                 capabilities_json JSON NULL,
                 trusted_origins_json JSON NULL,
+                e2e_public_key VARCHAR(88) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -734,6 +737,97 @@ class MySQLConnection
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
                 UNIQUE KEY uniq_desktop_command_idem (idempotency_key),
                 INDEX idx_desktop_command_poll (owner_user_id, status, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+
+        // E2E AI relay lane (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 1): sealed AI
+        // requests a web member enqueues for their linked desktop, served single-flight FIFO
+        // per target instance. The envelope/frames are opaque NaCl-box bodies the backend
+        // cannot read; DesktopAiRelayService purges them at completion and on expiry, so
+        // only routing metadata (owner, requester, target, provider, kind, timing) persists.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_ai_requests (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                requesting_user_id VARCHAR(36) NOT NULL,
+                target_instance_id VARCHAR(128) NULL,
+                provider_id VARCHAR(128) NOT NULL,
+                kind VARCHAR(32) NOT NULL,
+                eph_pub VARCHAR(64) NOT NULL,
+                envelope MEDIUMBLOB NULL,
+                status ENUM('pending','claimed','streaming','done','failed','expired') NOT NULL DEFAULT 'pending',
+                idempotency_key VARCHAR(255) NOT NULL,
+                claimed_by VARCHAR(128) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                claimed_at TIMESTAMP NULL,
+                finished_at TIMESTAMP NULL,
+                expires_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (requesting_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_desktop_ai_idem (idempotency_key),
+                INDEX idx_desktop_ai_poll (owner_user_id, status, created_at),
+                INDEX idx_desktop_ai_target (owner_user_id, target_instance_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Sealed stream frames for the AI lane: AUTO_INCREMENT seq is the delivery cursor
+        // (SSE/out = desktop reply deltas, in = browser confirm-mode input), purged with
+        // the request. direction is out|in from the BROWSER's perspective (out = to browser).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_ai_frames (
+                seq BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                request_id VARCHAR(36) NOT NULL,
+                direction ENUM('out','in') NOT NULL,
+                envelope MEDIUMBLOB NOT NULL,
+                created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                FOREIGN KEY (request_id) REFERENCES desktop_ai_requests(id) ON DELETE CASCADE,
+                INDEX idx_desktop_ai_frames_request (request_id, direction, seq)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // E2E flow-run relay lane (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 5 section 5.7):
+        // sealed flow runs a web member enqueues for their linked desktop ('desktop' execution
+        // location), served single-flight FIFO per target instance. flow_id is routing metadata
+        // (the desktop must know WHICH flow to run); inputs/context ride the sealed envelope.
+        // The result envelope (sealed, <= 1 MiB) survives completion until the requester reads
+        // it once (read-once, then purged — DesktopFlowRelayService).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_flow_runs (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                requesting_user_id VARCHAR(36) NOT NULL,
+                target_instance_id VARCHAR(128) NULL,
+                flow_id VARCHAR(36) NOT NULL,
+                eph_pub VARCHAR(64) NOT NULL,
+                envelope MEDIUMBLOB NULL,
+                result_envelope MEDIUMBLOB NULL,
+                status ENUM('pending','claimed','streaming','done','failed','expired') NOT NULL DEFAULT 'pending',
+                idempotency_key VARCHAR(255) NOT NULL,
+                claimed_by VARCHAR(128) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                claimed_at TIMESTAMP NULL,
+                finished_at TIMESTAMP NULL,
+                expires_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (requesting_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (flow_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_desktop_flow_run_idem (idempotency_key),
+                INDEX idx_desktop_flow_runs_poll (owner_user_id, status, created_at),
+                INDEX idx_desktop_flow_runs_target (owner_user_id, target_instance_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Sealed progress frames for the flow lane (desktop → browser only; there is no
+        // inbound channel — flow runs take no mid-run input). Purged at completion/expiry.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_flow_run_frames (
+                seq BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                request_id VARCHAR(36) NOT NULL,
+                envelope MEDIUMBLOB NOT NULL,
+                created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                FOREIGN KEY (request_id) REFERENCES desktop_flow_runs(id) ON DELETE CASCADE,
+                INDEX idx_desktop_flow_run_frames_request (request_id, seq)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -779,6 +873,95 @@ class MySQLConnection
                 UNIQUE KEY uniq_connector_assignment (owner_user_id, connector_id),
                 INDEX idx_connector_assignment_owner (owner_user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Site AI + cloud-credit allowances (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 2/5):
+        // per-plan monthly caps keyed by metric ('ai_messages', 'cloud_flow_runs'). monthly_value
+        // -1 = unlimited; enabled=0 = the metric is off for that plan. Admin-editable via
+        // PUT /api/admin/allowances; enforcement rides the planEnforced config gate (PlanService).
+        // Plan slugs match users.plan ('personal' = the standard paid plan, 'enterprise').
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS plan_allowances (
+                plan VARCHAR(20) NOT NULL,
+                metric VARCHAR(32) NOT NULL,
+                monthly_value INT NOT NULL DEFAULT 0,
+                enabled TINYINT(1) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (plan, metric)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Monthly usage metering: one row per (user, metric, UTC YYYY-MM period) -- a new month
+        // simply starts a fresh row, so rollover needs no reset job. count = units consumed
+        // (messages / flow runs); tokens_in/out track hosted-LLM token usage for visibility.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS usage_meter (
+                user_id VARCHAR(36) NOT NULL,
+                metric VARCHAR(32) NOT NULL,
+                period CHAR(7) NOT NULL,
+                `count` INT NOT NULL DEFAULT 0,
+                tokens_in INT NOT NULL DEFAULT 0,
+                tokens_out INT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, metric, period),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Per-user AI preferences (plan section 5.5/5.6): which AI source answers chat + flow
+        // 'Default' LLM nodes -- hosted 'site', the user's tunneled 'desktop' provider/model,
+        // or a browser-local 'custom' provider. chat_tool_mode gates E2E tool execution.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS user_ai_settings (
+                user_id VARCHAR(36) PRIMARY KEY,
+                ai_source VARCHAR(16) NOT NULL DEFAULT 'site',
+                desktop_provider_id VARCHAR(128) NULL,
+                desktop_model VARCHAR(128) NULL,
+                custom_provider_id VARCHAR(128) NULL,
+                chat_tool_mode VARCHAR(8) NOT NULL DEFAULT 'auto',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Chat tool grants (plan Phase 6 sections 5.4/6): short-lived (10 min) tokens the
+        // browser mints once per chat turn, bound to the minting user + ONE desktop instance
+        // + the ai:chat-tools scope. Only the sha256 token hash is stored (the ApiKeyService
+        // pattern); expired rows are reaped opportunistically during verification -- no cron.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS chat_tool_grants (
+                id VARCHAR(36) PRIMARY KEY,
+                token_hash CHAR(64) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                desktop_instance_id VARCHAR(128) NOT NULL,
+                scope VARCHAR(32) NOT NULL DEFAULT 'ai:chat-tools',
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_chat_tool_grant_token (token_hash),
+                INDEX idx_chat_tool_grants_user (user_id, expires_at),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Seed the Site AI allowance (plan section 3 decision 2): the standard paid plan gets 500
+        // hosted AI messages/month; enterprise is unlimited (-1). INSERT IGNORE so an
+        // admin's later edits are never overwritten by a re-run migration.
+        $pdo->exec("
+            INSERT IGNORE INTO plan_allowances (plan, metric, monthly_value, enabled) VALUES
+                ('personal', 'ai_messages', 500, 1),
+                ('enterprise', 'ai_messages', -1, 1)
+        ");
+
+        // Seed the cloud flow-run credit (plan section 3 decision 9): the standard paid plan
+        // gets 100 cloud flow runs/month; enterprise is unlimited (-1). INSERT IGNORE so an
+        // admin's later edits are never overwritten by a re-run migration.
+        $pdo->exec("
+            INSERT IGNORE INTO plan_allowances (plan, metric, monthly_value, enabled) VALUES
+                ('personal', 'cloud_flow_runs', 100, 1),
+                ('enterprise', 'cloud_flow_runs', -1, 1)
         ");
     }
 
@@ -1580,10 +1763,24 @@ class MySQLConnection
         if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'claimed_by'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN claimed_by VARCHAR(120) NULL AFTER runtime");
         }
+        // Flow execution location (plan Phase 5 section 5.7): the per-flow Auto/Desktop/Cloud
+        // choice, and the as-executed location stamped on every run log row. Fresh installs
+        // carry both via createFlowTables above.
+        if ($pdo->query("SHOW COLUMNS FROM flow_definitions LIKE 'execution_location'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_definitions ADD COLUMN execution_location VARCHAR(8) NOT NULL DEFAULT 'auto' AFTER enabled");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'execution_location'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN execution_location VARCHAR(8) NULL AFTER runtime");
+        }
         // desktop_connections.api_key_id (OAuth device-link → minted flk_ key) for installs that
         // predate the OAuth linking flow. Fresh installs already carry it (createFlowTables above).
         if ($pdo->query("SHOW COLUMNS FROM desktop_connections LIKE 'api_key_id'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE desktop_connections ADD COLUMN api_key_id VARCHAR(36) NULL AFTER desktop_instance_id");
+        }
+        // E2E AI relay (plan Phase 1): the desktop publishes its long-term X25519 public
+        // key here for browser TOFU pinning; NULL until POST /api/v1/desktop-ai/pubkey.
+        if ($pdo->query("SHOW COLUMNS FROM desktop_connections LIKE 'e2e_public_key'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE desktop_connections ADD COLUMN e2e_public_key VARCHAR(88) NULL AFTER trusted_origins_json");
         }
         // ROUTE-001: a relay command may be TARGETED at one desktop instance — only that
         // instance sees/claims it; NULL keeps the legacy owner-wide first-to-claim fan-out.

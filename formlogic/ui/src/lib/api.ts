@@ -851,6 +851,23 @@ class ApiClient {
     }
   }
 
+  /**
+   * Desktop-AI relay variant of request(): preserves the typed `code` from the standard
+   * {error:true, code, message} failure envelope (plan §5.8 taxonomy) so the tunnel client
+   * can branch on queue_full_user / ambiguous_desktop / e2e_key_unknown / … honestly.
+   */
+  private async desktopAiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<DesktopAiApiResponse<T>> {
+    const res = await this.requestWithMeta(endpoint, options);
+    if (res.ok) return { data: (res.body ?? {}) as T, status: res.status };
+    const code = typeof res.body?.code === 'string' ? res.body.code : undefined;
+    const message = typeof res.body?.message === 'string' ? res.body.message : res.networkError;
+    return {
+      error: message ?? `Server error (${res.status})`,
+      status: res.status || undefined,
+      ...(code ? { code } : {}),
+    };
+  }
+
   // Auth endpoints
   async register(email: string, password: string, name?: string, timezone?: string): Promise<ApiResponse<{ user: User }>> {
     const result = await this.request<{ user: User }>('/auth/register', {
@@ -3164,6 +3181,148 @@ class ApiClient {
     return this.request(`/desktop-connections/${id}`, { method: 'DELETE' });
   }
 
+  // ── Desktop AI E2E tunnel relay (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5, Phase 1) ──
+  // The browser tunnel client (client-runtime/desktop/desktopTunnel.ts) seals every
+  // sensitive body end-to-end to the desktop's X25519 identity key; these routes carry
+  // only routing metadata + sealed envelopes. Typed relay errors (plan §5.8) ride the
+  // standard {error:true, code, message} envelope and surface via DesktopAiApiResponse.code.
+
+  /** GET /api/desktop/ai/pubkey — the target desktop's long-term X25519 public key (TOFU-pinned by the tunnel client). */
+  async getDesktopAiPubkey(instanceId?: string): Promise<DesktopAiApiResponse<DesktopAiPubkeyResponse>> {
+    const query = instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : '';
+    return this.desktopAiRequest(`/desktop/ai/pubkey${query}`);
+  }
+
+  /** POST /api/desktop/ai/requests — enqueue a sealed AI request onto the desktop's FIFO lane. */
+  async enqueueDesktopAiRequest(body: DesktopAiEnqueueBody): Promise<DesktopAiApiResponse<DesktopAiEnqueueResponse>> {
+    return this.desktopAiRequest('/desktop/ai/requests', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  /** GET /api/desktop/ai/requests/{id} — status + read-time queue position (requesting user only). */
+  async getDesktopAiRequest(requestId: string): Promise<DesktopAiApiResponse<DesktopAiRequestStatusResponse>> {
+    return this.desktopAiRequest(`/desktop/ai/requests/${encodeURIComponent(requestId)}`);
+  }
+
+  /** POST /api/desktop/ai/requests/{id}/input — a sealed inbound frame (e.g. a tool-approval answer). */
+  async postDesktopAiInput(requestId: string, envelope: string): Promise<DesktopAiApiResponse<{ accepted: boolean }>> {
+    return this.desktopAiRequest(`/desktop/ai/requests/${encodeURIComponent(requestId)}/input`, {
+      method: 'POST',
+      body: JSON.stringify({ envelope }),
+    });
+  }
+
+  // ── Site AI preferences + plan allowances (plan Phase 2, §5.5/§6) ────────────
+  // Typed §5.8 codes (e.g. ai_allowance_exceeded) ride through via .code; the
+  // {data: …} response envelope is unwrapped (a pre-Phase-2 backend that returns
+  // the fields top-level still parses).
+
+  /** GET /api/ai/preferences — the signed-in user's AI source + chat tool mode (+ usage when metered). */
+  async getAiPreferences(): Promise<DesktopAiApiResponse<AiPreferencesState>> {
+    const res = await this.desktopAiRequest<unknown>('/ai/preferences');
+    if (res.error) return desktopAiErrorOnly(res);
+    return { data: normalizeAiPreferences(res.data), status: res.status };
+  }
+
+  /** PUT /api/ai/preferences — save the AI source + chat tool mode. Returns the saved state. */
+  async putAiPreferences(input: AiPreferencesInput): Promise<DesktopAiApiResponse<AiPreferencesState>> {
+    const res = await this.desktopAiRequest<unknown>('/ai/preferences', { method: 'PUT', body: JSON.stringify(input) });
+    if (res.error) return desktopAiErrorOnly(res);
+    return { data: normalizeAiPreferences(res.data), status: res.status };
+  }
+
+  /** Admin: GET /api/admin/allowances — per-plan monthly AI/credit allowances (plan_allowances). */
+  async adminListAllowances(): Promise<DesktopAiApiResponse<{ allowances: PlanAllowance[] }>> {
+    const res = await this.desktopAiRequest<unknown>('/admin/allowances');
+    if (res.error) return desktopAiErrorOnly(res);
+    return { data: { allowances: normalizePlanAllowances(res.data) }, status: res.status };
+  }
+
+  /** Admin: PUT /api/admin/allowances — update ONE plan+metric allowance (audited server-side). */
+  async adminPutAllowance(input: PlanAllowanceInput): Promise<DesktopAiApiResponse<{ allowance: PlanAllowance }>> {
+    const res = await this.desktopAiRequest<unknown>('/admin/allowances', { method: 'PUT', body: JSON.stringify(input) });
+    if (res.error) return desktopAiErrorOnly(res);
+    const body = recordValue(res.data);
+    const updated = normalizePlanAllowance(recordValue(body?.data) ?? body?.allowance ?? body);
+    return { data: { allowance: updated ?? { ...input } }, status: res.status };
+  }
+
+  // ── Chat tool grants + catalog (plan Phase 6, §5.4) ────────────────────────
+  // The browser mints ONE 10-minute grant per chat turn and sends it inside the sealed
+  // tunnel envelope; the desktop presents it to /api/ai/chat-tools/execute, which
+  // verifies the mint/introspect pair + the grant's bound desktop instance.
+
+  /** POST /api/ai/chat-tool-grant — mint a chat-tool grant bound to this user (+ desktop instance). */
+  async mintChatToolGrant(instanceId?: string): Promise<DesktopAiApiResponse<ChatToolGrant>> {
+    const res = await this.desktopAiRequest<unknown>('/ai/chat-tool-grant', {
+      method: 'POST',
+      body: JSON.stringify(instanceId ? { instanceId } : {}),
+    });
+    if (res.error) return desktopAiErrorOnly(res);
+    const grant = normalizeChatToolGrant(res.data);
+    if (!grant) return { error: 'The grant response was not understood.', status: res.status };
+    return { data: grant, status: res.status };
+  }
+
+  /** GET /api/ai/chat-tools/catalog — the v1 chat tool subset (additive/read + guarded writes). */
+  async getChatToolsCatalog(): Promise<DesktopAiApiResponse<{ tools: ChatToolDescriptor[] }>> {
+    const res = await this.desktopAiRequest<unknown>('/ai/chat-tools/catalog');
+    if (res.error) return desktopAiErrorOnly(res);
+    return { data: { tools: normalizeChatToolCatalog(res.data) }, status: res.status };
+  }
+
+  // ── Flow execution location: cloud runs + the desktop flow relay lane ────────────────
+  // (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5.7, Phase 5.)
+  // POST /api/flows/{id}/run executes synchronously on FormLogic Cloud (credit-metered).
+  // /api/desktop/flows/* is the E2E flow relay lane mirroring the Desktop-AI one above:
+  // the browser seals the run inputs to the desktop's X25519 identity (see
+  // client-runtime/desktop/desktopFlowRun.ts); the backend stores/relays only routing
+  // metadata + sealed blobs. Typed failures (plan §5.8) surface via .code like the AI lane.
+
+  /**
+   * POST /api/flows/{id}/run — a synchronous FormLogic Cloud run. Typed failures:
+   * `flow_credits_exceeded`, `cloud_unsupported_node` (offenders in details.nodes),
+   * `use_browser_runner` (409 — the flow's executionLocation is still 'auto').
+   */
+  async runFlowCloud(flowId: string, inputs?: Record<string, unknown>): Promise<CloudFlowRunApiResponse> {
+    const res = await this.requestWithMeta(`/flows/${encodeURIComponent(flowId)}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ inputs: inputs ?? {} }),
+    });
+    if (res.ok) {
+      const inner = recordValue(res.body?.data) ?? recordValue(res.body?.run) ?? res.body ?? {};
+      return { data: normalizeCloudFlowRunResult(inner), status: res.status };
+    }
+    const code = typeof res.body?.code === 'string' ? res.body.code : undefined;
+    const message = typeof res.body?.message === 'string' ? res.body.message : res.networkError;
+    const details = recordValue(res.body?.details);
+    const rawNodes = Array.isArray(details?.nodes) ? details.nodes : Array.isArray(res.body?.nodes) ? res.body.nodes : null;
+    const nodes = rawNodes?.filter((n): n is string => typeof n === 'string');
+    return {
+      error: message ?? `Server error (${res.status})`,
+      status: res.status || undefined,
+      ...(code ? { code } : {}),
+      ...(nodes && nodes.length > 0 ? { details: { nodes } } : {}),
+    };
+  }
+
+  /** POST /api/desktop/flows/run — enqueue a sealed flow run onto the desktop's flow lane. */
+  async enqueueDesktopFlowRun(body: DesktopFlowRunEnqueueBody): Promise<DesktopAiApiResponse<DesktopFlowRunEnqueueResponse>> {
+    const res = await this.desktopAiRequest<unknown>('/desktop/flows/run', { method: 'POST', body: JSON.stringify(body) });
+    if (res.error) return desktopAiErrorOnly(res);
+    const body2 = recordValue(res.data);
+    const inner = recordValue(body2?.data) ?? body2 ?? {};
+    return { data: normalizeDesktopFlowRunEnqueue(inner), status: res.status };
+  }
+
+  /** GET /api/desktop/flows/runs/{id} — status + read-time queue position + sealed result (requesting user only). */
+  async getDesktopFlowRun(requestId: string): Promise<DesktopAiApiResponse<DesktopFlowRunStatus>> {
+    const res = await this.desktopAiRequest<unknown>(`/desktop/flows/runs/${encodeURIComponent(requestId)}`);
+    if (res.error) return desktopAiErrorOnly(res);
+    const body = recordValue(res.data);
+    const inner = recordValue(body?.data) ?? recordValue(body?.run) ?? body ?? {};
+    return { data: normalizeDesktopFlowRunStatus(inner), status: res.status };
+  }
+
   // Connector routing (ROUTE-001): connector→app(+desktop) assignments — which ONE
   // machine services a connector's relay commands when several desktops are linked.
   async getConnectorAssignments(): Promise<ApiResponse<ConnectorAssignments>> {
@@ -3878,6 +4037,317 @@ export interface ConnectorAssignments {
     desktopInstanceId: string;
     lastSeenAt: string | null;
   }>;
+}
+
+// ── Desktop AI E2E tunnel relay wire shapes (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5) ──
+
+/**
+ * The plan §5.1 frame blob: {nonce (24B b64), ct}. On the wire it travels inside the
+ * backend's `envelope` string field — base64 of this JSON object (see
+ * client-runtime/desktop/desktopTunnel.ts encodeTunnelEnvelope/decodeTunnelEnvelope).
+ * The backend stores/relays the decoded bytes verbatim and never opens them.
+ */
+export interface DesktopAiSealedEnvelope {
+  nonce: string;
+  ct: string;
+}
+
+/** GET /api/desktop/ai/pubkey response — the desktop's published long-term X25519 identity. */
+export interface DesktopAiPubkeyResponse {
+  instanceId: string;
+  /** Long-term X25519 public key, base64 (32 bytes). */
+  publicKey: string;
+  deviceName?: string;
+}
+
+export type DesktopAiRequestKind = 'chat' | 'models' | 'providers';
+
+/** POST /api/desktop/ai/requests body — routing plaintext + sealed envelope (plan §5.1). */
+export interface DesktopAiEnqueueBody {
+  targetInstanceId?: string;
+  kind: DesktopAiRequestKind;
+  providerId: string;
+  /** Browser per-thread ephemeral X25519 public key (base64, 32 bytes) — never persisted. */
+  ephPub: string;
+  /** Base64 of the sealed frame blob (JSON {nonce, ct}) — the backend relays it verbatim. */
+  envelope: string;
+  idempotencyKey: string;
+}
+
+export interface DesktopAiEnqueueResponse {
+  requestId: string;
+  status: string;
+  queuePos?: number;
+  targetInstanceId?: string;
+}
+
+/** GET /api/desktop/ai/requests/{id} — the queue position is computed at read time (plan §5.2). */
+export interface DesktopAiRequestStatus {
+  requestId: string;
+  status: 'pending' | 'claimed' | 'streaming' | 'done' | 'failed' | 'expired';
+  queuePos?: number;
+  /** Typed failure code (plan §5.8) when status is failed/expired. */
+  code?: string;
+  message?: string;
+}
+
+export interface DesktopAiRequestStatusResponse {
+  request: DesktopAiRequestStatus;
+}
+
+/** ApiResponse + the relay's typed failure code (plan §5.8), when the server provided one. */
+export interface DesktopAiApiResponse<T> {
+  data?: T;
+  error?: string;
+  status?: number;
+  code?: string;
+}
+
+/**
+ * Re-type an errored `desktopAiRequest<unknown>` response for a narrower T: on the
+ * error path `data` is meaningless, so dropping it makes the result assignable to any
+ * DesktopAiApiResponse<T> without a cast.
+ */
+function desktopAiErrorOnly(res: DesktopAiApiResponse<unknown>): DesktopAiApiResponse<never> {
+  return {
+    ...(res.error !== undefined ? { error: res.error } : {}),
+    ...(res.status !== undefined ? { status: res.status } : {}),
+    ...(res.code !== undefined ? { code: res.code } : {}),
+  };
+}
+
+// ── Site AI preferences + plan allowances (plan Phase 2, §5.5/§6) ─────────────
+
+export type AiSourceSetting = 'site' | 'desktop' | 'custom';
+export type AiChatToolMode = 'auto' | 'confirm';
+
+/** Monthly Site AI usage — present only on backends that meter (Phase 2 usage_meter). */
+export interface AiUsageInfo {
+  used: number;
+  /** null = unlimited/unmetered limit (the row exists, the plan has no cap). */
+  limit: number | null;
+}
+
+/** The signed-in user's AI settings (GET/PUT /api/ai/preferences), normalized client-side. */
+export interface AiPreferencesState {
+  aiSource: AiSourceSetting;
+  desktopProviderId: string | null;
+  desktopModel: string | null;
+  customProviderId: string | null;
+  chatToolMode: AiChatToolMode;
+  /** Present only when the backend meters Site AI; absent = "not tracked". */
+  usage?: AiUsageInfo | null;
+}
+
+/** PUT /api/ai/preferences body — usage is server-owned and never sent. */
+export interface AiPreferencesInput {
+  aiSource: AiSourceSetting;
+  desktopProviderId: string | null;
+  desktopModel: string | null;
+  customProviderId: string | null;
+  chatToolMode: AiChatToolMode;
+}
+
+export type AiAllowanceMetric = 'ai_messages' | 'cloud_flow_runs';
+
+/** One plan_allowances row (GET/PUT /api/admin/allowances). */
+export interface PlanAllowance {
+  plan: string;
+  metric: AiAllowanceMetric | string;
+  monthlyValue: number;
+  enabled: boolean;
+}
+
+export type PlanAllowanceInput = PlanAllowance;
+
+function nullableTrimmedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+function normalizeAiPreferences(raw: unknown): AiPreferencesState {
+  const body = recordValue(raw) ?? {};
+  const inner = recordValue(body.data) ?? body;
+  const usage = recordValue(inner.usage);
+  return {
+    aiSource: inner.aiSource === 'desktop' || inner.aiSource === 'custom' ? inner.aiSource : 'site',
+    desktopProviderId: nullableTrimmedString(inner.desktopProviderId),
+    desktopModel: nullableTrimmedString(inner.desktopModel),
+    customProviderId: nullableTrimmedString(inner.customProviderId),
+    chatToolMode: inner.chatToolMode === 'confirm' ? 'confirm' : 'auto',
+    ...(usage
+      ? {
+          usage: {
+            used: typeof usage.used === 'number' && Number.isFinite(usage.used) ? usage.used : 0,
+            limit: typeof usage.limit === 'number' && Number.isFinite(usage.limit) ? usage.limit : null,
+          },
+        }
+      : {}),
+  };
+}
+
+function normalizePlanAllowance(value: unknown): PlanAllowance | null {
+  const row = recordValue(value);
+  if (!row || typeof row.plan !== 'string' || row.plan === '') return null;
+  if (typeof row.metric !== 'string' || row.metric === '') return null;
+  return {
+    plan: row.plan,
+    metric: row.metric,
+    monthlyValue: typeof row.monthlyValue === 'number' && Number.isFinite(row.monthlyValue) ? row.monthlyValue : 0,
+    enabled: row.enabled !== false,
+  };
+}
+
+function normalizePlanAllowances(raw: unknown): PlanAllowance[] {
+  const body = recordValue(raw);
+  const list = Array.isArray(raw) ? raw : Array.isArray(body?.data) ? body.data : Array.isArray(body?.allowances) ? body.allowances : [];
+  return list.map(normalizePlanAllowance).filter((row): row is PlanAllowance => row !== null);
+}
+
+// ── Chat tool grants + catalog wire shapes (plan §5.4, Phase 6) ──────────────
+
+/** POST /api/ai/chat-tool-grant response — one 10-minute grant per chat turn. */
+export interface ChatToolGrant {
+  grantToken: string;
+  /** ISO-8601 expiry (server-side truth; the token itself is what the desktop presents). */
+  expiresAt: string;
+}
+
+/** One entry of GET /api/ai/chat-tools/catalog (the v1 additive/read + guarded-write subset). */
+export interface ChatToolDescriptor {
+  name: string;
+  description?: string;
+  /** JSON-Schema-ish input description, passed through verbatim for display/future use. */
+  inputSchema?: unknown;
+}
+
+function normalizeChatToolGrant(raw: unknown): ChatToolGrant | null {
+  const body = recordValue(raw);
+  const inner = recordValue(body?.data) ?? body;
+  const grantToken = inner?.grantToken;
+  const expiresAt = inner?.expiresAt;
+  if (typeof grantToken !== 'string' || grantToken === '') return null;
+  return { grantToken, expiresAt: typeof expiresAt === 'string' ? expiresAt : '' };
+}
+
+function normalizeChatToolCatalog(raw: unknown): ChatToolDescriptor[] {
+  const body = recordValue(raw);
+  const list = Array.isArray(raw) ? raw : Array.isArray(body?.tools) ? body.tools : Array.isArray(body?.data) ? body.data : [];
+  const out: ChatToolDescriptor[] = [];
+  for (const item of list) {
+    const row = recordValue(item);
+    if (!row || typeof row.name !== 'string' || row.name === '') continue;
+    out.push({
+      name: row.name,
+      ...(typeof row.description === 'string' ? { description: row.description } : {}),
+      ...(row.inputSchema !== undefined ? { inputSchema: row.inputSchema } : {}),
+    });
+  }
+  return out;
+}
+
+// ── Flow execution location + desktop/cloud flow-run wire shapes (plan §5.7, Phase 5) ──
+
+/** Where a flow is CONFIGURED to run (flow_definitions.execution_location). */
+export type FlowExecutionLocation = 'auto' | 'desktop' | 'cloud';
+/** Where a run actually EXECUTED (flow_run_logs.execution_location). */
+export type FlowRunExecutedLocation = 'browser' | 'desktop' | 'cloud';
+
+/** POST /api/desktop/flows/run body — routing plaintext + sealed envelope (plan §5.7/§5.1). */
+export interface DesktopFlowRunEnqueueBody {
+  targetInstanceId?: string;
+  flowId: string;
+  /** Browser per-run ephemeral X25519 public key (base64, 32 bytes) — never persisted. */
+  ephPub: string;
+  /** Base64 of the sealed frame blob (nonce || ct) — the backend relays it verbatim. */
+  envelope: string;
+  idempotencyKey?: string;
+}
+
+export interface DesktopFlowRunEnqueueResponse {
+  requestId: string;
+  status?: string;
+  queuePos?: number;
+  targetInstanceId?: string;
+}
+
+/** GET /api/desktop/flows/runs/{id} — queue position is computed at read time (plan §5.2). */
+export interface DesktopFlowRunStatus {
+  requestId: string;
+  status: 'pending' | 'claimed' | 'running' | 'streaming' | 'done' | 'failed' | 'expired' | string;
+  queuePos?: number;
+  /** Sealed result frame (base64 nonce || ct), present once status is 'done'. */
+  resultEnvelope?: string;
+  /** Typed failure code (plan §5.8) when status is failed/expired. */
+  code?: string;
+  message?: string;
+}
+
+/** POST /api/flows/{id}/run — the synchronous cloud run outcome. */
+export interface CloudFlowRunResult {
+  runId?: string;
+  status: 'done' | 'error' | 'timeout' | 'cancelled' | string;
+  result?: unknown;
+  error?: { code?: string; message?: string; nodeId?: string } | null;
+  /** As-executed location — always 'cloud' from this endpoint, echoed for the run UI. */
+  executionLocation?: string;
+  nodesExecuted?: number;
+}
+
+/** runFlowCloud failure extras: cloud_unsupported_node names the offending nodes here. */
+export interface CloudFlowRunFailureDetails {
+  nodes?: string[];
+}
+
+export type CloudFlowRunApiResponse = DesktopAiApiResponse<CloudFlowRunResult> & {
+  details?: CloudFlowRunFailureDetails;
+};
+
+function firstStringField(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return undefined;
+}
+
+function normalizeDesktopFlowRunEnqueue(inner: Record<string, unknown>): DesktopFlowRunEnqueueResponse {
+  return {
+    requestId: firstStringField(inner.requestId, inner.id) ?? '',
+    ...(typeof inner.status === 'string' ? { status: inner.status } : {}),
+    ...(typeof inner.queuePos === 'number' ? { queuePos: inner.queuePos } : {}),
+    ...(typeof inner.targetInstanceId === 'string' ? { targetInstanceId: inner.targetInstanceId } : {}),
+  };
+}
+
+function normalizeDesktopFlowRunStatus(inner: Record<string, unknown>): DesktopFlowRunStatus {
+  return {
+    requestId: firstStringField(inner.requestId, inner.id) ?? '',
+    status: typeof inner.status === 'string' ? inner.status : 'pending',
+    ...(typeof inner.queuePos === 'number' ? { queuePos: inner.queuePos } : {}),
+    ...(typeof inner.resultEnvelope === 'string' ? { resultEnvelope: inner.resultEnvelope } : {}),
+    ...(typeof inner.code === 'string' ? { code: inner.code } : {}),
+    ...(typeof inner.message === 'string' ? { message: inner.message } : {}),
+  };
+}
+
+function normalizeCloudFlowRunResult(inner: Record<string, unknown>): CloudFlowRunResult {
+  const error = recordValue(inner.error);
+  return {
+    ...(firstStringField(inner.runId, inner.id) ? { runId: firstStringField(inner.runId, inner.id) } : {}),
+    // A 2xx response without an explicit status word is a completed run.
+    status: typeof inner.status === 'string' ? inner.status : 'done',
+    ...('result' in inner ? { result: inner.result } : {}),
+    ...(error
+      ? {
+          error: {
+            ...(typeof error.code === 'string' ? { code: error.code } : {}),
+            ...(typeof error.message === 'string' ? { message: error.message } : {}),
+            ...(typeof error.nodeId === 'string' ? { nodeId: error.nodeId } : {}),
+          },
+        }
+      : {}),
+    ...(typeof inner.executionLocation === 'string' ? { executionLocation: inner.executionLocation } : {}),
+    ...(typeof inner.nodesExecuted === 'number' ? { nodesExecuted: inner.nodesExecuted } : {}),
+  };
 }
 
 interface UploadedFileMetadata {

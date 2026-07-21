@@ -124,6 +124,11 @@ chacha20poly1305 = "0.10"
 ed25519-dalek = { version = "2", features = ["signature"] }
 base64 = "0.22"
 
+# Site-AI desktop tunnel (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5.1):
+# end-to-end envelopes between the browser (tweetnacl `box`) and this host —
+# X25519 ECDH → HSalsa20 → XSalsa20-Poly1305, guaranteed tweetnacl interop.
+crypto_box = "0.9"
+
 # Aokie Companion owner pairing payloads are rendered locally as QR SVGs.
 # The payload contains only public identity/binding material and a one-use
 # challenge; no admission/API bearer is ever encoded in the QR.

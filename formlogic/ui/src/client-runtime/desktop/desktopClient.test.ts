@@ -116,6 +116,76 @@ describe('desktopClient.plugins.list', () => {
   });
 });
 
+describe('desktopClient.plugins lifecycle', () => {
+  it('restart/enable/disable POST to their loopback routes with the id encoded', async () => {
+    storeDesktopToken('tok_abc');
+    const fetchMock = setFetch(vi.fn(() => jsonResponse({ ok: true })));
+
+    await desktopClient.plugins.restart('aokie/phone');
+    await desktopClient.plugins.enable('aokie');
+    await desktopClient.plugins.disable('aokie');
+
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls).toEqual([
+      'http://127.0.0.1:17872/api/plugins/aokie%2Fphone/restart',
+      'http://127.0.0.1:17872/api/plugins/aokie/enable',
+      'http://127.0.0.1:17872/api/plugins/aokie/disable',
+    ]);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit).method).toBe('POST');
+      expect(((call[1] as RequestInit).headers as Record<string, string>).Authorization).toBe('Bearer tok_abc');
+    }
+  });
+});
+
+describe('desktopClient.services lifecycle', () => {
+  it('start/stop/repair POST to their loopback routes', async () => {
+    storeDesktopToken('tok_abc');
+    const fetchMock = setFetch(vi.fn(() => jsonResponse({ ok: true })));
+
+    await desktopClient.services.start('llama-cpp');
+    await desktopClient.services.stop('llama-cpp');
+    await desktopClient.services.repair('aokie-voice');
+
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls).toEqual([
+      'http://127.0.0.1:17872/api/services/llama-cpp/start',
+      'http://127.0.0.1:17872/api/services/llama-cpp/stop',
+      'http://127.0.0.1:17872/api/services/aokie-voice/repair',
+    ]);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit).method).toBe('POST');
+    }
+  });
+
+  it('restart composes stop then start (no dedicated loopback route)', async () => {
+    storeDesktopToken('tok_abc');
+    const fetchMock = setFetch(vi.fn(() => jsonResponse({ ok: true })));
+
+    const res = await desktopClient.services.restart('llama-cpp');
+
+    expect(res.ok).toBe(true);
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls).toEqual([
+      'http://127.0.0.1:17872/api/services/llama-cpp/stop',
+      'http://127.0.0.1:17872/api/services/llama-cpp/start',
+    ]);
+  });
+
+  it('restart surfaces the stop failure and never calls start', async () => {
+    storeDesktopToken('tok_abc');
+    const fetchMock = setFetch(
+      vi.fn(() => jsonResponse({ ok: false, error: { code: 'command_failed', message: 'stop refused' } }, 500))
+    );
+
+    const res = await desktopClient.services.restart('llama-cpp');
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.message).toBe('stop refused');
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
+});
+
 describe('desktopClient.ai gateway', () => {
   it('POSTs chat through a named provider with pairing plus an exact owner service capability', async () => {
     storeDesktopToken('pair_tok');

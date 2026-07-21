@@ -580,6 +580,9 @@ final class AokieCompanionRelayController
         header('Content-Type: text/event-stream; charset=utf-8');
         header('Cache-Control: no-store');
         header('X-Accel-Buffering: no');
+        // Raw takeover bypasses CorsMiddleware — re-emit the allowlisted headers, or a
+        // cross-origin (api.<host>) stream reader is blocked despite a passing preflight.
+        \FormLogic\Middleware\CorsMiddleware::active()?->emitRawSseHeaders();
         // Defeat server-side buffering/compression: gzip would buffer events.
         if (function_exists('apache_setenv')) {
             @apache_setenv('no-gzip', '1');

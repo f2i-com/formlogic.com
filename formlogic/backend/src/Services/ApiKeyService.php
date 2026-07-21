@@ -27,6 +27,15 @@ class ApiKeyService
         // claims and completes connector commands a web member enqueued. Held by the flk_ key the
         // OAuth device-link flow mints.
         'connector:relay',
+        // E2E AI relay (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §7): the desktop polls the sealed
+        // AI lane, reads the owner's AI preferences, and may call hosted chat for its flow runner.
+        // New desktop links request it; legacy connector:relay keys are grandfathered onto the
+        // same surfaces by the controllers (checked per-request, never by this allow-list).
+        'ai:relay',
+        // E2E flow-run relay (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5.7): the desktop polls
+        // the sealed flow lane, claims runs single-flight, streams progress frames, and completes
+        // them. Same grandfathering rule as ai:relay for legacy connector:relay keys.
+        'flows:relay',
         // Narrow bootstrap/activity/routing authority for the Aokie realtime
         // plane. New Desktop links receive it explicitly; connector:relay alone
         // is never silently treated as media admission authority.

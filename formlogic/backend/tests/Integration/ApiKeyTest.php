@@ -89,6 +89,17 @@ class ApiKeyTest extends TestCase
         $this->assertNotContains('responses:write', $validated['scopes']);
     }
 
+    public function testFlowsRelayScopeIsAccepted(): void
+    {
+        // The Phase-5 desktop flow lane (plan §5.7) needs its own scope; new desktop links
+        // request the full set (ai:relay + flows:relay), legacy connector:relay keys are
+        // grandfathered controller-side, never by this allow-list.
+        $created = self::$svc->createKey($this->userId, 'DesktopFlow', ['ai:relay', 'flows:relay']);
+        $validated = self::$svc->validateKey($created['key']);
+        $this->assertContains('flows:relay', $validated['scopes']);
+        $this->assertContains('ai:relay', $validated['scopes']);
+    }
+
     public function testInvalidScopeRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);

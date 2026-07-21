@@ -4,6 +4,8 @@ import { Wrench, WifiOff } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
 import { DemoBanner } from './DemoBanner';
+import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
+import { SiteChatWidget } from '../chat/SiteChatWidget';
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -135,6 +137,15 @@ export function AppShell() {
 
       {/* Mobile Bottom Nav */}
       {isMobile && <MobileNav />}
+
+      {/* Global Desktop Connection trigger (presence, services/plugins, AI source).
+          Fixed-position, z-40 — under the z-50 banners and the mobile nav. */}
+      <DesktopConnectionPopover />
+
+      {/* Floating Site Chat (plan Phase 6): launcher bottom-right, draggable panel /
+          mobile bottom sheet. Also fixed z-40, under the z-50 banners; renders nothing
+          when signed out. */}
+      <SiteChatWidget />
     </div>
   );
 }

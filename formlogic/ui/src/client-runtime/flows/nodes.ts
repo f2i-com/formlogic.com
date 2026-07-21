@@ -11,6 +11,7 @@
 import { getDesktopBaseUrl } from '../desktop/desktopTypes';
 import type { FlowRunErrorCode, WorkflowGraphNode } from '../../types/flows';
 import { extractByPath, renderRequestTemplate, type AiCapability, type ResolvedAiProvider } from './aiProviders';
+import type { DefaultLlmOutcome } from './aiDefault';
 import {
   interpolateTemplate,
   resolveDeep,
@@ -177,6 +178,17 @@ export interface FlowExecutorDeps {
     body: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<Record<string, unknown> | null>;
+  /**
+   * Plan §5.6 "Default (from Settings)" alias runner (browser: aiDefault.resolveDefaultLlm,
+   * wired by flowDispatcher). Consulted by llm_chat ONLY when the node has no explicit
+   * provider ('' / 'default') and no endpoint override; its typed failures propagate —
+   * the node never falls through to a different source. Runtimes without the settings
+   * surface simply omit this dep and keep the legacy endpoint/provider chain.
+   */
+  runDefaultAiChat?(
+    messages: Array<{ role: string; content: string }>,
+    signal?: AbortSignal
+  ): Promise<DefaultLlmOutcome>;
   /** Configured app-level OpenAI-compatible AI base URL, when the app provides one. */
   getAppAiBase?(): string | null;
   /**
@@ -536,14 +548,27 @@ interface NodeProviderSelection {
   /** `provider:<id>` is an explicit Desktop-owned reference. Bare ids retain
    * the legacy browser-provider compatibility path. */
   desktopOnly: boolean;
+  /** `local:<id>` is an explicit browser-registry reference (plan §5.6): it resolves
+   * ONLY in this browser's AI-services list, never via a paired Desktop. */
+  localOnly: boolean;
+  /** absent/'default' = the acting user's Settings "Default" AI alias (plan §5.6). */
+  isDefault: boolean;
 }
 
 function nodeProviderSelection(ctx: FlowNodeContext): NodeProviderSelection {
   const raw = nodeData(ctx.node).provider;
-  if (typeof raw !== 'string' || raw.trim() === '') return { id: '', desktopOnly: false };
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { id: '', desktopOnly: false, localOnly: false, isDefault: true };
+  }
   const resolved = interpolateTemplate(raw, scopeToContext(ctx.scope)).trim();
+  if (resolved === '' || resolved === 'default') {
+    return { id: '', desktopOnly: false, localOnly: false, isDefault: true };
+  }
   const desktopOnly = resolved.indexOf('provider:') === 0;
-  return { id: desktopOnly ? resolved.slice(9) : resolved, desktopOnly };
+  if (desktopOnly) return { id: resolved.slice(9), desktopOnly: true, localOnly: false, isDefault: false };
+  const localOnly = resolved.indexOf('local:') === 0;
+  if (localOnly) return { id: resolved.slice(6), desktopOnly: false, localOnly: true, isDefault: false };
+  return { id: resolved, desktopOnly: false, localOnly: false, isDefault: false };
 }
 
 function nodeProviderId(ctx: FlowNodeContext): string {
@@ -622,13 +647,49 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
     Object.assign(body, data.extraBody as Record<string, unknown>);
   }
 
+  // Plan §5.6 "Default (from Settings)" alias: an absent/'default' provider resolves
+  // through the acting user's AI settings (Site AI / Desktop tunnel / browser-local
+  // custom service) via the injected runner. An explicit endpoint override keeps the
+  // legacy path (explicit config wins), and a runtime without the settings surface (no
+  // dep) keeps the legacy chain. Typed failures propagate — NEVER a silent source hop.
+  const hasEndpointOverride = typeof data.endpoint === 'string' && data.endpoint.trim() !== '';
+  if (providerSelection.isDefault && !hasEndpointOverride && deps.runDefaultAiChat) {
+    let outcome: DefaultLlmOutcome;
+    try {
+      outcome = await deps.runDefaultAiChat(messages, ctx.signal);
+    } catch (err) {
+      if (ctx.signal?.aborted) throw err;
+      throw new FlowExecError(
+        'node_failed',
+        `Node '${node.id}' llm_chat default AI failed: ${err instanceof Error ? err.message : String(err)}`,
+        node.id
+      );
+    }
+    if (!outcome.ok) {
+      throw new FlowExecError(
+        'node_failed',
+        `Node '${node.id}' llm_chat default AI failed (${outcome.error.code}): ${outcome.error.message}`,
+        node.id
+      );
+    }
+    return {
+      content: outcome.data.content,
+      raw: {
+        source: outcome.data.source,
+        ...(outcome.data.usage !== undefined ? { usage: outcome.data.usage } : {}),
+        ...(outcome.data.threadId ? { threadId: outcome.data.threadId } : {}),
+      },
+    };
+  }
+
   // A named provider first routes through paired Desktop. This is the safe
   // website -> Desktop -> provider path: the browser never receives or
   // forwards the provider credential. `null` means Desktop has no such
   // provider. Bare provider ids preserve the existing browser-provider/local
   // compatibility path; an explicit `provider:<id>` reference fails closed so
   // a saved Desktop choice can never silently switch models or expose a key.
-  if (providerId && deps.invokeDesktopAiChat) {
+  // `local:<id>` skips this Desktop leg entirely (browser-registry only, §5.6).
+  if (providerId && !providerSelection.localOnly && deps.invokeDesktopAiChat) {
     let matchedDesktop = false;
     let desktopFailure: FlowExecError | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {

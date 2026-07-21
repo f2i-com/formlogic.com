@@ -10,6 +10,7 @@ import { parseServerDate } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
 import { getNodeSpec } from './editor/nodeCatalog';
+import { runLocationLabel } from './editor/executionLocation';
 import { formatAbsoluteTimeTitle, formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
 import type { FlowDefinition, FlowRunLog, FlowRunStatus, WorkflowGraphNode } from '../../types/flows';
@@ -201,6 +202,7 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
                 <tr className="border-b border-gray-200/80 text-left text-xs text-gray-500 dark:border-slate-700/60 dark:text-slate-400">
                   <th className="px-3 py-2 font-medium">Trigger</th>
                   <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Location</th>
                   <th className="px-3 py-2 font-medium">Started</th>
                   <th className="px-3 py-2 font-medium">Duration</th>
                 </tr>
@@ -245,6 +247,8 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
 
 function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeLabel?: string; expanded: boolean; onToggle: () => void }) {
   const started = run.startedAt ?? run.createdAt;
+  // The as-executed location column (plan §5.7) — absent on rows that predate it ('—').
+  const location = runLocationLabel((run as FlowRunLog & { executionLocation?: unknown }).executionLocation);
   return (
     <>
       <tr onClick={onToggle} className="cursor-pointer border-b border-gray-100 hover:bg-gray-50 dark:border-slate-800 dark:hover:bg-slate-800/40">
@@ -255,6 +259,7 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
             {runtimeChip(run)}
           </div>
         </td>
+        <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{location}</td>
         <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500 dark:text-slate-400" title={formatAbsoluteTimeTitle(started)}>
           {formatRelativeTime(started)}
         </td>
@@ -262,7 +267,7 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
       </tr>
       {expanded && (
         <tr className="border-b border-gray-100 dark:border-slate-800">
-          <td colSpan={4} className="bg-gray-50/70 px-3 py-2 dark:bg-slate-800/40">
+          <td colSpan={5} className="bg-gray-50/70 px-3 py-2 dark:bg-slate-800/40">
             {run.error && (
               <div className="mb-1.5 text-xs text-red-600 dark:text-red-400">
                 <p>{run.error.code}: {run.error.message}</p>

@@ -135,6 +135,168 @@ class PlanService
         ];
     }
 
+    // ── Plan allowances + usage metering (Site AI / cloud credits) ─────────────
+
+    /**
+     * The monthly allowance a plan grants for one metric ('ai_messages',
+     * 'cloud_flow_runs'). A missing row means the metric is OFF for that plan.
+     *
+     * @return array{enabled: bool, monthlyValue: int} monthlyValue -1 = unlimited.
+     */
+    public function allowance(string $plan, string $metric): array
+    {
+        $stmt = $this->mysql->getConnection()->prepare(
+            'SELECT monthly_value, enabled FROM plan_allowances WHERE plan = ? AND metric = ?'
+        );
+        $stmt->execute([$plan, $metric]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$row) {
+            return ['enabled' => false, 'monthlyValue' => 0];
+        }
+        return ['enabled' => !empty($row['enabled']), 'monthlyValue' => (int) $row['monthly_value']];
+    }
+
+    /** @return array<int, array{plan: string, metric: string, monthlyValue: int, enabled: bool}> */
+    public function listAllowances(): array
+    {
+        $rows = $this->mysql->getConnection()
+            ->query('SELECT plan, metric, monthly_value, enabled FROM plan_allowances ORDER BY plan, metric')
+            ->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        return array_map(static fn (array $r) => [
+            'plan' => (string) $r['plan'],
+            'metric' => (string) $r['metric'],
+            'monthlyValue' => (int) $r['monthly_value'],
+            'enabled' => !empty($r['enabled']),
+        ], $rows);
+    }
+
+    /** Upsert one allowance row (admin surface; audited by the caller). */
+    public function setAllowance(string $plan, string $metric, int $monthlyValue, bool $enabled): void
+    {
+        if (!preg_match('/^[a-z0-9_-]{1,20}$/', $plan)) {
+            throw new \InvalidArgumentException('plan must be a lowercase slug (max 20 chars)');
+        }
+        if (!preg_match('/^[a-z0-9_]{1,32}$/', $metric)) {
+            throw new \InvalidArgumentException('metric must be a lowercase slug (max 32 chars)');
+        }
+        if ($monthlyValue < -1 || $monthlyValue > 10000000) {
+            throw new \InvalidArgumentException('monthlyValue must be -1 (unlimited) or 0..10000000');
+        }
+        $stmt = $this->mysql->getConnection()->prepare(
+            'INSERT INTO plan_allowances (plan, metric, monthly_value, enabled)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE monthly_value = VALUES(monthly_value), enabled = VALUES(enabled)'
+        );
+        $stmt->execute([$plan, $metric, $monthlyValue, $enabled ? 1 : 0]);
+    }
+
+    /**
+     * Record $amount units of $metric against the current UTC month, refusing first when the
+     * user's plan allowance would be exceeded. Usage is ALWAYS recorded (even when plan
+     * enforcement is off — self-hosted installs get visibility, never a refusal).
+     *
+     * Period rollover is implicit: the period key is the UTC YYYY-MM, so a new month starts a
+     * fresh row with no reset job.
+     *
+     * @throws \RuntimeException 'ai_allowance_exceeded' | 'flow_credits_exceeded' when over.
+     */
+    public function checkAndIncrement(string $userId, string $metric, int $amount = 1, int $tokensIn = 0, int $tokensOut = 0): void
+    {
+        if ($amount < 0) {
+            throw new \InvalidArgumentException('amount must be >= 0');
+        }
+        $period = gmdate('Y-m');
+        if (!$this->enforced) {
+            $this->incrementMeter($userId, $metric, $period, $amount, $tokensIn, $tokensOut);
+            return;
+        }
+        // Enterprise is unlimited by product invariant (same as the form/storage limits).
+        if ($this->planFor($userId) === 'enterprise') {
+            $this->incrementMeter($userId, $metric, $period, $amount, $tokensIn, $tokensOut);
+            return;
+        }
+        $code = self::allowanceErrorCode($metric);
+        // A lapsed personal plan has no hosted AI / cloud credits at all (the plan doc's
+        // "free = disabled" state — free-vs-paid within 'personal' is cloud activity).
+        if (!$this->isCloudActive($userId)) {
+            throw new \RuntimeException($code);
+        }
+        $allowance = $this->allowance($this->planFor($userId), $metric);
+        if (!$allowance['enabled']) {
+            throw new \RuntimeException($code);
+        }
+        if ($allowance['monthlyValue'] >= 0) {
+            $current = $this->meterCount($userId, $metric, $period);
+            if ($current + $amount > $allowance['monthlyValue']) {
+                throw new \RuntimeException($code);
+            }
+        }
+        $this->incrementMeter($userId, $metric, $period, $amount, $tokensIn, $tokensOut);
+    }
+
+    /** Record usage without any allowance check (post-hoc token metering, explicit-provider calls). */
+    public function recordUsage(string $userId, string $metric, int $amount = 0, int $tokensIn = 0, int $tokensOut = 0): void
+    {
+        if ($amount < 0 || $tokensIn < 0 || $tokensOut < 0) {
+            throw new \InvalidArgumentException('usage figures must be >= 0');
+        }
+        $this->incrementMeter($userId, $metric, gmdate('Y-m'), $amount, $tokensIn, $tokensOut);
+    }
+
+    /**
+     * The user's meter rows for one period (default: current UTC month), keyed by metric —
+     * feeds the settings/billing usage readouts.
+     *
+     * @return array{period: string, metrics: array<string, array{count: int, tokensIn: int, tokensOut: int}>}
+     */
+    public function usageMeter(string $userId, ?string $period = null): array
+    {
+        $period = $period ?? gmdate('Y-m');
+        $stmt = $this->mysql->getConnection()->prepare(
+            'SELECT metric, `count`, tokens_in, tokens_out FROM usage_meter WHERE user_id = ? AND period = ?'
+        );
+        $stmt->execute([$userId, $period]);
+        $metrics = [];
+        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [] as $row) {
+            $metrics[(string) $row['metric']] = [
+                'count' => (int) $row['count'],
+                'tokensIn' => (int) $row['tokens_in'],
+                'tokensOut' => (int) $row['tokens_out'],
+            ];
+        }
+        return ['period' => $period, 'metrics' => $metrics];
+    }
+
+    /** The typed error code for an exhausted metric (plan §5.8 error taxonomy). */
+    public static function allowanceErrorCode(string $metric): string
+    {
+        return $metric === 'cloud_flow_runs' ? 'flow_credits_exceeded' : 'ai_allowance_exceeded';
+    }
+
+    /** Current month's consumed units for (user, metric). */
+    private function meterCount(string $userId, string $metric, string $period): int
+    {
+        $stmt = $this->mysql->getConnection()->prepare(
+            'SELECT `count` FROM usage_meter WHERE user_id = ? AND metric = ? AND period = ?'
+        );
+        $stmt->execute([$userId, $metric, $period]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** Atomic upsert increment of the (user, metric, period) meter row. */
+    private function incrementMeter(string $userId, string $metric, string $period, int $amount, int $tokensIn, int $tokensOut): void
+    {
+        $stmt = $this->mysql->getConnection()->prepare(
+            'INSERT INTO usage_meter (user_id, metric, period, `count`, tokens_in, tokens_out)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                `count` = `count` + VALUES(`count`),
+                tokens_in = tokens_in + VALUES(tokens_in),
+                tokens_out = tokens_out + VALUES(tokens_out)'
+        );
+        $stmt->execute([$userId, $metric, $period, $amount, $tokensIn, $tokensOut]);
+    }
+
     /** @return array<string,mixed>|null */
     private function userRow(string $userId): ?array
     {

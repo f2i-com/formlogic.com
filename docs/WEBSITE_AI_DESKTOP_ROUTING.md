@@ -28,3 +28,39 @@ The executable policy is
 proves an unsupported Desktop selection returns `unsupported`, never hosted.
 Adding Desktop support to another row requires a bounded response parser and
 operation-specific tests before changing that policy.
+
+## Floating site chat (Phase 6)
+
+The floating chat widget (`ui/src/components/chat/SiteChatWidget.tsx`, mounted
+globally in `AppShell` for signed-in users) routes every turn through
+`ui/src/components/chat/chatEngine.ts`, which resolves the user's Settings → AI
+source per turn and runs **exactly one** source — a failing or unresolvable
+source is a typed inline error, never a silent hop:
+
+- **Site** — `POST /api/ai/chat` (hosted tool loop, SSE, allowance-metered).
+  Content is server-processed; the widget badges it
+  "Hosted — processed by FormLogic Cloud".
+- **Desktop** — the E2E tunnel
+  (`ui/src/client-runtime/desktop/desktopTunnel.ts`): the request body —
+  including `messages`, the per-user `toolMode` (Auto/Confirm) and a per-turn
+  `toolGrant` — is sealed to the desktop's X25519 identity, so FormLogic Cloud
+  relays only routing metadata. Badge: "Private — end-to-end encrypted to your
+  Desktop".
+- **Custom** — the browser-local AI-services registry, named plainly in the
+  badge. Tools are unsupported there; replies carry an honest text-only note.
+
+Tool use on the desktop source works without exposing content to the backend:
+the browser mints a 10-minute grant per turn (`POST /api/ai/chat-tool-grant`),
+seals it into the tunnel envelope, and the desktop presents it to
+`POST /api/ai/chat-tools/execute`, which verifies the grant + its bound desktop
+instance and executes as the granting user (audited). A failed mint degrades the
+turn to a no-tools reply with a visible note — it never fails the turn. In
+Confirm mode the desktop pauses on a sealed `tool_proposal` frame; the widget
+renders an approve/deny card answered over the sealed input channel
+(`postInput`, `{type:'tool_approval', callId, approved}`), and an unanswered
+proposal is auto-denied by the desktop after about 120 seconds.
+
+Chat history is client-side only in v1 (IndexedDB `formlogic-chat:<userId>`,
+`ui/src/components/chat/chatStore.ts`, in-memory fallback when storage is
+unavailable); there are no server-side transcripts. The demo account chats with
+tools disabled end to end (banner + `tools:false` + no grant minting).

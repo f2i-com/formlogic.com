@@ -316,6 +316,62 @@ CREATE TABLE `audit_sequence` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `chat_tool_grants` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `token_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `desktop_instance_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `scope` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'ai:chat-tools',
+  `expires_at` timestamp NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_chat_tool_grant_token` (`token_hash`),
+  KEY `idx_chat_tool_grants_user` (`user_id`,`expires_at`),
+  CONSTRAINT `chat_tool_grants_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `desktop_ai_frames` (
+  `seq` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `request_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `direction` enum('out','in') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `envelope` mediumblob NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`seq`),
+  KEY `idx_desktop_ai_frames_request` (`request_id`,`direction`,`seq`),
+  CONSTRAINT `desktop_ai_frames_ibfk_1` FOREIGN KEY (`request_id`) REFERENCES `desktop_ai_requests` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `desktop_ai_requests` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requesting_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `target_instance_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `provider_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `eph_pub` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `envelope` mediumblob,
+  `status` enum('pending','claimed','streaming','done','failed','expired') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `idempotency_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `claimed_by` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `claimed_at` timestamp NULL DEFAULT NULL,
+  `finished_at` timestamp NULL DEFAULT NULL,
+  `expires_at` timestamp NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_desktop_ai_idem` (`idempotency_key`),
+  KEY `requesting_user_id` (`requesting_user_id`),
+  KEY `idx_desktop_ai_poll` (`owner_user_id`,`status`,`created_at`),
+  KEY `idx_desktop_ai_target` (`owner_user_id`,`target_instance_id`,`status`),
+  CONSTRAINT `desktop_ai_requests_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `desktop_ai_requests_ibfk_2` FOREIGN KEY (`requesting_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `desktop_commands` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -353,12 +409,53 @@ CREATE TABLE `desktop_connections` (
   `last_seen_at` timestamp NULL DEFAULT NULL,
   `capabilities_json` json DEFAULT NULL,
   `trusted_origins_json` json DEFAULT NULL,
+  `e2e_public_key` varchar(88) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_desktop_instance` (`owner_user_id`,`desktop_instance_id`),
   KEY `idx_desktop_owner` (`owner_user_id`),
   CONSTRAINT `desktop_connections_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `desktop_flow_run_frames` (
+  `seq` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `request_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `envelope` mediumblob NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`seq`),
+  KEY `idx_desktop_flow_run_frames_request` (`request_id`,`seq`),
+  CONSTRAINT `desktop_flow_run_frames_ibfk_1` FOREIGN KEY (`request_id`) REFERENCES `desktop_flow_runs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `desktop_flow_runs` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requesting_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `target_instance_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `flow_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `eph_pub` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `envelope` mediumblob,
+  `result_envelope` mediumblob,
+  `status` enum('pending','claimed','streaming','done','failed','expired') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `idempotency_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `claimed_by` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `claimed_at` timestamp NULL DEFAULT NULL,
+  `finished_at` timestamp NULL DEFAULT NULL,
+  `expires_at` timestamp NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_desktop_flow_run_idem` (`idempotency_key`),
+  KEY `requesting_user_id` (`requesting_user_id`),
+  KEY `idx_desktop_flow_runs_poll` (`owner_user_id`,`status`,`created_at`),
+  KEY `idx_desktop_flow_runs_target` (`owner_user_id`,`target_instance_id`,`status`),
+  CONSTRAINT `desktop_flow_runs_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `desktop_flow_runs_ibfk_2` FOREIGN KEY (`requesting_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `desktop_flow_runs_ibfk_3` FOREIGN KEY (`flow_id`) REFERENCES `flow_definitions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -377,6 +474,7 @@ CREATE TABLE `flow_definitions` (
   `node_capabilities` json DEFAULT NULL,
   `version` int NOT NULL DEFAULT '1',
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `execution_location` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'auto',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -418,6 +516,7 @@ CREATE TABLE `flow_run_logs` (
   `idempotency_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'running',
   `runtime` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `execution_location` varchar(8) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `claimed_by` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `input_snapshot_json` json DEFAULT NULL,
   `result_json` json DEFAULT NULL,
@@ -720,6 +819,18 @@ CREATE TABLE `payments` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `plan_allowances` (
+  `plan` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `metric` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `monthly_value` int NOT NULL DEFAULT '0',
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`plan`,`metric`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `rate_limits` (
   `bucket` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `window_start` bigint NOT NULL,
@@ -1018,6 +1129,36 @@ CREATE TABLE `users` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`),
   KEY `idx_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `usage_meter` (
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `metric` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `period` char(7) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `count` int NOT NULL DEFAULT '0',
+  `tokens_in` int NOT NULL DEFAULT '0',
+  `tokens_out` int NOT NULL DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`,`metric`,`period`),
+  CONSTRAINT `usage_meter_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `user_ai_settings` (
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ai_source` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'site',
+  `desktop_provider_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `desktop_model` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `custom_provider_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `chat_tool_mode` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'auto',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`),
+  CONSTRAINT `user_ai_settings_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

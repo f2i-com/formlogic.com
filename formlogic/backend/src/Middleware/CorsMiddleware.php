@@ -16,6 +16,19 @@ class CorsMiddleware implements MiddlewareInterface
     private ?array $allowedOrigins;
     private bool $isWildcardMode = false;
 
+    /** The app-configured instance, for callers that bypass the PSR pipeline (SSE takeover). */
+    private static ?CorsMiddleware $active = null;
+
+    public static function setActive(?CorsMiddleware $instance): void
+    {
+        self::$active = $instance;
+    }
+
+    public static function active(): ?CorsMiddleware
+    {
+        return self::$active;
+    }
+
     /**
      * @param string $defaultOrigin Default allowed origin (for single-origin mode)
      * @param array|null $allowedOrigins Array of allowed origins (for multi-origin mode), or null for single-origin
@@ -89,6 +102,38 @@ class CorsMiddleware implements MiddlewareInterface
 
         // Origin doesn't match: omit the CORS header entirely.
         return null;
+    }
+
+    /**
+     * The origin value a response to $requestOrigin may carry, or null for none —
+     * the public face of validateOrigin() for callers outside the PSR pipeline.
+     */
+    public function allowedOriginFor(?string $requestOrigin): ?string
+    {
+        return $this->validateOrigin($requestOrigin === '' ? null : $requestOrigin);
+    }
+
+    /**
+     * Emit the CORS headers via raw header() for SSE routes that take over the
+     * connection (echo + exit): the PSR response this middleware decorates never
+     * reaches the client there, so without this a cross-origin stream reader is
+     * blocked even though the allowlist would have admitted the origin.
+     */
+    public function emitRawSseHeaders(?string $requestOrigin = null): void
+    {
+        $origin = $requestOrigin;
+        if ($origin === null && is_string($_SERVER['HTTP_ORIGIN'] ?? null)) {
+            $origin = $_SERVER['HTTP_ORIGIN'];
+        }
+        $allowed = $this->allowedOriginFor($origin);
+        if ($allowed === null) {
+            return;
+        }
+        header('Access-Control-Allow-Origin: ' . $allowed);
+        if ($allowed !== '*' && !$this->isWildcardMode) {
+            header('Access-Control-Allow-Credentials: true');
+        }
+        header('Vary: Origin');
     }
 
     /**

@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Services\ChatToolDeniedException;
+use FormLogic\Services\ChatToolsContext;
+use FormLogic\Services\ChatToolsService;
 use FormLogic\Services\McpOAuthService;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\FormService;
@@ -16,7 +19,6 @@ use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\RateLimiter;
 use FormLogic\Services\PlanService;
 use FormLogic\Services\FlowService;
-use FormLogic\Services\ScriptRejection;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -27,18 +29,13 @@ use Psr\Log\LoggerInterface;
  * a short, stable machine-readable reason code alongside the human message so callTool()'s catch site
  * can audit denials (queryable trail for a probing/misbehaving token) without parsing message text.
  * The message shown to the MCP caller is unchanged either way — this is purely additive server-side.
+ *
+ * Since the Phase-6 ChatToolsService extraction the reason-code carrier lives in the shared base
+ * class (Services\ChatToolDeniedException) — the extracted handlers throw the base, this subclass
+ * marks denials raised by the MCP surface itself; callTool() catches the base so both are audited.
  */
-class McpDeniedException extends \Exception
+class McpDeniedException extends ChatToolDeniedException
 {
-    public function __construct(string $message, private readonly string $reasonCode, ?\Throwable $previous = null)
-    {
-        parent::__construct($message, 0, $previous);
-    }
-
-    public function getReasonCode(): string
-    {
-        return $this->reasonCode;
-    }
 }
 
 /**
@@ -258,26 +255,13 @@ class McpController
         return ['jsonrpc' => '2.0', 'id' => $id, 'result' => $result];
     }
 
-    // Which scope each tool requires (a token without it can't see or call the tool).
-    private const TOOL_SCOPES = [
-        'list_forms' => 'forms:read', 'get_form' => 'forms:read',
-        'create_form' => 'forms:write', 'update_form' => 'forms:write', 'create_app_form' => 'forms:write',
-        'list_apps' => 'apps:read', 'create_app' => 'apps:write',
-        'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
-        'create_report' => 'apps:write', 'create_document' => 'apps:write',
-        'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
-        // Flows are app configuration, so they ride the apps scopes: any builder token that can
-        // shape an app can automate it too (no scope migration for existing tokens).
-        'list_flows' => 'apps:read', 'get_flow' => 'apps:read',
-        'create_flow' => 'apps:write', 'update_flow' => 'apps:write', 'delete_flow' => 'apps:write',
-        'list_flow_bindings' => 'apps:read', 'create_flow_binding' => 'apps:write',
-        'update_flow_binding' => 'apps:write', 'delete_flow_binding' => 'apps:write',
-        // Record writes are an explicit opt-in scope (never in DEFAULT_SCOPES) and run the SAME
-        // pipeline as the external API: sanitize → normalize → calc → validate → onSubmit script.
-        'add_response' => 'responses:write', 'update_response' => 'responses:write',
-        'delete_response' => 'responses:write',
-        'connector_command' => 'connector:command', 'desktop_status' => 'connector:command',
-    ];
+    // Which scope each tool requires — the map moved to ChatToolsService::TOOL_SCOPES with the
+    // Phase-6 handler extraction (one home for the scope model, shared with the chat surface).
+    private const TOOL_SCOPES = ChatToolsService::TOOL_SCOPES;
+
+    /** Shared tool handlers (plan Phase 6 §5.4) — built lazily from this controller's own
+     *  services so the constructor signature (pinned by tests + DI) stays untouched. */
+    private ?ChatToolsService $chatToolsService = null;
 
     /** A desktop is "online" if its connector:relay key was used within this window (it long-polls ≤25s). */
     private const DESKTOP_ONLINE_WINDOW = 90;
@@ -291,450 +275,28 @@ class McpController
     {
         $userId = $session['userId'];
         $scopedApp = $session['appId'] ?? null;
-        $creatorMode = is_array($session['created'] ?? null); // a "creator" token: confined to what it makes
         try {
             if ($name === 'get_started') {
                 return ['content' => [['type' => 'text', 'text' => $this->guide()]]];
             }
-            $this->requireScope($session, self::TOOL_SCOPES[$name] ?? '__none__');
-            // Cloud entitlement (audit FL-003/C-10): mutating tools require an ACTIVE
-            // cloud account, the SAME policy as every web/API write path — the count
-            // quota alone let a lapsed account keep building through MCP. Read tools
-            // stay available (mirrors CloudWriteGate's read/export/delete allowance).
-            $toolScope = self::TOOL_SCOPES[$name] ?? '';
-            if (
-                (str_ends_with($toolScope, ':write') || $toolScope === 'connector:command')
-                && $this->planService !== null
-                && $this->planService->isEnforced()
-                && !$this->planService->isCloudActive($userId)
-            ) {
-                throw new McpDeniedException('Cloud access for this account has lapsed — renew to make changes', 'cloud_lapsed');
+            // The MCP-TRANSPORT tools (relay/session concerns) stay in this controller; every
+            // other tool — and any unknown name, which gets the same scope-gated refusal as
+            // before — runs the SHARED ChatToolsService handlers via the switch default below.
+            // The service applies the scope + cloud-entitlement gates itself; for the two local
+            // cases apply the SAME gates here, in the same order.
+            if ($name === 'desktop_status' || $name === 'connector_command') {
+                $this->requireScope($session, self::TOOL_SCOPES[$name]);
+                // Cloud entitlement (audit FL-003/C-10): connector:command tools require an
+                // ACTIVE cloud account, the SAME policy as every web/API write path.
+                if (
+                    $this->planService !== null
+                    && $this->planService->isEnforced()
+                    && !$this->planService->isCloudActive($userId)
+                ) {
+                    throw new McpDeniedException('Cloud access for this account has lapsed — renew to make changes', 'cloud_lapsed');
+                }
             }
             switch ($name) {
-                case 'list_forms':
-                    if ($scopedApp !== null) {
-                        $data = array_map(static fn ($f) => ['id' => $f['formId'], 'title' => $f['displayName'], 'status' => $f['formStatus'] ?? 'draft'], $this->appService->getAppForms($scopedApp));
-                    } else {
-                        $forms = $this->formService->getAllForms($userId);
-                        if ($creatorMode) {
-                            $allowed = $this->creatorFormIds($session);
-                            $forms = array_values(array_filter($forms, static fn ($f) => isset($allowed[$f['id']])));
-                        }
-                        $data = array_map(static fn ($f) => ['id' => $f['id'], 'title' => $f['title'], 'status' => $f['status'] ?? 'draft', 'fieldCount' => $f['fieldCount'] ?? count($f['fields'] ?? [])], $forms);
-                    }
-                    break;
-                case 'get_form':
-                    $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
-                    $data = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
-                    break;
-                case 'create_form':
-                    $this->checkFormQuota($userId);
-                    $this->validateFormInput($args);
-                    $data = $this->createFormSanitized($args, $userId);
-                    // App-scoped token: auto-attach the new form to the scoped app so it's usable + stays in scope.
-                    if ($scopedApp !== null && !empty($data['id'])) {
-                        $this->appService->addFormToApp($scopedApp, (string) $data['id']);
-                    }
-                    // Creator token: remember the form so the token can keep editing it (and attach it later).
-                    if ($creatorMode && !empty($data['id'])) {
-                        $session['created']['forms'][] = (string) $data['id'];
-                        $this->tokens->recordCreated((string) $session['id'], 'forms', (string) $data['id']);
-                    }
-                    $this->audit($request, 'mcp.create_form', $userId, ['formId' => $data['id'] ?? null, 'appId' => $scopedApp]);
-                    break;
-                case 'create_app_form': {
-                    // Create a form AND attach it to an app in one call (preferred for app building).
-                    $target = (string) ($args['appId'] ?? '');
-                    if ($target === '' && $scopedApp !== null) {
-                        $target = $scopedApp;
-                    }
-                    if ($target === '' && $creatorMode && count($session['created']['apps'] ?? []) === 1) {
-                        $target = (string) $session['created']['apps'][0];
-                    }
-                    $this->requireScope($session, 'apps:write');
-                    $this->assertAppScope($session, $target);
-                    $this->ownApp($target, $userId);
-                    $this->checkFormQuota($userId);
-                    $this->validateFormInput($args);
-                    $form = $this->createFormSanitized($args, $userId);
-                    $this->appService->addFormToApp($target, (string) $form['id'], $args['displayName'] ?? null);
-                    if ($creatorMode && !empty($form['id'])) {
-                        $session['created']['forms'][] = (string) $form['id'];
-                        $this->tokens->recordCreated((string) $session['id'], 'forms', (string) $form['id']);
-                    }
-                    $data = ['form' => $form, 'appId' => $target];
-                    $this->audit($request, 'mcp.create_app_form', $userId, ['formId' => $form['id'] ?? null, 'appId' => $target]);
-                    break;
-                }
-                case 'update_form':
-                    $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
-                    $this->ownForm((string) ($args['formId'] ?? ''), $userId);
-                    $this->validateFormInput($args);
-                    $input = $this->formInput($args);
-                    if (is_array($input['customScreen'] ?? null)) {
-                        $input['customScreen'] = $this->sanitizeSectionScreen($input['customScreen'], (string) $args['formId']);
-                    }
-                    $data = $this->formService->updateForm((string) $args['formId'], $input);
-                    $this->audit($request, 'mcp.update_form', $userId, ['formId' => $args['formId'] ?? null]);
-                    break;
-                case 'list_apps':
-                    $apps = $this->appService->getAllApps($userId);
-                    if ($scopedApp !== null) {
-                        $apps = array_values(array_filter($apps, static fn ($a) => $a['id'] === $scopedApp));
-                    } elseif ($creatorMode) {
-                        $mine = $session['created']['apps'] ?? [];
-                        $apps = array_values(array_filter($apps, static fn ($a) => in_array($a['id'], $mine, true)));
-                    }
-                    $data = array_map(static fn ($a) => ['id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'] ?? null, 'status' => $a['status'] ?? 'draft'], $apps);
-                    break;
-                case 'create_app':
-                    if ($scopedApp !== null) {
-                        throw new \Exception('This token is scoped to one app and cannot create new apps');
-                    }
-                    $input = ['name' => (string) ($args['name'] ?? 'Untitled App'), 'description' => $args['description'] ?? null];
-                    // Optional settings.appKind audience tag. The service would silently drop an invalid
-                    // value; over MCP a clear error is more useful to the AI, so validate here.
-                    if (isset($args['appKind'])) {
-                        if (!is_string($args['appKind']) || !in_array($args['appKind'], AppService::APP_KINDS, true)) {
-                            throw new \Exception('appKind must be one of: ' . implode(', ', AppService::APP_KINDS));
-                        }
-                        $input['appKind'] = $args['appKind'];
-                    }
-                    $data = $this->appService->createApp($input, $userId);
-                    // Creator token: confine future access to this newly-created app.
-                    if ($creatorMode && !empty($data['id'])) {
-                        $session['created']['apps'][] = (string) $data['id'];
-                        $this->tokens->recordCreated((string) $session['id'], 'apps', (string) $data['id']);
-                    }
-                    $this->audit($request, 'mcp.create_app', $userId, ['appId' => $data['id'] ?? null]);
-                    break;
-                case 'update_app':
-                    $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
-                    $app = $this->ownApp((string) ($args['appId'] ?? ''), $userId);
-                    $upd = [];
-                    foreach (['name', 'description', 'status', 'slug'] as $k) {
-                        if (array_key_exists($k, $args)) {
-                            $upd[$k] = $args[$k];
-                        }
-                    }
-                    if (array_key_exists('hideNav', $args)) {
-                        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
-                        $settings['hideNav'] = (bool) $args['hideNav'];
-                        $upd['settings'] = $settings;
-                    }
-                    if (array_key_exists('customLogic', $args) && is_array($args['customLogic'])) {
-                        $bundle = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($args['customLogic']);
-                        if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($bundle)) {
-                            throw new \Exception('customLogic exceeds the 256KB limit');
-                        }
-                        $upd['customLogic'] = $bundle;
-                    }
-                    $data = $this->appService->updateApp((string) $args['appId'], $upd);
-                    $this->audit($request, 'mcp.update_app', $userId, ['appId' => $args['appId'] ?? null]);
-                    break;
-                case 'add_form_to_app':
-                    $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
-                    $this->ownApp((string) ($args['appId'] ?? ''), $userId);
-                    $this->ownForm((string) ($args['formId'] ?? ''), $userId);
-                    $data = $this->appService->addFormToApp((string) $args['appId'], (string) $args['formId'], $args['displayName'] ?? null);
-                    $this->audit($request, 'mcp.add_form_to_app', $userId, ['appId' => $args['appId'] ?? null, 'formId' => $args['formId'] ?? null]);
-                    break;
-                case 'set_app_home':
-                    $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
-                    $this->ownApp((string) ($args['appId'] ?? ''), $userId);
-                    $cs = is_array($args['customScreen'] ?? null) ? $args['customScreen'] : [];
-                    $this->validateCustomScreen($cs);
-                    // A widget dashboard is data, not code — sanitize its specs against this app so no
-                    // widget can query a form/field outside it (the same save boundary as the UI's
-                    // AppController::update path).
-                    if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null) && $this->reportValidator !== null) {
-                        $cs['dashboard'] = $this->reportValidator->sanitizeDashboardForApp($cs['dashboard'], (string) $args['appId']);
-                    }
-                    $data = $this->appService->updateApp((string) $args['appId'], ['customScreen' => $cs]);
-                    $this->audit($request, 'mcp.set_app_home', $userId, ['appId' => $args['appId'] ?? null]);
-                    break;
-                case 'create_report': {
-                    // Add a chart report to the app's Reports section. Spec uses REAL form ids.
-                    $appId = (string) ($args['appId'] ?? '');
-                    $this->assertAppScope($session, $appId);
-                    $app = $this->ownApp($appId, $userId);
-                    $spec = is_array($args['spec'] ?? null) ? $args['spec'] : [];
-                    if (empty($spec['formId']) || !is_string($spec['formId'])) {
-                        throw new \Exception('spec.formId is required (a form id in this app)');
-                    }
-                    if (!in_array($spec['viz'] ?? 'bar', ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'], true)) {
-                        throw new \Exception('spec.viz must be one of: table, bar, line, area, pie, donut, kpi');
-                    }
-                    // Validate the spec against the app: base form must belong to it; joins/field-refs are
-                    // checked + sanitized (foreign form / bad field refs are rejected, not stored).
-                    if ($this->reportValidator !== null) {
-                        $v = $this->reportValidator->validateChartSpec($spec, $appId);
-                        if (!$v['ok']) { throw new \Exception($v['error'] ?? 'Invalid report spec'); }
-                        $spec = $v['spec'];
-                    }
-                    $item = ['id' => 'rep_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Report'), 'type' => 'builder', 'spec' => $spec];
-                    if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
-                    $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
-                    $reports[] = $item;
-                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
-                    $this->appService->updateApp($appId, ['reports' => $reports]);
-                    $data = $item;
-                    $this->audit($request, 'mcp.create_report', $userId, ['appId' => $appId, 'reportId' => $item['id']]);
-                    break;
-                }
-                case 'create_document': {
-                    // Add a PDF document (text + chart blocks referencing existing reports) to the app.
-                    $appId = (string) ($args['appId'] ?? '');
-                    $this->assertAppScope($session, $appId);
-                    $app = $this->ownApp($appId, $userId);
-                    $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
-                    $existingIds = [];
-                    foreach ($reports as $r) { if (!empty($r['id'])) { $existingIds[(string) $r['id']] = true; } }
-                    $blocks = [];
-                    foreach ((is_array($args['blocks'] ?? null) ? $args['blocks'] : []) as $b) {
-                        $kind = $b['kind'] ?? '';
-                        if ($kind === 'text') {
-                            $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'text', 'title' => $b['title'] ?? null, 'body' => (string) ($b['body'] ?? '')];
-                        } elseif ($kind === 'report') {
-                            $rid = (string) ($b['reportId'] ?? '');
-                            if (!isset($existingIds[$rid])) { throw new \Exception("Document references unknown reportId '{$rid}' — create the chart report first"); }
-                            $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'report', 'reportId' => $rid, 'caption' => $b['caption'] ?? null];
-                        }
-                    }
-                    if (!$blocks) { throw new \Exception('A document needs at least one block (text or report)'); }
-                    $item = ['id' => 'doc_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Document'), 'type' => 'document', 'blocks' => $blocks];
-                    if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
-                    $reports[] = $item;
-                    // Defense-in-depth: sanitize the whole set against the app (drops broken refs, clamps text).
-                    if ($this->reportValidator !== null) {
-                        $reports = $this->reportValidator->sanitizeReports($reports, $appId);
-                    }
-                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
-                    $this->appService->updateApp($appId, ['reports' => $reports]);
-                    $data = $item;
-                    $this->audit($request, 'mcp.create_document', $userId, ['appId' => $appId, 'documentId' => $item['id']]);
-                    break;
-                }
-                case 'list_flows': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    // Summaries only — flowJson can be up to 256KB per flow; use get_flow for the graph.
-                    $data = array_map(static fn ($f) => [
-                        'id' => $f['id'], 'name' => $f['name'], 'slug' => $f['slug'],
-                        'description' => $f['description'], 'enabled' => $f['enabled'], 'version' => $f['version'],
-                    ], $this->flows()->listFlows($appId));
-                    break;
-                }
-                case 'get_flow': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    $data = $this->flows()->getFlow($appId, (string) ($args['flowId'] ?? ''));
-                    if (!$data) {
-                        throw new \Exception('Flow not found in this app');
-                    }
-                    break;
-                }
-                case 'create_flow': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    $input = [];
-                    foreach (['name', 'slug', 'description', 'flowJson', 'enabled', 'inputSchema', 'nodeCapabilities'] as $k) {
-                        if (array_key_exists($k, $args)) {
-                            $input[$k] = $args[$k];
-                        }
-                    }
-                    $data = $this->flows()->createFlow($appId, $userId, $input);
-                    $this->audit($request, 'mcp.create_flow', $userId, ['appId' => $appId, 'flowId' => $data['id'] ?? null]);
-                    break;
-                }
-                case 'update_flow': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    $input = [];
-                    foreach (['name', 'slug', 'description', 'flowJson', 'enabled', 'inputSchema', 'nodeCapabilities'] as $k) {
-                        if (array_key_exists($k, $args)) {
-                            $input[$k] = $args[$k];
-                        }
-                    }
-                    $data = $this->flows()->updateFlow($appId, (string) ($args['flowId'] ?? ''), $input);
-                    if (!$data) {
-                        throw new \Exception('Flow not found in this app');
-                    }
-                    $this->audit($request, 'mcp.update_flow', $userId, ['appId' => $appId, 'flowId' => $args['flowId'] ?? null]);
-                    break;
-                }
-                case 'delete_flow': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    // Recycle bin: snapshot before the hard delete (parity with the web surface).
-                    $flowDeleted = $this->trashService !== null
-                        ? $this->trashService->trashFlow($appId, (string) ($args['flowId'] ?? ''), $userId)
-                        : $this->flows()->deleteFlow($appId, (string) ($args['flowId'] ?? ''));
-                    if (!$flowDeleted) {
-                        throw new \Exception('Flow not found in this app');
-                    }
-                    $data = ['deleted' => true, 'flowId' => (string) ($args['flowId'] ?? '')];
-                    $this->audit($request, 'mcp.delete_flow', $userId, ['appId' => $appId, 'flowId' => $args['flowId'] ?? null]);
-                    break;
-                }
-                case 'list_flow_bindings': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    $data = $this->flows()->listBindings($appId);
-                    break;
-                }
-                case 'create_flow_binding': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    $input = [];
-                    foreach (['flow', 'event', 'mode', 'formId', 'connectorId', 'condition', 'inputMap',
-                              'outputActions', 'timeoutMs', 'retryPolicy', 'fallbackPolicy', 'enabled', 'sortOrder'] as $k) {
-                        if (array_key_exists($k, $args)) {
-                            $input[$k] = $args[$k];
-                        }
-                    }
-                    if (!isset($input['mode'])) {
-                        $input['mode'] = 'async'; // the forgiving default; sync/background/manual are opt-in
-                    }
-                    $data = $this->flows()->createBinding($appId, $input);
-                    $this->audit($request, 'mcp.create_flow_binding', $userId, ['appId' => $appId, 'bindingId' => $data['id'] ?? null, 'event' => $input['event'] ?? null]);
-                    break;
-                }
-                case 'update_flow_binding': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    $input = [];
-                    foreach (['flow', 'event', 'mode', 'formId', 'connectorId', 'condition', 'inputMap',
-                              'outputActions', 'timeoutMs', 'retryPolicy', 'fallbackPolicy', 'enabled', 'sortOrder'] as $k) {
-                        if (array_key_exists($k, $args)) {
-                            $input[$k] = $args[$k];
-                        }
-                    }
-                    $data = $this->flows()->updateBinding($appId, (string) ($args['bindingId'] ?? ''), $input);
-                    if (!$data) {
-                        throw new \Exception('Flow binding not found in this app');
-                    }
-                    $this->audit($request, 'mcp.update_flow_binding', $userId, ['appId' => $appId, 'bindingId' => $args['bindingId'] ?? null]);
-                    break;
-                }
-                case 'delete_flow_binding': {
-                    $appId = $this->resolveAppId($args, $session);
-                    $this->assertAppScope($session, $appId);
-                    $this->ownApp($appId, $userId);
-                    if (!$this->flows()->deleteBinding($appId, (string) ($args['bindingId'] ?? ''))) {
-                        throw new \Exception('Flow binding not found in this app');
-                    }
-                    $data = ['deleted' => true, 'bindingId' => (string) ($args['bindingId'] ?? '')];
-                    $this->audit($request, 'mcp.delete_flow_binding', $userId, ['appId' => $appId, 'bindingId' => $args['bindingId'] ?? null]);
-                    break;
-                }
-                case 'list_responses':
-                    $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
-                    $this->ownForm((string) ($args['formId'] ?? ''), $userId);
-                    $data = $this->responseService->getFormResponses((string) $args['formId'], ['limit' => min(200, max(1, (int) ($args['limit'] ?? 50)))]);
-                    break;
-                case 'add_response': {
-                    $formId = (string) ($args['formId'] ?? '');
-                    $this->assertFormInScope($session, $formId);
-                    $form = $this->ownForm($formId, $userId);
-                    // Owner PROGRAMMATIC write (same stance as the external API): only an explicitly
-                    // archived form refuses; app-internal forms are typically 'draft' and must accept.
-                    if (($form['status'] ?? '') === 'archived') {
-                        throw new \Exception('Form is archived and not accepting responses');
-                    }
-                    $settings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
-                    if (!empty($settings['isClosed'])) {
-                        throw new \Exception('This form is closed and not accepting responses');
-                    }
-                    if (!is_array($args['answers'] ?? null)) {
-                        throw new \Exception('answers must be an object of field id → value');
-                    }
-                    $answers = $this->preparedAnswers($form, $args['answers']);
-                    // Atomic quota enforcement, mirroring the external API path (fail closed, retryable).
-                    $quotaLock = null;
-                    if (!empty($settings['quotaLimit'])) {
-                        $quotaLock = $this->responseService->acquireFormLock($formId);
-                        if ($quotaLock === null) {
-                            throw new \Exception('The form is busy — please retry in a moment.');
-                        }
-                        if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
-                            $this->responseService->releaseFormLock($quotaLock);
-                            throw new \Exception('This form has reached its maximum number of responses.');
-                        }
-                    }
-                    try {
-                        $result = $this->responseService->createResponse(
-                            $formId,
-                            ['answers' => $answers, 'ipAddress' => $this->ip($request), 'userAgent' => 'mcp'],
-                            $form['logicScript'] ?? null
-                        );
-                    } finally {
-                        $this->responseService->releaseFormLock($quotaLock);
-                    }
-                    if ($result instanceof ScriptRejection) {
-                        throw new \Exception("Submission rejected by the form's onSubmit script: " . $result->message);
-                    }
-                    // {store:false} scripts persist nothing — no source row to link from.
-                    if (($result['stored'] ?? true) !== false) {
-                        $this->responseService->syncResponseLinks($formId, (string) ($result['id'] ?? ''), $form['fields'] ?? [], $answers);
-                    }
-                    $data = $result;
-                    $this->audit($request, 'mcp.add_response', $userId, ['formId' => $formId, 'responseId' => $result['id'] ?? null]);
-                    break;
-                }
-                case 'update_response': {
-                    $formId = (string) ($args['formId'] ?? '');
-                    $responseId = (string) ($args['responseId'] ?? '');
-                    $this->assertFormInScope($session, $formId);
-                    $form = $this->ownForm($formId, $userId);
-                    $existing = $responseId !== '' ? $this->responseService->getResponse($formId, $responseId) : null;
-                    if (!$existing) {
-                        throw new \Exception('Response not found');
-                    }
-                    $upd = [];
-                    if (isset($args['answers']) && is_array($args['answers'])) {
-                        // PATCH semantics: merge the patch over the STORED answers before validating,
-                        // so a partial update isn't rejected for omitting an unrelated required field
-                        // (mirrors the external API and AppPublicController::updateResponseById).
-                        $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
-                        $upd['answers'] = $this->preparedAnswers($form, array_merge($existingAnswers, $args['answers']));
-                    }
-                    if (array_key_exists('status', $args)) {
-                        $upd['status'] = $args['status'];
-                    }
-                    if ($upd === []) {
-                        throw new \Exception('Nothing to update — provide answers (a partial patch) and/or status');
-                    }
-                    $data = $this->responseService->updateResponse($formId, $responseId, $upd);
-                    if (!$data) {
-                        throw new \Exception('Response not found');
-                    }
-                    if (isset($upd['answers'])) {
-                        $this->responseService->syncResponseLinks($formId, $responseId, $form['fields'] ?? [], $upd['answers']);
-                    }
-                    $this->audit($request, 'mcp.update_response', $userId, ['formId' => $formId, 'responseId' => $responseId]);
-                    break;
-                }
-                case 'delete_response': {
-                    $formId = (string) ($args['formId'] ?? '');
-                    $responseId = (string) ($args['responseId'] ?? '');
-                    $this->assertFormInScope($session, $formId);
-                    $this->ownForm($formId, $userId);
-                    if ($responseId === '' || !$this->responseService->deleteResponse($formId, $responseId)) {
-                        throw new \Exception('Response not found');
-                    }
-                    $data = ['deleted' => true, 'responseId' => $responseId];
-                    $this->audit($request, 'mcp.delete_response', $userId, ['formId' => $formId, 'responseId' => $responseId]);
-                    break;
-                }
                 case 'desktop_status': {
                     if ($this->desktopCommands === null) {
                         throw new \Exception('Connector relay is not available on this server.');
@@ -850,13 +412,19 @@ class McpController
                     break;
                 }
                 default:
-                    throw new \Exception("Unknown or unavailable tool: {$name}");
+                    // Every non-transport tool — and any unknown name, which gets the same
+                    // scope-gated refusal as before — runs the SHARED handlers extracted to
+                    // ChatToolsService (plan Phase 6 §5.4): scope gate + cloud gate + the tool
+                    // switch moved there verbatim; toolContext() threads this token's session
+                    // (scopes, app confinement, creator bookkeeping, 'mcp.' audits) through.
+                    $data = $this->chatTools()->call($name, $args, $this->toolContext($session, $request));
             }
             return ['content' => [['type' => 'text', 'text' => json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)]]];
-        } catch (McpDeniedException $e) {
+        } catch (ChatToolDeniedException $e) {
             // A scope/ownership denial (as opposed to ordinary validation noise below) — always audited
             // so a token probing outside its scope, or repeatedly failing, leaves a queryable trail.
-            // Must be caught before the plain \Exception branch (McpDeniedException extends it).
+            // Must be caught before the plain \Exception branch (the denial base extends it); catching
+            // the BASE covers both this controller's McpDeniedException and the shared handlers'.
             $this->audit($request, 'mcp.denied', $userId, ['tool' => $name, 'reason' => $e->getReasonCode()]);
             return ['content' => [['type' => 'text', 'text' => 'Error: ' . $e->getMessage()]], 'isError' => true];
         } catch (\Exception $e) {
@@ -881,307 +449,66 @@ class McpController
         }
     }
 
-    /** Same form-count quota FormController::checkFormQuota enforces on the web create path — a
-     *  no-op unless $this->planService is set AND plan enforcement is on (self-hosted default). */
-    private function checkFormQuota(string $userId): void
+    /** The shared handlers, built from this controller's own services (constructor unchanged). */
+    private function chatTools(): ChatToolsService
     {
-        if ($this->planService && !$this->planService->canCreateForms($userId, 1)) {
-            throw new \Exception('You\'ve reached your plan\'s limit of ' . $this->planService->formLimit($userId) . ' forms. Delete a form or upgrade to add more.');
-        }
-    }
-
-    /** The FlowService, or a clean error on a server where it isn't wired (older test harnesses). */
-    private function flows(): FlowService
-    {
-        if ($this->flowService === null) {
-            throw new \Exception('Flows are not available on this server.');
-        }
-        return $this->flowService;
+        return $this->chatToolsService ??= new ChatToolsService(
+            $this->formService,
+            $this->appService,
+            $this->responseService,
+            $this->reportValidator,
+            $this->planService,
+            $this->flowService,
+            $this->trashService,
+        );
     }
 
     /**
-     * The app a flow/binding tool targets: an explicit appId wins; an app-scoped token falls back
-     * to its app; a creator token that has made exactly one app falls back to that app (the same
-     * convenience create_app_form provides).
+     * Thread the MCP token session through the shared handlers (plan §5.4): the scope closure
+     * enforces THIS token's scopes (throws McpDeniedException, so denials audit exactly as
+     * before), audits land under their historical 'mcp.<action>' names, and creator-token
+     * bookkeeping keeps mutating the by-reference $session (+ persists via McpTokenService)
+     * so later calls in the same batch see what earlier ones created.
      */
-    private function resolveAppId(array $args, array $session): string
+    private function toolContext(array &$session, Request $request): ChatToolsContext
     {
-        $appId = (string) ($args['appId'] ?? '');
-        if ($appId === '' && is_string($session['appId'] ?? null)) {
-            $appId = (string) $session['appId'];
-        }
-        if ($appId === '' && is_array($session['created'] ?? null) && count($session['created']['apps'] ?? []) === 1) {
-            $appId = (string) $session['created']['apps'][0];
-        }
-        return $appId;
-    }
-
-    /**
-     * Run submitted answers through the SAME pipeline as the external API write path:
-     * sanitize (drop non-input/unknown fields) → normalize (file urls, checkbox dedupe) →
-     * calculated fields → file validation → size cap → full field validation. Throws a
-     * user-safe \Exception carrying the per-field errors on failure.
-     */
-    private function preparedAnswers(array $form, array $answers): array
-    {
-        $fields = $form['fields'] ?? [];
-        $formId = (string) ($form['id'] ?? '');
-        $answers = $this->responseService->sanitizeSubmittedAnswers($fields, $answers);
-        $answers = $this->responseService->normalizeAnswers($fields, $answers, $formId);
-        $answers = $this->responseService->applyCalculatedFields($fields, $answers);
-        // Every MCP write path calls ownForm() first, so this is an owner programmatic
-        // write → owner attachment rules (FILE-PRIV-001).
-        $fileErrors = $this->responseService->validateFileAnswers($fields, $answers, $formId, ['isOwner' => true]);
-        if (!empty($fileErrors)) {
-            throw new \Exception('Validation failed: ' . json_encode($fileErrors, JSON_UNESCAPED_SLASHES));
-        }
-        if ($this->responseService->answersTooLarge($answers)) {
-            throw new \Exception('Submission is too large.');
-        }
-        $errors = $this->responseService->validateSubmittedAnswers($fields, $answers);
-        if (!empty($errors)) {
-            throw new \Exception('Validation failed: ' . json_encode($errors, JSON_UNESCAPED_SLASHES));
-        }
-        return $answers;
-    }
-
-    /** The target app must be in scope: the one scoped app, or (creator token) an app it created. */
-    private function assertAppScope(array $session, string $appId): void
-    {
-        if (is_array($session['created'] ?? null)) {
-            if ($appId === '' || !in_array($appId, $session['created']['apps'] ?? [], true)) {
-                throw new McpDeniedException('This MCP link can only manage the app(s) it created', 'app_scope');
-            }
-            return;
-        }
-        $scoped = $session['appId'] ?? null;
-        if ($scoped !== null && $scoped !== $appId) {
-            throw new McpDeniedException('This MCP token is scoped to a single app and cannot touch other apps', 'app_scope');
-        }
-    }
-
-    /** The target form must be in scope: belong to the scoped app, or (creator token) be one it created
-     *  / belong to an app it created. */
-    private function assertFormInScope(array $session, string $formId): void
-    {
-        if (is_array($session['created'] ?? null)) {
-            $createdForms = $session['created']['forms'] ?? [];
-            if ($formId !== '' && (in_array($formId, $createdForms, true) || $this->formInAnyApp($session['created']['apps'] ?? [], $formId))) {
-                return;
-            }
-            throw new McpDeniedException('This MCP link can only touch forms it created (or forms in apps it created)', 'form_scope');
-        }
-        $scoped = $session['appId'] ?? null;
-        if ($scoped !== null && ($formId === '' || !$this->appService->formBelongsToApp($scoped, $formId))) {
-            throw new McpDeniedException('This MCP token is scoped to an app; that form is not part of it', 'form_scope');
-        }
-    }
-
-    /** True if $formId belongs to any of the given apps. */
-    private function formInAnyApp(array $appIds, string $formId): bool
-    {
-        foreach ($appIds as $aid) {
-            if ($this->appService->formBelongsToApp((string) $aid, $formId)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** The set (formId => true) a creator token may read in list_forms: forms it created + forms in its apps. */
-    private function creatorFormIds(array $session): array
-    {
-        $set = [];
-        foreach ($session['created']['forms'] ?? [] as $fid) {
-            $set[(string) $fid] = true;
-        }
-        foreach ($session['created']['apps'] ?? [] as $aid) {
-            foreach ($this->appService->getAppForms((string) $aid) as $f) {
-                $set[$f['formId']] = true;
-            }
-        }
-        return $set;
-    }
-
-    /** Size caps for MCP-created/updated forms (MCP bypasses FormController, so enforce here). */
-    /** Mirror FormController's shape/type/size rules (MCP bypasses that controller, calling services directly). */
-    private function validateFormInput(array $args): void
-    {
-        if (array_key_exists('title', $args) && (!is_string($args['title']) || strlen($args['title']) > 500)) {
-            throw new \Exception('title must be a string up to 500 characters');
-        }
-        if (array_key_exists('description', $args) && $args['description'] !== null && !is_string($args['description'])) {
-            throw new \Exception('description must be a string or null');
-        }
-        if (array_key_exists('status', $args) && !in_array($args['status'], ['draft', 'published', 'archived'], true)) {
-            throw new \Exception('status must be draft, published, or archived');
-        }
-        if (array_key_exists('icon', $args) && $args['icon'] !== null && (!is_string($args['icon']) || strlen($args['icon']) > 100)) {
-            throw new \Exception('icon must be a string up to 100 characters');
-        }
-        if (isset($args['logicScript']) && (!is_string($args['logicScript']) || strlen($args['logicScript']) > 102400)) {
-            throw new \Exception('logicScript must be a string up to 100KB');
-        }
-        if (array_key_exists('fields', $args)) {
-            if (!is_array($args['fields'])) {
-                throw new \Exception('fields must be an array');
-            }
-            if (count($args['fields']) > 200) {
-                throw new \Exception('a form cannot have more than 200 fields');
-            }
-            foreach ($args['fields'] as $i => $f) {
-                if (!is_array($f) || !isset($f['type'])) {
-                    throw new \Exception("field at index {$i} is malformed (must be an object with a type)");
-                }
-            }
-            if (strlen((string) json_encode($args['fields'])) > 512000) {
-                throw new \Exception('fields exceed the 500KB limit');
-            }
-        }
-        if (isset($args['customScreen'])) {
-            if (!is_array($args['customScreen'])) {
-                throw new \Exception('customScreen must be an object');
-            }
-            $this->validateCustomScreen($args['customScreen']);
-        }
-    }
-
-    /** Shared customScreen shape check (form section screens AND the app home): key whitelist + size cap. */
-    private function validateCustomScreen(array $cs): void
-    {
-        $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields', 'kind', 'dashboard', 'recordScreen', 'allowNewResponses'];
-        $unknown = array_diff(array_keys($cs), $allowed);
-        if (!empty($unknown)) {
-            throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown) . ' (a widget dashboard is { kind:"dashboard", dashboard:{ cols, widgets } })');
-        }
-        // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
-        if (strlen((string) json_encode($cs)) > 2097152) {
-            throw new \Exception('customScreen exceeds the 2MB limit');
-        }
-    }
-
-    /**
-     * Mirror FormController::sanitizeDashboardScreen for the MCP path: a section-screen widget
-     * dashboard (customScreen.kind === 'dashboard') is sanitized against the form's own fields
-     * (+ its linked_record target forms) before it persists, so no widget can query outside them.
-     */
-    private function sanitizeSectionScreen(array $screen, string $formId): array
-    {
-        if (($screen['kind'] ?? '') === 'dashboard' && is_array($screen['dashboard'] ?? null) && $this->reportValidator !== null) {
-            $screen['dashboard'] = $this->reportValidator->sanitizeDashboard(
-                $screen['dashboard'],
-                $this->reportValidator->formFieldMap($formId)
-            );
-        }
-        return $screen;
-    }
-
-    /**
-     * Create a form for create_form / create_app_form. When the customScreen is a widget DASHBOARD its
-     * specs must be sanitized against the form's REAL stored fields — which don't exist until the form
-     * does — so the screen is held back from the insert and attached right after (create → sanitize →
-     * patch): an unsanitized dashboard never persists. Code screens pass straight through (sandboxed).
-     */
-    private function createFormSanitized(array $args, string $userId): array
-    {
-        $input = array_merge($this->formInput($args), ['userId' => $userId]);
-        $screen = null;
-        if (is_array($input['customScreen'] ?? null) && ($input['customScreen']['kind'] ?? '') === 'dashboard') {
-            $screen = $input['customScreen'];
-            unset($input['customScreen']);
-        }
-        $form = $this->formService->createForm($input);
-        if ($screen !== null && !empty($form['id'])) {
-            $form = $this->formService->updateForm((string) $form['id'], [
-                'customScreen' => $this->sanitizeSectionScreen($screen, (string) $form['id']),
-            ]) ?? $form;
-        }
-        return $form;
-    }
-
-    private function ownForm(string $formId, string $userId): array
-    {
-        $f = $formId !== '' ? $this->formService->getForm($formId) : null;
-        if (!$f || ($f['userId'] ?? null) !== $userId) {
-            throw new McpDeniedException('Form not found or access denied', 'not_found');
-        }
-        return $f;
-    }
-
-    private function ownApp(string $appId, string $userId): array
-    {
-        $a = $appId !== '' ? $this->appService->getApp($appId) : null;
-        if (!$a || ($a['ownerId'] ?? null) !== $userId) {
-            throw new McpDeniedException('App not found or access denied', 'not_found');
-        }
-        return $a;
-    }
-
-    /** Pick the writable form fields from tool args. */
-    private function formInput(array $args): array
-    {
-        $out = [];
-        foreach (['title', 'description', 'logicScript', 'status', 'icon'] as $k) {
-            if (array_key_exists($k, $args)) {
-                $out[$k] = $args[$k];
-            }
-        }
-        if (array_key_exists('fields', $args) && is_array($args['fields'])) {
-            $out['fields'] = $args['fields'];
-        }
-        if (array_key_exists('customScreen', $args) && is_array($args['customScreen'])) {
-            $out['customScreen'] = $args['customScreen'];
-        }
-        return $out;
+        $userId = (string) $session['userId'];
+        $tokens = $this->tokens;
+        return new ChatToolsContext(
+            userId: $userId,
+            scopedAppId: is_string($session['appId'] ?? null) ? $session['appId'] : null,
+            creatorMode: is_array($session['created'] ?? null), // a "creator" token: confined to what it makes
+            createdApps: is_array($session['created']['apps'] ?? null) ? $session['created']['apps'] : [],
+            createdForms: is_array($session['created']['forms'] ?? null) ? $session['created']['forms'] : [],
+            requireScope: function (string $scope) use (&$session): void {
+                $this->requireScope($session, $scope);
+            },
+            audit: function (string $action, array $details) use ($request, $userId): void {
+                $this->audit($request, 'mcp.' . $action, $userId, $details);
+            },
+            recordCreated: function (string $kind, string $id) use (&$session, $tokens): void {
+                $session['created'][$kind][] = $id;
+                $tokens->recordCreated((string) $session['id'], $kind, $id);
+            },
+            ip: $this->ip($request),
+            userAgent: 'mcp',
+            source: 'mcp',
+        );
     }
 
     /** Tool definitions visible to a session — filtered by its scopes (and app-scope for create_app;
      *  create_app_form additionally requires apps:write, since its own case in callTool() does too). */
     private function toolDefs(array $session): array
     {
-        $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
-        $screen = ['type' => 'object', 'description' => "Custom screen — two kinds. (1) PREFERRED no-code widget DASHBOARD: { kind:'dashboard', dashboard:{ cols?:12, widgets:[{ kind:'report'|'list'|'text'|'actions'|'activity', layout:{x,y,w,h}, title?, … }] } } — 'report' embeds a chart/KPI/table via `spec` (the SAME shape as create_report's spec), 'list' shows recent records via `list`:{formId,limit?,titleField?,subtitleField?,metaField?}, 'text' a note via `text`:{body}, 'actions' new-record buttons, 'activity' a latest-records feed (both config-free, app home only). Widget specs are validated against the in-scope forms on save; out-of-scope widgets are dropped. (2) CODE screen — a sandboxed full frontend: EITHER `ts` (a single TypeScript/TSX file) OR `files` (a multi-file project: an array of { path, content } with .tsx/.ts/.css files, folders + relative imports allowed, entry index.tsx). React-style TSX components WORK: 'react', 'react-dom/client', 'preact', 'preact/hooks' are built-in (react aliases to Preact); other npm packages resolve via esm.sh at compile time (pin versions). Image assets: .svg as text files, binary images as data: URI content — importing an image file yields its data: URI. No index.html needed (a <div id=\"root\"></div> shell is automatic; entry must createRoot(...).render(<App/>)). Compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast)."];
-        $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;
-        $flowGraph = ['type' => 'object', 'description' => "The automation graph: { nodes:[{ id, type, data:{ …node config } }], edges:[{ source, target, sourceHandle? }] }. Node ids are unique strings; node config lives under data; every edge references existing node ids; a condition node routes downstream via sourceHandle 'true' / 'false'. Node types + their config: see the get_started guide (§ Flows)."];
-        $customLogic = ['type' => 'object', 'description' => "App-logic bundle: { version:1, scripts:[{ id?, hook, source, permissions?, enabled? }], permissions?:[…], connector?:{ manifest, demoDriver? } }. hook ∈ onAppStart|onScreenEnter|onScreenLeave|onButtonClick|onBeforeSubmit|onAfterSubmit|onConnectorEvent|onSyncConflict|mapConnectorDataToForm|calculateDashboardState. source = sandboxed QuickJS (≤50KB/script, ≤256KB total). permissions grant what the scripts may do (e.g. 'formlogic.responses.write', 'connector.aokie.call.answer'). connector (optional) declares a pack-embedded connector: manifest { connectorId, kind, label, commands[], journalledCommands?, demoEvents?, demoCeremonies?, captions? } + demoDriver (a QuickJS 'function run(ctx)' simulator, ≤128KB) — the demo driver only activates with the reviewable grant 'connector.<id>.driver.demo' and only inside an explicit simulator session; real hardware always routes host-side via FormLogic Desktop."];
-        // Ordered deliberately: the core BUILD path first (create_app → create_app_form →
-        // set_app_home → update_app → flows), because some MCP clients (e.g. Claude) surface only
-        // the first batch of tool schemas eagerly and lazy-load the rest — a fresh app build should
-        // never stall on a deferred schema.
-        $all = [
-            ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms). Optional appKind tags the audience the app serves.', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'appKind' => ['type' => 'string', 'enum' => AppService::APP_KINDS, 'description' => 'Optional audience tag: admin console, client portal, staff field app, public intake, internal, or custom.']], ['name'])],
-            ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
-            ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
-            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed QuickJS event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'customLogic' => $customLogic], ['appId'])],
-            ['name' => 'create_flow', 'scope' => 'apps:write', 'description' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, QuickJS logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. After creating it, wire it to its trigger with create_flow_binding. Set nodeCapabilities to the union of the capabilities your nodes need (see get_started § Flows), e.g. ['formlogic.responses.read','formlogic.responses.write'].", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'lowercase letters/digits/hyphens; defaults from name.'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => "Capabilities the flow's nodes need: formlogic.responses.read / formlogic.responses.write / formlogic.kv.write / model.llm.local / connector.<id>.<command>."], 'enabled' => ['type' => 'boolean']], ['name'])],
-            ['name' => 'create_flow_binding', 'scope' => 'apps:write', 'description' => "Make a flow RUN automatically by binding it to a trigger EVENT. Common triggers: event 'form.submitted' + formId (a form received a new record), or a connector event + connectorId (e.g. event 'aokie.call.incoming', connectorId 'aokie' — an incoming phone call). flow = the flow's SLUG (not id). mode: async (default) | sync (the triggering caller waits for the result) | background | manual. inputMap maps the flow's trigger inputs from the event, e.g. { callerPhone: '\$event.data.from', name: '\$event.data.answers.name' }. outputActions (optional) run with the flow result, e.g. [{ type:'formlogic.submitResponse', form:'<formId>', answers:{ note:'\$result.summary' } }] — types: formlogic.submitResponse | formlogic.updateResponse | formlogic.toast | connector.request | call.speak | formlogic.store.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'flow' => ['type' => 'string', 'description' => "The flow's slug."], 'event' => ['type' => 'string', 'description' => "e.g. form.submitted, aokie.call.incoming, aokie.call.ended"], 'formId' => ['type' => 'string', 'description' => 'For form events: the form this binding listens to (must belong to the app).'], 'connectorId' => ['type' => 'string', 'description' => "For connector events: e.g. 'aokie'."], 'mode' => ['type' => 'string', 'enum' => ['sync', 'async', 'background', 'manual'], 'description' => 'Default async.'], 'condition' => ['type' => 'object', 'description' => "Optional gate: { type:'expression', expr:'<QuickJS boolean over event>' }."], 'inputMap' => ['type' => 'object', 'description' => 'flow input name → $event selector.'], 'outputActions' => ['type' => 'array', 'items' => ['type' => 'object'], 'description' => 'Actions run with the flow result (see tool description).'], 'timeoutMs' => ['type' => 'number', 'description' => '250–300000 (default 30000).'], 'enabled' => ['type' => 'boolean']], ['flow', 'event'])],
-            ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],
-            ['name' => 'create_document', 'scope' => 'apps:write', 'description' => "Add a PDF document (a report page combining multiple charts + explanatory text) to the app's Reports section. blocks[] render in order: { kind:'text', title?, body } for a heading/paragraph, or { kind:'report', reportId, caption? } to embed a chart — reportId is the id returned by create_report. Create the chart reports FIRST, then reference them here.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'blocks' => ['type' => 'array', 'items' => ['type' => 'object', 'description' => "{ kind:'text', title?, body } | { kind:'report', reportId, caption? }"]]], ['appId', 'name', 'blocks'])],
-            ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
-            ['name' => 'list_forms', 'scope' => 'forms:read', 'description' => "List the owner's forms (only this app's forms when the token is app-scoped).", 'inputSchema' => $obj([])],
-            ['name' => 'get_form', 'scope' => 'forms:read', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
-            ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a standalone form (prefer create_app_form when building an app). Provide title and optional fields[], logicScript (QuickJS onSubmit), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
-            ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['formId'])],
-            ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach an existing form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
-            ['name' => 'list_flows', 'scope' => 'apps:read', 'description' => "List an app's flows (automations) — id, name, slug, enabled, version. Use get_flow for a flow's graph.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."]])],
-            ['name' => 'get_flow', 'scope' => 'apps:read', 'description' => 'Get one flow including its flowJson graph and nodeCapabilities.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string']], ['flowId'])],
-            ['name' => 'update_flow', 'scope' => 'apps:write', 'description' => 'Update a flow (any of name, slug, description, flowJson, nodeCapabilities, enabled). Changing flowJson bumps the version.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string']], 'enabled' => ['type' => 'boolean']], ['flowId'])],
-            ['name' => 'delete_flow', 'scope' => 'apps:write', 'description' => 'Delete a flow from an app (its bindings are removed with it).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string']], ['flowId'])],
-            ['name' => 'list_flow_bindings', 'scope' => 'apps:read', 'description' => "List an app's flow bindings (which events trigger which flows).", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."]])],
-            ['name' => 'update_flow_binding', 'scope' => 'apps:write', 'description' => 'Update a flow binding (partial: any of flow, event, formId, connectorId, mode, condition, inputMap, outputActions, timeoutMs, enabled).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'bindingId' => ['type' => 'string'], 'flow' => ['type' => 'string'], 'event' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'connectorId' => ['type' => 'string'], 'mode' => ['type' => 'string', 'enum' => ['sync', 'async', 'background', 'manual']], 'condition' => ['type' => 'object'], 'inputMap' => ['type' => 'object'], 'outputActions' => ['type' => 'array', 'items' => ['type' => 'object']], 'timeoutMs' => ['type' => 'number'], 'enabled' => ['type' => 'boolean']], ['bindingId'])],
-            ['name' => 'delete_flow_binding', 'scope' => 'apps:write', 'description' => 'Delete a flow binding (the flow itself stays).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'bindingId' => ['type' => 'string']], ['bindingId'])],
-            ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses (records).", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
-            ['name' => 'add_response', 'scope' => 'responses:write', 'description' => "Create a record (response) in a form. Runs the FULL submission pipeline — field validation, calculated fields, and the form's onSubmit script — exactly like the external API. answers = { <fieldId>: value }. NOT idempotent: repeating the call creates another record.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'answers' => ['type' => 'object', 'description' => 'Field id → value.']], ['formId', 'answers'])],
-            ['name' => 'update_response', 'scope' => 'responses:write', 'description' => 'Patch a record: answers is a PARTIAL object merged over the stored answers (send only the fields you change), validated like a submission. Optionally set the workflow status.', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'responseId' => ['type' => 'string'], 'answers' => ['type' => 'object', 'description' => 'Partial patch: field id → new value.'], 'status' => ['type' => 'string']], ['formId', 'responseId'])],
-            ['name' => 'delete_response', 'scope' => 'responses:write', 'description' => 'Permanently delete one record (response) from a form.', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'responseId' => ['type' => 'string']], ['formId', 'responseId'])],
-            ['name' => 'desktop_status', 'scope' => 'connector:command', 'description' => "Check whether the owner's FormLogic Desktop is online (currently polling the connector relay). Call this BEFORE connector_command to know if commands will reach a desktop. Returns { online, lastSeenSecondsAgo }.", 'inputSchema' => $obj([])],
-            ['name' => 'connector_command', 'scope' => 'connector:command', 'description' => "Send a command to a hardware/service CONNECTOR on the owner's linked FormLogic Desktop and wait for the result (the desktop must be RUNNING + LINKED). connectorId names the connector (e.g. 'aokie' — the Bluetooth phone bridge). command + payload are connector-specific; for aokie: call.answer, call.reject, call.hangup, call.operatorSpeak {text}, sms.send {to, body}, sms.thread {threadId}, call.current, phone.status, dongle.list, dongle.diagnostics {simulate:'call'}. This is how you REMOTELY control the phone: e.g. hang up the current call, or speak a message to the caller. Returns the connector's result, or a note that it is still pending (desktop offline/slow).", 'inputSchema' => $obj(['connectorId' => ['type' => 'string', 'description' => "Connector id, e.g. 'aokie'."], 'command' => ['type' => 'string', 'description' => 'Connector command, e.g. call.hangup.'], 'payload' => ['type' => 'object', 'description' => 'Command arguments (connector-specific).'], 'waitMs' => ['type' => 'number', 'description' => 'Max ms to wait for the desktop result (default 15000, max 25000).']], ['connectorId', 'command'])],
-        ];
+        // The definition list (name/scope/description/inputSchema, deliberately ordered) moved
+        // to ChatToolsService::toolDefinitions() with the Phase-6 extraction — one catalog
+        // source shared with the chat surface; this method keeps the MCP session filtering.
+        $all = ChatToolsService::toolDefinitions();
         // get_started is always available (no scope) — a full how-to guide so an AI can build with no prior
         // knowledge. Listed first so it's the obvious first call.
-        $out = [['name' => 'get_started', 'description' => 'Read this FIRST. A complete guide to building/editing a FormLogic app over MCP: the workflow, field types, custom-screen SDK, and a worked example.', 'inputSchema' => $obj([])]];
+        $out = [['name' => 'get_started', 'description' => 'Read this FIRST. A complete guide to building/editing a FormLogic app over MCP: the workflow, field types, custom-screen SDK, and a worked example.', 'inputSchema' => ['type' => 'object']]];
         foreach ($all as $t) {
             if (!in_array($t['scope'], $scopes, true)) {
                 continue;

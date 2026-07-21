@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { api, type AdminNotice, type MaintenanceStatus, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
+import { AdminAllowancesCard } from './AdminAllowancesCard';
 import { AdminError, AdminSpinner } from './adminUi';
 
 /**
@@ -245,6 +246,8 @@ export function AdminPlatform() {
           )}
         </CardContent>
       </Card>
+
+      <AdminAllowancesCard />
 
       <ConfirmDialog
         isOpen={confirmBoot}

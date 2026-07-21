@@ -310,6 +310,13 @@ impl PluginHost {
         self.bindings.clone()
     }
 
+    /// The directory that backs plugin journals + host-scoped key files (the
+    /// E2E identity fallback + publish marker live here too). Exposed for the
+    /// headless binary, which is a separate crate from the lib.
+    pub fn plugin_data_root(&self) -> &std::path::Path {
+        &self.plugin_data_root
+    }
+
     /// PLG-206: wire the services registry so plugin-owned service templates are
     /// installed/removed with the plugin. Called once after both handles exist.
     pub fn set_services_registry(&self, reg: crate::services::registry::RegistryHandle) {

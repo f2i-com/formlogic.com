@@ -329,6 +329,18 @@ pub struct FlowRuntime {
     /// At-rest sealer for the journals' PII payloads (DATA-PRIV-001); `None`
     /// only when every key store failed (loudly logged, plaintext fallback).
     journal_crypto: Option<Arc<crate::journal_crypto::JournalCrypto>>,
+    /// Phase-1 Site-AI E2E tunnel state (identity + sessions + provider
+    /// registry + codex agent). `None` until `set_ai_tunnel` runs at boot;
+    /// the AI relay loop idles until then (and while the account is unlinked).
+    ai_tunnel: RwLock<Option<Arc<crate::ai::relay_poller::AiTunnel>>>,
+    /// Phase-5 flow-run E2E relay lane (plan §5.7) — the second,
+    /// INDEPENDENT single-flight lane from plan §5.2 (a long flow run never
+    /// blocks chat). `None` until `set_flow_relay` runs at boot.
+    flow_relay: RwLock<Option<Arc<crate::ai::flow_relay_poller::FlowRelay>>>,
+    /// Phase-4 (plan §5.6): the account owner's Default-AI preferences,
+    /// refreshed at heartbeat cadence and disk-cached beside the runtime
+    /// state so an offline desktop still resolves the last-known source.
+    default_ai_prefs: Arc<crate::ai::default_prefs::DefaultAiPrefsStore>,
 }
 
 /// True iff a redirect hop from `origin` (the first URL in the chain — i.e. the URL that was
@@ -537,6 +549,10 @@ impl FlowRuntime {
                 None
             }
         };
+        // Phase-4 (plan §5.6) Default-AI prefs store — opened before the struct
+        // literal moves `host` (it roots at the same plugin-data dir).
+        let default_ai_prefs =
+            crate::ai::default_prefs::DefaultAiPrefsStore::new(&host.plugin_data_root);
         Arc::new(Self {
             host,
             registry,
@@ -556,6 +572,9 @@ impl FlowRuntime {
             event_queues: Mutex::new(None),
             session_start: chrono::Utc::now(),
             journal_crypto,
+            ai_tunnel: RwLock::new(None),
+            flow_relay: RwLock::new(None),
+            default_ai_prefs,
         })
     }
 
@@ -634,6 +653,23 @@ impl FlowRuntime {
         {
             let rt = self.clone();
             tokio::spawn(async move { rt.relay_loop().await });
+        }
+        // Site-AI E2E tunnel lane (plan §5.2): long-poll → claim → open →
+        // dispatch through the in-process AI gateway → seal frames → complete.
+        // Independent single-flight lane from the command relay, idle until
+        // set_ai_tunnel runs and the account is linked.
+        {
+            let rt = self.clone();
+            tokio::spawn(async move { rt.ai_relay_loop().await });
+        }
+        // Phase-5 flow-run relay lane (plan §5.7): long-poll → claim → open →
+        // run the flow through the EXISTING flows/runner.rs → sealed progress
+        // frames → sealed result on complete. An INDEPENDENT single-flight lane
+        // from the AI tunnel (plan §5.2), idle until set_flow_relay runs and
+        // the account is linked.
+        {
+            let rt = self.clone();
+            tokio::spawn(async move { rt.flow_relay_loop().await });
         }
         // Crash-recovery sweep (audit CROSS-EVENT-001): import pre-ledger
         // receipts once, then re-drive EVERY unfinished ledger event from any
@@ -825,6 +861,28 @@ impl FlowRuntime {
     /// Live client, if an account is linked.
     fn client(&self) -> Option<Arc<FormLogicClient>> {
         self.inner.read().ok().and_then(|i| i.client.clone())
+    }
+
+    /// Attach the Site-AI E2E tunnel state at boot (identity + provider
+    /// registry + codex agent). Called once from the app setup; the AI relay
+    /// loop idles until this lands AND the account is linked.
+    pub fn set_ai_tunnel(&self, tunnel: Arc<crate::ai::relay_poller::AiTunnel>) {
+        *self.ai_tunnel.write().unwrap_or_else(|e| e.into_inner()) = Some(tunnel);
+    }
+
+    fn ai_tunnel(&self) -> Option<Arc<crate::ai::relay_poller::AiTunnel>> {
+        self.ai_tunnel.read().ok().and_then(|t| t.clone())
+    }
+
+    /// Attach the flow-run relay lane state at boot (identity + sessions +
+    /// executor). Called once from the app setup; the flow relay loop idles
+    /// until this lands AND the account is linked.
+    pub fn set_flow_relay(&self, relay: Arc<crate::ai::flow_relay_poller::FlowRelay>) {
+        *self.flow_relay.write().unwrap_or_else(|e| e.into_inner()) = Some(relay);
+    }
+
+    fn flow_relay(&self) -> Option<Arc<crate::ai::flow_relay_poller::FlowRelay>> {
+        self.flow_relay.read().ok().and_then(|t| t.clone())
     }
 
     pub fn config(&self) -> FormLogicConfig {
@@ -2130,6 +2188,7 @@ impl FlowRuntime {
             capabilities,
             flow_slug,
             request_id_seed,
+            progress: None,
         };
 
         let mut outcome = FlowOutcome { status: "error", result: None, error: None, nodes_executed: 0 };
@@ -2162,12 +2221,83 @@ impl FlowRuntime {
             http: self.http.clone(),
             llm_endpoint: self.resolve_llm_endpoint(),
             base_url: self.base_url(),
+            // Phase 4 (plan §5.6): the owner's Default-AI prefs for llm_chat
+            // 'default' resolution (heartbeat-refreshed, disk-cached).
+            default_ai_prefs: Some(self.default_ai_prefs.clone()),
             // The services registry backs the desktop-service nodes (browser_action → the
             // "playwright-browser" service, image_gen → "krea2"); the runner resolves + (best-
             // effort) auto-starts them by id. No overrides in production — the registry is the source.
             registry: self.registry.clone(),
             service_bases: std::collections::HashMap::new(),
         }
+    }
+
+    // ── Phase-5 desktop flow relay lane (plan §5.7) ─────────────────
+
+    /// The executor the flow relay lane runs each claimed request through:
+    /// resolve the flow from the (refreshed) snapshot and drive the SAME
+    /// `flows/runner.rs` pipeline the event/claim paths use. The lane stays
+    /// transport-only (mirroring how the AI lane delegates to the gateway).
+    pub fn flow_relay_executor(
+        self: &Arc<Self>,
+    ) -> crate::ai::flow_relay_poller::FlowExecutor {
+        let rt = self.clone();
+        Arc::new(move |job: crate::ai::flow_relay_poller::FlowRunJob| {
+            let rt = rt.clone();
+            Box::pin(async move { rt.execute_flow_relay_job(job).await })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = runner::FlowOutcome> + Send>,
+                >
+        })
+    }
+
+    /// Execute one claimed relay flow run: resolve by flow id (slug fallback),
+    /// fail closed on unknown/disabled flows, then run ONCE through the
+    /// standard runner — no retry: the lane reports the terminal status to
+    /// the site, which owns any re-enqueue decision.
+    async fn execute_flow_relay_job(
+        self: &Arc<Self>,
+        job: crate::ai::flow_relay_poller::FlowRunJob,
+    ) -> runner::FlowOutcome {
+        let unknown = |message: String| runner::FlowOutcome {
+            status: "error",
+            result: None,
+            error: Some(runner::FlowError {
+                code: runner::FlowErrorCode::InvalidFlow,
+                message,
+                node_id: None,
+            }),
+            nodes_executed: 0,
+        };
+        self.ensure_snapshot(&job.client).await;
+        let Some(flow) = self.find_flow(Some(&job.flow_id), &job.flow_id) else {
+            return unknown(format!("Unknown flow '{}'", job.flow_id));
+        };
+        if flow.get("enabled").and_then(Value::as_bool) == Some(false) {
+            return unknown(format!("Flow '{}' is disabled", job.flow_id));
+        }
+        let flow_json = flow.get("flowJson").cloned().unwrap_or(json!({}));
+        let capabilities = flow
+            .get("nodeCapabilities")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let flow_slug = flow.get("slug").and_then(Value::as_str).unwrap_or_default().to_string();
+        let app_id = flow.get("appId").and_then(Value::as_str).map(str::to_string);
+        let deps = self.build_deps(app_id.clone(), Some(job.client.clone()));
+        let opts = RunOptions {
+            inputs: job.inputs,
+            event: None,
+            app: self.app_context(app_id.as_deref()),
+            timeout_ms: job.timeout_ms,
+            capabilities,
+            flow_slug,
+            request_id_seed: job.seed,
+            progress: job.progress,
+        };
+        let outcome = runner::execute_flow(&flow_json, &deps, &opts).await;
+        self.note_run();
+        outcome
     }
 
     /// A running local OpenAI-compatible chat endpoint (loopback), if any — from
@@ -2635,6 +2765,7 @@ impl FlowRuntime {
                 capabilities,
                 flow_slug: flow_slug.unwrap_or_default(),
                 request_id_seed: idempotency_key.clone(),
+                progress: None,
             };
             let outcome = runner::execute_flow(&fj, &deps, &opts).await;
             self.note_run();
@@ -2977,6 +3108,14 @@ impl FlowRuntime {
         if let Err(FlError::Unauthorized(e)) = self.sync_desktop_connection().await {
             self.note_error(format!("heartbeat: {e}"));
         }
+        // Phase 4 (plan §5.6): keep the owner's Default-AI preferences fresh
+        // for llm_chat 'default' resolution. Best-effort: a failure keeps the
+        // last-known cache (offline tolerance), so it only logs.
+        if let Some(client) = self.client() {
+            if let Err(e) = self.default_ai_prefs.refresh(&client).await {
+                eprintln!("[flows] default AI prefs refresh failed (last-known kept): {e}");
+            }
+        }
     }
 
     // ── remote command relay loop (docs/API.md §connector:relay) ──────────────────
@@ -2994,6 +3133,49 @@ impl FlowRuntime {
             let backoff = self.relay_poll_once().await;
             if !backoff.is_zero() {
                 tokio::time::sleep(backoff).await;
+            }
+        }
+    }
+
+    /// The Site-AI E2E tunnel lane (plan §5.2): same shape as `relay_loop` —
+    /// long-poll while linked, claim + process strictly one request at a time
+    /// (the desktop half of the single-flight invariant), back off on errors.
+    /// Runs forever; idles until the tunnel state is attached and linked.
+    async fn ai_relay_loop(self: Arc<Self>) {
+        loop {
+            let ready = self.client().zip(self.ai_tunnel());
+            let Some((client, tunnel)) = ready else {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                continue;
+            };
+            let outcome = tunnel.poll_cycle(&client, &self.instance_id).await;
+            if let Some(error) = outcome.error {
+                self.note_error(error);
+            }
+            if !outcome.backoff.is_zero() {
+                tokio::time::sleep(outcome.backoff).await;
+            }
+        }
+    }
+
+    /// The Phase-5 flow-run relay lane (plan §5.7): same shape as
+    /// `ai_relay_loop` — long-poll while linked, claim + execute strictly one
+    /// request at a time (the desktop half of the flow lane's single-flight
+    /// invariant), back off on errors. Runs forever; idles until the lane
+    /// state is attached and linked.
+    async fn flow_relay_loop(self: Arc<Self>) {
+        loop {
+            let ready = self.client().zip(self.flow_relay());
+            let Some((client, relay)) = ready else {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                continue;
+            };
+            let outcome = relay.poll_cycle(&client, &self.instance_id).await;
+            if let Some(error) = outcome.error {
+                self.note_error(error);
+            }
+            if !outcome.backoff.is_zero() {
+                tokio::time::sleep(outcome.backoff).await;
             }
         }
     }
@@ -3047,6 +3229,7 @@ impl FlowRuntime {
     async fn handle_command(self: &Arc<Self>, client: &Arc<FormLogicClient>, command: &Value) {
         let instance = self.instance_id.clone();
         let host = self.host.clone();
+        let ops_registry = self.registry.clone();
         let relay_request_id = relay::command_id(command).map(|command_id| {
             crate::connectors::stable_request_id("relay-command", &[&command_id])
         });
@@ -3076,6 +3259,19 @@ impl FlowRuntime {
                     };
                     crate::connectors::dispatch(&host, &connector_id, &body)
                         .await
+                        .map_err(|f| relay::RelayFailure { code: f.code.to_string(), message: f.message })
+                }
+            },
+            // Reserved `desktop` connector (plan §5.3): allow-listed
+            // services/plugins lifecycle ops via the shared desktop_ops
+            // handlers — the same code the localhost HTTP routes call.
+            |op, payload| {
+                let host = host.clone();
+                let ops_registry = ops_registry.clone();
+                async move {
+                    crate::desktop_ops::execute(op, ops_registry.as_ref(), &host, &payload)
+                        .await
+                        .map(crate::desktop_ops::OpSuccess::into_relay_result)
                         .map_err(|f| relay::RelayFailure { code: f.code.to_string(), message: f.message })
                 }
             },

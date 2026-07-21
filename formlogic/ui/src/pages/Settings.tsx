@@ -39,12 +39,14 @@ import {
   Archive,
   UploadCloud,
   Recycle,
+  Sparkles,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
 import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AccountBackupImportResult } from '../lib/api';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import { MfaPanel } from '../components/settings/MfaPanel';
+import { AiSourceCard } from '../components/settings/AiSourceCard';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
 // Local preferences stored in localStorage
@@ -80,6 +82,7 @@ const SECTIONS = [
   { id: 'notifications', label: 'Notifications' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'form-defaults', label: 'Form defaults' },
+  { id: 'ai', label: 'AI' },
   { id: 'security', label: 'Security' },
   { id: 'api-keys', label: 'API keys' },
   { id: 'linked-desktops', label: 'Linked desktops' },
@@ -718,6 +721,22 @@ export function Settings() {
                   onChange={(checked) => handlePreferenceChange('allowBackNavigation', checked)}
                 />
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* AI Section — which AI answers chats and default-source flow nodes (Site AI plan §5.5) */}
+        <Card id="ai" className="overflow-hidden scroll-mt-24">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Sparkles}
+              title="AI"
+              description="Choose which AI answers your chats and default flows"
+              iconBg="bg-indigo-50 dark:bg-indigo-500/10"
+              iconColor="text-indigo-600 dark:text-indigo-400"
+            />
+            <div className="ml-0 sm:ml-14">
+              <AiSourceCard />
             </div>
           </CardContent>
         </Card>

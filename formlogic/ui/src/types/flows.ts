@@ -43,6 +43,12 @@ export interface FlowDefinition {
   nodeCapabilities: string[] | null;
   version: number;
   enabled: boolean;
+  /**
+   * Where the flow executes (plan §5.7, Phase 5): flow_definitions.execution_location.
+   * Optional — pre-Phase-5 backends omit it; absent/unknown reads as 'auto'
+   * (see components/flows/editor/executionLocation.ts).
+   */
+  executionLocation?: 'auto' | 'desktop' | 'cloud';
   createdAt: string;
   updatedAt: string;
 }

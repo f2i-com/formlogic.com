@@ -48,6 +48,7 @@ class AdminController
         private ?\FormLogic\Services\MfaService $mfaService = null,
         private ?\FormLogic\Services\AccountErasureService $erasure = null,
         private ?\FormLogic\Services\EmailService $email = null,
+        private ?\FormLogic\Services\PlanService $planService = null,
     ) {
     }
 
@@ -246,6 +247,53 @@ class AdminController
         $this->admin->setComplimentary($target['id'], $enabled);
         $this->audit($request, 'admin.complimentary', $target['id'], ['enabled' => $enabled]);
         return $this->jsonResponse($response, ['success' => true, 'complimentary' => $enabled]);
+    }
+
+    /** GET /api/admin/allowances — the per-plan monthly AI/cloud-credit allowance rows. */
+    public function listAllowances(Request $request, Response $response): Response
+    {
+        if ($this->planService === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Plan allowances are not available'], 503);
+        }
+        return $this->jsonResponse($response, ['allowances' => $this->planService->listAllowances()]);
+    }
+
+    /**
+     * PUT /api/admin/allowances {plan, metric, monthlyValue, enabled} — upsert one row.
+     * monthlyValue -1 = unlimited; enabled=false = the metric is off for that plan.
+     * Enforcement still rides the global planEnforced gate; this only edits the caps.
+     */
+    public function putAllowance(Request $request, Response $response): Response
+    {
+        if ($this->planService === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Plan allowances are not available'], 503);
+        }
+        $body = $request->getParsedBody() ?? [];
+        if (!is_array($body)) {
+            $body = [];
+        }
+        $plan = is_string($body['plan'] ?? null) ? trim((string) $body['plan']) : '';
+        $metric = is_string($body['metric'] ?? null) ? trim((string) $body['metric']) : '';
+        $monthlyValue = filter_var($body['monthlyValue'] ?? null, FILTER_VALIDATE_INT);
+        $enabled = ($body['enabled'] ?? null) === true;
+        if ($plan === '' || $metric === '' || $monthlyValue === false || $monthlyValue === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'plan, metric and an integer monthlyValue are required'], 400);
+        }
+        try {
+            $this->planService->setAllowance($plan, $metric, (int) $monthlyValue, $enabled);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        $this->audit($request, 'admin.allowance_update', $plan . '/' . $metric, [
+            'plan' => $plan,
+            'metric' => $metric,
+            'monthlyValue' => (int) $monthlyValue,
+            'enabled' => $enabled,
+        ]);
+        return $this->jsonResponse($response, [
+            'success' => true,
+            'allowance' => ['plan' => $plan, 'metric' => $metric, 'monthlyValue' => (int) $monthlyValue, 'enabled' => $enabled],
+        ]);
     }
 
     /**

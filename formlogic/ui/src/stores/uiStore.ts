@@ -16,6 +16,12 @@ type PreviewMode = 'focused' | 'classic';
 // in dark). The named colors are explicit opt-in overrides applied to both modes.
 export type ThemeColor = 'default' | 'indigo' | 'lime' | 'rose' | 'orange' | 'cyan' | 'violet';
 
+/** Persisted drag offset of the floating chat panel (px from its bottom-right dock). */
+export interface ChatPanelPosition {
+  x: number;
+  y: number;
+}
+
 interface UIState {
   // Sidebar
   sidebarCollapsed: boolean;
@@ -52,6 +58,14 @@ interface UIState {
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setThemeColor: (color: ThemeColor) => void;
+
+  // Floating site chat widget (plan Phase 6) — open/minimized + drag position persist.
+  chatOpen: boolean;
+  chatMinimized: boolean;
+  chatPosition: ChatPanelPosition | null;
+  setChatOpen: (open: boolean) => void;
+  setChatMinimized: (minimized: boolean) => void;
+  setChatPosition: (position: ChatPanelPosition | null) => void;
 }
 
 import { persist } from 'zustand/middleware';
@@ -94,6 +108,14 @@ export const useUIStore = create<UIState>()(
       toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
       setTheme: (theme) => set({ theme }),
       setThemeColor: (color) => set({ themeColor: color }),
+
+      // Site chat widget
+      chatOpen: false,
+      chatMinimized: false,
+      chatPosition: null,
+      setChatOpen: (open) => set({ chatOpen: open }),
+      setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
+      setChatPosition: (position) => set({ chatPosition: position }),
     }),
     {
       name: 'formlogic-ui-storage',
@@ -111,7 +133,10 @@ export const useUIStore = create<UIState>()(
       partialize: (state) => ({
         theme: state.theme,
         themeColor: state.themeColor,
-        sidebarCollapsed: state.sidebarCollapsed
+        sidebarCollapsed: state.sidebarCollapsed,
+        chatOpen: state.chatOpen,
+        chatMinimized: state.chatMinimized,
+        chatPosition: state.chatPosition
       }),
     }
   )

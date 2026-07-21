@@ -763,6 +763,379 @@ PROMPT;
         return $data['choices'][0]['message']['content'];
     }
 
+    /** Bounds for the hosted chat surface (POST /api/ai/chat — plan Phase 2). */
+    public const CHAT_MAX_MESSAGES = 50;
+    public const CHAT_MAX_MESSAGE_CHARS = 32000;
+    public const CHAT_MAX_TOTAL_CHARS = 128000;
+    public const CHAT_MAX_TOKENS = 2048;
+    private const CHAT_STREAM_TIMEOUT = 180;
+    private const CHAT_HEARTBEAT_SECONDS = 15;
+    private const CHAT_MAX_STREAM_CHARS = 262144;
+
+    /**
+     * General hosted chat completion (Site AI, plan Phase 2) — the same env-configured
+     * OpenAI-compatible upstream as the fixed generators, over free-form messages.
+     * Returns ['content' => string, 'usage' => ['promptTokens'|'completionTokens'|'totalTokens']].
+     * With $stream=true the upstream SSE is parsed incrementally: $onDelta fires per content
+     * delta, $onHeartbeat fires while the upstream goes quiet (keeps the client SSE alive).
+     */
+    public function chat(array $messages, bool $stream = false, ?callable $onDelta = null, ?callable $onHeartbeat = null): array
+    {
+        $messages = self::validateChatMessages($messages);
+        if (!$this->isEnabled()) {
+            throw new \Exception('The in-app AI is disabled (AI_ENABLED=false). Use an external AI via the MCP server instead.');
+        }
+        if (!$this->isConfigured()) {
+            throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
+        }
+
+        $payload = [
+            'model' => $this->model,
+            'messages' => $messages,
+            'temperature' => 0.7,
+            'max_tokens' => self::CHAT_MAX_TOKENS,
+            'stream' => $stream,
+        ];
+        if ($stream) {
+            // Ask for a final usage frame (OpenAI + llama-server honor it; absent → zeros).
+            $payload['stream_options'] = ['include_usage' => true];
+        }
+        return $this->chatCompletionsRequest($payload, $stream, $onDelta, $onHeartbeat);
+    }
+
+    /**
+     * Validate + normalize the chat message list (roles system/user/assistant, non-empty
+     * string content, per-message and total size bounds). Returns the cleaned list.
+     *
+     * @throws \InvalidArgumentException on malformed input.
+     */
+    public static function validateChatMessages(array $messages): array
+    {
+        if ($messages === [] || count($messages) > self::CHAT_MAX_MESSAGES) {
+            throw new \InvalidArgumentException('messages must contain 1..' . self::CHAT_MAX_MESSAGES . ' items');
+        }
+        $total = 0;
+        $clean = [];
+        foreach ($messages as $m) {
+            if (!is_array($m)) {
+                throw new \InvalidArgumentException('each message must be an object');
+            }
+            $role = $m['role'] ?? null;
+            if (!in_array($role, ['system', 'user', 'assistant'], true)) {
+                throw new \InvalidArgumentException('message role must be system, user or assistant');
+            }
+            $content = $m['content'] ?? null;
+            if (!is_string($content) || $content === '') {
+                throw new \InvalidArgumentException('message content must be a non-empty string');
+            }
+            if (strlen($content) > self::CHAT_MAX_MESSAGE_CHARS) {
+                throw new \InvalidArgumentException('message content exceeds ' . self::CHAT_MAX_MESSAGE_CHARS . ' characters');
+            }
+            $total += strlen($content);
+            if ($total > self::CHAT_MAX_TOTAL_CHARS) {
+                throw new \InvalidArgumentException('messages exceed ' . self::CHAT_MAX_TOTAL_CHARS . ' characters in total');
+            }
+            $clean[] = ['role' => $role, 'content' => $content];
+        }
+        return $clean;
+    }
+
+    /**
+     * One complete SSE line from a streaming chat response → a frame:
+     * ['delta' => string] | ['usage' => array] | ['done' => true] | null (blank/comment/other).
+     *
+     * @internal Public only so the SSE wire format has a deterministic regression test.
+     */
+    public static function parseChatStreamLine(string $line): ?array
+    {
+        if ($line === '' || str_starts_with($line, ':') || !str_starts_with($line, 'data:')) {
+            return null;
+        }
+        $data = trim(substr($line, 5));
+        if ($data === '[DONE]') {
+            return ['done' => true];
+        }
+        $json = json_decode($data, true);
+        if (!is_array($json)) {
+            return null;
+        }
+        if (isset($json['usage']) && is_array($json['usage'])) {
+            return ['usage' => self::normalizeUsage($json['usage'])];
+        }
+        $delta = $json['choices'][0]['delta']['content'] ?? null;
+        if (is_string($delta) && $delta !== '') {
+            return ['delta' => $delta];
+        }
+        return null;
+    }
+
+    /** OpenAI usage object → camelCase {promptTokens, completionTokens, totalTokens} (zeros when absent). */
+    private static function normalizeUsage(?array $usage): array
+    {
+        $usage = is_array($usage) ? $usage : [];
+        return [
+            'promptTokens' => (int) ($usage['prompt_tokens'] ?? 0),
+            'completionTokens' => (int) ($usage['completion_tokens'] ?? 0),
+            'totalTokens' => (int) ($usage['total_tokens'] ?? 0),
+        ];
+    }
+
+    /**
+     * The HTTP half of chat(), isolated so tests can subclass the transport. Streaming
+     * parses OpenAI-style SSE ("data: {json}" lines terminated by "data: [DONE]").
+     *
+     * @return array{content: string, usage: array{promptTokens: int, completionTokens: int, totalTokens: int}}
+     */
+    protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array
+    {
+        // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)
+        // can reject or mishandle an empty bearer token.
+        $headers = ['Content-Type: application/json'];
+        if ($this->apiKey !== '') {
+            $headers[] = 'Authorization: Bearer ' . $this->apiKey;
+        }
+
+        $content = '';
+        $usage = self::normalizeUsage(null);
+        $carry = '';          // partial SSE line spanning write callbacks
+        $rawBody = '';        // bounded capture for error reporting (non-200 bodies)
+        $overflow = false;    // stream content bound tripped
+        $lastActivity = microtime(true);
+
+        $ch = curl_init($this->apiUrl . '/chat/completions');
+        $opts = [
+            CURLOPT_RETURNTRANSFER => !$stream,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_TIMEOUT => $stream ? self::CHAT_STREAM_TIMEOUT : 120,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ];
+        // Vendored CA bundle fallback (only when the operator hasn't configured
+        // their own curl.cainfo / CURL_CA_BUNDLE — don't override a private CA).
+        $caBundle = __DIR__ . '/../../resources/cacert.pem';
+        if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
+            $opts[CURLOPT_CAINFO] = $caBundle;
+        }
+        if ($stream) {
+            $opts[CURLOPT_WRITEFUNCTION] = static function ($ch, string $chunk) use (&$content, &$usage, &$carry, &$rawBody, &$overflow, &$lastActivity, $onDelta): int {
+                if (strlen($rawBody) < 16384) {
+                    $rawBody = substr($rawBody . $chunk, 0, 16384);
+                }
+                $carry .= $chunk;
+                while (($pos = strpos($carry, "\n")) !== false) {
+                    $line = rtrim(substr($carry, 0, $pos), "\r");
+                    $carry = substr($carry, $pos + 1);
+                    $frame = AIService::parseChatStreamLine($line);
+                    if ($frame === null) {
+                        continue;
+                    }
+                    if (isset($frame['usage'])) {
+                        $usage = $frame['usage'];
+                        continue;
+                    }
+                    if (isset($frame['delta'])) {
+                        $content .= $frame['delta'];
+                        $lastActivity = microtime(true);
+                        if ($onDelta !== null) {
+                            $onDelta($frame['delta']);
+                        }
+                        if (strlen($content) > AIService::CHAT_MAX_STREAM_CHARS) {
+                            $overflow = true;
+                            return 0; // short-write aborts the transfer
+                        }
+                    }
+                }
+                return strlen($chunk);
+            };
+            // Heartbeat while the upstream is quiet (long time-to-first-token or pauses):
+            // fires the client-facing SSE keepalive so proxies don't cut the connection.
+            $opts[CURLOPT_NOPROGRESS] = false;
+            $opts[CURLOPT_XFERINFOFUNCTION] = static function () use (&$lastActivity, $onHeartbeat): int {
+                if ($onHeartbeat !== null && microtime(true) - $lastActivity >= AIService::CHAT_HEARTBEAT_SECONDS) {
+                    $onHeartbeat();
+                    $lastActivity = microtime(true);
+                }
+                return 0;
+            };
+        }
+        curl_setopt_array($ch, $opts);
+
+        try {
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+        } finally {
+            curl_close($ch);
+        }
+
+        if ($overflow) {
+            throw new \Exception('The AI reply exceeded the chat length limit');
+        }
+        if (!$stream && ($response === false || $error)) {
+            throw new \Exception('API request failed: ' . ($error ?: 'curl_exec returned false'));
+        }
+        if ($stream && $error && $content === '') {
+            throw new \Exception('API request failed: ' . $error);
+        }
+        if ($httpCode !== 200) {
+            $errorData = json_decode($stream ? $rawBody : (string) $response, true);
+            $errorMessage = $errorData['error']['message'] ?? 'Unknown error';
+            throw new \Exception('API error (' . $httpCode . '): ' . $errorMessage);
+        }
+
+        if (!$stream) {
+            $data = json_decode((string) $response, true);
+            if (!isset($data['choices'][0]['message']['content'])) {
+                throw new \Exception('Invalid API response format');
+            }
+            return [
+                'content' => (string) $data['choices'][0]['message']['content'],
+                'usage' => self::normalizeUsage($data['usage'] ?? null),
+            ];
+        }
+        return ['content' => $content, 'usage' => $usage];
+    }
+
+    /**
+     * One round of the hosted tool-calling loop (plan Phase 6 §5.4): a NON-streaming
+     * /chat/completions call carrying OpenAI function-calling `tools`, returning both the
+     * assistant text (may be empty) and any requested tool calls so the controller can
+     * execute them and feed back role:"tool" messages.
+     *
+     * V1 design note (deliberate, per the plan's "simplest honest implementation"
+     * allowance): when tools are in play EVERY round runs non-streaming — including the
+     * final one, whose text the controller then emits as a single SSE delta. Parsing
+     * upstream tool_call fragments mid-stream is intentionally not implemented.
+     *
+     * $messages is the full conversation INCLUDING synthesized assistant tool_calls and
+     * role:"tool" feedback entries — deliberately NOT re-validated here (validateChatMessages
+     * only admits system/user/assistant; the ORIGINAL user list was validated by the caller).
+     *
+     * @param array[] $tools Catalog entries {name, description?, inputSchema?} (ChatToolsService::chatCatalog()).
+     * @return array{
+     *   content: string,
+     *   toolCalls: array<int, array{id:string, name:string, arguments:?array, argumentsRaw:string}>,
+     *   usage: array{promptTokens:int, completionTokens:int, totalTokens:int}
+     * } toolCalls[].arguments is null when the upstream sent unparseable JSON (caller fails that call honestly).
+     */
+    public function chatToolsRound(array $messages, array $tools): array
+    {
+        if (!$this->isEnabled()) {
+            throw new \Exception('The in-app AI is disabled (AI_ENABLED=false). Use an external AI via the MCP server instead.');
+        }
+        if (!$this->isConfigured()) {
+            throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
+        }
+        $payload = [
+            'model' => $this->model,
+            'messages' => $messages,
+            'temperature' => 0.7,
+            'max_tokens' => self::CHAT_MAX_TOKENS,
+            'tools' => array_map(static function (array $t): array {
+                $fn = ['name' => (string) ($t['name'] ?? '')];
+                if (isset($t['description']) && is_string($t['description'])) {
+                    $fn['description'] = $t['description'];
+                }
+                if (isset($t['inputSchema'])) {
+                    $fn['parameters'] = $t['inputSchema'];
+                }
+                return ['type' => 'function', 'function' => $fn];
+            }, array_values($tools)),
+        ];
+        $data = $this->chatCompletionsToolsRequest($payload);
+        $message = $data['choices'][0]['message'] ?? null;
+        if (!is_array($message)) {
+            throw new \Exception('Invalid API response format');
+        }
+        $calls = [];
+        foreach ((is_array($message['tool_calls'] ?? null) ? $message['tool_calls'] : []) as $tc) {
+            if (!is_array($tc)) {
+                continue;
+            }
+            $fn = is_array($tc['function'] ?? null) ? $tc['function'] : [];
+            $name = (string) ($fn['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $argumentsRaw = is_string($fn['arguments'] ?? null) ? $fn['arguments'] : '';
+            $decoded = $argumentsRaw === '' ? [] : json_decode($argumentsRaw, true);
+            $calls[] = [
+                'id' => is_string($tc['id'] ?? null) && $tc['id'] !== '' ? $tc['id'] : 'call-' . bin2hex(random_bytes(6)),
+                'name' => $name,
+                'arguments' => is_array($decoded) ? $decoded : null,
+                'argumentsRaw' => $argumentsRaw,
+            ];
+        }
+        return [
+            'content' => is_string($message['content'] ?? null) ? $message['content'] : '',
+            'toolCalls' => $calls,
+            'usage' => self::normalizeUsage(is_array($data['usage'] ?? null) ? $data['usage'] : null),
+        ];
+    }
+
+    /**
+     * The HTTP half of chatToolsRound(), isolated so tests can subclass the transport
+     * (the chatCompletionsRequest pattern). Returns the FULL decoded response body —
+     * a tool-calling reply may legitimately carry a null content with tool_calls, which
+     * the content-requiring parse in chatCompletionsRequest would reject.
+     */
+    protected function chatCompletionsToolsRequest(array $payload): array
+    {
+        // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)
+        // can reject or mishandle an empty bearer token.
+        $headers = ['Content-Type: application/json'];
+        if ($this->apiKey !== '') {
+            $headers[] = 'Authorization: Bearer ' . $this->apiKey;
+        }
+
+        $ch = curl_init($this->apiUrl . '/chat/completions');
+        $opts = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_TIMEOUT => 120,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ];
+        // Vendored CA bundle fallback (only when the operator hasn't configured
+        // their own curl.cainfo / CURL_CA_BUNDLE — don't override a private CA).
+        $caBundle = __DIR__ . '/../../resources/cacert.pem';
+        if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
+            $opts[CURLOPT_CAINFO] = $caBundle;
+        }
+        curl_setopt_array($ch, $opts);
+
+        try {
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+        } finally {
+            curl_close($ch);
+        }
+
+        if ($response === false || $error) {
+            throw new \Exception('API request failed: ' . ($error ?: 'curl_exec returned false'));
+        }
+        if ($httpCode !== 200) {
+            $errorData = json_decode((string) $response, true);
+            $errorMessage = $errorData['error']['message'] ?? 'Unknown error';
+            throw new \Exception('API error (' . $httpCode . '): ' . $errorMessage);
+        }
+        $data = json_decode((string) $response, true);
+        if (!is_array($data)) {
+            throw new \Exception('Invalid API response format');
+        }
+        return $data;
+    }
+
+
     /**
      * Get the system prompt for form generation
      */

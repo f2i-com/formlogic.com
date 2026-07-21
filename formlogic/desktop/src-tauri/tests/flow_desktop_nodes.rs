@@ -113,6 +113,7 @@ fn deps_with_services(base: &str, ids: &[&str]) -> RunDeps {
         base_url: "http://formlogic.local".into(),
         registry: None,
         service_bases,
+        default_ai_prefs: None,
     }
 }
 
@@ -129,6 +130,7 @@ fn opts() -> RunOptions {
         capabilities: vec![],
         flow_slug: "t".into(),
         request_id_seed: "desktop-node-test".into(),
+        progress: None,
     }
 }
 

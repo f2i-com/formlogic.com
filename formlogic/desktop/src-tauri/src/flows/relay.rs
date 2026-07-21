@@ -10,12 +10,18 @@
 //! (claim-gated), failure, and retry behaviour is unit-tested without a network
 //! or a live plugin. The polling loop + wiring to `FlowRuntime` live in
 //! `dispatcher.rs` (which owns the client/host/status).
+//!
+//! Commands whose connector id is the reserved `desktop` (plan §5.3 ops relay)
+//! are intercepted BEFORE the connector gateway: validated against the
+//! services/plugins allow-list and executed through the shared
+//! `desktop_ops.rs` handlers (see `desktop_op_for`).
 
 use std::future::Future;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::desktop_ops::DesktopOp;
 use crate::formlogic_client::FlResult;
 
 /// A failed local execution — the typed connector error code + message, carried
@@ -24,6 +30,30 @@ use crate::formlogic_client::FlResult;
 pub struct RelayFailure {
     pub code: String,
     pub message: String,
+}
+
+/// The reserved connector id for Desktop self-ops (plan §5.3 — the account-
+/// scoped `/api/desktop/ops` route enqueues lifecycle commands for THIS
+/// machine with `connector_id='desktop'`). These are intercepted BEFORE the
+/// normal connector gateway and run through the shared handlers in
+/// `desktop_ops.rs`.
+pub const DESKTOP_CONNECTOR_ID: &str = "desktop";
+
+/// Route one claimed command: `Some(Ok(op))` when it targets the reserved
+/// `desktop` connector and names an allow-listed op; `Some(Err(_))` when it
+/// targets `desktop` but the op is NOT allow-listed (a typed refusal — the
+/// command still gets COMPLETED as failed so it doesn't sit claimed forever);
+/// `None` for every ordinary connector command (the normal dispatch path).
+pub fn desktop_op_for(connector_id: &str, command: &str) -> Option<Result<DesktopOp, RelayFailure>> {
+    if connector_id != DESKTOP_CONNECTOR_ID {
+        return None;
+    }
+    Some(DesktopOp::from_command(command).ok_or_else(|| RelayFailure {
+        code: "command_failed".into(),
+        message: format!(
+            "unknown desktop op {command:?} — the 'desktop' connector accepts the SHORT verbs: services.list|start|stop|restart|repair, plugins.list|start|stop|restart|health (the 'desktop.' prefix is the connector id, not part of the command)"
+        ),
+    }))
 }
 
 /// What happened to one command (the loop uses this to bump status counters).
@@ -87,11 +117,18 @@ pub fn failed_payload(code: &str, message: &str) -> Value {
 /// only ever execute a command we won. `complete` is retried up to
 /// `max_complete_attempts` because we've already run the side effect — losing
 /// the result to a transient blip would strand the web member.
-pub async fn process_one<FC, FCf, FE, FEf, FK, FKf>(
+///
+/// Commands whose connector id is the reserved `desktop` (plan §5.3) are
+/// intercepted BEFORE `execute`: the op is validated against the
+/// services/plugins allow-list (unknown op ⇒ completed failed, typed) and run
+/// through `desktop_execute` (the shared `desktop_ops.rs` handlers) instead of
+/// the connector gateway.
+pub async fn process_one<FC, FCf, FE, FEf, FD, FDf, FK, FKf>(
     command: &Value,
     max_complete_attempts: u32,
     claim: FC,
     execute: FE,
+    desktop_execute: FD,
     complete: FK,
 ) -> Disposition
 where
@@ -99,6 +136,8 @@ where
     FCf: Future<Output = FlResult<bool>>,
     FE: Fn(String, String, Value) -> FEf,
     FEf: Future<Output = Result<Value, RelayFailure>>,
+    FD: Fn(DesktopOp, Value) -> FDf,
+    FDf: Future<Output = Result<Value, RelayFailure>>,
     FK: Fn(String, Value) -> FKf,
     FKf: Future<Output = FlResult<()>>,
 {
@@ -116,10 +155,17 @@ where
     // Resolve the target; a malformed command still gets COMPLETED (failed) so it
     // doesn't sit claimed forever.
     let (complete_payload, disposition) = match connector_and_command(command) {
-        Some((cid, cmd)) => match execute(cid, cmd, payload_of(command)).await {
-            Ok(result) => (done_payload(result), Disposition::Completed),
-            Err(f) => (failed_payload(&f.code, &f.message), Disposition::Failed),
-        },
+        Some((cid, cmd)) => {
+            let outcome = match desktop_op_for(&cid, &cmd) {
+                Some(Ok(op)) => desktop_execute(op, payload_of(command)).await,
+                Some(Err(failure)) => Err(failure),
+                None => execute(cid, cmd, payload_of(command)).await,
+            };
+            match outcome {
+                Ok(result) => (done_payload(result), Disposition::Completed),
+                Err(f) => (failed_payload(&f.code, &f.message), Disposition::Failed),
+            }
+        }
         None => (
             failed_payload("command_failed", "command missing connectorId/command"),
             Disposition::Failed,
@@ -176,6 +222,14 @@ mod tests {
         })
     }
 
+    /// A `desktop_execute` stand-in for non-desktop tests: must never fire.
+    fn refuse_desktop_ops(
+        _op: DesktopOp,
+        _payload: Value,
+    ) -> impl Future<Output = Result<Value, RelayFailure>> {
+        async { unreachable!("not a desktop op") }
+    }
+
     #[test]
     fn helpers_extract_and_shape() {
         assert_eq!(command_id(&cmd()).as_deref(), Some("c1"));
@@ -217,6 +271,7 @@ mod tests {
                     Ok(json!({ "ok": true, "data": { "spoken": true } }))
                 }
             },
+            refuse_desktop_ops,
             move |id, payload| {
                 let k = k1.clone();
                 async move {
@@ -252,6 +307,7 @@ mod tests {
                     Ok(Value::Null)
                 }
             },
+            refuse_desktop_ops,
             |_id, _p| async { Ok(()) },
         )
         .await;
@@ -271,6 +327,7 @@ mod tests {
             |_c, _cmd, _p| async {
                 Err(RelayFailure { code: "connector_unavailable".into(), message: "plugin not running".into() })
             },
+            refuse_desktop_ops,
             move |_id, payload| {
                 let k = k1.clone();
                 async move {
@@ -296,6 +353,7 @@ mod tests {
             3,
             |_id| async { Ok(true) },
             |_c, _cmd, _p| async { Ok(json!({ "ok": true })) },
+            refuse_desktop_ops,
             move |_id, _payload| {
                 let a = a1.clone();
                 async move {
@@ -323,6 +381,7 @@ mod tests {
             2,
             |_id| async { Ok(true) },
             |_c, _cmd, _p| async { Ok(json!({ "ok": true })) },
+            refuse_desktop_ops,
             move |_id, _payload| {
                 let a = a1.clone();
                 async move {
@@ -343,6 +402,7 @@ mod tests {
             3,
             |_id| async { Err(FlError::Network("dns".into())) },
             |_c, _cmd, _p| async { Ok(Value::Null) },
+            refuse_desktop_ops,
             |_id, _p| async { Ok(()) },
         )
         .await;
@@ -356,9 +416,128 @@ mod tests {
             3,
             |_id| async { Ok(true) },
             |_c, _cmd, _p| async { Ok(Value::Null) },
+            refuse_desktop_ops,
             |_id, _p| async { Ok(()) },
         )
         .await;
         assert!(matches!(disp, Disposition::ClaimError(_)));
+    }
+
+    // ── Desktop-ops interception (plan §5.3) ─────────────────────────────────
+
+    fn desktop_cmd(command: &str) -> Value {
+        json!({
+            "commandId": "ops-1",
+            "connectorId": "desktop",
+            "command": command,
+            "payload": { "id": "llama-cpp" }
+        })
+    }
+
+    #[test]
+    fn desktop_op_for_routes_only_the_reserved_connector() {
+        assert!(matches!(
+            desktop_op_for("desktop", "services.list"),
+            Some(Ok(DesktopOp::ServicesList))
+        ));
+        assert!(matches!(
+            desktop_op_for("desktop", "plugins.health"),
+            Some(Ok(DesktopOp::PluginsHealth))
+        ));
+        assert!(desktop_op_for("aokie", "services.list").is_none());
+        assert!(desktop_op_for("desktop", "services.nuke").is_some_and(|r| r.is_err()));
+    }
+
+    #[tokio::test]
+    async fn desktop_connector_intercepts_to_desktop_ops_not_the_gateway() {
+        let gateway_calls = Arc::new(AtomicUsize::new(0));
+        let ops_calls: Arc<std::sync::Mutex<Vec<(DesktopOp, Value)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let completed: Arc<std::sync::Mutex<Option<Value>>> = Arc::new(std::sync::Mutex::new(None));
+
+        let (g1, o1, k1) = (gateway_calls.clone(), ops_calls.clone(), completed.clone());
+        let disp = process_one(
+            &desktop_cmd("services.restart"),
+            3,
+            |_id| async { Ok(true) },
+            move |_c, _cmd, _p| {
+                let g = g1.clone();
+                async move {
+                    g.fetch_add(1, Ordering::SeqCst);
+                    Ok(Value::Null)
+                }
+            },
+            move |op, payload| {
+                let o = o1.clone();
+                async move {
+                    o.lock().unwrap().push((op, payload));
+                    Ok(json!({ "ok": true }))
+                }
+            },
+            move |_id, payload| {
+                let k = k1.clone();
+                async move {
+                    *k.lock().unwrap() = Some(payload);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(disp, Disposition::Completed);
+        assert_eq!(gateway_calls.load(Ordering::SeqCst), 0, "the connector gateway must be bypassed");
+        let ops = ops_calls.lock().unwrap().clone();
+        assert_eq!(ops, vec![(DesktopOp::ServicesRestart, json!({ "id": "llama-cpp" }))]);
+        let body = completed.lock().unwrap().clone().unwrap();
+        assert_eq!(body["status"], "done");
+        assert_eq!(body["result"], json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn unknown_desktop_op_is_a_typed_failure_without_side_effects() {
+        let gateway_calls = Arc::new(AtomicUsize::new(0));
+        let ops_calls = Arc::new(AtomicUsize::new(0));
+        let completed: Arc<std::sync::Mutex<Option<Value>>> = Arc::new(std::sync::Mutex::new(None));
+
+        let (g1, o1, k1) = (gateway_calls.clone(), ops_calls.clone(), completed.clone());
+        let disp = process_one(
+            &desktop_cmd("plugins.uninstall"),
+            3,
+            |_id| async { Ok(true) },
+            move |_c, _cmd, _p| {
+                let g = g1.clone();
+                async move {
+                    g.fetch_add(1, Ordering::SeqCst);
+                    Ok(Value::Null)
+                }
+            },
+            move |_op, _p| {
+                let o = o1.clone();
+                async move {
+                    o.fetch_add(1, Ordering::SeqCst);
+                    Ok(Value::Null)
+                }
+            },
+            move |_id, payload| {
+                let k = k1.clone();
+                async move {
+                    *k.lock().unwrap() = Some(payload);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(disp, Disposition::Failed, "the command is still completed — failed — so it doesn't sit claimed");
+        assert_eq!(gateway_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ops_calls.load(Ordering::SeqCst), 0, "no side effect for an unlisted op");
+        let body = completed.lock().unwrap().clone().unwrap();
+        assert_eq!(body["status"], "failed");
+        assert_eq!(body["error"]["code"], "command_failed");
+        assert!(
+            body["error"]["message"].as_str().unwrap_or("").contains("unknown desktop op"),
+            "got: {}",
+            body["error"]["message"]
+        );
     }
 }

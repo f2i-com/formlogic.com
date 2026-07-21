@@ -8,9 +8,14 @@
 //! (OpenAI / Anthropic / Ollama / LM Studio / Custom HTTP) with the user's
 //! own key. See ADR-008.
 
+pub mod chat_agent;
 pub mod codex;
+pub mod default_prefs;
+pub mod e2e;
 pub mod egress;
+pub mod flow_relay_poller;
 pub mod gateway;
 pub mod gateway_token;
 pub mod providers;
 pub mod realtime_bridge;
+pub mod relay_poller;

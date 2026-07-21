@@ -26,6 +26,8 @@ import { FlowCanvas } from './FlowCanvas';
 import { EMPTY_DESKTOP_PRESENCE, FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
 import { NodePalette } from './NodePalette';
 import { NodeProperties, type FlowFormOption } from './NodeProperties';
+import { ExecutionLocationNotice, ExecutionLocationSelect } from './ExecutionLocationSelect';
+import { flowExecutionLocation, type FlowExecutionLocation } from './executionLocation';
 import { declaredInputNames } from './nodeSummary';
 import { getNodeSpec, initialNodeData, EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './nodeCatalog';
 import { graphToReactFlow, reactFlowToGraph, type FlowRFEdge, type FlowRFNode } from './flowGraph';
@@ -82,9 +84,15 @@ interface FlowEditorProps {
   bindings?: FlowBinding[];
   /** Human scope line for the subtitle — the owning app's NAME (e.g. "Aokie Receptionist flow"). */
   scopeLabel?: string;
+  /** "Run on" (plan §5.7): persist a new execution location for this flow. */
+  onExecutionLocationChange?: (location: FlowExecutionLocation) => void;
+  /** When set, the Cloud option is disabled with this reason (typed refusal on a past run). */
+  cloudDisabledReason?: string | null;
+  /** Offending node names from the last cloud_unsupported_node run refusal (inline warning). */
+  cloudUnsupportedNodes?: string[] | null;
 }
 
-function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel }: FlowEditorProps) {
+function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel, onExecutionLocationChange, cloudDisabledReason = null, cloudUnsupportedNodes = null }: FlowEditorProps) {
   // Seed React Flow state once (the parent renders this keyed by flow.id, so a flow switch
   // remounts with a fresh initial graph). A lazy useState initializer runs exactly on mount.
   const [initialGraph] = useState(() => graphToReactFlow(flow.flowJson ?? { nodes: [], edges: [] }));
@@ -457,6 +465,14 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           <div className="flex flex-none">
             <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact={editorLayout.toolbar !== 'full'} />
           </div>
+          {onExecutionLocationChange && (
+            <ExecutionLocationSelect
+              value={flowExecutionLocation(flow)}
+              onChange={onExecutionLocationChange}
+              cloudDisabledReason={cloudDisabledReason}
+              compact={editorLayout.toolbar !== 'full'}
+            />
+          )}
         </div>
 
         {editorLayout.toolbar === 'full' && <ToolbarDivider />}
@@ -517,6 +533,13 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           </Button>
         </div>
       </div>
+
+      {/* "Run on" feedback (cloud unsupported nodes / cloud unavailable) — plan §5.7. */}
+      <ExecutionLocationNotice
+        value={flowExecutionLocation(flow)}
+        cloudDisabledReason={cloudDisabledReason}
+        cloudUnsupportedNodes={cloudUnsupportedNodes}
+      />
 
       {/* Body: palette | canvas | properties. Measured-width tiers keep the canvas usable even
           in a half-snapped desktop window; below-md retains the existing sheet/drawer behavior. */}

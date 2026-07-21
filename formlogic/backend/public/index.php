@@ -172,7 +172,8 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
             $c->get(\FormLogic\Services\TrashService::class),
             $c->get(LoggerInterface::class)
         ),
-        $c->get(\FormLogic\Services\EmailService::class)
+        $c->get(\FormLogic\Services\EmailService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 
@@ -372,7 +373,13 @@ $container->set(AIController::class, function (Container $c) {
         $c->get(AIService::class),
         $c->get(DocumentConverter::class),
         $c->get('settings')['uploads'] ?? [],
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\UserAiSettingsService::class),
+        $c->get(ApiKeyService::class),
+        // Plan Phase 6: shared chat tool handlers + audit sink for the hosted tool loop.
+        $c->get(\FormLogic\Services\ChatToolsService::class),
+        $c->get(AuditService::class)
     );
 });
 
@@ -698,6 +705,92 @@ $container->set(\FormLogic\Controllers\ConnectorCommandController::class, functi
         $c->get(\FormLogic\Database\MySQLConnection::class)
     );
 });
+// E2E AI relay (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 1): sealed AI requests
+// web members enqueue for their linked desktop; single-flight FIFO per target.
+$container->set(\FormLogic\Services\DesktopAiRelayService::class, function (Container $c) {
+    return new \FormLogic\Services\DesktopAiRelayService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\DesktopAiRelayController::class, function (Container $c) {
+    return new \FormLogic\Controllers\DesktopAiRelayController(
+        $c->get(\FormLogic\Services\DesktopAiRelayService::class),
+        $c->get(\FormLogic\Services\DesktopCommandService::class)
+    );
+});
+// Flow execution location (plan Phase 5 section 5.7): the E2E desktop flow lane — sealed
+// runs web members enqueue for their linked desktop; single-flight FIFO per target.
+$container->set(\FormLogic\Services\DesktopFlowRelayService::class, function (Container $c) {
+    return new \FormLogic\Services\DesktopFlowRelayService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\DesktopFlowRelayController::class, function (Container $c) {
+    return new \FormLogic\Controllers\DesktopFlowRelayController(
+        $c->get(\FormLogic\Services\DesktopFlowRelayService::class),
+        $c->get(\FormLogic\Services\DesktopCommandService::class),
+        $c->get(\FormLogic\Services\FlowService::class)
+    );
+});
+// Cloud flow runner (plan section 5.7): the bounded server-side flow executor for
+// execution_location='cloud' — credit-metered; llm_chat also meters ai_messages.
+$container->set(\FormLogic\Services\CloudFlowRunner::class, function (Container $c) {
+    $appUrl = rtrim((string) ($_ENV['APP_URL'] ?? getenv('APP_URL') ?: ''), '/');
+    if ($appUrl === '') {
+        $appUrl = rtrim((string) ($_ENV['CORS_ORIGIN'] ?? getenv('CORS_ORIGIN') ?: ''), '/');
+    }
+    return new \FormLogic\Services\CloudFlowRunner(
+        $c->get(MySQLConnection::class),
+        $c->get(ResponseService::class),
+        $c->get(AIService::class),
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\DesktopCommandService::class),
+        $appUrl
+    );
+});
+// Run dispatcher (plan section 5.7): POST /api/flows/{id}/run honors execution_location.
+$container->set(\FormLogic\Controllers\FlowRunController::class, function (Container $c) {
+    return new \FormLogic\Controllers\FlowRunController(
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\CloudFlowRunner::class),
+        $c->get(\FormLogic\Controllers\DesktopFlowRelayController::class)
+    );
+});
+// Per-user AI preferences (plan Phase 2): AI source + desktop provider/model + tool mode.
+$container->set(\FormLogic\Services\UserAiSettingsService::class, function (Container $c) {
+    return new \FormLogic\Services\UserAiSettingsService($c->get(MySQLConnection::class));
+});
+// Chat tools (plan Phase 6 section 5.4): the shared build/read tool handlers extracted from
+// McpController — MCP delegates to the same service, so the two surfaces can never drift.
+$container->set(\FormLogic\Services\ChatToolsService::class, function (Container $c) {
+    return new \FormLogic\Services\ChatToolsService(
+        $c->get(FormService::class),
+        $c->get(AppService::class),
+        $c->get(ResponseService::class),
+        $c->get(\FormLogic\Services\AppReportService::class),
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\TrashService::class)
+    );
+});
+// Chat tool grants (plan Phase 6 section 6): per-turn hashed tokens bound to user + desktop
+// instance + the ai:chat-tools scope; the desktop presents them to the execute route.
+$container->set(\FormLogic\Services\ChatToolGrantService::class, function (Container $c) {
+    return new \FormLogic\Services\ChatToolGrantService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\ChatToolsController::class, function (Container $c) {
+    return new \FormLogic\Controllers\ChatToolsController(
+        $c->get(\FormLogic\Services\ChatToolGrantService::class),
+        $c->get(\FormLogic\Services\ChatToolsService::class),
+        $c->get(\FormLogic\Services\DesktopCommandService::class),
+        $c->get(ApiKeyService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+// Desktop ops relay (plan Phase 3 section 5.3): account-scoped service/plugin lifecycle
+// commands enqueued under the reserved connector id 'desktop'.
+$container->set(\FormLogic\Controllers\DesktopOpsController::class, function (Container $c) {
+    return new \FormLogic\Controllers\DesktopOpsController(
+        $c->get(\FormLogic\Services\DesktopCommandService::class)
+    );
+});
 // Typed service.invoke for pack-owned sandboxed screens (plan §8.3, APP-503):
 // server-registered read-only operations only, never a generic passthrough.
 $container->set(\FormLogic\Controllers\ServiceInvokeController::class, function (Container $c) {
@@ -858,10 +951,14 @@ $app->add(new \FormLogic\Middleware\MaintenanceMiddleware(
 
 // Add CORS middleware with allowlist support
 $corsSettings = $settings['settings']['cors'];
-$app->add(new CorsMiddleware(
+$corsMiddleware = new CorsMiddleware(
     $corsSettings['origin'],
     $corsSettings['allowedOrigins'] ?? null
-));
+);
+// SSE routes that take over the connection (echo + exit) bypass the PSR response
+// pipeline — they re-emit the allowlisted CORS headers through this shared instance.
+CorsMiddleware::setActive($corsMiddleware);
+$app->add($corsMiddleware);
 
 // Add security headers middleware
 $app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
@@ -1091,6 +1188,15 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
         return $ctrl()->revokeNotice($request, $response, $adminArgs($request));
     });
 
+    // Plan allowances (Site AI + cloud credits): list/update the per-plan monthly caps
+    // (plan Phase 2; updates audited as admin.allowance_update).
+    $group->get('/allowances', function ($request, $response) use ($ctrl) {
+        return $ctrl()->listAllowances($request, $response);
+    });
+    $group->put('/allowances', function ($request, $response) use ($ctrl) {
+        return $ctrl()->putAllowance($request, $response);
+    });
+
     // In-place upgrades: upload → validate/stage → apply (auto DB export + code
     // snapshot + maintenance window) → rollback / restore-db from the backup.
     $group->get('/upgrade/status', function ($request, $response) use ($ctrl) {
@@ -1245,6 +1351,8 @@ $app->get('/api/ai/status', function ($request, $response) use ($container) {
 // keyByUser is safe here because $authRequired runs first and sets userId.
 $aiRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'ai', true);
 $aiFileRateLimiter = new RateLimitMiddleware($rateLimiter, 5, 60, 'ai_file', true);
+// Hosted chat rides its own 30/min per-user budget (plan section 7) — chattier than the generators.
+$aiChatRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'ai_chat', true);
 
 // Protected AI routes (require authentication to prevent abuse)
 // Cloud entitlement gate (audit FL-003/C-10): ONE policy — content-creating writes
@@ -1313,6 +1421,41 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $a
         return $container->get(AIController::class)->generateScreen($request, $response);
     });
 })->add($cloudWriteGate)->add($aiRateLimiter)->add($authRequired);
+
+// Hosted Site AI chat + per-user AI preferences (plan Phase 2). Deliberately OUTSIDE the
+// /api/ai group: that group carries $cloudWriteGate, while hosted inference is gated by the
+// plan allowance (typed ai_allowance_exceeded) — and a lapsed account must still be able to
+// switch its AI source to 'desktop', so preferences stay ungated as well. The chat route is
+// authOptional: a session JWT wins, otherwise the controller authenticates a scoped flk_ key
+// itself (plan §5.6 — the desktop flow runner calls this route, metered to the owner).
+$app->post('/api/ai/chat', function ($request, $response) use ($container) {
+    return $container->get(AIController::class)->chat($request, $response);
+})->add($aiChatRateLimiter)->add($authOptional);
+$app->get('/api/ai/preferences', function ($request, $response) use ($container) {
+    return $container->get(AIController::class)->getPreferences($request, $response);
+})->add($authRequired);
+$app->put('/api/ai/preferences', function ($request, $response) use ($container) {
+    return $container->get(AIController::class)->putPreferences($request, $response);
+})->add($authRequired);
+
+// Chat tool grants + catalog + execute (plan Phase 6 section 5.4). The grant mint is
+// session-authed (demo -> 403 in the controller); the catalog serves BOTH the browser
+// (session) and the desktop chat agent (flk_ carrying ai:relay, connector:relay
+// grandfathered -- checked in the controller like /api/ai/chat); execute is flk_-ONLY
+// (ApiKeyMiddleware authenticates, the controller does the either-scope check like
+// preferencesV1, then verifies the per-turn grant + instance binding and runs the tool
+// as the GRANTING user, audited).
+$chatToolsRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'chat_tools', true);
+$chatToolsExecuteAuth = new ApiKeyMiddleware($container->get(ApiKeyService::class), [], $rateLimiter);
+$app->post('/api/ai/chat-tool-grant', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ChatToolsController::class)->mintGrant($request, $response);
+})->add($chatToolsRateLimiter)->add($authRequired);
+$app->get('/api/ai/chat-tools/catalog', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ChatToolsController::class)->catalog($request, $response);
+})->add($authOptional);
+$app->post('/api/ai/chat-tools/execute', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ChatToolsController::class)->execute($request, $response);
+})->add($chatToolsExecuteAuth);
 
 // Helper function to get route args
 $getArgs = function ($request) {
@@ -2289,6 +2432,67 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->post('/desktop-connections', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->upsertDesktopConnectionV1($request, $response);
     })->add($connectorRelayAuth);
+
+    // E2E AI relay (plan Phase 1): the desktop publishes its X25519 pubkey, long-polls the
+    // AI lane, claims single-flight, streams sealed frames back, and completes (purging all
+    // sealed content). Scope: ai:relay, with legacy connector:relay keys grandfathered
+    // (plan section 7) -- the controller checks scopes itself, so the middleware
+    // authenticates without a required-scope list.
+    $desktopAiRelayAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+
+    $group->post('/desktop-ai/pubkey', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->publishPubkeyV1($request, $response);
+    })->add($desktopAiRelayAuth);
+
+    $group->get('/desktop-ai/pending', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->pendingV1($request, $response);
+    })->add($desktopAiRelayAuth);
+
+    $group->post('/desktop-ai/{id}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->claimV1($request, $response, $getArgs($request));
+    })->add($desktopAiRelayAuth);
+
+    $group->post('/desktop-ai/{id}/frames', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->postFrameV1($request, $response, $getArgs($request));
+    })->add($desktopAiRelayAuth);
+
+    $group->get('/desktop-ai/{id}/input', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->inputV1($request, $response, $getArgs($request));
+    })->add($desktopAiRelayAuth);
+
+    $group->post('/desktop-ai/{id}/complete', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->completeV1($request, $response, $getArgs($request));
+    })->add($desktopAiRelayAuth);
+
+    // E2E flow-run relay (plan Phase 5 section 5.7): the desktop long-polls the sealed flow
+    // lane, claims runs single-flight, streams progress frames, and completes (storing a
+    // read-once sealed result). Scope: flows:relay, with legacy connector:relay keys
+    // grandfathered (plan section 7) — the controller checks scopes itself, so the
+    // middleware authenticates without a required-scope list.
+    $desktopFlowRelayAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+
+    $group->get('/desktop-flows/pending', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->pendingV1($request, $response);
+    })->add($desktopFlowRelayAuth);
+
+    $group->post('/desktop-flows/{id}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->claimV1($request, $response, $getArgs($request));
+    })->add($desktopFlowRelayAuth);
+
+    $group->post('/desktop-flows/{id}/frames', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->postFrameV1($request, $response, $getArgs($request));
+    })->add($desktopFlowRelayAuth);
+
+    $group->post('/desktop-flows/{id}/complete', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->completeV1($request, $response, $getArgs($request));
+    })->add($desktopFlowRelayAuth);
+
+    // AI preferences (plan Phase 2 + section 5.6): the desktop flow runner reads the ACCOUNT
+    // OWNER's AI source settings. Same either-scope middleware as the AI relay — the
+    // controller accepts ai:relay or the grandfathered connector:relay itself.
+    $group->get('/ai/preferences', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->preferencesV1($request, $response);
+    })->add($desktopAiRelayAuth);
 })->add($apiRateLimiter);
 
 // Audit verification route (admin, protected — restricted to platform owner)
@@ -2544,6 +2748,61 @@ $app->post('/api/desktop-connections', function ($request, $response) use ($cont
 })->add($authRequired);
 $app->delete('/api/desktop-connections/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FlowController::class)->deleteDesktopConnection($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// E2E AI relay, web side (plan Phase 1 + section 7): session auth, a 30/min per-user
+// enqueue throttle, and requesting-user enforcement on every {id} route. Envelopes and
+// frames are sealed NaCl-box bodies -- the backend only ever relays opaque bytes.
+$desktopAiRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'desktop_ai', true);
+$app->post('/api/desktop/ai/requests', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->enqueue($request, $response);
+})->add($desktopAiRateLimiter)->add($authRequired);
+$app->get('/api/desktop/ai/requests/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->getRequest($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->get('/api/desktop/ai/requests/{id}/stream', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->stream($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->post('/api/desktop/ai/requests/{id}/input', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->postInput($request, $response, $getArgs($request));
+})->add($desktopAiRateLimiter)->add($authRequired);
+$app->get('/api/desktop/ai/pubkey', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->getPubkey($request, $response);
+})->add($authRequired);
+
+// E2E flow-run relay, web side (plan Phase 5 section 5.7): session auth, a 30/min per-user
+// enqueue throttle, and requesting-user enforcement on every {id} route. Envelopes and
+// frames are sealed NaCl-box bodies — the backend only ever relays opaque bytes.
+$desktopFlowRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'desktop_flow', true);
+$app->post('/api/desktop/flows/run', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->enqueue($request, $response);
+})->add($desktopFlowRateLimiter)->add($authRequired);
+$app->get('/api/desktop/flows/runs/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->getRun($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->get('/api/desktop/flows/runs/{id}/stream', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->stream($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// Flow run dispatcher (plan section 5.7): POST /api/flows/{id}/run honors the flow's
+// execution_location — 'cloud' runs synchronously in CloudFlowRunner (10/min per-user,
+// plan section 7); 'desktop' requires the sealed-envelope passthrough; 'auto' stays
+// client-side (typed 409 use_browser_runner). Deliberately NOT inside the cloudWriteGate
+// group: a lapsed plan must get the typed flow_credits_exceeded from the allowance check.
+$cloudFlowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'cloud_flow_run', true);
+$app->post('/api/flows/{flowId}/run', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FlowRunController::class)->run($request, $response, $getArgs($request));
+})->add($cloudFlowRunRateLimiter)->add($authRequired);
+
+// Desktop ops relay (plan Phase 3 section 5.3): account-scoped service/plugin lifecycle
+// commands for the linked desktop, enqueued under the reserved connector id 'desktop'.
+// Session auth; 30/min per-user throttle on enqueue (plan section 7), read-back rides auth alone.
+$desktopOpsRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'desktop_ops', true);
+$app->post('/api/desktop/ops', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DesktopOpsController::class)->enqueue($request, $response);
+})->add($desktopOpsRateLimiter)->add($authRequired);
+$app->get('/api/desktop/ops/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopOpsController::class)->getOp($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Connector routing (ROUTE-001): the owner's session surface for the same connector→app(+desktop)

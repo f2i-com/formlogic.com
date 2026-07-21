@@ -22,6 +22,7 @@ import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demo
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
 import { resolveEditorLayout, sameResolvedEditorLayout } from '../../components/flows/editor/flowEditorLogic';
+import type { CloudRunFeedback, FlowExecutionLocation } from '../../components/flows/editor/executionLocation';
 import { deriveFlowConnectors } from '../../components/flows/flowConnectors';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from '../../components/flows/editor/nodeCatalog';
 import type { FlowFormOption } from '../../components/flows/editor/NodeProperties';
@@ -90,6 +91,11 @@ export function FlowsWorkspace() {
   const [forms, setForms] = useState<FlowFormOption[]>([]);
   const [flowBindingsById, setFlowBindingsById] = useState<Record<string, FlowBinding[]>>({});
   const [flowBindingsLoading, setFlowBindingsLoading] = useState<Record<string, boolean>>({});
+  // "Run on" (plan §5.7) cloud feedback per flow id: nodes the cloud runner refused
+  // (inline warning — the selection stays saveable) and a typed refusal that means the
+  // server has no cloud-run concept at all (the Cloud option disables with that reason).
+  const [cloudUnsupportedByFlowId, setCloudUnsupportedByFlowId] = useState<Record<string, string[]>>({});
+  const [cloudDisabledReasonByFlowId, setCloudDisabledReasonByFlowId] = useState<Record<string, string>>({});
   const workspaceRowRef = useRef<HTMLDivElement | null>(null);
   const workspaceWidthRef = useRef<number | null>(null);
 
@@ -325,6 +331,44 @@ export function FlowsWorkspace() {
     return true;
   }, [selectedFlow, upsertFlow]);
 
+  /** Persist the "Run on" execution location (plan §5.7) — a per-flow setting saved on change. */
+  const saveExecutionLocation = useCallback(async (flow: FlowDefinition, location: FlowExecutionLocation) => {
+    if (api.isDemoMode()) {
+      upsertFlow(await demoUpdateFlow(flow, { executionLocation: location } as Partial<FlowDefinition>));
+      return;
+    }
+    // The backend's flow read/update API accepts executionLocation (the Phase-5 contract);
+    // the api client's update payload type predates the column, hence the one cast here.
+    const payload = { executionLocation: location } as Parameters<typeof api.updateFlow>[2];
+    const res = flow.appId
+      ? await api.updateFlow(flow.appId, flow.id, payload)
+      : await api.updateWorkspaceFlow(flow.id, payload);
+    if (res.error || !res.data) {
+      toast.error('Failed to save the run location', typeof res.error === 'string' ? res.error : undefined);
+      return;
+    }
+    upsertFlow({ ...(res.data.flow as FlowDefinition & { executionLocation?: FlowExecutionLocation }), executionLocation: location });
+  }, [upsertFlow]);
+
+  /** Cloud-run feedback from the Test Run drawer (plan §5.7 run-time honesty). */
+  const handleCloudRunFeedback = useCallback((flowId: string, feedback: CloudRunFeedback) => {
+    if (feedback.kind === 'unsupported') {
+      setCloudUnsupportedByFlowId((m) => ({ ...m, [flowId]: feedback.nodes }));
+      return;
+    }
+    if (feedback.kind === 'unavailable') {
+      setCloudDisabledReasonByFlowId((m) => ({ ...m, [flowId]: feedback.reason }));
+      return;
+    }
+    // 'ok': a cloud run went through — clear any earlier warning for this flow.
+    setCloudUnsupportedByFlowId((m) => {
+      if (!(flowId in m)) return m;
+      const next = { ...m };
+      delete next[flowId];
+      return next;
+    });
+  }, []);
+
   const openNewFlow = (template: FlowStarterTemplate | null = null) => {
     setNewFlowInitialTemplate(template);
     setShowNew(true);
@@ -534,6 +578,9 @@ export function FlowsWorkspace() {
                   scopeLabel={selectedFlow.appId
                     ? `${groups.find((g) => g.app?.id === selectedFlow.appId)?.app?.name ?? 'app'} flow`
                     : 'workspace flow'}
+                  onExecutionLocationChange={(location) => void saveExecutionLocation(selectedFlow, location)}
+                  cloudDisabledReason={cloudDisabledReasonByFlowId[selectedFlow.id] ?? null}
+                  cloudUnsupportedNodes={cloudUnsupportedByFlowId[selectedFlow.id] ?? null}
                 />
               </div>
             </>
@@ -598,6 +645,7 @@ export function FlowsWorkspace() {
               onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
               onRunStart={() => setNodeStatus({})}
               onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
+              onCloudRunFeedback={handleCloudRunFeedback}
             />
           </div>
         )}
@@ -629,6 +677,7 @@ export function FlowsWorkspace() {
             onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
             onRunStart={() => setNodeStatus({})}
             onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
+            onCloudRunFeedback={handleCloudRunFeedback}
           />
         </FlowMobileDrawer>
       )}

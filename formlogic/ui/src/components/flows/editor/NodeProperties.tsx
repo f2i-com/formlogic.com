@@ -27,7 +27,9 @@ import {
 } from './nodeCatalog';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
-import { AI_PROVIDER_PRESETS, listProviders, providerSupports } from '../../../client-runtime/flows/aiProviders';
+import { listProviders } from '../../../client-runtime/flows/aiProviders';
+import { defaultSourceLabel, getAiPreferences } from '../../../client-runtime/flows/aiDefault';
+import { buildAiProviderOptions } from './aiProviderOptions';
 import { desktopClient, type DesktopServiceSnapshot } from '../../../client-runtime/desktop/desktopClient';
 import { mergeKnownConnectorCommands } from '../flowEventCatalog';
 import { useAuthStore } from '../../../stores/authStore';
@@ -638,7 +640,7 @@ function DesktopServicePickerField({
   );
 }
 
-function AiProviderPickerField({
+export function AiProviderPickerField({
   spec,
   value,
   onChange,
@@ -658,13 +660,34 @@ function AiProviderPickerField({
   // focus/open on the select — instead of mirroring into state via effects.
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
-  const providers = useMemo(() => {
-    const all = listProviders(userId);
-    const usable = all.filter((provider) => provider.enabled && providerSupports(provider, capability));
-    const selected = raw ? all.find((provider) => provider.id === raw) ?? null : null;
-    return selected && !usable.some((provider) => provider.id === selected.id) ? [...usable, selected] : usable;
+  const providers = useMemo(
+    () => listProviders(userId),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- version invalidates the localStorage read
-  }, [raw, userId, capability, version]);
+    [userId, version]
+  );
+  // Plan §5.6: the "Default (from Settings)" option shows the currently-resolved source
+  // beside it. Preferences come from the shared 60s cache in aiDefault.ts.
+  const [defaultLabel, setDefaultLabel] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getAiPreferences()
+      .then((res) => {
+        if (cancelled || !res.ok) return;
+        const customName =
+          res.data.aiSource === 'custom' && res.data.customProviderId
+            ? listProviders(userId).find((p) => p.id === res.data.customProviderId)?.name ?? null
+            : null;
+        setDefaultLabel(defaultSourceLabel(res.data, customName));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, version]);
+  const options = useMemo(
+    () => buildAiProviderOptions({ providers, capability, currentValue: raw, defaultSourceLabel: defaultLabel }),
+    [providers, capability, raw, defaultLabel]
+  );
 
   useEffect(() => {
     window.addEventListener('formlogic:ai-services-changed', refresh);
@@ -674,8 +697,6 @@ function AiProviderPickerField({
   const openManager = () => {
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('formlogic:open-ai-services'));
   };
-
-  const known = providers.some((provider) => provider.id === raw);
 
   return (
     <div className="block">
@@ -687,19 +708,11 @@ function AiProviderPickerField({
         onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
         className={INPUT_CLS + ' cursor-pointer'}
       >
-        <option value="">Auto (Desktop/app default)</option>
-        {providers.map((provider) => {
-          const flags = [
-            provider.enabled ? '' : ' (disabled)',
-            providerSupports(provider, capability) ? '' : ` (no ${capability})`,
-          ].join('');
-          return (
-            <option key={provider.id} value={provider.id}>
-              {provider.name} - {AI_PROVIDER_PRESETS[provider.kind].label}{flags}
-            </option>
-          );
-        })}
-        {raw !== '' && !known && <option value={raw}>{raw} (missing)</option>}
+        {options.map((option) => (
+          <option key={option.value === '' ? '(auto)' : option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
       </select>
       <div className="mt-1 flex flex-col gap-2">
         {spec.help && <p className={HELP_CLS + ' mt-0'}>{spec.help}</p>}

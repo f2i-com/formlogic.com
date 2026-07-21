@@ -63,6 +63,30 @@ pub type FlResult<T> = Result<T, FlError>;
 /// The runtime kind stamped into `flow_run_logs.runtime` on claim.
 pub const RUNTIME_DESKTOP: &str = "desktop";
 
+/// Failure of one chat-tool execution (Phase 6, plan §5.4). `Typed` preserves
+/// the backend's exact refusal code verbatim — the chat agent fails the whole
+/// request on terminal grant codes and feeds every other error back to the
+/// model as an honest tool result.
+#[derive(Debug, Clone)]
+pub enum ChatToolExecError {
+    /// A typed refusal from the backend (`grant_expired`, `grant_invalid`,
+    /// `grant_instance_mismatch`, `unknown_tool`, …).
+    Typed { code: String, message: String },
+    /// Transport/HTTP failure without a typed code.
+    Other(FlError),
+}
+
+impl std::fmt::Display for ChatToolExecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatToolExecError::Typed { code, message } => write!(f, "{code}: {message}"),
+            ChatToolExecError::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ChatToolExecError {}
+
 #[derive(Clone)]
 pub struct FormLogicClient {
     base: String,
@@ -113,9 +137,23 @@ impl FormLogicClient {
         timeout: Option<Duration>,
     ) -> FlResult<(u16, Value)> {
         let url = format!("{}/api/v1/{}", self.base, path.trim_start_matches('/'));
+        self.send_url(method, &url, query, body, timeout).await
+    }
+
+    /// The shared request machinery, given a FULL URL. Everything except the
+    /// `/api/v1` prefixing lives here so a non-v1 route (the hosted Site-AI
+    /// chat, plan §5.6) rides the exact same auth/timeout/error mapping.
+    async fn send_url(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        query: &[(&str, &str)],
+        body: Option<&Value>,
+        timeout: Option<Duration>,
+    ) -> FlResult<(u16, Value)> {
         let mut req = self
             .http
-            .request(method, &url)
+            .request(method, url)
             .bearer_auth(&self.key)
             .header(reqwest::header::ACCEPT, "application/json");
         if let Some(t) = timeout {
@@ -159,6 +197,29 @@ impl FormLogicClient {
         self.send(reqwest::Method::GET, "flow-runs/queued", &[("limit", "1")], None)
             .await
             .map(|_| ())
+    }
+
+    // ── Site AI preferences + hosted chat (Phase 4, plan §5.6) ──────────────
+
+    /// `GET /api/v1/ai/preferences` — the ACCOUNT OWNER's AI defaults backing
+    /// the flows "Default" alias. The raw envelope is returned;
+    /// `ai/default_prefs.rs` validates its `data` member (fail closed).
+    pub async fn ai_preferences(&self) -> FlResult<Value> {
+        self.send(reqwest::Method::GET, "ai/preferences", &[], None)
+            .await
+            .map(|(_, v)| v)
+    }
+
+    /// `POST /api/ai/chat` — the hosted Site-AI chat route. Unlike every other
+    /// call this is NOT under `/api/v1` (it's the web session surface, which
+    /// also accepts the desktop's flk_ key, metered to the account owner per
+    /// plan §5.6); the desktop flow runner uses it when the owner's Default
+    /// source is `site`/`custom`.
+    pub async fn site_ai_chat(&self, body: &Value) -> FlResult<Value> {
+        let url = format!("{}/api/ai/chat", self.base);
+        self.send_url(reqwest::Method::POST, &url, &[], Some(body), None)
+            .await
+            .map(|(_, v)| v)
     }
 
     /// Exchange this linked Desktop's revocable `flk_` key for a one-use,
@@ -543,6 +604,261 @@ impl FormLogicClient {
         }
         match self
             .send(reqwest::Method::POST, &format!("connector-commands/{id}/complete"), &[], Some(&body))
+            .await
+        {
+            Ok(_) | Err(FlError::Conflict) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    // ── desktop AI tunnel (E2E relay lane, plan §5.1/§5.2 — flk_ + ai:relay scope) ──
+
+    /// Publish (or rotate) this install's long-term E2E identity public key.
+    /// The browser pins it TOFU-style; only the public half ever leaves the host.
+    pub async fn publish_e2e_pubkey(&self, instance_id: &str, public_key_b64: &str) -> FlResult<()> {
+        let body = json!({ "instanceId": instance_id, "publicKey": public_key_b64 });
+        self.send(reqwest::Method::POST, "desktop-ai/pubkey", &[], Some(&body))
+            .await
+            .map(|_| ())
+    }
+
+    /// Long-poll the AI lane's pending requests for THIS instance. Same shape
+    /// as [`poll_pending_commands`]: `wait_ms` blocks server-side, so the HTTP
+    /// call gets `wait_ms + 10s` of headroom.
+    pub async fn poll_pending_ai_requests(
+        &self,
+        instance_id: &str,
+        wait_ms: u32,
+    ) -> FlResult<Vec<Value>> {
+        let wait_ms = wait_ms.min(25_000);
+        let wait_s = wait_ms.to_string();
+        let q: Vec<(&str, &str)> = vec![("instanceId", instance_id), ("wait", &wait_s)];
+        let timeout = Duration::from_millis(wait_ms as u64) + Duration::from_secs(10);
+        let (_, v) = self
+            .send_inner(reqwest::Method::GET, "desktop-ai/pending", &q, None, Some(timeout))
+            .await?;
+        Ok(array_field(&v, "requests"))
+    }
+
+    /// Claim a pending AI request (single-flight per lane). `Ok(true)` when we
+    /// won, `Ok(false)` on 409 (a sibling in the lane is already claimed).
+    pub async fn claim_ai_request(&self, id: &str, instance_id: &str) -> FlResult<bool> {
+        let body = json!({ "instanceId": instance_id });
+        match self
+            .send(reqwest::Method::POST, &format!("desktop-ai/{id}/claim"), &[], Some(&body))
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(FlError::Conflict) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Append one sealed outbound frame (a stream delta or the final body).
+    /// `envelope_b64` is the wire form `base64(nonce(24) || ciphertext)`; the
+    /// server assigns the monotonic `seq` itself (returned) and marks the row
+    /// `streaming`.
+    pub async fn append_ai_frame(
+        &self,
+        id: &str,
+        instance_id: &str,
+        envelope_b64: &str,
+    ) -> FlResult<u64> {
+        let body = json!({
+            "instanceId": instance_id,
+            "envelope": envelope_b64,
+        });
+        let (_, v) = self
+            .send(reqwest::Method::POST, &format!("desktop-ai/{id}/frames"), &[], Some(&body))
+            .await?;
+        Ok(v.get("seq").and_then(Value::as_u64).unwrap_or(0))
+    }
+
+    /// Complete a claimed AI request: `{status:'done'|'failed'}` — the terminal
+    /// content (sealed final body / typed error) rides the LAST frame, not this
+    /// call: completion purges the envelope + frames server-side (plan §7).
+    /// Claimant-bound like [`complete_command`]; a 409 is swallowed (already
+    /// terminal — re-reporting cannot improve anything).
+    pub async fn complete_ai_request(
+        &self,
+        id: &str,
+        payload: &Value,
+        instance_id: &str,
+    ) -> FlResult<()> {
+        let mut body = payload.clone();
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("instanceId".to_string(), json!(instance_id));
+        }
+        match self
+            .send(reqwest::Method::POST, &format!("desktop-ai/{id}/complete"), &[], Some(&body))
+            .await
+        {
+            Ok(_) | Err(FlError::Conflict) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Poll a claimed AI request's sealed IN frames (confirm-mode approvals).
+    /// `GET /api/v1/desktop-ai/{id}/input?since=&instanceId=` — claimant-bound;
+    /// the raw body (`{frames:[{seq, envelope}], status}`) is returned for the
+    /// caller to advance its own cursor (Phase 6, plan §5.4).
+    pub async fn fetch_ai_input(
+        &self,
+        id: &str,
+        instance_id: &str,
+        since: u64,
+    ) -> FlResult<Value> {
+        let since_s = since.to_string();
+        let q: Vec<(&str, &str)> = vec![("since", &since_s), ("instanceId", instance_id)];
+        self.send(reqwest::Method::GET, &format!("desktop-ai/{id}/input"), &q, None)
+            .await
+            .map(|(_, v)| v)
+    }
+
+    // ── chat tools (Phase 6, plan §5.4 — flk_ bearer + per-turn grant token) ──
+
+    /// `GET /api/ai/chat-tools/catalog` — the shared tool catalog the desktop
+    /// chat agent offers the model. NOT under `/api/v1` (same surface as
+    /// [`site_ai_chat`]); `ai/chat_agent.rs` parses the top-level `tools`
+    /// array (`{tools:[{name, description, inputSchema}]}`), tolerating a
+    /// `data.tools` envelope as the fallback.
+    pub async fn chat_tools_catalog(&self) -> FlResult<Value> {
+        let url = format!("{}/api/ai/chat-tools/catalog", self.base);
+        self.send_url(reqwest::Method::GET, &url, &[], None, None)
+            .await
+            .map(|(_, v)| v)
+    }
+
+    /// `POST /api/ai/chat-tools/execute {grantToken, tool, input}` — run one
+    /// catalog tool as the granting user. Typed refusals keep their exact code
+    /// (`grant_expired` / `grant_invalid` / `grant_instance_mismatch` /
+    /// `unknown_tool`) so the chat agent can tell a terminal grant failure
+    /// from a recoverable tool error.
+    pub async fn chat_tools_execute(
+        &self,
+        grant_token: &str,
+        tool: &str,
+        input: &Value,
+    ) -> Result<Value, ChatToolExecError> {
+        let url = format!("{}/api/ai/chat-tools/execute", self.base);
+        let body = json!({ "grantToken": grant_token, "tool": tool, "input": input });
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.key)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(serde_json::to_vec(&body).unwrap_or_default())
+            .send()
+            .await
+            .map_err(|e| ChatToolExecError::Other(FlError::Network(e.to_string())))?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        let value: Value = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text).unwrap_or(Value::Null)
+        };
+        if (200..300).contains(&status) {
+            return Ok(value);
+        }
+        let code = value
+            .get("code")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/error/code").and_then(Value::as_str))
+            .map(str::to_string);
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                value
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or("tool execution failed")
+            .to_string();
+        match code {
+            Some(code) => Err(ChatToolExecError::Typed { code, message }),
+            None => Err(ChatToolExecError::Other(match status {
+                401 | 403 => FlError::Unauthorized(message),
+                409 => FlError::Conflict,
+                s => FlError::Http { status: s, message },
+            })),
+        }
+    }
+
+    // ── desktop FLOW relay lane (Phase 5, plan §5.7 — flk_ + flows:relay scope) ──
+    // The flow-lane twins of the desktop-ai methods above. Same single-flight
+    // claim semantics; the only contract difference is that the terminal SEALED
+    // result envelope rides the complete call's `result` field (kept server-side
+    // until read once) instead of the last frame.
+
+    /// Long-poll the flow lane's pending run requests for THIS instance. Same
+    /// shape as [`poll_pending_ai_requests`].
+    pub async fn poll_pending_flow_runs(
+        &self,
+        instance_id: &str,
+        wait_ms: u32,
+    ) -> FlResult<Vec<Value>> {
+        let wait_ms = wait_ms.min(25_000);
+        let wait_s = wait_ms.to_string();
+        let q: Vec<(&str, &str)> = vec![("instanceId", instance_id), ("wait", &wait_s)];
+        let timeout = Duration::from_millis(wait_ms as u64) + Duration::from_secs(10);
+        let (_, v) = self
+            .send_inner(reqwest::Method::GET, "desktop-flows/pending", &q, None, Some(timeout))
+            .await?;
+        Ok(array_field(&v, "requests"))
+    }
+
+    /// Claim a pending flow-run request (single-flight per lane). `Ok(true)`
+    /// when we won, `Ok(false)` on 409 (a sibling in the lane is claimed).
+    pub async fn claim_flow_run(&self, id: &str, instance_id: &str) -> FlResult<bool> {
+        let body = json!({ "instanceId": instance_id });
+        match self
+            .send(reqwest::Method::POST, &format!("desktop-flows/{id}/claim"), &[], Some(&body))
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(FlError::Conflict) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Append one sealed outbound progress frame
+    /// (`{v:1,type:'flow_progress',…}`). The server assigns the monotonic `seq`
+    /// itself (returned), mirroring [`append_ai_frame`].
+    pub async fn append_flow_frame(
+        &self,
+        id: &str,
+        instance_id: &str,
+        envelope_b64: &str,
+    ) -> FlResult<u64> {
+        let body = json!({
+            "instanceId": instance_id,
+            "envelope": envelope_b64,
+        });
+        let (_, v) = self
+            .send(reqwest::Method::POST, &format!("desktop-flows/{id}/frames"), &[], Some(&body))
+            .await?;
+        Ok(v.get("seq").and_then(Value::as_u64).unwrap_or(0))
+    }
+
+    /// Complete a claimed flow-run request: `{status:'done'|'failed', result?}`
+    /// where `result` is the SEALED terminal envelope (≤ 1 MiB plaintext, kept
+    /// server-side until read once). Claimant-bound like [`complete_ai_request`];
+    /// a 409 is swallowed (already terminal).
+    pub async fn complete_flow_run(
+        &self,
+        id: &str,
+        payload: &Value,
+        instance_id: &str,
+    ) -> FlResult<()> {
+        let mut body = payload.clone();
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("instanceId".to_string(), json!(instance_id));
+        }
+        match self
+            .send(reqwest::Method::POST, &format!("desktop-flows/{id}/complete"), &[], Some(&body))
             .await
         {
             Ok(_) | Err(FlError::Conflict) => Ok(()),

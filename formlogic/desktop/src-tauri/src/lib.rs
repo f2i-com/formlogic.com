@@ -10,6 +10,7 @@ pub mod connectors;
 pub mod aokie_endpoint_identity;
 pub mod aokie_companion_publisher;
 pub mod consent_signing;
+pub mod desktop_ops;
 pub mod events;
 pub mod external_url;
 pub mod flows;
@@ -1546,6 +1547,38 @@ pub fn run() {
                 api_key: read_api_key(app.handle()).unwrap_or_default(),
             };
             let flow_runtime = FlowRuntime::new(plugin_host.clone(), Some(registry.clone()), fl_config);
+            // Phase-1 Site-AI E2E tunnel (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md):
+            // ONE shared Codex agent (the HTTP layer and the tunnel lane must not
+            // double-manage the Codex runtime) + the provider registry back the
+            // lane; the identity loads/mints beside the plugin data and its public
+            // half is published on boot when absent/rotated.
+            let codex_agent = {
+                let reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+                crate::ai::codex::CodexAgent::new(reg.data_dir().to_path_buf())
+            };
+            match crate::ai::relay_poller::AiTunnel::new(
+                ai_providers.clone(),
+                codex_agent.clone(),
+                plugin_host.plugin_data_root.clone(),
+                // service:<id> chat surface (Settings dropdown) — the SAME
+                // services the /api/ai/sources union lists as chat-capable.
+                Some(Arc::new(crate::ai::relay_poller::RegistryServices(
+                    registry.clone(),
+                ))),
+            ) {
+                Ok(tunnel) => flow_runtime.set_ai_tunnel(tunnel),
+                Err(e) => eprintln!("[ai-tunnel] E2E tunnel unavailable: {e}"),
+            }
+            // Phase-5 flow-run relay lane (plan §5.7): the SAME desktop E2E
+            // identity the AI tunnel publishes (one pinned key per install),
+            // its own independent single-flight lane.
+            match crate::ai::flow_relay_poller::FlowRelay::new(
+                flow_runtime.flow_relay_executor(),
+                plugin_host.plugin_data_root.clone(),
+            ) {
+                Ok(relay) => flow_runtime.set_flow_relay(relay),
+                Err(e) => eprintln!("[flow-relay] E2E flow lane unavailable: {e}"),
+            }
             // Reconcile only the public Desktop connection id into native config.
             // The heartbeat's API key remains inside FormLogicClient and never
             // crosses this callback or the renderer boundary. We compare against
@@ -1654,6 +1687,7 @@ pub fn run() {
                     pairing_for_http,
                     Some(flow_runtime_for_http),
                     ai_providers_for_http,
+                    Some(codex_agent),
                 )
                 .await
                 {

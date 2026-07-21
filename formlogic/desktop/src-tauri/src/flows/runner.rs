@@ -145,6 +145,10 @@ pub struct RunDeps {
     /// Explicit service-id → base URL overrides, checked BEFORE the registry (tests point these
     /// at a stub server; also a pre-resolution seam). e.g. {"playwright-browser": "http://127.0.0.1:PORT"}.
     pub service_bases: HashMap<String, String>,
+    /// Phase 4 (plan §5.6): the account owner's Default-AI prefs store, consulted when an
+    /// llm_chat node's provider is absent/'default'. `None`/never-fetched ⇒ the node fails
+    /// with the typed `ai_default_unresolved` error — never a silent source hop.
+    pub default_ai_prefs: Option<Arc<crate::ai::default_prefs::DefaultAiPrefsStore>>,
 }
 
 /// Options for one run.
@@ -158,7 +162,24 @@ pub struct RunOptions {
     /// Stable per-run seed used to derive physical connector request IDs. It
     /// must survive flow retries/recovery so a connector can replay safely.
     pub request_id_seed: String,
+    /// Optional node-boundary observer (Phase 5, plan §5.7): fired once after
+    /// each node completes and once when a node fails, so the desktop flow
+    /// relay lane can stream sealed `flow_progress` frames. Purely additive —
+    /// `None` keeps every existing call site byte-identical in behavior.
+    pub progress: Option<NodeProgressSink>,
 }
+
+/// One node-boundary progress event (see [`RunOptions::progress`]).
+#[derive(Debug, Clone)]
+pub struct NodeProgress {
+    pub node_id: String,
+    /// `done` after a successful node, `failed` on the node that errored.
+    pub status: &'static str,
+    pub message: Option<String>,
+}
+
+/// The node-progress observer callback shape.
+pub type NodeProgressSink = std::sync::Arc<dyn Fn(NodeProgress) + Send + Sync>;
 
 // ── graph model ────────────────────────────────────────────────────────────
 
@@ -366,7 +387,16 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
         let exec = execute_node(node, &scope, deps, opts);
         let output = match tokio::time::timeout(remaining, exec).await {
             Ok(Ok(v)) => v,
-            Ok(Err(e)) => return FlowOutcome::err(e, nodes_executed),
+            Ok(Err(e)) => {
+                if let Some(progress) = &opts.progress {
+                    progress(NodeProgress {
+                        node_id: node.id.clone(),
+                        status: "failed",
+                        message: Some(e.message.clone()),
+                    });
+                }
+                return FlowOutcome::err(e, nodes_executed);
+            }
             Err(_) => {
                 return FlowOutcome::err(
                     FlowError::new(FlowErrorCode::Timeout, format!("Flow run exceeded {}ms", opts.timeout_ms), None),
@@ -377,6 +407,13 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
 
         nodes_executed += 1;
         executed.insert(node.id.clone());
+        if let Some(progress) = &opts.progress {
+            progress(NodeProgress {
+                node_id: node.id.clone(),
+                status: "done",
+                message: None,
+            });
+        }
         if node.node_type == "output" {
             saw_output = true;
             output_result = output.clone();
@@ -1344,6 +1381,128 @@ fn is_typed_codex_busy(using_provider_gateway: bool, status: u16, body: &[u8]) -
         == Some("codex_busy")
 }
 
+/// The system/messages/prompt assembly shared by the gateway and hosted-chat
+/// paths (order + interpolation identical on both).
+fn build_llm_messages(node: &GraphNode, data: &Value, tctx: &Value) -> Result<Vec<Value>, FlowError> {
+    let mut messages: Vec<Value> = Vec::new();
+    if let Some(sys) = data.get("system").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        messages.push(json!({ "role": "system", "content": interpolate_template(sys, tctx) }));
+    }
+    if let Some(arr) = data.get("messages").and_then(Value::as_array) {
+        for m in arr {
+            if let (Some(role), Some(content)) = (m.get("role").and_then(Value::as_str), m.get("content").and_then(Value::as_str)) {
+                messages.push(json!({ "role": role, "content": interpolate_template(content, tctx) }));
+            }
+        }
+    }
+    if let Some(prompt) = data.get("prompt").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        messages.push(json!({ "role": "user", "content": interpolate_template(prompt, tctx) }));
+    }
+    if messages.is_empty() {
+        return Err(FlowError::new(FlowErrorCode::InvalidFlow, format!("Node '{}' llm_chat has no prompt/messages", node.id), Some(node.id.clone())));
+    }
+    Ok(messages)
+}
+
+/// Phase 4 (plan §5.6): resolution of a provider-less/'default' llm_chat node
+/// through the account owner's cached AI preferences.
+#[derive(Debug)]
+struct DefaultAiResolution {
+    /// Desktop source: the owner's named local provider — the existing
+    /// gateway path takes it from here.
+    provider: Option<String>,
+    /// Desktop source: the owner's pinned model, applied when the node set none.
+    model: Option<String>,
+    /// Site/custom source: POST {base}/api/ai/chat over the flk_ key.
+    backend_chat: bool,
+}
+
+fn resolve_default_ai(deps: &RunDeps, node_id: &str) -> Result<DefaultAiResolution, FlowError> {
+    use crate::ai::default_prefs::AiSource;
+    let prefs = deps.default_ai_prefs.as_ref().and_then(|store| store.resolve());
+    let Some(prefs) = prefs else {
+        return Err(ai_default_unresolved(
+            node_id,
+            "the account owner's AI preferences have not been fetched yet — link FormLogic Desktop to the account and let it sync once, or pick an explicit provider on this node",
+        ));
+    };
+    match prefs.ai_source {
+        AiSource::Desktop => {
+            let provider = prefs
+                .desktop_provider_id
+                .map(|id| id.trim().to_owned())
+                .filter(|id| !id.is_empty());
+            let Some(provider) = provider else {
+                return Err(ai_default_unresolved(
+                    node_id,
+                    "the account's Default AI source is 'desktop' but no desktop provider is chosen in Settings → AI",
+                ));
+            };
+            Ok(DefaultAiResolution {
+                provider: Some(provider),
+                model: prefs
+                    .desktop_model
+                    .map(|m| m.trim().to_owned())
+                    .filter(|m| !m.is_empty()),
+                backend_chat: false,
+            })
+        }
+        AiSource::Site | AiSource::Custom => Ok(DefaultAiResolution {
+            provider: None,
+            model: None,
+            backend_chat: true,
+        }),
+    }
+}
+
+/// The plan §5.8 typed code for an unresolvable Default source. The
+/// flow-run-result schema's closed `code` enum has no member for it, so the
+/// envelope stays `node_failed` and the typed code leads the message — the UI
+/// keys off the token (same honesty, schema-compatible).
+fn ai_default_unresolved(node_id: &str, detail: &str) -> FlowError {
+    FlowError::new(
+        FlowErrorCode::NodeFailed,
+        format!("ai_default_unresolved — Node '{node_id}' llm_chat: {detail}"),
+        Some(node_id.to_string()),
+    )
+}
+
+/// Site/custom Default source (plan §5.6): the backend's hosted chat route
+/// over the desktop's flk_ key — `{messages, stream:false}` → `{data:{content}}`,
+/// metered to the account owner. No tools, no streaming (v1).
+async fn run_site_default_chat(
+    node: &GraphNode,
+    deps: &RunDeps,
+    data: &Value,
+    tctx: &Value,
+) -> Result<Value, FlowError> {
+    let messages = build_llm_messages(node, data, tctx)?;
+    let Some(client) = deps.client.as_ref() else {
+        return Err(FlowError::new(
+            FlowErrorCode::NodeFailed,
+            format!(
+                "Node '{}' llm_chat cannot use the Default AI source because FormLogic Desktop is not linked to a FormLogic account",
+                node.id
+            ),
+            Some(node.id.clone()),
+        ));
+    };
+    let body = json!({ "messages": messages, "stream": false });
+    let payload = client
+        .site_ai_chat(&body)
+        .await
+        .map_err(|e| client_err(node, format!("llm_chat Default (site AI) request failed: {e}")))?;
+    let content = payload.pointer("/data/content").and_then(Value::as_str);
+    let Some(content) = content.filter(|c| !c.trim().is_empty()) else {
+        return Err(FlowError::new(
+            FlowErrorCode::NodeFailed,
+            format!("Node '{}' llm_chat Default (site AI) returned no content", node.id),
+            Some(node.id.clone()),
+        ));
+    };
+    Ok(json!({ "content": content, "raw": payload }))
+}
+
 async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node);
     let tctx = scope_to_context(scope);
@@ -1355,6 +1514,21 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
         .and_then(Value::as_str)
         .map(|value| interpolate_template(value, &tctx).trim().to_owned())
         .filter(|value| !value.is_empty());
+    // Phase 4 (plan §5.6): absent/'default' resolves through the account
+    // owner's AI preferences — NEVER a silent fallback to another source.
+    // Explicit provider selections keep the historical path byte-for-byte.
+    let mut prefs_model: Option<String> = None;
+    let is_default = provider.as_deref().map_or(true, |p| p == "default");
+    let (provider, backend_default) = if is_default {
+        let resolved = resolve_default_ai(deps, &node.id)?;
+        prefs_model = resolved.model;
+        (resolved.provider, resolved.backend_chat)
+    } else {
+        (provider, false)
+    };
+    if backend_default {
+        return run_site_default_chat(node, deps, data, &tctx).await;
+    }
     let using_provider_gateway = provider.is_some();
     // Endpoint resolution: node.data.endpoint (allow-listed) → resolved local service.
     let endpoint = if let Some(provider) = provider.as_deref() {
@@ -1383,23 +1557,7 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
             Some(node.id.clone()),
         ));
     };
-    let mut messages: Vec<Value> = Vec::new();
-    if let Some(sys) = data.get("system").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-        messages.push(json!({ "role": "system", "content": interpolate_template(sys, &tctx) }));
-    }
-    if let Some(arr) = data.get("messages").and_then(Value::as_array) {
-        for m in arr {
-            if let (Some(role), Some(content)) = (m.get("role").and_then(Value::as_str), m.get("content").and_then(Value::as_str)) {
-                messages.push(json!({ "role": role, "content": interpolate_template(content, &tctx) }));
-            }
-        }
-    }
-    if let Some(prompt) = data.get("prompt").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-        messages.push(json!({ "role": "user", "content": interpolate_template(prompt, &tctx) }));
-    }
-    if messages.is_empty() {
-        return Err(FlowError::new(FlowErrorCode::InvalidFlow, format!("Node '{}' llm_chat has no prompt/messages", node.id), Some(node.id.clone())));
-    }
+    let messages = build_llm_messages(node, data, &tctx)?;
     let mut body = json!({ "messages": messages });
     // Model may be templated ({{...}}) so a config record / upstream node can drive it.
     let model_str = data
@@ -1408,6 +1566,10 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
         .map(|m| interpolate_template(m, &tctx).trim().to_string())
         .filter(|m| !m.is_empty());
     if let Some(model) = model_str {
+        body["model"] = json!(model);
+    } else if let Some(model) = prefs_model {
+        // The owner's Settings → AI model for the desktop Default source. The
+        // gateway validates it fail-closed; nothing is substituted (plan §5.5).
         body["model"] = json!(model);
     } else if !using_provider_gateway {
         if let Some(m) = discover_default_model(&endpoint, &deps.http).await {
@@ -1955,6 +2117,7 @@ mod tests {
             base_url: "http://formlogic.local".into(),
             registry: None,
             service_bases: HashMap::new(),
+            default_ai_prefs: None,
         }
     }
 
@@ -1967,6 +2130,7 @@ mod tests {
             capabilities: vec![],
             flow_slug: "t".into(),
             request_id_seed: "test-run-1".into(),
+            progress: None,
         }
     }
 
@@ -2017,6 +2181,250 @@ mod tests {
             host: Some(host),
             ..deps()
         }
+    }
+
+    // ── Phase 4 (plan §5.6): llm_chat "Default (from Settings)" resolution ────
+
+    use crate::ai::default_prefs::{AiSource, DefaultAiPrefs, DefaultAiPrefsStore};
+
+    fn prefs(source: AiSource) -> DefaultAiPrefs {
+        DefaultAiPrefs {
+            ai_source: source,
+            desktop_provider_id: Some("local-llm".into()),
+            desktop_model: Some("qwen3-9b".into()),
+            custom_provider_id: Some("my-custom".into()),
+            chat_tool_mode: Some("auto".into()),
+        }
+    }
+
+    fn store_with(prefs: Option<DefaultAiPrefs>) -> Arc<DefaultAiPrefsStore> {
+        let dir = std::env::temp_dir().join(format!("fl-runner-prefs-{}", uuid::Uuid::new_v4().simple()));
+        let store = DefaultAiPrefsStore::new(&dir);
+        if let Some(p) = prefs {
+            store.seed_for_test(p);
+        }
+        store
+    }
+
+    fn llm_node(data: Value) -> GraphNode {
+        GraphNode { id: "ai".into(), node_type: "llm_chat".into(), data }
+    }
+
+    fn empty_scope() -> SelectorScope {
+        SelectorScope {
+            inputs: None,
+            event: None,
+            app: None,
+            nodes: None,
+            upstream: None,
+            result: None,
+        }
+    }
+
+    #[test]
+    fn default_resolution_needs_fetched_prefs() {
+        // No store at all, and a store that never fetched: both fail closed.
+        for deps in [
+            RunDeps { default_ai_prefs: None, ..deps() },
+            RunDeps { default_ai_prefs: Some(store_with(None)), ..deps() },
+        ] {
+            let err = resolve_default_ai(&deps, "ai").expect_err("unresolved prefs fail closed");
+            assert_eq!(err.code, FlowErrorCode::NodeFailed);
+            assert!(err.message.contains("ai_default_unresolved"), "got: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn default_resolution_matrix_per_source() {
+        // Desktop source → the owner's named local provider + model.
+        let desktop_deps = RunDeps {
+            default_ai_prefs: Some(store_with(Some(prefs(AiSource::Desktop)))),
+            ..deps()
+        };
+        let resolved = resolve_default_ai(&desktop_deps, "ai").expect("desktop prefs resolve");
+        assert_eq!(resolved.provider.as_deref(), Some("local-llm"));
+        assert_eq!(resolved.model.as_deref(), Some("qwen3-9b"));
+        assert!(!resolved.backend_chat);
+
+        // Site + custom → the hosted backend chat route.
+        for source in [AiSource::Site, AiSource::Custom] {
+            let hosted_deps = RunDeps {
+                default_ai_prefs: Some(store_with(Some(prefs(source)))),
+                ..deps()
+            };
+            let resolved = resolve_default_ai(&hosted_deps, "ai").expect("site/custom prefs resolve");
+            assert!(resolved.backend_chat, "{source:?} must ride the hosted route");
+            assert!(resolved.provider.is_none());
+        }
+
+        // Desktop source without a chosen provider → typed unresolved, never a hop.
+        let mut broken = prefs(AiSource::Desktop);
+        broken.desktop_provider_id = None;
+        let broken_deps = RunDeps {
+            default_ai_prefs: Some(store_with(Some(broken))),
+            ..deps()
+        };
+        let err = resolve_default_ai(&broken_deps, "ai").expect_err("missing provider id fails closed");
+        assert!(err.message.contains("ai_default_unresolved"), "got: {}", err.message);
+    }
+
+    #[tokio::test]
+    async fn llm_chat_absent_provider_without_prefs_is_typed_unresolved() {
+        let node = llm_node(json!({ "prompt": "hi" }));
+        let err = run_llm_chat(&node, &empty_scope(), &deps())
+            .await
+            .expect_err("absent provider + no prefs must not fall back anywhere");
+        assert_eq!(err.code, FlowErrorCode::NodeFailed);
+        assert!(err.message.contains("ai_default_unresolved"), "got: {}", err.message);
+        assert_eq!(err.node_id.as_deref(), Some("ai"));
+    }
+
+    #[tokio::test]
+    async fn llm_chat_default_site_source_posts_to_the_hosted_chat_route() {
+        // The stub asserts the exact §5.6 contract: POST /api/ai/chat (NOT
+        // /api/v1), flk_ bearer, {messages, stream:false} → {data:{content}}.
+        let seen: Arc<std::sync::Mutex<Vec<(Option<String>, Value)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_in_handler = seen.clone();
+        let app = axum::Router::new().route(
+            "/api/ai/chat",
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: axum::Json<Value>| {
+                let seen = seen_in_handler.clone();
+                async move {
+                    let auth = headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
+                    seen.lock().unwrap().push((auth, body.0));
+                    axum::Json(json!({ "data": { "content": "pong from site" } }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("bind chat stub");
+        let base = format!("http://{}", listener.local_addr().expect("stub address"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = FormLogicClient::new(&crate::formlogic_client::FormLogicConfig {
+            base_url: base,
+            api_key: "flk_owner".into(),
+        })
+        .map(Arc::new);
+        let deps = RunDeps {
+            client,
+            default_ai_prefs: Some(store_with(Some(prefs(AiSource::Site)))),
+            ..deps()
+        };
+        let node = llm_node(json!({ "provider": "default", "system": "be terse", "prompt": "say hi" }));
+        let out = run_llm_chat(&node, &empty_scope(), &deps)
+            .await
+            .expect("site source resolves through the hosted route");
+        assert_eq!(out["content"], json!("pong from site"));
+        assert_eq!(out["raw"]["data"]["content"], json!("pong from site"));
+
+        let calls = seen.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        let (auth, body) = &calls[0];
+        assert_eq!(auth.as_deref(), Some("Bearer flk_owner"));
+        assert_eq!(body["stream"], json!(false));
+        assert_eq!(
+            body["messages"],
+            json!([
+                { "role": "system", "content": "be terse" },
+                { "role": "user", "content": "say hi" }
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_chat_default_custom_source_also_uses_the_hosted_route() {
+        let app = axum::Router::new().route(
+            "/api/ai/chat",
+            axum::routing::post(|| async { axum::Json(json!({ "data": { "content": "pong" } })) }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("bind chat stub");
+        let base = format!("http://{}", listener.local_addr().expect("stub address"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let client = FormLogicClient::new(&crate::formlogic_client::FormLogicConfig {
+            base_url: base,
+            api_key: "flk_owner".into(),
+        })
+        .map(Arc::new);
+        // A provider-LESS node with custom source resolves the same way.
+        let deps = RunDeps {
+            client,
+            default_ai_prefs: Some(store_with(Some(prefs(AiSource::Custom)))),
+            ..deps()
+        };
+        let node = llm_node(json!({ "prompt": "hi" }));
+        let out = run_llm_chat(&node, &empty_scope(), &deps)
+            .await
+            .expect("custom source resolves through the hosted route");
+        assert_eq!(out["content"], json!("pong"));
+    }
+
+    #[tokio::test]
+    async fn llm_chat_default_desktop_source_routes_to_the_local_gateway() {
+        // The desktop source's provider id is handed to named_ai_provider_endpoint
+        // (the local-gateway URL builder): an id it rejects surfaces as ITS typed
+        // validation error — proving the node took the gateway path, never the
+        // hosted route and never ai_default_unresolved. (Tests must not actually
+        // reach the live loopback gateway, so the id is deliberately invalid.)
+        let mut desktop = prefs(AiSource::Desktop);
+        desktop.desktop_provider_id = Some("local_llm".into()); // '_' is rejected
+        let deps = RunDeps {
+            default_ai_prefs: Some(store_with(Some(desktop))),
+            ..deps()
+        };
+        let node = llm_node(json!({ "provider": "default", "prompt": "hi" }));
+        let err = run_llm_chat(&node, &empty_scope(), &deps)
+            .await
+            .expect_err("invalid owner provider id fails closed");
+        assert_eq!(err.code, FlowErrorCode::InvalidFlow);
+        assert!(
+            err.message.contains("must be a provider id"),
+            "the named-provider gateway path must see the owner's id, got: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_chat_explicit_provider_ignores_prefs_byte_for_byte() {
+        // An explicit selection must behave exactly as before — prefs are not
+        // consulted (an unresolved store would otherwise change the outcome to
+        // ai_default_unresolved). The invalid id proves the request went into
+        // named_ai_provider_endpoint, the historical explicit-provider path.
+        let deps = RunDeps {
+            default_ai_prefs: Some(store_with(None)), // unresolved on purpose
+            ..deps()
+        };
+        let node = llm_node(json!({ "provider": "provider:local_llm", "prompt": "hi" }));
+        let err = run_llm_chat(&node, &empty_scope(), &deps)
+            .await
+            .expect_err("invalid explicit provider id fails closed");
+        assert_eq!(err.code, FlowErrorCode::InvalidFlow);
+        assert!(
+            err.message.contains("must be a provider id"),
+            "explicit provider must keep the named-gateway path, got: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_chat_default_site_source_without_a_link_is_honest() {
+        let deps = RunDeps {
+            client: None, // unlinked desktop
+            default_ai_prefs: Some(store_with(Some(prefs(AiSource::Site)))),
+            ..deps()
+        };
+        let node = llm_node(json!({ "provider": "default", "prompt": "hi" }));
+        let err = run_llm_chat(&node, &empty_scope(), &deps)
+            .await
+            .expect_err("no flk_ client → honest refusal, never a silent local hop");
+        assert!(err.message.contains("not linked"), "got: {}", err.message);
     }
 
     #[test]

@@ -266,39 +266,24 @@ async fn desktop_journals_clear(State(state): State<AppState>) -> impl IntoRespo
 // ------- services -------
 
 async fn list_services(State(state): State<AppState>) -> impl IntoResponse {
-    // SRV-001: serve the pre-serialized, revision-keyed snapshot body — an Arc
-    // clone on the hot path, with NO filesystem or process probing. Template
-    // folder-drops are picked up by the background refresher (registry::
-    // background_refresh) instead of a rescan-per-poll here, and the mutex is
-    // taken on the blocking pool so a rebuild can never stall async workers.
-    let registry = state.registry.clone();
-    match tokio::task::spawn_blocking(move || {
-        registry
-            .lock()
-            .map(|mut reg| reg.snapshot_cached())
-            .map_err(|_| ())
-    })
-    .await
-    {
-        Ok(Ok(body)) => (
+    // The handler is shared with the ops relay (desktop_ops.rs); the snapshot
+    // body is pre-serialized (SRV-001), so it is served raw.
+    match crate::desktop_ops::services_list(&state.registry).await {
+        Ok(crate::desktop_ops::OpSuccess::RawJson(body)) => (
             StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
-            body.as_str().to_owned(),
+            body,
         )
             .into_response(),
-        _ => err500("registry mutex poisoned"),
+        Ok(_) => err500("services.list returned an unexpected body"),
+        Err(f) => err500(&f.message),
     }
 }
 
 async fn start_service(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let result = state
-        .registry
-        .lock()
-        .map_err(|_| "registry mutex poisoned".to_string())
-        .and_then(|mut reg| reg.start(&id));
-    match result {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => err400(&e),
+    match crate::desktop_ops::service_start(&state.registry, &id) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(f) => service_op_err(&f),
     }
 }
 
@@ -310,14 +295,9 @@ async fn repair_service(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let result = state
-        .registry
-        .lock()
-        .map_err(|_| "registry mutex poisoned".to_string())
-        .and_then(|mut reg| reg.repair(&id));
-    match result {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => err400(&e),
+    match crate::desktop_ops::service_repair(&state.registry, &id) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(f) => service_op_err(&f),
     }
 }
 
@@ -369,14 +349,9 @@ async fn set_service_extra_args(
 }
 
 async fn stop_service(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let result = state
-        .registry
-        .lock()
-        .map_err(|_| "registry mutex poisoned".to_string())
-        .and_then(|mut reg| reg.stop(&id));
-    match result {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => err400(&e),
+    match crate::desktop_ops::service_stop(&state.registry, &id) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(f) => service_op_err(&f),
     }
 }
 
@@ -697,7 +672,11 @@ async fn codex_interrupt(
 /// "speech", so the heuristic would wrongly grant transcription + speech to an
 /// STT-only service. Services with no AI capability (browser automation, …)
 /// are left out of the sources union entirely.
-fn service_source_capabilities<'a>(declared: &'a [String], category: &str) -> Vec<&'a str> {
+///
+/// `pub(crate)`: the Site-AI tunnel's `service:<id>` surface
+/// (`ai/relay_poller.rs`) reuses THIS mapping — one capability decision,
+/// never a second one.
+pub(crate) fn service_source_capabilities<'a>(declared: &'a [String], category: &str) -> Vec<&'a str> {
     if !declared.is_empty() {
         return declared.iter().map(String::as_str).collect();
     }
@@ -2371,15 +2350,11 @@ fn pairing_admin_ok(auth: &AuthConfig, headers: &HeaderMap) -> bool {
 // ---- plugins ----
 
 async fn list_plugins(State(st): State<DesktopState>) -> impl IntoResponse {
-    Json(serde_json::json!({
-        "pluginsDir": st.host.plugins_root().display().to_string(),
-        // Dev mode drives dev-only panel affordances (Aokie's simulate-call).
-        "devMode": st.host.dev_mode(),
-        "plugins": st.host.list(),
-        // Bundled first-party templates (e.g. Aokie) + installed flags, so
-        // the panel can offer "Install" without a separate endpoint.
-        "builtins": st.host.builtin_plugins(),
-    }))
+    // Shared with the ops relay (desktop_ops.rs).
+    match crate::desktop_ops::plugins_list(&st.host) {
+        Ok(crate::desktop_ops::OpSuccess::Json(body)) => Json(body).into_response(),
+        _ => err500("plugins.list returned an unexpected body"),
+    }
 }
 
 /// `POST /api/plugins/{id}/install` — materialise a BUILT-IN plugin template
@@ -2517,16 +2492,16 @@ async fn aokie_receptionist_codex_configuration(
 }
 
 async fn start_plugin(State(st): State<DesktopState>, Path(id): Path<String>) -> impl IntoResponse {
-    match st.host.start(&id) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    match crate::desktop_ops::plugin_start(&st.host, &id) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(f) => plugin_op_err(&f),
     }
 }
 
 async fn stop_plugin(State(st): State<DesktopState>, Path(id): Path<String>) -> impl IntoResponse {
-    match st.host.stop(&id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    match crate::desktop_ops::plugin_stop(&st.host, &id).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(f) => plugin_op_err(&f),
     }
 }
 
@@ -2534,9 +2509,9 @@ async fn restart_plugin(
     State(st): State<DesktopState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match st.host.restart(&id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => desktop_err(StatusCode::BAD_REQUEST, "command_failed", &e),
+    match crate::desktop_ops::plugin_restart(&st.host, &id).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(f) => plugin_op_err(&f),
     }
 }
 
@@ -2781,22 +2756,11 @@ async fn plugin_health(
     State(st): State<DesktopState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if st.host.get(&id).is_none() {
-        return desktop_err(
-            StatusCode::NOT_FOUND,
-            "command_failed",
-            &format!("unknown plugin {id:?}"),
-        );
-    }
-    // On-demand probe when live; errors are reflected in the report itself.
-    let _ = st.host.probe_health(&id).await;
-    match st.host.last_health(&id) {
-        Some(h) => Json(serde_json::json!({ "health": h })).into_response(),
-        None => desktop_err(
-            StatusCode::NOT_FOUND,
-            "command_failed",
-            &format!("unknown plugin {id:?}"),
-        ),
+    // Shared with the ops relay (desktop_ops.rs).
+    match crate::desktop_ops::plugin_health(&st.host, &id).await {
+        Ok(crate::desktop_ops::OpSuccess::Json(body)) => Json(body).into_response(),
+        Ok(_) => err500("plugins.health returned an unexpected body"),
+        Err(f) => plugin_op_err(&f),
     }
 }
 
@@ -4119,6 +4083,27 @@ async fn flows_runtime_errors_clear(State(st): State<DesktopState>) -> impl Into
 
 // ------- helpers -------
 
+/// Map a shared services-op failure onto this surface's historical
+/// `{ "error": msg }` envelope (500 for the poisoned-registry case, 400
+/// otherwise) — the relay instead carries the typed code + message.
+fn service_op_err(f: &crate::desktop_ops::OpFailure) -> axum::response::Response {
+    if f.status >= 500 {
+        err500(&f.message)
+    } else {
+        err400(&f.message)
+    }
+}
+
+/// Map a shared plugins-op failure onto the `{ok:false,error:{code,message}}`
+/// envelope this surface has always used.
+fn plugin_op_err(f: &crate::desktop_ops::OpFailure) -> axum::response::Response {
+    desktop_err(
+        StatusCode::from_u16(f.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        f.code,
+        &f.message,
+    )
+}
+
 fn err400(msg: &str) -> axum::response::Response {
     (
         StatusCode::BAD_REQUEST,
@@ -4721,6 +4706,10 @@ pub async fn serve(
     flow_runtime: Option<Arc<FlowRuntime>>,
     // AI-401: the provider registry backing the `/api/ai/*` gateway.
     ai_providers: crate::ai::providers::ProviderRegistryHandle,
+    // Optional shared Codex agent (Phase-1 Site-AI tunnel): the app setup
+    // hands the SAME agent to the tunnel lane so both never double-manage
+    // the Codex runtime; `None` builds a private one (legacy callers).
+    codex_agent: Option<crate::ai::codex::CodexAgentHandle>,
 ) -> Result<(), BoxError> {
     // CORS stays permissive at the HTTP layer (the localhost bind keeps
     // non-local processes out, and `Authorization` must be readable from any
@@ -4752,10 +4741,10 @@ pub async fn serve(
         // CORS preflight, it does not grant access.
         .allow_private_network(true);
 
-    let codex_agent = {
+    let codex_agent = codex_agent.unwrap_or_else(|| {
         let registry = registry.lock().unwrap_or_else(|e| e.into_inner());
         crate::ai::codex::CodexAgent::new(registry.data_dir().to_path_buf())
-    };
+    });
     let state = AppState {
         config,
         registry,

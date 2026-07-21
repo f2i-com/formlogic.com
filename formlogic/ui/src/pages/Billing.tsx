@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Cloud, Check, Minus, Plus, Loader2, Info, Sparkles } from 'lucide-react';
-import { api, type BillingStatus } from '../lib/api';
+import { api, type AiUsageInfo, type BillingStatus } from '../lib/api';
 import { parseServerDate } from '../lib/utils';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
@@ -25,6 +25,9 @@ function loadPayPalSdk(clientId: string, currency: string): Promise<PayPalNamesp
 export function Billing() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  // Site AI usage (Phase 2): undefined = still loading, null = not tracked on this instance.
+  const [aiUsage, setAiUsage] = useState<AiUsageInfo | null | undefined>(undefined);
+  const [aiUsageError, setAiUsageError] = useState<string | null>(null);
   const [months, setMonths] = useState(1);
   const monthsRef = useRef(1);
   const [paypalReady, setPaypalReady] = useState(false);
@@ -70,6 +73,13 @@ export function Billing() {
       else setError(typeof res.error === 'string' ? res.error : 'Could not load billing status');
       setLoading(false);
     })();
+    // Site AI usage rides the AI preferences endpoint (Phase 2); a pre-Phase-2
+    // backend just leaves the "not tracked" / unavailable state, never an error page.
+    api.getAiPreferences().then((res) => {
+      if (!active) return;
+      if (res.data) setAiUsage(res.data.usage ?? null);
+      else setAiUsageError(res.error ?? 'Could not load Site AI usage');
+    });
     return () => { active = false; };
   }, []);
   useEffect(() => { monthsRef.current = months; }, [months]);
@@ -202,6 +212,20 @@ export function Billing() {
           <UsageBar label="Storage" used={status.usage.storage.usedBytes} limit={status.usage.storage.limitBytes} format={formatBytes} />
         </div>
       )}
+
+      {/* Site AI usage (Phase 2) — ai_messages metered against the plan allowance. */}
+      <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-5 mb-6">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Site AI usage</h2>
+        {aiUsageError ? (
+          <p className="text-sm text-gray-500 dark:text-slate-400">Site AI usage couldn&apos;t be loaded — {aiUsageError}</p>
+        ) : aiUsage === undefined ? (
+          <p className="text-sm text-gray-400 dark:text-slate-500">Loading…</p>
+        ) : aiUsage === null ? (
+          <p className="text-sm text-gray-500 dark:text-slate-400">AI messages aren&apos;t tracked on this instance yet.</p>
+        ) : (
+          <UsageBar label="AI messages" used={aiUsage.used} limit={aiUsage.limit} format={(n) => String(n)} />
+        )}
+      </div>
 
       {/* Buy cloud months — hidden on self-hosted instances (nothing to purchase). */}
       {!selfHosted && (<>

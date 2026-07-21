@@ -6,14 +6,23 @@
 // like a debug log: a live per-node timeline (each node's status, duration and a compact output /
 // error) built from the executor's onNodeStatus observer, plus the final status + result. App-scoped
 // flows additionally offer a headless server run that writes a row into run history.
+//
+// "Run on" (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5.7): the primary run button honors the
+// flow's executionLocation — 'auto' keeps the browser executor untouched, 'desktop' rides the
+// E2E desktop relay with live queue/progress, 'cloud' calls the synchronous cloud runner
+// (credit-metered; typed refusals — credits exhausted / unsupported nodes — surface inline).
 import { useMemo, useState } from 'react';
-import { AlertTriangle, Check, Loader2, PlayCircle, ServerCog, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, Check, Cloud, Laptop, Loader2, PlayCircle, ServerCog, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
 import { toast } from '../../stores/toastStore';
+import { api } from '../../lib/api';
 import { executeFlow, type FlowRunOutcome } from '../../client-runtime/flows/flowExecutor';
 import { buildWorkspaceExecutorDeps } from '../../client-runtime/flows/flowDispatcher';
+import { runFlowOnDesktop, type DesktopFlowRunState } from '../../client-runtime/desktop/desktopFlowRun';
 import { getNodeSpec } from './editor/nodeCatalog';
+import { flowExecutionLocation, type CloudRunFeedback, type FlowRunExecutedLocation } from './editor/executionLocation';
 import {
   EMPTY_RUN_LOG,
   formatDuration,
@@ -23,7 +32,7 @@ import {
   type NodeRunPhase,
   type RunLog,
 } from './runStatus';
-import type { FlowDefinition, WorkflowGraph } from '../../types/flows';
+import type { FlowDefinition, FlowRunError, WorkflowGraph } from '../../types/flows';
 
 /** Seed the Inputs box from the Trigger node's declared inputs ({ name, example? }) so the box
  *  mirrors exactly what the flow expects. Falls back to an empty object when none are declared. */
@@ -60,7 +69,7 @@ function PhaseGlyph({ phase }: { phase: NodeRunPhase }) {
   return <X className="h-3.5 w-3.5 flex-none text-red-500" />;
 }
 
-export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus, hideClose = false }: {
+export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus, onCloudRunFeedback, hideClose = false }: {
   flow: FlowDefinition;
   onClose: () => void;
   /** Called after a successful server test-run (app flows) so the caller can refresh history. */
@@ -69,14 +78,23 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   onRunStart?: () => void;
   /** Forwarded executor onNodeStatus events so the caller can light up the canvas node pills. */
   onNodeStatus?: (nodeId: string, status: NodeRunPhase, info?: { output?: unknown; error?: string }) => void;
+  /** Cloud-run refusals/successes, forwarded so the editor's "Run on" chrome can react (plan §5.7). */
+  onCloudRunFeedback?: (flowId: string, feedback: CloudRunFeedback) => void;
   /** The mobile slide-over supplies its own close — suppress the header's to avoid two X buttons. */
   hideClose?: boolean;
 }) {
+  const navigate = useNavigate();
   const [inputText, setInputText] = useState(() => initialInputsJson(flow.flowJson));
   const [running, setRunning] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
   const [outcome, setOutcome] = useState<FlowRunOutcome | null>(null);
   const [runLog, setRunLog] = useState<RunLog>(EMPTY_RUN_LOG);
+  // "Run on" state (plan §5.7): where the last run executed, the desktop relay's live
+  // queue/run state, and a cloud run's typed refusal (credits / unsupported nodes).
+  const location = flowExecutionLocation(flow);
+  const [runLocation, setRunLocation] = useState<FlowRunExecutedLocation | null>(null);
+  const [desktopState, setDesktopState] = useState<DesktopFlowRunState | null>(null);
+  const [cloudError, setCloudError] = useState<{ kind: 'credits' | 'unsupported' | 'other'; message: string; nodes?: string[] } | null>(null);
 
   // Friendly label per node id for the timeline (falls back to the raw type / id).
   const nodeLabel = useMemo(() => {
@@ -101,12 +119,19 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
     }
   };
 
+  const resetRunState = () => {
+    setOutcome(null);
+    setRunLog(EMPTY_RUN_LOG);
+    setRunLocation(null);
+    setDesktopState(null);
+    setCloudError(null);
+  };
+
   const runBrowser = async () => {
     const inputs = parseInputs();
     if (inputs === null) return;
     setRunning(true);
-    setOutcome(null);
-    setRunLog(EMPTY_RUN_LOG);
+    resetRunState();
     onRunStart?.();
     try {
       const result = await executeFlow(flow.flowJson ?? { nodes: [], edges: [] }, {
@@ -121,6 +146,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
           onNodeStatus?.(id, status, info);
         },
       });
+      setRunLocation('browser');
       setOutcome(result);
     } catch (err) {
       setOutcome({ status: 'error', error: { code: 'node_failed', message: err instanceof Error ? err.message : String(err) }, nodesExecuted: 0 });
@@ -129,13 +155,113 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
     }
   };
 
+  /** Cloud run (plan §5.7): synchronous server-side runner, credit-metered. */
+  const runCloud = async () => {
+    const inputs = parseInputs();
+    if (inputs === null) return;
+    setRunning(true);
+    resetRunState();
+    onRunStart?.();
+    // The shared demo is server-read-only; run in the browser instead (same honesty note
+    // as the server-run path).
+    if (api.isDemoMode()) {
+      setRunning(false);
+      toast.info('Demo mode', 'Runs execute in your browser and are not saved to the server.');
+      await runBrowser();
+      return;
+    }
+    const res = await api.runFlowCloud(flow.id, inputs);
+    setRunning(false);
+    if (res.error || !res.data) {
+      if (res.code === 'flow_credits_exceeded') {
+        setCloudError({ kind: 'credits', message: res.error ?? 'Out of cloud run credits' });
+        return;
+      }
+      if (res.code === 'cloud_unsupported_node') {
+        const nodes = res.details?.nodes ?? [];
+        setCloudError({ kind: 'unsupported', message: res.error ?? 'This flow has nodes the cloud runner cannot execute', nodes });
+        onCloudRunFeedback?.(flow.id, { kind: 'unsupported', nodes });
+        return;
+      }
+      if (res.status === 404 || res.code === 'not_found' || res.code === 'route_not_found') {
+        // The server predates the cloud runner: Cloud can't work here at all — the
+        // editor's dropdown disables the option with this reason.
+        onCloudRunFeedback?.(flow.id, { kind: 'unavailable', reason: 'this FormLogic server has no cloud runner' });
+        setCloudError({ kind: 'other', message: 'Cloud runs are not available on this FormLogic server yet.' });
+        return;
+      }
+      setOutcome({
+        status: 'error',
+        error: { code: (res.code ?? 'runner_unavailable') as FlowRunError['code'], message: res.error ?? 'Cloud run failed' },
+        nodesExecuted: 0,
+      });
+      return;
+    }
+    const data = res.data;
+    onCloudRunFeedback?.(flow.id, { kind: 'ok' });
+    setRunLocation('cloud');
+    setOutcome({
+      status: data.status === 'done' ? 'done' : data.status === 'timeout' ? 'timeout' : data.status === 'cancelled' ? 'cancelled' : 'error',
+      result: data.result,
+      error: data.error
+        ? {
+            code: (data.error.code ?? 'node_failed') as FlowRunError['code'],
+            message: data.error.message ?? 'Cloud run failed',
+            ...(data.error.nodeId ? { nodeId: data.error.nodeId } : {}),
+          }
+        : undefined,
+      nodesExecuted: data.nodesExecuted ?? 0,
+    });
+  };
+
+  /** Desktop run (plan §5.7): E2E-sealed relay run with live queue position + node progress. */
+  const runDesktop = async () => {
+    const inputs = parseInputs();
+    if (inputs === null) return;
+    setRunning(true);
+    resetRunState();
+    onRunStart?.();
+    if (api.isDemoMode()) {
+      setRunning(false);
+      toast.info('Demo mode', 'Runs execute in your browser and are not saved to the server.');
+      await runBrowser();
+      return;
+    }
+    let executed = 0;
+    const res = await runFlowOnDesktop(flow.id, {
+      inputs,
+      onState: (s) => setDesktopState(s),
+      onProgress: (p) => {
+        if (p.status === 'done' || p.status === 'error') executed += 1;
+        if (!p.nodeId) return;
+        const phase: NodeRunPhase = p.status === 'done' ? 'done' : p.status === 'error' ? 'error' : 'running';
+        const info = p.status === 'error' ? { error: p.message ?? 'Failed' } : undefined;
+        setRunLog((l) => reduceRunLog(l, p.nodeId as string, phase, info));
+        onNodeStatus?.(p.nodeId, phase, info);
+      },
+    });
+    setRunning(false);
+    if (!res.ok) {
+      if (res.error.code === 'uncertain') {
+        // Honest non-outcome: the state line already says the desktop may still finish.
+        return;
+      }
+      setOutcome({
+        status: 'error',
+        error: { code: res.error.code as FlowRunError['code'], message: res.error.message },
+        nodesExecuted: 0,
+      });
+      return;
+    }
+    setRunLocation('desktop');
+    setOutcome({ status: 'done', result: res.data.result, nodesExecuted: executed });
+  };
+
   const runServer = async () => {
     if (!flow.appId) return;
     setServerRunning(true);
-    setOutcome(null);
-    setRunLog(EMPTY_RUN_LOG);
+    resetRunState();
     onRunStart?.();
-    const { api } = await import('../../lib/api');
     // The shared demo is server-read-only; a logged server run isn't possible, so run in the
     // browser instead (same executor) — no server error, and the result still shows here.
     if (api.isDemoMode()) {
@@ -193,9 +319,26 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={runBrowser} isLoading={running} disabled={running} leftIcon={<PlayCircle className="h-4 w-4" />}>
-            Run in browser
-          </Button>
+          {location === 'auto' && (
+            <Button size="sm" onClick={runBrowser} isLoading={running} disabled={running} leftIcon={<PlayCircle className="h-4 w-4" />}>
+              Run in browser
+            </Button>
+          )}
+          {location === 'desktop' && (
+            <Button size="sm" onClick={runDesktop} isLoading={running} disabled={running} leftIcon={<Laptop className="h-4 w-4" />}>
+              Run on Desktop
+            </Button>
+          )}
+          {location === 'cloud' && (
+            <Button size="sm" onClick={runCloud} isLoading={running} disabled={running} leftIcon={<Cloud className="h-4 w-4" />}>
+              Run on FormLogic Cloud
+            </Button>
+          )}
+          {location !== 'auto' && (
+            <Button variant="outline" size="sm" onClick={runBrowser} disabled={running || serverRunning} leftIcon={<PlayCircle className="h-4 w-4" />}>
+              Run in browser
+            </Button>
+          )}
           {flow.appId && (
             <Button variant="outline" size="sm" onClick={runServer} isLoading={serverRunning} disabled={serverRunning} leftIcon={<ServerCog className="h-4 w-4" />}>
               Run on server &amp; log
@@ -203,9 +346,61 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
           )}
         </div>
         <p className="text-[11px] text-gray-400 dark:text-slate-500">
-          Browser runs use the real QuickJS sandbox and your session's permissions, exactly like a live run, but are not written to history.
+          {location === 'desktop'
+            ? 'Desktop runs travel end-to-end encrypted to your FormLogic Desktop and are unmetered; queue position and node progress appear live below.'
+            : location === 'cloud'
+              ? 'Cloud runs execute on FormLogic Cloud and use plan credits.'
+              : 'Browser runs use the real QuickJS sandbox and your session\'s permissions, exactly like a live run, but are not written to history.'}
           {flow.appId ? ' A server run executes headless and is recorded below.' : ''}
         </p>
+
+        {/* Desktop relay state (plan §5.7): queue position → running → done/failed/uncertain. */}
+        {desktopState && desktopState.state !== 'done' && (
+          <p role="status" className="text-xs text-gray-500 dark:text-slate-400">
+            {desktopState.state === 'queued'
+              ? desktopState.position >= 1
+                ? `Queued #${desktopState.position} on your Desktop…`
+                : 'Queued on your Desktop — up next…'
+              : desktopState.state === 'running'
+                ? 'Running on your Desktop…'
+                : desktopState.state === 'failed'
+                  ? `Desktop run failed: ${desktopState.message ?? desktopState.code}`
+                  : `Outcome uncertain — ${desktopState.message ?? 'the desktop may still complete the run.'}`}
+          </p>
+        )}
+
+        {/* Cloud typed refusals (plan §5.7/§5.8): credits exhausted (upgrade copy) and
+            unsupported nodes (named inline; the Cloud selection stays saveable). */}
+        {cloudError && (
+          <div
+            role="alert"
+            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
+          >
+            {cloudError.kind === 'credits' ? (
+              <p>
+                Out of Cloud run credits for this month.{' '}
+                <button
+                  type="button"
+                  onClick={() => navigate('/billing')}
+                  className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100"
+                >
+                  Upgrade your plan
+                </button>
+                , or switch Run on to Auto or Desktop — those are unmetered.
+              </p>
+            ) : cloudError.kind === 'unsupported' ? (
+              <p>
+                FormLogic Cloud can't run this flow yet — unsupported node{cloudError.nodes && cloudError.nodes.length === 1 ? '' : 's'}
+                {cloudError.nodes && cloudError.nodes.length > 0 ? (
+                  <>: <span className="font-medium">{cloudError.nodes.join(', ')}</span></>
+                ) : null}
+                . Switch to Auto or Desktop to run it now, or change those nodes.
+              </p>
+            ) : (
+              <p>{cloudError.message}</p>
+            )}
+          </div>
+        )}
 
         {/* Per-node run timeline (browser runs) — reads like a debug log. */}
         {hasTimeline && (
@@ -247,11 +442,23 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
 
         {outcome && (
           <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3 space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusTone(outcome.status)}`}>
                 {outcome.status !== 'done' && <AlertTriangle className="h-3 w-3" />}
                 {outcome.status}
               </span>
+              {runLocation && (
+                <span
+                  data-testid="run-location-badge"
+                  className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300"
+                >
+                  {runLocation === 'cloud'
+                    ? 'Ran on FormLogic Cloud'
+                    : runLocation === 'desktop'
+                      ? 'Ran on your Desktop'
+                      : 'Ran in this browser'}
+                </span>
+              )}
               <span className="text-[11px] text-gray-400 dark:text-slate-500">{outcome.nodesExecuted} node{outcome.nodesExecuted === 1 ? '' : 's'} executed</span>
             </div>
             {outcome.error && (
