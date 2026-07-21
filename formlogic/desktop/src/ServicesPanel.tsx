@@ -4,6 +4,7 @@ import {
   aiProviders,
   openExternal,
   openInExplorer,
+  plugins,
   servicePlatform,
   services,
   type AiProviderProfile,
@@ -1540,21 +1541,26 @@ interface CardProps {
 // (avoids one nvidia-smi per card).
 let gpusCache: GpuInfo[] | null = null;
 let gpusPromise: Promise<GpuInfo[]> | null = null;
-function useGpus(): GpuInfo[] {
-  const [gpus, setGpus] = useState<GpuInfo[]>(gpusCache ?? []);
+/** GGUF disk-scan results, cached machine-wide like the GPU list so the
+ *  Configure expander opens instantly after the first scan. */
+let ggufModelsCache: string[] | null = null;
+function useGpus(): { gpus: GpuInfo[]; ready: boolean } {
+  const [state, setState] = useState<{ gpus: GpuInfo[]; ready: boolean }>(() =>
+    gpusCache ? { gpus: gpusCache, ready: true } : { gpus: [], ready: false },
+  );
   useEffect(() => {
     if (gpusCache) return;
     if (!gpusPromise) gpusPromise = appConfig.listGpus().catch(() => [] as GpuInfo[]);
     let alive = true;
     void gpusPromise.then((g) => {
       gpusCache = g;
-      if (alive) setGpus(g);
+      if (alive) setState({ gpus: g, ready: true });
     });
     return () => {
       alive = false;
     };
   }, []);
-  return gpus;
+  return state;
 }
 
 /** Split an args line into spawn-vector entries: whitespace-separated, with
@@ -1568,12 +1574,48 @@ function splitArgsLine(line: string): string[] {
   return out;
 }
 
+/** Quick-add presets for the common launch flags per service — pick from a
+ *  dropdown instead of remembering flag spellings. Adding one REPLACES any
+ *  existing occurrence of the same flag (no duplicates). */
+const EXTRA_ARG_PRESETS: Record<string, { label: string; tokens: string[] }[]> = {
+  'llama-cpp': [
+    { label: 'Run every layer on the GPU (-ngl 99)', tokens: ['-ngl', '99'] },
+    { label: 'Flash attention (-fa)', tokens: ['-fa'] },
+    { label: '2 parallel requests (--parallel 2)', tokens: ['--parallel', '2'] },
+    { label: '8k context window (-c 8192)', tokens: ['-c', '8192'] },
+    { label: '16 CPU threads (-t 16)', tokens: ['-t', '16'] },
+  ],
+};
+
+/** Merge a preset into an args line: drop any existing occurrence of the
+ *  preset's flag (and its value, when the preset carries one), then append
+ *  the preset tokens. */
+function applyArgPreset(current: string, tokens: string[]): string {
+  const args = splitArgsLine(current.trim());
+  const flag = tokens[0];
+  const hasValue = tokens.length > 1;
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === flag) {
+      if (hasValue && i + 1 < args.length) i++;
+      continue;
+    }
+    out.push(args[i]);
+  }
+  out.push(...tokens);
+  return out.join(' ');
+}
+
 /**
  * Extra launch arguments — the generic per-service tuning lever: `-t 16
  * --parallel 2 -ngl 99` on llama-cpp, any flag on a custom service — WITHOUT
  * editing the template JSON (a hand-edited template opts itself out of future
  * built-in template updates). Appended after the template args at spawn;
  * applies on the next start.
+ *
+ * Simple by default: services with known presets get a "Quick options"
+ * dropdown; the raw args line lives behind an Advanced disclosure for direct
+ * editing (same value, one persistence lane).
  */
 function ExtraArgsEditor({ service }: { service: ServiceSnapshot }) {
   const toast = useToast();
@@ -1593,6 +1635,7 @@ function ExtraArgsEditor({ service }: { service: ServiceSnapshot }) {
     });
   }, [saved]);
   const dirty = value.trim() !== savedBase.trim();
+  const presets = EXTRA_ARG_PRESETS[service.id] ?? [];
   const apply = async () => {
     setPending(true);
     try {
@@ -1620,26 +1663,64 @@ function ExtraArgsEditor({ service }: { service: ServiceSnapshot }) {
     }
   };
   return (
-    <div className="service-config-row">
-      <span className="service-config-label">Extra args</span>
-      <input
-        className="service-config-control-wide"
-        value={value}
-        disabled={pending}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={
-          service.id === 'llama-cpp'
-            ? 'e.g. -t 16 --parallel 2 -ngl 99'
-            : 'extra launch arguments (optional)'
-        }
-      />
-      {dirty && (
-        <button className="btn btn-ghost" onClick={apply} disabled={pending}>
-          {pending ? 'Saving…' : 'Save'}
-        </button>
+    <>
+      {presets.length > 0 && (
+        <div className="service-config-row">
+          <span className="service-config-label">Quick options</span>
+          <select
+            className="service-config-control"
+            value=""
+            disabled={pending}
+            onChange={(e) => {
+              const idx = Number(e.target.value);
+              if (!Number.isNaN(idx) && e.target.value !== '') {
+                const p = presets[idx];
+                if (p) setValue((v) => applyArgPreset(v, p.tokens));
+              }
+            }}
+          >
+            <option value="">Add a tuning option…</option>
+            {presets.map((p, i) => (
+              <option key={p.label} value={i}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <span className="service-config-note">then press Save to apply</span>
+        </div>
       )}
-      <span className="service-config-note">appended at launch · applies on next start</span>
-    </div>
+      <details className="custom-mapping">
+        <summary>
+          {presets.length > 0
+            ? 'Launch arguments (advanced)'
+            : 'Extra launch arguments (advanced)'}
+        </summary>
+        <div className="service-config-row">
+          <span className="service-config-label">Extra args</span>
+          <input
+            className="service-config-control-wide"
+            value={value}
+            disabled={pending}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={
+              service.id === 'llama-cpp'
+                ? 'e.g. -t 16 --parallel 2 -ngl 99'
+                : 'extra launch arguments (optional)'
+            }
+          />
+          <span className="service-config-note">appended at launch</span>
+        </div>
+      </details>
+      {dirty && (
+        <div className="service-config-row">
+          <span className="service-config-label" />
+          <button className="btn btn-secondary" onClick={apply} disabled={pending}>
+            {pending ? 'Saving…' : 'Save'}
+          </button>
+          <span className="service-config-note">applies on next start</span>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1664,11 +1745,61 @@ const SPEECH_ENGINE_OPTIONS: Record<
     dirLabel: 'Voice model folder (optional)',
     options: [
       { value: '', label: 'Default (Pocket-TTS)' },
-      { value: 'pocket', label: 'Pocket-TTS — expressive (slower)' },
+      { value: 'pocket', label: 'Pocket-TTS — expressive' },
       { value: 'sherpa', label: 'Sherpa — Piper/VITS voices (fast)' },
     ],
   },
 };
+
+/** One installed sherpa voice bundle, from the plugin's ttsVoiceCatalog. */
+interface SherpaBundle {
+  dir: string;
+  name: string;
+}
+
+/** Pull the sherpa bundle list out of a `settings.get` response's
+ *  `ttsVoiceCatalog` side key (shape: `{engines:[{id,voices?|bundles?}]}`).
+ *  Defensive — any surprise shape just means "no list" and the folder
+ *  control falls back to Automatic + Custom. */
+function parseTtsCatalogBundles(data: unknown): SherpaBundle[] {
+  if (!data || typeof data !== 'object') return [];
+  const cat = (data as { ttsVoiceCatalog?: unknown }).ttsVoiceCatalog;
+  if (!cat || typeof cat !== 'object') return [];
+  const engines = (cat as { engines?: unknown }).engines;
+  if (!Array.isArray(engines)) return [];
+  for (const e of engines) {
+    if (!e || typeof e !== 'object') continue;
+    const bundles = (e as { bundles?: unknown }).bundles;
+    if (!Array.isArray(bundles)) continue;
+    return bundles
+      .filter(
+        (b): b is { dir: string; name: string } =>
+          !!b &&
+          typeof b === 'object' &&
+          typeof (b as { dir?: unknown }).dir === 'string' &&
+          typeof (b as { name?: unknown }).name === 'string',
+      )
+      .map((b) => ({ dir: b.dir, name: b.name }));
+  }
+  return [];
+}
+
+/** "vits-piper-en_GB-jenny_dioco-medium" → "Jenny Dioco (en_GB, medium)". */
+function prettifyBundleName(name: string): string {
+  const m = name.match(/^vits-piper-([a-z]{2}_[A-Z]{2})-(.+)-(x_low|low|medium|high)$/);
+  if (!m) return name;
+  const voice = m[2]
+    .split('_')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+  return `${voice} (${m[1]}, ${m[3]})`;
+}
+
+/** Case/separator-insensitive Windows path equality. */
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => p.replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
+  return norm(a) === norm(b);
+}
 
 /**
  * Structured engine config for the split speech services (aokie-stt /
@@ -1686,42 +1817,123 @@ function SpeechEngineConfig({ service }: { service: ServiceSnapshot }) {
   );
   const [engine, setEngine] = useState(saved.engine);
   const [modelDir, setModelDir] = useState(saved.modelDir);
-  const [base, setBase] = useState({ engine: saved.engine, modelDir: saved.modelDir });
+  const [ep, setEp] = useState(saved.ep);
+  const [base, setBase] = useState({
+    engine: saved.engine,
+    modelDir: saved.modelDir,
+    ep: saved.ep,
+  });
   const [pending, setPending] = useState(false);
+  const running = service.status === 'running' || service.status === 'starting';
+  const isTts = service.id === 'aokie-tts';
+  // The installed sherpa voice bundles, from the plugin's voice catalog
+  // (settings.get ttsVoiceCatalog) — feeds the engine-aware folder dropdown.
+  // Best-effort: with the plugin down the dropdown still offers
+  // Automatic/Default + Custom folder.
+  const [bundles, setBundles] = useState<SherpaBundle[]>([]);
+  const [customDir, setCustomDir] = useState(false);
+  useEffect(() => {
+    if (!isTts) return;
+    let alive = true;
+    void plugins
+      .command('aokie', 'settings.get', {})
+      .then((res) => {
+        if (alive) setBundles(parseTtsCatalogBundles((res as { data?: unknown }).data));
+      })
+      .catch(() => {
+        // Plugin stopped/not installed — the dropdown just has no bundle rows.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isTts]);
   // Re-seed when another window/session changed the persisted args — but never
   // while the user is mid-edit (their draft differs from OUR baseline).
   useEffect(() => {
     setBase((prev) => {
-      if (saved.engine !== prev.engine || saved.modelDir !== prev.modelDir) {
+      if (
+        saved.engine !== prev.engine ||
+        saved.modelDir !== prev.modelDir ||
+        saved.ep !== prev.ep
+      ) {
         setEngine((e) => (e === prev.engine ? saved.engine : e));
         setModelDir((d) => (d === prev.modelDir ? saved.modelDir : d));
-        return { engine: saved.engine, modelDir: saved.modelDir };
+        setEp((p) => (p === prev.ep ? saved.ep : p));
+        return { engine: saved.engine, modelDir: saved.modelDir, ep: saved.ep };
       }
       return prev;
     });
-  }, [saved.engine, saved.modelDir]);
-  const dirty = engine !== base.engine || modelDir.trim() !== base.modelDir.trim();
+  }, [saved.engine, saved.modelDir, saved.ep]);
+  const dirty =
+    engine !== base.engine || modelDir.trim() !== base.modelDir.trim() || ep !== base.ep;
   // A hand-typed engine we don't list (raw extra-args lane) still renders as a
   // matching option so the controlled select doesn't silently misreport it.
   const unknownEngine =
     engine !== '' && !conf.options.some((o) => o.value === engine) ? engine : null;
-  const apply = async () => {
+  // '' and 'pocket' are the same engine family (the service default IS
+  // pocket); the folder means a DIFFERENT thing per family (sherpa: which
+  // voice bundle; pocket: the model bundle dir), so switching families must
+  // never carry the other family's path along.
+  const family = engine === 'sherpa' ? 'sherpa' : 'pocket';
+  const engineFamily = (e: string) => (e === 'sherpa' ? 'sherpa' : 'pocket');
+  const onEngineChange = (value: string) => {
+    setEngine(value);
+    if (isTts && engineFamily(value) !== family) {
+      // Restore the saved folder when switching BACK to the saved family;
+      // otherwise reset to the engine default (Automatic).
+      setModelDir(engineFamily(value) === engineFamily(base.engine) ? base.modelDir : '');
+      setCustomDir(false);
+    }
+  };
+  const apply = async (restartNow: boolean) => {
     setPending(true);
     try {
-      const args = composeEngineArgs(service.extraArgs ?? [], conf.spec, engine, modelDir);
+      const args = composeEngineArgs(service.extraArgs ?? [], conf.spec, engine, modelDir, ep);
       await services.setExtraArgs(service.id, args);
       const next = parseEngineArgs(args, conf.spec);
-      setBase({ engine: next.engine, modelDir: next.modelDir });
+      setBase({ engine: next.engine, modelDir: next.modelDir, ep: next.ep });
       setEngine(next.engine);
       setModelDir(next.modelDir);
+      setEp(next.ep);
+
+      // Carry the TTS engine choice forward to the receptionist: the web
+      // console's Receptionist Settings "Voice & replies" card and the
+      // plugin's desktop screen both seed their engine select + voice list
+      // from the plugin's ttsEngine/ttsModelDir settings. Best-effort — the
+      // service config is already saved even if the plugin isn't running.
+      let synced = false;
+      if (isTts) {
+        try {
+          await plugins.command('aokie', 'settings.set', {
+            ttsEngine: next.engine,
+            ttsModelDir: next.modelDir.trim(),
+          });
+          synced = true;
+        } catch {
+          // Plugin stopped/not installed — sync happens next time it's up.
+        }
+      }
+
+      if (restartNow && running) {
+        await services.stop(service.id);
+        await services.start(service.id);
+      }
       await refreshServices();
+      const applyNote =
+        restartNow && running
+          ? 'Restarted — the new engine is live.'
+          : running
+            ? 'Applies on the next start — restart the service to pick them up.'
+            : 'Applies on the next start.';
+      const syncNote = !isTts
+        ? ''
+        : synced
+          ? 'Receptionist Settings now follows this engine.'
+          : 'Receptionist Settings will follow once the Aokie plugin is running.';
       toast.push({
         kind: 'success',
         title: `${service.name}: engine settings saved`,
-        body:
-          service.status === 'running' || service.status === 'starting'
-            ? 'Applies on the next start — restart the service to pick them up.'
-            : 'Applies on the next start.',
+        body: [applyNote, syncNote].filter(Boolean).join(' '),
       });
     } catch (e) {
       toast.push({
@@ -1741,7 +1953,7 @@ function SpeechEngineConfig({ service }: { service: ServiceSnapshot }) {
           className="service-config-control"
           value={engine}
           disabled={pending}
-          onChange={(e) => setEngine(e.target.value)}
+          onChange={(e) => onEngineChange(e.target.value)}
         >
           {conf.options.map((o) => (
             <option key={o.value} value={o.value}>
@@ -1750,25 +1962,134 @@ function SpeechEngineConfig({ service }: { service: ServiceSnapshot }) {
           ))}
           {unknownEngine && <option value={unknownEngine}>{unknownEngine} (custom)</option>}
         </select>
-        <span className="service-config-note">applies on next start</span>
+        <span className="service-config-note">
+          {isTts ? 'also sets the voice list in Receptionist Settings' : 'applies on next start'}
+        </span>
       </div>
-      <div className="service-config-row">
-        <span className="service-config-label">{conf.dirLabel}</span>
-        <input
-          className="service-config-control-wide"
-          type="text"
-          spellCheck={false}
-          value={modelDir}
-          disabled={pending}
-          onChange={(e) => setModelDir(e.target.value)}
-          placeholder="blank = the bundled/default model location"
-        />
-        {dirty && (
-          <button className="btn btn-ghost" onClick={apply} disabled={pending}>
-            {pending ? 'Saving…' : 'Save'}
+      {conf.spec.epFlag && engine !== 'sherpa' && (
+        <div className="service-config-row">
+          <span className="service-config-label">Processor</span>
+          <select
+            className="service-config-control"
+            value={ep}
+            disabled={pending}
+            onChange={(e) => setEp(e.target.value)}
+          >
+            <option value="">CPU</option>
+            <option value="cuda">NVIDIA GPU (CUDA)</option>
+          </select>
+          <span className="service-config-note">
+            Pocket-TTS only — GPU synthesis is many times faster
+          </span>
+        </div>
+      )}
+      {isTts ? (
+        <div className="service-config-row">
+          <span className="service-config-label">
+            {family === 'sherpa' ? 'Voice bundle' : 'Model folder'}
+          </span>
+          {customDir ? (
+            <>
+              <input
+                className="service-config-control-wide"
+                type="text"
+                spellCheck={false}
+                value={modelDir}
+                disabled={pending}
+                onChange={(e) => setModelDir(e.target.value)}
+                placeholder={
+                  family === 'sherpa'
+                    ? 'C:\\path\\to\\voice-bundle (one .onnx + tokens.txt)'
+                    : 'blank = the bundled Pocket-TTS model'
+                }
+              />
+              <button
+                className="btn btn-ghost"
+                disabled={pending}
+                onClick={() => {
+                  setCustomDir(false);
+                  setModelDir('');
+                }}
+              >
+                Back to list
+              </button>
+            </>
+          ) : (
+            (() => {
+              const matched =
+                family === 'sherpa'
+                  ? bundles.find((b) => samePath(b.dir, modelDir))
+                  : undefined;
+              const selectValue = modelDir === '' ? '' : matched ? matched.dir : modelDir;
+              const unmatched = modelDir !== '' && !matched;
+              return (
+                <select
+                  className="service-config-control-wide"
+                  value={selectValue}
+                  disabled={pending}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '__custom__') {
+                      setCustomDir(true);
+                      return;
+                    }
+                    setModelDir(v);
+                  }}
+                >
+                  <option value="">
+                    {family === 'sherpa'
+                      ? 'Automatic — first installed voice bundle'
+                      : 'Default — bundled Pocket-TTS voices'}
+                  </option>
+                  {family === 'sherpa' &&
+                    bundles.map((b) => (
+                      <option key={b.dir} value={b.dir}>
+                        {prettifyBundleName(b.name)}
+                      </option>
+                    ))}
+                  {unmatched && <option value={modelDir}>{modelDir} (custom)</option>}
+                  <option value="__custom__">Custom folder…</option>
+                </select>
+              );
+            })()
+          )}
+        </div>
+      ) : (
+        <div className="service-config-row">
+          <span className="service-config-label">{conf.dirLabel}</span>
+          <input
+            className="service-config-control-wide"
+            type="text"
+            spellCheck={false}
+            value={modelDir}
+            disabled={pending}
+            onChange={(e) => setModelDir(e.target.value)}
+            placeholder="blank = the bundled/default model location"
+          />
+        </div>
+      )}
+      {dirty && (
+        <div className="service-config-row">
+          <span className="service-config-label" />
+          <button
+            className="btn btn-secondary"
+            onClick={() => void apply(true)}
+            disabled={pending}
+          >
+            {pending ? 'Saving…' : running ? 'Save & restart now' : 'Save'}
           </button>
-        )}
-      </div>
+          {running && (
+            <button className="btn btn-ghost" onClick={() => void apply(false)} disabled={pending}>
+              Save only
+            </button>
+          )}
+          <span className="service-config-note">
+            {running
+              ? 'Save & restart applies the engine immediately'
+              : 'applies when the service starts'}
+          </span>
+        </div>
+      )}
     </>
   );
 }
@@ -1779,13 +2100,26 @@ function SpeechEngineConfig({ service }: { service: ServiceSnapshot }) {
  * krea2 keeps GPU 0. Hidden when fewer than 2 GPUs. Applies on the service's next start.
  */
 function GpuSelector({ serviceId, currentGpu }: { serviceId: string; currentGpu: number | null }) {
-  const gpus = useGpus();
+  const { gpus, ready } = useGpus();
   const [value, setValue] = useState<string>(currentGpu == null ? '' : String(currentGpu));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setValue(currentGpu == null ? '' : String(currentGpu));
   }, [currentGpu]);
+  // While the first nvidia-smi enumeration runs, say so instead of rendering
+  // nothing — the picker used to pop in after the fact (layout shift with no
+  // hint anything was loading).
+  if (!ready && currentGpu == null) {
+    return (
+      <div className="service-config-row">
+        <span className="service-config-label">GPU</span>
+        <span className="section-loading">
+          <span className="spinner spinner-inline" /> Detecting GPUs…
+        </span>
+      </div>
+    );
+  }
   // Hide the picker when there's no meaningful choice (0/1 GPU) — UNLESS a pin is already
   // set, so a stale pin left over from a removed card stays visible and can be cleared
   // (selecting "Auto" calls setServiceGpu(id, null)).
@@ -1849,7 +2183,11 @@ function GpuSelector({ serviceId, currentGpu }: { serviceId: string; currentGpu:
  * "load on flow demand" case). A running service needs a restart to swap models.
  */
 function LlamaModelSelector({ running }: { running: boolean }) {
-  const [models, setModels] = useState<string[]>([]);
+  // Seed from the module-level cache so REOPENING Configure is instant; the
+  // mount effect still re-scans in the background (a fresh download shows up
+  // on the next open without a spinner).
+  const [models, setModels] = useState<string[]>(ggufModelsCache ?? []);
+  const [scanning, setScanning] = useState(ggufModelsCache === null);
   const [current, setCurrent] = useState<string>(''); // '' = default model.gguf
   const [customMode, setCustomMode] = useState(false);
   const [customPath, setCustomPath] = useState('');
@@ -1861,8 +2199,10 @@ function LlamaModelSelector({ running }: { running: boolean }) {
     let alive = true;
     Promise.all([appConfig.listGgufModels(), appConfig.get()])
       .then(([list, cfg]) => {
+        ggufModelsCache = list;
         if (!alive) return;
         setModels(list);
+        setScanning(false);
         const sel = cfg.llamaModel ?? '';
         setCurrent(sel);
         setMmproj(cfg.llamaMmproj ?? '');
@@ -1871,7 +2211,11 @@ function LlamaModelSelector({ running }: { running: boolean }) {
           setCustomPath(sel);
         }
       })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => {
+        if (!alive) return;
+        setScanning(false);
+        setError(e instanceof Error ? e.message : String(e));
+      });
     return () => {
       alive = false;
     };
@@ -1935,6 +2279,10 @@ function LlamaModelSelector({ running }: { running: boolean }) {
             Cancel
           </button>
         </>
+      ) : scanning && models.length === 0 ? (
+        <span className="section-loading">
+          <span className="spinner spinner-inline" /> Scanning model folders…
+        </span>
       ) : (
         <select
           value={models.includes(current) ? current : ''}

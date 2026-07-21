@@ -9,7 +9,7 @@ import {
 
 test('parse: empty args → defaults, nothing lost', () => {
   const p = parseEngineArgs([], STT_ENGINE_FLAGS);
-  assert.deepEqual(p, { engine: '', modelDir: '', rest: [] });
+  assert.deepEqual(p, { engine: '', modelDir: '', ep: '', rest: [] });
 });
 
 test('parse: extracts engine + model dir, preserves other tokens in order', () => {
@@ -74,4 +74,31 @@ test('compose ∘ parse round-trips a selection', () => {
   assert.equal(p.engine, 'sherpa');
   assert.equal(p.modelDir, 'E:\\models\\piper');
   assert.deepEqual(p.rest, ['-x']);
+});
+
+test('parse: extracts the tts execution provider (--tts-ep)', () => {
+  const p = parseEngineArgs(['--tts-ep', 'cuda', '--tts-engine', 'pocket'], TTS_ENGINE_FLAGS);
+  assert.equal(p.engine, 'pocket');
+  assert.equal(p.ep, 'cuda');
+  assert.deepEqual(p.rest, []);
+});
+
+test('parse: stt spec has no ep flag — --tts-ep stays a user token there', () => {
+  const p = parseEngineArgs(['--tts-ep', 'cuda'], STT_ENGINE_FLAGS);
+  assert.equal(p.ep, '');
+  assert.deepEqual(p.rest, ['--tts-ep', 'cuda']);
+});
+
+test('compose: writes + replaces the ep flag; blank removes it', () => {
+  const withEp = composeEngineArgs(['-x'], TTS_ENGINE_FLAGS, 'pocket', '', 'cuda');
+  assert.deepEqual(withEp, ['-x', '--tts-engine', 'pocket', '--tts-ep', 'cuda']);
+  const replaced = composeEngineArgs(withEp, TTS_ENGINE_FLAGS, 'pocket', '', 'cuda');
+  assert.deepEqual(replaced, ['-x', '--tts-engine', 'pocket', '--tts-ep', 'cuda'], 'no duplicates');
+  const removed = composeEngineArgs(withEp, TTS_ENGINE_FLAGS, 'pocket', '', '');
+  assert.deepEqual(removed, ['-x', '--tts-engine', 'pocket']);
+});
+
+test('compose: ep is ignored for specs without an ep flag', () => {
+  const out = composeEngineArgs([], STT_ENGINE_FLAGS, 'parakeet', '', 'cuda');
+  assert.deepEqual(out, ['--stt-engine', 'parakeet']);
 });

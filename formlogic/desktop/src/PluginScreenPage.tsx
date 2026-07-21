@@ -357,6 +357,15 @@ export default function PluginScreenPage({
             result = (await aiSources.list()).sources;
             break;
           }
+          case 'restartPlugin': {
+            // A screen may restart ITS OWN plugin — the sanctioned way to
+            // apply settings that only take effect at plugin start (e.g. the
+            // receptionist's voice-engine mode). Scoped by construction: the
+            // bridge only ever talks to this screen's plugin.
+            await plugins.restart(pluginId);
+            result = true;
+            break;
+          }
           case 'snapshot': {
             const list = await plugins.list();
             result = list.plugins.find((p) => p.id === pluginId) ?? null;

@@ -14,6 +14,9 @@ export interface EngineFlagSpec {
   engineFlag: string;
   /** e.g. `--stt-model-dir` */
   modelDirFlag: string;
+  /** e.g. `--tts-ep` — the execution-provider (CPU/GPU) flag. Only the TTS
+   *  lane has one today (Pocket-TTS on CUDA). */
+  epFlag?: string;
 }
 
 export const STT_ENGINE_FLAGS: EngineFlagSpec = {
@@ -24,6 +27,7 @@ export const STT_ENGINE_FLAGS: EngineFlagSpec = {
 export const TTS_ENGINE_FLAGS: EngineFlagSpec = {
   engineFlag: '--tts-engine',
   modelDirFlag: '--tts-model-dir',
+  epFlag: '--tts-ep',
 };
 
 export interface ParsedEngineArgs {
@@ -31,6 +35,8 @@ export interface ParsedEngineArgs {
   engine: string;
   /** Model folder ('' = service default — flag absent). */
   modelDir: string;
+  /** Execution provider ('' = service default — flag absent). */
+  ep: string;
   /** Every OTHER token, in order (the user's own extra args). */
   rest: string[];
 }
@@ -47,6 +53,7 @@ export function parseEngineArgs(
 ): ParsedEngineArgs {
   let engine = '';
   let modelDir = '';
+  let ep = '';
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -58,16 +65,20 @@ export function parseEngineArgs(
       if (i + 1 < args.length) modelDir = args[++i];
       continue;
     }
+    if (spec.epFlag && a === spec.epFlag) {
+      if (i + 1 < args.length) ep = args[++i];
+      continue;
+    }
     rest.push(a);
   }
-  return { engine, modelDir, rest };
+  return { engine, modelDir, ep, rest };
 }
 
 /**
- * Write the engine/model-dir selection back into an extra-args array:
- * removes every existing `engineFlag X` / `modelDirFlag DIR` pair (including
- * duplicates and dangling flags), PRESERVES every other user token in order,
- * then appends the new pairs. Blank engine/modelDir simply removes the
+ * Write the engine/model-dir/ep selection back into an extra-args array:
+ * removes every existing `engineFlag X` / `modelDirFlag DIR` / `epFlag EP`
+ * pair (including duplicates and dangling flags), PRESERVES every other user
+ * token in order, then appends the new pairs. Blank values simply remove the
  * corresponding flag (the service's built-in default takes over).
  */
 export function composeEngineArgs(
@@ -75,11 +86,14 @@ export function composeEngineArgs(
   spec: EngineFlagSpec,
   engine: string,
   modelDir: string,
+  ep = '',
 ): string[] {
   const out = [...parseEngineArgs(args, spec).rest];
   const e = engine.trim();
   const d = modelDir.trim();
+  const p = ep.trim();
   if (e) out.push(spec.engineFlag, e);
   if (d) out.push(spec.modelDirFlag, d);
+  if (p && spec.epFlag) out.push(spec.epFlag, p);
   return out;
 }

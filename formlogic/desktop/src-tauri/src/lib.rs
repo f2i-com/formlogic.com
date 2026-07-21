@@ -782,13 +782,23 @@ fn remove_model_dir(
 }
 
 /// Tauri command: the loadable GGUFs found across the model search roots —
-/// the options for the llama.cpp Model picker.
+/// the options for the llama.cpp Model picker. Async + spawn_blocking: this
+/// walks every model dir on disk, and a SYNC Tauri command runs on the MAIN
+/// thread — the scan used to freeze the whole window while the Configure
+/// expander opened.
 #[tauri::command]
-fn list_gguf_models(registry: tauri::State<RegistryHandle>) -> Vec<String> {
-    registry
-        .lock()
-        .map(|r| r.list_gguf_models())
-        .unwrap_or_default()
+async fn list_gguf_models(
+    registry: tauri::State<'_, RegistryHandle>,
+) -> Result<Vec<String>, String> {
+    let handle = registry.inner().clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        handle
+            .lock()
+            .map(|r| r.list_gguf_models())
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default())
 }
 
 /// Tauri command: set (or clear, with '') the GGUF a single-model server
@@ -862,8 +872,19 @@ struct GpuInfo {
 
 /// Tauri command: the CUDA GPUs present (index + name), via nvidia-smi. Empty on a box
 /// without an NVIDIA GPU / nvidia-smi — the GPU picker then hides itself.
+/// Async + spawn_blocking: spawning nvidia-smi takes hundreds of ms, and a
+/// SYNC Tauri command runs on the MAIN thread — this was the "Configure
+/// expander lags before the options appear" freeze.
 #[tauri::command]
-fn list_gpus() -> Vec<GpuInfo> {
+async fn list_gpus() -> Vec<GpuInfo> {
+    tauri::async_runtime::spawn_blocking(enumerate_gpus)
+        .await
+        .unwrap_or_default()
+}
+
+/// Blocking nvidia-smi enumeration — shared by the `list_gpus` command and
+/// the in-process GPU-pin validation.
+fn enumerate_gpus() -> Vec<GpuInfo> {
     let out = match std::process::Command::new(resolved_system_exe(
         "System32",
         "nvidia-smi.exe",
@@ -1446,7 +1467,7 @@ pub fn run() {
                 // when enumeration actually succeeds, so a transient nvidia-smi hiccup can't
                 // wipe valid pins.
                 let mut gpus = read_service_gpus(app.handle());
-                let available = list_gpus();
+                let available = enumerate_gpus();
                 if !available.is_empty() {
                     let valid: std::collections::HashSet<u32> =
                         available.iter().map(|g| g.index).collect();

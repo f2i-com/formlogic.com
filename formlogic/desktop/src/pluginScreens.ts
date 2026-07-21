@@ -79,6 +79,7 @@ export const PLUGIN_SCREEN_CSP =
  *   companionPairing.rotateDesktopKey()                {op:'rotateDesktopKey', args:[]}
  *   aiSources()                        → op 'aiSources'        {}
  *   snapshot()                         → op 'snapshot'         {}
+ *   restartPlugin()                    → op 'restartPlugin'    {}
  *   events.subscribe(names?, cb)       → op 'eventsSubscribe'  {names?}   → {subId}
  *     (handle.unsubscribe()            → op 'eventsUnsubscribe' {subId})
  *   toast(kind, msg)                   → op 'toast'            {kind, msg}
@@ -136,6 +137,10 @@ export const PLUGIN_SCREEN_SHIM = `
     aiSources: function(){ return call('aiSources', {}); },
     /** THIS plugin's current snapshot (state/health/ui/events), or null while unknown. */
     snapshot: function(){ return call('snapshot', {}); },
+    /** Restart THIS plugin — the sanctioned way to apply settings that only
+     *  take effect at plugin start (e.g. the voice-engine mode). The screen
+     *  keeps running; the plugin reconnects underneath it. */
+    restartPlugin: function(){ return call('restartPlugin', {}); },
     events: {
       /** Live plugin events. names (optional) must be a subset of the events THIS plugin's
        *  manifest declares; omitted = all of them. cb receives { name, data }. Resolves
