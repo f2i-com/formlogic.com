@@ -51,54 +51,233 @@ use formlogic_desktop_lib::plugins::registry::{PluginHost, PluginHostHandle, Plu
 /// The plugin's real, shipped manifest (crates/aokie-plugin/manifest.json in the
 /// aokie.com repo), copied verbatim so this test drives the SAME declared
 /// capability/command surface production does.
-const AOKIE_MANIFEST: &str = r#"{
-  "schemaVersion": 1,
+const AOKIE_MANIFEST: &str = r#"
+{
+  "schemaVersion": 2,
   "id": "aokie",
   "name": "Aokie Phone Bridge",
   "version": "0.1.0",
   "publisher": "Aokie",
-  "description": "test copy",
+  "description": "Bluetooth dongle / phone bridge (WinUSB, HFP/SCO, MAP SMS, PBAP contacts) packaged as a FormLogic Desktop plugin. Emits aokie.* call/SMS/dongle events and serves the aokie connector command surface.",
   "pluginApiVersion": 1,
   "minDesktopVersion": "0.1.0",
-  "entry": { "kind": "process", "command": "aokie-plugin.exe", "args": ["--stdio"] },
+  "entry": {
+    "kind": "process",
+    "command": "aokie-plugin.exe",
+    "args": ["--stdio"]
+  },
   "capabilities": [
     "flow.run",
+    "companion.admission",
     "connector.aokie.dongle.list",
     "connector.aokie.dongle.getPreferred",
     "connector.aokie.dongle.setPreferred",
     "connector.aokie.dongle.installDriver",
+    "connector.aokie.dongle.restoreDriver",
+    "connector.aokie.dongle.removeCerts",
     "connector.aokie.dongle.diagnostics",
     "connector.aokie.phone.status",
     "connector.aokie.phone.startPairing",
     "connector.aokie.phone.stopPairing",
+    "connector.aokie.phone.confirmPairing",
     "connector.aokie.phone.listPaired",
+    "connector.aokie.phone.removePaired",
+    "connector.aokie.phone.disconnect",
+    "connector.aokie.phone.connect",
     "connector.aokie.call.current",
+    "connector.aokie.call.switchboard",
+    "connector.aokie.call.activate",
     "connector.aokie.call.answer",
     "connector.aokie.call.reject",
     "connector.aokie.call.hangup",
     "connector.aokie.call.operatorSpeak",
+    "connector.aokie.call.configureAgent",
+    "connector.aokie.call.dial",
     "connector.aokie.sms.threads",
     "connector.aokie.sms.thread",
     "connector.aokie.sms.send",
     "connector.aokie.settings.get",
-    "connector.aokie.settings.set"
+    "connector.aokie.settings.set",
+    "connector.aokie.outbox.redrive",
+    "connector.aokie.consent.get",
+    "connector.aokie.consent.set",
+    "connector.aokie.consent.revoke"
   ],
   "connectors": [
-    { "id": "aokie", "name": "Aokie Phone Bridge", "commands": [
-      "dongle.list", "dongle.getPreferred", "dongle.setPreferred", "dongle.installDriver",
-      "dongle.diagnostics", "phone.status", "phone.startPairing", "phone.stopPairing",
-      "phone.listPaired", "call.current", "call.answer", "call.reject", "call.hangup",
-      "call.operatorSpeak", "sms.threads", "sms.thread", "sms.send", "settings.get", "settings.set"
-    ] }
+    {
+      "id": "aokie",
+      "name": "Aokie Phone Bridge",
+      "commands": [
+        "dongle.list",
+        "dongle.getPreferred",
+        "dongle.setPreferred",
+        "dongle.installDriver",
+        "dongle.restoreDriver",
+        "dongle.removeCerts",
+        "dongle.diagnostics",
+        "phone.status",
+        "phone.startPairing",
+        "phone.stopPairing",
+        "phone.confirmPairing",
+        "phone.listPaired",
+        "phone.removePaired",
+        "phone.disconnect",
+        "phone.connect",
+        "call.current",
+        "call.switchboard",
+        "call.activate",
+        "call.answer",
+        "call.reject",
+        "call.hangup",
+        "call.operatorSpeak",
+        "call.configureAgent",
+        "call.dial",
+        "sms.threads",
+        "sms.thread",
+        "sms.send",
+        "settings.get",
+        "settings.set",
+        "outbox.redrive",
+        "consent.get",
+        "consent.set",
+        "consent.revoke"
+      ]
+    }
   ],
   "events": [
-    "aokie.dongle.detected", "aokie.dongle.driver_required", "aokie.dongle.ready", "aokie.dongle.error",
-    "aokie.phone.pairing_started", "aokie.phone.paired", "aokie.phone.disconnected",
-    "aokie.call.incoming", "aokie.call.answered", "aokie.call.rejected",
-    "aokie.call.turn.partial", "aokie.call.turn.final", "aokie.call.ended",
-    "aokie.sms.received", "aokie.sms.sent", "aokie.sms.failed", "aokie.hardware.error"
-  ]
-}"#;
+    "aokie.dongle.detected",
+    "aokie.dongle.driver_required",
+    "aokie.dongle.ready",
+    "aokie.dongle.error",
+    "aokie.phone.pairing_started",
+    "aokie.phone.pairing_confirm_required",
+    "aokie.phone.paired",
+    "aokie.phone.connected",
+    "aokie.phone.disconnected",
+    "aokie.call.incoming",
+    "aokie.call.ringing",
+    "aokie.call.answered",
+    "aokie.call.caller_id",
+    "aokie.call.rejected",
+    "aokie.call.audio.connected",
+    "aokie.call.audio.disconnected",
+    "aokie.call.turn.partial",
+    "aokie.call.turn.final",
+    "aokie.call.turn.corrected",
+    "aokie.call.transcript.settled",
+    "aokie.call.ended",
+    "aokie.call.assistance.requested",
+    "aokie.call.assistance.resolved",
+    "aokie.call.waiting",
+    "aokie.call.outbound.dialing",
+    "aokie.appointment.requested",
+    "aokie.sms.received",
+    "aokie.sms.sent",
+    "aokie.sms.failed",
+    "aokie.manager.action",
+    "aokie.hardware.error"
+  ],
+  "ui": {
+    "nav": [
+      {
+        "id": "receptionist",
+        "label": "AI Receptionist",
+        "icon": "phone",
+        "badge": "New",
+        "screen": "receptionist-home"
+      }
+    ],
+    "screens": [
+      {
+        "id": "receptionist-home",
+        "title": "AI Receptionist",
+        "entry": "ui/receptionist/index.html",
+        "files": [
+          "ui/receptionist/index.html",
+          "ui/receptionist/styles.css",
+          "ui/receptionist/app.js",
+          "ui/receptionist/tabs/settings.js",
+          "ui/receptionist/tabs/phone.js",
+          "ui/receptionist/tabs/companion.js",
+          "ui/receptionist/tabs/consent.js",
+          "ui/receptionist/tabs/dongle.js"
+        ]
+      }
+    ],
+    "overview": [
+      {
+        "id": "aokie-hero",
+        "kind": "hero",
+        "title": "Aokie receptionist",
+        "icon": "phone",
+        "bind": {
+          "headline": "$health.status",
+          "body": "$health.detail",
+          "cta": { "label": "Open AI Receptionist", "nav": "receptionist" }
+        }
+      }
+    ],
+    "statusCards": [
+      {
+        "id": "phone-bridge",
+        "title": "Phone bridge",
+        "poll": { "command": "phone.status", "intervalMs": 5000 },
+        "fields": [
+          { "label": "Phone", "path": "device.name" },
+          { "label": "Connected", "path": "connected" },
+          { "label": "Paired", "path": "paired" },
+          { "label": "In call", "path": "callActive" }
+        ]
+      },
+      {
+        "id": "data-delivery",
+        "title": "Data delivery",
+        "poll": { "command": "dongle.diagnostics", "intervalMs": 10000 },
+        "fields": [
+          { "label": "Radio connected", "path": "radio.connected" },
+          { "label": "Outbox pending", "path": "outbox.pending" },
+          { "label": "Outbox failed", "path": "outbox.failed" },
+          { "label": "Dead letters", "path": "outbox.dead" }
+        ]
+      }
+    ]
+  },
+  "commands": {
+    "journalled": [
+      "phone.startPairing",
+      "phone.stopPairing",
+      "phone.removePaired",
+      "phone.disconnect",
+      "phone.connect",
+      "phone.confirmPairing",
+      "call.activate",
+      "call.answer",
+      "call.reject",
+      "call.hangup",
+      "call.operatorSpeak",
+      "call.configureAgent",
+      "call.dial",
+      "sms.send"
+    ]
+  },
+  "data": {
+    "externalInventory": [
+      {
+        "path": "%APPDATA%/com.aokie.app",
+        "label": "Aokie radio data (phone pairing keys, models, call database, logs)"
+      },
+      {
+        "credential": "Aokie/*",
+        "label": "Sealed keys in Windows Credential Manager (endpoint identity, manager PIN)"
+      },
+      {
+        "path": "%ProgramData%/Aokie/driver-transactions.jsonl",
+        "label": "WinUSB driver transaction journal"
+      }
+    ]
+  }
+}
+"#;
 
 /// Locate the real aokie-plugin.exe built from the sibling aokie.com repo.
 /// `AOKIE_PLUGIN_EXE` overrides; otherwise the default dev-machine checkout

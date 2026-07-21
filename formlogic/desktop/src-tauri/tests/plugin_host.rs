@@ -38,7 +38,7 @@ const MOCK_MANIFEST: &str = r#"{
 }"#;
 
 const SPEAKING_MOCK_MANIFEST: &str = r#"{
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "mock",
   "name": "Speaking mock plugin",
   "version": "0.1.0",
@@ -48,7 +48,8 @@ const SPEAKING_MOCK_MANIFEST: &str = r#"{
   "connectors": [
     { "id": "aokie", "name": "Aokie test connector", "commands": ["call.operatorSpeak"] }
   ],
-  "events": []
+  "events": [],
+  "commands": { "journalled": ["call.operatorSpeak"] }
 }"#;
 
 fn temp_data_dir(tag: &str) -> PathBuf {

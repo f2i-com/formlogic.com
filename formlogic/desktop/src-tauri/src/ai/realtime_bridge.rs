@@ -45,7 +45,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SEND_TIMEOUT: Duration = Duration::from_secs(2);
 const SESSION_LIFETIME: Duration = Duration::from_secs(55 * 60);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
-const DEFAULT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
+// gpt-4o-transcribe (not -mini): live call 1ce475b2 (2026-07-21) heard
+// "lawn mowing" as "oral mount" on narrowband telephone audio and every
+// booking retry died on the garbled transcript.
+const DEFAULT_TRANSCRIPTION_MODEL: &str = "gpt-4o-transcribe";
 
 /// A secret-bearing, DNS-pinned upstream request prepared before Axum accepts
 /// the local upgrade. Fields are private so a handler cannot serialize or log
@@ -499,6 +502,9 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
 
     let model = prepared.model;
     let destination_origin = prepared.destination_origin;
+    // Captured before `start` fields move below: the Begin-time transcription
+    // retune re-sends the complete audio.input object with this exact value.
+    let begin_turn_detection = normalized_turn_detection(start.turn_detection.as_ref()).ok();
     let (mut local_tx, mut local_rx) = local.split();
     let (mut upstream_tx, mut upstream_rx) = upstream.split();
     let mut state = SessionState::new_with_capabilities(
@@ -605,12 +611,26 @@ pub async fn run(mut local: WebSocket, prepared: PreparedRealtime) {
                                     .map(str::trim)
                                     .filter(|value| !value.is_empty())
                                 {
+                                    let mut session = json!({
+                                        "type": "realtime",
+                                        "instructions": instructions,
+                                    });
+                                    // Retune the transcription prompt from the
+                                    // personalized instructions: the caller's
+                                    // NAME only exists in this overlay, and an
+                                    // unbiased transcriber mishears names on
+                                    // narrowband audio (live call 825c8e7f:
+                                    // "Lance" -> "Let's"). The whole
+                                    // audio.input object is re-sent so nothing
+                                    // else can be dropped by replace semantics.
+                                    if let Some(turn_detection) = begin_turn_detection.clone() {
+                                        session["audio"] = json!({
+                                            "input": audio_input_config(turn_detection, instructions),
+                                        });
+                                    }
                                     let update = UpstreamMessage::Text(json!({
                                         "type": "session.update",
-                                        "session": {
-                                            "type": "realtime",
-                                            "instructions": instructions,
-                                        }
+                                        "session": session,
                                     }).to_string());
                                     if !send_upstream(&mut upstream_tx, update).await {
                                         break 'session;
@@ -889,6 +909,72 @@ async fn receive_start(local: &mut WebSocket) -> Result<StartFrame, &'static str
     Ok(start)
 }
 
+/// Compose the transcription-model biasing prompt from the session
+/// instructions. The separate transcription model only hears narrowband
+/// telephone audio; feeding it the business's own vocabulary (its name and
+/// services ride at the head of the instructions) is what keeps domain words
+/// intact — live call 1ce475b2 transcribed "lawn mowing" as "oral mount" and
+/// the appointment agreement fence built on the transcript refused every
+/// booking retry.
+fn transcription_prompt(instructions: &str) -> String {
+    const BASE: &str = "Telephone call to a business receptionist about appointments, bookings, \
+                        availability, prices, and services.";
+    // Prefer the persona notes between the fixed instruction section markers:
+    // the business name/services LEAD the notes and the known-caller
+    // personalization (the caller's own NAME — "Lance" was heard as "Let's"
+    // on live call 825c8e7f) CLOSES them, so a long persona keeps both by
+    // taking the head and the tail.
+    let notes = instructions
+        .split_once("Business context:")
+        .map(|(_, tail)| tail)
+        .and_then(|tail| {
+            tail.split_once("\n\nAppointment rules:")
+                .map(|(notes, _)| notes)
+        })
+        .unwrap_or(instructions);
+    let flat: Vec<char> = notes
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .collect();
+    let vocabulary = if flat.len() <= 900 {
+        flat.iter().collect::<String>()
+    } else {
+        let head: String = flat[..550].iter().collect();
+        let tail: String = flat[flat.len() - 300..].iter().collect();
+        format!("{head} ... {tail}")
+    };
+    if vocabulary.is_empty() {
+        return BASE.to_string();
+    }
+    format!("{BASE} Business context: {vocabulary}")
+}
+
+/// The COMPLETE `audio.input` session object. Both the session-create update
+/// and the Begin-time refresh send the whole object (never a partial patch)
+/// so provider-side replace semantics can never silently drop turn detection
+/// or noise reduction while retuning the transcription prompt.
+fn audio_input_config(turn_detection: Value, instructions: &str) -> Value {
+    json!({
+        "format": { "type": "audio/pcm", "rate": 24000 },
+        "noise_reduction": { "type": "near_field" },
+        "transcription": {
+            "model": DEFAULT_TRANSCRIPTION_MODEL,
+            // Narrowband telephone audio: bias the separate transcription
+            // model toward the call domain AND this business's own
+            // vocabulary so stored transcripts (and the appointment
+            // agreement fence built on them) stop drifting into unrelated
+            // words. Recomposed at Begin from the personalized instructions
+            // so the caller's own NAME biases recognition too (live call
+            // 825c8e7f heard "Lance" as "Let's").
+            "language": "en",
+            "prompt": transcription_prompt(instructions),
+        },
+        "turn_detection": turn_detection,
+    })
+}
+
 fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'static str> {
     let voice = start.voice.as_deref().unwrap_or("marin").trim();
     if voice.is_empty() || voice.len() > 128 || voice.chars().any(|ch| ch.is_control()) {
@@ -899,6 +985,7 @@ fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'
         return Err("Realtime maxOutputTokens must be between 1 and 4096");
     }
     let turn_detection = normalized_turn_detection(start.turn_detection.as_ref())?;
+    let audio_input = audio_input_config(turn_detection, &start.instructions);
     let tools = realtime_tools(
         start.allow_business_lookup,
         start.allow_request_appointment,
@@ -918,21 +1005,7 @@ fn session_update(start: &StartFrame, model: &str) -> Result<UpstreamMessage, &'
                 "max_output_tokens": max_output_tokens,
                 "output_modalities": ["audio"],
                 "audio": {
-                    "input": {
-                        "format": { "type": "audio/pcm", "rate": 24000 },
-                        "noise_reduction": { "type": "near_field" },
-                        "transcription": {
-                            "model": DEFAULT_TRANSCRIPTION_MODEL,
-                            // Narrowband telephone audio: bias the separate
-                            // transcription model toward the call domain so
-                            // stored transcripts (and the appointment
-                            // agreement fence built on them) stop drifting
-                            // into unrelated words.
-                            "language": "en",
-                            "prompt": "Telephone call to a business receptionist about appointments, bookings, availability, prices, and services.",
-                        },
-                        "turn_detection": turn_detection,
-                    },
+                    "input": audio_input,
                     "output": {
                         "format": { "type": "audio/pcm", "rate": 24000 },
                         "voice": voice,
@@ -5337,5 +5410,31 @@ mod tests {
         assert!(translate_server_event(&input_delta, &fence, &mut state)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn transcription_prompt_carries_the_business_vocabulary() {
+        let prompt = transcription_prompt(
+            "You are the receptionist at Test Business.\nServices: lawn mowing, gardening.",
+        );
+        assert!(prompt.starts_with("Telephone call to a business receptionist"));
+        assert!(prompt.contains("lawn mowing, gardening"));
+        assert!(!prompt.contains('\n'));
+        let long = "word ".repeat(500);
+        assert!(transcription_prompt(&long).chars().count() < 1100);
+        assert!(transcription_prompt("").starts_with("Telephone call"));
+        assert!(!transcription_prompt("").contains("Business context"));
+        // A long persona keeps BOTH ends of the notes section: the business
+        // vocabulary leads it and the known-caller block (the caller's NAME)
+        // closes it; the surrounding fixed rule text never rides along.
+        let overlay = format!(
+            "Preamble. Business context:\nTest Business does lawn mowing. {} KNOWN CALLER: \
+             the caller is Lance.\n\nAppointment rules: fixed rule text.",
+            "filler ".repeat(300)
+        );
+        let tuned = transcription_prompt(&overlay);
+        assert!(tuned.contains("lawn mowing"));
+        assert!(tuned.contains("Lance"));
+        assert!(!tuned.contains("Appointment rules"));
     }
 }
