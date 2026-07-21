@@ -1647,17 +1647,55 @@ fn translate_server_event_full(
             ))?;
             match event.pointer("/item/type").and_then(Value::as_str) {
                 Some("message") => {
-                    // An unbound forced response tolerates interloper items:
-                    // a VAD-created response can stream before the forced
-                    // request's own response.created binds its identity.
-                    let forced_response_matches =
-                        state.pending_forced_response.as_ref().is_none_or(|forced| {
+                    // Recovery, never disconnect: rapid tool refusals plus
+                    // caller VAD churn can start a new assistant message
+                    // before the previous response's item is marked done
+                    // (two responses in flight). Retire the superseded item
+                    // (close its audio fence) and accept the new one instead
+                    // of ending the live call. A never-bound forced response
+                    // that this different response supersedes is also cleared
+                    // so it cannot fail later fences.
+                    let mut messages = Vec::new();
+                    if state
+                        .output
+                        .as_ref()
+                        .is_some_and(|output| !output.done && output.response_id != response_id)
+                    {
+                        let output = state.output.as_mut().expect("checked stale output");
+                        output.done = true;
+                        output.completed = false;
+                        messages.push(fenced_json(
+                            fence,
+                            "formlogic.realtime.output_item_done",
+                            json!({
+                                "itemId": output.item_id,
+                                "responseId": output.response_id,
+                            }),
+                        ));
+                    }
+                    if state
+                        .pending_forced_response
+                        .as_ref()
+                        .is_some_and(|forced| {
                             forced.response_id.is_none()
-                                || forced.response_id.as_deref() == Some(response_id.as_str())
-                        });
+                                && event
+                                    .pointer("/item/role")
+                                    .and_then(Value::as_str)
+                                    == Some("assistant")
+                        })
+                    {
+                        // A new assistant message on a response that is NOT
+                        // our forced request means server VAD won the race;
+                        // release the never-bound forced fence.
+                        state.pending_forced_response = None;
+                    }
                     // pending_tool_result deliberately does NOT gate this arm:
                     // a VAD response answering caller speech while the plugin
-                    // still executes a tool is legitimate GA behavior.
+                    // still executes a tool is legitimate GA behavior. A
+                    // genuinely malformed item (non-assistant, non-zero index,
+                    // same-response reuse, or one arriving mid-tool-call) is
+                    // SKIPPED with a recoverable notice — its stray audio, if
+                    // any, is dropped by the audio arm — rather than fatal.
                     if event.pointer("/item/role").and_then(Value::as_str) != Some("assistant")
                         || output_index != 0
                         || state.output.as_ref().is_some_and(|output| !output.done)
@@ -1666,12 +1704,14 @@ fn translate_server_event_full(
                             .as_ref()
                             .is_some_and(|output| output.response_id == response_id)
                         || state.tool_candidate.is_some()
-                        || !forced_response_matches
                     {
-                        return Err((
-                            "upstream_protocol",
-                            "Realtime output item ordering or assistant identity was invalid.",
+                        messages.push(local_error(
+                            fence,
+                            "output_item_skipped",
+                            "A Realtime output item arrived out of order and was skipped.",
+                            false,
                         ));
+                        return Ok(messages);
                     }
                     state.output = Some(OutputItemState {
                         item_id: item_id.clone(),
@@ -1683,11 +1723,12 @@ fn translate_server_event_full(
                         audio_bytes: 0,
                         transcript: None,
                     });
-                    Ok(vec![fenced_json(
+                    messages.push(fenced_json(
                         fence,
                         "formlogic.realtime.output_item_started",
                         json!({ "itemId": item_id, "responseId": response_id }),
-                    )])
+                    ));
+                    Ok(messages)
                 }
                 Some("function_call") => {
                     let provider_call_id = safe_id(event.pointer("/item/call_id"))?;
@@ -1831,10 +1872,10 @@ fn translate_server_event_full(
             if !state.output.as_ref().is_some_and(|output| {
                 !output.done && output.item_id == item_id && output.response_id == response_id
             }) {
-                return Err((
-                    "upstream_protocol",
-                    "Realtime audio did not match the active assistant item.",
-                ));
+                // Audio for a retired/skipped item (a superseded response's
+                // tail): drop the frame — it is only played to the caller —
+                // instead of ending the call.
+                return Ok(Vec::new());
             }
             let delta = event
                 .get("delta")
@@ -1867,10 +1908,8 @@ fn translate_server_event_full(
             if !state.output.as_ref().is_some_and(|output| {
                 !output.done && output.item_id == item_id && output.response_id == response_id
             }) {
-                return Err((
-                    "upstream_protocol",
-                    "Realtime transcript did not match the active assistant item.",
-                ));
+                // Transcript for a retired/skipped item: drop it, never fatal.
+                return Ok(Vec::new());
             }
             let transcript = bounded_content(event.get("transcript"), 64 * 1024)?;
             if let Some(output) = state.output.as_mut() {
@@ -1935,15 +1974,17 @@ fn translate_server_event_full(
             }
 
             let Some(output) = state.output.as_mut() else {
-                return Err((
-                    "upstream_protocol",
-                    "Realtime completed an unknown output item.",
-                ));
+                // A done for an item we already retired or never tracked
+                // (a superseded response's item): harmless, drop it.
+                return Ok(Vec::new());
             };
             let item_status = event.pointer("/item/status").and_then(Value::as_str);
+            if output.item_id != item_id || output.response_id != response_id {
+                // The completion belongs to a different (retired/skipped)
+                // item, not the active one: no-op rather than fatal.
+                return Ok(Vec::new());
+            }
             if output.done
-                || output.item_id != item_id
-                || output.response_id != response_id
                 || event.get("output_index").and_then(Value::as_u64) != Some(output.output_index)
                 || event.pointer("/item/type").and_then(Value::as_str) != Some("message")
                 || event.pointer("/item/role").and_then(Value::as_str) != Some("assistant")
@@ -4252,6 +4293,57 @@ mod tests {
     }
 
     #[test]
+    fn back_to_back_forced_and_vad_responses_never_disconnect() {
+        // Live call_d38ee8b2: four correct booking refusals + caller VAD
+        // produced two responses whose assistant messages overlapped, and
+        // the strict ordering fence hung up the call. Recovery must keep the
+        // session alive across the whole burst.
+        let fence = call_fence();
+        let mut state = tool_state(true, false);
+        // A forced continuation is in flight and its message is streaming.
+        state.pending_forced_response = Some(PendingForcedResponse {
+            purpose: ForcedResponsePurpose::LookupContinuation,
+            tool_call_id: Some("provider-tool-call-1".into()),
+            response_id: Some("forced-1".into()),
+            request: None,
+            retried: false,
+        });
+        let forced_msg = json!({
+            "type": "response.output_item.added",
+            "response_id": "forced-1",
+            "output_index": 0,
+            "item": { "id": "forced-item", "type": "message", "role": "assistant", "status": "in_progress" },
+        });
+        translate_server_event(&forced_msg, &fence, &mut state).unwrap();
+        // Caller spoke: server VAD creates its own response whose message
+        // arrives before the forced item is marked done — the exact fatal
+        // race. It must recover, not disconnect.
+        let vad_msg = json!({
+            "type": "response.output_item.added",
+            "response_id": "vad-2",
+            "output_index": 0,
+            "item": { "id": "vad-item", "type": "message", "role": "assistant", "status": "in_progress" },
+        });
+        let messages = translate_server_event(&vad_msg, &fence, &mut state).unwrap();
+        assert!(messages
+            .iter()
+            .any(|m| text_event(m)["type"] == "formlogic.realtime.output_item_started"
+                && text_event(m)["itemId"] == "vad-item"));
+        assert_eq!(
+            state.output.as_ref().map(|o| o.item_id.as_str()),
+            Some("vad-item")
+        );
+        // A late done for the retired forced item is a harmless no-op.
+        let stale_done = json!({
+            "type": "response.output_item.done",
+            "response_id": "forced-1",
+            "output_index": 0,
+            "item": { "id": "forced-item", "type": "message", "role": "assistant", "status": "completed" },
+        });
+        assert!(translate_server_event(&stale_done, &fence, &mut state).unwrap().is_empty());
+    }
+
+    #[test]
     fn completed_mute_responses_are_re_prompted_within_the_budget() {
         // A response that COMPLETES with zero audio and no tool leaves the
         // caller in unbounded silence; the bridge re-requests speech.
@@ -4809,7 +4901,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_finish_farewell_rejects_crossed_response_identity() {
+    fn a_crossed_response_never_resolves_or_corrupts_the_bound_farewell_fence() {
         let fence = call_fence();
         let mut state = tool_state(false, true);
         state.pending_forced_response = Some(PendingForcedResponse {
@@ -4820,6 +4912,9 @@ mod tests {
             retried: false,
         });
 
+        // An interloper assistant message on a different response is now
+        // TOLERATED (recovery, not disconnect), but it must never disturb the
+        // BOUND farewell fence — that stays armed for its own exact response.
         let added = json!({
             "type": "response.output_item.added",
             "response_id": "unrelated-response",
@@ -4831,11 +4926,13 @@ mod tests {
                 "status": "in_progress",
             },
         });
-        assert_eq!(
-            translate_server_event(&added, &fence, &mut state)
-                .unwrap_err()
-                .0,
-            "upstream_protocol"
+        translate_server_event(&added, &fence, &mut state).unwrap();
+        assert!(
+            state
+                .pending_forced_response
+                .as_ref()
+                .is_some_and(|f| f.response_id.as_deref() == Some("farewell-response-1")),
+            "the bound farewell fence must survive an interloper message"
         );
 
         // An unrelated terminal response never resolves the bound farewell
@@ -4927,7 +5024,10 @@ mod tests {
     }
 
     #[test]
-    fn output_items_cannot_overlap_or_cross_response_fences() {
+    fn an_overlapping_response_retires_the_previous_item_instead_of_disconnecting() {
+        // Rapid tool refusals + caller VAD can start a new assistant message
+        // before the previous item is done. Recovery, never disconnect: the
+        // superseded item is retired and the new one takes over the audio.
         let fence = CallFence {
             call_id: "call-1".into(),
             generation: 1,
@@ -4940,14 +5040,31 @@ mod tests {
             "output_index": 0,
             "item": { "id": "item-2", "type": "message", "role": "assistant" },
         });
-        assert!(translate_server_event(&overlap, &fence, &mut state).is_err());
-        let mismatch = json!({
+        let messages = translate_server_event(&overlap, &fence, &mut state).unwrap();
+        // Retire item-1, then start item-2.
+        assert_eq!(text_event(&messages[0])["type"], "formlogic.realtime.output_item_done");
+        assert_eq!(text_event(&messages[0])["itemId"], "item-1");
+        assert_eq!(text_event(&messages[1])["type"], "formlogic.realtime.output_item_started");
+        assert_eq!(text_event(&messages[1])["itemId"], "item-2");
+        // Audio now flows for the new active item; a stray frame for the
+        // retired item is dropped, never fatal.
+        let live = json!({
             "type": "response.output_audio.delta",
             "item_id": "item-2",
             "response_id": "response-2",
             "delta": base64::engine::general_purpose::STANDARD.encode([0u8, 0]),
         });
-        assert!(translate_server_event(&mismatch, &fence, &mut state).is_err());
+        assert!(matches!(
+            translate_server_event(&live, &fence, &mut state).unwrap().as_slice(),
+            [LocalMessage::Binary(_)]
+        ));
+        let stale = json!({
+            "type": "response.output_audio.delta",
+            "item_id": "item-1",
+            "response_id": "response-1",
+            "delta": base64::engine::general_purpose::STANDARD.encode([1u8, 0]),
+        });
+        assert!(translate_server_event(&stale, &fence, &mut state).unwrap().is_empty());
     }
 
     #[test]
@@ -4957,18 +5074,23 @@ mod tests {
             generation: 1,
         };
         let mut state = SessionState::new(String::new());
-        for item in [
-            json!({ "id": "item-1", "type": "message", "role": "user" }),
-            json!({ "id": "item-1", "type": "function_call", "role": "assistant" }),
-        ] {
-            let event = json!({
-                "type": "response.output_item.added",
-                "response_id": "response-1",
-                "output_index": 0,
-                "item": item,
-            });
-            assert!(translate_server_event(&event, &fence, &mut state).is_err());
-        }
+        // A user-role message item is skipped (recoverable), never opening
+        // the audio lane; its stray audio is dropped, never fatal.
+        let user_item = json!({
+            "type": "response.output_item.added",
+            "response_id": "response-1",
+            "output_index": 0,
+            "item": { "id": "item-1", "type": "message", "role": "user" },
+        });
+        translate_server_event(&user_item, &fence, &mut state).unwrap();
+        assert!(state.output.is_none(), "user item must not open the audio lane");
+        let stray = json!({
+            "type": "response.output_audio.delta",
+            "item_id": "item-1",
+            "response_id": "response-1",
+            "delta": base64::engine::general_purpose::STANDARD.encode([0u8, 0]),
+        });
+        assert!(translate_server_event(&stray, &fence, &mut state).unwrap().is_empty());
     }
 
     #[test]

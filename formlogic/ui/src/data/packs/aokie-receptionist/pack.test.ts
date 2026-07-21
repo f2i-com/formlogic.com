@@ -464,6 +464,9 @@ describe('aokieReceptionistPack â€” deterministic Realtime appointment requ
     requestTasks: { responses: [] },
     callTasks: { responses: [] },
     calls: { responses: [{ id: 'call-response-1', answers: { call_id: callId } }] },
+    customers: { responses: [] },
+    phoneTasks: { responses: [] },
+    settings: { responses: [{ id: 'settings-1', answers: { business_name: 'Test Business', default_country_code: '61', active: 'yes' } }] },
   });
 
   it('uses no LLM and writes Appointment before its confirmation task', () => {
@@ -471,8 +474,9 @@ describe('aokieReceptionistPack â€” deterministic Realtime appointment requ
     expect(flow.flowJson.nodes.some((node) => node.type === 'llm_chat')).toBe(false);
     const binding = (pack.flowBindings ?? []).find((item) => item.flow === 'appointment-request-apply')!;
     expect(binding.event).toBe('aokie.appointment.requested');
-    expect(binding.outputActions?.slice(0, 2)).toMatchObject([
+    expect(binding.outputActions?.slice(0, 3)).toMatchObject([
       { type: 'formlogic.submitResponse', form: '@pack:appointments' },
+      { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks' },
       { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks' },
     ]);
   });
@@ -511,6 +515,91 @@ describe('aokieReceptionistPack â€” deterministic Realtime appointment requ
     expect(result.duplicate).toBe(true);
     expect(result.hasAppointment).toBe(false);
     expect(result.hasTask).toBe(false);
+  });
+
+  it('kicks off the SMS confirmation loop for a new realtime booking', () => {
+    const input = { ...baseInput(), from: '0491570156' };
+    const result = evaluate(exprFor('appointment-request-apply', 'plan'), input, emptyNodes(input.callId));
+    expect(result.hasKickoffSms).toBe(true);
+    expect(result.kickoffSms.to).toBe('+61491570156');
+    expect(result.kickoffSms.body).toContain("It's Test Business");
+    expect(result.kickoffSms.body).toContain('Lawn mowing');
+    expect(result.kickoffSms.body).toContain('Reply YES to confirm');
+    expect(result.kickoffSms.body).toContain('Reply STOP to opt out');
+    expect(result.kickoffSms.body.length).toBeLessThanOrEqual(440);
+    expect([...result.kickoffSms.body].every((ch: string) => ch >= ' ' && ch <= '~')).toBe(true);
+    expect(result.kickoffMessage).toMatchObject({
+      message_id: `smskick_${input.requestId}`.slice(0, 64),
+      phone: '0491570156',
+      direction: 'outbound',
+      status: 'queued',
+    });
+    expect(result.task.sms_state).toBe('active');
+    expect(result.task.sms_exchanges).toBe(1);
+  });
+
+  it('never kicks off SMS for duplicates, blocked or SMS-incapable customers', () => {
+    const input = { ...baseInput(), from: '0491570156' };
+    // Duplicate replay: no second SMS.
+    const appt = { request_id: input.requestId, call_id: input.callId, service: input.service, date: input.date, time: input.time, status: 'requested' };
+    const task = { request_id: input.requestId, call_id: input.callId, status: 'open' };
+    const dupNodes = emptyNodes(input.callId);
+    dupNodes.requestAppointments.responses = [{ id: 'appt-1', answers: appt }];
+    dupNodes.callAppointments.responses = [{ id: 'appt-1', answers: appt }];
+    dupNodes.requestTasks.responses = [{ id: 'task-1', answers: task }];
+    dupNodes.callTasks.responses = [{ id: 'task-1', answers: task }];
+    let result = evaluate(exprFor('appointment-request-apply', 'plan'), input, dupNodes);
+    expect(result.hasKickoffSms).toBe(false);
+
+    // Blocked customer: task only, no text.
+    const blockedNodes = emptyNodes(input.callId);
+    (blockedNodes.customers.responses as unknown[]).push({ id: 'cust-1', answers: { phone: input.from, status: 'blocked' } });
+    result = evaluate(exprFor('appointment-request-apply', 'plan'), input, blockedNodes);
+    expect(result.hasKickoffSms).toBe(false);
+    expect(result.hasTask).toBe(true);
+    expect(result.task.sms_state).toBeUndefined();
+
+    // sms_capable No (landline): task only.
+    const landlineNodes = emptyNodes(input.callId);
+    (landlineNodes.customers.responses as unknown[]).push({ id: 'cust-2', answers: { phone: input.from, status: 'active', sms_capable: 'No' } });
+    result = evaluate(exprFor('appointment-request-apply', 'plan'), input, landlineNodes);
+    expect(result.hasKickoffSms).toBe(false);
+  });
+
+  it('supersedes an active SMS loop from another call, never its own', () => {
+    const input = { ...baseInput(), from: '0491570156' };
+    const nodes = emptyNodes(input.callId);
+    (nodes.phoneTasks.responses as unknown[]).push({
+      id: 'prior-task-1',
+      answers: { call_id: 'call_other_1234567890abcdef', status: 'open', sms_state: 'active', summary: 'Confirm gardening' },
+    });
+    let result = evaluate(exprFor('appointment-request-apply', 'plan'), input, nodes);
+    expect(result.hasPriorTaskClose).toBe(true);
+    expect(result.priorTaskId).toBe('prior-task-1');
+    expect(result.priorTaskUpdate).toMatchObject({ status: 'done', sms_state: 'done' });
+    expect(result.priorTaskUpdate.summary).toContain('superseded');
+
+    const ownNodes = emptyNodes(input.callId);
+    (ownNodes.phoneTasks.responses as unknown[]).push({
+      id: 'own-task-1',
+      answers: { call_id: input.callId, status: 'open', sms_state: 'active', summary: 'Same call loop' },
+    });
+    result = evaluate(exprFor('appointment-request-apply', 'plan'), input, ownNodes);
+    expect(result.hasPriorTaskClose).toBe(false);
+  });
+
+  it('wires the kickoff SMS actions after the task and before the toast', () => {
+    const binding = (pack.flowBindings ?? []).find((item) => item.flow === 'appointment-request-apply')!;
+    const types = (binding.outputActions ?? []).map((action) => `${action.type}:${(action as { form?: string; command?: string }).form ?? (action as { command?: string }).command ?? ''}`);
+    expect(types).toEqual([
+      'formlogic.submitResponse:@pack:appointments',
+      'formlogic.updateResponse:@pack:follow-up-tasks',
+      'formlogic.submitResponse:@pack:follow-up-tasks',
+      'formlogic.updateResponse:@pack:calls',
+      'formlogic.submitResponse:@pack:sms-messages',
+      'connector.request:sms.send',
+      'formlogic.toast:',
+    ]);
   });
 
   it('fails closed on malformed dates and request-id collisions', () => {

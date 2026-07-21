@@ -1937,6 +1937,80 @@ const FLOW_APPOINTMENT_REQUEST_APPLY = `(function () {
     priority: 'high'
   };
   if (callRow) task.call_link = callRow.id;
+
+  // SMS confirmation kickoff (after-call parity for the deterministic
+  // Realtime path): text the caller their booking-request confirmation the
+  // moment the tool records it, so the SMS Follow-up Conversation flow can
+  // drive YES/reschedule replies. Only a NEW request (never a duplicate
+  // retry), only to a dialable number, and never to a blocked or
+  // SMS-incapable customer - those keep the human task instead. The
+  // after-call extractor already defers to this path (directTaskExists), so
+  // exactly one loop exists per booking.
+  var custRows = rowsOf(nodes.customers);
+  var custA = (custRows.length && custRows[0] && custRows[0].answers) || {};
+  var custBlocked = String(custA.status || '').trim().toLowerCase() === 'blocked';
+  var smsCapableNo = String(custA.sms_capable || '').trim().toLowerCase() === 'no';
+  var sRows = rowsOf(nodes.settings);
+  var business = '';
+  var countryCode = '';
+  for (var sb = 0; sb < sRows.length; sb++) {
+    var sba = (sRows[sb] && sRows[sb].answers) || {};
+    if (String(sba.active || 'yes') !== 'no') {
+      business = text(sba.business_name, 120);
+      countryCode = text(sba.default_country_code, 6).replace(/[^0-9]/g, '');
+      break;
+    }
+  }
+  function normOutbound(p) {
+    var digits = String(p || '').replace(/[^0-9+]/g, '');
+    if (countryCode && /^0\\d+/.test(digits)) return '+' + countryCode + digits.slice(1);
+    return digits;
+  }
+  function humanWhen(d, t) {
+    var hp = d.split('-');
+    var dt = new Date(Number(hp[0]), Number(hp[1]) - 1, Number(hp[2]));
+    var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var label = days[dt.getDay()] + ' ' + months[dt.getMonth()] + ' ' + dt.getDate() + ' ' + dt.getFullYear();
+    if (t) {
+      var hh = Number(t.slice(0, 2));
+      var mm = t.slice(3, 5);
+      var ap = hh >= 12 ? 'PM' : 'AM';
+      var h12 = hh % 12 === 0 ? 12 : hh % 12;
+      label += ' at ' + h12 + (mm === '00' ? '' : ':' + mm) + ' ' + ap;
+    }
+    return label;
+  }
+  var newRequest = ok && !appointmentExists && !taskExists;
+  var wantsSms = newRequest && phone !== '' && !custBlocked && !smsCapableNo;
+  var firstName = callerName.split(' ')[0] || 'there';
+  var kickBody = 'Hi ' + firstName + "! It's " + (business || 'us') + ' - thanks for your call. '
+    + 'We have your booking request: ' + service + ' on ' + humanWhen(date, time)
+    + '. Reply YES to confirm, or text a better day and time. Reply STOP to opt out.';
+  kickBody = kickBody.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
+  // One SMS loop per phone: an earlier still-active loop from ANOTHER call
+  // closes as superseded so a YES is never ambiguous between two threads.
+  var prior = null;
+  var pRows = rowsOf(nodes.phoneTasks);
+  for (var pp = 0; pp < pRows.length; pp++) {
+    var ppa = (pRows[pp] && pRows[pp].answers) || {};
+    var pps = String(ppa.status || '');
+    if ((pps === 'open' || pps === 'in_progress') && String(ppa.sms_state || '') === 'active'
+      && String(ppa.call_id || '') !== callId) { prior = pRows[pp]; break; }
+  }
+  var hasPriorTaskClose = wantsSms && !!prior;
+  var priorTaskUpdate = null;
+  if (hasPriorTaskClose) {
+    priorTaskUpdate = {
+      status: 'done',
+      sms_state: 'done',
+      summary: (String(((prior.answers || {}).summary) || '') + ' [superseded by the realtime booking from call ' + callId + ']').slice(0, 500)
+    };
+  }
+  if (wantsSms) {
+    task.sms_state = 'active';
+    task.sms_exchanges = 1;
+  }
   return {
     ok: ok,
     requestId: requestId,
@@ -1948,9 +2022,25 @@ const FLOW_APPOINTMENT_REQUEST_APPLY = `(function () {
     callResponseId: callRow ? callRow.id : null,
     callUpdate: { intent: 'booking', follow_up_required: ['yes'] },
     duplicate: ok && appointmentExists && taskExists,
+    hasPriorTaskClose: hasPriorTaskClose,
+    priorTaskId: prior ? prior.id : null,
+    priorTaskUpdate: priorTaskUpdate,
+    hasKickoffSms: wantsSms,
+    kickoffSms: { to: normOutbound(phone), body: kickBody },
+    kickoffMessage: {
+      message_id: ('smskick_' + requestId).slice(0, 64),
+      phone: phone,
+      direction: 'outbound',
+      body: kickBody,
+      timestamp: new Date().toISOString(),
+      status: 'queued',
+      is_ai_reply: ['yes'],
+      approval_status: 'not_required'
+    },
     summaryLine: ok
       ? (appointmentExists ? 'Appointment request already recorded; ' : 'Appointment request recorded; ')
         + (taskExists ? 'confirmation task already present.' : 'confirmation task created.')
+        + (wantsSms ? ' Confirmation SMS sent.' : '')
       : 'Appointment request refused: ' + reason + '.'
   };
 })()`;
@@ -4580,6 +4670,12 @@ export const aokieReceptionistPack: PackData = {
           { id: 'requestTasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 5, filters: [{ field: 'request_id', op: 'eq', value: '$inputs.requestId' }] } },
           { id: 'callTasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 20, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
           { id: 'calls', type: 'formlogic_list_responses', data: { form: '@pack:calls', return: 'all', limit: 2, filters: [{ field: 'call_id', op: 'eq', value: '$inputs.callId' }] } },
+          // SMS-kickoff context (after-call parity): the customer's SMS
+          // eligibility, any still-active SMS loop for this number, and the
+          // business name for the confirmation text.
+          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] } },
+          { id: 'phoneTasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] } },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'plan', type: 'logic_block', data: { expr: FLOW_APPOINTMENT_REQUEST_APPLY } },
           {
             id: 'out',
@@ -4596,6 +4692,12 @@ export const aokieReceptionistPack: PackData = {
                 hasCall: '$nodes.plan.hasCall',
                 callResponseId: '$nodes.plan.callResponseId',
                 callUpdate: '$nodes.plan.callUpdate',
+                hasPriorTaskClose: '$nodes.plan.hasPriorTaskClose',
+                priorTaskId: '$nodes.plan.priorTaskId',
+                priorTaskUpdate: '$nodes.plan.priorTaskUpdate',
+                hasKickoffSms: '$nodes.plan.hasKickoffSms',
+                kickoffSms: '$nodes.plan.kickoffSms',
+                kickoffMessage: '$nodes.plan.kickoffMessage',
                 summaryLine: '$nodes.plan.summaryLine',
               },
             },
@@ -4607,7 +4709,10 @@ export const aokieReceptionistPack: PackData = {
           { source: 'callAppointments', target: 'requestTasks' },
           { source: 'requestTasks', target: 'callTasks' },
           { source: 'callTasks', target: 'calls' },
-          { source: 'calls', target: 'plan' },
+          { source: 'calls', target: 'customers' },
+          { source: 'customers', target: 'phoneTasks' },
+          { source: 'phoneTasks', target: 'settings' },
+          { source: 'settings', target: 'plan' },
           { source: 'plan', target: 'out' },
         ],
       },
@@ -4948,11 +5053,18 @@ export const aokieReceptionistPack: PackData = {
         at: '$event.data.at',
       },
       // Records before notification. Appointment is deliberately first so a
-      // later task/toast failure never loses the caller's actual request.
+      // later task/toast/SMS failure never loses the caller's actual request.
+      // The prior active SMS loop (another call) closes BEFORE the new task
+      // exists so the conversation flow can never match two active threads.
       outputActions: [
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasPriorTaskClose', responseId: '$result.priorTaskId', answers: '$result.priorTaskUpdate' },
         { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
         { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCall', responseId: '$result.callResponseId', answers: '$result.callUpdate' },
+        // SMS confirmation kickoff: the Messages row first (the delivery-status
+        // flow flips it queued->sent), then the physical send.
+        { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasKickoffSms', answers: '$result.kickoffMessage' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasKickoffSms', payload: { messageId: '$result.kickoffMessage.message_id', to: '$result.kickoffSms.to', body: '$result.kickoffSms.body' } },
         { type: 'formlogic.toast', message: 'Realtime booking: {{result.summaryLine}}' },
       ],
       retryPolicy: { maxAttempts: 3, backoff: 'exponential' },
