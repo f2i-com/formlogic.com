@@ -2749,6 +2749,23 @@ class ApiClient {
   }
 
   /** Claim a queued run (owner scope — workspace runs + any run of a flow the user owns). */
+  /**
+   * Owner-scoped run reserve (POST /api/flow-runs) — workspace flow_call children ride
+   * this (lineage via parentRunId/callNodeId, plan §8.7). 201 {run, created:true} |
+   * 200 {run, created:false, idempotent:true} on an idempotency replay.
+   */
+  async reserveMyFlowRun(payload: {
+    flowSlug: string;
+    triggerEvent: string;
+    correlationId: string;
+    idempotencyKey: string;
+    inputSnapshot?: Record<string, unknown>;
+    parentRunId?: string;
+    callNodeId?: string;
+  }): Promise<ApiResponse<{ run: FlowRunLog; created: boolean; idempotent?: boolean }>> {
+    return this.request('/flow-runs', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
   async claimMyFlowRun(
     runId: string,
     payload: { runtime: FlowRuntimeKind; instanceId?: string }

@@ -848,7 +848,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     doc:
       'Awaited flow-to-flow composition (extensible-flows plan §8, v1): the child flow is referenced by its STABLE id (never its slug), runs with the mapped input, and gets its own run-log entry. '
       + 'Success routes the Success handle with { status, result, runId }; with Failure mode “Route”, a failed child routes the Failure handle carrying the structured error instead of failing this flow. '
-      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. v1 runs in the browser app runtime (live triggers, queued runs, flow.run) — desktop/cloud execution and the workspace Test Run drawer land with the orchestrator slice.',
+      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. Runs in the browser — app runtime AND workspace (Test Run included), each scope calling only its own flows; desktop/cloud execution lands with the orchestrator slice.',
     icon: Workflow,
     accent: 'slate',
     executable: true,

@@ -45,6 +45,7 @@ import {
   type AiSourceListing,
 } from './desktopService';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
+import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
 import type { FlowExecutorDeps } from './nodes';
 import {
   buildInputs,
@@ -225,7 +226,7 @@ function buildKvDeps(): Pick<FlowExecutorDeps, 'kvGet' | 'kvSet' | 'kvList'> {
   };
 }
 
-function buildDefaultExecutorDeps(): FlowExecutorDeps {
+export function buildDefaultExecutorDeps(): FlowExecutorDeps {
   return {
     // NOTE: these forward the node's clamped `timeoutMs` (nodes.ts) as `budgetMs` — the
     // BINDING-level `defaultEvaluateCondition` above is a separate, 2-arg-only evaluator
@@ -285,6 +286,8 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
     },
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
     listDesktopServices: () => listDesktopServices(),
+    // flow_call's browser FlowInvoker (plan §8.5) — shared guard core + APP backend.
+    invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
   };
 }
 
@@ -358,10 +361,11 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     getAppAiBase: () => null,
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
     listDesktopServices: () => listDesktopServices(),
-    // flow_call's browser FlowInvoker (plan §8.5 v1) — app-runtime scope only; the
-    // workspace deps deliberately omit it (Test Run there refuses typed until the
-    // workspace invoker lands).
-    invokeChildFlow: (req) => invokeChildFlow(req),
+    // flow_call in WORKSPACE scope (Test Run drawer + workspace queued runs): the shared
+    // guard core with the owner-scoped backend. NOTE the two builders wire DIFFERENT
+    // backends — a scope mix-up here silently strands flow_call (pinned by
+    // childFlowInvoker.test.ts's wiring assertions).
+    invokeChildFlow: (req) => invokeChildFlowWith(workspaceChildFlowBackend(), req),
   };
 }
 
@@ -657,86 +661,103 @@ function findFlowById(flowId: string): RuntimeFlowDefinition | undefined {
   return runtime?.flows.find((f) => f.id === flowId);
 }
 
-/** Maximum awaited flow_call depth (plan §8.8; ancestry includes the root). */
-const FLOW_CALL_MAX_DEPTH = 8;
+/**
+ * APP-runtime flow_call backend (plan §8.5): the shared invoker core
+ * (childFlowInvoker.ts) owns the guards; this supplies the app runtime's flow list
+ * (the allowlist), app-scoped run APIs, and app executor deps.
+ */
+function appChildFlowBackend(): ChildFlowBackend {
+  return {
+    scope: 'app runtime',
+    resolveFlow: async (flowId) => {
+      const d = getDeps();
+      if (!d.getAppSlug()) throw new Error('dependency_missing: flow_call requires an app runtime');
+      const flow = findFlowById(flowId);
+      return flow ? { slug: flow.slug, flowJson: flow.flowJson, nodeCapabilities: flow.nodeCapabilities } : null;
+    },
+    reserveRun: async (flow, req) => {
+      const d = getDeps();
+      const slug = d.getAppSlug();
+      if (!slug) return { error: 'no app runtime' };
+      const correlationId = newIdempotencyKey();
+      const reservation = await d.reserveRun(slug, {
+        flowSlug: flow.slug,
+        triggerEvent: 'flow.call',
+        correlationId,
+        idempotencyKey: `flowcall:${req.callNodeId}:${correlationId}`,
+        inputSnapshot: req.inputs,
+        // Lineage (plan §8.7): the server derives root/depth from the parent row.
+        parentRunId: req.parentRunId,
+        callNodeId: req.callNodeId,
+      });
+      return reservation;
+    },
+    completeRun: async (runId, outcome) => {
+      const d = getDeps();
+      const slug = d.getAppSlug();
+      if (!slug) return;
+      try {
+        if (outcome.status === 'done') {
+          await d.completeRun(slug, runId, { status: 'done', result: normalizeResult(outcome.result) ?? {} });
+        } else {
+          await d.completeRun(slug, runId, {
+            status: outcome.status,
+            error: outcome.error ?? { code: 'node_failed', message: 'Flow failed' },
+          });
+        }
+      } catch (err) {
+        logger.warn('[flows] child completeRun failed:', err);
+      }
+    },
+    appContext: () => getDeps().getAppContext(),
+    executorDeps: () => getDeps().executorDeps,
+  };
+}
 
 /**
- * The browser FlowInvoker (plan §8.5, v1 awaited mode): resolve the child by stable id
- * WITHIN the current app runtime (cross-app calls are structurally impossible — the
- * runtime list is the allowlist), guard recursion/depth over the awaited ancestry,
- * reserve a run log, execute inline with the ancestry extended, complete the run, and
- * return the typed envelope. Refusals throw with a §6.7 code prefix; the flow_call node
- * wraps them into its FlowExecError.
+ * WORKSPACE flow_call backend: owner-scoped flow list + run APIs — what makes flow_call
+ * work in the Test Run drawer and workspace queued runs (previously a typed refusal).
+ * Children resolve only within the caller's own enabled workspace flows.
  */
-async function invokeChildFlow(req: {
-  targetFlowId: string;
-  inputs: Record<string, unknown>;
-  callNodeId: string;
-  callStack: readonly string[];
-  parentRunId?: string;
-  timeoutMs?: number;
-  signal?: AbortSignal;
-}): Promise<{
-  status: 'done' | 'error' | 'timeout' | 'cancelled';
-  result?: unknown;
-  error?: FlowRunError;
-  runId?: string;
-}> {
-  const d = getDeps();
-  const slug = d.getAppSlug();
-  if (!slug) throw new Error('dependency_missing: flow_call requires an app runtime');
-  const flow = findFlowById(req.targetFlowId);
-  if (!flow) {
-    throw new Error(
-      `dependency_missing: flow '${req.targetFlowId}' is not available in this app (missing, disabled, or not yet loaded)`,
-    );
-  }
-  if (req.callStack.includes(req.targetFlowId)) {
-    throw new Error(`recursion_detected: flow '${flow.slug}' is already running in this awaited call chain`);
-  }
-  if (req.callStack.length >= FLOW_CALL_MAX_DEPTH) {
-    throw new Error(`root_budget_exceeded: awaited flow_call depth limit (${FLOW_CALL_MAX_DEPTH}) reached`);
-  }
-
-  const correlationId = newIdempotencyKey();
-  const reservation = await d.reserveRun(slug, {
-    flowSlug: flow.slug,
-    triggerEvent: 'flow.call',
-    correlationId,
-    idempotencyKey: `flowcall:${req.callNodeId}:${correlationId}`,
-    inputSnapshot: req.inputs,
-    // Lineage (plan §8.7): the server derives root/depth from the parent row.
-    parentRunId: req.parentRunId,
-    callNodeId: req.callNodeId,
-  });
-  if ('error' in reservation) {
-    throw new Error(`transport_failed: child run reservation failed: ${reservation.error}`);
-  }
-
-  const outcome = await executeFlow(flow.flowJson, {
-    inputs: req.inputs,
-    app: d.getAppContext(),
-    timeoutMs: req.timeoutMs,
-    deps: d.executorDeps,
-    capabilities: flow.nodeCapabilities,
-    flowSlug: flow.slug,
-    signal: req.signal,
-    callStack: [...req.callStack, req.targetFlowId],
-    runId: reservation.runId,
-  });
-  try {
-    if (outcome.status === 'done') {
-      await d.completeRun(slug, reservation.runId, { status: 'done', result: normalizeResult(outcome.result) ?? {} });
-    } else {
-      await d.completeRun(slug, reservation.runId, {
-        status: outcome.status,
-        error: outcome.error ?? { code: 'node_failed', message: 'Flow failed' },
+function workspaceChildFlowBackend(): ChildFlowBackend {
+  return {
+    scope: 'workspace',
+    resolveFlow: async (flowId) => {
+      const flows = (await api.listWorkspaceFlows()).data?.flows ?? [];
+      const flow = flows.find((f) => f.id === flowId && f.enabled);
+      return flow ? { slug: flow.slug, flowJson: flow.flowJson, nodeCapabilities: flow.nodeCapabilities } : null;
+    },
+    reserveRun: async (flow, req) => {
+      const correlationId = newIdempotencyKey();
+      const res = await api.reserveMyFlowRun({
+        flowSlug: flow.slug,
+        triggerEvent: 'flow.call',
+        correlationId,
+        idempotencyKey: `flowcall:${req.callNodeId}:${correlationId}`,
+        inputSnapshot: req.inputs,
+        parentRunId: req.parentRunId,
+        callNodeId: req.callNodeId,
       });
-    }
-  } catch (err) {
-    logger.warn('[flows] child completeRun failed:', err);
-  }
-  return { status: outcome.status, result: outcome.result, error: outcome.error, runId: reservation.runId };
+      if (res.error || !res.data) return { error: res.error ?? 'Reserve failed' };
+      return { runId: res.data.run.runId };
+    },
+    completeRun: async (runId, outcome) => {
+      try {
+        if (outcome.status === 'done') {
+          await api.completeMyFlowRun(runId, { status: 'done', result: normalizeResult(outcome.result) ?? {} });
+        } else {
+          await api.completeMyFlowRun(runId, {
+            status: outcome.status,
+            error: outcome.error ?? { code: 'node_failed', message: 'Flow failed' },
+          });
+        }
+      } catch (err) {
+        logger.warn('[flows] workspace child completeRun failed:', err);
+      }
+    },
+    appContext: () => undefined,
+    executorDeps: () => buildWorkspaceExecutorDeps(),
+  };
 }
 
 function bindingMatches(binding: RuntimeFlowBinding, event: FlowTriggerEvent): boolean {
