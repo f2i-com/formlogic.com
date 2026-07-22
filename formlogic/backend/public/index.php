@@ -2496,6 +2496,12 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerQueuedRuns($request, $response);
     })->add($flowsReadAuth);
 
+    // Run lineage children (extensible-flows plan §14.4): paginated direct children of one
+    // run + call-node association — the run-tree UI's fetch-on-expand source.
+    $group->get('/flow-runs/{runId}/children', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerRunChildren($request, $response, $getArgs($request));
+    })->add($flowsReadAuth);
+
     // Owner-scoped reserve — FormLogic Desktop's dispatcher reserves event-driven runs here with
     // the SAME idempotency keys the browser dispatcher uses (flow:<binding>:<event key>), so the
     // UNIQUE ledger makes desktop-vs-browser execution exactly-once.

@@ -315,9 +315,82 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
                 {JSON.stringify({ inputSnapshot: run.inputSnapshot, result: run.result }, null, 2)}
               </pre>
             )}
+            <ChildRuns runId={run.runId} level={0} />
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+/** Deepest child level the tree expands to (matches the browser invoker's awaited-depth guard). */
+const CHILD_TREE_MAX_LEVELS = 8;
+
+/**
+ * The collapsible run tree (extensible-flows plan §8.7), one fetch-on-expand level at a
+ * time via GET /api/flow-runs/{id}/children (§14.4). Renders nothing when a run has no
+ * children — most runs — so ordinary history rows stay clean. Child runs may belong to a
+ * DIFFERENT flow (that is the point of flow_call), so each row names its flow slug.
+ */
+function ChildRuns({ runId, level }: { runId: string; level: number }) {
+  const [children, setChildren] = useState<FlowRunLog[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [openChild, setOpenChild] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      const r = await api.listFlowRunChildren(runId, { limit: 25 });
+      if (cancelled) return;
+      setChildren(r.data?.runs ?? []);
+      setTotal(r.data?.total ?? 0);
+    })();
+    return () => { cancelled = true; };
+  }, [runId]);
+
+  if (children === null || children.length === 0) return null;
+  return (
+    <div className={level === 0 ? 'mt-2 border-t border-gray-200/70 pt-2 dark:border-slate-700/50' : 'mt-1'}>
+      {level === 0 && (
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">
+          Child runs ({total})
+        </p>
+      )}
+      <ul className="space-y-1 border-l border-gray-200/80 pl-2.5 dark:border-slate-700/60">
+        {children.map((child) => (
+          <li key={child.runId} className="text-xs">
+            <button
+              type="button"
+              onClick={() => setOpenChild((id) => (id === child.runId ? null : child.runId))}
+              className="flex w-full flex-wrap items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-gray-100/70 dark:hover:bg-slate-800/60"
+              title={`Run ${child.runId}${child.callNodeId ? ` — via node ${child.callNodeId}` : ''}`}
+            >
+              {statusChip(child)}
+              <span className="font-mono text-gray-600 dark:text-slate-300">{child.flow ?? child.flowDefinitionId}</span>
+              {child.callNodeId && <span className="text-gray-400 dark:text-slate-500">via {child.callNodeId}</span>}
+              <span className="ml-auto text-gray-400 dark:text-slate-500" title={formatAbsoluteTimeTitle(child.startedAt ?? child.createdAt)}>
+                {formatRelativeTime(child.startedAt ?? child.createdAt)} · {runDuration(child)}
+              </span>
+            </button>
+            {openChild === child.runId && (
+              <div className="mt-1 pl-1">
+                {child.error && (
+                  <p className="mb-1 text-[11px] text-red-600 dark:text-red-400">
+                    {child.error.code}: {child.error.message}
+                  </p>
+                )}
+                {level + 1 < CHILD_TREE_MAX_LEVELS && <ChildRuns runId={child.runId} level={level + 1} />}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {total > children.length && (
+        <p className="mt-1 pl-2.5 text-[11px] text-gray-400 dark:text-slate-500">
+          Showing {children.length} of {total} children
+        </p>
+      )}
+    </div>
   );
 }

@@ -435,6 +435,26 @@ class FlowController
         return $this->jsonResponse($response, $result);
     }
 
+    /** Run lineage children (extensible-flows plan §14.4) — the run-tree's fetch-on-expand. */
+    public function listOwnerRunChildren(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $q = $request->getQueryParams();
+        $result = $this->flows->listOwnerRunChildren(
+            $userId,
+            (string) ($args['runId'] ?? ''),
+            (int) ($q['limit'] ?? 25),
+            (int) ($q['offset'] ?? 0)
+        );
+        if ($result === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
+        }
+        return $this->jsonResponse($response, $result);
+    }
+
     public function listOwnerQueuedRuns(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');

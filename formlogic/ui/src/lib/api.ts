@@ -2728,6 +2728,21 @@ class ApiClient {
     return this.request(`/flow-runs${query ? `?${query}` : ''}`);
   }
 
+  /**
+   * Direct children of one run (extensible-flows plan §14.4) — runs a flow_call spawned
+   * from it, oldest first. 404 when the run isn't visible to the caller.
+   */
+  async listFlowRunChildren(
+    runId: string,
+    options?: { limit?: number; offset?: number }
+  ): Promise<ApiResponse<{ runs: FlowRunLog[]; total: number; limit: number; offset: number }>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset !== undefined) params.set('offset', String(options.offset));
+    const query = params.toString();
+    return this.request(`/flow-runs/${encodeURIComponent(runId)}/children${query ? `?${query}` : ''}`);
+  }
+
   /** Claimable 'queued' runs across every flow the user owns, oldest first. */
   async listMyQueuedFlowRuns(limit?: number): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
     return this.request(`/flow-runs/queued${limit ? `?limit=${limit}` : ''}`);

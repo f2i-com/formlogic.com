@@ -2114,6 +2114,50 @@ class FlowService
 
     // ── Owner run history (across every flow the user owns) ────────────────────────────────
 
+    /**
+     * Paginated DIRECT children of one run (extensible-flows plan §14.4) — runs whose
+     * parent_run_id names it, oldest first (creation order = call order for awaited
+     * children). Anchored on getOwnerRun's ownership check: an invisible parent returns
+     * null exactly like a nonexistent one (no run-id oracle); children are additionally
+     * owner-filtered through their own flow join.
+     *
+     * @return array{runs: array[], total: int, limit: int, offset: int}|null
+     */
+    public function listOwnerRunChildren(string $ownerUserId, string $runId, int $limit = 25, int $offset = 0): ?array
+    {
+        if ($this->getOwnerRun($ownerUserId, $runId) === null) {
+            return null;
+        }
+        $limit = max(1, min(100, $limit));
+        $offset = max(0, $offset);
+
+        $count = $this->mysql->prepare("
+            SELECT COUNT(*)
+            FROM flow_run_logs r
+            JOIN flow_definitions f ON f.id = r.flow_definition_id
+            WHERE r.parent_run_id = :id AND f.owner_user_id = :o
+        ");
+        $count->execute(['id' => $runId, 'o' => $ownerUserId]);
+        $total = (int) $count->fetchColumn();
+
+        $stmt = $this->mysql->prepare("
+            SELECT r.*, f.slug AS flow_slug
+            FROM flow_run_logs r
+            JOIN flow_definitions f ON f.id = r.flow_definition_id
+            WHERE r.parent_run_id = :id AND f.owner_user_id = :o
+            ORDER BY r.created_at ASC, r.id ASC
+            LIMIT {$limit} OFFSET {$offset}
+        ");
+        $stmt->execute(['id' => $runId, 'o' => $ownerUserId]);
+
+        return [
+            'runs' => array_map([$this, 'formatRun'], $stmt->fetchAll()),
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+        ];
+    }
+
     public function getOwnerRun(string $ownerUserId, string $runId): ?array
     {
         $stmt = $this->mysql->prepare("

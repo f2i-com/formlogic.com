@@ -243,6 +243,41 @@ class FlowVersioningTest extends TestCase
         $this->assertSame($root['runId'], $forged['rootRunId']);
     }
 
+    public function testListOwnerRunChildrenReturnsDirectChildrenOnly(): void
+    {
+        $this->makeFlow();
+        $root = $this->reserve();
+        $c1 = $this->reserve(['parentRunId' => $root['runId'], 'callNodeId' => 'call-a']);
+        $c2 = $this->reserve(['parentRunId' => $root['runId'], 'callNodeId' => 'call-b']);
+        $grand = $this->reserve(['parentRunId' => $c1['runId'], 'callNodeId' => 'call-c']);
+
+        $page = self::$flows->listOwnerRunChildren($this->userId, $root['runId']);
+        $this->assertNotNull($page);
+        $this->assertSame(2, $page['total'], 'direct children only — the grandchild lives under c1');
+        // Same-second siblings tie-break by id, so assert membership, not order.
+        $ids = array_column($page['runs'], 'runId');
+        sort($ids);
+        $expected = [$c1['runId'], $c2['runId']];
+        sort($expected);
+        $this->assertSame($expected, $ids);
+        foreach ($page['runs'] as $child) {
+            $this->assertSame($root['runId'], $child['parentRunId']);
+            $this->assertNotNull($child['callNodeId']);
+        }
+
+        $under = self::$flows->listOwnerRunChildren($this->userId, $c1['runId']);
+        $this->assertSame([$grand['runId']], array_column($under['runs'], 'runId'));
+
+        // Pagination clamps and pages.
+        $paged = self::$flows->listOwnerRunChildren($this->userId, $root['runId'], 1, 1);
+        $this->assertSame(2, $paged['total']);
+        $this->assertCount(1, $paged['runs']);
+
+        // Invisible parent (foreign owner / nonexistent) reads identically: null → 404.
+        $this->assertNull(self::$flows->listOwnerRunChildren('someone-else', $root['runId']));
+        $this->assertNull(self::$flows->listOwnerRunChildren($this->userId, 'no-such-run'));
+    }
+
     public function testForeignParentRunIsRefusedOpaquely(): void
     {
         $this->makeFlow();
