@@ -239,7 +239,33 @@ export interface FlowExecutorDeps {
     error?: { code: string; message: string; nodeId?: string };
     runId?: string;
   }>;
+  /**
+   * Run one `service_action` node through the paired same-machine Desktop's
+   * ServiceActionHost (plan §7.6 — wired by flowDispatcher over the token-gated
+   * loopback gateway with an exact owner-minted action capability). Absent dep =
+   * no Desktop leg in this context → the node keeps its typed Desktop-only
+   * refusal. `desktopUnreachable` marks not-paired/not-running failures so the
+   * node can fall back to that SAME refusal (remote browsers behave exactly as
+   * before this route existed).
+   */
+  invokeServiceAction?(req: ServiceActionInvokeRequest): Promise<ServiceActionInvokeResult>;
 }
+
+/** One §7.6 browser→Desktop service-action invocation (deps.invokeServiceAction). */
+export interface ServiceActionInvokeRequest {
+  definitionId: string;
+  actionId: string;
+  /** Opaque AI provider profile id — the Desktop composes the gateway URL. */
+  connection: string;
+  input: unknown;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export type ServiceActionInvokeResult =
+  | { ok: true; output: unknown }
+  /** `code` is the §6.7 code (or a transport code); the node surfaces `code: message`. */
+  | { ok: false; code: string; message: string; desktopUnreachable?: boolean };
 
 /** Everything one node execution can see. */
 export interface FlowNodeContext {
@@ -1327,6 +1353,66 @@ async function runTtsSpeak(ctx: FlowNodeContext): Promise<unknown> {
  * routing, so an unwired failure is loud (§8.3). Resolution, recursion/depth guards and
  * child run reservation live in deps.invokeChildFlow (the dispatcher's FlowInvoker).
  */
+/** The pre-§7.6 typed refusal — still every non-Desktop-paired context's answer. */
+function serviceActionRefusal(nodeId: string): FlowExecError {
+  return new FlowExecError(
+    'node_failed',
+    `Node '${nodeId}': service_action nodes run on FormLogic Desktop — set the flow's "Run on" to Desktop (or wire a desktop-executed trigger)`,
+    nodeId,
+  );
+}
+
+/**
+ * `service_action` in the browser (plan §7.6, paired same-machine leg). Node data
+ * mirrors the desktop runner exactly (definitionId/definition, actionId/action,
+ * connection/provider, resolve-deep'd input, bounded timeoutMs); the invocation —
+ * catalog resolution, §6.5 validation, gateway transport — happens host-side, and
+ * failures surface as the SAME `code: detail` messages the desktop runner emits.
+ */
+async function runServiceAction(ctx: FlowNodeContext): Promise<unknown> {
+  const { node, deps } = ctx;
+  const data = (node.data ?? {}) as Record<string, unknown>;
+  const first = (...keys: string[]): string => {
+    for (const key of keys) {
+      const value = data[key];
+      if (typeof value === 'string' && value.trim() !== '') return value.trim();
+    }
+    return '';
+  };
+  const definitionId = first('definitionId', 'definition');
+  const actionId = first('actionId', 'action');
+  const connection = first('connection', 'provider');
+  if (definitionId === '' || actionId === '' || connection === '') {
+    throw new FlowExecError(
+      'invalid_flow',
+      `Node '${node.id}': service_action requires definitionId, actionId and connection`,
+      node.id,
+    );
+  }
+  if (!deps.invokeServiceAction) {
+    throw serviceActionRefusal(node.id);
+  }
+  const input = data.input !== undefined ? resolveDeep(data.input, ctx.scope) : {};
+  const timeoutMs =
+    typeof data.timeoutMs === 'number' && Number.isFinite(data.timeoutMs) ? data.timeoutMs : undefined;
+
+  const result = await deps.invokeServiceAction({
+    definitionId,
+    actionId,
+    connection,
+    input,
+    timeoutMs,
+    signal: ctx.signal,
+  });
+  if (!result.ok) {
+    // No reachable paired Desktop = exactly the pre-route behavior, so remote
+    // browsers keep their actionable "run this on Desktop" diagnostic.
+    if (result.desktopUnreachable) throw serviceActionRefusal(node.id);
+    throw new FlowExecError('node_failed', `Node '${node.id}': ${result.code}: ${result.message}`, node.id);
+  }
+  return result.output;
+}
+
 async function runFlowCall(ctx: FlowNodeContext): Promise<unknown> {
   const { node, deps } = ctx;
   const data = (node.data ?? {}) as Record<string, unknown>;
@@ -1453,17 +1539,12 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
     case 'llm_chat':
       return await runLlmChat(ctx);
 
-    // Generic ServiceDefinition action (extensible-flows plan §7, slice 2). v1 executes
-    // ONLY on FormLogic Desktop (the ServiceActionHost lives there — catalog resolution,
-    // schema validation, credential-holding gateway transport). The browser refuses with
-    // a precise, actionable diagnostic instead of silently pretending (§15.5) — the
-    // browser→Desktop invoke route lands with the progress/cancellation slice.
+    // Generic ServiceDefinition action (extensible-flows plan §7). The ServiceActionHost
+    // lives on FormLogic Desktop; a browser context with a paired SAME-MACHINE Desktop
+    // invokes it through the dispatcher-wired §7.6 route (deps.invokeServiceAction).
+    // Everything else keeps the typed, actionable refusal (§15.5).
     case 'service_action':
-      throw new FlowExecError(
-        'node_failed',
-        `Node '${node.id}': service_action nodes run on FormLogic Desktop — set the flow's "Run on" to Desktop (or wire a desktop-executed trigger)`,
-        node.id,
-      );
+      return await runServiceAction(ctx);
 
     case 'flow_call':
       return await runFlowCall(ctx);

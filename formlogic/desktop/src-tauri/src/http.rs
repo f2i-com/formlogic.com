@@ -667,6 +667,82 @@ async fn codex_interrupt(
     }
 }
 
+// ------- Generic service-action invoke (extensible-flows plan §7.6) -------
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceActionInvokeBody {
+    /// Opaque AI provider profile id — same shape rules as the flow runner's
+    /// `named_ai_provider_endpoint`; the loopback base is composed host-side.
+    connection: String,
+    #[serde(default)]
+    input: serde_json::Value,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+/// The exact owner-minted grant a website needs for one service action — the
+/// SAME `service.{definition}.{action}` vocabulary the AI gateway's per-path
+/// capabilities use, so backend mint lists cover both surfaces identically.
+fn service_action_invoke_capability(definition_id: &str, action_id: &str) -> String {
+    format!("service.{definition_id}.{action_id}")
+}
+
+/// Map a ServiceActionHost refusal onto the wire. The envelope `code` is the
+/// §6.7 code verbatim, so the browser node composes the SAME `code: detail`
+/// message shape the desktop flow runner surfaces (§15.5 parity).
+fn service_invoke_error(error: crate::services::invocation::InvokeError) -> Response {
+    use crate::services::invocation::InvokeErrorCode as C;
+    let status = match error.code {
+        C::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        C::ActionUnavailable => StatusCode::NOT_FOUND,
+        C::InputInvalid => StatusCode::BAD_REQUEST,
+        C::OutputInvalid | C::TransportFailed => StatusCode::BAD_GATEWAY,
+    };
+    let code = error.code.as_str();
+    desktop_err(status, code, &error.message)
+}
+
+fn service_invoke_http() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
+/// POST /api/services/actions/:definitionId/:actionId/invoke — the paired
+/// same-machine browser leg of the §7.6 execution matrix: a browser-executed
+/// flow's `service_action` node runs through the SAME ServiceActionHost the
+/// desktop flow runner uses (catalog resolution → §6.5 input validation →
+/// credential-holding gateway transport → output validation). AUTH lives in
+/// `management_auth_guard`: website callers need the exact owner-minted
+/// `service.{definition}.{action}` capability derived from this path by
+/// `service_action_invoke_path_capability` (fail-closed like the AI inference
+/// lanes — an unlinked desktop refuses); Desktop administration and the signed
+/// plugin gateway pass. Cancellation: the caller aborts its request — dropping
+/// the connection cancels this handler's future and the in-flight gateway call.
+async fn invoke_service_action(
+    axum::extract::Path((definition_id, action_id)): axum::extract::Path<(String, String)>,
+    Json(body): Json<ServiceActionInvokeBody>,
+) -> Response {
+    let action = match crate::services::invocation::resolve_action(&definition_id, &action_id) {
+        Ok(action) => action,
+        Err(error) => return service_invoke_error(error),
+    };
+    match crate::services::invocation::invoke(
+        service_invoke_http(),
+        &action,
+        &body.connection,
+        &body.input,
+        body.timeout_ms,
+    )
+    .await
+    {
+        Ok(output) => {
+            (StatusCode::OK, Json(serde_json::json!({ "ok": true, "output": output }))).into_response()
+        }
+        Err(error) => service_invoke_error(error),
+    }
+}
+
 /// Capability hint per service — which AI lanes a local service can serve.
 /// A template-DECLARED capability list (non-empty) is authoritative; else the
 /// legacy category-substring heuristic applies UNCHANGED (existing templates
@@ -4641,6 +4717,38 @@ fn website_service_capability(method: &Method, path: &str) -> Result<Option<&'st
     Ok(openai_api_owner_capability(method, path))
 }
 
+/// The generic invoke route's required grant is DERIVED FROM ITS PATH
+/// (`POST /api/services/actions/:definitionId/:actionId/invoke` →
+/// `service.{definition}.{action}`), so the middleware enforces it exactly like
+/// the static AI-lane capabilities. Segments are strictly percent-decoded the
+/// same way axum decodes them for the handler — a malformed escape is a
+/// request error, never a fall-through to some other capability (or none).
+fn service_action_invoke_path_capability(
+    method: &Method,
+    path: &str,
+) -> Result<Option<String>, ()> {
+    if *method != Method::POST {
+        return Ok(None);
+    }
+    let Some(rest) = path.strip_prefix("/api/services/actions/") else {
+        return Ok(None);
+    };
+    let Some(rest) = rest.strip_suffix("/invoke") else {
+        return Ok(None);
+    };
+    let mut parts = rest.split('/');
+    let (Some(raw_definition), Some(raw_action), None) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(None);
+    };
+    if raw_definition.is_empty() || raw_action.is_empty() {
+        return Ok(None);
+    }
+    let definition_id = strict_percent_decode_path_segment(raw_definition)?;
+    let action_id = strict_percent_decode_path_segment(raw_action)?;
+    Ok(Some(service_action_invoke_capability(&definition_id, &action_id)))
+}
+
 fn codex_desktop_admin_path(path: &str) -> bool {
     path.starts_with("/api/services/codex/auth/")
         || path == "/api/services/codex/actions/turn.interrupt"
@@ -4909,7 +5017,23 @@ async fn management_auth_guard(
             )
         }
     };
-    if let Some(required) = website_capability {
+    // The generic service-action invoke route (§7.6) derives its exact grant
+    // from the path's definition/action segments — enforced HERE, exactly like
+    // the static AI-lane capabilities above.
+    let invoke_capability = match service_action_invoke_path_capability(&m, req.uri().path()) {
+        Ok(capability) => capability,
+        Err(()) => {
+            return desktop_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "The service action path contains malformed percent-encoding.",
+            )
+        }
+    };
+    let required_capability: Option<std::borrow::Cow<'_, str>> = website_capability
+        .map(std::borrow::Cow::Borrowed)
+        .or(invoke_capability.map(std::borrow::Cow::Owned));
+    if let Some(required) = required_capability.as_deref() {
         if !(server_token_ok || gui_webview_ok || plugin_gateway_ok) {
             let grants =
                 match resolve_capability_grants(
@@ -5094,6 +5218,12 @@ pub async fn serve(
         .route(
             "/api/services/codex/actions/turn.interrupt",
             post(codex_interrupt),
+        )
+        // §7.6 paired same-machine browser leg — capability-gated in the
+        // handler (the required grant depends on the path's definition/action).
+        .route(
+            "/api/services/actions/:definitionId/:actionId/invoke",
+            post(invoke_service_action).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
         .route("/api/services/ensure-by-port", post(ensure_service_by_port))
         .route("/api/services/:id", delete(delete_service))
@@ -5354,7 +5484,9 @@ mod tests {
         direct_command_request_id, grant_covers_capability, health_body, is_ai_inference_path,
         is_ai_realtime_stream_path, is_gui_webview_origin, is_privileged_path,
         management_auth_decision, offline_grace_grants, openai_api_owner_capability,
-        realtime_stream_principal_allowed, screen_asset_content_type, service_source_capabilities,
+        realtime_stream_principal_allowed, screen_asset_content_type,
+        service_action_invoke_capability, service_action_invoke_path_capability,
+        service_invoke_error, service_source_capabilities,
         strict_percent_decode_path_segment, website_service_capability,
         AokieCodexPhoneConfiguration, OFFLINE_GRACE_MAX_AGE,
     };
@@ -6026,6 +6158,81 @@ mod tests {
             openai_api_owner_capability(&Method::GET, "/api/ai/sources"),
             None
         );
+    }
+
+    #[test]
+    fn service_action_invoke_uses_exact_grants_and_typed_statuses() {
+        // The middleware derives the required grant from the invoke path itself —
+        // POST-only, exact segment shape, strict percent-decoding (Err = request
+        // error, never a fall-through past the capability check).
+        assert_eq!(
+            service_action_invoke_path_capability(
+                &Method::POST,
+                "/api/services/actions/openai-api/chat.complete/invoke"
+            ),
+            Ok(Some("service.openai-api.chat.complete".to_string()))
+        );
+        assert_eq!(
+            service_action_invoke_path_capability(
+                &Method::POST,
+                "/api/services/actions/openai%2Dapi/chat.complete/invoke"
+            ),
+            Ok(Some("service.openai-api.chat.complete".to_string())),
+            "the decoded identity selects the capability, matching axum's handler decoding"
+        );
+        assert_eq!(
+            service_action_invoke_path_capability(
+                &Method::GET,
+                "/api/services/actions/openai-api/chat.complete/invoke"
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            service_action_invoke_path_capability(&Method::POST, "/api/services/catalog"),
+            Ok(None)
+        );
+        assert_eq!(
+            service_action_invoke_path_capability(
+                &Method::POST,
+                "/api/services/actions/a/b/c/invoke"
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            service_action_invoke_path_capability(
+                &Method::POST,
+                "/api/services/actions/openai%/chat.complete/invoke"
+            ),
+            Err(())
+        );
+
+        // The invoke route speaks the SAME grant vocabulary as the AI gateway paths,
+        // so one backend mint list covers both surfaces.
+        let required = service_action_invoke_capability("openai-api", "chat.complete");
+        assert_eq!(required, "service.openai-api.chat.complete");
+        assert!(grant_covers_capability(&[required.clone()], &required));
+        assert!(!grant_covers_capability(
+            &["service.openai-api.models.list".into()],
+            &required
+        ));
+        assert!(!grant_covers_capability(
+            &["connector.aokie.*".into()],
+            &required
+        ));
+
+        // §6.7 code → wire status stays typed and bounded (§15.5: the browser composes
+        // the same `code: detail` node message the desktop runner surfaces).
+        use crate::services::invocation::{InvokeError, InvokeErrorCode};
+        for (code, status) in [
+            (InvokeErrorCode::ServiceUnavailable, StatusCode::SERVICE_UNAVAILABLE),
+            (InvokeErrorCode::ActionUnavailable, StatusCode::NOT_FOUND),
+            (InvokeErrorCode::InputInvalid, StatusCode::BAD_REQUEST),
+            (InvokeErrorCode::OutputInvalid, StatusCode::BAD_GATEWAY),
+            (InvokeErrorCode::TransportFailed, StatusCode::BAD_GATEWAY),
+        ] {
+            let response = service_invoke_error(InvokeError { code, message: "detail".into() });
+            assert_eq!(response.status(), status, "status for {}", code.as_str());
+        }
     }
 
     #[test]

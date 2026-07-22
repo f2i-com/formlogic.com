@@ -134,4 +134,9 @@ describe('dispatcher wiring (scope mix-up pin)', () => {
     expect(typeof buildDefaultExecutorDeps().invokeChildFlow).toBe('function');
     expect(typeof buildWorkspaceExecutorDeps().invokeChildFlow).toBe('function');
   });
+
+  it('BOTH executor-deps builders carry the §7.6 service_action Desktop invoker', () => {
+    expect(typeof buildDefaultExecutorDeps().invokeServiceAction).toBe('function');
+    expect(typeof buildWorkspaceExecutorDeps().invokeServiceAction).toBe('function');
+  });
 });

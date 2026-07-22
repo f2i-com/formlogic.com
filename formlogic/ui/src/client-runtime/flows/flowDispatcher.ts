@@ -226,6 +226,36 @@ function buildKvDeps(): Pick<FlowExecutorDeps, 'kvGet' | 'kvSet' | 'kvList'> {
   };
 }
 
+/**
+ * §7.6 browser→Desktop service_action invoker — shared by BOTH scope builders (the
+ * paired Desktop is machine-scoped, not app/workspace-scoped; the exact-action
+ * capability mint is the authorization boundary). Maps the desktop client's typed
+ * envelope onto the executor contract: transport failures and pairing gaps read as
+ * `desktopUnreachable`, so the node degrades to its pre-route typed refusal.
+ */
+async function invokeDesktopServiceAction(
+  req: import('./nodes').ServiceActionInvokeRequest,
+): Promise<import('./nodes').ServiceActionInvokeResult> {
+  const { desktopClient } = await import('../desktop/desktopClient');
+  const result = await desktopClient.servicePlatform.invokeAction({
+    definitionId: req.definitionId,
+    actionId: req.actionId,
+    connection: req.connection,
+    input: req.input,
+    timeoutMs: req.timeoutMs,
+    signal: req.signal,
+  });
+  if (!result.ok) {
+    const desktopUnreachable =
+      result.transportFailure === true
+      || result.error.code === 'auth_required'
+      || result.error.code === 'connector_unavailable';
+    return { ok: false, code: result.error.code, message: result.error.message, desktopUnreachable };
+  }
+  const output = (result.data as { output?: unknown } | null)?.output;
+  return { ok: true, output };
+}
+
 export function buildDefaultExecutorDeps(): FlowExecutorDeps {
   return {
     // NOTE: these forward the node's clamped `timeoutMs` (nodes.ts) as `budgetMs` — the
@@ -288,6 +318,8 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
     listDesktopServices: () => listDesktopServices(),
     // flow_call's browser FlowInvoker (plan §8.5) — shared guard core + APP backend.
     invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
+    // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
+    invokeServiceAction: (req) => invokeDesktopServiceAction(req),
   };
 }
 
@@ -366,6 +398,8 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     // backends — a scope mix-up here silently strands flow_call (pinned by
     // childFlowInvoker.test.ts's wiring assertions).
     invokeChildFlow: (req) => invokeChildFlowWith(workspaceChildFlowBackend(), req),
+    // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
+    invokeServiceAction: (req) => invokeDesktopServiceAction(req),
   };
 }
 

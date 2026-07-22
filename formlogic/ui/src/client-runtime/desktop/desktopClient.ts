@@ -842,6 +842,22 @@ function capabilityFailure<T>(serviceId: string): DesktopClientResult<T> {
 
 type DesktopServiceId = 'openai-api' | 'openai-codex-agent';
 
+/** The capability service a catalog definition mints under — the backend's exact allow-list. */
+function serviceCapabilityId(definitionId: string): DesktopServiceId | null {
+  return definitionId === 'openai-api' || definitionId === 'openai-codex-agent' ? definitionId : null;
+}
+
+/** One §7.6 service-action invocation through the paired Desktop's ServiceActionHost. */
+export interface DesktopServiceActionInvokeRequest {
+  definitionId: string;
+  actionId: string;
+  /** Opaque AI provider profile id (the Desktop composes the loopback gateway URL). */
+  connection: string;
+  input?: unknown;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 async function mintServiceCapability(
   serviceId: DesktopServiceId,
   contextEpoch: number,
@@ -1034,6 +1050,46 @@ export const desktopClient = {
     /** Safe ServiceDefinition projection; credentials/auth transports are omitted. */
     catalog(): Promise<DesktopClientResult<DesktopServiceCatalog>> {
       return desktopFetch<unknown>('/api/services/catalog').then(mapServiceCatalog);
+    },
+
+    /**
+     * POST /api/services/actions/:definitionId/:actionId/invoke — the §7.6 paired
+     * same-machine browser leg: one catalog action through the Desktop's
+     * ServiceActionHost (catalog resolution → §6.5 validation → credential-holding
+     * gateway transport → output validation). The Desktop requires the exact
+     * owner-minted `service.{definition}.{action}` capability; definitions outside
+     * the backend's mintable allow-list refuse here without a wasted round trip.
+     * Aborting `signal` cancels the in-flight Desktop-side gateway call too
+     * (dropping the connection cancels the handler).
+     */
+    invokeAction(req: DesktopServiceActionInvokeRequest): Promise<DesktopClientResult<{ output: unknown }>> {
+      const serviceId = serviceCapabilityId(req.definitionId);
+      if (!serviceId) {
+        return Promise.resolve({
+          ok: false,
+          error: {
+            code: 'capability_denied',
+            message: `No owner capability is mintable for service '${req.definitionId}'.`,
+          },
+        });
+      }
+      const path = `/api/services/actions/${encodeURIComponent(req.definitionId)}/${encodeURIComponent(req.actionId)}/invoke`;
+      // The default client timeout is tuned for management calls; an inference
+      // action needs the action's own budget (plus transport headroom) unless
+      // the caller supplied a signal (the flow's deadline/cancel signal).
+      const signal = req.signal ?? timeoutSignal(Math.max(60_000, (req.timeoutMs ?? 120_000) + 30_000));
+      return withServiceCapability(serviceId, (capabilityToken) =>
+        desktopFetch<{ output: unknown }>(path, {
+          method: 'POST',
+          headers: { 'X-FormLogic-Capability': capabilityToken },
+          body: JSON.stringify({
+            connection: req.connection,
+            input: req.input ?? {},
+            ...(req.timeoutMs !== undefined ? { timeoutMs: req.timeoutMs } : {}),
+          }),
+          ...(signal ? { signal } : {}),
+        })
+      );
     },
 
     codex: {

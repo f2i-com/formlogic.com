@@ -54,26 +54,88 @@ describe('validateWorkflowGraph', () => {
   });
 });
 
-describe('executeFlow — service_action (desktop-only v1)', () => {
-  it('refuses in the browser with an actionable desktop diagnostic', async () => {
-    // v1: the ServiceActionHost lives on FormLogic Desktop. The browser must fail with a
-    // precise, actionable message (extensible-flows plan §15.5) — never silently skip.
-    const graph: WorkflowGraph = {
-      nodes: [
-        { id: 'in', type: 'input' },
-        {
-          id: 'svc',
-          type: 'service_action',
-          data: { definitionId: 'openai-api', actionId: 'chat.complete', connection: 'openai-platform' },
-        },
-      ],
-      edges: [{ source: 'in', target: 'svc' }],
-    };
-    const outcome = await executeFlow(graph, { deps: fakeDeps() });
+describe('executeFlow — service_action (§7.6 paired-Desktop leg)', () => {
+  const svcGraph = (data: Record<string, unknown>): WorkflowGraph => ({
+    nodes: [
+      { id: 'in', type: 'input' },
+      { id: 'svc', type: 'service_action', data },
+      { id: 'out', type: 'output' },
+    ],
+    edges: [
+      { source: 'in', target: 'svc' },
+      { source: 'svc', target: 'out' },
+    ],
+  });
+  const svcData = {
+    definitionId: 'openai-api',
+    actionId: 'chat.complete',
+    connection: 'openai-platform',
+    input: { prompt: '$inputs.q' },
+    timeoutMs: 45000,
+  };
+
+  it('refuses with the actionable desktop diagnostic when no invoker is wired', async () => {
+    // Contexts without a paired same-machine Desktop keep the typed refusal —
+    // a precise, actionable message (extensible-flows plan §15.5), never a silent skip.
+    const outcome = await executeFlow(svcGraph(svcData), { deps: fakeDeps() });
     expect(outcome.status).toBe('error');
     expect(outcome.error?.code).toBe('node_failed');
     expect(outcome.error?.message).toMatch(/FormLogic Desktop/);
     expect(outcome.error?.nodeId).toBe('svc');
+  });
+
+  it('invokes the dispatcher-wired Desktop leg with resolved input and returns the output', async () => {
+    const invokeServiceAction = vi.fn(async () => ({ ok: true as const, output: { choices: ['hi'] } }));
+    const outcome = await executeFlow(svcGraph(svcData), {
+      inputs: { q: 'hello' },
+      deps: fakeDeps({ invokeServiceAction }),
+    });
+    expect(outcome.status).toBe('done');
+    expect(outcome.result).toEqual({ choices: ['hi'] });
+    expect(invokeServiceAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definitionId: 'openai-api',
+        actionId: 'chat.complete',
+        connection: 'openai-platform',
+        input: { prompt: 'hello' },
+        timeoutMs: 45000,
+      }),
+    );
+  });
+
+  it('degrades an unreachable Desktop to the SAME typed refusal (remote browsers unchanged)', async () => {
+    const invokeServiceAction = vi.fn(async () => ({
+      ok: false as const,
+      code: 'connector_unavailable',
+      message: 'FormLogic Desktop is not reachable.',
+      desktopUnreachable: true,
+    }));
+    const outcome = await executeFlow(svcGraph(svcData), { deps: fakeDeps({ invokeServiceAction }) });
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.message).toMatch(/service_action nodes run on FormLogic Desktop/);
+  });
+
+  it("surfaces host refusals as the desktop runner's `code: detail` message shape", async () => {
+    const invokeServiceAction = vi.fn(async () => ({
+      ok: false as const,
+      code: 'input_invalid',
+      message: "input.prompt: expected type 'string'",
+    }));
+    const outcome = await executeFlow(svcGraph(svcData), { deps: fakeDeps({ invokeServiceAction }) });
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.code).toBe('node_failed');
+    expect(outcome.error?.message).toBe("Node 'svc': input_invalid: input.prompt: expected type 'string'");
+  });
+
+  it('rejects incomplete node data as invalid_flow before any invocation', async () => {
+    const invokeServiceAction = vi.fn();
+    const outcome = await executeFlow(
+      svcGraph({ definitionId: 'openai-api' }),
+      { deps: fakeDeps({ invokeServiceAction }) },
+    );
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.code).toBe('invalid_flow');
+    expect(invokeServiceAction).not.toHaveBeenCalled();
   });
 });
 
