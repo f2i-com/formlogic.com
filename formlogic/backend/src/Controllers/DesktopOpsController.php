@@ -85,8 +85,10 @@ class DesktopOpsController
         }
         $isLifecycle = in_array($op, self::LIFECYCLE_OPS, true);
 
-        // The exact target the op acts on: services.* (except list) need serviceId,
-        // plugins.* (except list) need pluginId. Both ride the command payload.
+        // The exact target the op acts on: services.* (except list) take serviceId in the
+        // HTTP body, plugins.* (except list) take pluginId. On the wire BOTH ride the
+        // command payload as `id` — the desktop's desktop_ops::execute reads payload.id
+        // (its side of this seam is pinned in desktop_ops.rs tests).
         $payload = [];
         $targetKey = str_starts_with($op, 'desktop.services.') ? 'serviceId' : 'pluginId';
         $targetRequired = !str_ends_with($op, '.list');
@@ -95,13 +97,13 @@ class DesktopOpsController
             if (!is_string($targetId) || $targetId === '' || strlen($targetId) > self::MAX_ID || !preg_match(self::ID_PATTERN, $targetId)) {
                 return $this->jsonError($response, $targetKey . ' is required for ' . $op . ' (max ' . self::MAX_ID . ' chars, letters/digits/._-)', 400);
             }
-            $payload[$targetKey] = $targetId;
+            $payload['id'] = $targetId;
         } elseif (is_string($targetId) && $targetId !== '') {
             // Tolerated on list ops but shape-checked like everything else.
             if (strlen($targetId) > self::MAX_ID || !preg_match(self::ID_PATTERN, $targetId)) {
                 return $this->jsonError($response, $targetKey . ' must be letters/digits/._- (max ' . self::MAX_ID . ' chars)', 400);
             }
-            $payload[$targetKey] = $targetId;
+            $payload['id'] = $targetId;
         }
 
         // Tier gate: both tiers need a linked desktop; lifecycle ops additionally need the

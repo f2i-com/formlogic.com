@@ -173,7 +173,9 @@ class DesktopOpsTest extends TestCase
         // Cross-side seam pin: the stored command is the SHORT verb — the desktop's
         // DesktopOp::from_command rejects prefixed names ('desktop.' = connector id).
         $this->assertSame('services.restart', $row['command']);
-        $this->assertSame(['serviceId' => 'llama-cpp'], json_decode((string) $row['payload_json'], true));
+        // Cross-side seam pin: the target rides the payload as `id` (never serviceId /
+        // pluginId — those are HTTP-body keys only). desktop_ops::execute reads payload.id.
+        $this->assertSame(['id' => 'llama-cpp'], json_decode((string) $row['payload_json'], true));
         $this->assertNull($row['app_id']); // account-scoped, never app-scoped
         $this->assertSame('inst-a', $row['target_instance_id']);
     }
@@ -187,7 +189,7 @@ class DesktopOpsTest extends TestCase
         $this->assertSame(201, $health['status']);
         $row = $this->commandRow($health['body']['data']['commandId']);
         $this->assertSame('plugins.health', $row['command']);
-        $this->assertSame(['pluginId' => 'aokie'], json_decode((string) $row['payload_json'], true));
+        $this->assertSame(['id' => 'aokie'], json_decode((string) $row['payload_json'], true));
     }
 
     public function testEnqueueIsIdempotentOnKey(): void
