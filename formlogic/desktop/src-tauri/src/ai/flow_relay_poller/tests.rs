@@ -79,6 +79,7 @@ fn test_executor() -> FlowExecutor {
                 registry: None,
                 service_bases: HashMap::new(),
                 default_ai_prefs: None,
+                invoke_child_flow: None,
             };
             let opts = RunOptions {
                 inputs: job.inputs,
@@ -89,6 +90,8 @@ fn test_executor() -> FlowExecutor {
                 flow_slug: job.flow_id.clone(),
                 request_id_seed: job.seed.clone(),
                 progress: job.progress,
+                call_stack: vec![],
+                run_id: None,
             };
             runner::execute_flow(&flow_json, &deps, &opts).await
         })

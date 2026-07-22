@@ -431,6 +431,7 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
         registry: None,
         service_bases: HashMap::new(),
         default_ai_prefs: None,
+        invoke_child_flow: None,
     };
     let opts = RunOptions {
         inputs: json!({ "text": "Thanks for calling, how can I help?" }),
@@ -441,6 +442,8 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
         flow_slug: "live-reply-test".to_string(),
         request_id_seed: "aokie-plugin-live".to_string(),
         progress: None,
+        call_stack: vec!["test-root-flow".into()],
+        run_id: None,
     };
     let outcome = execute_flow(&flow_json, &deps, &opts).await;
     // The mock call already ran to completion (Ended) above — so the REAL plugin
@@ -469,6 +472,8 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
         flow_slug: "live-reply-test".to_string(),
         request_id_seed: "aokie-plugin-live-no-cap".to_string(),
         progress: None,
+        call_stack: vec!["test-root-flow".into()],
+        run_id: None,
     };
     let outcome2 = execute_flow(&flow_json, &deps, &opts_no_cap).await;
     assert_eq!(outcome2.status, "error");

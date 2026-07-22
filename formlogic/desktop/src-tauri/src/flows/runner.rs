@@ -149,7 +149,44 @@ pub struct RunDeps {
     /// llm_chat node's provider is absent/'default'. `None`/never-fetched ⇒ the node fails
     /// with the typed `ai_default_unresolved` error — never a silent source hop.
     pub default_ai_prefs: Option<Arc<crate::ai::default_prefs::DefaultAiPrefsStore>>,
+    /// flow_call's desktop FlowInvoker (extensible-flows plan §8.5/§15.6), built by the
+    /// dispatcher: resolve the child within the owner's flow snapshot, guard
+    /// recursion/depth, reserve a lineage-linked owner run, execute INLINE on this worker
+    /// (never re-enqueued behind the parent on the single-flight relay lane), complete
+    /// the run. `None` ⇒ flow_call refuses typed (mirrors the browser's absent-dep case).
+    pub invoke_child_flow: Option<ChildFlowInvoker>,
 }
+
+/// Child-flow invocation request (`flow_call` → the dispatcher's FlowInvoker).
+#[derive(Debug, Clone)]
+pub struct ChildFlowRequest {
+    pub target_flow_id: String,
+    pub inputs: Value,
+    pub call_node_id: String,
+    /// Awaited ancestry INCLUDING the calling flow (stable ids, root first).
+    pub call_stack: Vec<String>,
+    /// The calling run's log id — recorded as the child's parent (lineage, plan §8.7).
+    pub parent_run_id: Option<String>,
+    pub timeout_ms: Option<u64>,
+}
+
+/// The invoker's return: the child's outcome + its reserved run-log id.
+pub struct ChildFlowEnvelope {
+    pub outcome: FlowOutcome,
+    pub run_id: Option<String>,
+}
+
+/// Dispatcher-provided child invoker. Refusals (dependency_missing / recursion_detected /
+/// root_budget_exceeded / transport_failed) return Err with the §6.7 code as the message
+/// prefix — the same contract as the browser invoker (childFlowInvoker.ts). The boxed
+/// future breaks the recursive-type cycle (execute_flow → node → invoker → execute_flow).
+pub type ChildFlowInvoker = Arc<
+    dyn Fn(
+            ChildFlowRequest,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ChildFlowEnvelope, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Options for one run.
 pub struct RunOptions {
@@ -167,6 +204,13 @@ pub struct RunOptions {
     /// relay lane can stream sealed `flow_progress` frames. Purely additive —
     /// `None` keeps every existing call site byte-identical in behavior.
     pub progress: Option<NodeProgressSink>,
+    /// Awaited flow_call ancestry INCLUDING this flow (stable flow ids, root first —
+    /// plan §8.8 recursion/depth guard). Empty ⇒ this context cannot host children and
+    /// flow_call refuses typed. The dispatcher seeds it with [flowId] where known.
+    pub call_stack: Vec<String>,
+    /// This run's reserved run-log id — flow_call children name it as parentRunId
+    /// (lineage, plan §8.7). None on inline/unreserved executions.
+    pub run_id: Option<String>,
 }
 
 /// One node-boundary progress event (see [`RunOptions::progress`]).
@@ -290,14 +334,24 @@ fn topological_order(graph: &Graph) -> Option<Vec<usize>> {
 
 /// Which outgoing edges a finished node activates (condition routes by handle).
 fn edge_is_active(node: &GraphNode, output: &Value, source_handle: Option<&str>) -> bool {
-    if node.node_type != "condition" {
-        return true;
+    if node.node_type == "condition" {
+        let branch = if crate::flows::selectors::js_truthy(Some(output)) { "true" } else { "false" };
+        return match source_handle {
+            None | Some("") => branch == "true",
+            Some(h) => h == branch,
+        };
     }
-    let branch = if crate::flows::selectors::js_truthy(Some(output)) { "true" } else { "false" };
-    match source_handle {
-        None | Some("") => branch == "true",
-        Some(h) => h == branch,
+    if node.node_type == "flow_call" {
+        // flow_call routes success/failure by handle (plan §8.3). A failed child only
+        // reaches routing under failureMode 'route' (fail-parent throws — no edges
+        // activate); a handle-less edge follows success. Mirrors the browser executor.
+        let branch = if output.get("status").and_then(Value::as_str) == Some("failed") { "failure" } else { "success" };
+        return match source_handle {
+            None | Some("") => branch == "success",
+            Some(h) => h == branch,
+        };
     }
+    true
 }
 
 /// Interpret a WorkflowGraph. Resolves (never rejects) with the run outcome.
@@ -972,17 +1026,10 @@ async fn execute_node(
         // ServiceActionHost). §6.7 codes ride the message as `code: detail`.
         "service_action" => run_service_action(node, scope, deps).await,
 
-        // Awaited flow-to-flow composition (extensible-flows plan §8) — browser-first v1.
-        // The desktop invoker (inline child execution + lineage, §8.5) lands with the
-        // orchestrator slice; until then refuse typed, never silently diverge (§15.5).
-        "flow_call" => Err(FlowError::new(
-            FlowErrorCode::NodeFailed,
-            format!(
-                "Node '{}': flow_call runs in the browser app runtime in v1 — desktop execution lands with the orchestrator slice",
-                node.id
-            ),
-            Some(node.id.clone()),
-        )),
+        // Awaited flow-to-flow composition (extensible-flows plan §8): the dispatcher's
+        // FlowInvoker executes the child INLINE on this worker (§15.6 — never re-enqueued
+        // behind the parent on the single-flight relay lane).
+        "flow_call" => run_flow_call(node, scope, deps, opts).await,
 
         "http_request" => run_http_request(node, scope, deps).await,
 
@@ -1401,6 +1448,76 @@ async fn run_service_action(
     crate::services::invocation::invoke(&deps.http, &action, &connection, &input, timeout_override)
         .await
         .map_err(node_err)
+}
+
+/// `flow_call` (extensible-flows plan §8, desktop leg). data: flowId (STABLE id, §8.1),
+/// input (selector-resolved object), failureMode ('fail-parent' default | 'route'),
+/// timeoutMs. Output { status: 'succeeded'|'failed', result?, error?, runId } — the
+/// executor routes Success/Failure handles by `status` (edge_is_active); fail-parent
+/// fails the parent `child_flow_failed` so an unwired failure is loud. Resolution,
+/// guards, reservation and inline execution live in the dispatcher's invoker
+/// (RunDeps::invoke_child_flow) — identical contract to the browser's childFlowInvoker.
+async fn run_flow_call(
+    node: &GraphNode,
+    scope: &SelectorScope,
+    deps: &RunDeps,
+    opts: &RunOptions,
+) -> Result<Value, FlowError> {
+    let target_flow_id = require_string(node, &["flowId", "flow"])?;
+    let data = node_data(node);
+    let failure_mode = data.get("failureMode").and_then(Value::as_str).unwrap_or("fail-parent");
+    let input = data
+        .get("input")
+        .map(|raw| crate::flows::selectors::resolve_deep(raw, scope))
+        .unwrap_or_else(|| json!({}));
+    let timeout_override = clamp_declared_timeout(data).map(|d| d.as_millis() as u64);
+    let refusal = |msg: String| {
+        FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}': {msg}", node.id), Some(node.id.clone()))
+    };
+
+    let Some(invoker) = deps.invoke_child_flow.as_ref() else {
+        return Err(refusal("flow_call is not available in this context (no flow invoker)".into()));
+    };
+    if opts.call_stack.is_empty() {
+        return Err(refusal("flow_call is not available in this context (no ancestry seed)".into()));
+    }
+
+    let envelope = invoker(ChildFlowRequest {
+        target_flow_id: target_flow_id.clone(),
+        inputs: input,
+        call_node_id: node.id.clone(),
+        call_stack: opts.call_stack.clone(),
+        parent_run_id: opts.run_id.clone(),
+        timeout_ms: timeout_override,
+    })
+    .await
+    .map_err(refusal)?;
+
+    let outcome = envelope.outcome;
+    if outcome.status == "done" {
+        return Ok(json!({
+            "status": "succeeded",
+            "result": outcome.result.unwrap_or(Value::Null),
+            "runId": envelope.run_id,
+        }));
+    }
+    let (code, message) = outcome
+        .error
+        .as_ref()
+        .map(|e| (e.code.as_str().to_string(), e.message.clone()))
+        .unwrap_or_else(|| (outcome.status.to_string(), format!("Child flow {}", outcome.status)));
+    if failure_mode == "route" {
+        return Ok(json!({
+            "status": "failed",
+            "error": { "code": code, "message": message },
+            "runId": envelope.run_id,
+        }));
+    }
+    Err(FlowError::new(
+        FlowErrorCode::NodeFailed,
+        format!("Node '{}': child_flow_failed: flow '{target_flow_id}' {code}: {message}", node.id),
+        Some(node.id.clone()),
+    ))
 }
 
 fn named_ai_provider_endpoint(provider: &str) -> Result<String, String> {
@@ -2183,6 +2300,7 @@ mod tests {
             registry: None,
             service_bases: HashMap::new(),
             default_ai_prefs: None,
+            invoke_child_flow: None,
         }
     }
 
@@ -2196,6 +2314,8 @@ mod tests {
             flow_slug: "t".into(),
             request_id_seed: "test-run-1".into(),
             progress: None,
+            call_stack: vec!["test-root-flow".into()],
+            run_id: None,
         }
     }
 
@@ -2678,6 +2798,94 @@ mod tests {
         let err = out.error.expect("error envelope");
         assert!(err.message.contains("input_invalid"), "got: {}", err.message);
         assert!(err.message.contains("messages"), "names the missing property: {}", err.message);
+    }
+
+    /// RunDeps with a canned flow_call invoker (no dispatcher/server needed).
+    fn deps_with_child_invoker(envelope: fn() -> Result<ChildFlowEnvelope, String>) -> RunDeps {
+        RunDeps {
+            invoke_child_flow: Some(Arc::new(move |_req| Box::pin(async move { envelope() }))),
+            ..deps()
+        }
+    }
+
+    #[tokio::test]
+    async fn flow_call_routes_success_and_failure_handles_like_the_browser() {
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "call", "type": "flow_call", "data": { "flowId": "child-1", "failureMode": "route" } },
+                { "id": "ok", "type": "output", "data": { "value": "took success" } },
+                { "id": "bad", "type": "output", "data": { "value": "took failure" } }
+            ],
+            "edges": [
+                { "source": "in", "target": "call" },
+                { "source": "call", "target": "ok", "sourceHandle": "success" },
+                { "source": "call", "target": "bad", "sourceHandle": "failure" }
+            ]
+        });
+        let ok_deps = deps_with_child_invoker(|| {
+            Ok(ChildFlowEnvelope {
+                outcome: FlowOutcome::done(json!({ "msg": "hi" }), 1),
+                run_id: Some("run-child".into()),
+            })
+        });
+        let out = execute_flow(&flow, &ok_deps, &opts()).await;
+        assert_eq!(out.status, "done");
+        assert_eq!(out.result, Some(json!("took success")));
+
+        let fail_deps = deps_with_child_invoker(|| {
+            Ok(ChildFlowEnvelope {
+                outcome: FlowOutcome::err(
+                    FlowError::new(FlowErrorCode::Timeout, "child ran out of time", None),
+                    1,
+                ),
+                run_id: Some("run-child".into()),
+            })
+        });
+        let out = execute_flow(&flow, &fail_deps, &opts()).await;
+        assert_eq!(out.status, "done"); // the PARENT succeeds — the failure path handled it
+        assert_eq!(out.result, Some(json!("took failure")));
+    }
+
+    #[tokio::test]
+    async fn flow_call_fail_parent_default_and_invoker_refusals_are_typed() {
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "call", "type": "flow_call", "data": { "flowId": "child-1" } }
+            ],
+            "edges": [ { "source": "in", "target": "call" } ]
+        });
+        // fail-parent (default): the child's typed error fails the parent loudly.
+        let fail_deps = deps_with_child_invoker(|| {
+            Ok(ChildFlowEnvelope {
+                outcome: FlowOutcome::err(FlowError::new(FlowErrorCode::NodeFailed, "boom", None), 1),
+                run_id: None,
+            })
+        });
+        let out = execute_flow(&flow, &fail_deps, &opts()).await;
+        assert_eq!(out.status, "error");
+        let err = out.error.expect("error envelope");
+        assert!(err.message.contains("child_flow_failed"), "got: {}", err.message);
+        assert_eq!(err.node_id.as_deref(), Some("call"));
+
+        // Invoker refusal (guards live in the dispatcher) surfaces its §6.7 code prefix.
+        let refused = deps_with_child_invoker(|| Err("recursion_detected: flow 'x' is already running".into()));
+        let out = execute_flow(&flow, &refused, &opts()).await;
+        assert!(out.error.expect("error").message.contains("recursion_detected"));
+
+        // No invoker at all (deps()) → typed refusal, mirroring the browser's absent dep.
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert!(out.error.expect("error").message.contains("not available in this context"));
+
+        // Invoker present but no ancestry seed (inline runs) → typed refusal too.
+        let mut bare = opts();
+        bare.call_stack = vec![];
+        let ok_deps = deps_with_child_invoker(|| {
+            Ok(ChildFlowEnvelope { outcome: FlowOutcome::done(json!({}), 1), run_id: None })
+        });
+        let out = execute_flow(&flow, &ok_deps, &bare).await;
+        assert!(out.error.expect("error").message.contains("no ancestry seed"));
     }
 
     /// A busy-wait expression that blocks for roughly `ms` milliseconds (deterministic CPU

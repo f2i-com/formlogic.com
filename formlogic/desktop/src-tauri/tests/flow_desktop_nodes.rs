@@ -114,6 +114,7 @@ fn deps_with_services(base: &str, ids: &[&str]) -> RunDeps {
         registry: None,
         service_bases,
         default_ai_prefs: None,
+        invoke_child_flow: None,
     }
 }
 
@@ -131,6 +132,8 @@ fn opts() -> RunOptions {
         flow_slug: "t".into(),
         request_id_seed: "desktop-node-test".into(),
         progress: None,
+        call_stack: vec!["test-root-flow".into()],
+        run_id: None,
     }
 }
 

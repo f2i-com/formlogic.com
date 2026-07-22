@@ -2189,6 +2189,10 @@ impl FlowRuntime {
             flow_slug,
             request_id_seed,
             progress: None,
+            // flow_call seeds (plan §8.7/§8.8): ancestry from the flow's stable id,
+            // parent linkage from this run's log id (execution_id IS the run id here).
+            call_stack: flow.get("id").and_then(Value::as_str).map(|id| vec![id.to_string()]).unwrap_or_default(),
+            run_id: Some(execution_id.to_string()),
         };
 
         let mut outcome = FlowOutcome { status: "error", result: None, error: None, nodes_executed: 0 };
@@ -2213,7 +2217,7 @@ impl FlowRuntime {
         outcome
     }
 
-    fn build_deps(&self, app_id: Option<String>, client: Option<Arc<FormLogicClient>>) -> RunDeps {
+    fn build_deps(self: &Arc<Self>, app_id: Option<String>, client: Option<Arc<FormLogicClient>>) -> RunDeps {
         RunDeps {
             client: client.or_else(|| self.client()),
             host: Some(self.host.clone()),
@@ -2221,6 +2225,9 @@ impl FlowRuntime {
             http: self.http.clone(),
             llm_endpoint: self.resolve_llm_endpoint(),
             base_url: self.base_url(),
+            // flow_call's desktop FlowInvoker (plan §8.5/§15.6) — recursion reaches back
+            // through this Arc'd closure, so grandchildren compose inline too.
+            invoke_child_flow: Some(self.child_flow_invoker()),
             // Phase 4 (plan §5.6): the owner's Default-AI prefs for llm_chat
             // 'default' resolution (heartbeat-refreshed, disk-cached).
             default_ai_prefs: Some(self.default_ai_prefs.clone()),
@@ -2230,6 +2237,111 @@ impl FlowRuntime {
             registry: self.registry.clone(),
             service_bases: std::collections::HashMap::new(),
         }
+    }
+
+    // ── flow_call desktop FlowInvoker (extensible-flows plan §8.5/§15.6) ─────────────
+
+    /// The Arc'd invoker closure handed to the runner via RunDeps. The boxed future
+    /// breaks the recursive-type cycle (execute_flow → flow_call → this → execute_flow).
+    fn child_flow_invoker(self: &Arc<Self>) -> runner::ChildFlowInvoker {
+        let rt = self.clone();
+        Arc::new(move |req| {
+            let rt = rt.clone();
+            Box::pin(async move { rt.run_child_flow(req).await })
+        })
+    }
+
+    /// Awaited child invocation (plan §8.5): resolve by STABLE id within THIS owner's
+    /// flow snapshot (the snapshot is the allowlist), guard recursion/depth over the
+    /// awaited ancestry, reserve a lineage-linked owner run (server derives root/depth
+    /// from parentRunId — slice 4), execute INLINE on this worker (§15.6 — never
+    /// re-enqueued behind the parent on the single-flight relay lane), complete the run,
+    /// return the envelope. Refusal contract mirrors the browser childFlowInvoker.
+    async fn run_child_flow(
+        self: Arc<Self>,
+        req: runner::ChildFlowRequest,
+    ) -> Result<runner::ChildFlowEnvelope, String> {
+        const FLOW_CALL_MAX_DEPTH: usize = 8;
+        let flow = self
+            .find_flow(Some(&req.target_flow_id), "")
+            .filter(|f| f.get("enabled").and_then(Value::as_bool) != Some(false))
+            .ok_or_else(|| {
+                format!(
+                    "dependency_missing: flow '{}' is not available on this desktop (missing, disabled, or the snapshot is stale)",
+                    req.target_flow_id
+                )
+            })?;
+        let flow_slug = flow.get("slug").and_then(Value::as_str).unwrap_or_default().to_string();
+        if req.call_stack.iter().any(|id| id == &req.target_flow_id) {
+            return Err(format!(
+                "recursion_detected: flow '{flow_slug}' is already running in this awaited call chain"
+            ));
+        }
+        if req.call_stack.len() >= FLOW_CALL_MAX_DEPTH {
+            return Err(format!(
+                "root_budget_exceeded: awaited flow_call depth limit ({FLOW_CALL_MAX_DEPTH}) reached"
+            ));
+        }
+        let client = self
+            .client()
+            .ok_or_else(|| "transport_failed: no FormLogic connection for the child run".to_string())?;
+
+        let correlation = uuid::Uuid::new_v4().simple().to_string();
+        let idempotency_key = format!("flowcall:{}:{}", req.call_node_id, correlation);
+        let reserve_payload = json!({
+            "flowSlug": flow_slug,
+            "triggerEvent": "flow.call",
+            "correlationId": correlation,
+            "idempotencyKey": idempotency_key,
+            "inputSnapshot": req.inputs.clone(),
+            "parentRunId": req.parent_run_id,
+            "callNodeId": req.call_node_id,
+        });
+        let (run, _created) = client
+            .reserve_run(&reserve_payload)
+            .await
+            .map_err(|e| format!("transport_failed: child run reservation failed: {e}"))?;
+        let run_id = run.get("runId").and_then(Value::as_str).map(str::to_string);
+
+        let flow_json = flow.get("flowJson").cloned().unwrap_or(json!({}));
+        let capabilities = flow
+            .get("nodeCapabilities")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let app_id = flow.get("appId").and_then(Value::as_str).map(str::to_string);
+        let deps = self.build_deps(app_id.clone(), Some(client.clone()));
+        let mut call_stack = req.call_stack.clone();
+        call_stack.push(req.target_flow_id.clone());
+        let opts = runner::RunOptions {
+            inputs: req.inputs,
+            event: None,
+            app: self.app_context(app_id.as_deref()),
+            timeout_ms: req.timeout_ms.unwrap_or(runner::DEFAULT_TIMEOUT_MS),
+            capabilities,
+            flow_slug,
+            request_id_seed: idempotency_key,
+            progress: None,
+            call_stack,
+            run_id: run_id.clone(),
+        };
+        let outcome = runner::execute_flow(&flow_json, &deps, &opts).await;
+
+        if let Some(id) = &run_id {
+            let payload = if outcome.status == "done" {
+                json!({ "status": "done", "result": outcome.result.clone().unwrap_or(json!({})) })
+            } else {
+                json!({
+                    "status": outcome.status,
+                    "error": outcome.error.as_ref().map(|e| e.to_json())
+                        .unwrap_or(json!({ "code": "node_failed", "message": "Flow failed" })),
+                })
+            };
+            if let Err(e) = client.complete_flow_run(id, &payload, &self.instance_id).await {
+                eprintln!("[flows] flow_call child completeRun failed for {id}: {e}");
+            }
+        }
+        Ok(runner::ChildFlowEnvelope { outcome, run_id })
     }
 
     // ── Phase-5 desktop flow relay lane (plan §5.7) ─────────────────
@@ -2294,6 +2406,10 @@ impl FlowRuntime {
             flow_slug,
             request_id_seed: job.seed,
             progress: job.progress,
+            // Relay jobs execute server-tracked relay rows (not flow_run_logs rows), so
+            // children root themselves; ancestry still guards recursion by flow id.
+            call_stack: flow.get("id").and_then(Value::as_str).map(|id| vec![id.to_string()]).unwrap_or_default(),
+            run_id: None,
         };
         let outcome = runner::execute_flow(&flow_json, &deps, &opts).await;
         self.note_run();
@@ -2766,6 +2882,9 @@ impl FlowRuntime {
                 flow_slug: flow_slug.unwrap_or_default(),
                 request_id_seed: idempotency_key.clone(),
                 progress: None,
+                // Inline flowJson has no stable flow identity — flow_call refuses typed here.
+                call_stack: vec![],
+                run_id: None,
             };
             let outcome = runner::execute_flow(&fj, &deps, &opts).await;
             self.note_run();

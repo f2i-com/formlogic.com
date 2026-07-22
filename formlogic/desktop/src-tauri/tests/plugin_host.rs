@@ -597,6 +597,7 @@ async fn operator_speak_request_id_is_stable_across_retry_and_text_is_unchanged(
         registry: None,
         service_bases: HashMap::new(),
         default_ai_prefs: None,
+        invoke_child_flow: None,
     };
     let mut opts = RunOptions {
         inputs: serde_json::json!({ "callerText": caller_text }),
@@ -607,6 +608,8 @@ async fn operator_speak_request_id_is_stable_across_retry_and_text_is_unchanged(
         flow_slug: "retry-speech".into(),
         request_id_seed: "logical-run-42".into(),
         progress: None,
+        call_stack: vec!["test-root-flow".into()],
+        run_id: None,
     };
 
     // Re-running with the same RunOptions is exactly what retryPolicy does.
