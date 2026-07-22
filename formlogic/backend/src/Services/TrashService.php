@@ -49,6 +49,7 @@ final class TrashService
         private FlowService $flowService,
         array $trashConfig = [],
         ?LoggerInterface $logger = null,
+        private ?FormEncryptionService $formEncryption = null,
     ) {
         $this->pdo = $mysql->getConnection();
         $this->retentionDays = max(1, (int) ($trashConfig['retentionDays'] ?? 30));
@@ -307,15 +308,43 @@ final class TrashService
             throw $e;
         }
 
-        // Consumed: a second restore of the same snapshot would only make copies.
-        $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $trashId]);
-        @unlink($zipAbs);
-
-        // E2EE: a restored private form gets its parked key/grant rows back
-        // ('trashed' → 'active'); manifests never moved.
-        if (($item['kind'] ?? '') === 'form') {
-            $this->formEncryptionLifecycle('restore', (string) $item['original_id']);
+        // Consumed ONLY after the crypto lifecycle succeeded (security review):
+        // the parked key/grant flips and the trash_items delete commit in ONE
+        // transaction, so a lifecycle failure rolls the WHOLE restore back —
+        // imported resources removed, claim released, snapshot kept — instead of
+        // consuming the recovery zip first and stranding the restored form
+        // without its encryption rows.
+        try {
+            $this->pdo->beginTransaction();
+            if (($item['kind'] ?? '') === 'form') {
+                // E2EE: a restored private form gets its parked key/grant rows back
+                // ('trashed' → 'active'); manifests never moved.
+                $this->formEncryptionLifecycle('restore', (string) $item['original_id'], true);
+            }
+            $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $trashId]);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            // Roll the import back too (hard delete — the retained bin item IS the
+            // recovery copy), so a retry starts from the exact pre-restore state
+            // instead of dead-ending on the now-occupied original id.
+            foreach (($summary['forms'] ?? []) as $restoredForm) {
+                try {
+                    $this->formService->deleteForm((string) ($restoredForm['id'] ?? ''));
+                } catch (\Throwable $cleanupError) {
+                    $this->logger->error('Trash: restore rollback could not remove the restored form', [
+                        'formId' => $restoredForm['id'] ?? '', 'error' => $cleanupError->getMessage(),
+                    ]);
+                }
+            }
+            $release = $this->pdo->prepare("UPDATE trash_items SET status = 'trashed' WHERE id = :id");
+            $release->execute(['id' => $trashId]);
+            throw $e;
         }
+        // A second restore of the same snapshot would only make copies.
+        @unlink($zipAbs);
 
         return ['item' => $this->formatItem($item), 'restored' => $summary];
     }
@@ -329,16 +358,32 @@ final class TrashService
         if (!is_array($row) || !is_string($row['zip_path'])) {
             return false;
         }
-        $del = $this->pdo->prepare("DELETE FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
-        $del->execute(['id' => $trashId, 'u' => $userId]);
-        if ($del->rowCount() !== 1) {
+        // E2EE (security review): "delete forever" removes the form's parked
+        // key/grant/manifest rows in the SAME transaction as the item delete,
+        // BEFORE the recovery zip is touched — a crypto-lifecycle failure rolls
+        // both back (row + zip intact) instead of consuming the snapshot first.
+        try {
+            $this->pdo->beginTransaction();
+            if (($row['kind'] ?? '') === 'form') {
+                $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
+            }
+            $del = $this->pdo->prepare("DELETE FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
+            $del->execute(['id' => $trashId, 'u' => $userId]);
+            if ($del->rowCount() !== 1) {
+                $this->pdo->rollBack();
+                return false;
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            $this->logger->error('Trash: purge failed — item and snapshot left intact', [
+                'trashId' => $trashId, 'error' => $e->getMessage(),
+            ]);
             return false;
         }
         @unlink($this->trashDir . '/' . $row['zip_path']);
-        // E2EE: "delete forever" removes the form's parked key/grant/manifest rows.
-        if (($row['kind'] ?? '') === 'form') {
-            $this->formEncryptionLifecycle('purge', (string) $row['original_id']);
-        }
         return true;
     }
 
@@ -353,11 +398,26 @@ final class TrashService
         $items = 0;
         $stmt = $this->pdo->query('SELECT id, zip_path, kind, original_id FROM trash_items WHERE expires_at < NOW()');
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            @unlink($this->trashDir . '/' . $row['zip_path']);
-            $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
-            if (($row['kind'] ?? '') === 'form') {
-                $this->formEncryptionLifecycle('purge', (string) $row['original_id']);
+            // The crypto purge commits in the SAME transaction as the row delete,
+            // BEFORE the zip is unlinked — a failure keeps the item (row + zip)
+            // so the next cron run retries instead of losing the recovery data.
+            try {
+                $this->pdo->beginTransaction();
+                if (($row['kind'] ?? '') === 'form') {
+                    $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
+                }
+                $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
+                $this->pdo->commit();
+            } catch (\Throwable $e) {
+                if ($this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
+                $this->logger->error('Trash: expired-item purge failed — item kept for retry', [
+                    'trashId' => $row['id'], 'error' => $e->getMessage(),
+                ]);
+                continue;
             }
+            @unlink($this->trashDir . '/' . $row['zip_path']);
             $items++;
         }
 
@@ -387,11 +447,13 @@ final class TrashService
             $stmt = $this->pdo->prepare('SELECT id, zip_path, kind, original_id FROM trash_items WHERE user_id = :u');
             $stmt->execute(['u' => $userId]);
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                @unlink($this->trashDir . '/' . $row['zip_path']);
-                $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
+                // Crypto purge FIRST, strictly: a lifecycle failure keeps the row +
+                // zip so the fail-closed count below retains the account.
                 if (($row['kind'] ?? '') === 'form') {
-                    $this->formEncryptionLifecycle('purge', (string) $row['original_id']);
+                    $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
                 }
+                $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
+                @unlink($this->trashDir . '/' . $row['zip_path']);
             }
             $userDir = $this->trashDir . '/' . $this->safeSegment($userId);
             if (is_dir($userDir)) {
@@ -529,17 +591,22 @@ final class TrashService
      * E2EE key-row lifecycle beside the bin (docs/E2EE_PRIVATE_FORMS_PLAN.md §7):
      * trash parks form_encryption / form_ingestion_keys / form_key_grants rows as
      * 'trashed' (manifests are append-only and stay put); restore flips them back
-     * to 'active'; purge hard-deletes every encryption row for the form. Always
-     * best-effort AFTER the authoritative operation succeeded — a lifecycle
-     * failure logs loudly but never fails the user's request.
+     * to 'active'; purge hard-deletes every encryption row for the form.
+     *
+     * Two modes: the trash-time calls are best-effort AFTER the authoritative
+     * delete succeeded (a failure logs loudly but never fails the user's
+     * request); restore/purge callers pass $strict so the lifecycle runs INSIDE
+     * their transaction and any failure rolls the whole operation back — the
+     * recovery zip is only consumed after the crypto rows really moved
+     * (security review: never consume-then-best-effort).
      */
-    private function formEncryptionLifecycle(string $op, string $formId): void
+    private function formEncryptionLifecycle(string $op, string $formId, bool $strict = false): void
     {
         if ($formId === '') {
             return;
         }
         try {
-            $enc = new FormEncryptionService($this->pdo, $this->sqlite);
+            $enc = $this->formEncryption ?? new FormEncryptionService($this->pdo, $this->sqlite);
             match ($op) {
                 'trash' => $enc->markFormTrashed($formId),
                 'restore' => $enc->markFormRestored($formId),
@@ -550,6 +617,9 @@ final class TrashService
             $this->logger->error('Trash: form-encryption lifecycle step failed', [
                 'op' => $op, 'formId' => $formId, 'error' => $e->getMessage(),
             ]);
+            if ($strict) {
+                throw $e;
+            }
         }
     }
 

@@ -71,8 +71,8 @@ export function VaultUnlockDialog({ isOpen, onClose, onUnlocked, title }: VaultU
   };
 
   const doRecovery = async () => {
-    if (!user || !recoveryCode.trim() || newPassphrase.length < 8) {
-      setError(newPassphrase.length < 8 ? 'The new passphrase must be at least 8 characters.' : 'Enter your recovery kit.');
+    if (!user || !recoveryCode.trim() || newPassphrase.length < 12) {
+      setError(newPassphrase.length < 12 ? 'The new passphrase must be at least 12 characters.' : 'Enter your recovery kit.');
       return;
     }
     setBusy(true);
@@ -140,7 +140,7 @@ export function VaultUnlockDialog({ isOpen, onClose, onUnlocked, title }: VaultU
             label="New vault passphrase"
             value={newPassphrase}
             onChange={(e) => setNewPassphrase(e.target.value)}
-            placeholder="At least 8 characters"
+            placeholder="At least 12 characters"
             autoComplete="new-password"
             onKeyDown={(e) => { if (e.key === 'Enter') void doRecovery(); }}
           />

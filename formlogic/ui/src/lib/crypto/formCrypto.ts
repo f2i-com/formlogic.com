@@ -11,7 +11,7 @@ import { usePrivateDataStore } from '../../stores/privateDataStore';
 import { getCryptoClient, CryptoClientError } from './cryptoClient';
 import { isEncryptedEnvelope, sha256Hex, type InnerPayload, type ResponseEnvelope } from './envelope';
 import { utf8Bytes } from './encoding';
-import type { FormEncryptionStateWire, ManifestRowWire } from '../../types/e2ee';
+import type { FormEncryptionStateWire, ManifestRowWire, PublishSchemaPayload } from '../../types/e2ee';
 
 export interface DecryptedRecord {
   answers: Record<string, unknown>;
@@ -29,22 +29,35 @@ export function vaultGeneration(): number {
 /** formId -> definitively-known privacy (in-memory; enable marks true). */
 const formPrivacyCache = new Map<string, boolean>();
 
-/** Whether a form is private (owner surfaces). A transient failure resolves to
- *  false and is NOT cached. */
-export async function getFormPrivacy(formId: string): Promise<boolean> {
+/** Authoritative privacy state for a form: 'private' or 'plain' only when the
+ *  server said so (or enable marked it); 'unknown' on any transient failure. */
+export type FormPrivacy = 'unknown' | 'plain' | 'private';
+
+/**
+ * The server-authoritative privacy state (GET /api/forms/{id}/encryption, cached).
+ * A transient failure resolves to 'unknown' and is NOT cached — callers must treat
+ * 'unknown' conservatively (never as proof of plaintext).
+ */
+export async function getFormPrivacyState(formId: string): Promise<FormPrivacy> {
   const cached = formPrivacyCache.get(formId);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return cached ? 'private' : 'plain';
   const res = await api.getFormEncryptionState(formId);
   if (res.data) {
     const isPrivate = res.data.encryption?.mode === 'private';
     formPrivacyCache.set(formId, isPrivate);
-    return isPrivate;
+    return isPrivate ? 'private' : 'plain';
   }
   if (res.status === 404) {
     formPrivacyCache.set(formId, false);
-    return false;
+    return 'plain';
   }
-  return false;
+  return 'unknown';
+}
+
+/** Whether a form is private (owner surfaces). A transient failure resolves to
+ *  false and is NOT cached. Prefer getFormPrivacyState where 'unknown' matters. */
+export async function getFormPrivacy(formId: string): Promise<boolean> {
+  return (await getFormPrivacyState(formId)) === 'private';
 }
 
 export function markFormPrivate(formId: string): void {
@@ -99,7 +112,7 @@ export function ensureFormKeys(formId: string): Promise<FormEncryptionStateWire>
         );
       }
       const state = res.data;
-      await getCryptoClient().loadFormKeys(formId, state.grant ? [state.grant] : [], state.ingestionKeys);
+      await getCryptoClient().loadFormKeys(formId, state.grant ? [state.grant] : [], state.ingestionKeys, state.manifests, state.schemaVersions);
       return state;
     })(),
   };
@@ -237,21 +250,27 @@ export async function enableFormEncryption(formId: string, schemaJson: string): 
 }
 
 /**
- * Publish the form's current field schema as a new signed schema version +
- * manifest (required before a changed private form accepts new submissions).
- * No-ops (returns {published:false}) when the latest manifest already covers
- * exactly these bytes.
+ * SIGN the form's current field schema as a new schema version + manifest —
+ * WITHOUT persisting anything (review 2026-07-22, blocker 2). The caller attaches
+ * the returned payload as `encryptionSchema` to the SAME update call that saves
+ * fields+status, so a private form's fields, signature, manifest and publish state
+ * land atomically (PUT /api/forms/{id}). Returns null when the latest manifest
+ * already covers exactly these bytes (the no-op path). Throws vault_locked /
+ * key_unavailable — the caller MUST block the publish, never publish unsigned.
  */
-export async function publishPrivateFormSchema(
+export async function signPrivateFormSchema(
   formId: string,
   schemaJson: string,
-): Promise<{ published: boolean; schemaVersion?: number }> {
+): Promise<{ encryptionSchema: PublishSchemaPayload; schemaVersion: number } | null> {
   const userId = requireUserId();
+  if (useVaultStore.getState().status !== 'unlocked') {
+    throw new CryptoClientError('vault_locked', 'Unlock your vault to publish a private form — the encryption schema must be signed by your vault.');
+  }
   const state = await ensureFormKeys(formId);
   const manifest = currentManifestOf(state);
   const schemaHash = await sha256Hex(utf8Bytes(schemaJson));
   if (manifest.schemaHash === schemaHash) {
-    return { published: false, schemaVersion: manifest.schemaVersion };
+    return null;
   }
   const version = Math.max(0, ...state.manifests.map((m) => m.schemaVersion)) + 1;
   const signed = await getCryptoClient().publishSchemaVersion(userId, formId, {
@@ -260,17 +279,13 @@ export async function publishPrivateFormSchema(
     schemaJson,
     version,
   });
-  const res = await api.publishFormSchemaVersion(formId, {
-    schema: { schemaJson, schemaHash: signed.schemaHash },
-    manifest: signed.manifest,
-  });
-  if (!res.ok) {
-    forgetFormKeys(formId);
-    const body = (res.body ?? {}) as { code?: string; message?: string };
-    throw new CryptoClientError(body.code ?? 'schema_publish_failed', body.message ?? 'Could not publish the schema change');
-  }
-  forgetFormKeys(formId);
-  return { published: true, schemaVersion: version };
+  return {
+    encryptionSchema: {
+      schema: { schemaJson, schemaHash: signed.schemaHash },
+      manifest: signed.manifest,
+    },
+    schemaVersion: version,
+  };
 }
 
 function requireUserId(): string {

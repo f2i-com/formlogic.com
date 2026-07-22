@@ -14,6 +14,8 @@ export const DEFAULT_KDF_OPSLIMIT = 3;
 export const DEFAULT_KDF_MEMLIMIT = 64 * 1024 * 1024; // 64 MiB
 export const UMK_BYTES = 32;
 export const RECOVERY_KEY_BYTES = 32;
+/** Client-side passphrase floor (offline-attack resistance; review 2026-07-22). */
+export const MIN_PASSPHRASE_LENGTH = 12;
 const RECOVERY_PREFIX = 'FLRK1';
 const RECOVERY_KDF_CONTEXT = 'flrecov1'; // crypto_kdf context: exactly 8 chars
 const RECOVERY_KDF_SUBKEY_ID = 1;
@@ -41,6 +43,13 @@ export class VaultError extends Error {
     super(message);
     this.code = code;
     this.name = 'VaultError';
+  }
+}
+
+/** Fail-closed passphrase policy — every vault-creating/rewrapping path enforces this. */
+export function assertPassphraseStrength(passphrase: string, label = 'Passphrase'): void {
+  if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    throw new VaultError('vault_invalid', `${label} must be at least ${MIN_PASSPHRASE_LENGTH} characters`);
   }
 }
 
@@ -191,6 +200,7 @@ export interface GeneratedVault {
 
 /** Full client-side vault creation (plan §16-P2). All secrets zeroed before return. */
 export async function generateVault(passphrase: string, userId: string): Promise<GeneratedVault> {
+  assertPassphraseStrength(passphrase);
   const sodium = await getSodium();
   const kdf: VaultKdfParams = {
     kdf: KDF_SUITE,

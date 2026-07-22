@@ -71,8 +71,10 @@ class WebhookService
     {
         // E2EE §9.2 gate: webhooks carry answer payloads — creation is refused on
         // private forms (the enable preflight guarantees none pre-exist, so this
-        // closes the post-enable half of the two-ended invariant).
+        // closes the post-enable half of the two-ended invariant). Mid-enable the
+        // refusal is encryption_enabling (409) — the enable-race gate.
         $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        $this->formEncryption->assertNotEnabling($formId);
         if ($this->formEncryption->isPrivate($formId)) {
             throw new PrivateFormEncryptedException('Webhooks are not available on private (end-to-end encrypted) forms (private_form_encrypted).');
         }

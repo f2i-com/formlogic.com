@@ -9,6 +9,7 @@ use FormLogic\Services\SubmissionIdempotencyService;
 use FormLogic\Helpers\RelatedRecords;
 use FormLogic\Services\DuplicateResponseIdException;
 use FormLogic\Services\EnvelopeValidator;
+use FormLogic\Services\EncryptionEnablingException;
 use FormLogic\Services\FormEncryptionService;
 use FormLogic\Services\PrivateFormEncryptedException;
 use FormLogic\Services\ResponseService;
@@ -91,6 +92,13 @@ class ResponseController
     private function privateFormError(Response $response, PrivateFormEncryptedException $e): Response
     {
         return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
+    }
+
+    /** Enable-race gate: true while the form's encryption row is mid-transition. */
+    private function isEncryptionEnabling(string $formId): bool
+    {
+        $enc = $this->formEncryption();
+        return $enc !== null && $enc->encryptionState($formId) === 'enabling';
     }
 
     /**
@@ -438,6 +446,12 @@ class ResponseController
     public function create(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
+
+        // Enable-race gate (§9.1): while the form is mid-enable, EVERY submission
+        // shape (plaintext or envelope) fails closed with the same 409.
+        if ($this->isEncryptionEnabling($formId)) {
+            return $this->jsonError($response, 'Encryption is being enabled for this form — retry in a moment.', 409, EncryptionEnablingException::ERROR_CODE);
+        }
 
         // E2EE dispatch (plan §6): the private branch is taken at the VERY TOP —
         // before sanitizeAnswers/normalizeAnswers or any other plaintext-shaped code
@@ -895,6 +909,20 @@ class ResponseController
 
             $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId, 'stored' => $stored]);
             return ['status' => 201, 'payload' => ['response' => $result]];
+        } catch (EncryptionEnablingException $e) {
+            // Enable-race gate: a concurrent enable committed between the dispatch
+            // check and the atomic write — fail closed with the contract shape.
+            return ['status' => 409, 'payload' => [
+                'error' => true,
+                'message' => $e->getMessage(),
+                'code' => EncryptionEnablingException::ERROR_CODE,
+            ]];
+        } catch (PrivateFormEncryptedException $e) {
+            return ['status' => 400, 'payload' => [
+                'error' => true,
+                'message' => $e->getMessage(),
+                'code' => PrivateFormEncryptedException::ERROR_CODE,
+            ]];
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return ['status' => 400, 'payload' => [
                 'error' => true,
@@ -1274,6 +1302,12 @@ class ResponseController
             ], 404);
         }
 
+        // Enable-race gate (§9.1): mid-enable updates fail closed (envelope AND
+        // plaintext shapes) with the same 409.
+        if ($this->isEncryptionEnabling($formId)) {
+            return $this->jsonError($response, 'Encryption is being enabled for this form — retry in a moment.', 409, EncryptionEnablingException::ERROR_CODE);
+        }
+
         // E2EE dispatch (plan §6): private-form updates are envelope CAS swaps —
         // taken BEFORE the sanitize/normalize/calculated plaintext handling below.
         if ($this->isPrivateForm($formId)) {
@@ -1323,6 +1357,8 @@ class ResponseController
             }
 
             return $this->jsonResponse($response, ['response' => $formResponse]);
+        } catch (EncryptionEnablingException $e) {
+            return $this->jsonError($response, $e->getMessage(), 409, EncryptionEnablingException::ERROR_CODE);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,

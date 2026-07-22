@@ -976,13 +976,16 @@ class MySQLConnection
 
         // Which forms are private (end-to-end encrypted). NO disable path exists (plan
         // D8): no state value, no endpoint, no import flag can revert 'private'.
+        // 'enabling' is the durable plaintext → private transition marker (enable
+        // race fix): it is committed FIRST and every mutation surface fails closed
+        // (409 encryption_enabling) while it is present.
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS form_encryption (
                 form_id VARCHAR(36) PRIMARY KEY,
                 mode ENUM('private') NOT NULL,
                 current_ingest_epoch INT NOT NULL DEFAULT 1,
                 current_fk_epoch INT NOT NULL DEFAULT 1,
-                state ENUM('active','trashed') NOT NULL DEFAULT 'active',
+                state ENUM('enabling','active','trashed') NOT NULL DEFAULT 'active',
                 enabled_by VARCHAR(36) NOT NULL,
                 enabled_at DATETIME
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -1247,6 +1250,16 @@ class MySQLConnection
                 id INT AUTO_INCREMENT PRIMARY KEY
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // E2EE enable race fix (plan §9.1): the durable 'enabling' state. Existing
+        // databases predating it have state ENUM('active','trashed') — widen it so the
+        // enable flow can commit its plaintext → enabling → private transition marker.
+        if ($pdo->query("SHOW TABLES LIKE 'form_encryption'")->rowCount() > 0) {
+            $stateCol = $pdo->query("SHOW COLUMNS FROM form_encryption LIKE 'state'")->fetch(\PDO::FETCH_ASSOC);
+            if (is_array($stateCol) && !str_contains((string) ($stateCol['Type'] ?? ''), 'enabling')) {
+                $pdo->exec("ALTER TABLE form_encryption MODIFY COLUMN state ENUM('enabling','active','trashed') NOT NULL DEFAULT 'active'");
+            }
+        }
 
         // E2EE Private Forms (plan §7): durable publication history. Backfilled NOW()
         // for EVERY pre-existing row (one-time — guarded by the column-existence check)

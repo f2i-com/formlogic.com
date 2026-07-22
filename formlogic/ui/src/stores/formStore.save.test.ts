@@ -19,6 +19,17 @@ vi.mock('./toastStore', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
+// E2EE sign-first path (blocker 2): saveFormPart dynamically imports formCrypto
+// to sign field changes on published private forms. Default: not private.
+const { getFormPrivacyMock, signSchemaMock } = vi.hoisted(() => ({
+  getFormPrivacyMock: vi.fn(async () => false),
+  signSchemaMock: vi.fn(),
+}));
+vi.mock('../lib/crypto/formCrypto', () => ({
+  getFormPrivacy: getFormPrivacyMock,
+  signPrivateFormSchema: signSchemaMock,
+}));
+
 import { api } from '../lib/api';
 import { clearAllDebounceTimers, flushFormSaves, useFormStore } from './formStore';
 
@@ -43,6 +54,8 @@ function seedForm(): Form {
 beforeEach(() => {
   clearAllDebounceTimers();
   mockedUpdateForm.mockReset();
+  getFormPrivacyMock.mockReset().mockResolvedValue(false);
+  signSchemaMock.mockReset();
   useFormStore.setState({
     forms: [seedForm()],
     storageMode: 'api',
@@ -131,5 +144,44 @@ describe('FL-SAVE-001 truthful save state', () => {
     vi.mocked(api).deleteForm = vi.fn(async () => ({ data: { success: true } })) as never;
     await useFormStore.getState().deleteForm(FORM_ID);
     expect(useFormStore.getState().saveErrors[FORM_ID]).toBeUndefined();
+  });
+
+  it('a published PRIVATE form signs field changes into the same save (encryptionSchema attached)', async () => {
+    getFormPrivacyMock.mockResolvedValue(true);
+    signSchemaMock.mockResolvedValue({
+      encryptionSchema: {
+        schema: { schemaJson: '[]', schemaHash: 'abc' },
+        manifest: { signature: 'sig', signerKeyId: 'kid', expiresAt: null },
+      },
+      schemaVersion: 2,
+    });
+    useFormStore.setState({ forms: [{ ...seedForm(), status: 'published' }] });
+    mockedUpdateForm.mockResolvedValue({ data: { form: seedForm() } } as never);
+
+    useFormStore.getState().setFields(FORM_ID, [
+      { id: 'f1', type: 'short_text', label: 'Name', required: false, properties: {}, order: 0 } as Form['fields'][number],
+    ]);
+    const { ok } = await flushFormSaves(FORM_ID);
+
+    expect(ok).toBe(true);
+    expect(signSchemaMock).toHaveBeenCalledWith(FORM_ID, expect.any(String));
+    const payload = mockedUpdateForm.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(payload).toHaveProperty('fields');
+    expect(payload).toHaveProperty('encryptionSchema');
+  });
+
+  it('a published private form whose schema cannot be signed (vault locked) FAILS the save loudly', async () => {
+    getFormPrivacyMock.mockResolvedValue(true);
+    signSchemaMock.mockRejectedValue(Object.assign(new Error('Unlock your vault first'), { code: 'vault_locked' }));
+    useFormStore.setState({ forms: [{ ...seedForm(), status: 'published' }] });
+
+    useFormStore.getState().setFields(FORM_ID, [
+      { id: 'f1', type: 'short_text', label: 'Name', required: false, properties: {}, order: 0 } as Form['fields'][number],
+    ]);
+    const { ok } = await flushFormSaves(FORM_ID);
+
+    expect(ok).toBe(false);
+    expect(useFormStore.getState().saveErrors[FORM_ID]).toContain('fields');
+    expect(mockedUpdateForm).not.toHaveBeenCalled();
   });
 });

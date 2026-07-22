@@ -301,6 +301,9 @@ class ExternalApiController
 
             $createdId = is_string($result['id'] ?? null) ? $result['id'] : null;
             return $this->jsonResponse($response, ['response' => $result], 201);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: mid-enable submissions fail closed with 409.
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
         } catch (PrivateFormEncryptedException $e) {
             // §9.2: plaintext writes to a private form refuse typed, before sanitation runs.
             return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);

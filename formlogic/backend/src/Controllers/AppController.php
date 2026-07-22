@@ -380,6 +380,9 @@ class AppController
         try {
             $forms = $this->appService->addFormToApp($args['id'], $data['formId'], $data['displayName'] ?? null);
             return $this->jsonResponse($response, ['forms' => $forms], 201);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: mid-enable app attach fails closed (409).
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // E2EE §9.2: P3 private forms are standalone-only — typed refusal.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);

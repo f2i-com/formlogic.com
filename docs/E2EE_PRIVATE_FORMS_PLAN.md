@@ -380,10 +380,18 @@ CREATE TABLE form_encryption (
   form_id VARCHAR(36) PRIMARY KEY, mode ENUM('private') NOT NULL,
   current_ingest_epoch INT NOT NULL DEFAULT 1,
   current_fk_epoch INT NOT NULL DEFAULT 1,
-  state ENUM('active','trashed') NOT NULL DEFAULT 'active',
+  state ENUM('enabling','active','trashed') NOT NULL DEFAULT 'active',
   enabled_by VARCHAR(36) NOT NULL, enabled_at DATETIME);
   -- NO disable path exists (D8): no state value, no endpoint, no import flag can revert
   -- 'private'. Enforced in code review + a dedicated test.
+  -- 'enabling' (added post-review): durable enable-in-flight marker. The enable endpoint
+  -- writes it FIRST (PK insert is the gate; a stale marker >5 min is retaken once, so a
+  -- crash never wedges the form), then preflights + writes keys/manifest/grant and flips
+  -- to 'active' in ONE transaction under a forms-row lock. While 'enabling', submit
+  -- (plaintext AND envelope), publish/field saves and integration mutations fail closed
+  -- with 409 encryption_enabling; plaintext inserts are atomic conditional writes that
+  -- re-check the marker at write time. A second concurrent enable gets
+  -- private_enable_blocked with reason enable_in_progress.
 
 CREATE TABLE form_schema_versions (
   id VARCHAR(40) PRIMARY KEY, form_id VARCHAR(36) NOT NULL, version INT NOT NULL,
@@ -537,6 +545,23 @@ manifest rows. Post-enable invariants: adding a blocked feature to a private for
 flow binding, linked_record field, file field pre-P4, app attachment pre-P5) is refused at
 that feature's creation path with `private_form_encrypted` — the §9.2 matrix is enforced on
 *both* ends. Private mode is irreversible (D8).
+
+**Post-review hardening (implemented 2026-07-22, supersedes where it conflicts):**
+- Enable is two-phase with the durable `enabling` marker described above; concurrent submits
+  lose to an atomic conditional write that re-checks the marker at insert time.
+- **Atomic publish:** `PUT /api/forms/{id}` accepts `encryptionSchema {schema, manifest}`
+  applied in the SAME transaction as fields+status; a private form whose fields change while
+  (being) published without a valid signed schema fails `409 manifest_required` with nothing
+  saved. The UI signs first — "published but not re-signed" no longer exists.
+- New codes: `encryption_enabling` (409, retryable), `manifest_required` (409),
+  `kdf_downgrade` (400 — passphrase change may never lower ops/mem; maxima ops ≤ 10,
+  mem ≤ 256 MiB refuse corrupt-browser-freezing params), `encryption_not_restorable`
+  (400 — backups restore E2EE material to the SAME account only; cross-account is refused
+  whole because wrappers are AAD-bound to the original account id).
+- Account erasure transactionally purges all six E2EE tables and verifies zero rows before
+  reporting success. Trash restore/purge consumes its recovery ZIP only after the crypto
+  lifecycle rows commit in the same transaction. Retired ingestion keys stay served to the
+  owner (state gates WRITES only) so historical responses remain decryptable after rotation.
 
 ### 9.2 Fail-closed feature matrix
 

@@ -5,8 +5,12 @@
 //   - unlock/create/recovery go through the crypto worker (secrets stay there);
 //   - lock() bumps the vault GENERATION (forcing remount of anything holding
 //     decrypted data), clears the decrypted LRU, tells the worker to lock and then
-//     terminates it, and broadcasts on BroadcastChannel('fl-vault') so every other
-//     tab locks too (worker terminated there as well);
+//     terminates it (bounded: a wedged worker is hard-terminated after ~250ms), and
+//     broadcasts on BroadcastChannel('fl-vault') so every other tab locks too
+//     (worker terminated there as well). The status flips to 'locked' ONLY after
+//     the worker is dead — never 'locked' with a live worker holding keys;
+//   - a recovery-rewrap / passphrase-CAS failure (unknown server state) forces the
+//     same full lock + terminate;
 //   - auto-lock fires after 30 min idle (configurable via setAutoLockMinutes);
 //   - logout locks via authStore's session purge hook.
 
@@ -99,6 +103,25 @@ export function lockVaultForSessionTeardown(): void {
   useVaultStore.getState().lock();
 }
 
+/**
+ * A recovery-rewrap / passphrase-CAS failure leaves the vault in an UNKNOWN state
+ * (review 2026-07-22): the worker holds secrets derived from a vault the server may
+ * have moved past. Force a full lock: terminate the worker, bump the generation
+ * (dropping decrypted state), and only then report locked.
+ */
+async function forceLockAfterUnknownState(): Promise<void> {
+  stopIdleTimer();
+  await getCryptoClient().lockAndTerminate();
+  const gen = useVaultStore.getState().generation + 1;
+  useVaultStore.setState({
+    generation: gen,
+    status: useVaultStore.getState().vault ? 'locked' : 'none',
+    autoLockAt: null,
+  });
+  usePrivateDataStore.getState().setGeneration(gen);
+  usePrivateDataStore.getState().clear();
+}
+
 /** The backend wraps success bodies in {data: {vault: …}} — pull the vault out. */
 function vaultFromBody(body: Record<string, unknown> | null): VaultWire | null {
   const data = body?.data as { vault?: VaultWire } | undefined;
@@ -150,7 +173,13 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
       if (!res.ok) {
         await client.lockAndTerminate();
         set({ status: 'none', vault: null });
-        return { ok: false, error: res.body?.message as string ?? 'Could not save the vault' };
+        const body = (res.body ?? {}) as { code?: string; message?: string };
+        return {
+          ok: false,
+          error: body.code === 'kdf_downgrade'
+            ? 'The server rejected the vault encryption parameters — reload the app and try again.'
+            : body.message ?? 'Could not save the vault',
+        };
       }
       // The server returns the stored vault ({data:{vault}}) — adopt it verbatim.
       set({ status: 'unlocked', vault: vaultFromBody(res.body) ?? vault });
@@ -216,13 +245,21 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     // same one as a passphrase change (only the passphrase-side fields move).
     const res = await api.changeVaultPassphrase(vault.version, rewrap);
     if (!res.ok) {
+      // The worker already adopted the recovered secrets but the server did NOT
+      // confirm the rewrap (a 409 means another session rewrote the vault; a network
+      // failure leaves acceptance UNKNOWN). Never leave an unlocked worker behind
+      // against a possibly-stale vault: force a full lock + terminate (§10).
+      await forceLockAfterUnknownState();
       const conflict = res.status === 409;
+      const bodyCode = (res.body as { code?: string } | null)?.code;
       return {
         ok: false,
         error: conflict
           ? 'The vault was changed in another session — reload and try again.'
-          : (res.body?.message as string) ?? 'Could not save the re-encrypted vault',
-        code: conflict ? 'vault_version_conflict' : undefined,
+          : bodyCode === 'kdf_downgrade'
+            ? 'The server rejected the vault encryption parameters — reload the app and try again.'
+            : (res.body?.message as string) ?? 'Could not save the re-encrypted vault',
+        code: conflict ? 'vault_version_conflict' : 'vault_state_unknown',
       };
     }
     const updated = vaultFromBody(res.body) ?? { ...vault, ...rewrap, version: vault.version + 1 };
@@ -254,13 +291,20 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     // Rewrap-only (§11): version-checked against the backend; 409 → reload required.
     const res = await api.changeVaultPassphrase(vault.version, rewrap);
     if (!res.ok) {
+      // Same posture as recovery: the rewrap was computed but not confirmed (a 409
+      // means the served vault is stale; a network failure is ambiguous) — force
+      // lock + terminate rather than leaving an unlocked worker in an unknown state.
+      await forceLockAfterUnknownState();
       const conflict = res.status === 409;
+      const bodyCode = (res.body as { code?: string } | null)?.code;
       return {
         ok: false,
         error: conflict
           ? 'The vault was changed in another session — reload and try again.'
-          : (res.body?.message as string) ?? 'Could not save the new passphrase',
-        code: conflict ? 'vault_version_conflict' : undefined,
+          : bodyCode === 'kdf_downgrade'
+            ? 'The server rejected the vault encryption parameters — reload the app and try again.'
+            : (res.body?.message as string) ?? 'Could not save the new passphrase',
+        code: conflict ? 'vault_version_conflict' : 'vault_state_unknown',
       };
     }
     set({ vault: vaultFromBody(res.body) ?? { ...vault, ...rewrap, version: vault.version + 1 } });
@@ -273,13 +317,21 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     try {
       stopIdleTimer();
       const gen = get().generation + 1;
-      // 1. Bump the generation — private-data components remount empty (§10).
+      // 1. Bump the generation — private-data components remount empty (§10). This is
+      //    the synchronous plaintext boundary: editors close and drafts drop NOW.
       set({ generation: gen });
       // 2. Drop the decrypted LRU + error map.
       usePrivateDataStore.getState().setGeneration(gen);
       usePrivateDataStore.getState().clear();
-      // 3. Terminate the crypto worker (its secrets die with its heap).
-      void getCryptoClient().lockAndTerminate();
+      // 3. Terminate the crypto worker (its secrets die with its heap). The status
+      //    flips to locked EXACTLY ONCE, only after the worker is actually dead —
+      //    never report 'locked' while a live worker may still hold keys. A newer
+      //    unlock (generation moved on) supersedes the flip.
+      void getCryptoClient().lockAndTerminate().then(() => {
+        if (get().generation === gen) {
+          set({ status: get().vault ? 'locked' : 'none', autoLockAt: null });
+        }
+      });
       // 4. Propagate to every other tab.
       if (broadcast) {
         ensureChannel();
@@ -289,7 +341,7 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
           /* channel unavailable — this tab still locked */
         }
       }
-      set({ status: get().vault ? 'locked' : 'none', autoLockAt: null });
+      set({ autoLockAt: null });
     } finally {
       set({ locking: false });
     }

@@ -1196,6 +1196,20 @@ class ApiClient {
     });
   }
 
+  /** PUT /api/forms/{id} with the raw status/body preserved — used where typed
+   *  error codes (409 encryption_enabling / manifest_required) must survive to the
+   *  caller, and where the optional E2EE `encryptionSchema` rides along so fields,
+   *  status and the signed schema land in ONE transaction (atomic private publish). */
+  async updateFormWithMeta(
+    id: string,
+    data: Partial<Form> & { encryptionSchema?: PublishSchemaPayload },
+  ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta(`/forms/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   async deleteForm(id: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
     return this.request(`/forms/${id}`, {
       method: 'DELETE',

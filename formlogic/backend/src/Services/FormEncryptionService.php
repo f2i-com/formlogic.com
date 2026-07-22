@@ -42,6 +42,13 @@ final class FormEncryptionService
     /** Field types the P3 preflight blocks outright (files wait for P4, links never). */
     public const BLOCKED_FIELD_TYPES = ['file_upload', 'camera', 'linked_record'];
 
+    /**
+     * An 'enabling' row older than this is a crashed enable (the process died
+     * between the durable enabling marker and the commit) — a retry may retake
+     * it instead of the form staying wedged mid-transition forever.
+     */
+    public const ENABLING_STALE_SECONDS = 300;
+
     /** @var array<string, bool> per-request isPrivate cache (plan §9.2). */
     private static array $privateCache = [];
 
@@ -87,6 +94,38 @@ final class FormEncryptionService
         $stmt = $this->mysql->prepare('SELECT 1 FROM form_encryption WHERE form_id = :f LIMIT 1');
         $stmt->execute(['f' => $formId]);
         return self::$privateCache[$formId] = ($stmt->fetchColumn() !== false);
+    }
+
+    /**
+     * The form's current encryption lifecycle state — 'enabling' (durable
+     * transition marker), 'active', 'trashed' — or null when the form is
+     * plaintext. Deliberately NOT cached: the fail-closed gates must observe a
+     * state flip the moment it commits, not a request-stale snapshot.
+     */
+    public function encryptionState(string $formId): ?string
+    {
+        if ($formId === '') {
+            return null;
+        }
+        $stmt = $this->mysql->prepare('SELECT state FROM form_encryption WHERE form_id = :f LIMIT 1');
+        $stmt->execute(['f' => $formId]);
+        $state = $stmt->fetchColumn();
+        return $state === false ? null : (string) $state;
+    }
+
+    /**
+     * Fail closed while an enable is in flight (enable-race fix): every mutation
+     * surface — submissions, publish/field saves, webhook/flow/integration
+     * mutations — calls this BEFORE its privacy check so nothing can interleave
+     * between the enable preflight and its commit.
+     *
+     * @throws EncryptionEnablingException 409 encryption_enabling
+     */
+    public function assertNotEnabling(string $formId): void
+    {
+        if ($this->encryptionState($formId) === 'enabling') {
+            throw new EncryptionEnablingException();
+        }
     }
 
     /**
@@ -170,10 +209,20 @@ final class FormEncryptionService
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Enable private mode on a form: the §9.1 atomic preflight (EVERY violated item
-     * reported in `reasons`), cryptographic verification of the owner's manifest +
-     * self-grant signatures, then the first key/schema/manifest/grant rows — all in
-     * one MySQL transaction. Irreversible by design (plan D8).
+     * Enable private mode on a form: durable plaintext → enabling → private.
+     *
+     * Phase 1 commits the 'enabling' marker in its OWN short transaction, so
+     * every gated surface (submissions, publish/field saves, integration
+     * mutations) fails closed with 409 encryption_enabling for the WHOLE
+     * enable — the preflight can no longer race a plaintext write that lands
+     * between check and commit. Phase 2 then takes the forms-row lock
+     * (serializing against publish/field saves, which take the same lock),
+     * re-runs the full §9.1 preflight at commit-time state, verifies the
+     * owner's manifest + self-grant signatures, and writes the first
+     * key/schema/manifest/grant rows + the enabling → active flip in ONE
+     * transaction. ANY failure deletes the enabling marker (the form is left
+     * plaintext); a crashed enable leaves a stale marker a retry may retake
+     * after ENABLING_STALE_SECONDS. Irreversible once active (plan D8).
      *
      * @param array<string,mixed> $body
      * @return array{enabled: bool, manifestSeq: int}
@@ -191,125 +240,205 @@ final class FormEncryptionService
 
         $vault = $this->vaultRow($userId);
 
-        $this->mysql->beginTransaction();
+        // ── Phase 1: the durable enabling marker (committed on its own) ──
+        $this->beginEnable($formId, $userId);
+
         try {
-            $reasons = $this->preflightReasons($formId, $userId, $vault !== null);
-            if ($reasons !== []) {
-                $this->mysql->rollBack();
-                throw new EncryptionRequestException('private_enable_blocked', 'This form cannot be made private: ' . implode(', ', $reasons), 409, ['reasons' => $reasons]);
-            }
-            /** @var array{ed25519_pk_raw: string, x25519_pk_raw: string, ed25519_pk_b64: string, x25519_pk_b64: string} $vault */
-
-            // ── Cryptographic write-time verification (plan §8/§11) ──
-            $signerKeyId = substr(hash('sha256', $vault['ed25519_pk_raw']), 0, 16);
-            if (!hash_equals($signerKeyId, $req['manifest']['signerKeyId'])) {
-                throw new EncryptionRequestException('manifest_invalid', 'manifest signerKeyId does not match the requester vault signing key', 400);
-            }
-            $canonical = $this->manifestCanonical($formId, $req['keyId'], 1, $req['ingestionPublicKeyB64'], 1, $req['schema']['schemaHash'], $signerKeyId, null);
-            if (!sodium_crypto_sign_verify_detached($req['manifest']['signatureRaw'], $canonical, $vault['ed25519_pk_raw'])) {
-                throw new EncryptionRequestException('manifest_invalid', 'manifest signature verification failed', 400);
-            }
-
-            $grantCanonical = $this->grantCanonical(
-                $req['grant']['grantId'],
-                $formId,
-                1,
-                $userId,
-                $userId,
-                $vault['x25519_pk_raw'],
-                $req['grant']['wrappedKeyRaw'],
-                null
-            );
-            if (!sodium_crypto_sign_verify_detached($req['grant']['signatureRaw'], $grantCanonical, $vault['ed25519_pk_raw'])) {
-                throw new EncryptionRequestException('grant_invalid', 'grant signature verification failed', 400);
-            }
-
-            // ── Writes (the form_encryption PK insert is the atomic enable gate) ──
-            $now = date('Y-m-d H:i:s');
+            $this->mysql->beginTransaction();
             try {
+                // Serialize against publish/field saves: FormService::updateForm
+                // takes the same forms-row lock for its gated writes.
+                $lock = $this->mysql->prepare('SELECT id FROM forms WHERE id = :f FOR UPDATE');
+                $lock->execute(['f' => $formId]);
+
+                $reasons = $this->preflightReasons($formId, $userId, $vault !== null);
+                if ($reasons !== []) {
+                    throw new EncryptionRequestException('private_enable_blocked', 'This form cannot be made private: ' . implode(', ', $reasons), 409, ['reasons' => $reasons]);
+                }
+                /** @var array{ed25519_pk_raw: string, x25519_pk_raw: string, ed25519_pk_b64: string, x25519_pk_b64: string} $vault */
+
+                // ── Cryptographic write-time verification (plan §8/§11) ──
+                $signerKeyId = substr(hash('sha256', $vault['ed25519_pk_raw']), 0, 16);
+                if (!hash_equals($signerKeyId, $req['manifest']['signerKeyId'])) {
+                    throw new EncryptionRequestException('manifest_invalid', 'manifest signerKeyId does not match the requester vault signing key', 400);
+                }
+                $canonical = $this->manifestCanonical($formId, $req['keyId'], 1, $req['ingestionPublicKeyB64'], 1, $req['schema']['schemaHash'], $signerKeyId, null);
+                if (!sodium_crypto_sign_verify_detached($req['manifest']['signatureRaw'], $canonical, $vault['ed25519_pk_raw'])) {
+                    throw new EncryptionRequestException('manifest_invalid', 'manifest signature verification failed', 400);
+                }
+
+                $grantCanonical = $this->grantCanonical(
+                    $req['grant']['grantId'],
+                    $formId,
+                    1,
+                    $userId,
+                    $userId,
+                    $vault['x25519_pk_raw'],
+                    $req['grant']['wrappedKeyRaw'],
+                    null
+                );
+                if (!sodium_crypto_sign_verify_detached($req['grant']['signatureRaw'], $grantCanonical, $vault['ed25519_pk_raw'])) {
+                    throw new EncryptionRequestException('grant_invalid', 'grant signature verification failed', 400);
+                }
+
+                // ── Writes (phase 1's enabling row was the atomic enable gate) ──
+                $now = date('Y-m-d H:i:s');
                 $this->mysql->prepare("
-                    INSERT INTO form_encryption (form_id, mode, current_ingest_epoch, current_fk_epoch, state, enabled_by, enabled_at)
-                    VALUES (:f, 'private', 1, 1, 'active', :u, :now)
-                ")->execute(['f' => $formId, 'u' => $userId, 'now' => $now]);
-            } catch (\PDOException $e) {
-                if ($this->isDuplicateKey($e)) {
-                    throw new EncryptionRequestException('private_enable_blocked', 'This form is already private.', 409, ['reasons' => ['already_enabled']]);
+                    INSERT INTO form_schema_versions (id, form_id, version, schema_json, schema_hash, created_at)
+                    VALUES (:id, :f, 1, :json, :hash, :now)
+                ")->execute([
+                    'id' => 'fsv_' . bin2hex(random_bytes(16)),
+                    'f' => $formId,
+                    'json' => $req['schema']['schemaJson'],
+                    'hash' => $req['schema']['schemaHash'],
+                    'now' => $now,
+                ]);
+
+                $this->mysql->prepare("
+                    INSERT INTO form_ingestion_keys (id, form_id, epoch, public_key, wrapped_secret, fk_epoch, state, accept_until, created_at)
+                    VALUES (:id, :f, 1, :pk, :sk, 1, 'active', NULL, :now)
+                ")->execute([
+                    'id' => $req['keyId'],
+                    'f' => $formId,
+                    'pk' => $req['ingestionPublicKeyB64'],
+                    'sk' => $req['wrappedIngestionSecretRaw'],
+                    'now' => $now,
+                ]);
+
+                $this->mysql->prepare("
+                    INSERT INTO form_manifests
+                        (id, form_id, manifest_seq, key_id, ingest_epoch, schema_version, schema_hash,
+                         content_suite, wrap_suite, signer_key_id, signer_pk, signed_bytes, signature,
+                         created_at, expires_at, superseded_at)
+                    VALUES
+                        (:id, :f, 1, :key, 1, 1, :hash, :content, :wrap, :skid, :spk, :bytes, :sig, :now, NULL, NULL)
+                ")->execute([
+                    'id' => 'fm_' . bin2hex(random_bytes(16)),
+                    'f' => $formId,
+                    'key' => $req['keyId'],
+                    'hash' => $req['schema']['schemaHash'],
+                    'content' => self::CONTENT_SUITE,
+                    'wrap' => self::WRAP_SUITE,
+                    'skid' => $signerKeyId,
+                    'spk' => $vault['ed25519_pk_b64'],
+                    'bytes' => $canonical,
+                    'sig' => $req['manifest']['signatureRaw'],
+                    'now' => $now,
+                ]);
+
+                $this->mysql->prepare("
+                    INSERT INTO form_key_grants
+                        (id, form_id, user_id, fk_epoch, wrapped_key, wrap_suite, role, grantor_user_id,
+                         grantor_key_id, grantee_pk, sig_version, signature, expires_at, state, created_at)
+                    VALUES
+                        (:id, :f, :u, 1, :wk, :wrap, 'owner', :gu, :gkid, :gpk, 1, :sig, NULL, 'active', :now)
+                ")->execute([
+                    'id' => $req['grant']['grantId'],
+                    'f' => $formId,
+                    'u' => $userId,
+                    'wk' => $req['grant']['wrappedKeyRaw'],
+                    'wrap' => self::WRAP_SUITE,
+                    'gu' => $userId,
+                    'gkid' => $signerKeyId,
+                    'gpk' => $vault['x25519_pk_b64'],
+                    'sig' => $req['grant']['signatureRaw'],
+                    'now' => $now,
+                ]);
+
+                // The transition commit: enabling → active (same transaction as the
+                // key material, so the form is never active without its keys).
+                $this->mysql->prepare("
+                    UPDATE form_encryption SET state = 'active', enabled_at = :now
+                    WHERE form_id = :f AND state = 'enabling'
+                ")->execute(['now' => $now, 'f' => $formId]);
+
+                $this->mysql->commit();
+            } catch (\Throwable $e) {
+                if ($this->mysql->inTransaction()) {
+                    $this->mysql->rollBack();
                 }
                 throw $e;
             }
-
-            $this->mysql->prepare("
-                INSERT INTO form_schema_versions (id, form_id, version, schema_json, schema_hash, created_at)
-                VALUES (:id, :f, 1, :json, :hash, :now)
-            ")->execute([
-                'id' => 'fsv_' . bin2hex(random_bytes(16)),
-                'f' => $formId,
-                'json' => $req['schema']['schemaJson'],
-                'hash' => $req['schema']['schemaHash'],
-                'now' => $now,
-            ]);
-
-            $this->mysql->prepare("
-                INSERT INTO form_ingestion_keys (id, form_id, epoch, public_key, wrapped_secret, fk_epoch, state, accept_until, created_at)
-                VALUES (:id, :f, 1, :pk, :sk, 1, 'active', NULL, :now)
-            ")->execute([
-                'id' => $req['keyId'],
-                'f' => $formId,
-                'pk' => $req['ingestionPublicKeyB64'],
-                'sk' => $req['wrappedIngestionSecretRaw'],
-                'now' => $now,
-            ]);
-
-            $this->mysql->prepare("
-                INSERT INTO form_manifests
-                    (id, form_id, manifest_seq, key_id, ingest_epoch, schema_version, schema_hash,
-                     content_suite, wrap_suite, signer_key_id, signer_pk, signed_bytes, signature,
-                     created_at, expires_at, superseded_at)
-                VALUES
-                    (:id, :f, 1, :key, 1, 1, :hash, :content, :wrap, :skid, :spk, :bytes, :sig, :now, NULL, NULL)
-            ")->execute([
-                'id' => 'fm_' . bin2hex(random_bytes(16)),
-                'f' => $formId,
-                'key' => $req['keyId'],
-                'hash' => $req['schema']['schemaHash'],
-                'content' => self::CONTENT_SUITE,
-                'wrap' => self::WRAP_SUITE,
-                'skid' => $signerKeyId,
-                'spk' => $vault['ed25519_pk_b64'],
-                'bytes' => $canonical,
-                'sig' => $req['manifest']['signatureRaw'],
-                'now' => $now,
-            ]);
-
-            $this->mysql->prepare("
-                INSERT INTO form_key_grants
-                    (id, form_id, user_id, fk_epoch, wrapped_key, wrap_suite, role, grantor_user_id,
-                     grantor_key_id, grantee_pk, sig_version, signature, expires_at, state, created_at)
-                VALUES
-                    (:id, :f, :u, 1, :wk, :wrap, 'owner', :gu, :gkid, :gpk, 1, :sig, NULL, 'active', :now)
-            ")->execute([
-                'id' => $req['grant']['grantId'],
-                'f' => $formId,
-                'u' => $userId,
-                'wk' => $req['grant']['wrappedKeyRaw'],
-                'wrap' => self::WRAP_SUITE,
-                'gu' => $userId,
-                'gkid' => $signerKeyId,
-                'gpk' => $vault['x25519_pk_b64'],
-                'sig' => $req['grant']['signatureRaw'],
-                'now' => $now,
-            ]);
-
-            $this->mysql->commit();
         } catch (\Throwable $e) {
-            if ($this->mysql->inTransaction()) {
-                $this->mysql->rollBack();
-            }
+            // Any failure AFTER the marker was committed removes it — the form is
+            // left plaintext, never wedged mid-transition (a stale marker from a
+            // hard crash is retaken by beginEnable after ENABLING_STALE_SECONDS).
+            $this->abortEnable($formId);
             throw $e;
         }
 
         self::invalidateCache($formId);
         return ['enabled' => true, 'manifestSeq' => 1];
+    }
+
+    /**
+     * Phase 1 of enable(): insert the durable 'enabling' marker and COMMIT it on
+     * its own, so gated surfaces fail closed for the entire enable. The PK
+     * insert is the atomic gate: an existing row means the form is already
+     * private (active/trashed), mid-enable (fresh enabling), or has a STALE
+     * enabling marker from a crashed attempt — the last is deleted and retaken
+     * exactly once so a crash never wedges the form.
+     *
+     * @throws EncryptionRequestException private_enable_blocked (already_enabled / enable_in_progress)
+     */
+    private function beginEnable(string $formId, string $userId): void
+    {
+        $now = date('Y-m-d H:i:s');
+        $insert = function () use ($formId, $userId, $now): void {
+            $this->mysql->prepare("
+                INSERT INTO form_encryption (form_id, mode, current_ingest_epoch, current_fk_epoch, state, enabled_by, enabled_at)
+                VALUES (:f, 'private', 1, 1, 'enabling', :u, :now)
+            ")->execute(['f' => $formId, 'u' => $userId, 'now' => $now]);
+        };
+        try {
+            $insert();
+        } catch (\PDOException $e) {
+            if (!$this->isDuplicateKey($e)) {
+                throw $e;
+            }
+            $stmt = $this->mysql->prepare('SELECT state, enabled_at FROM form_encryption WHERE form_id = :f');
+            $stmt->execute(['f' => $formId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (is_array($row) && $row['state'] === 'enabling') {
+                $enabledAt = strtotime((string) $row['enabled_at']);
+                if ($enabledAt !== false && $enabledAt < time() - self::ENABLING_STALE_SECONDS) {
+                    // Crashed enable: retake the stale marker, then retry the gate
+                    // insert once — a concurrent retry that beat us to it surfaces
+                    // as the in-progress refusal below.
+                    $this->mysql->prepare("DELETE FROM form_encryption WHERE form_id = :f AND state = 'enabling'")
+                        ->execute(['f' => $formId]);
+                    self::invalidateCache($formId);
+                    try {
+                        $insert();
+                        self::invalidateCache($formId);
+                        return;
+                    } catch (\PDOException $retry) {
+                        if (!$this->isDuplicateKey($retry)) {
+                            throw $retry;
+                        }
+                    }
+                }
+                throw new EncryptionRequestException('private_enable_blocked', 'Encryption is already being enabled for this form — retry in a moment.', 409, ['reasons' => ['enable_in_progress']]);
+            }
+            throw new EncryptionRequestException('private_enable_blocked', 'This form is already private.', 409, ['reasons' => ['already_enabled']]);
+        }
+        self::invalidateCache($formId);
+    }
+
+    /**
+     * Phase 2 failed (or the request died): delete the enabling marker so the
+     * form is left plaintext. Best-effort — a marker that outlives even this
+     * cleanup is retaken as stale by the next beginEnable.
+     */
+    private function abortEnable(string $formId): void
+    {
+        try {
+            $this->mysql->prepare("DELETE FROM form_encryption WHERE form_id = :f AND state = 'enabling'")
+                ->execute(['f' => $formId]);
+        } catch (\Throwable) {
+            // The stale-marker retake in beginEnable covers a wedged row.
+        }
+        self::invalidateCache($formId);
     }
 
     /**
@@ -331,7 +460,12 @@ final class FormEncryptionService
             $reasons[] = 'ever_published';
         }
 
-        if ($this->isPrivate($formId)) {
+        // Our own 'enabling' marker (phase 1) is expected — anything ELSE with a
+        // form_encryption row means the form is already private.
+        $stmt = $this->mysql->prepare('SELECT state FROM form_encryption WHERE form_id = :f');
+        $stmt->execute(['f' => $formId]);
+        $encState = $stmt->fetchColumn();
+        if ($encState !== false && $encState !== 'enabling') {
             $reasons[] = 'already_enabled';
         }
 
@@ -570,6 +704,7 @@ final class FormEncryptionService
         return [
             'encryption' => [
                 'mode' => (string) $enc['mode'],
+                'state' => (string) $enc['state'],
                 'currentIngestEpoch' => (int) $enc['current_ingest_epoch'],
                 'currentFkEpoch' => (int) $enc['current_fk_epoch'],
             ],
@@ -578,6 +713,37 @@ final class FormEncryptionService
             'manifests' => $manifests,
             'schemaVersions' => $schemaVersions,
         ];
+    }
+
+    /**
+     * PHP-canonical fields hash of the latest non-superseded manifest's schema snapshot,
+     * derived by decoding the stored schema_json and re-encoding it with the SAME flags
+     * FormService::canonicalFieldsHash() uses. The manifest's stored schema_hash is the
+     * CLIENT's sha256 over JSON.stringify(fields) — JS serializes empty objects as {}
+     * where PHP json_encode() emits [], so comparing the client hash against a PHP
+     * re-encoding would call every unchanged save "changed" (spurious 409
+     * manifest_required). Both sides of the fields-changed comparison must use
+     * PHP-canonical bytes; the client hash stays authoritative only for signatures/AAD.
+     */
+    public function latestManifestSchemaHash(string $formId): ?string
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT sv.schema_json FROM form_manifests m
+            JOIN form_schema_versions sv
+              ON sv.form_id = m.form_id AND sv.version = m.schema_version
+            WHERE m.form_id = :f AND m.superseded_at IS NULL
+            ORDER BY m.manifest_seq DESC LIMIT 1
+        ");
+        $stmt->execute(['f' => $formId]);
+        $json = $stmt->fetchColumn();
+        if ($json === false) {
+            return null;
+        }
+        $fields = json_decode((string) $json, true);
+        if (!is_array($fields)) {
+            return null;
+        }
+        return hash('sha256', (string) json_encode($fields, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 
     /**
@@ -599,6 +765,37 @@ final class FormEncryptionService
         if (!$this->isPrivate($formId)) {
             throw new EncryptionRequestException('private_form_not_encrypted', 'This form is not a private form.', 404);
         }
+
+        $this->mysql->beginTransaction();
+        try {
+            $result = $this->applySchemaPublishInTx($formId, $userId, $body);
+            $this->mysql->commit();
+            return $result;
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * The transactional core of schema publishing, shared by publishSchemaVersion
+     * and the atomic form publish (FormService::updateForm's encryptionSchema
+     * body key — same {schema, manifest} shape, same vault-signature
+     * verification). REQUIRES an already-open transaction on the shared
+     * connection; the caller owns commit/rollback so the schema version +
+     * manifest land in the SAME transaction as the surrounding field/status save.
+     *
+     * @param array<string,mixed> $body {schema:{schemaJson,schemaHash}, manifest:{signature,signerKeyId,expiresAt:null}}
+     * @return array{schemaVersion: int, manifestSeq: int}
+     * @throws EncryptionRequestException
+     */
+    public function applySchemaPublishInTx(string $formId, string $userId, array $body): array
+    {
+        if (!self::sodiumAvailable()) {
+            throw new EncryptionRequestException('encryption_unavailable', 'Server-side signature verification (ext-sodium) is unavailable.', 503);
+        }
         $schema = $this->validateSchemaBlock($body['schema'] ?? $body);
         $manifest = $this->validateManifestBlock($body['manifest'] ?? null);
         $vault = $this->vaultRow($userId);
@@ -606,94 +803,85 @@ final class FormEncryptionService
             throw new EncryptionRequestException('vault_not_found', 'No vault exists for this account.', 404);
         }
 
-        $this->mysql->beginTransaction();
-        try {
-            $stmt = $this->mysql->prepare('SELECT current_ingest_epoch FROM form_encryption WHERE form_id = :f FOR UPDATE');
-            $stmt->execute(['f' => $formId]);
-            $currentEpoch = (int) $stmt->fetchColumn();
+        $stmt = $this->mysql->prepare('SELECT current_ingest_epoch FROM form_encryption WHERE form_id = :f FOR UPDATE');
+        $stmt->execute(['f' => $formId]);
+        $currentEpoch = (int) $stmt->fetchColumn();
 
-            $stmt = $this->mysql->prepare('SELECT id, public_key FROM form_ingestion_keys WHERE form_id = :f AND epoch = :e');
-            $stmt->execute(['f' => $formId, 'e' => $currentEpoch]);
-            $keyRow = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($keyRow)) {
-                throw new EncryptionRequestException('encryption_unavailable', 'The form has no current ingestion key.', 503);
-            }
-
-            $stmt = $this->mysql->prepare('SELECT COALESCE(MAX(version), 0) FROM form_schema_versions WHERE form_id = :f');
-            $stmt->execute(['f' => $formId]);
-            $newVersion = ((int) $stmt->fetchColumn()) + 1;
-
-            $stmt = $this->mysql->prepare('SELECT COALESCE(MAX(manifest_seq), 0) FROM form_manifests WHERE form_id = :f');
-            $stmt->execute(['f' => $formId]);
-            $newSeq = ((int) $stmt->fetchColumn()) + 1;
-
-            $signerKeyId = substr(hash('sha256', $vault['ed25519_pk_raw']), 0, 16);
-            if (!hash_equals($signerKeyId, $manifest['signerKeyId'])) {
-                throw new EncryptionRequestException('manifest_invalid', 'manifest signerKeyId does not match the requester vault signing key', 400);
-            }
-            $canonical = $this->manifestCanonical(
-                $formId,
-                (string) $keyRow['id'],
-                $currentEpoch,
-                (string) $keyRow['public_key'],
-                $newVersion,
-                $schema['schemaHash'],
-                $signerKeyId,
-                null
-            );
-            if (!sodium_crypto_sign_verify_detached($manifest['signatureRaw'], $canonical, $vault['ed25519_pk_raw'])) {
-                throw new EncryptionRequestException('manifest_invalid', 'manifest signature verification failed', 400);
-            }
-
-            $now = date('Y-m-d H:i:s');
-            $this->mysql->prepare("
-                INSERT INTO form_schema_versions (id, form_id, version, schema_json, schema_hash, created_at)
-                VALUES (:id, :f, :v, :json, :hash, :now)
-            ")->execute([
-                'id' => 'fsv_' . bin2hex(random_bytes(16)),
-                'f' => $formId,
-                'v' => $newVersion,
-                'json' => $schema['schemaJson'],
-                'hash' => $schema['schemaHash'],
-                'now' => $now,
-            ]);
-
-            $this->mysql->prepare("
-                UPDATE form_manifests SET superseded_at = :now WHERE form_id = :f AND superseded_at IS NULL
-            ")->execute(['now' => $now, 'f' => $formId]);
-
-            $this->mysql->prepare("
-                INSERT INTO form_manifests
-                    (id, form_id, manifest_seq, key_id, ingest_epoch, schema_version, schema_hash,
-                     content_suite, wrap_suite, signer_key_id, signer_pk, signed_bytes, signature,
-                     created_at, expires_at, superseded_at)
-                VALUES
-                    (:id, :f, :seq, :key, :epoch, :v, :hash, :content, :wrap, :skid, :spk, :bytes, :sig, :now, NULL, NULL)
-            ")->execute([
-                'id' => 'fm_' . bin2hex(random_bytes(16)),
-                'f' => $formId,
-                'seq' => $newSeq,
-                'key' => (string) $keyRow['id'],
-                'epoch' => $currentEpoch,
-                'v' => $newVersion,
-                'hash' => $schema['schemaHash'],
-                'content' => self::CONTENT_SUITE,
-                'wrap' => self::WRAP_SUITE,
-                'skid' => $signerKeyId,
-                'spk' => $vault['ed25519_pk_b64'],
-                'bytes' => $canonical,
-                'sig' => $manifest['signatureRaw'],
-                'now' => $now,
-            ]);
-
-            $this->mysql->commit();
-            return ['schemaVersion' => $newVersion, 'manifestSeq' => $newSeq];
-        } catch (\Throwable $e) {
-            if ($this->mysql->inTransaction()) {
-                $this->mysql->rollBack();
-            }
-            throw $e;
+        $stmt = $this->mysql->prepare('SELECT id, public_key FROM form_ingestion_keys WHERE form_id = :f AND epoch = :e');
+        $stmt->execute(['f' => $formId, 'e' => $currentEpoch]);
+        $keyRow = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($keyRow)) {
+            throw new EncryptionRequestException('encryption_unavailable', 'The form has no current ingestion key.', 503);
         }
+
+        $stmt = $this->mysql->prepare('SELECT COALESCE(MAX(version), 0) FROM form_schema_versions WHERE form_id = :f');
+        $stmt->execute(['f' => $formId]);
+        $newVersion = ((int) $stmt->fetchColumn()) + 1;
+
+        $stmt = $this->mysql->prepare('SELECT COALESCE(MAX(manifest_seq), 0) FROM form_manifests WHERE form_id = :f');
+        $stmt->execute(['f' => $formId]);
+        $newSeq = ((int) $stmt->fetchColumn()) + 1;
+
+        $signerKeyId = substr(hash('sha256', $vault['ed25519_pk_raw']), 0, 16);
+        if (!hash_equals($signerKeyId, $manifest['signerKeyId'])) {
+            throw new EncryptionRequestException('manifest_invalid', 'manifest signerKeyId does not match the requester vault signing key', 400);
+        }
+        $canonical = $this->manifestCanonical(
+            $formId,
+            (string) $keyRow['id'],
+            $currentEpoch,
+            (string) $keyRow['public_key'],
+            $newVersion,
+            $schema['schemaHash'],
+            $signerKeyId,
+            null
+        );
+        if (!sodium_crypto_sign_verify_detached($manifest['signatureRaw'], $canonical, $vault['ed25519_pk_raw'])) {
+            throw new EncryptionRequestException('manifest_invalid', 'manifest signature verification failed', 400);
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $this->mysql->prepare("
+            INSERT INTO form_schema_versions (id, form_id, version, schema_json, schema_hash, created_at)
+            VALUES (:id, :f, :v, :json, :hash, :now)
+        ")->execute([
+            'id' => 'fsv_' . bin2hex(random_bytes(16)),
+            'f' => $formId,
+            'v' => $newVersion,
+            'json' => $schema['schemaJson'],
+            'hash' => $schema['schemaHash'],
+            'now' => $now,
+        ]);
+
+        $this->mysql->prepare("
+            UPDATE form_manifests SET superseded_at = :now WHERE form_id = :f AND superseded_at IS NULL
+        ")->execute(['now' => $now, 'f' => $formId]);
+
+        $this->mysql->prepare("
+            INSERT INTO form_manifests
+                (id, form_id, manifest_seq, key_id, ingest_epoch, schema_version, schema_hash,
+                 content_suite, wrap_suite, signer_key_id, signer_pk, signed_bytes, signature,
+                 created_at, expires_at, superseded_at)
+            VALUES
+                (:id, :f, :seq, :key, :epoch, :v, :hash, :content, :wrap, :skid, :spk, :bytes, :sig, :now, NULL, NULL)
+        ")->execute([
+            'id' => 'fm_' . bin2hex(random_bytes(16)),
+            'f' => $formId,
+            'seq' => $newSeq,
+            'key' => (string) $keyRow['id'],
+            'epoch' => $currentEpoch,
+            'v' => $newVersion,
+            'hash' => $schema['schemaHash'],
+            'content' => self::CONTENT_SUITE,
+            'wrap' => self::WRAP_SUITE,
+            'skid' => $signerKeyId,
+            'spk' => $vault['ed25519_pk_b64'],
+            'bytes' => $canonical,
+            'sig' => $manifest['signatureRaw'],
+            'now' => $now,
+        ]);
+
+        return ['schemaVersion' => $newVersion, 'manifestSeq' => $newSeq];
     }
 
     // ─────────────────────────────────────────────────────────────────────────

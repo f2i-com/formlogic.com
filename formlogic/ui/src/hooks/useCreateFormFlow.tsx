@@ -47,9 +47,22 @@ export function useCreateFormFlow() {
           markFormPrivate(form.id);
           toast.success('Private form created', 'Responses will be end-to-end encrypted.');
         } catch (e) {
+          // Fail closed (review 2026-07-22, blocker 2): an explicit PRIVATE choice
+          // must never silently become a plaintext form the user believes is
+          // encrypted — remove the created form and surface the error. The user
+          // can create it again (or enable encryption later from form settings).
           const err = e as { code?: string; reasons?: string[]; message?: string };
+          try {
+            await useFormStore.getState().deleteForm(form.id);
+          } catch {
+            // Best effort — if the delete failed, say so explicitly.
+            toast.error('Encryption failed — DELETE THIS FORM', 'This form could not be made private and could not be removed automatically. Delete it: it is NOT encrypted.');
+            return;
+          }
           const reasons = err.reasons?.length ? ` (${err.reasons.join('; ')})` : '';
-          toast.error('Could not make it private', `The form was created as a normal form. ${err.message ?? ''}${reasons}`.trim());
+          const retryHint = err.code === 'encryption_enabling' ? ' Encryption setup was still in progress — try again in a moment.' : '';
+          toast.error('Could not make it private', `The form was removed rather than left unencrypted.${retryHint} ${err.message ?? ''}${reasons}`.trim());
+          return;
         }
       }
 

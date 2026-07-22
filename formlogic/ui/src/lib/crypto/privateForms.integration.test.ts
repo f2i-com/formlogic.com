@@ -29,7 +29,7 @@ import { toB64 } from './encoding';
 import { getSodium } from './sodium';
 import type { FormEncryptionManifest } from '../../types/e2ee';
 import { sealPrivateSubmission, PrivateSubmitError } from './privateSubmit';
-import { clearSignerPins, pinSigner } from './signerPins';
+import { clearSignerPins, pinSigner, trustFormSignerKey, PinStorageError } from './signerPins';
 import { decryptRowsPipeline } from './useDecryptedResponses';
 import { buildCsv, exportPrivateFormCsv, csvEscapeCell } from './privateExport';
 import type { FormField } from '../../types/form';
@@ -110,6 +110,52 @@ describe('private submit path (SS8)', () => {
   });
 });
 
+describe('TOFU pin storage honesty (blocker 7)', () => {
+  // Reads succeed (empty store); WRITES fail — the fail-closed path must trigger
+  // on the very first pin attempt, with no silent session-only fallback.
+  const throwingStorage = {
+    getItem: () => null,
+    setItem: () => { throw new Error('denied'); },
+    removeItem: () => undefined,
+    clear: () => undefined,
+    key: () => null,
+    length: 0,
+  } as unknown as Storage;
+
+  it('pinSigner fails CLOSED when storage writes fail — no silent session fallback', () => {
+    expect(() => pinSigner(FORM, 'c2lnbmVy', throwingStorage)).toThrow(PinStorageError);
+  });
+
+  it('pinSigner fails CLOSED when storage is unavailable entirely', () => {
+    expect(() => pinSigner(FORM, 'c2lnbmVy', null)).toThrow(PinStorageError);
+  });
+
+  it('pinSigner fails CLOSED on a corrupted pin store (cannot prove key continuity)', () => {
+    localStorage.setItem('fl-signer-pins', '{not json');
+    try {
+      expect(() => pinSigner(FORM, 'c2lnbmVy', localStorage)).toThrow(PinStorageError);
+    } finally {
+      clearSignerPins(localStorage);
+    }
+  });
+
+  it('trustFormSignerKey fails CLOSED when the trust decision cannot be persisted', () => {
+    expect(() => trustFormSignerKey(FORM, 'c2lnbmVy', throwingStorage)).toThrow(PinStorageError);
+  });
+
+  it('submission is REFUSED when the pin store cannot be written (fail-closed state)', async () => {
+    const manifest = await servedManifest();
+    const saved = (globalThis as { localStorage?: Storage }).localStorage;
+    (globalThis as { localStorage?: Storage }).localStorage = throwingStorage;
+    try {
+      await expect(sealPrivateSubmission({ formId: FORM, encryption: manifest, answers: { f1: SECRET } }))
+        .rejects.toMatchObject({ code: 'pin_storage_unavailable' });
+    } finally {
+      (globalThis as { localStorage?: Storage }).localStorage = saved;
+    }
+  });
+});
+
 describe('owner decrypt-merge pipeline (SS10)', () => {
   const enc = (recordId: string, rev: number) => ({ __flenc: 1, recordId, rev }) as unknown as Record<string, unknown>;
 
@@ -140,6 +186,38 @@ describe('owner decrypt-merge pipeline (SS10)', () => {
     );
     expect(errors.r1).toBe('decrypt_failed');
     expect((merged.get('r1') as { _decryptError?: string })._decryptError).toBe('decrypt_failed');
+  });
+
+  it('authoritative private form: a non-envelope row is CORRUPTION, never rendered as plaintext', async () => {
+    const rows = [
+      { id: 'good', answers: enc('good', 1) },
+      { id: 'corrupt', answers: { secret: 'plaintext-that-should-not-exist' } },
+    ];
+    const { merged, errors } = await decryptRowsPipeline(
+      { openResponses: async () => new Map([['good', { answers: { name: 'Ada' }, rev: 1 }]]) },
+      FORM,
+      rows,
+      { authoritativePrivate: true },
+    );
+    expect(errors.corrupt).toBe('plaintext_in_private_form');
+    const corruptRow = merged.get('corrupt') as { answers: Record<string, unknown>; _decryptError?: string };
+    expect(corruptRow._decryptError).toBe('plaintext_in_private_form');
+    // The plaintext answers are dropped — never displayed.
+    expect(corruptRow.answers).toEqual({});
+    expect(JSON.stringify(corruptRow)).not.toContain('plaintext-that-should-not-exist');
+    // The genuine envelope row still decrypts normally.
+    expect(merged.get('good')?.answers).toEqual({ name: 'Ada' });
+  });
+
+  it('without the authoritative private state, non-envelope rows are left alone', async () => {
+    const rows = [{ id: 'plain', answers: { foo: 'bar' } }];
+    const { merged, errors } = await decryptRowsPipeline(
+      { openResponses: async () => new Map() },
+      FORM,
+      rows,
+    );
+    expect(merged.has('plain')).toBe(false);
+    expect(errors.plain).toBeUndefined();
   });
 });
 
@@ -174,5 +252,33 @@ describe('private CSV export (SS10)', () => {
     expect(result.partial).toBe(true);
     expect(result.rowCount).toBe(1); // only the first page landed before cancel
     expect(result.csv).toContain('Ada');
+  });
+
+  it('ABORTS on a misshapen page — an API failure must never look like an empty final page', async () => {
+    let page = 0;
+    await expect(exportPrivateFormCsv(
+      {
+        fetchPage: async () => {
+          page += 1;
+          if (page === 1) return { rows: [{ id: 'r1', answers: {}, submittedAt: '2026-01-01', status: 'submitted' }], count: 5 };
+          // A failure shaped like "no rows array" (what an error-swallowing caller would pass).
+          return { rows: undefined as unknown as [], count: null };
+        },
+        decryptRows: async (rows) => new Map(rows.map((r) => [r.id, { answers: { f1: 'Ada' }, rev: 1 }])),
+        formatDate: (iso) => iso,
+      },
+      { fields, pageSize: 1 },
+    )).rejects.toThrow(/unexpected page/);
+  });
+
+  it('a page-fetch failure propagates and aborts the export (no silent partial file)', async () => {
+    await expect(exportPrivateFormCsv(
+      {
+        fetchPage: async () => { throw new Error('server error 500'); },
+        decryptRows: async () => new Map(),
+        formatDate: (iso) => iso,
+      },
+      { fields, pageSize: 1 },
+    )).rejects.toThrow('server error 500');
   });
 });

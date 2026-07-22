@@ -90,6 +90,13 @@ export async function exportPrivateFormCsv(
       break;
     }
     const page = await deps.fetchPage(offset, pageSize);
+    // Failure integrity (review 2026-07-22): a page that isn't the expected list
+    // shape aborts the export — an API failure must NEVER look like an empty final
+    // page and produce a normal-looking incomplete CSV. Only a genuinely empty
+    // page ends iteration.
+    if (!page || !Array.isArray(page.rows)) {
+      throw new Error('Export aborted: the server returned an unexpected page of responses. No file was produced.');
+    }
     if (total === null && page.count !== null) total = page.count;
     if (page.rows.length === 0) break;
     fetched += page.rows.length;

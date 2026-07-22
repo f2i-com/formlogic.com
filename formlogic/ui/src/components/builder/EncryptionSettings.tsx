@@ -89,6 +89,13 @@ export function EncryptionSettings({ formId, isPrivate, onEnabled }: EncryptionS
         // The reasons box renders below the button inside the modal's scroll area and
         // is easy to miss — also toast so the failure (and why) is unmistakable.
         toast.warning('This form can\'t be made private', described[0] ?? 'See the reasons in form settings.');
+      } else if (err.code === 'encryption_enabling') {
+        // 409 while another enable is mid-flight — retryable.
+        setError('Encryption setup is already in progress for this form. Try again in a moment.');
+        toast.warning('Encryption setup in progress', 'Try again in a moment.');
+      } else if (err.code === 'encryption_not_restorable') {
+        setError('This form\'s encryption was removed and cannot be restored. Create a new private form instead.');
+        toast.error('Encryption can\'t be restored', 'Create a new private form instead.');
       } else {
         const message = err.message ?? 'Could not enable encryption on this form.';
         setError(message);

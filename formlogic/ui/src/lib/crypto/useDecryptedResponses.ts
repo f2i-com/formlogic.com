@@ -1,20 +1,25 @@
 // Owner-side decrypt pipeline hook (plan SS10 read pipeline).
 //
-// Give it the rows a page already fetched (each row's `answers` is either plain
-// answers or, for a private form, the stored __flenc envelope object/string) and
-// it returns display rows:
-//  - plain forms pass through untouched (isPrivate=false, zero crypto loaded);
-//  - private + vault locked -> rows unchanged, locked=true (render the lock UI);
-//  - private + unlocked -> form keys are unlocked once per form per vault
-//    generation, rows batch-decrypt in the worker, and decrypted answers merge
-//    over each row transiently (never persisted; dropped on lock via the
-//    generation counter).
+// Privacy is the SERVER-AUTHORITATIVE tri-state from getFormPrivacyState (GET
+// /api/forms/{id}/encryption, cached) — never inferred from row shapes
+// (review 2026-07-22, blocker 5):
+//  - 'plain'    → rows pass through untouched (zero crypto loaded);
+//  - 'unknown'  → transient state; envelope-looking rows still take the private
+//                 path (fail-safe), plaintext-looking rows are left alone;
+//  - 'private'  → vault locked -> rows unchanged, locked=true (render the lock UI);
+//                 unlocked -> form keys load once per form per vault generation and
+//                 rows batch-decrypt in the worker. ANY row whose answers are NOT a
+//                 valid __flenc:1 envelope is CORRUPTION: it renders as an error row
+//                 (never attempted as plaintext, never silently skipped).
+// Decrypted answers merge over each row transiently (never persisted; dropped on
+// lock via the generation counter).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVaultStore } from '../../stores/vaultStore';
 import { isEncryptedEnvelope, type InnerPayload } from './envelope';
 import {
-  ensureVaultLoaded, openResponsesForForm, vaultGeneration, type OpenRowsResult,
+  ensureVaultLoaded, getFormPrivacyState, openResponsesForForm, vaultGeneration,
+  type FormPrivacy, type OpenRowsResult,
 } from './formCrypto';
 import { logger } from '../logger';
 
@@ -22,6 +27,9 @@ export interface DecryptableRow {
   id: string;
   answers: Record<string, unknown>;
 }
+
+/** Typed code for a non-envelope row inside an authoritatively-private form. */
+export const CORRUPT_ROW_CODE = 'plaintext_in_private_form';
 
 export type DecryptedDisplayRow<T extends DecryptableRow> = T & {
   /** True when this row was stored as ciphertext. */
@@ -38,6 +46,8 @@ export interface DecryptedResponsesResult<T extends DecryptableRow> {
   rows: Array<DecryptedDisplayRow<T>>;
   /** Any row in the input is an encrypted envelope. */
   isPrivate: boolean;
+  /** The server-authoritative privacy state ('unknown' until the check resolves). */
+  privacy: FormPrivacy;
   /** Private data present but the vault is not unlocked. */
   locked: boolean;
   /** Worker decryption in flight. */
@@ -50,18 +60,35 @@ export interface DecryptPipelineDeps {
   openResponses: typeof openResponsesForForm;
 }
 
+export interface DecryptPipelineOptions {
+  /** Server-authoritative "this form IS private": non-envelope rows are corruption. */
+  authoritativePrivate?: boolean;
+}
+
 /**
  * The pure decrypt-merge step (exported for tests): batch-decrypts the
- * encrypted rows and merges each decrypted answer set over its row.
+ * encrypted rows and merges each decrypted answer set over its row. When
+ * `authoritativePrivate` is set, every non-envelope row is marked corrupt.
  */
 export async function decryptRowsPipeline<T extends DecryptableRow>(
   deps: DecryptPipelineDeps,
   formId: string,
   rows: T[],
+  opts?: DecryptPipelineOptions,
 ): Promise<{ merged: Map<string, DecryptedDisplayRow<T>>; errors: Record<string, string> }> {
   const encryptedRows = rows.filter((r) => isEncryptedEnvelope(r.answers));
   const merged = new Map<string, DecryptedDisplayRow<T>>();
   const errors: Record<string, string> = {};
+  if (opts?.authoritativePrivate) {
+    // A private form stores ONLY envelopes — a plaintext-shaped row is corruption
+    // (server tampering or a stale writer). Render it as an error row; never try
+    // to display it as plaintext and never drop it silently.
+    for (const row of rows) {
+      if (isEncryptedEnvelope(row.answers)) continue;
+      errors[row.id] = CORRUPT_ROW_CODE;
+      merged.set(row.id, { ...row, answers: {}, _encrypted: true, _decryptError: CORRUPT_ROW_CODE });
+    }
+  }
   if (encryptedRows.length === 0) return { merged, errors };
   const opened: OpenRowsResult = await deps.openResponses(
     formId,
@@ -93,6 +120,22 @@ export async function decryptRowsPipeline<T extends DecryptableRow>(
   return { merged, errors };
 }
 
+/**
+ * Plaintext boundary helper (review 2026-07-22, blocker 3): run `reset` the moment
+ * the vault generation changes (lock / re-unlock), so open editors close and
+ * decrypted drafts are wiped immediately — decrypted React state must never
+ * outlive the vault. The initial render never fires.
+ */
+export function useResetOnVaultGenerationChange(reset: () => void): void {
+  const generation = useVaultStore((s) => s.generation);
+  const prevRef = useRef(generation);
+  useEffect(() => {
+    if (prevRef.current === generation) return;
+    prevRef.current = generation;
+    reset();
+  }, [generation, reset]);
+}
+
 export function useDecryptedResponses<T extends DecryptableRow>(
   formId: string | undefined,
   rows: T[],
@@ -100,7 +143,21 @@ export function useDecryptedResponses<T extends DecryptableRow>(
   const status = useVaultStore((s) => s.status);
   const generation = useVaultStore((s) => s.generation);
 
-  const isPrivate = useMemo(() => rows.some((r) => isEncryptedEnvelope(r.answers)), [rows]);
+  // Server-authoritative privacy (tri-state). Until it resolves, envelope-shaped
+  // rows still take the private path so ciphertext never renders as answers.
+  const [privacy, setPrivacy] = useState<FormPrivacy>('unknown');
+  useEffect(() => {
+    if (!formId) { setPrivacy('unknown'); return; }
+    let cancelled = false;
+    setPrivacy('unknown');
+    getFormPrivacyState(formId)
+      .then((p) => { if (!cancelled) setPrivacy(p); })
+      .catch(() => { if (!cancelled) setPrivacy('unknown'); });
+    return () => { cancelled = true; };
+  }, [formId]);
+
+  const envelopePresent = useMemo(() => rows.some((r) => isEncryptedEnvelope(r.answers)), [rows]);
+  const isPrivate = privacy === 'private' || (privacy === 'unknown' && envelopePresent);
 
   const [decrypting, setDecrypting] = useState(false);
   const [result, setResult] = useState<{
@@ -128,6 +185,7 @@ export function useDecryptedResponses<T extends DecryptableRow>(
       try {
         const { merged, errors } = await decryptRowsPipeline(
           { openResponses: openResponsesForForm }, formId, rows,
+          { authoritativePrivate: privacy === 'private' },
         );
         // Never publish results from a generation that has since been locked.
         if (!cancelled && vaultGeneration() === generation) {
@@ -143,7 +201,7 @@ export function useDecryptedResponses<T extends DecryptableRow>(
     return () => {
       cancelled = true;
     };
-  }, [formId, rows, isPrivate, status, generation]);
+  }, [formId, rows, isPrivate, privacy, status, generation]);
 
   const current = result !== null && result.generation === generation && result.formId === formId
     ? result
@@ -157,6 +215,7 @@ export function useDecryptedResponses<T extends DecryptableRow>(
   return {
     rows: displayRows,
     isPrivate,
+    privacy,
     locked: isPrivate && status !== 'unlocked',
     decrypting: isPrivate && status === 'unlocked' && (decrypting || current === null),
     errors: current?.errors ?? {},

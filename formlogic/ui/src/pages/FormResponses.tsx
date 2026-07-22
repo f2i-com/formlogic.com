@@ -48,8 +48,8 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
 import { isEncryptedEnvelope } from '../lib/crypto/envelope';
-import { useDecryptedResponses } from '../lib/crypto/useDecryptedResponses';
-import { sealResponseForUpdate, openResponsesForForm } from '../lib/crypto/formCrypto';
+import { useDecryptedResponses, useResetOnVaultGenerationChange, CORRUPT_ROW_CODE } from '../lib/crypto/useDecryptedResponses';
+import { sealResponseForUpdate, openResponsesForForm, getFormPrivacyState } from '../lib/crypto/formCrypto';
 import { exportPrivateFormCsv } from '../lib/crypto/privateExport';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { toast } from '../stores/toastStore';
@@ -79,30 +79,33 @@ const PRIVATE_LIST_CAP = 5000;
 // search, sort, and CSV export. Loop until exhausted so the page reflects the
 // full set. Also normalizes completionTime, which the server nests under
 // metadata.completionTime but the UI reads at the top level.
-// For PRIVATE forms (detected by envelope rows in the first page) the loop stops
-// at PRIVATE_LIST_CAP and reports how many were skipped.
+// Privacy is the SERVER-AUTHORITATIVE tri-state (never row-shape inference,
+// review 2026-07-22): 'private' applies the PRIVATE_LIST_CAP; 'unknown' falls
+// back to first-page envelope detection. ANY failed page aborts loudly — a
+// mid-loop failure must never look like a clean final page (silent partial).
 async function fetchAllApiResponses(
-  formId: string
+  formId: string,
+  privacy: 'unknown' | 'plain' | 'private' = 'unknown'
 ): Promise<{ responses: ResponseWithStatus[]; truncated: boolean; privateCap: { shown: number; total: number } | null }> {
   const PAGE = 1000;
   const MAX_PAGES = 100; // 100k safety cap, mirrors the server-side export cap
   const all: ResponseWithStatus[] = [];
   let truncated = false;
-  let isPrivate = false;
+  let isPrivate = privacy === 'private';
   let totalCount: number | null = null;
   for (let page = 0; page < MAX_PAGES; page++) {
     const result = await api.getResponses(formId, { limit: PAGE, offset: page * PAGE });
     const batch = result.data?.responses;
-    if (!batch) {
-      if (page === 0) throw new Error(result.error || 'Failed to load responses');
-      break;
+    if (!batch || !Array.isArray(batch)) {
+      throw new Error(result.error || `Failed to load responses (page ${page + 1})`);
     }
     if (typeof result.data?.count === 'number') totalCount = result.data.count;
     for (const r of batch) {
       const rr = r as unknown as ResponseWithStatus & { metadata?: { completionTime?: number } };
       all.push({ ...rr, completionTime: rr.completionTime ?? rr.metadata?.completionTime ?? 0 });
     }
-    if (page === 0) {
+    if (page === 0 && privacy === 'unknown') {
+      // Transient fallback only: the authoritative state was unavailable.
       isPrivate = batch.some((r) => isEncryptedEnvelope((r as { answers?: unknown }).answers));
     }
     if (isPrivate && all.length >= PRIVATE_LIST_CAP) {
@@ -127,6 +130,13 @@ async function fetchAllApiResponses(
 
 // Status pills render via the shared <Badge> (statusBadgeVariant in lib/utils),
 // so the responses table, response detail, and members list stay in one palette.
+
+/** Row-level text for a record that failed to decrypt or is corrupt (E2EE). */
+function rowErrorText(code: string | undefined): string {
+  return code === CORRUPT_ROW_CODE
+    ? '⚠ Corrupt record: stored without encryption'
+    : '⚠ Could not decrypt this record';
+}
 
 // Stats card component for consistency
 // StatCard is the shared component (imported) — same metric tiles as Dashboard/Analytics.
@@ -194,10 +204,12 @@ function FormResponses() {
         if (localForm) setForm(localForm);
       }
 
-      // Load responses
+      // Load responses. Privacy comes from the server-authoritative state first
+      // (cached), so a private form's list cap never depends on row shapes.
       if (storageMode === 'api') {
         try {
-          const { responses: all, truncated, privateCap } = await fetchAllApiResponses(formId);
+          const privacy = await getFormPrivacyState(formId).catch(() => 'unknown' as const);
+          const { responses: all, truncated, privateCap } = await fetchAllApiResponses(formId, privacy);
           if (cancelled) return;
           setResponses(all);
           setPrivateCapInfo(privateCap);
@@ -235,7 +247,8 @@ function FormResponses() {
     const fid = formId;
     setIsRefreshing(true);
     try {
-      const { responses: all, privateCap } = await fetchAllApiResponses(fid);
+      const privacy = await getFormPrivacyState(fid).catch(() => 'unknown' as const);
+      const { responses: all, privateCap } = await fetchAllApiResponses(fid, privacy);
       if (formIdRef.current === fid) {
         setResponses(all); // drop stale result if navigated away
         setPrivateCapInfo(privateCap);
@@ -266,6 +279,19 @@ function FormResponses() {
   const viewResponses = decrypted.rows as ResponseWithStatus[];
   const isPrivateForm = decrypted.isPrivate;
   const vaultLocked = decrypted.locked;
+  const corruptRowCount = useMemo(
+    () => Object.values(decrypted.errors).filter((c) => c === CORRUPT_ROW_CODE).length,
+    [decrypted.errors],
+  );
+
+  // Plaintext boundary (review 2026-07-22): the edit modal holds DECRYPTED answers
+  // in local state, so a vault generation change (lock / re-unlock) must close it
+  // and wipe the draft IMMEDIATELY — never let decrypted state outlive the vault.
+  useResetOnVaultGenerationChange(useCallback(() => {
+    setIsEditModalOpen(false);
+    setSelectedResponse(null);
+    setEditedAnswers({});
+  }, []));
 
   // Close the export menu on outside click / Escape (mirrors the Analytics export menu).
   useEffect(() => {
@@ -419,6 +445,9 @@ function FormResponses() {
 
   // Handle edit response
   const handleEdit = (response: ResponseWithStatus) => {
+    // Never open the editor on a record that failed to decrypt / is corrupt —
+    // its answers are empty placeholders and saving would destroy the record.
+    if ((response as { _decryptError?: string })._decryptError) return;
     setSelectedResponse(response);
     setEditedAnswers({ ...response.answers });
     setIsEditModalOpen(true);
@@ -570,6 +599,11 @@ function FormResponses() {
         {
           fetchPage: async (offset, limit) => {
             const r = await api.getResponses(form.id, { limit, offset });
+            // Failure integrity (review 2026-07-22): a failed or misshapen page
+            // ABORTS the export — it must never pass for an empty final page.
+            if (r.error || !Array.isArray(r.data?.responses)) {
+              throw new Error(`Could not fetch a page of responses (${r.error ?? `server error ${r.status ?? ''}`}). The export was aborted — no file was produced.`);
+            }
             const rows = (r.data?.responses ?? []).map((x) => {
               const row = x as unknown as { id: string; answers: Record<string, unknown>; submittedAt: string; status?: string };
               return { id: row.id, answers: row.answers, submittedAt: row.submittedAt, status: row.status };
@@ -661,9 +695,7 @@ function FormResponses() {
 
   // Resolved linked-record labels for a field on a given response (empty if none/unresolved).
   const linksFor = (response: ResponseWithStatus, fieldId: string): ResolvedLink[] =>
-    asResolvedList(response._resolved?.[fieldId]);
-
-  // Format date (server timestamps are UTC) in the viewer's display timezone.
+    asResolvedList(response._resolved?.[fieldId]);  // Format date (server timestamps are UTC) in the viewer's display timezone.
   const formatDate = (dateStr: string) => {
     const date = parseServerDate(dateStr);
     return date.toLocaleDateString(undefined, {
@@ -864,6 +896,15 @@ function FormResponses() {
           </div>
         )}
 
+        {/* E2EE corruption banner: a private form must hold ONLY envelopes — any
+            plaintext-shaped row is server-side corruption/tampering, surfaced loudly
+            (never rendered as plaintext, never silently skipped). */}
+        {isPrivateForm && !vaultLocked && corruptRowCount > 0 && (
+          <div className="mb-6 rounded-xl border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10 p-3 text-sm text-red-800 dark:text-red-200" role="alert">
+            {corruptRowCount} record{corruptRowCount === 1 ? '' : 's'} in this encrypted form {corruptRowCount === 1 ? 'is' : 'are'} stored WITHOUT encryption — this should be impossible and indicates corruption or tampering. {corruptRowCount === 1 ? 'It was' : 'They were'} not displayed.
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard
@@ -1007,9 +1048,13 @@ function FormResponses() {
                           {/* Locked vault: rows render the lock text, never decrypted bytes. */}
                           {isPrivateForm && vaultLocked
                             ? (fieldIndex === 0 ? '🔒 Encrypted — unlock to view' : '—')
-                            : field.type === 'linked_record'
-                              ? linkedText(linksFor(response, field.id))
-                              : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
+                            : (response as { _decryptError?: string })._decryptError
+                              ? (fieldIndex === 0
+                                ? <span className="text-red-600 dark:text-red-400">{rowErrorText((response as { _decryptError?: string })._decryptError)}</span>
+                                : '—')
+                              : field.type === 'linked_record'
+                                ? linkedText(linksFor(response, field.id))
+                                : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
                         </p>
                       ))}
                       <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
@@ -1111,14 +1156,17 @@ function FormResponses() {
                       </td>
                       {visibleFields.map((field, fieldIndex) => {
                         const isLinked = field.type === 'linked_record';
+                        const decryptError = (response as { _decryptError?: string })._decryptError;
                         // Locked vault: the first answer column carries the lock text
                         // (never decrypted bytes, never a spinner pretending to load).
                         const locked = isPrivateForm && vaultLocked;
                         const plain = locked
                           ? (fieldIndex === 0 ? '🔒 Encrypted — unlock to view' : '-')
-                          : isLinked
-                            ? linkedText(linksFor(response, field.id))
-                            : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz);
+                          : decryptError
+                            ? (fieldIndex === 0 ? rowErrorText(decryptError) : '-')
+                            : isLinked
+                              ? linkedText(linksFor(response, field.id))
+                              : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz);
                         const isEmpty = plain === '-';
                         return (
                           <td

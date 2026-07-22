@@ -331,4 +331,47 @@ abstract class E2eeTestCase extends TestCase
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return is_array($row) ? $row : null;
     }
+
+    /**
+     * Plant the durable 'enabling' marker EXACTLY as enable()'s phase 1 commits
+     * it — the hook for simulating a mid-enable form (between the marker write
+     * and the transition commit) without driving the full enable flow.
+     */
+    protected function insertEnablingMarker(string $formId, ?string $userId = null, ?string $enabledAt = null): void
+    {
+        self::$pdo->prepare("
+            INSERT INTO form_encryption (form_id, mode, current_ingest_epoch, current_fk_epoch, state, enabled_by, enabled_at)
+            VALUES (?, 'private', 1, 1, 'enabling', ?, ?)
+        ")->execute([$formId, $userId ?? $this->userId, $enabledAt ?? date('Y-m-d H:i:s')]);
+        FormEncryptionService::invalidateCache($formId);
+    }
+
+    /**
+     * A correctly-signed encryptionSchema block — the PUT /api/forms/{id}
+     * atomic-publish body key ({schema, manifest}) — for the form's CURRENT
+     * active ingestion key at the given (next) schema version.
+     *
+     * @param array{x25519PkB64: string, ed25519PkB64: string, ed25519SkRaw: string} $vault
+     * @return array<string,mixed>
+     */
+    protected function makeEncryptionSchema(string $formId, array $vault, string $schemaJson, int $version): array
+    {
+        $keyRow = $this->row(
+            'SELECT k.id, k.public_key, k.epoch FROM form_ingestion_keys k
+             JOIN form_encryption e ON e.form_id = k.form_id AND e.current_ingest_epoch = k.epoch
+             WHERE k.form_id = ?',
+            [$formId]
+        );
+        $this->assertNotNull($keyRow, 'form has no current ingestion key');
+        $schemaHash = hash('sha256', $schemaJson);
+        $signerKeyId = substr(hash('sha256', base64_decode($vault['ed25519PkB64'])), 0, 16);
+        $sig = sodium_crypto_sign_detached(
+            $this->manifestCanonical($formId, (string) $keyRow['id'], (int) $keyRow['epoch'], (string) $keyRow['public_key'], $version, $schemaHash, $signerKeyId),
+            $vault['ed25519SkRaw']
+        );
+        return [
+            'schema' => ['schemaJson' => $schemaJson, 'schemaHash' => $schemaHash],
+            'manifest' => ['signature' => base64_encode($sig), 'signerKeyId' => $signerKeyId, 'expiresAt' => null],
+        ];
+    }
 }

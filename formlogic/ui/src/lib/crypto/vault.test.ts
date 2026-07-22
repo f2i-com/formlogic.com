@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getSodium } from './sodium';
 import { fromHex, toHex } from './encoding';
 import {
-  DEFAULT_KDF_MEMLIMIT, DEFAULT_KDF_OPSLIMIT, decodeRecoveryKey, derivePuk,
+  DEFAULT_KDF_MEMLIMIT, DEFAULT_KDF_OPSLIMIT, assertPassphraseStrength, decodeRecoveryKey, derivePuk,
   deriveRecoveryWrapKey, encodeRecoveryKey, generateVault, openBundle, recoveryAad,
   umkAad, unwrapKey, wrapKey,
 } from './vault';
@@ -106,4 +106,11 @@ describe('vault', () => {
     await expect(unwrapKey(blob, kek, recoveryAad(USER_ID))).rejects.toMatchObject({ code: 'vault_unlock_failed' });
     expect(toHex(await unwrapKey(blob, kek, umkAad(USER_ID)))).toBe(toHex(secret));
   });
+
+  it('enforces the 12-character passphrase floor (offline-attack resistance)', async () => {
+    await expect(generateVault('eleven-chrs', USER_ID)).rejects.toMatchObject({ code: 'vault_invalid' });
+    await expect(generateVault('twelve-chars', USER_ID)).resolves.toBeDefined();
+    expect(() => assertPassphraseStrength('short')).toThrowError(/12 characters/);
+    expect(() => assertPassphraseStrength('a long enough passphrase')).not.toThrow();
+  }, 30_000);
 });

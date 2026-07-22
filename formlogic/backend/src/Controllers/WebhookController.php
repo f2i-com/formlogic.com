@@ -78,6 +78,9 @@ class WebhookController
 
         try {
             $webhook = $this->webhookService->createWebhook($formId, $userId, $url, $events, $description);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: mid-enable webhook creation fails closed (409).
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // E2EE §9.2: no webhooks on private forms — typed, never silent.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);

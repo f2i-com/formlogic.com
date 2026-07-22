@@ -51,8 +51,8 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
 
   const startSetup = async () => {
     setError(null);
-    if (passphrase.length < 8) {
-      setError('Passphrase must be at least 8 characters.');
+    if (passphrase.length < 12) {
+      setError('Passphrase must be at least 12 characters.');
       return;
     }
     if (passphrase !== passphrase2) {
@@ -113,7 +113,7 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
               label="Vault passphrase"
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="At least 12 characters"
               autoComplete="new-password"
               autoFocus
             />

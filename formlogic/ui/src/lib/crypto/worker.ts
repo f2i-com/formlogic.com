@@ -17,6 +17,7 @@ import {
   DEFAULT_KDF_MEMLIMIT,
   DEFAULT_KDF_OPSLIMIT,
   KDF_SUITE,
+  assertPassphraseStrength,
   decodeRecoveryKey,
   derivePuk,
   deriveRecoveryWrapKey,
@@ -229,9 +230,7 @@ async function handleCreateVault(payload: { userId: string; passphrase: string }
   const sodium = await getSodium();
   const { userId, passphrase } = payload;
   if (!userId) throw new WorkerError('vault_invalid', 'userId required');
-  if (!passphrase || passphrase.length < 8) {
-    throw new WorkerError('vault_invalid', 'Passphrase must be at least 8 characters');
-  }
+  assertPassphraseStrength(passphrase);
   const kdf = {
     kdf: KDF_SUITE,
     salt: sodium.randombytes_buf(16),
@@ -313,9 +312,7 @@ async function handleRecoveryUnlock(payload: {
 }): Promise<{ rewrap: Pick<VaultWire, 'kdf' | 'kdfSalt' | 'kdfMemlimit' | 'kdfOpslimit' | 'wrappedUmk'> }> {
   const sodium = await getSodium();
   const { userId, recoveryCode, newPassphrase } = payload;
-  if (!newPassphrase || newPassphrase.length < 8) {
-    throw new WorkerError('vault_invalid', 'New passphrase must be at least 8 characters');
-  }
+  assertPassphraseStrength(newPassphrase, 'New passphrase');
   const wire = parseVaultWire(payload.vault);
   if (!wire.wrappedUmkRecovery) throw new WorkerError('recovery_invalid', 'This vault has no recovery kit');
   // Checksum + format are verified inside decodeRecoveryKey BEFORE any KDF work (§16-P2 gate).
@@ -347,9 +344,7 @@ async function handleChangePassphrase(payload: {
   const sodium = await getSodium();
   const secrets = requireUnlocked();
   const { userId, currentPassphrase, newPassphrase } = payload;
-  if (!newPassphrase || newPassphrase.length < 8) {
-    throw new WorkerError('vault_invalid', 'New passphrase must be at least 8 characters');
-  }
+  assertPassphraseStrength(newPassphrase, 'New passphrase');
   const wire = parseVaultWire(payload.vault);
   // Verify the CURRENT passphrase against the served wrap before rewrapping — the
   // server can't check it (E2EE), so the client must.
@@ -480,27 +475,106 @@ async function handlePublishSchemaVersion(payload: {
   };
 }
 
+/**
+ * Owner-side verification of ONE stored manifest row (review 2026-07-22, blocker 4):
+ * the owner is the only signer in P3, so EVERY served row — current or historical —
+ * must (1) be signed by THIS vault's Ed25519 key, (2) bind signerKeyId to that key,
+ * (3) reference a served ingestion key + schema version, (4) carry a schemaHash equal
+ * to SHA-256 of the exact served schema snapshot bytes, (5) hold signed_bytes equal
+ * to the canonical string recomputed from the row, and (6) carry a valid Ed25519
+ * signature over those exact bytes. Any failure is a typed refusal — keys never load.
+ */
+async function verifyStoredManifestRow(
+  sodium: Awaited<ReturnType<typeof getSodium>>,
+  secrets: VaultSecrets,
+  formId: string,
+  m: ManifestRowWire,
+  ingestionKeys: IngestionKeyWire[],
+  schemaVersions: { version: number; schemaHash: string; schemaJson: string }[],
+): Promise<void> {
+  const signerPk = fromB64(m.signerPk);
+  if (signerPk.length !== 32 || !bytesEqual(signerPk, secrets.ed25519Pk)) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest was not signed by this vault');
+  }
+  if ((await signerKeyIdFromPk(signerPk)) !== m.signerKeyId) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest signerKeyId does not match its signer key');
+  }
+  if (m.contentSuite !== CONTENT_SUITE || m.wrapSuite !== WRAP_SUITE) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest names an unknown suite');
+  }
+  const key = ingestionKeys.find((k) => k.id === m.keyId);
+  if (!key || key.epoch !== m.ingestEpoch) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest references an unknown ingestion key');
+  }
+  const schema = schemaVersions.find((s) => s.version === m.schemaVersion);
+  if (!schema) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest references a missing schema version');
+  }
+  const recomputed = toHex(sodium.crypto_hash_sha256(utf8Bytes(schema.schemaJson)));
+  if (recomputed !== m.schemaHash || recomputed !== schema.schemaHash) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest schemaHash does not match the served schema bytes');
+  }
+  const canonical = manifestCanonicalString({
+    formId,
+    keyId: m.keyId,
+    epoch: m.ingestEpoch,
+    publicKey: key.publicKey,
+    content: m.contentSuite,
+    wrap: m.wrapSuite,
+    schemaVersion: m.schemaVersion,
+    schemaHash: m.schemaHash,
+    signerKeyId: m.signerKeyId,
+    expiresAt: m.expiresAt,
+  });
+  if (m.signedBytes !== canonical) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest canonical bytes were altered');
+  }
+  const ok = sodium.crypto_sign_verify_detached(fromB64(m.signature), utf8Bytes(m.signedBytes), signerPk);
+  if (!ok) {
+    throw new WorkerError('manifest_invalid', 'A stored manifest signature verification failed');
+  }
+}
+
 async function handleLoadFormKeys(payload: {
   formId: string;
   grants: FormKeyGrantWire[];
   ingestionKeys: IngestionKeyWire[];
+  manifests?: ManifestRowWire[];
+  schemaVersions?: { version: number; schemaHash: string; schemaJson: string }[];
 }): Promise<{ loadedEpochs: number[] }> {
   const sodium = await getSodium();
   const secrets = requireUnlocked();
   const { formId, grants, ingestionKeys } = payload;
+  const manifests = payload.manifests ?? [];
+  const schemaVersions = payload.schemaVersions ?? [];
   // The backend serves the caller's latest non-revoked grant (revoked ones are
   // filtered server-side), so the local check is just "is it ours?".
   const grant = grants.find((g) => g.granteeUserId === secrets.userId);
   if (!grant) throw new WorkerError('key_unavailable', 'No active key grant for this account');
-  // Grant integrity (§11): for v1 the grantor is the owner themself, so the signature
-  // verifies against our own vault Ed25519 key. (P5 grantor verification for other
-  // members arrives with reciprocal fingerprint checks.)
-  if (grant.grantorUserId === secrets.userId) {
-    const granteePkHash = toHex(sodium.crypto_hash_sha256(fromB64(grant.granteePk)));
-    const wrappedKeyHash = toHex(sodium.crypto_hash_sha256(fromB64(grant.wrappedKey)));
-    const canonical = `flgrant:1|${grant.grantId}|${formId}|${grant.fkEpoch}|${grant.grantorUserId}|${grant.granteeUserId}|${granteePkHash}|${wrappedKeyHash}|${WRAP_SUITE}|${grant.role}|-`;
-    const ok = sodium.crypto_sign_verify_detached(fromB64(grant.signature), utf8Bytes(canonical), secrets.ed25519Pk);
-    if (!ok) throw new WorkerError('grant_invalid', 'Key grant signature verification failed');
+  // P3 is owner-only: NEVER unwrap an FK from a grant that is not a complete
+  // self-grant — any other grantor/grantee fails closed BEFORE any crypto (a
+  // tampered grantorUserId must not skip verification, review 2026-07-22 blocker 4).
+  if (grant.grantorUserId !== secrets.userId || grant.granteeUserId !== secrets.userId) {
+    throw new WorkerError('grant_invalid', 'Refusing a key grant that is not a vault-owner self-grant');
+  }
+  // Grant integrity (§11): the grantee key snapshot must be OUR X25519 key, and the
+  // signature over the exact canonical grant string must verify against the vault
+  // Ed25519 key — before the wrapped FK is touched.
+  if (!bytesEqual(fromB64(grant.granteePk), secrets.x25519Pk)) {
+    throw new WorkerError('grant_invalid', 'Key grant is sealed to a different public key');
+  }
+  const granteePkHash = toHex(sodium.crypto_hash_sha256(fromB64(grant.granteePk)));
+  const wrappedKeyHash = toHex(sodium.crypto_hash_sha256(fromB64(grant.wrappedKey)));
+  const canonical = `flgrant:1|${grant.grantId}|${formId}|${grant.fkEpoch}|${grant.grantorUserId}|${grant.granteeUserId}|${granteePkHash}|${wrappedKeyHash}|${WRAP_SUITE}|${grant.role}|-`;
+  const ok = sodium.crypto_sign_verify_detached(fromB64(grant.signature), utf8Bytes(canonical), secrets.ed25519Pk);
+  if (!ok) throw new WorkerError('grant_invalid', 'Key grant signature verification failed');
+  // EVERY served manifest row is verified before any key loads (blocker 4) — the
+  // owner is the only signer in P3, so anything not signed by this vault is refused.
+  if (manifests.length === 0) {
+    throw new WorkerError('manifest_invalid', 'No manifests were served for a private form');
+  }
+  for (const m of manifests) {
+    await verifyStoredManifestRow(sodium, secrets, formId, m, ingestionKeys, schemaVersions);
   }
   let fk: Uint8Array;
   try {

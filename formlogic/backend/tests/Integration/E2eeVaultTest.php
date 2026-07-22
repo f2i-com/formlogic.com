@@ -140,6 +140,89 @@ class E2eeVaultTest extends E2eeTestCase
         $this->assertSame(VaultService::MIN_MEMLIMIT * 2, $vault['kdfMemlimit']);
     }
 
+    public function testKdfAboveMaximumIsRefused(): void
+    {
+        // Sane maximums (security review): corrupt/huge parameters would freeze
+        // the browser's Argon2id derivation — the server refuses to store them.
+        foreach ([['kdfOpslimit', VaultService::MAX_OPSLIMIT + 1], ['kdfMemlimit', VaultService::MAX_MEMLIMIT + 1]] as [$field, $value]) {
+            $body = $this->validCreateBody();
+            $body[$field] = $value;
+            try {
+                self::$vaults->createVault($this->userId, $body);
+                $this->fail("over-max {$field} on create must throw");
+            } catch (EncryptionRequestException $e) {
+                $this->assertSame('vault_invalid', $e->errorCode);
+                $this->assertSame(400, $e->status);
+            }
+        }
+        $this->assertNull($this->row('SELECT user_id FROM user_vaults WHERE user_id = ?', [$this->userId]));
+
+        // Same ceiling on passphrase change.
+        self::$vaults->createVault($this->userId, $this->validCreateBody());
+        $change = [
+            'expectedVersion' => 1,
+            'kdfSalt' => base64_encode(random_bytes(16)),
+            'kdfOpslimit' => VaultService::MAX_OPSLIMIT + 1,
+            'kdfMemlimit' => VaultService::MIN_MEMLIMIT,
+            'wrappedUmk' => base64_encode(random_bytes(72)),
+        ];
+        try {
+            self::$vaults->changePassphrase($this->userId, $change);
+            $this->fail('over-max opslimit on passphrase change must throw');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('vault_invalid', $e->errorCode);
+        }
+    }
+
+    public function testKdfDowngradeBelowStoredParamsIsRefusedOnPassphraseChange(): void
+    {
+        // Create at NON-minimum params so a change can sit between MIN and stored.
+        $create = $this->validCreateBody();
+        $create['kdfOpslimit'] = 5;
+        $create['kdfMemlimit'] = VaultService::MIN_MEMLIMIT * 2;
+        self::$vaults->createVault($this->userId, $create);
+
+        $change = [
+            'expectedVersion' => 1,
+            'kdfSalt' => base64_encode(random_bytes(16)),
+            'kdfOpslimit' => 4, // >= MIN but BELOW the stored 5 — a silent downgrade
+            'kdfMemlimit' => VaultService::MIN_MEMLIMIT * 2,
+            'wrappedUmk' => base64_encode(random_bytes(72)),
+        ];
+        try {
+            self::$vaults->changePassphrase($this->userId, $change);
+            $this->fail('downgrading below the stored opslimit must throw kdf_downgrade');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('kdf_downgrade', $e->errorCode);
+            $this->assertSame(400, $e->status);
+        }
+
+        $change['kdfOpslimit'] = 5;
+        $change['kdfMemlimit'] = VaultService::MIN_MEMLIMIT; // below the stored 128 MiB
+        try {
+            self::$vaults->changePassphrase($this->userId, $change);
+            $this->fail('downgrading below the stored memlimit must throw kdf_downgrade');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('kdf_downgrade', $e->errorCode);
+        }
+
+        // Nothing moved: still version 1 with the original params.
+        $vault = self::$vaults->getVault($this->userId);
+        $this->assertSame(1, $vault['version']);
+        $this->assertSame(5, $vault['kdfOpslimit']);
+        $this->assertSame(VaultService::MIN_MEMLIMIT * 2, $vault['kdfMemlimit']);
+
+        // Equal params are accepted (idempotent rewrap), higher are an upgrade.
+        $change['kdfMemlimit'] = VaultService::MIN_MEMLIMIT * 2;
+        $vault = self::$vaults->changePassphrase($this->userId, $change);
+        $this->assertSame(2, $vault['version']);
+        $change['expectedVersion'] = 2;
+        $change['kdfOpslimit'] = 6;
+        $vault = self::$vaults->changePassphrase($this->userId, $change);
+        $this->assertSame(6, $vault['kdfOpslimit']);
+        $this->assertSame(3, $vault['version']);
+    }
+
     public function testPassphraseChangeRewrapsOnly(): void
     {
         $create = $this->validCreateBody();

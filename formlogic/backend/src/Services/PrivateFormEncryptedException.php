@@ -16,8 +16,14 @@ namespace FormLogic\Services;
  * The stable code rides in ERROR_CODE for controllers that map it onto the
  * canonical error shape, and inside the default message for legacy catch
  * paths that only surface message text.
+ *
+ * Deliberately NOT final: EncryptionEnablingException extends it so the §9.1
+ * durable-enable refusal is caught by every existing §9.2 catch site (no
+ * surface can accidentally fall through to a 500 while an enable is in
+ * flight), with the contract surfaces catching the subclass FIRST to emit
+ * the 409 encryption_enabling shape.
  */
-final class PrivateFormEncryptedException extends \RuntimeException
+class PrivateFormEncryptedException extends \RuntimeException
 {
     public const ERROR_CODE = 'private_form_encrypted';
 

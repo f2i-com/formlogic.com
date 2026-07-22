@@ -869,6 +869,26 @@ final class AccountBackupService
                 }
             }
 
+            // E2EE cross-account guard (security review, blocker 5): the vault's
+            // wrapped UMK is AAD-bound to the OWNING account id and every grant to
+            // its signed user ids — installed under a different account id, the
+            // vault unwraps to nothing and the grants are useless. v1 fails CLOSED:
+            // when the backup carries encryption material and its owning account id
+            // differs from the restore target, refuse the WHOLE restore (a partial
+            // restore would silently strand the private forms).
+            $encBlock = $structure['encryption'] ?? null;
+            $hasEncryptionMaterial = is_array($encBlock)
+                && (is_array($encBlock['vault'] ?? null)
+                    || (is_array($encBlock['forms'] ?? null) && $encBlock['forms'] !== []));
+            $backupOwnerId = is_array($structure['user'] ?? null) ? ($structure['user']['id'] ?? null) : null;
+            if ($hasEncryptionMaterial && $backupOwnerId !== $userId) {
+                throw new EncryptionRequestException(
+                    'encryption_not_restorable',
+                    'This backup contains end-to-end encrypted (private-form) key material that is cryptographically bound to the account that created it — only a restore into that same account can recover it.',
+                    400
+                );
+            }
+
             // ── Phase 1: structure, in ONE MySQL transaction ──
             $maps = $this->restoreStructure($structure, $userId, $created, $warnings, $opts);
 

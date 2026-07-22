@@ -221,6 +221,9 @@ class FlowController
         try {
             $binding = $this->flows->createBinding($args['id'], $request->getParsedBody() ?? []);
             return $this->jsonResponse($response, ['binding' => $binding], 201);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: mid-enable binding creation fails closed (409).
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // E2EE §9.2: no flow bindings on private forms — typed refusal.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
@@ -587,6 +590,9 @@ class FlowController
         try {
             $binding = $this->flows->createFormBinding($userId, $formId, $request->getParsedBody() ?? []);
             return $this->jsonResponse($response, ['binding' => $binding], 201);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: mid-enable binding creation fails closed (409).
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // E2EE §9.2: no flow bindings on private forms — typed refusal.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);

@@ -64,10 +64,46 @@ describe('vaultStore lock semantics', () => {
 
     useVaultStore.getState().lock();
 
+    // The plaintext boundary is SYNCHRONOUS: generation bump + LRU wipe now.
     expect(useVaultStore.getState().generation).toBeGreaterThan(genBefore);
-    expect(useVaultStore.getState().status).toBe('locked');
     expect(usePrivateDataStore.getState().get('rec-1')).toBeUndefined();
     expect(usePrivateDataStore.getState().generation).toBe(useVaultStore.getState().generation);
+    // The status flips to locked only once the worker is actually terminated.
+    await flushAsync();
+    expect(useVaultStore.getState().status).toBe('locked');
+  });
+
+  it('lock() never reports locked while a live worker may still hold keys', async () => {
+    const { wire } = await makeVaultWire();
+    await unlockStore(wire);
+    const client = getCryptoClient();
+    expect(client.isRunning).toBe(true);
+
+    useVaultStore.getState().lock();
+    // Synchronously after lock() the worker is still mid-termination — the store
+    // must NOT yet claim locked (review 2026-07-22, blocker 3).
+    expect(useVaultStore.getState().status).toBe('unlocked');
+    expect(useVaultStore.getState().generation).toBeGreaterThan(0);
+
+    await flushAsync();
+    // Exactly one flip, after termination: locked AND no live worker.
+    expect(useVaultStore.getState().status).toBe('locked');
+    expect(client.isRunning).toBe(false);
+    expect((await client.status()).unlocked).toBe(false);
+  });
+
+  it('a failed recovery-rewrap CAS forces a full lock (no unlocked worker left behind)', async () => {
+    const { wire, recoveryDisplay } = await makeVaultWire();
+    await unlockStore(wire);
+    vi.mocked(api.changeVaultPassphrase).mockResolvedValue({ ok: false, status: 409, body: { error: true, message: 'stale version' } });
+
+    const result = await useVaultStore.getState().recoveryUnlock(USER, recoveryDisplay, 'brand-new-passphrase');
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('vault_version_conflict');
+    // Forced lock: worker dead, status locked, generation bumped (decrypted state dropped).
+    expect(useVaultStore.getState().status).toBe('locked');
+    expect(getCryptoClient().isRunning).toBe(false);
   });
 
   it('lock() terminates the crypto worker (fresh worker on next op)', async () => {
@@ -135,6 +171,8 @@ describe('vaultStore lock semantics', () => {
 
     // Idle past the default 30-minute budget + one 15s check tick.
     vi.advanceTimersByTime(DEFAULT_AUTO_LOCK_MINUTES * 60_000 + 16_000);
+    // The lock's worker termination (+ status flip) completes on microtasks/timers.
+    await vi.advanceTimersByTimeAsync(300);
 
     expect(useVaultStore.getState().status).toBe('locked');
     expect(useVaultStore.getState().autoLockAt).toBeNull();
@@ -152,6 +190,7 @@ describe('vaultStore lock semantics', () => {
     expect(useVaultStore.getState().status).toBe('unlocked');
     // One more idle stretch past the budget locks it.
     vi.advanceTimersByTime(2 * 60_000 + 16_000);
+    await vi.advanceTimersByTimeAsync(300);
     expect(useVaultStore.getState().status).toBe('locked');
   });
 });

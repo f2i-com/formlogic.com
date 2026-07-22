@@ -65,7 +65,9 @@ import { resolveBuilderChrome, type BuilderChromeTier } from '../components/buil
 import { BUILDER_FLOWS_W, BUILDER_SETTINGS_W, resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
 import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
 import { demoApplyFormBindingOverlay } from '../lib/demoLocal';
-import { flushFormSaves, useFormStore } from '../stores/formStore';
+import { flushFormSaves, discardPendingFormSaves, useFormStore } from '../stores/formStore';
+import { useVaultStore } from '../stores/vaultStore';
+import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { usePersistentBoolean } from '../hooks/usePersistentBoolean';
 import { toast } from '../stores/toastStore';
@@ -556,6 +558,9 @@ export default function FormBuilder() {
   // field-palette blocks (no file/camera/linked_record - plan SS9.1), and the
   // schema-publish path on Publish. Looked up once per form (owner-only endpoint).
   const [isPrivateForm, setIsPrivateForm] = useState(false);
+  // E2EE: publishing a private form with a locked vault is BLOCKED — this opens
+  // the unlock dialog, after which the publish retries (blocker 2).
+  const [showPublishUnlock, setShowPublishUnlock] = useState(false);
   useEffect(() => {
     let cancelled = false;
     if (!currentFormId || storageMode !== 'api' || acting) { setIsPrivateForm(false); return; }
@@ -1058,6 +1063,108 @@ export default function FormBuilder() {
   };
 
   const closeModal = () => setActiveModal(null);
+
+  // Publish — make it a real activation moment: confirm + surface the live link so
+  // first-time users know it worked and where it lives. PRIVATE forms sign the
+  // field schema FIRST and publish fields + status + signed schema in ONE atomic
+  // update (blocker 2): a locked vault blocks the publish (offering unlock) —
+  // there is no "published but not re-signed" state.
+  const handlePublish = async () => {
+    if ((form.fields?.length ?? 0) === 0) {
+      toast.warning('Add a field first', 'Your form needs at least one field before publishing.');
+      return;
+    }
+    const alreadyLive = form.status === 'published';
+    const previousStatus = form.status;
+
+    if (storageMode === 'api' && isPrivateForm && !api.isDemoMode()) {
+      const fc = await import('../lib/crypto/formCrypto');
+      await fc.ensureVaultLoaded().catch(() => undefined);
+      if (useVaultStore.getState().status !== 'unlocked') {
+        toast.warning('Unlock your vault to publish', 'A private form can only go live with its encryption schema signed by your vault. Nothing was published.');
+        setShowPublishUnlock(true);
+        return;
+      }
+      let signed: Awaited<ReturnType<typeof fc.signPrivateFormSchema>> = null;
+      try {
+        signed = await fc.signPrivateFormSchema(form.id, JSON.stringify(form.fields ?? []));
+      } catch (e) {
+        toast.error('Not published', e instanceof Error ? e.message : 'The encryption schema could not be signed — nothing was published.');
+        return;
+      }
+      // One atomic PUT (fields + status + encryptionSchema): pending debounced
+      // slice saves must not fire after this — they would lack the signed schema.
+      discardPendingFormSaves(form.id);
+      const res = await api.updateFormWithMeta(form.id, {
+        title: form.title,
+        description: form.description,
+        status: 'published',
+        icon: form.icon,
+        theme: form.theme,
+        settings: form.settings,
+        logicScript: form.logicScript,
+        logicPrompt: form.logicPrompt,
+        fields: form.fields,
+        ...(signed ? { encryptionSchema: signed.encryptionSchema } : {}),
+      });
+      if (!res.ok) {
+        const body = (res.body ?? {}) as { code?: string; message?: string };
+        if (body.code === 'encryption_enabling') {
+          toast.warning('Encryption setup is still running', 'Try again in a moment — nothing was published.');
+        } else if (body.code === 'manifest_required') {
+          toast.error('Unlock your vault and republish', body.message ?? 'The encrypted schema must be signed by your vault before publishing.');
+        } else {
+          toast.error('Not published', body.message ?? `Server error (${res.status})`);
+        }
+        return;
+      }
+      // A new schema version may have landed — refetch the encryption state next use.
+      fc.forgetFormKeys(form.id);
+      useFormStore.getState().setFormLocal(form.id, { status: 'published' });
+    } else {
+      await updateForm(form.id, { status: 'published' });
+      // FL-SAVE-001: updateForm only SCHEDULES the server write - flush it and
+      // require acknowledgement before announcing anything. On failure, roll the
+      // optimistic status back so the header does not claim 'Published' for a
+      // version the server never accepted.
+      if (storageMode === 'api' && !api.isDemoMode()) {
+        const { ok } = await flushFormSaves(form.id);
+        if (!ok) {
+          if (!alreadyLive) {
+            useFormStore.getState().setFormLocal(form.id, { status: previousStatus });
+          }
+          toast.error(
+            alreadyLive ? 'Changes not published' : 'Not published',
+            'Your changes could not be saved to the server, so nothing went live. Retry from the save indicator.'
+          );
+          return;
+        }
+      }
+    }
+    // Only cloud-stored forms have a public link / embed; a local form
+    // isn't on the server, so don't claim a shareable link for it.
+    if (storageMode === 'api') {
+      toast.success(
+        alreadyLive ? 'Changes published' : 'Your form is live',
+        'Share the link or embed it anywhere.'
+      );
+      // Heads-up on first publish if it collects files: standalone public-form uploads
+      // are link-accessible to anyone (see the file-upload field settings note).
+      if (!alreadyLive && (form.fields ?? []).some((f) => f.type === 'file_upload')) {
+        toast.info(
+          'Public file access',
+          'Files uploaded to this public form can be opened by anyone with the link — use an app form for member-only access.'
+        );
+      }
+      setActiveModal('embed');
+    } else {
+      toast.success(
+        alreadyLive ? 'Changes published' : 'Form published',
+        'Switch to Cloud storage (top-right menu) to share it with a public link.'
+      );
+    }
+  };
+
   const showHeaderLabels = builderChrome === 'full';
   const foldMiddleClusters = builderChrome === 'tiny';
   const designActions: BuilderHeaderAction[] = [
@@ -1223,70 +1330,7 @@ export default function FormBuilder() {
             title={form.status === 'published' ? 'Published' : 'Publish'}
             aria-label={form.status === 'published' ? 'Published' : 'Publish'}
             leftIcon={<Rocket className="h-4 w-4" />}
-            onClick={async () => {
-              if ((form.fields?.length ?? 0) === 0) {
-                toast.warning('Add a field first', 'Your form needs at least one field before publishing.');
-                return;
-              }
-              const alreadyLive = form.status === 'published';
-              const previousStatus = form.status;
-              await updateForm(form.id, { status: 'published' });
-              // FL-SAVE-001: updateForm only SCHEDULES the server write - flush it and
-              // require acknowledgement before announcing anything. On failure, roll the
-              // optimistic status back so the header does not claim 'Published' for a
-              // version the server never accepted.
-              if (storageMode === 'api' && !api.isDemoMode()) {
-                const { ok } = await flushFormSaves(form.id);
-                if (!ok) {
-                  if (!alreadyLive) {
-                    useFormStore.getState().setFormLocal(form.id, { status: previousStatus });
-                  }
-                  toast.error(
-                    alreadyLive ? 'Changes not published' : 'Not published',
-                    'Your changes could not be saved to the server, so nothing went live. Retry from the save indicator.'
-                  );
-                  return;
-                }
-              }
-              // E2EE: publishing a private form must cut a new SIGNED schema version
-              // so the served manifest matches the current fields (plan SS8). Needs
-              // the vault unlocked; a no-op when the fields are unchanged.
-              if (storageMode === 'api' && isPrivateForm) {
-                try {
-                  const { publishPrivateFormSchema } = await import('../lib/crypto/formCrypto');
-                  await publishPrivateFormSchema(form.id, JSON.stringify(form.fields ?? []));
-                } catch (e) {
-                  const err = e as { code?: string; message?: string };
-                  if (err.code === 'vault_locked') {
-                    toast.warning('Unlock your vault', 'Published, but the encrypted schema was not re-signed. Unlock your vault and publish again so new submissions use the current fields.');
-                  } else {
-                    toast.error('Schema not re-signed', err.message ?? 'The encrypted form schema could not be published; new submissions may be rejected until you republish.');
-                  }
-                }
-              }
-              // Only cloud-stored forms have a public link / embed; a local form
-              // isn't on the server, so don't claim a shareable link for it.
-              if (storageMode === 'api') {
-                toast.success(
-                  alreadyLive ? 'Changes published' : 'Your form is live',
-                  'Share the link or embed it anywhere.'
-                );
-                // Heads-up on first publish if it collects files: standalone public-form uploads
-                // are link-accessible to anyone (see the file-upload field settings note).
-                if (!alreadyLive && (form.fields ?? []).some((f) => f.type === 'file_upload')) {
-                  toast.info(
-                    'Public file access',
-                    'Files uploaded to this public form can be opened by anyone with the link — use an app form for member-only access.'
-                  );
-                }
-                setActiveModal('embed');
-              } else {
-                toast.success(
-                  alreadyLive ? 'Changes published' : 'Form published',
-                  'Switch to Cloud storage (top-right menu) to share it with a public link.'
-                );
-              }
-            }}
+            onClick={() => void handlePublish()}
           >
             {showHeaderLabels && <span>{form.status === 'published' ? 'Published' : 'Publish'}</span>}
           </Button>
@@ -1666,6 +1710,14 @@ export default function FormBuilder() {
 
       {/* Preview chooser — shown when this form is published in 2+ apps */}
       {previewChooser}
+
+      {/* E2EE: publishing a private form needs the vault unlocked (signing). */}
+      <VaultUnlockDialog
+        isOpen={showPublishUnlock}
+        onClose={() => setShowPublishUnlock(false)}
+        onUnlocked={() => void handlePublish()}
+        title="Unlock to publish"
+      />
     </div>
   );
 }

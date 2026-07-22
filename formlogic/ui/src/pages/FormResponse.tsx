@@ -1,13 +1,13 @@
 import { useEffect, useState, useMemo, useCallback, useRef, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft, Wrench } from 'lucide-react';
+import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft, Wrench, ShieldAlert } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
-import { cn } from '../lib/utils';
+import { cn, generateId } from '../lib/utils';
 import { readableForegroundColor, parseHex, luminance } from '../lib/color';
 import { useUIStore } from '../stores/uiStore';
 import { useAuthStore } from '../stores/authStore';
@@ -840,6 +840,17 @@ export default function FormResponse() {
   // Private forms: the served manifest signer differs from the TOFU-pinned key
   // for this form - submission is refused until the user explicitly re-trusts.
   const [pinConflict, setPinConflict] = useState<{ pinnedFingerprint: string; servedFingerprint: string } | null>(null);
+  // Private forms (blocker 2): the rendered field list comes ONLY from the
+  // manifest's verified, signed schemaJson - never the ordinary fields payload.
+  // null while verification is in flight; privateSchemaError => fail closed.
+  const [privateSchema, setPrivateSchema] = useState<{ formId: string; fields: FormField[] } | null>(null);
+  const [privateSchemaError, setPrivateSchemaError] = useState<string | null>(null);
+  // Offline honesty (blocker 6): set when the sealed envelope was provably queued
+  // by the service worker for background delivery (not yet accepted by the server).
+  const [submitQueued, setSubmitQueued] = useState(false);
+  // One idempotency key per fill, reused across manual retries so a retry after a
+  // dropped ack can never create a duplicate record.
+  const submitIdemKeyRef = useRef<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
   const [isLoadingForm, setIsLoadingForm] = useState(false);
@@ -927,11 +938,16 @@ export default function FormResponse() {
   // Explicitly-themed forms keep their own colours in both modes.
   const form = useMemo(() => {
     if (!rawForm) return rawForm;
-    const th = (rawForm.theme || {}) as unknown as { backgroundColor?: string; textColor?: string; [k: string]: unknown };
-    if (th.backgroundColor && th.textColor) return rawForm;
+    // E2EE (blocker 2): a private form renders EXCLUSIVELY from the manifest's
+    // verified, signed schemaJson — the ordinary fields payload is never rendered.
+    const base = rawForm.encryption?.mode === 'private' && privateSchema?.formId === rawForm.id
+      ? { ...rawForm, fields: privateSchema.fields }
+      : rawForm;
+    const th = (base.theme || {}) as unknown as { backgroundColor?: string; textColor?: string; [k: string]: unknown };
+    if (th.backgroundColor && th.textColor) return base;
     const dark = appTheme === 'dark';
     return {
-      ...rawForm,
+      ...base,
       theme: {
         ...DEFAULT_FORM_THEME,
         ...th,
@@ -939,8 +955,40 @@ export default function FormResponse() {
         textColor: th.textColor || (dark ? '#e8edf5' : '#1f2937'),
       },
     };
-  }, [rawForm, appTheme]);
+  }, [rawForm, appTheme, privateSchema]);
   useDocumentTitle(form?.title);
+
+  // E2EE (blocker 2): verify the served manifest (structure, signature, schema
+  // hash, signer-key binding) and parse the SIGNED schema snapshot. Until this
+  // completes the form is not rendered; on failure it fails closed.
+  useEffect(() => {
+    if (!rawForm || rawForm.encryption?.mode !== 'private') {
+      setPrivateSchema(null);
+      setPrivateSchemaError(null);
+      return;
+    }
+    const encryption = rawForm.encryption;
+    const fid = rawForm.id;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { verifyManifest } = await import('../lib/crypto/manifest');
+        await verifyManifest(fid, encryption);
+        const parsed: unknown = JSON.parse(encryption.schemaJson);
+        if (!Array.isArray(parsed)) throw new Error('The signed schema snapshot is not a field list.');
+        if (!cancelled) {
+          setPrivateSchema({ formId: fid, fields: parsed as FormField[] });
+          setPrivateSchemaError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setPrivateSchema(null);
+          setPrivateSchemaError(e instanceof Error ? e.message : 'The encryption manifest could not be verified.');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rawForm]);
 
   // The public form must render in its OWN theme, not the visitor's app dark-mode
   // preference — otherwise Tailwind `dark:` control colors (e.g. slate-400 text) leak
@@ -976,12 +1024,15 @@ export default function FormResponse() {
 
   // Seed static defaults for hidden fields that have no calculation expression.
   useEffect(() => {
+    // Private form: never seed from the UNSIGNED fields payload — wait for the
+    // verified signed schema before anything touches the answers (blocker 2).
+    if (form?.encryption?.mode === 'private' && privateSchema?.formId !== form.id) return;
     hiddenFields.forEach((f) => {
       if (!f.properties.calculationExpression && f.properties.defaultValue !== undefined && currentAnswers[f.id] === undefined) {
         setAnswer(f.id, f.properties.defaultValue);
       }
     });
-  }, [hiddenFields, currentAnswers, setAnswer]);
+  }, [hiddenFields, currentAnswers, setAnswer, form, privateSchema]);
 
   // Use conditional logic to determine field visibility
   // Note: hooks must be called before any early returns
@@ -1121,6 +1172,36 @@ export default function FormResponse() {
     );
   }
 
+  // E2EE fail-closed (blocker 2): a private form renders ONLY from its verified,
+  // signed schema snapshot. While verification runs show a spinner; if the
+  // manifest is missing or invalid, refuse to render the unsigned fields at all.
+  if (form.encryption?.mode === 'private' && privateSchema?.formId !== form.id) {
+    if (!privateSchemaError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" />
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-red-100 dark:bg-red-500/15 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <ShieldAlert className="h-8 w-8 text-red-500 dark:text-red-400" />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">This form's encryption can't be verified</h1>
+          <p className="text-gray-500 dark:text-slate-400 mb-6">
+            The signed encryption manifest for this form is missing or invalid, so the form was not rendered.
+            Do not enter any data — contact the form owner.
+          </p>
+          <Button onClick={() => window.location.reload()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // A section-screen widget dashboard takes over the public/embed view (host-rendered recharts;
   // aggregates come from the whitelisted public endpoint).
   if (form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard && !showFormView) {
@@ -1240,11 +1321,16 @@ export default function FormResponse() {
     // the base bundle. ANY failure is a blocking error - there is NO plaintext
     // fallback, and plaintext never enters responseStore persistence.
     if (form.encryption?.mode === 'private') {
+      let queued = false;
       try {
         const crypto = await import('../lib/crypto/privateSubmit');
-        // Fold client-computed calculated/hidden values into the sealed answers -
-        // the server no longer derives anything for private forms.
-        const answers = { ...currentAnswers, ...calculatedValues };
+        // Fold client-computed calculated/hidden values into the sealed answers,
+        // restricted to the VERIFIED signed schema's field ids (blocker 2) - the
+        // server no longer derives anything for private forms.
+        const allowedFieldIds = new Set(form.fields.map((f) => f.id));
+        const answers = Object.fromEntries(
+          Object.entries({ ...currentAnswers, ...calculatedValues }).filter(([key]) => allowedFieldIds.has(key)),
+        );
         const { envelope } = await crypto.sealPrivateSubmission({
           formId: form.id,
           encryption: form.encryption,
@@ -1252,21 +1338,27 @@ export default function FormResponse() {
           completionTime,
           language: typeof navigator !== 'undefined' ? navigator.language : undefined,
         });
-        const result = await api.submitEncryptedResponse(form.id, envelope);
-        if (!result.ok && navigator.onLine) {
-          // Typed server refusals (envelope_invalid / key_epoch_retired /
-          // payload_too_large) block the success screen honestly.
+        // One idempotency key per fill: manual retries after a dropped ack (or a
+        // Workbox replay of the queued POST) hit the server's dedup instead of
+        // creating a duplicate record.
+        if (!submitIdemKeyRef.current) submitIdemKeyRef.current = generateId();
+        const result = await api.submitEncryptedResponse(form.id, envelope, submitIdemKeyRef.current);
+        // Offline honesty (blocker 6): accepted (2xx) vs provably queued (network
+        // failure + SW background-sync active) vs rejected — never navigator.onLine.
+        const { classifySubmitOutcome } = await import('../lib/swQueue');
+        const outcome = await classifySubmitOutcome(result);
+        if (outcome === 'rejected') {
           const body = (result.body ?? {}) as { code?: string; message?: string };
           setSubmitError(
             body.code === 'key_epoch_retired'
               ? 'This form\'s encryption keys were rotated while you were filling it in. Reload the page and re-enter your response.'
-              : body.message ?? 'Your response could not be submitted. Please try again.',
+              : body.message
+                ?? 'Your response could not be submitted and could not be queued for offline delivery. Your answers are still here — check your connection and try again.',
           );
           setIsSubmitting(false);
           return;
         }
-        // Offline: the service worker queued the sealed envelope for background
-        // delivery - ciphertext only, same as the plain-form offline path.
+        queued = outcome === 'queued';
       } catch (err) {
         const e = err as { code?: string; message?: string; pinChange?: { pinnedFingerprint: string; servedFingerprint: string } };
         if (e && typeof e === 'object' && e.pinChange) {
@@ -1280,7 +1372,10 @@ export default function FormResponse() {
       // Success: clear the in-progress answers WITHOUT recording them locally -
       // no plaintext may enter responseStore persistence for private forms.
       resetCurrentResponse();
-      updateForm(form.id, { responseCount: form.responseCount + 1 });
+      submitIdemKeyRef.current = null;
+      setSubmitQueued(queued);
+      // Only an ACCEPTED submission bumps the count — a queued one hasn't landed.
+      if (!queued) updateForm(form.id, { responseCount: form.responseCount + 1 });
       setIsSubmitted(true);
       const privateRedirectUrl = form.settings?.redirectUrl;
       if (privateRedirectUrl) {
@@ -1355,7 +1450,13 @@ export default function FormResponse() {
   const trustNewKeyAndResubmit = async () => {
     if (!form?.encryption) return;
     const crypto = await import('../lib/crypto/privateSubmit');
-    crypto.trustFormSignerKey(form.id, form.encryption.signerPk);
+    try {
+      crypto.trustFormSignerKey(form.id, form.encryption.signerPk);
+    } catch (e) {
+      // Fail closed (blocker 7): a trust decision that can't be persisted refuses.
+      setSubmitError(e instanceof Error ? e.message : 'Could not persist the trust decision — submission refused.');
+      return;
+    }
     setPinConflict(null);
     setSubmitError(null);
     await handleSubmit();
@@ -1605,6 +1706,15 @@ export default function FormResponse() {
           </button>
         )}
         <SuccessScreen form={form} isRedirecting={isRedirecting} thankYou={form.fields.find((f) => f.type === 'thank_you')} />
+        {submitQueued && (
+          <p
+            role="status"
+            className="mt-4 mx-auto max-w-md text-center text-sm rounded-lg px-4 py-2.5 border"
+            style={{ color: form.theme.textColor, borderColor: `${form.theme.textColor}40`, backgroundColor: `${form.theme.textColor}10` }}
+          >
+            You're offline — your encrypted response was <strong>queued</strong> on this device and will be sent automatically when you're back online.
+          </p>
+        )}
       </div>
     );
   }

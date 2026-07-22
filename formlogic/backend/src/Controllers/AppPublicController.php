@@ -754,6 +754,9 @@ class AppPublicController
             }
 
             return ['status' => 201, 'payload' => ['response' => $result]];
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: mid-enable submissions fail closed with 409.
+            return ['status' => 409, 'payload' => ['error' => true, 'message' => $e->getMessage(), 'code' => \FormLogic\Services\EncryptionEnablingException::ERROR_CODE]];
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // §9.2 (defense-in-depth — a private form can never be app-attached in P3):
             // never let the plaintext pipeline touch a private form, typed refusal.

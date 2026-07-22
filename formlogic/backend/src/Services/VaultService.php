@@ -19,14 +19,20 @@ use PDO;
  * Create is CREATE-ONLY (the PK insert is the atomic gate → vault_exists);
  * passphrase change is a version-checked compare-and-swap UPDATE that touches
  * passphrase-side fields only (plan: "passphrase change rewraps the UMK only").
- * KDF parameters are validated against the pinned minimums on every write —
- * the server refuses downgrades below opslimit 3 / memlimit 64 MiB.
+ * KDF parameters are validated on every write: pinned minimums (opslimit 3 /
+ * memlimit 64 MiB), sane maximums (10 / 256 MiB — corrupt values would freeze
+ * the browser), and per-account MONOTONICITY on rewrap (a downgrade below the
+ * stored values loses the CAS → 400 kdf_downgrade).
  */
 final class VaultService
 {
     public const KDF = 'argon2id13.1';
     public const MIN_OPSLIMIT = 3;
     public const MIN_MEMLIMIT = 67_108_864; // 64 MiB
+    // Sane maximums (security review): absurd parameters would freeze the
+    // browser's Argon2id derivation — the server refuses to store them.
+    public const MAX_OPSLIMIT = 10;
+    public const MAX_MEMLIMIT = 268_435_456; // 256 MiB
 
     public const SALT_BYTES = 16;
     public const WRAPPED_UMK_BYTES = 72;       // 24B nonce || 32B key || 16B tag
@@ -117,6 +123,10 @@ final class VaultService
      * Version-checked passphrase change: ONE atomic conditional UPDATE — never
      * read-then-write. Only the passphrase-side fields move (salt, KDF params,
      * wrapped UMK); recovery wrap, key bundle and public keys are untouched.
+     * KDF parameters are monotonic per account (security review): the WHERE
+     * clause refuses any downgrade below the STORED opslimit/memlimit in the
+     * same atomic write — a losing CAS is then diagnosed as version conflict
+     * vs kdf_downgrade from the current row.
      *
      * @param array<string,mixed> $body {expectedVersion, kdfSalt, kdfOpslimit, kdfMemlimit, wrappedUmk}
      * @return array<string,mixed> the updated vault (wire shape)
@@ -137,6 +147,7 @@ final class VaultService
             SET kdf_salt = :salt, kdf_opslimit = :ops, kdf_memlimit = :mem,
                 wrapped_umk = :umk, version = version + 1, updated_at = :now
             WHERE user_id = :u AND version = :expected
+              AND kdf_opslimit <= :ops2 AND kdf_memlimit <= :mem2
         ");
         $stmt->execute([
             'salt' => $salt,
@@ -146,17 +157,27 @@ final class VaultService
             'now' => date('Y-m-d H:i:s'),
             'u' => $userId,
             'expected' => $expectedVersion,
+            'ops2' => $opslimit,
+            'mem2' => $memlimit,
         ]);
         if ($stmt->rowCount() === 0) {
             $vault = $this->getVault($userId);
             if ($vault === null) {
                 throw new EncryptionRequestException('vault_not_found', 'No vault exists for this account.', 404);
             }
+            if ((int) $vault['version'] !== $expectedVersion) {
+                throw new EncryptionRequestException(
+                    'vault_version_conflict',
+                    'The vault changed since it was loaded — unlock again and retry.',
+                    409,
+                    ['currentVersion' => $vault['version']]
+                );
+            }
+            // The version matched, so the KDF monotonicity clause lost the CAS.
             throw new EncryptionRequestException(
-                'vault_version_conflict',
-                'The vault changed since it was loaded — unlock again and retry.',
-                409,
-                ['currentVersion' => $vault['version']]
+                'kdf_downgrade',
+                'KDF parameters cannot be lowered — passphrase changes are upgrade-only (kdfOpslimit/kdfMemlimit must be >= the stored values).',
+                400
             );
         }
 
@@ -202,6 +223,12 @@ final class VaultService
         }
         if (!is_int($mem) || $mem < self::MIN_MEMLIMIT) {
             $this->invalid('kdfMemlimit must be an integer >= ' . self::MIN_MEMLIMIT . ' (64 MiB)');
+        }
+        if ($ops > self::MAX_OPSLIMIT) {
+            $this->invalid('kdfOpslimit must be <= ' . self::MAX_OPSLIMIT);
+        }
+        if ($mem > self::MAX_MEMLIMIT) {
+            $this->invalid('kdfMemlimit must be <= ' . self::MAX_MEMLIMIT . ' (256 MiB)');
         }
         return [$ops, $mem];
     }

@@ -833,7 +833,7 @@ CREATE TABLE `form_encryption` (
   `mode` enum('private') COLLATE utf8mb4_unicode_ci NOT NULL,
   `current_ingest_epoch` int NOT NULL DEFAULT '1',
   `current_fk_epoch` int NOT NULL DEFAULT '1',
-  `state` enum('active','trashed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `state` enum('enabling','active','trashed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
   `enabled_by` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `enabled_at` datetime DEFAULT NULL,
   PRIMARY KEY (`form_id`)

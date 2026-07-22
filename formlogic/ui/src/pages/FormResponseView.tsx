@@ -29,7 +29,7 @@ import { toast } from '../stores/toastStore';
 import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import { describeUserAgent, primaryLanguage } from '../lib/userAgent';
-import { useDecryptedResponses } from '../lib/crypto/useDecryptedResponses';
+import { useDecryptedResponses, useResetOnVaultGenerationChange, CORRUPT_ROW_CODE } from '../lib/crypto/useDecryptedResponses';
 import { sealResponseForUpdate } from '../lib/crypto/formCrypto';
 import type { Form } from '../types/form';
 
@@ -137,7 +137,15 @@ function FormResponseView() {
   const decrypted = useDecryptedResponses(formId, encRows);
   const isPrivateRecord = decrypted.isPrivate;
   const vaultLocked = decrypted.locked;
-  const decRow = decrypted.rows[0] as (typeof decrypted.rows)[0] & { _rev?: number; _encMeta?: { completionTime?: number; language?: string; clientAt?: string }; _encrypted?: boolean } | undefined;
+  const decRow = decrypted.rows[0] as (typeof decrypted.rows)[0] & { _rev?: number; _encMeta?: { completionTime?: number; language?: string; clientAt?: string }; _encrypted?: boolean; _decryptError?: string } | undefined;
+
+  // Plaintext boundary (review 2026-07-22): an in-progress edit holds DECRYPTED
+  // answers in `draft` — a vault generation change (lock / re-unlock) closes the
+  // editor and wipes the draft immediately.
+  useResetOnVaultGenerationChange(useCallback(() => {
+    setEditing(false);
+    setDraft({});
+  }, []));
   // The record used for display/edit: decrypted answers merged over the raw row.
   const viewRecord = useMemo(() => {
     if (!record) return null;
@@ -281,7 +289,7 @@ function FormResponseView() {
                       <span className="hidden lg:inline ml-2">Re-run logic</span>
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={startEdit} disabled={vaultLocked} title={vaultLocked ? 'Unlock your vault to edit' : undefined}>
+                  <Button variant="outline" size="sm" onClick={startEdit} disabled={vaultLocked || !!decRow?._decryptError} title={vaultLocked ? 'Unlock your vault to edit' : decRow?._decryptError ? 'This record could not be decrypted' : undefined}>
                     <Edit2 className="h-4 w-4" />
                     <span className="hidden lg:inline ml-2">Edit</span>
                   </Button>
@@ -379,6 +387,14 @@ function FormResponseView() {
                 <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-6 space-y-4">
                   {isPrivateRecord && vaultLocked ? (
                     <p className="text-sm text-gray-400 dark:text-slate-500 italic">Unlock your vault to view this record's answers.</p>
+                  ) : decRow?._decryptError ? (
+                    <div className="rounded-lg border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10 p-4" role="alert">
+                      <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                        {decRow._decryptError === CORRUPT_ROW_CODE
+                          ? '⚠ Corrupt record: stored WITHOUT encryption inside an encrypted form — this indicates server-side corruption or tampering. Its content was not displayed.'
+                          : '⚠ This record could not be decrypted. Its content was not displayed.'}
+                      </p>
+                    </div>
                   ) : fields.map((field) => (
                     <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
                       <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>

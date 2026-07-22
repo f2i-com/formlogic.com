@@ -78,6 +78,9 @@ function defaultFactory(): CryptoWorkerLike {
 }
 
 export class CryptoClient {
+  /** Max wait for the graceful worker 'lock' op before a hard terminate (§10). */
+  static readonly LOCK_OP_TIMEOUT_MS = 250;
+
   private factory: CryptoWorkerFactory;
   private worker: CryptoWorkerLike | null = null;
   private nextId = 1;
@@ -124,14 +127,25 @@ export class CryptoClient {
     });
   }
 
-  /** Lock the worker and TERMINATE it — the next op spawns a fresh one (plan §10). */
+  /** Lock the worker and TERMINATE it — the next op spawns a fresh one (plan §10).
+   *  Bounded (review 2026-07-22): the graceful 'lock' op gets at most
+   *  LOCK_OP_TIMEOUT_MS to zero secrets; a busy/wedged worker is hard-terminated
+   *  after that either way, so this never waits indefinitely. */
   async lockAndTerminate(): Promise<void> {
     const worker = this.worker;
     if (!worker) return;
     try {
-      await this.call('lock');
+      await Promise.race([
+        this.call('lock').then(
+          () => undefined,
+          () => undefined, // lock must succeed even if the op fails — terminate regardless
+        ),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, CryptoClient.LOCK_OP_TIMEOUT_MS);
+        }),
+      ]);
     } catch {
-      // Lock must succeed even if the worker is wedged — terminate regardless.
+      // Terminate regardless.
     }
     if (this.listener) worker.removeEventListener('message', this.listener);
     worker.terminate();
@@ -197,8 +211,14 @@ export class CryptoClient {
     return this.call('publishSchemaVersion', { userId, formId, ...args });
   }
 
-  loadFormKeys(formId: string, grants: FormKeyGrantWire[], ingestionKeys: IngestionKeyWire[]): Promise<{ loadedEpochs: number[] }> {
-    return this.call('loadFormKeys', { formId, grants, ingestionKeys });
+  loadFormKeys(
+    formId: string,
+    grants: FormKeyGrantWire[],
+    ingestionKeys: IngestionKeyWire[],
+    manifests: ManifestRowWire[],
+    schemaVersions: { version: number; schemaHash: string; schemaJson: string }[],
+  ): Promise<{ loadedEpochs: number[] }> {
+    return this.call('loadFormKeys', { formId, grants, ingestionKeys, manifests, schemaVersions });
   }
 
   sealResponse(args: {

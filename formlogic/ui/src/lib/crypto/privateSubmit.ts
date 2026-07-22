@@ -14,7 +14,7 @@ import { getSodium } from './sodium';
 import { fromB64 } from './encoding';
 import { mintRecordId, sealEnvelope, EnvelopeError, type InnerPayload, type ResponseEnvelope } from './envelope';
 import { verifyManifest, ManifestError } from './manifest';
-import { getPinnedSigner, pinSigner, SignerChangedError, signerFingerprint } from './signerPins';
+import { getPinnedSigner, pinSigner, PinStorageError, SignerChangedError, signerFingerprint } from './signerPins';
 import type { FormEncryptionManifest } from '../../types/e2ee';
 
 export { trustFormSignerKey, clearSignerPins } from './signerPins';
@@ -93,6 +93,12 @@ export async function sealPrivateSubmission(
       const pinned = getPinnedSigner(formId);
       throw new PrivateSubmitError('signer_pin_mismatch', e.message,
         pinned ? { pinnedFingerprint: fingerprintOf(pinned), servedFingerprint: fingerprintOf(encryption.signerPk) } : undefined);
+    }
+    if (e instanceof PinStorageError) {
+      // Fail closed (no silent session-only pinning): the submit page shows this as
+      // a blocking error — nothing is submitted without a persisted TOFU pin.
+      throw new PrivateSubmitError('pin_storage_unavailable',
+        `${e.message} Enable browser storage (cookies/site data) for this site and reload to submit.`);
     }
     if (e instanceof ManifestError) {
       throw new PrivateSubmitError(e.code, e.message);

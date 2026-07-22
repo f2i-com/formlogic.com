@@ -72,15 +72,17 @@ class E2eeImportGuardTest extends E2eeTestCase
         $manifestBefore = $this->row('SELECT * FROM form_manifests WHERE form_id = ?', [$formId]);
         $schemaBefore = $this->row('SELECT * FROM form_schema_versions WHERE form_id = ?', [$formId]);
 
-        // Simulate a clean install: the original form + its encryption rows are gone.
+        // Simulate disaster recovery on the SAME account: the original form + its
+        // encryption rows are gone, the account itself (and its vault) survives.
+        // (A restore into a DIFFERENT account is refused — encryption_not_restorable,
+        // see testCrossAccountRestoreIsRefused.)
         self::$forms->deleteForm($formId);
         self::$encryption->purgeFormRows($formId);
         FormEncryptionService::invalidateCache();
         $this->assertNull($this->row('SELECT 1 AS x FROM forms WHERE id = ?', [$formId]));
 
-        $newUser = $this->makeUser();
         try {
-            $summary = self::$backup->importAccount($zip, $newUser, ['preserveIds' => true]);
+            $summary = self::$backup->importAccount($zip, $this->userId, ['preserveIds' => true]);
         } finally {
             @unlink($zip);
         }
@@ -89,7 +91,7 @@ class E2eeImportGuardTest extends E2eeTestCase
         // The form came back with its ORIGINAL id (byte-for-byte — it is baked into AADs).
         $restored = $this->row('SELECT * FROM forms WHERE id = ?', [$formId]);
         $this->assertNotNull($restored);
-        $this->assertSame($newUser, $restored['user_id']);
+        $this->assertSame($this->userId, $restored['user_id']);
 
         // Key material restored byte-for-byte: same key id + epoch + wrapped secret.
         $keyAfter = $this->row('SELECT * FROM form_ingestion_keys WHERE form_id = ?', [$formId]);
@@ -113,8 +115,9 @@ class E2eeImportGuardTest extends E2eeTestCase
         $this->assertSame((string) $schemaBefore['schema_json'], (string) $schemaAfter['schema_json']);
         $this->assertSame((string) $schemaBefore['schema_hash'], (string) $schemaAfter['schema_hash']);
 
-        // The vault was restored for the importing account (it can unlock + decrypt).
-        $vault = $this->row('SELECT * FROM user_vaults WHERE user_id = ?', [$newUser]);
+        // The vault stays usable: the existing row is never overwritten (INSERT
+        // IGNORE — it may be newer), and it belongs to the SAME account.
+        $vault = $this->row('SELECT * FROM user_vaults WHERE user_id = ?', [$this->userId]);
         $this->assertNotNull($vault);
 
         // The encrypted record is back with its ORIGINAL recordId and envelope contents…
@@ -128,6 +131,40 @@ class E2eeImportGuardTest extends E2eeTestCase
         $this->assertSame('private', $this->row('SELECT mode FROM form_encryption WHERE form_id = ?', [$formId])['mode']);
     }
 
+    public function testCrossAccountRestoreIsRefused(): void
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        self::$forms->updateForm($formId, ['status' => 'published']);
+        $env = $this->makeEnvelope($formId);
+        self::$responses->createEncryptedResponse($formId, $env, null, null);
+        $zip = self::$backup->exportAccount($this->userId);
+
+        // Security review (blocker 5): the vault's wrapped UMK is AAD-bound to the
+        // OWNING account id and grants to its signed user ids — under a different
+        // account id nothing unwraps. v1 fails CLOSED: the WHOLE restore is refused.
+        $otherUser = $this->makeUser();
+        try {
+            self::$backup->importAccount($zip, $otherUser, ['preserveIds' => true]);
+            $this->fail('cross-account restore of encryption material must be refused');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('encryption_not_restorable', $e->errorCode);
+            $this->assertSame(400, $e->status);
+            $this->assertStringContainsString('cryptographically bound', $e->getMessage());
+        } finally {
+            @unlink($zip);
+        }
+
+        // Nothing crossed accounts: no vault row, no form, no encryption rows.
+        $this->assertNull($this->row('SELECT 1 AS x FROM user_vaults WHERE user_id = ?', [$otherUser]));
+        $this->assertNull($this->row('SELECT 1 AS x FROM forms WHERE user_id = ?', [$otherUser]));
+        $this->assertNull($this->row('SELECT 1 AS x FROM form_key_grants WHERE user_id = ?', [$otherUser]));
+        $this->assertSame('active', $this->row('SELECT state FROM form_encryption WHERE form_id = ?', [$formId])['state']);
+        // Cleanup the extra user (makeUser rows aren't tracked by tearDown).
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$otherUser]);
+    }
+
     public function testRestoreWithOccupiedIdFailsHard(): void
     {
         $form = $this->makeDraftForm();
@@ -136,10 +173,10 @@ class E2eeImportGuardTest extends E2eeTestCase
         $zip = self::$backup->exportAccount($this->userId);
 
         // The original form still EXISTS → preserve-ids restore can never fall back
-        // to a copy for a private form (it would sever the AAD id binding).
-        $otherUser = $this->makeUser();
+        // to a copy for a private form (it would sever the AAD id binding). Same
+        // account, so the cross-account guard is not what fires here.
         try {
-            self::$backup->importAccount($zip, $otherUser, ['preserveIds' => true]);
+            self::$backup->importAccount($zip, $this->userId, ['preserveIds' => true]);
             $this->fail('restore into an occupied id must refuse, never copy');
         } catch (EncryptionRequestException $e) {
             $this->assertSame('import_remint_refused', $e->errorCode);
@@ -147,6 +184,7 @@ class E2eeImportGuardTest extends E2eeTestCase
         } finally {
             @unlink($zip);
         }
-        $this->assertNull($this->row('SELECT 1 AS x FROM forms WHERE user_id = ?', [$otherUser]));
+        // The original form is untouched (no duplicate, no overwrite).
+        $this->assertSame(1, (int) self::$pdo->query("SELECT COUNT(*) FROM forms WHERE user_id = '{$this->userId}'")->fetchColumn());
     }
 }

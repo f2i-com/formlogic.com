@@ -387,7 +387,7 @@ class FormController
                 }
             }
 
-            $updatedForm = $this->formService->updateForm($formId, $data);
+            $updatedForm = $this->formService->updateForm($formId, $data, (string) $request->getAttribute('userId'));
 
             if (!$updatedForm) {
                 return $this->jsonResponse($response, [
@@ -400,6 +400,12 @@ class FormController
             $this->audit($request, $action, 'form', $formId);
 
             return $this->jsonResponse($response, ['form' => $updatedForm]);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            // Enable-race gate: the form is mid-enable — publish/field saves fail closed.
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
+        } catch (\FormLogic\Services\EncryptionRequestException $e) {
+            // Atomic publish: manifest_required / manifest_invalid / vault problems — typed refusal.
+            return $this->jsonError($response, $e->getMessage(), $e->status, $e->errorCode, $e->details);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // E2EE §9.2: blocked field types / private-form violations — typed refusal.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);

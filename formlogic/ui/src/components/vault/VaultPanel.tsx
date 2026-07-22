@@ -37,8 +37,8 @@ export function VaultPanel() {
   const handleChangePassphrase = async () => {
     if (changing || !user) return;
     setChangeError(null);
-    if (newPass.length < 10) {
-      setChangeError('Use at least 10 characters for the new passphrase.');
+    if (newPass.length < 12) {
+      setChangeError('Use at least 12 characters for the new passphrase.');
       return;
     }
     if (newPass !== confirmPass) {
@@ -132,7 +132,7 @@ export function VaultPanel() {
               />
               <PasswordInput
                 label="New passphrase"
-                placeholder="At least 10 characters"
+                placeholder="At least 12 characters"
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
                 autoComplete="new-password"

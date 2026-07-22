@@ -94,6 +94,19 @@ class FormService
         }
     }
 
+    /**
+     * The canonical sha256 over a fields array, matching how the client's
+     * schemaJson is produced (JSON.stringify semantics: no slash/unicode
+     * escaping) — the atomic-publish rule compares this against the latest
+     * signed manifest's schema_hash to decide whether the fields are changing.
+     *
+     * @param array<mixed> $fields
+     */
+    private function canonicalFieldsHash(array $fields): string
+    {
+        return hash('sha256', (string) json_encode($fields, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
     public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null, ?FileStorageService $fileStorageService = null)
     {
         $this->fileStorageService = $fileStorageService;
@@ -396,14 +409,55 @@ class FormService
     }
 
     /**
-     * Update an existing form
+     * Update an existing form.
+     *
+     * E2EE (enable-race + atomic-publish fixes): while the form's encryption row
+     * is 'enabling', any field save or status change fails closed with 409
+     * encryption_enabling. The optional `encryptionSchema` body key
+     * ({schema:{schemaJson,schemaHash}, manifest:{signature,signerKeyId,
+     * expiresAt:null}}) is verified against the requester's vault key and
+     * applied in the SAME transaction as the field/status save; when the form
+     * is private, its fields are changing vs the latest signed schema snapshot,
+     * and it is published (or being published), the request MUST carry a valid
+     * encryptionSchema — otherwise 409 manifest_required and nothing is saved.
+     *
+     * @throws EncryptionEnablingException|EncryptionRequestException|PrivateFormEncryptedException
      */
-    public function updateForm(string $formId, array $data): ?array
+    public function updateForm(string $formId, array $data, ?string $actorUserId = null): ?array
     {
         // Check form exists
         $existing = $this->getForm($formId);
         if (!$existing) {
             return null;
+        }
+
+        $encryptionSchema = $data['encryptionSchema'] ?? null;
+        unset($data['encryptionSchema']);
+        $fieldsProvided = isset($data['fields']);
+        $statusProvided = isset($data['status']);
+
+        // ── E2EE gates (pre-write; re-checked under the forms-row lock below) ──
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        $encState = $this->formEncryption->encryptionState($formId);
+        if ($fieldsProvided || $statusProvided || $encryptionSchema !== null) {
+            if ($encState === 'enabling') {
+                throw new EncryptionEnablingException();
+            }
+        }
+        if ($encryptionSchema !== null && $encState === null) {
+            throw new EncryptionRequestException('private_form_not_encrypted', 'This form is not a private form.', 404);
+        }
+        if ($fieldsProvided && $encState === 'active') {
+            $published = ($existing['status'] ?? 'draft') === 'published'
+                || ($data['status'] ?? null) === 'published';
+            $fieldsChanged = $this->canonicalFieldsHash($data['fields']) !== $this->formEncryption->latestManifestSchemaHash($formId);
+            if ($published && $fieldsChanged && $encryptionSchema === null) {
+                throw new EncryptionRequestException(
+                    'manifest_required',
+                    'This private form is published and its fields changed — the save must carry a signed encryptionSchema (manifest_required).',
+                    409
+                );
+            }
         }
 
         $updates = [];
@@ -496,7 +550,6 @@ class FormService
         // the MySQL row untouched (previously title/settings committed and the fields
         // silently didn't); a MySQL failure AFTER the fields saved compensates by
         // restoring the previous fields, so the update applies all-or-nothing.
-        $fieldsProvided = isset($data['fields']);
         // E2EE: refuse blocked field types on a private form BEFORE any store write
         // (the preflight bans them at enable; this bans adding them afterwards).
         if ($fieldsProvided) {
@@ -510,7 +563,19 @@ class FormService
             ]);
         }
 
+        $ownTx = !$this->mysql->inTransaction();
+        if ($ownTx) {
+            $this->mysql->beginTransaction();
+        }
         try {
+            // Serialize against a concurrent enable: FormEncryptionService::enable
+            // holds the same forms-row lock from preflight to commit, so a publish/
+            // field save can never interleave between its check and its writes.
+            $this->mysql->prepare('SELECT id FROM forms WHERE id = :id FOR UPDATE')->execute(['id' => $formId]);
+            if (($fieldsProvided || $statusProvided || $encryptionSchema !== null) && $this->formEncryption->encryptionState($formId) === 'enabling') {
+                throw new EncryptionEnablingException();
+            }
+
             // Update fields in SQLite if provided
             if ($fieldsProvided) {
                 $this->saveFormFields($formId, $data['fields']);
@@ -524,7 +589,25 @@ class FormService
                 $stmt = $this->mysql->prepare($sql);
                 $stmt->execute($params);
             }
+
+            // Atomic publish (enable-race fix): the signed schema version + manifest
+            // land in the SAME transaction as the field/status save — a fields change
+            // on a published private form can never commit without its new manifest.
+            if ($encryptionSchema !== null) {
+                $this->formEncryption->applySchemaPublishInTx(
+                    $formId,
+                    $actorUserId ?? (string) ($existing['userId'] ?? ''),
+                    $encryptionSchema
+                );
+            }
+
+            if ($ownTx) {
+                $this->mysql->commit();
+            }
         } catch (\Throwable $e) {
+            if ($ownTx && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
             if ($fieldsProvided) {
                 // Restore the pre-update fields (idempotent: if the new fields never
                 // committed this simply rewrites the old ones) so neither store holds a

@@ -238,6 +238,32 @@ export async function flushDebouncedSave(formId: string): Promise<void> {
 }
 
 /**
+ * Drop a form's pending debounced saves WITHOUT running them, balancing the
+ * 'Saving…' counter each pending debounce took. Used by the atomic private-form
+ * publish: its single PUT carries fields+status+encryptionSchema, so a stale
+ * debounced slice must not fire afterwards (it would lack the signed schema and
+ * be refused with 409 manifest_required).
+ */
+export function discardPendingFormSaves(formId: string): void {
+  for (const part of ['fields', 'settings', 'theme', 'meta']) {
+    const key = `${formId}-${part}`;
+    const entry = debounceTimers[key];
+    if (!entry) continue;
+    clearTimeout(entry.timer);
+    delete debounceTimers[key];
+    useFormStore.setState((s) => {
+      const current = s.savingFormIds[formId] ?? 0;
+      if (current <= 1) {
+        const rest = { ...s.savingFormIds };
+        delete rest[formId];
+        return { savingFormIds: rest };
+      }
+      return { savingFormIds: { ...s.savingFormIds, [formId]: current - 1 } };
+    });
+  }
+}
+
+/**
  * Flush a form's pending saves AND report the truth (audit FL-SAVE-001): run any pending
  * debounced saves now, then immediately retry any part whose save failed (this call or an
  * earlier one). `ok: false` means at least one slice of this form is NOT on the server —
@@ -300,6 +326,24 @@ export const useFormStore = create<FormState>()(
         return true; // deleted meanwhile — nothing left to save
       }
       try {
+        // E2EE (review 2026-07-22, blocker 2): field changes on a PUBLISHED private
+        // form must carry a freshly SIGNED schema in the same update — the server
+        // refuses an unsigned fields change with 409 manifest_required. Sign first;
+        // a locked vault fails the save loudly instead of persisting unsigned data.
+        let encryptionSchema: unknown;
+        if (part === 'fields' && form.status === 'published' && cloudSync() && !api.isDemoMode()) {
+          try {
+            const fc = await import('../lib/crypto/formCrypto');
+            if (await fc.getFormPrivacy(formId)) {
+              encryptionSchema = (await fc.signPrivateFormSchema(formId, JSON.stringify(form.fields)))?.encryptionSchema;
+            }
+          } catch (e) {
+            logger.error(`Failed to sign the private form schema for ${formId}:`, e);
+            toast.error('Private form not saved', e instanceof Error ? e.message : 'Unlock your vault and republish to save these changes.');
+            recordSaveResult(formId, part, false);
+            return false;
+          }
+        }
         let result;
         if (part === 'meta') {
           // Send ALL editable meta fields, not just title/description/status/icon.
@@ -310,7 +354,10 @@ export const useFormStore = create<FormState>()(
           const { title, description, status, icon, theme, settings, logicScript, logicPrompt } = form;
           result = await api.updateForm(formId, { title, description, status, icon, theme, settings, logicScript, logicPrompt });
         } else {
-          result = await api.updateForm(formId, { [part]: form[part] });
+          result = await api.updateForm(formId, {
+            [part]: form[part],
+            ...(encryptionSchema ? { encryptionSchema } : {}),
+          } as Partial<Form>);
         }
         if (result.error) {
           logger.error(`Failed to save form ${part} to server:`, result.error);

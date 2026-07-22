@@ -76,6 +76,8 @@ class FlowService
             return;
         }
         $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        // Enable-race gate: mid-enable the refusal is encryption_enabling (409).
+        $this->formEncryption->assertNotEnabling($formId);
         if ($this->formEncryption->isPrivate($formId)) {
             throw new PrivateFormEncryptedException('Flow bindings are not available on private (end-to-end encrypted) forms (private_form_encrypted).');
         }

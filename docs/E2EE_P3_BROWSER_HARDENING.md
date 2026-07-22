@@ -79,3 +79,25 @@ surfaces: `FormResponses.tsx`, `FormResponseView.tsx`,
   generation bumps, the LRU is dropped, and private-data surfaces re-render from
   the locked state (React state rebuilt empty on the next mount; the hook also
   refuses to publish results computed under a superseded generation).
+
+## Threat model honesty (external review, 2026-07-22)
+
+State this plainly in docs/UI — never oversell:
+
+- **What browser E2EE protects against:** theft of the database, stolen backups,
+  and passive server access (a curious or compelled operator reading stored rows).
+  Responses are sealed in the submitter's browser; the server stores only
+  ciphertext envelopes and cannot read the answers.
+- **What it does NOT protect against:** an **actively compromised server** that
+  serves modified JavaScript to a future session. Browser E2EE cannot defend
+  against hostile code delivery — the submitted code is the trust root each
+  session (the §8 signed manifest + TOFU signer pinning constrain *key*
+  substitution, not code substitution). Do not claim otherwise.
+- **Metadata is not encrypted.** The per-form SQLite stores envelopes, but record
+  ids, timestamps, row status, form structure, and submission metadata remain
+  plaintext, and submitter IPs are retained briefly (the §12 sweep). E2EE covers
+  answer content, not traffic analysis.
+- **SQLCipher would add at-rest encryption of the database file, but it would not
+  be E2EE** while the server holds its key — the operator could still read every
+  row. It is a complementary hardening option, not a substitute for end-to-end
+  encryption, and it must never be marketed as E2EE.

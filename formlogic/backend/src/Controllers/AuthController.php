@@ -620,7 +620,8 @@ class AuthController
                 $this->formService,
                 $this->appService,
                 $this->trashService,
-                $this->logger
+                $this->logger,
+                $this->db?->getConnection()
             ))->erase($userId);
 
             if (!$result['completed']) {

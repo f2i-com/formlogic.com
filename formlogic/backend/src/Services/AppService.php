@@ -963,8 +963,11 @@ class AppService
         // E2EE §9.1/§9.2 (docs/E2EE_PRIVATE_FORMS_PLAN.md): P3 private forms are
         // standalone-only — attaching one to an app is refused at this feature's
         // creation path, mirroring the enable preflight (app-runtime private
-        // forms arrive with grants in P5).
-        if ((new FormEncryptionService($this->mysql))->isPrivate($formId)) {
+        // forms arrive with grants in P5). Mid-enable the refusal is
+        // encryption_enabling (409) — the enable-race gate.
+        $enc = new FormEncryptionService($this->mysql);
+        $enc->assertNotEnabling($formId);
+        if ($enc->isPrivate($formId)) {
             throw new PrivateFormEncryptedException('Private (end-to-end encrypted) forms cannot be added to an app (private_form_encrypted).');
         }
 

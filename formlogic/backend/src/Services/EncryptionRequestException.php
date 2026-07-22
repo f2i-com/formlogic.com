@@ -12,9 +12,10 @@ namespace FormLogic\Services;
  * { error, message, code, details } shape without parsing message text.
  *
  * Codes in use: vault_not_found, vault_exists, vault_invalid,
- * vault_version_conflict, encryption_unavailable, private_enable_blocked,
- * encryption_payload_invalid, manifest_invalid, grant_invalid,
- * private_form_not_encrypted.
+ * vault_version_conflict, kdf_downgrade, encryption_unavailable,
+ * private_enable_blocked, encryption_payload_invalid, manifest_invalid,
+ * manifest_required, grant_invalid, private_form_not_encrypted,
+ * import_remint_refused, encryption_not_restorable.
  */
 final class EncryptionRequestException extends \RuntimeException
 {

@@ -61,9 +61,18 @@ class ResponseService
         return $this->formEncryption->isPrivate($formId);
     }
 
-    /** @throws PrivateFormEncryptedException fail closed (plan D6) — never silent. */
+    /**
+     * Fail closed (plan D6) — never silent. While the form is mid-enable the
+     * typed refusal is encryption_enabling (409; the enable-race gate), which
+     * extends PrivateFormEncryptedException so every §9.2 catch site still
+     * refuses.
+     *
+     * @throws PrivateFormEncryptedException|EncryptionEnablingException
+     */
     private function assertNotPrivate(string $formId): void
     {
+        $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
+        $this->formEncryption->assertNotEnabling($formId);
         if ($this->isPrivateForm($formId)) {
             throw new PrivateFormEncryptedException();
         }
@@ -126,17 +135,35 @@ class ResponseService
         }
 
         // MySQL mirror (metadata minimized per plan §12) with the same compensating
-        // delete as the plaintext path so the two stores never diverge.
+        // delete as the plaintext path so the two stores never diverge. Enable-race
+        // gate: the insert is conditional on the form being an ACTIVE private form —
+        // a crashed/aborted enable (marker removed) or a mid-enable form (marker
+        // still 'enabling') refuses the write instead of stranding an envelope on a
+        // form that is (or is becoming) plaintext.
         try {
-            $this->mysql->prepare("
+            $stmt = $this->mysql->prepare("
                 INSERT INTO response_metadata (id, form_id, status, submitted_at, ip_address, user_agent, completion_time)
-                VALUES (:id, :form_id, 'submitted', :submitted_at, :ip_address, NULL, NULL)
-            ")->execute([
+                SELECT :id, :form_id, 'submitted', :submitted_at, :ip_address, NULL, NULL
+                FROM DUAL
+                WHERE EXISTS (SELECT 1 FROM form_encryption WHERE form_id = :fe_form_id AND state = 'active')
+            ");
+            $stmt->execute([
                 'id' => $id,
                 'form_id' => $formId,
                 'submitted_at' => $now,
                 'ip_address' => $ipAddress,
+                'fe_form_id' => $formId,
             ]);
+            if ($stmt->rowCount() === 0) {
+                $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+                $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
+                if ($this->formEncryption->encryptionState($formId) === 'enabling') {
+                    throw new EncryptionEnablingException();
+                }
+                throw new PrivateFormEncryptedException(
+                    'This form is not an active private form — the envelope cannot be stored (private_form_encrypted).'
+                );
+            }
         } catch (\PDOException $e) {
             if ($e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062)) {
                 // The recordId already exists in the mirror (e.g. reused across forms).
@@ -1735,10 +1762,18 @@ class ResponseService
             throw $e;
         }
 
-        // 6. Also insert metadata into MySQL for global querying
+        // 6. Also insert metadata into MySQL for global querying.
+        // Enable-race gate (plan §9.1): the insert is an ATOMIC conditional write —
+        // it lands only while NO form_encryption row exists, so a submission that
+        // passed the privacy check before a concurrent enable committed its durable
+        // 'enabling' marker can never slip plaintext in behind it (the enabling
+        // marker commits before the enable preflight runs, and any write that beat
+        // the marker is counted by that preflight and aborts the enable instead).
         $mysqlStmt = $this->mysql->prepare("
             INSERT INTO response_metadata (id, form_id, status, submitted_at, ip_address, user_agent, completion_time)
-            VALUES (:id, :form_id, :status, :submitted_at, :ip_address, :user_agent, :completion_time)
+            SELECT :id, :form_id, :status, :submitted_at, :ip_address, :user_agent, :completion_time
+            FROM DUAL
+            WHERE NOT EXISTS (SELECT 1 FROM form_encryption WHERE form_id = :fe_form_id)
         ");
 
         try {
@@ -1750,7 +1785,22 @@ class ResponseService
                 'ip_address' => $data['ipAddress'] ?? null,
                 'user_agent' => $data['userAgent'] ?? null,
                 'completion_time' => $data['completionTime'] ?? null,
+                'fe_form_id' => $formId,
             ]);
+            if ($mysqlStmt->rowCount() === 0) {
+                // Encryption arrived between the privacy check and now — refuse and
+                // compensate (the same SQLite cleanup as the failure path below).
+                $qid = $db->quote($id);
+                $db->exec("DELETE FROM computed WHERE response_id = $qid");
+                $db->exec("DELETE FROM tags WHERE response_id = $qid");
+                $db->exec("DELETE FROM script_logs WHERE response_id = $qid");
+                $db->exec("DELETE FROM responses WHERE id = $qid");
+                $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
+                if ($this->formEncryption->encryptionState($formId) === 'enabling') {
+                    throw new EncryptionEnablingException();
+                }
+                throw new PrivateFormEncryptedException();
+            }
         } catch (\Exception $mysqlErr) {
             // Compensating delete on SQLite if MySQL insert fails. Step 4/5 may
             // already have written child rows (computed/tags/script_logs) keyed
