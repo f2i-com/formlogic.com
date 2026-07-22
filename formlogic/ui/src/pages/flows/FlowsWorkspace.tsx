@@ -25,6 +25,7 @@ import { resolveEditorLayout, sameResolvedEditorLayout } from '../../components/
 import type { CloudRunFeedback, FlowExecutionLocation } from '../../components/flows/editor/executionLocation';
 import { deriveFlowConnectors } from '../../components/flows/flowConnectors';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from '../../components/flows/editor/nodeCatalog';
+import { flowPickOptions } from '../../components/flows/editor/flowCallChecks';
 import type { FlowFormOption } from '../../components/flows/editor/NodeProperties';
 import { FlowRunHistory } from '../../components/flows/FlowRunHistory';
 import { TriggersPanel } from '../../components/flows/TriggersPanel';
@@ -158,22 +159,25 @@ export function FlowsWorkspace() {
     return () => observer.disconnect();
   }, [applyWorkspaceLayout]);
 
-  // Editor context (docs §4): the palette + connector pickers depend on whether the selected flow
-  // is app-scoped and which connectors its app actually grants. Workspace flows have no connectors.
-  const editorContext = useMemo<FlowEditorContext>(() => {
-    if (!selectedFlow?.appId) return EMPTY_FLOW_EDITOR_CONTEXT;
-    const app = groups.find((g) => g.app?.id === selectedFlow.appId)?.app ?? null;
-    // The app's own forms scope the Find/Submit/Update form picker to a short labelled list.
-    const appFormIds = (app?.navConfig ?? []).map((n) => n.formId).filter((id): id is string => typeof id === 'string');
-    return { appScoped: true, connectors: deriveFlowConnectors(app), appFormIds };
-  }, [selectedFlow, groups]);
-  const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
-  // The selected flow's sibling flows (same app) feed the §9.1 outcome-trigger source picker.
+  // The selected flow's sibling flows (same app / same workspace) feed the §9.1 outcome-trigger
+  // source picker AND the flow_call child picker — the same lists the runtimes resolve against.
   const selectedAppFlows = useMemo(
     () => (selectedFlow ? allFlows.filter((flow) => flow.appId === selectedFlow.appId) : []),
     [allFlows, selectedFlow],
   );
+  // Editor context (docs §4): the palette + connector pickers depend on whether the selected flow
+  // is app-scoped and which connectors its app actually grants. Workspace flows have no connectors
+  // but DO carry sibling flows (workspace flow_call resolves from the owner's workspace list).
+  const editorContext = useMemo<FlowEditorContext>(() => {
+    const flowContext = { flows: flowPickOptions(selectedAppFlows), currentFlowId: selectedFlow?.id };
+    if (!selectedFlow?.appId) return { ...EMPTY_FLOW_EDITOR_CONTEXT, ...flowContext };
+    const app = groups.find((g) => g.app?.id === selectedFlow.appId)?.app ?? null;
+    // The app's own forms scope the Find/Submit/Update form picker to a short labelled list.
+    const appFormIds = (app?.navConfig ?? []).map((n) => n.formId).filter((id): id is string => typeof id === 'string');
+    return { appScoped: true, connectors: deriveFlowConnectors(app), appFormIds, ...flowContext };
+  }, [selectedFlow, groups, selectedAppFlows]);
+  const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
   const availableConnectorIds = useMemo(
     () => [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort(),
     [apps],

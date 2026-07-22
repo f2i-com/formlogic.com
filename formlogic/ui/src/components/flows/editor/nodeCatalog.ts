@@ -76,6 +76,8 @@ export type FieldType =
   | 'boolean'
   /** Form picker (select of the author's forms) with a "dynamic value" escape hatch (id / selector). */
   | 'form'
+  /** Flow picker — a select of the context's sibling flows by STABLE id (flow_call); free text without context flows. */
+  | 'flow'
   /** The Trigger node's declared inputs: rows of { name, example? } shown as chips on the node card. */
   | 'triggerInputs'
   /** Rows of { field, op, value } ANDed together (formlogic_list_responses). */
@@ -306,6 +308,26 @@ export interface FlowEditorContext {
    * the author's forms.
    */
   appFormIds?: string[];
+  /**
+   * The flows a flow_call node in this context may target — the selected flow's SIBLINGS
+   * (same app, or the workspace list for a workspace flow), matching exactly what each
+   * runtime's child-flow invoker will resolve against. Absent → the flow picker degrades
+   * to a raw stable-id text field.
+   */
+  flows?: FlowPickOption[];
+  /** The flow being edited — powers the flow_call self-recursion warning. */
+  currentFlowId?: string;
+}
+
+/** One flow a flow_call node may target, with the child contract the panel checks against. */
+export interface FlowPickOption {
+  id: string;
+  name: string;
+  slug: string;
+  /** The child's Trigger-declared input names (its advertised input contract). */
+  declaredInputs: string[];
+  /** Optional JSON-Schema (§6.5 subset) over the child's inputs object — enables typed §6.4 checks. */
+  inputSchema?: Record<string, unknown> | null;
 }
 
 /** A workspace flow with no app context — no connectors, so connector-gated nodes stay hidden. */
@@ -859,7 +881,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { id: 'failure', label: 'Failure', tone: 'false' },
     ],
     properties: [
-      { key: 'flowId', label: 'Flow (stable id)', type: 'text', required: true, placeholder: 'e.g. 3f2a9c…', help: 'The target flow’s id (Flows workspace → flow → copy id). Ids survive renames; slugs do not.' },
+      { key: 'flowId', label: 'Flow', type: 'flow', required: true, placeholder: 'e.g. 3f2a9c…', help: 'The flow to run — referenced by its stable id, so renames never break the call.' },
       { key: 'input', label: 'Input', type: 'code', language: 'json', referenceSyntax: 'selector', placeholder: '{ "customerId": "$inputs.customerId" }', help: 'The child flow’s inputs. String values may be $ selectors.' },
       {
         key: 'failureMode',

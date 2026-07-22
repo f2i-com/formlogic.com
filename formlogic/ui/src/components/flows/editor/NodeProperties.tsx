@@ -7,7 +7,8 @@
 // description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
-import { Plus, Search, Sparkles, Trash2, Zap } from 'lucide-react';
+import { AlertTriangle, Info, Plus, Search, Sparkles, Trash2, Zap } from 'lucide-react';
+import { checkFlowCallInput, type FlowCallIssue } from './flowCallChecks';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
@@ -260,6 +261,83 @@ function FormPickerField({
         </button>
       </div>
     </label>
+  );
+}
+
+/**
+ * Flow picker (flow_call §8): a select of the context's SIBLING flows by stable id — the same
+ * list the runtime's child-flow invoker resolves against. Degrades to a raw stable-id text
+ * field when the context carries no flows (embeddings without a flow list). Warns inline on
+ * self-recursion (always refused at run time) and keeps an id no longer in the list visible.
+ */
+function FlowPickerField({
+  spec,
+  value,
+  context,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  context: FlowEditorContext;
+  onChange: (value: unknown) => void;
+}) {
+  const raw = typeof value === 'string' ? value : '';
+  const options = context.flows ?? [];
+
+  if (options.length === 0) {
+    return <Field spec={spec} value={value} onChange={onChange} />;
+  }
+  const known = options.some((f) => f.id === raw);
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <select
+        value={raw}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        aria-label="Target flow"
+        className={INPUT_CLS + ' cursor-pointer'}
+      >
+        <option value="">Pick a flow…</option>
+        {raw !== '' && !known && <option value={raw}>Missing flow ({raw.slice(0, 8)}…)</option>}
+        {options.map((f) => (
+          <option key={f.id} value={f.id}>{f.name} ({f.slug})</option>
+        ))}
+      </select>
+      {raw !== '' && context.currentFlowId !== undefined && raw === context.currentFlowId && (
+        <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+          <AlertTriangle className="h-3 w-3 flex-none" />
+          This flow calls itself — self-recursion is always refused at run time.
+        </p>
+      )}
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
+/** flow_call input-mapping advice (§6.4 lattice consumer) — presentation only, never blocks. */
+function FlowCallInputIssues({ issues }: { issues: FlowCallIssue[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      {issues.map((issue, i) => (
+        <p
+          key={`${issue.key ?? ''}:${i}`}
+          className={
+            'flex items-start gap-1 text-[11px] leading-snug ' +
+            (issue.severity === 'error'
+              ? 'text-red-600 dark:text-red-400'
+              : issue.severity === 'warn'
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-gray-400 dark:text-slate-500')
+          }
+        >
+          {issue.severity === 'info'
+            ? <Info className="mt-0.5 h-3 w-3 flex-none" />
+            : <AlertTriangle className="mt-0.5 h-3 w-3 flex-none" />}
+          {issue.message}
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -1071,6 +1149,9 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 if (p.type === 'form') {
                   return <FormPickerField key={p.key} spec={p} value={data[p.key]} forms={forms} context={context} onChange={onChange} />;
                 }
+                if (p.type === 'flow') {
+                  return <FlowPickerField key={p.key} spec={p} value={data[p.key]} context={context} onChange={onChange} />;
+                }
                 if (p.type === 'filters') {
                   return <FiltersField key={p.key} spec={p} value={data[p.key]} formFields={formFields} onChange={onChange} />;
                 }
@@ -1109,6 +1190,21 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 }
                 if (p.type === 'code') {
                   const codeField = <CodeField key={p.key} spec={p} value={data[p.key]} onChange={onChange} setInserter={setInserter} />;
+                  // flow_call: static §6.4 advice for the input mapping against the picked child's
+                  // contract (declared Trigger inputs + optional inputSchema). Purely presentational.
+                  if (p.key === 'input' && type === 'flow_call') {
+                    const child = (context.flows ?? []).find((f) => f.id === data.flowId) ?? null;
+                    const issues = checkFlowCallInput(data[p.key], child);
+                    if (issues.length > 0) {
+                      return (
+                        <div key={p.key} className="space-y-1.5">
+                          {codeField}
+                          <FlowCallInputIssues issues={issues} />
+                        </div>
+                      );
+                    }
+                    return codeField;
+                  }
                   if (p.key === 'answers' && formFields && formFields.length > 0) {
                     return (
                       <div key={p.key} className="space-y-1.5">
