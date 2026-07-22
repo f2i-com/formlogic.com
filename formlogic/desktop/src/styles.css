@@ -2547,7 +2547,8 @@ code {
   padding: 10px 12px;
   min-width: 0;
 }
-.data-stat b { display: block; font-size: 18px; font-weight: 650; color: var(--ink); }
+.data-stat b { display: block; font-size: 18px; font-weight: 650; color: var(--ink); line-height: 1.25; }
+.data-stat b .badge { font-size: 11px; font-weight: 600; vertical-align: middle; }
 .data-stat span {
   display: block;
   margin-top: 2px;
@@ -2567,7 +2568,6 @@ code {
   display: flex;
   flex-direction: column;
 }
-.data-card + .data-card { margin-top: 10px; }
 .data-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
@@ -2580,6 +2580,7 @@ code {
   font-weight: 600;
   color: var(--ink);
   font-size: 13.5px;
+  margin-bottom: 2px;
 }
 .data-card-title svg { color: var(--ink-dim); flex-shrink: 0; }
 .data-fingerprint {
