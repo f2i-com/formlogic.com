@@ -150,64 +150,27 @@ class BlueprintService
      *   blueprint.layout.set      {targetId, layout}                        (layout-only)
      *   blueprint.viewport.set    {viewport}                                (layout-only)
      */
+    /**
+     * §14 dry-run: validate a batch EXACTLY as commit would — same preconditions, same
+     * structural checks against the working element set — without writing anything.
+     * Returns the revisions the commit WOULD produce; Copilot proposals preview through
+     * this before a user-confirmed commit. Throws exactly like commitOperations.
+     */
+    public function validateOperations(string $ownerUserId, string $blueprintId, array $batch): array
+    {
+        [$row, , $semanticOps, $layoutOps] = $this->planBatch($ownerUserId, $blueprintId, $batch);
+        return [
+            'valid' => true,
+            'semanticRevision' => $semanticOps > 0 ? ((int) $row['semantic_revision']) + 1 : (int) $row['semantic_revision'],
+            'layoutRevision' => $layoutOps > 0 ? ((int) $row['layout_revision']) + 1 : (int) $row['layout_revision'],
+        ];
+    }
+
     public function commitOperations(string $ownerUserId, string $blueprintId, array $batch): array
     {
-        $row = $this->ownedRow($ownerUserId, $blueprintId);
-        if ($row === null) {
-            throw new \InvalidArgumentException('Unknown blueprint');
-        }
-        $operations = $batch['operations'] ?? null;
-        if (!is_array($operations) || $operations === [] || count($operations) > self::MAX_OPERATIONS_PER_BATCH) {
-            throw new \InvalidArgumentException('operations must be 1-' . self::MAX_OPERATIONS_PER_BATCH . ' entries');
-        }
-
-        $semanticOps = 0;
-        $layoutOps = 0;
-        foreach ($operations as $op) {
-            $type = is_array($op) ? (string) ($op['type'] ?? '') : '';
-            if (in_array($type, ['blueprint.element.create', 'blueprint.element.update', 'blueprint.element.delete'], true)) {
-                $semanticOps++;
-                if ($type === 'blueprint.element.create' && is_array($op['layout'] ?? null)) {
-                    $layoutOps++; // an inline placement is a layout change too
-                }
-            } elseif (in_array($type, ['blueprint.layout.set', 'blueprint.viewport.set'], true)) {
-                $layoutOps++;
-            } else {
-                throw new \InvalidArgumentException("Unsupported operation type '{$type}'");
-            }
-        }
-
-        $currentSemantic = (int) $row['semantic_revision'];
-        if ($semanticOps > 0) {
-            $base = $batch['baseSemanticRevision'] ?? null;
-            if (!is_int($base) && !(is_numeric($base) && (string) (int) $base === (string) $base)) {
-                throw new \InvalidArgumentException('Semantic operations require baseSemanticRevision');
-            }
-            if ((int) $base !== $currentSemantic) {
-                throw new BlueprintRevisionConflictException($currentSemantic);
-            }
-        }
-
-        // Working element set for structural validation (ids -> element_type), tombstones excluded.
-        $existing = $this->mysql->prepare(
-            'SELECT id, element_type FROM blueprint_elements WHERE blueprint_id = :b AND deleted_at IS NULL'
-        );
-        $existing->execute(['b' => $blueprintId]);
-        $live = [];
-        foreach ($existing->fetchAll() as $element) {
-            $live[(string) $element['id']] = (string) $element['element_type'];
-        }
-
+        [$row, $planned, $semanticOps, $layoutOps] = $this->planBatch($ownerUserId, $blueprintId, $batch);
         $changeSetId = 'cs_' . bin2hex(random_bytes(10));
-        $planned = [];
-        $seq = 0;
-        foreach ($operations as $op) {
-            $planned[] = $this->validateOperation($blueprintId, $op, $live, $seq++);
-        }
-        if (count($live) > self::MAX_ELEMENTS_PER_BLUEPRINT) {
-            throw new \InvalidArgumentException('Element limit reached (' . self::MAX_ELEMENTS_PER_BLUEPRINT . ')');
-        }
-
+        $currentSemantic = (int) $row['semantic_revision'];
         $newSemantic = $semanticOps > 0 ? $currentSemantic + 1 : $currentSemantic;
         $newLayout = $layoutOps > 0 ? ((int) $row['layout_revision']) + 1 : (int) $row['layout_revision'];
 
@@ -249,6 +212,72 @@ class BlueprintService
     }
 
     // ─── internals ─────────────────────────────────────────────────────────────
+
+    /**
+     * The shared validate-everything-before-any-write path commit and dry-run both use:
+     * ownership, batch shape, operation classification, the semantic-revision
+     * precondition, and structural validation against the working element set.
+     *
+     * @return array{0: array, 1: array[], 2: int, 3: int} [$blueprintRow, $plannedOps, $semanticOps, $layoutOps]
+     */
+    private function planBatch(string $ownerUserId, string $blueprintId, array $batch): array
+    {
+        $row = $this->ownedRow($ownerUserId, $blueprintId);
+        if ($row === null) {
+            throw new \InvalidArgumentException('Unknown blueprint');
+        }
+        $operations = $batch['operations'] ?? null;
+        if (!is_array($operations) || $operations === [] || count($operations) > self::MAX_OPERATIONS_PER_BATCH) {
+            throw new \InvalidArgumentException('operations must be 1-' . self::MAX_OPERATIONS_PER_BATCH . ' entries');
+        }
+
+        $semanticOps = 0;
+        $layoutOps = 0;
+        foreach ($operations as $op) {
+            $type = is_array($op) ? (string) ($op['type'] ?? '') : '';
+            if (in_array($type, ['blueprint.element.create', 'blueprint.element.update', 'blueprint.element.delete'], true)) {
+                $semanticOps++;
+                if ($type === 'blueprint.element.create' && is_array($op['layout'] ?? null)) {
+                    $layoutOps++; // an inline placement is a layout change too
+                }
+            } elseif (in_array($type, ['blueprint.layout.set', 'blueprint.viewport.set'], true)) {
+                $layoutOps++;
+            } else {
+                throw new \InvalidArgumentException("Unsupported operation type '{$type}'");
+            }
+        }
+
+        if ($semanticOps > 0) {
+            $base = $batch['baseSemanticRevision'] ?? null;
+            if (!is_int($base) && !(is_numeric($base) && (string) (int) $base === (string) $base)) {
+                throw new \InvalidArgumentException('Semantic operations require baseSemanticRevision');
+            }
+            if ((int) $base !== (int) $row['semantic_revision']) {
+                throw new BlueprintRevisionConflictException((int) $row['semantic_revision']);
+            }
+        }
+
+        // Working element set for structural validation (ids -> element_type), tombstones excluded.
+        $existing = $this->mysql->prepare(
+            'SELECT id, element_type FROM blueprint_elements WHERE blueprint_id = :b AND deleted_at IS NULL'
+        );
+        $existing->execute(['b' => $blueprintId]);
+        $live = [];
+        foreach ($existing->fetchAll() as $element) {
+            $live[(string) $element['id']] = (string) $element['element_type'];
+        }
+
+        $planned = [];
+        $seq = 0;
+        foreach ($operations as $op) {
+            $planned[] = $this->validateOperation($blueprintId, $op, $live, $seq++);
+        }
+        if (count($live) > self::MAX_ELEMENTS_PER_BLUEPRINT) {
+            throw new \InvalidArgumentException('Element limit reached (' . self::MAX_ELEMENTS_PER_BLUEPRINT . ')');
+        }
+
+        return [$row, $planned, $semanticOps, $layoutOps];
+    }
 
     /**
      * Structural validation of one operation against the WORKING element set ($live is

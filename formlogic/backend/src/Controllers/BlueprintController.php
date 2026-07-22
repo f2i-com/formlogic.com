@@ -71,6 +71,31 @@ class BlueprintController
         return $this->jsonResponse($response, ['deleted' => true]);
     }
 
+    public function validateOperations(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        try {
+            $result = $this->blueprints->validateOperations(
+                (string) $userId,
+                (string) ($args['blueprintId'] ?? ''),
+                (array) ($request->getParsedBody() ?? [])
+            );
+            return $this->jsonResponse($response, $result);
+        } catch (BlueprintRevisionConflictException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'revision_conflict',
+                'message' => 'The blueprint changed since you loaded it — reload and retry',
+                'currentSemanticRevision' => $e->currentRevision,
+            ], 409);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'valid' => false, 'message' => $e->getMessage()], 400);
+        }
+    }
+
     public function commitOperations(Request $request, Response $response, array $args): Response
     {
         $userId = $request->getAttribute('userId');

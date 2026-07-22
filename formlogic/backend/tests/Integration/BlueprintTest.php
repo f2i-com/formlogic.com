@@ -227,6 +227,34 @@ class BlueprintTest extends TestCase
         $this->assertSame(2, (int) $tombstones->fetchColumn());
     }
 
+    public function testValidateIsACommitFaithfulDryRunThatWritesNothing(): void
+    {
+        $blueprint = $this->createBlueprint();
+        $batch = [
+            'baseSemanticRevision' => 0,
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'n1', 'elementType' => 'form', 'layout' => ['x' => 1, 'y' => 2]])],
+        ];
+        $preview = self::$blueprints->validateOperations($this->userId, $blueprint['id'], $batch);
+        $this->assertTrue($preview['valid']);
+        $this->assertSame(1, $preview['semanticRevision'], 'previews the revision the commit WOULD produce');
+        $this->assertSame(1, $preview['layoutRevision']);
+        // Nothing was written — no elements, no revision bump, no operation rows.
+        $snapshot = self::$blueprints->getBlueprint($this->userId, $blueprint['id']);
+        $this->assertCount(0, $snapshot['elements']);
+        $this->assertSame(0, $snapshot['semanticRevision']);
+        $ops = self::$pdo->prepare('SELECT COUNT(*) FROM blueprint_operations WHERE blueprint_id = ?');
+        $ops->execute([$blueprint['id']]);
+        $this->assertSame(0, (int) $ops->fetchColumn());
+        // The SAME batch then commits cleanly, and validate rejects exactly like commit.
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], $batch);
+        try {
+            self::$blueprints->validateOperations($this->userId, $blueprint['id'], $batch);
+            $this->fail('expected the dry-run to conflict like commit would');
+        } catch (BlueprintRevisionConflictException $e) {
+            $this->assertSame(1, $e->currentRevision);
+        }
+    }
+
     public function testOperationLogRecordsInversesAndRefusesReplays(): void
     {
         $blueprint = $this->createBlueprint();
