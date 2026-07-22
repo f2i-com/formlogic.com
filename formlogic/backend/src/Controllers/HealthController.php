@@ -37,6 +37,8 @@ class HealthController
             'timestamp' => date('c'),
             // Public flag so the SPA can show the "free while in beta" banner + signup note pre-auth.
             'betaMode' => (bool) ($this->settings['cloud']['betaMode'] ?? false),
+            // E2EE Private Forms beta flag (plan D9).
+            'privateForms' => (bool) ($this->settings['cloud']['privateForms'] ?? false),
         ]);
     }
 

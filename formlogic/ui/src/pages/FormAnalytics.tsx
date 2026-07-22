@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, type ElementType, type ReactNode } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Download, Users, Clock, CheckCircle, TrendingUp, TrendingDown, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick } from 'lucide-react';
+import { Download, Users, Clock, CheckCircle, TrendingUp, TrendingDown, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick, Lock } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LabelList } from 'recharts';
 import { useUIStore } from '../stores/uiStore';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
@@ -16,6 +16,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
 import { cn, formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
+import { isEncryptedEnvelope } from '../lib/crypto/envelope';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { EmbedModal } from '../components/builder/EmbedModal';
 
@@ -61,6 +62,15 @@ export default function FormAnalytics() {
   // Use server-fetched responses in API mode (local store is empty in cloud mode),
   // so the field breakdown and Recent Responses table reflect real data.
   const responses = storageMode === 'api' ? apiResponses : localResponses;
+
+  // E2EE (§9.2): a private form's answers are ciphertext — answer-derived surfaces
+  // (field breakdown, answer previews) render the private placeholder instead of
+  // silently empty charts. Count-based surfaces (over-time chart) stay: they are
+  // computed from non-content columns and remain meaningful.
+  const isPrivateForm = useMemo(
+    () => responses.some((r) => isEncryptedEnvelope((r as { answers?: unknown }).answers)),
+    [responses],
+  );
 
   // Calculate local analytics
   const localAnalytics = useMemo(() => {
@@ -726,8 +736,8 @@ export default function FormAnalytics() {
           </CardContent>
         </Card>
 
-        {/* Field Breakdown */}
-        {Object.keys(fieldBreakdown).length > 0 && (
+        {/* Field Breakdown — hidden for private forms (answers are ciphertext). */}
+        {!isPrivateForm && Object.keys(fieldBreakdown).length > 0 && (
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
               <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-500" />
@@ -781,6 +791,22 @@ export default function FormAnalytics() {
           </Card>
         )}
 
+        {/* E2EE (§9.2): private-form placeholder for answer-derived analytics. */}
+        {isPrivateForm && (
+          <Card>
+            <CardContent className="p-6 flex items-start gap-3">
+              <Lock className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">Private form — open records to view</p>
+                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                  Answers are end-to-end encrypted, so field breakdowns and answer previews aren't available here.
+                  Response counts and submission times above are unaffected.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Recent Responses */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
@@ -817,9 +843,11 @@ export default function FormAnalytics() {
                           {previewFields.map((field) => (
                             <p key={field.id} className="text-sm text-gray-600 dark:text-slate-300 truncate">
                               <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                              {field.type === 'linked_record'
-                                ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                                : formatPreviewValue(field, response.answers[field.id])}
+                              {isPrivateForm
+                                ? '🔒'
+                                : field.type === 'linked_record'
+                                  ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                                  : formatPreviewValue(field, response.answers[field.id])}
                             </p>
                           ))}
                         </button>
@@ -867,9 +895,11 @@ export default function FormAnalytics() {
                         </td>
                         {visiblePreview.map((field) => (
                           <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
-                            {field.type === 'linked_record'
-                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                              : formatPreviewValue(field, response.answers[field.id])}
+                            {isPrivateForm
+                              ? '🔒'
+                              : field.type === 'linked_record'
+                                ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                                : formatPreviewValue(field, response.answers[field.id])}
                           </td>
                         ))}
                       </tr>

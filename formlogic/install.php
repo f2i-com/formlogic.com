@@ -1348,6 +1348,12 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           or lost connectivity) to 'error' so anything waiting on it can retry:<br>
           <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-runs-reclaim.php &gt;&gt; /var/log/formlogic-flow-runs-reclaim.log 2&gt;&amp;1</code>
         </li>
+        <li style="margin-bottom:10px;">
+          <strong>Private-form privacy sweep</strong> — nightly null-out of respondent IP addresses
+          on end-to-end encrypted (private) forms once they pass the 30-day abuse-forensics window
+          (plan §12; skipped entirely when no private forms exist):<br>
+          <code>41 3 * * * php <?= $backendAbsHtml ?>/bin/privacy-sweep.php &gt;&gt; /var/log/formlogic-privacy-sweep.log 2&gt;&amp;1</code>
+        </li>
         <li>
           <strong>Data drift report</strong> — weekly read-only consistency check between MySQL and the
           per-form response databases (exit 1 = drift found; review the log, then run it manually with

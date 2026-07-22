@@ -244,6 +244,9 @@ final class AccountBackupService
                     throw new \RuntimeException('Form not found');
                 }
                 $structure['forms'][] = $this->buildFormBlock($form);
+                // E2EE: a private form's trash snapshot must carry its key material
+                // (ciphertext/public only) so an undelete restores a DECRYPTABLE form.
+                $structure['encryption'] = $this->encryptionBlock($userId, [$id]);
                 foreach ($this->flowService->listFormBindings($userId, $id) as $b) {
                     $structure['formBindings'][] = $this->serializeBinding($b);
                 }
@@ -481,6 +484,10 @@ final class AccountBackupService
             'flows' => $flows,
             'appBindings' => $appBindings,
             'formBindings' => $formBindings,
+            // E2EE (plan §7): vault + per-form key/schema/manifest/grant rows —
+            // ciphertext/public material only, required for an id-preserving restore
+            // of private forms (their AADs bind these ids byte-for-byte).
+            'encryption' => $this->encryptionBlock($userId, array_map(static fn (array $f) => (string) $f['id'], $forms)),
             // Honesty list: what a backup deliberately does NOT carry.
             'excluded' => [
                 'webhooks (signing secrets)', 'app members and invitations', 'custom domains',
@@ -498,6 +505,7 @@ final class AccountBackupService
             'description' => $f['description'],
             'status' => $f['status'],
             'publishedAt' => $f['publishedAt'] ?? null,
+            'encryption' => (new FormEncryptionService($this->pdo))->isPrivate((string) $f['id']) ? 'private' : null,
             'icon' => $f['icon'] ?? null,
             'settings' => is_array($f['settings'] ?? null) ? $f['settings'] : [],
             'theme' => is_array($f['theme'] ?? null) ? $f['theme'] : [],
@@ -507,6 +515,116 @@ final class AccountBackupService
             'customLogic' => is_array($f['customLogic'] ?? null) ? $f['customLogic'] : null,
             'fields' => is_array($f['fields'] ?? null) ? $f['fields'] : [],
         ];
+    }
+
+    /**
+     * E2EE (docs/E2EE_PRIVATE_FORMS_PLAN.md §7): every encryption row for the given
+     * forms + the account vault, exported as ciphertext/public material ONLY
+     * (wrapped UMK, sealed grants, wrapped ingestion secrets, exact signed manifest
+     * bytes) — the backup never contains an unwrapped key. Binary columns ride as
+     * base64 so the exact bytes round-trip (they are baked into envelope AADs).
+     * Null vault / absent form ids are simply omitted.
+     *
+     * @param list<string> $formIds
+     * @return array{vault: array<string,mixed>|null, forms: array<string,array<string,mixed>>}
+     */
+    private function encryptionBlock(string $userId, array $formIds): array
+    {
+        $vault = null;
+        $vStmt = $this->pdo->prepare('SELECT * FROM user_vaults WHERE user_id = :u');
+        $vStmt->execute(['u' => $userId]);
+        $vRow = $vStmt->fetch(PDO::FETCH_ASSOC);
+        if (is_array($vRow)) {
+            $vault = [
+                'version' => (int) $vRow['version'],
+                'kdf' => (string) $vRow['kdf'],
+                'kdfSalt' => base64_encode((string) $vRow['kdf_salt']),
+                'kdfMemlimit' => (int) $vRow['kdf_memlimit'],
+                'kdfOpslimit' => (int) $vRow['kdf_opslimit'],
+                'wrappedUmk' => base64_encode((string) $vRow['wrapped_umk']),
+                'wrappedUmkRecovery' => $vRow['wrapped_umk_recovery'] !== null ? base64_encode((string) $vRow['wrapped_umk_recovery']) : null,
+                'encKeyBundle' => base64_encode((string) $vRow['enc_key_bundle']),
+                'x25519Pk' => (string) $vRow['x25519_pk'],
+                'ed25519Pk' => (string) $vRow['ed25519_pk'],
+            ];
+        }
+
+        $forms = [];
+        foreach ($formIds as $formId) {
+            $eStmt = $this->pdo->prepare('SELECT * FROM form_encryption WHERE form_id = :f');
+            $eStmt->execute(['f' => $formId]);
+            $enc = $eStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($enc)) {
+                continue;
+            }
+            $rows = function (string $sql) use ($formId): array {
+                $stmt = $this->pdo->prepare($sql);
+                $stmt->execute(['f' => $formId]);
+                return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            };
+            $forms[$formId] = [
+                'encryption' => [
+                    'mode' => (string) $enc['mode'],
+                    'currentIngestEpoch' => (int) $enc['current_ingest_epoch'],
+                    'currentFkEpoch' => (int) $enc['current_fk_epoch'],
+                    'state' => (string) $enc['state'],
+                    'enabledBy' => (string) $enc['enabled_by'],
+                    'enabledAt' => $enc['enabled_at'] !== null ? (string) $enc['enabled_at'] : null,
+                ],
+                'schemaVersions' => array_map(static fn (array $r) => [
+                    'id' => (string) $r['id'],
+                    'version' => (int) $r['version'],
+                    // EXACT snapshot bytes, base64 — never re-encoded server-side.
+                    'schemaJsonB64' => base64_encode((string) $r['schema_json']),
+                    'schemaHash' => (string) $r['schema_hash'],
+                    'createdAt' => $r['created_at'] !== null ? (string) $r['created_at'] : null,
+                ], $rows('SELECT * FROM form_schema_versions WHERE form_id = :f ORDER BY version ASC')),
+                'ingestionKeys' => array_map(static fn (array $r) => [
+                    'id' => (string) $r['id'],
+                    'epoch' => (int) $r['epoch'],
+                    'publicKey' => (string) $r['public_key'],
+                    'wrappedSecret' => base64_encode((string) $r['wrapped_secret']),
+                    'fkEpoch' => (int) $r['fk_epoch'],
+                    'state' => (string) $r['state'],
+                    'acceptUntil' => $r['accept_until'] !== null ? (string) $r['accept_until'] : null,
+                    'createdAt' => $r['created_at'] !== null ? (string) $r['created_at'] : null,
+                ], $rows('SELECT * FROM form_ingestion_keys WHERE form_id = :f ORDER BY epoch ASC')),
+                'manifests' => array_map(static fn (array $r) => [
+                    'id' => (string) $r['id'],
+                    'manifestSeq' => (int) $r['manifest_seq'],
+                    'keyId' => (string) $r['key_id'],
+                    'ingestEpoch' => (int) $r['ingest_epoch'],
+                    'schemaVersion' => (int) $r['schema_version'],
+                    'schemaHash' => (string) $r['schema_hash'],
+                    'contentSuite' => (string) $r['content_suite'],
+                    'wrapSuite' => (string) $r['wrap_suite'],
+                    'signerKeyId' => (string) $r['signer_key_id'],
+                    'signerPk' => (string) $r['signer_pk'],
+                    'signedBytesB64' => base64_encode((string) $r['signed_bytes']),
+                    'signature' => base64_encode((string) $r['signature']),
+                    'createdAt' => (string) $r['created_at'],
+                    'expiresAt' => $r['expires_at'] !== null ? (string) $r['expires_at'] : null,
+                    'supersededAt' => $r['superseded_at'] !== null ? (string) $r['superseded_at'] : null,
+                ], $rows('SELECT * FROM form_manifests WHERE form_id = :f ORDER BY manifest_seq ASC')),
+                'grants' => array_map(static fn (array $r) => [
+                    'id' => (string) $r['id'],
+                    'userId' => (string) $r['user_id'],
+                    'fkEpoch' => (int) $r['fk_epoch'],
+                    'wrappedKey' => base64_encode((string) $r['wrapped_key']),
+                    'wrapSuite' => (string) $r['wrap_suite'],
+                    'role' => (string) $r['role'],
+                    'grantorUserId' => (string) $r['grantor_user_id'],
+                    'grantorKeyId' => (string) $r['grantor_key_id'],
+                    'granteePk' => (string) $r['grantee_pk'],
+                    'sigVersion' => (int) $r['sig_version'],
+                    'signature' => base64_encode((string) $r['signature']),
+                    'expiresAt' => $r['expires_at'] !== null ? (string) $r['expires_at'] : null,
+                    'state' => (string) $r['state'],
+                    'createdAt' => $r['created_at'] !== null ? (string) $r['created_at'] : null,
+                ], $rows('SELECT * FROM form_key_grants WHERE form_id = :f ORDER BY fk_epoch ASC')),
+            ];
+        }
+        return ['vault' => $vault, 'forms' => $forms];
     }
 
     /** @param array $app a formatted app (getApp shape) */
@@ -736,6 +854,21 @@ final class AccountBackupService
                 'rebuildInboundLinks' => (bool) ($options['rebuildInboundLinks'] ?? false),
             ];
 
+            // E2EE import-id-preservation guard (plan §7): a private form's form_id,
+            // recordIds, key ids and epochs are baked into envelope AADs — an import
+            // that would remint ANY of them must refuse, never silently corrupt.
+            if (!$opts['preserveIds']) {
+                foreach ($structure['forms'] as $bf) {
+                    if (($bf['encryption'] ?? null) === 'private') {
+                        throw new EncryptionRequestException(
+                            'import_remint_refused',
+                            'This backup contains an end-to-end encrypted (private) form. A plain import would assign new ids and permanently corrupt its encrypted data — restore it in preserve-ids mode instead.',
+                            400
+                        );
+                    }
+                }
+            }
+
             // ── Phase 1: structure, in ONE MySQL transaction ──
             $maps = $this->restoreStructure($structure, $userId, $created, $warnings, $opts);
 
@@ -911,6 +1044,15 @@ final class AccountBackupService
                 if ($opts['preserveIds'] && $this->formIdIsFree($oldId)) {
                     $formIdMap[$oldId] = $oldId;
                 } else {
+                    // E2EE: a private form can NEVER be restored as a copy — its id is
+                    // baked into every envelope AAD (plan §7). Hard-fail the import.
+                    if (($bf['encryption'] ?? null) === 'private') {
+                        throw new EncryptionRequestException(
+                            'import_remint_refused',
+                            "Private form '" . (string) ($bf['title'] ?? $oldId) . "' cannot be restored: its original id is still in use, and an encrypted form can never be restored as a copy.",
+                            409
+                        );
+                    }
                     $formIdMap[$oldId] = $this->generateUuid();
                     if ($opts['preserveIds']) {
                         $warnings[] = "Form '" . (string) ($bf['title'] ?? $oldId) . "' could not keep its original id (still in use) — restored as a copy.";
@@ -943,6 +1085,11 @@ final class AccountBackupService
                         ->execute(['p' => $bf['publishedAt'], 'id' => $newId]);
                 }
             }
+
+            // E2EE (plan §7): restore vault + per-form key/schema/manifest/grant rows
+            // byte-for-byte (ids/epochs are baked into envelope AADs). Runs inside the
+            // same transaction so a malformed encryption block rolls the import back.
+            $this->restoreEncryptionRows($structure, $formIdMap, $userId);
 
             foreach ($structure['apps'] as $ba) {
                 $settings = is_array($ba['settings'] ?? null) ? $ba['settings'] : [];
@@ -1217,6 +1364,10 @@ final class AccountBackupService
                 }
             }
             $created = ['apps' => [], 'forms' => [], 'workspaceFlows' => [], 'appFlows' => []];
+            // Typed E2EE refusals (import_remint_refused) keep their code + status.
+            if ($e instanceof EncryptionRequestException) {
+                throw $e;
+            }
             throw $e instanceof \RuntimeException || $e instanceof \InvalidArgumentException
                 ? new \RuntimeException('Backup import failed: ' . $e->getMessage(), 0, $e)
                 : $e;
@@ -1228,6 +1379,175 @@ final class AccountBackupService
      * $attachOwnerId (restore mode): a binding scope on a form OUTSIDE the snapshot
      * re-attaches to that owner's surviving form instead of being cleared.
      */
+    /**
+     * E2EE import half (plan §7): re-insert the vault + per-form encryption rows
+     * from the backup's `encryption` block, byte-for-byte. Rules:
+     *  - only forms whose id was PRESERVED get their rows (a reminted id was
+     *    already refused for private forms upstream; a stray block for one is skipped);
+     *  - the vault is inserted only when the target account has none (an existing
+     *    vault is never overwritten — it may be newer);
+     *  - per-form rows are inserted only when NO form_encryption row exists yet —
+     *    a trash-restore finds its parked rows already present, and TrashService
+     *    flips their state back; a clean restore inserts everything;
+     *  - 'trashed' states from the backup map back to 'active' (a restored form is live).
+     * Malformed base64 fails the whole import (the encryption block is integrity-critical).
+     *
+     * @param array<string,mixed> $structure
+     * @param array<string,string> $formIdMap
+     */
+    private function restoreEncryptionRows(array $structure, array $formIdMap, string $userId): void
+    {
+        $block = $structure['encryption'] ?? null;
+        if (!is_array($block)) {
+            return; // pre-E2EE backup — nothing to restore
+        }
+
+        $b64 = static function (mixed $value, string $field): string {
+            if (!is_string($value)) {
+                throw new \RuntimeException("Backup encryption block is malformed ({$field})");
+            }
+            $decoded = base64_decode($value, true);
+            if ($decoded === false) {
+                throw new \RuntimeException("Backup encryption block has invalid base64 ({$field})");
+            }
+            return $decoded;
+        };
+
+        $vault = $block['vault'] ?? null;
+        if (is_array($vault)) {
+            $this->pdo->prepare("
+                INSERT IGNORE INTO user_vaults
+                    (user_id, version, kdf, kdf_salt, kdf_memlimit, kdf_opslimit,
+                     wrapped_umk, wrapped_umk_recovery, enc_key_bundle, x25519_pk, ed25519_pk,
+                     created_at, updated_at)
+                VALUES
+                    (:u, :version, :kdf, :salt, :mem, :ops, :umk, :umk_rec, :bundle, :xpk, :edpk, :now, :now2)
+            ")->execute([
+                'u' => $userId,
+                'version' => (int) ($vault['version'] ?? 1),
+                'kdf' => (string) ($vault['kdf'] ?? 'argon2id13.1'),
+                'salt' => $b64($vault['kdfSalt'] ?? null, 'vault.kdfSalt'),
+                'mem' => (int) ($vault['kdfMemlimit'] ?? 0),
+                'ops' => (int) ($vault['kdfOpslimit'] ?? 0),
+                'umk' => $b64($vault['wrappedUmk'] ?? null, 'vault.wrappedUmk'),
+                'umk_rec' => ($vault['wrappedUmkRecovery'] ?? null) !== null ? $b64($vault['wrappedUmkRecovery'], 'vault.wrappedUmkRecovery') : null,
+                'bundle' => $b64($vault['encKeyBundle'] ?? null, 'vault.encKeyBundle'),
+                'xpk' => (string) ($vault['x25519Pk'] ?? ''),
+                'edpk' => (string) ($vault['ed25519Pk'] ?? ''),
+                'now' => date('Y-m-d H:i:s'),
+                'now2' => date('Y-m-d H:i:s'),
+            ]);
+        }
+
+        $formsBlock = is_array($block['forms'] ?? null) ? $block['forms'] : [];
+        $now = date('Y-m-d H:i:s');
+        $active = static fn (string $state): string => $state === 'trashed' ? 'active' : $state;
+        foreach ($formsBlock as $oldFormId => $fb) {
+            $oldFormId = (string) $oldFormId;
+            $formId = $formIdMap[$oldFormId] ?? null;
+            if ($formId === null || $formId !== $oldFormId || !is_array($fb)) {
+                continue; // only id-preserved forms restore encryption rows
+            }
+            $exists = $this->pdo->prepare('SELECT 1 FROM form_encryption WHERE form_id = :f');
+            $exists->execute(['f' => $formId]);
+            if ($exists->fetchColumn() !== false) {
+                continue; // parked rows from trash — TrashService flips them back
+            }
+            $enc = is_array($fb['encryption'] ?? null) ? $fb['encryption'] : [];
+            $this->pdo->prepare("
+                INSERT INTO form_encryption (form_id, mode, current_ingest_epoch, current_fk_epoch, state, enabled_by, enabled_at)
+                VALUES (:f, 'private', :ie, :fe, :state, :by, :at)
+            ")->execute([
+                'f' => $formId,
+                'ie' => (int) ($enc['currentIngestEpoch'] ?? 1),
+                'fe' => (int) ($enc['currentFkEpoch'] ?? 1),
+                'state' => $active((string) ($enc['state'] ?? 'active')),
+                'by' => (string) ($enc['enabledBy'] ?? $userId),
+                'at' => $enc['enabledAt'] ?? $now,
+            ]);
+            foreach (is_array($fb['schemaVersions'] ?? null) ? $fb['schemaVersions'] : [] as $r) {
+                $this->pdo->prepare("
+                    INSERT INTO form_schema_versions (id, form_id, version, schema_json, schema_hash, created_at)
+                    VALUES (:id, :f, :v, :json, :hash, :at)
+                ")->execute([
+                    'id' => (string) ($r['id'] ?? ''),
+                    'f' => $formId,
+                    'v' => (int) ($r['version'] ?? 0),
+                    'json' => $b64($r['schemaJsonB64'] ?? null, 'schemaVersions.schemaJsonB64'),
+                    'hash' => (string) ($r['schemaHash'] ?? ''),
+                    'at' => $r['createdAt'] ?? $now,
+                ]);
+            }
+            foreach (is_array($fb['ingestionKeys'] ?? null) ? $fb['ingestionKeys'] : [] as $r) {
+                $this->pdo->prepare("
+                    INSERT INTO form_ingestion_keys (id, form_id, epoch, public_key, wrapped_secret, fk_epoch, state, accept_until, created_at)
+                    VALUES (:id, :f, :e, :pk, :sk, :fe, :state, :until, :at)
+                ")->execute([
+                    'id' => (string) ($r['id'] ?? ''),
+                    'f' => $formId,
+                    'e' => (int) ($r['epoch'] ?? 0),
+                    'pk' => (string) ($r['publicKey'] ?? ''),
+                    'sk' => $b64($r['wrappedSecret'] ?? null, 'ingestionKeys.wrappedSecret'),
+                    'fe' => (int) ($r['fkEpoch'] ?? 1),
+                    'state' => $active((string) ($r['state'] ?? 'active')),
+                    'until' => $r['acceptUntil'] ?? null,
+                    'at' => $r['createdAt'] ?? $now,
+                ]);
+            }
+            foreach (is_array($fb['manifests'] ?? null) ? $fb['manifests'] : [] as $r) {
+                $this->pdo->prepare("
+                    INSERT INTO form_manifests
+                        (id, form_id, manifest_seq, key_id, ingest_epoch, schema_version, schema_hash,
+                         content_suite, wrap_suite, signer_key_id, signer_pk, signed_bytes, signature,
+                         created_at, expires_at, superseded_at)
+                    VALUES
+                        (:id, :f, :seq, :key, :epoch, :sv, :hash, :content, :wrap, :skid, :spk, :bytes, :sig, :at, :exp, :sup)
+                ")->execute([
+                    'id' => (string) ($r['id'] ?? ''),
+                    'f' => $formId,
+                    'seq' => (int) ($r['manifestSeq'] ?? 0),
+                    'key' => (string) ($r['keyId'] ?? ''),
+                    'epoch' => (int) ($r['ingestEpoch'] ?? 0),
+                    'sv' => (int) ($r['schemaVersion'] ?? 0),
+                    'hash' => (string) ($r['schemaHash'] ?? ''),
+                    'content' => (string) ($r['contentSuite'] ?? ''),
+                    'wrap' => (string) ($r['wrapSuite'] ?? ''),
+                    'skid' => (string) ($r['signerKeyId'] ?? ''),
+                    'spk' => (string) ($r['signerPk'] ?? ''),
+                    'bytes' => $b64($r['signedBytesB64'] ?? null, 'manifests.signedBytesB64'),
+                    'sig' => $b64($r['signature'] ?? null, 'manifests.signature'),
+                    'at' => $r['createdAt'] ?? $now,
+                    'exp' => $r['expiresAt'] ?? null,
+                    'sup' => $r['supersededAt'] ?? null,
+                ]);
+            }
+            foreach (is_array($fb['grants'] ?? null) ? $fb['grants'] : [] as $r) {
+                $this->pdo->prepare("
+                    INSERT INTO form_key_grants
+                        (id, form_id, user_id, fk_epoch, wrapped_key, wrap_suite, role, grantor_user_id,
+                         grantor_key_id, grantee_pk, sig_version, signature, expires_at, state, created_at)
+                    VALUES
+                        (:id, :f, :u, :fe, :wk, :wrap, :role, :gu, :gkid, :gpk, :sv, :sig, :exp, :state, :at)
+                ")->execute([
+                    'id' => (string) ($r['id'] ?? ''),
+                    'f' => $formId,
+                    'u' => (string) ($r['userId'] ?? $userId),
+                    'fe' => (int) ($r['fkEpoch'] ?? 1),
+                    'wk' => $b64($r['wrappedKey'] ?? null, 'grants.wrappedKey'),
+                    'wrap' => (string) ($r['wrapSuite'] ?? ''),
+                    'role' => (string) ($r['role'] ?? 'owner'),
+                    'gu' => (string) ($r['grantorUserId'] ?? $userId),
+                    'gkid' => (string) ($r['grantorKeyId'] ?? ''),
+                    'gpk' => (string) ($r['granteePk'] ?? ''),
+                    'sv' => (int) ($r['sigVersion'] ?? 1),
+                    'sig' => $b64($r['signature'] ?? null, 'grants.signature'),
+                    'exp' => $r['expiresAt'] ?? null,
+                    'state' => $active((string) ($r['state'] ?? 'active')),
+                    'at' => $r['createdAt'] ?? $now,
+                ]);
+            }
+        }
+    }
     private function bindingData(array $bb, array $formIdMap, array &$warnings, ?string $attachOwnerId = null): array
     {
         $formId = null;

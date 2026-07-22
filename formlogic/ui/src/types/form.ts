@@ -192,6 +192,33 @@ export interface RecordScreen {
   height?: number;
 }
 
+/**
+ * The signed encryption manifest served on a PRIVATE form by
+ * GET /api/public/forms/{id} (E2EE plan SS8 - pinned wire contract). Presence of
+ * this object (mode 'private') switches the submit path to client-side sealing;
+ * it must NEVER silently fall back to plaintext.
+ */
+export interface PublicFormEncryption {
+  mode: 'private';
+  keyId: string;
+  epoch: number;
+  /** Base64 32-byte ingestion X25519 public key. */
+  publicKey: string;
+  content: string;
+  wrap: string;
+  schemaVersion: number;
+  /** SHA-256 hex of the EXACT schemaJson bytes. */
+  schemaHash: string;
+  /** The exact stored schema snapshot string that was hashed. */
+  schemaJson: string;
+  signerKeyId: string;
+  /** Base64 32-byte Ed25519 manifest verification key (TOFU-pinned per form). */
+  signerPk: string;
+  expiresAt: string | null;
+  /** Base64 Ed25519 signature over the pinned canonical manifest string. */
+  sig: string;
+}
+
 export interface Form {
   id: string;
   title: string;
@@ -206,11 +233,17 @@ export interface Form {
   customScreen?: CustomScreen;
   /** Optional form-scoped sandboxed QuickJS app-logic (runs only when this form is open). */
   customLogic?: import('./customAppLogic').CustomAppLogicBundle;
+  /** Present (mode 'private') when this form is end-to-end encrypted (E2EE plan SS8). */
+  encryption?: PublicFormEncryption;
   icon?: string;
   createdAt: string;
   updatedAt: string;
   status: 'draft' | 'published' | 'archived';
   responseCount: number;
+  /** Durable first-publish timestamp (§9.1): private forms can only be enabled while null. */
+  everPublishedAt?: string | null;
+  /** Served on the forms-list payload (E2EE): true when the form is end-to-end encrypted. */
+  isPrivate?: boolean;
 }
 
 /**
@@ -276,3 +309,31 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
   thank_you: { label: 'Thank You', icon: 'Heart', category: 'layout' },
   hidden: { label: 'Hidden Field', icon: 'EyeOff', category: 'advanced' },
 };
+
+/**
+ * Legacy field-type aliases from older/imported schemas, mapped onto the canonical
+ * types above (the backend normalizes on read/write too — FormService::normalizeFieldType).
+ * Without this, a legacy `text`/`textarea` field hits the renderer's default case
+ * ("Field type not supported").
+ */
+export const FIELD_TYPE_ALIASES: Record<string, FieldType> = {
+  text: 'short_text',
+  textarea: 'long_text',
+};
+
+export function normalizeFieldType(type: string): FieldType {
+  return FIELD_TYPE_ALIASES[type] ?? (type as FieldType);
+}
+
+// Stored settings predate newer keys for most forms (and can even be `[]`), so consumers
+// that edit settings should seed over the defaults — otherwise e.g. reading
+// `notifications.emailNotifications` throws on forms whose settings never had a
+// `notifications` object (the builder Settings → Notifications crash).
+export function normalizeFormSettings(settings: FormSettings): FormSettings {
+  const base = (settings ?? {}) as Partial<FormSettings>;
+  return {
+    ...DEFAULT_FORM_SETTINGS,
+    ...base,
+    notifications: { ...DEFAULT_FORM_SETTINGS.notifications, ...(base.notifications ?? {}) },
+  };
+}

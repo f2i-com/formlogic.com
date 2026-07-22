@@ -2,9 +2,9 @@
 // table's view MODAL. Shows every answer, computed values, metadata, status and
 // tags, plus the related-records grids — and edits inline. Route:
 // /responses/:formId/:responseId (owner-scoped; local-storage forms supported).
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Check, Edit2, RefreshCw, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Edit2, Lock, RefreshCw, Trash2, X } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -20,6 +20,7 @@ import {
   asResolvedList, formatValue,
   STATUS_OPTIONS, type ResolvedLink,
 } from '../components/responses/recordFormat';
+import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
@@ -28,6 +29,8 @@ import { toast } from '../stores/toastStore';
 import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import { describeUserAgent, primaryLanguage } from '../lib/userAgent';
+import { useDecryptedResponses } from '../lib/crypto/useDecryptedResponses';
+import { sealResponseForUpdate } from '../lib/crypto/formCrypto';
 import type { Form } from '../types/form';
 
 interface RecordData {
@@ -127,16 +130,54 @@ function FormResponseView() {
     return () => { cancelled = true; };
   }, [formId, responseId, storageMode, getStoredForm, getLocalResponses, reloadTick]);
 
+  // E2EE: a private-form record's `answers` is the stored envelope. Decrypt it in
+  // the browser (vault unlocked) and drive the whole view off the decrypted copy.
+  const [showUnlock, setShowUnlock] = useState(false);
+  const encRows = useMemo(() => (record ? [{ id: record.id, answers: record.answers }] : []), [record]);
+  const decrypted = useDecryptedResponses(formId, encRows);
+  const isPrivateRecord = decrypted.isPrivate;
+  const vaultLocked = decrypted.locked;
+  const decRow = decrypted.rows[0] as (typeof decrypted.rows)[0] & { _rev?: number; _encMeta?: { completionTime?: number; language?: string; clientAt?: string }; _encrypted?: boolean } | undefined;
+  // The record used for display/edit: decrypted answers merged over the raw row.
+  const viewRecord = useMemo(() => {
+    if (!record) return null;
+    if (isPrivateRecord && decRow) return { ...record, answers: decRow.answers };
+    return record;
+  }, [record, isPrivateRecord, decRow]);
+
   const startEdit = useCallback(() => {
-    if (!record) return;
-    setDraft({ ...record.answers });
+    if (!viewRecord) return;
+    setDraft({ ...viewRecord.answers });
     setEditing(true);
-  }, [record]);
+  }, [viewRecord]);
 
   const saveEdit = useCallback(async () => {
     if (!formId || !record) return;
     setSaving(true);
     try {
+      // PRIVATE record: re-seal the COMPLETE record (rev+1) with an expectedRev CAS.
+      if (isPrivateRecord && decRow?._encrypted) {
+        const expectedRev = decRow._rev ?? 1;
+        const { envelope } = await sealResponseForUpdate(formId, record.id, expectedRev, {
+          v: 1,
+          answers: draft,
+          ...(decRow._encMeta ? { meta: decRow._encMeta } : {}),
+        });
+        const res = await api.updateEncryptedResponse(formId, record.id, envelope, expectedRev);
+        if (!res.ok) {
+          const body = (res.body ?? {}) as { code?: string; message?: string };
+          toast.error(
+            body.code === 'revision_conflict' ? 'This record changed elsewhere' : 'Failed to update record',
+            body.code === 'revision_conflict' ? 'Reload the page and re-apply your edit.' : (body.message ?? 'Please try again.'),
+          );
+          return;
+        }
+        // Swap the stored envelope so the record re-decrypts at the new rev.
+        setRecord((prev) => (prev ? { ...prev, answers: envelope as unknown as Record<string, unknown> } : prev));
+        setEditing(false);
+        toast.success('Record updated', 'Changes saved successfully');
+        return;
+      }
       if (storageMode === 'api') {
         const result = await api.updateResponse(formId, record.id, { answers: draft });
         if (result.error) { toast.error('Failed to update record', result.error); return; }
@@ -146,12 +187,12 @@ function FormResponseView() {
       setRecord((prev) => (prev ? { ...prev, answers: draft } : prev));
       setEditing(false);
       toast.success('Record updated', 'Changes saved successfully');
-    } catch {
-      toast.error('Failed to save', 'An error occurred while saving');
+    } catch (e) {
+      toast.error('Failed to save', e instanceof Error ? e.message : 'An error occurred while saving');
     } finally {
       setSaving(false);
     }
-  }, [formId, record, draft, storageMode, updateLocalResponse]);
+  }, [formId, record, draft, storageMode, updateLocalResponse, isPrivateRecord, decRow]);
 
   const changeStatus = useCallback(async (newStatus: string) => {
     if (!formId || !record) return;
@@ -234,13 +275,13 @@ function FormResponseView() {
                 </>
               ) : (
                 <>
-                  {storageMode === 'api' && form?.logicScript && (
+                  {storageMode === 'api' && form?.logicScript && !isPrivateRecord && (
                     <Button variant="outline" size="sm" onClick={recompute} isLoading={recomputing} title="Re-run the form's logic script on this record">
                       <RefreshCw className="h-4 w-4" />
                       <span className="hidden lg:inline ml-2">Re-run logic</span>
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={startEdit}>
+                  <Button variant="outline" size="sm" onClick={startEdit} disabled={vaultLocked} title={vaultLocked ? 'Unlock your vault to edit' : undefined}>
                     <Edit2 className="h-4 w-4" />
                     <span className="hidden lg:inline ml-2">Edit</span>
                   </Button>
@@ -297,7 +338,7 @@ function FormResponseView() {
                 On phones the controls wrap onto their own line, left-aligned. */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-x-4 gap-y-2 mb-6">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0 sm:flex-1">
-                {recordTitle(form, record.answers)}
+                {isPrivateRecord && vaultLocked ? 'Encrypted record' : recordTitle(form, (viewRecord ?? record).answers)}
               </h1>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:flex-shrink-0 sm:justify-end">
                 {storageMode === 'api' ? (
@@ -322,11 +363,23 @@ function FormResponseView() {
               </div>
             </div>
 
+            {isPrivateRecord && vaultLocked && (
+              <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4">
+                <Lock className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
+                  🔒 This record is end-to-end encrypted. Unlock your vault to view or edit it.
+                </p>
+                <Button size="sm" onClick={() => setShowUnlock(true)}>Unlock vault</Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
               {/* Answers */}
               <div className="lg:col-span-2 min-w-0">
                 <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-6 space-y-4">
-                  {fields.map((field) => (
+                  {isPrivateRecord && vaultLocked ? (
+                    <p className="text-sm text-gray-400 dark:text-slate-500 italic">Unlock your vault to view this record's answers.</p>
+                  ) : fields.map((field) => (
                     <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
                       <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
                       {editing ? (
@@ -338,20 +391,20 @@ function FormResponseView() {
                               items={asResolvedList(record._resolved?.[field.id])}
                               onOpen={(it) => it.targetFormId && navigate(`/responses/${it.targetFormId}/${it.id}`)}
                             />
-                          ) : field.type === 'file_upload' && Array.isArray(record.answers[field.id]) && (record.answers[field.id] as unknown[]).length > 0 ? (
+                          ) : field.type === 'file_upload' && Array.isArray((viewRecord ?? record).answers[field.id]) && ((viewRecord ?? record).answers[field.id] as unknown[]).length > 0 ? (
                             <FileAnswerValue
-                              files={record.answers[field.id] as import('../components/ui/FileAnswerValue').FileAnswerItem[]}
+                              files={(viewRecord ?? record).answers[field.id] as import('../components/ui/FileAnswerValue').FileAnswerItem[]}
                               linkClassName="text-primary-600 dark:text-primary-400 hover:underline"
                             />
                           ) : field.type === 'signature' ? (
                             // Drawn signatures render as the actual image (typed ones as the
                             // name) so the owner can verify the record was signed at a glance.
-                            <SignatureValue value={record.answers[field.id]} />
+                            <SignatureValue value={(viewRecord ?? record).answers[field.id]} />
                           ) : (
-                            formatValue(record.answers[field.id], field.type, field.properties?.options, displayTz) === '-' ? (
+                            formatValue((viewRecord ?? record).answers[field.id], field.type, field.properties?.options, displayTz) === '-' ? (
                               <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
                             ) : (
-                              formatValue(record.answers[field.id], field.type, field.properties?.options, displayTz)
+                              formatValue((viewRecord ?? record).answers[field.id], field.type, field.properties?.options, displayTz)
                             )
                           )}
                         </div>
@@ -471,6 +524,9 @@ function FormResponseView() {
         variant="danger"
         isLoading={deleting}
       />
+
+      {/* E2EE: unlock dialog for the locked-record banner. */}
+      <VaultUnlockDialog isOpen={showUnlock} onClose={() => setShowUnlock(false)} />
     </div>
   );
 }

@@ -7,7 +7,8 @@ import { Switch } from '../ui/Switch';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
 import { WebhookManager } from './WebhookManager';
-import type { FormSettings } from '../../types/form';
+import { EncryptionSettings } from './EncryptionSettings';
+import { normalizeFormSettings, type FormSettings } from '../../types/form';
 
 interface FormSettingsModalProps {
   isOpen: boolean;
@@ -15,12 +16,16 @@ interface FormSettingsModalProps {
   settings: FormSettings;
   onSave: (settings: FormSettings) => void;
   formId?: string;
+  /** E2EE: whether the form is already end-to-end encrypted (read-only status then). */
+  isPrivate?: boolean;
+  /** E2EE: fired after a successful one-way enable so the builder refreshes its badge. */
+  onEncryptionEnabled?: () => void;
 }
 
 type SettingsTab = 'presentation' | 'behavior' | 'notifications' | 'access' | 'webhooks';
 
-export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }: FormSettingsModalProps) {
-  const [editedSettings, setEditedSettings] = useState<FormSettings>(settings);
+export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, isPrivate, onEncryptionEnabled }: FormSettingsModalProps) {
+  const [editedSettings, setEditedSettings] = useState<FormSettings>(() => normalizeFormSettings(settings));
   const [activeTab, setActiveTab] = useState<SettingsTab>('presentation');
 
   // Re-seed the edit buffer every time the modal opens so it reflects the CURRENT
@@ -29,7 +34,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
   useEffect(() => {
     if (isOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- re-seed draft from prop when modal opens; must run on open to avoid stale buffer
-      setEditedSettings(settings);
+      setEditedSettings(normalizeFormSettings(settings));
       setActiveTab('presentation');
     }
   }, [isOpen, settings]);
@@ -330,6 +335,20 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
                   <p className="text-sm text-yellow-700 dark:text-yellow-400">
                     When closed, visitors will see the closed message instead of the form.
                   </p>
+                </div>
+              )}
+
+              {/* E2EE: one-way "Encrypt this form" action (private mode is irreversible),
+                  or read-only status when already private. Owner + cloud forms only —
+                  the builder passes isPrivate only in that context. */}
+              {formId && isPrivate !== undefined && (
+                <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">End-to-end encryption</h3>
+                  <EncryptionSettings
+                    formId={formId}
+                    isPrivate={isPrivate}
+                    onEnabled={() => onEncryptionEnabled?.()}
+                  />
                 </div>
               )}
             </div>

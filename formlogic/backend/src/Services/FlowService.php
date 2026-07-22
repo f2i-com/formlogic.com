@@ -56,10 +56,29 @@ class FlowService
     private const TIMEOUT_DEFAULT_MS = 30000;
 
     private PDO $mysql;
+    private ?FormEncryptionService $formEncryption = null;
 
     public function __construct(MySQLConnection $mysql)
     {
         $this->mysql = $mysql->getConnection();
+    }
+
+    /**
+     * E2EE §9.2 gate: flow bindings hand answer snapshots to runners — binding a
+     * private (end-to-end encrypted) form is refused at creation, matching the
+     * enable preflight that guarantees none pre-exist.
+     *
+     * @throws PrivateFormEncryptedException
+     */
+    private function assertBindableForm(?string $formId): void
+    {
+        if ($formId === null || $formId === '') {
+            return;
+        }
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        if ($this->formEncryption->isPrivate($formId)) {
+            throw new PrivateFormEncryptedException('Flow bindings are not available on private (end-to-end encrypted) forms (private_form_encrypted).');
+        }
     }
 
     // ── Static sanitization (shared with PackService::validatePack) ─────────────────────────
@@ -509,7 +528,14 @@ class FlowService
             throw new \InvalidArgumentException("Unknown flow '{$clean['flow']}' in this app");
         }
 
+        // E2EE §9.2 first: a private form id is refused with the typed error even
+        // before membership validation (which would 404-style reject it anyway —
+        // a private form can never be app-attached, so it never belongs).
+        if (is_string($data['formId'] ?? null)) {
+            $this->assertBindableForm($data['formId']);
+        }
         $formId = $this->sanitizeBindingFormId($appId, $data['formId'] ?? null);
+        $this->assertBindableForm($formId);
         $connectorId = $this->sanitizeConnectorId($data['connectorId'] ?? null);
 
         $countStmt = $this->mysql->prepare("SELECT COUNT(*) FROM app_flow_bindings WHERE app_id = :a");
@@ -1343,6 +1369,7 @@ class FlowService
      */
     public function createFormBinding(string $ownerUserId, string $formId, array $data): array
     {
+        $this->assertBindableForm($formId);
         $clean = self::sanitizeBinding($data);
 
         // The flow must be one of the owner's WORKSPACE flows (bindings can target disabled flows).

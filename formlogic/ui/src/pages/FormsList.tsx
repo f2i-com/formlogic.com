@@ -56,6 +56,9 @@ import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
 import type { PackInstallation } from '../lib/api';
 import type { Form } from '../types/form';
+// E2EE private forms: lock badge next to the form name (list payload `isPrivate`) —
+// shared with the Dashboard "My Forms" cards.
+import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 
 // Incremental pagination page sizes for the card grids.
 const FORMS_PAGE = 12;
@@ -240,7 +243,10 @@ const FormCard = memo(function FormCard({
             <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-600 dark:text-primary-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-[15px] font-semibold leading-snug text-gray-900 dark:text-slate-100 truncate" title={form.title || 'Untitled Form'}>{form.title || 'Untitled Form'}</h3>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h3 className="text-[15px] font-semibold leading-snug text-gray-900 dark:text-slate-100 truncate" title={form.title || 'Untitled Form'}>{form.title || 'Untitled Form'}</h3>
+              {form.isPrivate && <PrivateLockBadge />}
+            </div>
             <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
               {(() => { const n = form.fieldCount ?? form.fields?.length ?? 0; return `${n} field${n === 1 ? '' : 's'}`; })()}
             </p>
@@ -481,6 +487,7 @@ const FormListRow = memo(function FormListRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{form.title}</span>
+          {form.isPrivate && <PrivateLockBadge />}
           {packName && (
             <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-slate-400 flex-none">
               <Package className="h-3 w-3" /> {packName}

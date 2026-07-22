@@ -426,10 +426,34 @@ class CloudFlowRunner
         }
     }
 
+    private ?FormEncryptionService $formEncryption = null;
+
+    /**
+     * E2EE §9.2 gate (docs/E2EE_PRIVATE_FORMS_PLAN.md): cloud record nodes never
+     * touch a private form — reads would hand ciphertext to flows/LLMs, writes
+     * would smuggle plaintext past the envelope pipeline. Uses the closed
+     * 'node_failed' error-code set (the cross-runner contract is frozen); the
+     * stable private_form_encrypted marker rides in the message.
+     *
+     * @throws CloudFlowNodeError
+     */
+    private function assertNotPrivateForm(array $node, string $formId): void
+    {
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        if ($this->formEncryption->isPrivate($formId)) {
+            throw new CloudFlowNodeError(
+                'node_failed',
+                "Node '{$node['id']}': this form is end-to-end encrypted — cloud flow nodes cannot read or write its responses (private_form_encrypted)",
+                is_string($node['id'] ?? null) ? $node['id'] : null,
+            );
+        }
+    }
+
     /** FROZEN CONTRACT (docs §4): fetch up to `limit` rows, normalize, apply ANDed filters, return {responses, count, first, found}. */
     private function runListResponses(array $node, array $data, array $scope): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
+        $this->assertNotPrivateForm($node, $formId);
         $limit = $this->clampListLimit($data['limit'] ?? null);
         $filters = $this->parseResponseFilters($data['filters'] ?? null);
 
@@ -483,6 +507,7 @@ class CloudFlowRunner
     private function runSubmitResponse(array $node, array $data, array $scope): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
+        $this->assertNotPrivateForm($node, $formId);
         $answers = $this->resolveDeep($data['answers'] ?? null, $scope);
         $this->requireObject($node, $answers);
         try {
@@ -499,6 +524,7 @@ class CloudFlowRunner
     private function runUpdateResponse(array $node, array $data, array $scope): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
+        $this->assertNotPrivateForm($node, $formId);
         $responseId = $this->resolveSelector($data['responseId'] ?? null, $scope);
         if (!is_string($responseId) || $responseId === '') {
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}' responseId did not resolve", $node['id']);

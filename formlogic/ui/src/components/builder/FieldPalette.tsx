@@ -18,7 +18,12 @@ const FIELD_PRESETS: Array<{ preset: string; type: FieldType; label: string; ico
   { preset: 'camera', type: 'file_upload', label: 'Camera', icon: 'Camera', category: 'advanced' },
 ];
 
-export function FieldPalette({ onAddField }: { onAddField: (type: FieldType, preset?: string) => void }) {
+// Field types not yet supported on private (E2EE) forms (plan SS9.1): file/camera
+// need the P4 attachment claim flow; linked_record needs server-side resolution.
+const PRIVATE_BLOCKED_TYPES = new Set<FieldType>(['file_upload', 'linked_record']);
+const PRIVATE_BLOCKED_PRESETS = new Set(['camera']);
+
+export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (type: FieldType, preset?: string) => void; isPrivate?: boolean }) {
   const [query, setQuery] = useState('');
 
   const fieldsByCategory = useMemo(
@@ -76,12 +81,16 @@ export function FieldPalette({ onAddField }: { onAddField: (type: FieldType, pre
           <div className="grid grid-cols-2 gap-1.5">
             {fields.map((field) => {
               const IconComponent = ICON_MAP[field.icon] || HelpCircle;
+              const blocked = isPrivate && (PRIVATE_BLOCKED_TYPES.has(field.type) || (field.preset ? PRIVATE_BLOCKED_PRESETS.has(field.preset) : false));
               return (
                 <button
                   key={field.preset ?? field.type}
-                  onClick={() => onAddField(field.type, field.preset)}
-                  title={field.label}
-                  className="flex min-w-0 items-center gap-2 p-2.5 sm:p-1.5 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 active:scale-[0.98] motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                  onClick={() => { if (!blocked) onAddField(field.type, field.preset); }}
+                  disabled={blocked}
+                  title={blocked ? 'Not yet supported on private forms' : field.label}
+                  className={blocked
+                    ? 'flex min-w-0 items-center gap-2 p-2.5 sm:p-1.5 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 opacity-40 cursor-not-allowed'
+                    : 'flex min-w-0 items-center gap-2 p-2.5 sm:p-1.5 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 active:scale-[0.98] motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500'}
                 >
                   <span
                     aria-hidden="true"

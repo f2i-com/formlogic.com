@@ -221,6 +221,9 @@ class FlowController
         try {
             $binding = $this->flows->createBinding($args['id'], $request->getParsedBody() ?? []);
             return $this->jsonResponse($response, ['binding' => $binding], 201);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // E2EE §9.2: no flow bindings on private forms — typed refusal.
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
@@ -584,6 +587,9 @@ class FlowController
         try {
             $binding = $this->flows->createFormBinding($userId, $formId, $request->getParsedBody() ?? []);
             return $this->jsonResponse($response, ['binding' => $binding], 201);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // E2EE §9.2: no flow bindings on private forms — typed refusal.
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }

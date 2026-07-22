@@ -10,7 +10,9 @@ import { formTemplates, templateCategories, type FormTemplate } from '../../data
 interface TemplateSelectorProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectTemplate: (template: FormTemplate | null) => void;
+  onSelectTemplate: (template: FormTemplate | null, makePrivate?: boolean) => void;
+  /** Offer the "Private (end-to-end encrypted)" opt-in (requires an unlocked vault). */
+  canMakePrivate?: boolean;
 }
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -49,9 +51,10 @@ const categoryColors: Record<string, string> = {
   other: 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-slate-400',
 };
 
-export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: TemplateSelectorProps) {
+export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePrivate = false }: TemplateSelectorProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [hoveredTemplate, setHoveredTemplate] = useState<string | null>(null);
+  const [makePrivate, setMakePrivate] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -141,7 +144,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
             {/* Blank form option */}
             <div className="mb-6">
               <button
-                onClick={() => onSelectTemplate(null)}
+                onClick={() => onSelectTemplate(null, makePrivate)}
                 className="w-full flex items-center gap-4 p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/10 motion-safe:transition-all group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
               >
                 <div className="p-3 bg-gray-100 dark:bg-slate-800 rounded-lg group-hover:bg-primary-100 dark:group-hover:bg-primary-900/30 motion-safe:transition-colors">
@@ -170,7 +173,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
                   {filteredTemplates.map((template) => (
                     <button
                       key={template.id}
-                      onClick={() => onSelectTemplate(template)}
+                      onClick={() => onSelectTemplate(template, makePrivate)}
                       onMouseEnter={() => setHoveredTemplate(template.id)}
                       onMouseLeave={() => setHoveredTemplate(null)}
                       className={cn(
@@ -207,10 +210,32 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-end">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
+          <div className="flex items-center justify-between gap-3">
+            {canMakePrivate ? (
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={makePrivate}
+                  onChange={(e) => setMakePrivate(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                />
+                🔒 Private form (end-to-end encrypted, beta)
+              </label>
+            ) : <span />}
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+          {/* Explainer + irreversibility (plan D1/D8): shown BEFORE the point of no return. */}
+          {canMakePrivate && makePrivate && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+              Responses are encrypted in each submitter's browser — FormLogic stores only ciphertext and
+              cannot read the answers; you decrypt them with your vault passphrase. This is
+              <strong> permanent</strong>: it cannot be turned off, and webhooks, flows, reports, file
+              uploads and linked records stay unavailable on this form.
+            </p>
+          )}
         </div>
       </div>
     </div>,

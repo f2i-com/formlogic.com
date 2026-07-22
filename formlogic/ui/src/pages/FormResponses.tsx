@@ -34,6 +34,7 @@ import {
   Upload,
   RefreshCw,
 } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
@@ -42,9 +43,14 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Modal } from '../components/ui/Modal';
 import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
+import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
+import { isEncryptedEnvelope } from '../lib/crypto/envelope';
+import { useDecryptedResponses } from '../lib/crypto/useDecryptedResponses';
+import { sealResponseForUpdate, openResponsesForForm } from '../lib/crypto/formCrypto';
+import { exportPrivateFormCsv } from '../lib/crypto/privateExport';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { toast } from '../stores/toastStore';
 import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
@@ -63,18 +69,27 @@ interface ResponseWithStatus extends LocalFormResponse {
   _resolved?: Record<string, ResolvedLink | ResolvedLink[]>;
 }
 
+// Private forms decrypt in the browser (E2EE plan SS10): the list view fetches +
+// decrypts at most this many rows, with a visible banner - never a silent
+// partial. The decrypted CSV export has NO cap (full paged fetch).
+const PRIVATE_LIST_CAP = 5000;
+
 // Fetch EVERY response for a form. The API caps each page (default 100, max
 // 1000), so a single request silently truncates large forms — corrupting stats,
 // search, sort, and CSV export. Loop until exhausted so the page reflects the
 // full set. Also normalizes completionTime, which the server nests under
 // metadata.completionTime but the UI reads at the top level.
+// For PRIVATE forms (detected by envelope rows in the first page) the loop stops
+// at PRIVATE_LIST_CAP and reports how many were skipped.
 async function fetchAllApiResponses(
   formId: string
-): Promise<{ responses: ResponseWithStatus[]; truncated: boolean }> {
+): Promise<{ responses: ResponseWithStatus[]; truncated: boolean; privateCap: { shown: number; total: number } | null }> {
   const PAGE = 1000;
   const MAX_PAGES = 100; // 100k safety cap, mirrors the server-side export cap
   const all: ResponseWithStatus[] = [];
   let truncated = false;
+  let isPrivate = false;
+  let totalCount: number | null = null;
   for (let page = 0; page < MAX_PAGES; page++) {
     const result = await api.getResponses(formId, { limit: PAGE, offset: page * PAGE });
     const batch = result.data?.responses;
@@ -82,9 +97,21 @@ async function fetchAllApiResponses(
       if (page === 0) throw new Error(result.error || 'Failed to load responses');
       break;
     }
+    if (typeof result.data?.count === 'number') totalCount = result.data.count;
     for (const r of batch) {
       const rr = r as unknown as ResponseWithStatus & { metadata?: { completionTime?: number } };
       all.push({ ...rr, completionTime: rr.completionTime ?? rr.metadata?.completionTime ?? 0 });
+    }
+    if (page === 0) {
+      isPrivate = batch.some((r) => isEncryptedEnvelope((r as { answers?: unknown }).answers));
+    }
+    if (isPrivate && all.length >= PRIVATE_LIST_CAP) {
+      const total = totalCount ?? all.length;
+      return {
+        responses: all.slice(0, PRIVATE_LIST_CAP),
+        truncated: false,
+        privateCap: total > PRIVATE_LIST_CAP ? { shown: PRIVATE_LIST_CAP, total } : null,
+      };
     }
     if (batch.length < PAGE) break;
     if (page === MAX_PAGES - 1) {
@@ -94,7 +121,7 @@ async function fetchAllApiResponses(
       truncated = !!probe.data?.responses && probe.data.responses.length > 0;
     }
   }
-  return { responses: all, truncated };
+  return { responses: all, truncated, privateCap: null };
 }
 
 
@@ -137,6 +164,11 @@ function FormResponses() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  // E2EE private-form state: 5000-row list cap info, unlock dialog, decrypted export progress.
+  const [privateCapInfo, setPrivateCapInfo] = useState<{ shown: number; total: number } | null>(null);
+  const [showUnlockDialog, setShowUnlockDialog] = useState(false);
+  const [privateExportProgress, setPrivateExportProgress] = useState<{ fetched: number; decrypted: number; total: number | null; confirmCancel: boolean } | null>(null);
+  const privateExportCancelRef = useRef(false);
 
   // Load form and responses
   useEffect(() => {
@@ -165,9 +197,10 @@ function FormResponses() {
       // Load responses
       if (storageMode === 'api') {
         try {
-          const { responses: all, truncated } = await fetchAllApiResponses(formId);
+          const { responses: all, truncated, privateCap } = await fetchAllApiResponses(formId);
           if (cancelled) return;
           setResponses(all);
+          setPrivateCapInfo(privateCap);
           if (truncated) {
             toast.error('Showing first 100,000 responses', 'This form has more responses than can be displayed at once.');
           }
@@ -202,8 +235,11 @@ function FormResponses() {
     const fid = formId;
     setIsRefreshing(true);
     try {
-      const { responses: all } = await fetchAllApiResponses(fid);
-      if (formIdRef.current === fid) setResponses(all); // drop stale result if navigated away
+      const { responses: all, privateCap } = await fetchAllApiResponses(fid);
+      if (formIdRef.current === fid) {
+        setResponses(all); // drop stale result if navigated away
+        setPrivateCapInfo(privateCap);
+      }
     } catch {
       // Keep the current data on a transient refresh failure.
     } finally {
@@ -222,6 +258,14 @@ function FormResponses() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [storageMode, reloadResponses]);
+
+  // E2EE: for a private form the loaded rows carry ciphertext envelopes. Decrypt
+  // them in the browser (vault must be unlocked) and drive every derived view off
+  // the DECRYPTED rows. Plain forms pass straight through (isPrivate=false).
+  const decrypted = useDecryptedResponses(formId, responses);
+  const viewResponses = decrypted.rows as ResponseWithStatus[];
+  const isPrivateForm = decrypted.isPrivate;
+  const vaultLocked = decrypted.locked;
 
   // Close the export menu on outside click / Escape (mirrors the Analytics export menu).
   useEffect(() => {
@@ -281,32 +325,32 @@ function FormResponses() {
     let thisWeek = 0;
     let lastWeek = 0;
     let todayCount = 0;
-    for (const r of responses) {
+    for (const r of viewResponses) {
       const d = parseServerDate(r.submittedAt);
       const t = d.getTime();
       if (t > weekAgo) thisWeek++;
       else if (t > twoWeeksAgo) lastWeek++;
       if (d.toDateString() === today) todayCount++;
     }
-    const avgTime = responses.length > 0
-      ? responses.reduce((acc, r) => acc + (r.completionTime || 0), 0) / responses.length
+    const avgTime = viewResponses.length > 0
+      ? viewResponses.reduce((acc, r) => acc + (r.completionTime || 0), 0) / viewResponses.length
       : 0;
 
     return {
-      total: responses.length,
+      total: viewResponses.length,
       thisWeek,
       todayCount,
       avgTime,
       // null = no prior week to compare against
       weeklyPct: lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null,
     };
-  }, [responses]);
+  }, [viewResponses]);
 
-  // Precompute a lowercased search haystack per response ONCE (keyed on responses), so
-  // typing in the search box is a cheap substring scan instead of re-serializing every
-  // response's answers on every keystroke.
+  // Precompute a lowercased search haystack per response ONCE (keyed on the
+  // DECRYPTED rows for private forms), so typing in the search box is a cheap
+  // substring scan instead of re-serializing every response's answers on every keystroke.
   const searchIndex = useMemo(
-    () => responses.map((r) => {
+    () => viewResponses.map((r) => {
       // Also index the resolved linked-record labels so a search for "Ada Lovelace" matches a
       // Deal that links to her — the raw answers only hold the target UUID.
       const linkText = r._resolved
@@ -314,12 +358,12 @@ function FormResponses() {
         : '';
       return { r, hay: (JSON.stringify(r.answers) + ' ' + r.id + ' ' + linkText).toLowerCase() };
     }),
-    [responses]
+    [viewResponses]
   );
 
   // Filter and sort responses
   const filteredResponses = useMemo(() => {
-    let filtered = responses;
+    let filtered = viewResponses;
 
     // Search filter
     if (searchQuery) {
@@ -352,7 +396,7 @@ function FormResponses() {
     });
 
     return filtered;
-  }, [responses, searchIndex, searchQuery, statusFilter, sortField, sortDirection]);
+  }, [viewResponses, searchIndex, searchQuery, statusFilter, sortField, sortDirection]);
 
   // Pagination
   const totalPages = Math.ceil(filteredResponses.length / ITEMS_PER_PAGE);
@@ -386,6 +430,30 @@ function FormResponses() {
 
     setIsSaving(true);
     try {
+      // PRIVATE form: re-seal the COMPLETE record (rev+1) and CAS on expectedRev.
+      const enc = selectedResponse as unknown as { _encrypted?: boolean; _rev?: number; _encMeta?: { completionTime?: number; language?: string; clientAt?: string } };
+      if (isPrivateForm && enc._encrypted) {
+        const expectedRev = enc._rev ?? 1;
+        const { envelope } = await sealResponseForUpdate(formId, selectedResponse.id, expectedRev, {
+          v: 1,
+          answers: editedAnswers,
+          ...(enc._encMeta ? { meta: enc._encMeta } : {}),
+        });
+        const res = await api.updateEncryptedResponse(formId, selectedResponse.id, envelope, expectedRev);
+        if (!res.ok) {
+          const body = (res.body ?? {}) as { code?: string; message?: string };
+          toast.error(
+            body.code === 'revision_conflict' ? 'This record changed elsewhere' : 'Failed to update response',
+            body.code === 'revision_conflict' ? 'Reload the page and re-apply your edit.' : (body.message ?? 'Please try again.'),
+          );
+          return;
+        }
+        // Swap the stored envelope so the row re-decrypts at the new rev.
+        setResponses((prev) => prev.map((r) => (r.id === selectedResponse.id ? { ...r, answers: envelope as unknown as Record<string, unknown> } : r)));
+        toast.success('Response updated', 'Changes saved successfully');
+        setIsEditModalOpen(false);
+        return;
+      }
       if (storageMode === 'api') {
         const result = await api.updateResponse(formId, selectedResponse.id, {
           answers: editedAnswers,
@@ -487,6 +555,51 @@ function FormResponses() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Export ready', 'Your CSV download has started.');
+  };
+
+  // PRIVATE forms: the server only holds ciphertext, so a full CSV export is a
+  // full paged fetch + browser decrypt (plan SS10) - no search cap, cancel names
+  // the file '-partial'.
+  const handleExportPrivateCsv = async () => {
+    if (!form) return;
+    setExportMenuOpen(false);
+    privateExportCancelRef.current = false;
+    setPrivateExportProgress({ fetched: 0, decrypted: 0, total: null, confirmCancel: false });
+    try {
+      const result = await exportPrivateFormCsv(
+        {
+          fetchPage: async (offset, limit) => {
+            const r = await api.getResponses(form.id, { limit, offset });
+            const rows = (r.data?.responses ?? []).map((x) => {
+              const row = x as unknown as { id: string; answers: Record<string, unknown>; submittedAt: string; status?: string };
+              return { id: row.id, answers: row.answers, submittedAt: row.submittedAt, status: row.status };
+            });
+            return { rows, count: r.data?.count ?? null };
+          },
+          decryptRows: (rows) => openResponsesForForm(form.id, rows),
+          formatDate: (iso) => formatDateTimeInZone(iso, displayTz),
+        },
+        {
+          fields: form.fields,
+          displayTz,
+          onProgress: (p) => setPrivateExportProgress((prev) => ({ ...p, confirmCancel: prev?.confirmCancel ?? false })),
+          shouldCancel: () => privateExportCancelRef.current,
+        },
+      );
+      const suffix = result.partial ? '-partial' : '';
+      const blob = new Blob(['\ufeff' + result.csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sanitizeFilename(form.title)}-responses${suffix}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(result.partial ? 'Partial export ready' : 'Export ready', `${result.rowCount} record${result.rowCount === 1 ? '' : 's'} decrypted.`);
+    } catch (e) {
+      toast.error('Export failed', e instanceof Error ? e.message : 'Could not export responses.');
+    } finally {
+      setPrivateExportProgress(null);
+    }
   };
 
   // Server-side exports of the FULL dataset \u2014 the same endpoints Analytics uses.
@@ -658,7 +771,23 @@ function FormResponses() {
               </Button>
               {exportMenuOpen && (
                 <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
-                  {storageMode === 'api' && (
+                  {/* Private forms: server exports are ciphertext (§9.2 refuses the
+                      answer-bearing ones). Offer a full-decrypt CSV instead; SQLite
+                      (ciphertext bundle) stays available. */}
+                  {storageMode === 'api' && isPrivateForm && (
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={handleExportPrivateCsv}
+                      disabled={vaultLocked}
+                      title={vaultLocked ? 'Unlock your vault to export' : 'Fetch and decrypt every record, then export CSV'}
+                      className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                      <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
+                      Export CSV (decrypt all)
+                    </button>
+                  )}
+                  {storageMode === 'api' && !isPrivateForm && (
                     <>
                       <button
                         role="menuitem"
@@ -678,23 +807,25 @@ function FormResponses() {
                         <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
                         Export JSON
                       </button>
-                      <button
-                        role="menuitem"
-                        type="button"
-                        onClick={handleExportSqlite}
-                        className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
-                      >
-                        <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                        Download SQLite
-                      </button>
                     </>
+                  )}
+                  {storageMode === 'api' && (
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={handleExportSqlite}
+                      className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
+                    >
+                      <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
+                      Download SQLite{isPrivateForm ? ' (encrypted)' : ''}
+                    </button>
                   )}
                   <button
                     role="menuitem"
                     type="button"
                     onClick={handleExportFilteredCsv}
-                    disabled={filteredResponses.length === 0}
-                    title={filteredResponses.length === 0 ? 'No responses match the current search and status filters' : 'Export only the rows matching the current filters'}
+                    disabled={filteredResponses.length === 0 || vaultLocked}
+                    title={vaultLocked ? 'Unlock your vault to export' : filteredResponses.length === 0 ? 'No responses match the current search and status filters' : 'Export only the rows matching the current filters'}
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   >
                     <Filter className="h-4 w-4 text-amber-500 dark:text-amber-400" />
@@ -714,6 +845,24 @@ function FormResponses() {
           onBack={goBack}
           backLabel="Back"
         />
+
+        {/* E2EE: locked vault - private data is hidden until unlocked. */}
+        {isPrivateForm && vaultLocked && (
+          <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4">
+            <Lock className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+            <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
+              🔒 This form is end-to-end encrypted. Unlock your vault to view and search its responses.
+            </p>
+            <Button size="sm" onClick={() => setShowUnlockDialog(true)}>Unlock vault</Button>
+          </div>
+        )}
+
+        {/* E2EE: progressive-fetch cap banner (plan SS10) - never a silent partial. */}
+        {isPrivateForm && !vaultLocked && privateCapInfo && (
+          <div className="mb-6 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-200">
+            Searched the first {privateCapInfo.shown.toLocaleString()} of {privateCapInfo.total.toLocaleString()} records. Use "Export CSV (decrypt all)" for the complete set.
+          </div>
+        )}
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -757,11 +906,13 @@ function FormResponses() {
                 placeholder="Search responses..."
                 aria-label="Search responses"
                 value={searchQuery}
+                disabled={isPrivateForm && vaultLocked}
+                title={isPrivateForm && vaultLocked ? 'Unlock your vault to search' : undefined}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
           </div>
@@ -850,13 +1001,15 @@ function FormResponses() {
                           ))}
                         </div>
                       )}
-                      {displayFields.slice(0, 4).map((field) => (
+                      {displayFields.slice(0, 4).map((field, fieldIndex) => (
                         <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
                           <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                          {/* This row is itself a button, so linked records render as plain text (no nested buttons). */}
-                          {field.type === 'linked_record'
-                            ? linkedText(linksFor(response, field.id))
-                            : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
+                          {/* Locked vault: rows render the lock text, never decrypted bytes. */}
+                          {isPrivateForm && vaultLocked
+                            ? (fieldIndex === 0 ? '🔒 Encrypted — unlock to view' : '—')
+                            : field.type === 'linked_record'
+                              ? linkedText(linksFor(response, field.id))
+                              : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
                         </p>
                       ))}
                       <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
@@ -865,7 +1018,13 @@ function FormResponses() {
                       <button onClick={() => handleView(response)} className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors cursor-pointer" aria-label="View response details">
                         <Eye className="h-4 w-4" />
                       </button>
-                      <button onClick={() => handleEdit(response)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer" aria-label="Edit response">
+                      <button
+                        onClick={() => handleEdit(response)}
+                        disabled={isPrivateForm && vaultLocked}
+                        className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500"
+                        aria-label="Edit response"
+                        title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
+                      >
                         <Edit2 className="h-4 w-4" />
                       </button>
                       <button onClick={() => handleDeleteConfirm(response)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer" aria-label="Delete response">
@@ -952,9 +1111,14 @@ function FormResponses() {
                       </td>
                       {visibleFields.map((field, fieldIndex) => {
                         const isLinked = field.type === 'linked_record';
-                        const plain = isLinked
-                          ? linkedText(linksFor(response, field.id))
-                          : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz);
+                        // Locked vault: the first answer column carries the lock text
+                        // (never decrypted bytes, never a spinner pretending to load).
+                        const locked = isPrivateForm && vaultLocked;
+                        const plain = locked
+                          ? (fieldIndex === 0 ? '🔒 Encrypted — unlock to view' : '-')
+                          : isLinked
+                            ? linkedText(linksFor(response, field.id))
+                            : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz);
                         const isEmpty = plain === '-';
                         return (
                           <td
@@ -1000,8 +1164,9 @@ function FormResponses() {
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleEdit(response); }}
-                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer"
-                            title="Edit response"
+                            disabled={isPrivateForm && vaultLocked}
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500"
+                            title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
                             aria-label="Edit response"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -1149,8 +1314,9 @@ function FormResponses() {
           // Reload responses and refresh form list counts after import
           if (storageMode === 'api' && formId) {
             try {
-              const { responses: all } = await fetchAllApiResponses(formId);
+              const { responses: all, privateCap } = await fetchAllApiResponses(formId);
               setResponses(all);
+              setPrivateCapInfo(privateCap);
             } catch {
               // Responses will refresh on next page load
             }
@@ -1159,6 +1325,49 @@ function FormResponses() {
           }
         }}
       />
+
+      {/* E2EE: unlock dialog for the locked-state banner. */}
+      <VaultUnlockDialog isOpen={showUnlockDialog} onClose={() => setShowUnlockDialog(false)} />
+
+      {/* E2EE: full-decrypt CSV export progress (plan SS10). */}
+      <Modal
+        isOpen={privateExportProgress !== null}
+        onClose={() => {
+          if (privateExportProgress && !privateExportProgress.confirmCancel) {
+            setPrivateExportProgress({ ...privateExportProgress, confirmCancel: true });
+          }
+        }}
+        title="Decrypting and exporting"
+        size="sm"
+      >
+        <div className="p-6 space-y-4">
+          <p className="text-sm text-gray-600 dark:text-slate-400">
+            Fetched {privateExportProgress?.fetched ?? 0}
+            {privateExportProgress?.total != null ? ` of ${privateExportProgress.total}` : ''} records; decrypted {privateExportProgress?.decrypted ?? 0}.
+          </p>
+          {privateExportProgress?.confirmCancel ? (
+            <div className="space-y-3">
+              <p className="text-sm text-amber-700 dark:text-amber-300">
+                Cancel now? The file will be saved with a <span className="font-mono">-partial</span> suffix.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => privateExportProgress && setPrivateExportProgress({ ...privateExportProgress, confirmCancel: false })}>
+                  Keep exporting
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => { privateExportCancelRef.current = true; }}>
+                  Cancel export
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-end">
+              <Button size="sm" variant="outline" onClick={() => privateExportProgress && setPrivateExportProgress({ ...privateExportProgress, confirmCancel: true })}>
+                Cancel
+              </Button>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

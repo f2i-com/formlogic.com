@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\PrivateFormEncryptedException;
 use FormLogic\Services\ReportService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -30,7 +32,8 @@ class FormReportController
         private FormService $formService,
         private SQLiteConnection $sqlite,
         private AppService $appService,
-        private AppReportService $reportValidator
+        private AppReportService $reportValidator,
+        private ?MySQLConnection $mysql = null
     ) {}
 
     // ── Owner (authenticated) ───────────────────────────────────────────────
@@ -136,9 +139,12 @@ class FormReportController
         }
         try {
             // Owner: may resolve linked-record labels from any of their own target forms (null allowlist).
-            $svc = new ReportService($this->sqlite, $this->formService);
+            $svc = new ReportService($this->sqlite, $this->formService, $this->mysql);
             $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, 'all', $userId, $resolvedJoins, 'UTC', null);
             return ['status' => 200, 'body' => $result];
+        } catch (PrivateFormEncryptedException $e) {
+            // §9.2: private forms render a "Private form — open records to view" placeholder client-side.
+            return ['status' => 400, 'body' => ['error' => true, 'message' => $e->getMessage(), 'code' => PrivateFormEncryptedException::ERROR_CODE]];
         } catch (\Throwable $e) {
             return ['status' => 500, 'body' => ['error' => true, 'message' => 'Failed to run report']];
         }
@@ -173,10 +179,12 @@ class FormReportController
         $formId = (string) $form['id'];
         $safe = $this->reportValidator->sanitizePublicSpec($spec, $formId, $allowed);
         try {
-            $svc = new ReportService($this->sqlite);
+            $svc = new ReportService($this->sqlite, null, $this->mysql);
             // scope 'all' (no per-user own-filter); joins are already stripped for public.
             $result = $svc->runReport($safe, $form['fields'] ?? [], $formId, 'all', null, [], 'UTC');
             return ['status' => 200, 'body' => $result];
+        } catch (PrivateFormEncryptedException $e) {
+            return ['status' => 400, 'body' => ['error' => true, 'message' => $e->getMessage(), 'code' => PrivateFormEncryptedException::ERROR_CODE]];
         } catch (\Throwable $e) {
             return ['status' => 500, 'body' => ['error' => true, 'message' => 'Failed to run report']];
         }

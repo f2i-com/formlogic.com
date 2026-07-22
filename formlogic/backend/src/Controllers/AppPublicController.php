@@ -754,6 +754,10 @@ class AppPublicController
             }
 
             return ['status' => 201, 'payload' => ['response' => $result]];
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // §9.2 (defense-in-depth — a private form can never be app-attached in P3):
+            // never let the plaintext pipeline touch a private form, typed refusal.
+            return ['status' => 400, 'payload' => ['error' => true, 'message' => $e->getMessage(), 'code' => \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE]];
         } catch (\Throwable $e) {
             // \Throwable (not \Exception): an \Error escaping here would skip processSubmission's
             // reservation release and strand a 'pending' idempotency row (forever-409-processing until
@@ -986,7 +990,12 @@ class AppPublicController
             }
         }
 
-        $result = $this->responseService->getFormResponsesSearchable($formId, $search, [], $options, $extraMatches);
+        try {
+            $result = $this->responseService->getFormResponsesSearchable($formId, $search, [], $options, $extraMatches);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // §9.2: answer filters/sort/search over ciphertext refuse loudly.
+            return $this->jsonError($response, $e->getMessage(), 400, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
+        }
         $responses = $result['responses'];
         $total = (int) ($result['total'] ?? count($responses));
 
@@ -1036,7 +1045,13 @@ class AppPublicController
         $safeTitle = preg_replace('/[^A-Za-z0-9_-]+/', '-', (string) ($form['title'] ?? 'form')) ?: 'form';
         $filename = trim($safeTitle, '-') . '-responses.csv';
         $stream = fopen('php://temp', 'r+');
-        $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream);
+        try {
+            $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // §9.2: server-side CSV assembly is impossible over ciphertext.
+            fclose($stream);
+            return $this->jsonError($response, $e->getMessage(), 400, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
+        }
         rewind($stream);
 
         return $response
@@ -1222,7 +1237,12 @@ class AppPublicController
             }
         }
 
-        $updated = $this->appResponseService->updateResponse($formId, $responseId, $data);
+        try {
+            $updated = $this->appResponseService->updateResponse($formId, $responseId, $data);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // §9.2: PATCH-merge over ciphertext is impossible — typed refusal.
+            return $this->jsonError($response, $e->getMessage(), 400, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
+        }
 
         if (!$updated) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
@@ -1759,9 +1779,12 @@ class AppPublicController
         try {
             // Relative date filters are evaluated in the app's timezone (falls back to UTC).
             $tz = (string) ($app['settings']['timezone'] ?? 'UTC') ?: 'UTC';
-            $svc = new \FormLogic\Services\ReportService($this->sqlite, $this->formService);
+            $svc = new \FormLogic\Services\ReportService($this->sqlite, $this->formService, $this->mysql);
             $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', $userId, $resolvedJoins, $tz, $resolvableFormIds);
             return ['status' => 200, 'body' => $result];
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // §9.2: reports over ciphertext refuse loudly (typed), never empty charts.
+            return ['status' => 400, 'body' => ['error' => true, 'message' => $e->getMessage(), 'code' => \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE]];
         } catch (\Throwable $e) {
             return ['status' => 500, 'body' => ['error' => true, 'message' => 'Failed to run report']];
         }

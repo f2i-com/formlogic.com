@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\FormDeletionIncompleteException;
+use FormLogic\Services\FormEncryptionService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
@@ -29,6 +30,7 @@ class FormController
     private ?PlanService $planService;
     private ?AppReportService $reportValidator;
     private ?TrashService $trashService;
+    private ?FormEncryptionService $encryptionService;
 
     public function __construct(
         FormService $formService,
@@ -37,7 +39,8 @@ class FormController
         ?AuditService $auditService = null,
         ?PlanService $planService = null,
         ?AppReportService $reportValidator = null,
-        ?TrashService $trashService = null
+        ?TrashService $trashService = null,
+        ?FormEncryptionService $encryptionService = null
     ) {
         $this->formService = $formService;
         $this->logger = $logger ?? new NullLogger();
@@ -46,6 +49,7 @@ class FormController
         $this->planService = $planService;
         $this->reportValidator = $reportValidator;
         $this->trashService = $trashService;
+        $this->encryptionService = $encryptionService;
     }
 
     /**
@@ -225,6 +229,15 @@ class FormController
             ], 404);
         }
 
+        // E2EE (plan §8): private forms carry their signed manifest on the OWNER
+        // payload too — the builder verifies signer keys and renders the exact
+        // schema snapshot. Served no-store like the public manifest.
+        if ($this->encryptionService !== null && $this->encryptionService->isPrivate($formId)) {
+            $form['encryption'] = $this->encryptionService->publicManifest($formId);
+            return $this->jsonResponse($response, ['form' => $form])
+                ->withHeader('Cache-Control', 'no-store');
+        }
+
         return $this->jsonResponse($response, ['form' => $form]);
     }
 
@@ -387,6 +400,9 @@ class FormController
             $this->audit($request, $action, 'form', $formId);
 
             return $this->jsonResponse($response, ['form' => $updatedForm]);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // E2EE §9.2: blocked field types / private-form violations — typed refusal.
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,

@@ -40,6 +40,7 @@ class AppDataExportService
     private AppService $apps;
     private string $uploadsPath;
     private LoggerInterface $logger;
+    private ?FormEncryptionService $formEncryption = null;
 
     public function __construct(
         MySQLConnection $mysql,
@@ -299,6 +300,16 @@ TXT;
             throw new \InvalidArgumentException('Unknown SQL dialect');
         }
         $exportForms = $this->exportForms($app);
+        // E2EE §9.2 gate (defensive — a private form can never be attached to an
+        // app in P3, but refuse loudly rather than emit per-field columns of
+        // ciphertext): SQL dumps interpret answers; the sqlite bundle stays
+        // allowed as it copies the database files verbatim.
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        foreach ($exportForms as $ef) {
+            if ($this->formEncryption->isPrivate((string) $ef['form']['id'])) {
+                throw new PrivateFormEncryptedException('This app contains a private (end-to-end encrypted) form — SQL dumps are unavailable (private_form_encrypted).');
+            }
+        }
         $tableByFormId = [];
         foreach ($exportForms as $ef) {
             $tableByFormId[(string) $ef['form']['id']] = $ef['table'];

@@ -7,6 +7,10 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\SubmissionIdempotencyService;
 
 use FormLogic\Helpers\RelatedRecords;
+use FormLogic\Services\DuplicateResponseIdException;
+use FormLogic\Services\EnvelopeValidator;
+use FormLogic\Services\FormEncryptionService;
+use FormLogic\Services\PrivateFormEncryptedException;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
@@ -56,6 +60,37 @@ class ResponseController
         $this->emailService = $emailService;
         $this->appService = $appService;
         $this->mysql = $mysql?->getConnection();
+    }
+
+    // ── E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md §6/§8/§9.2) ─────────
+
+    /** Lazily built from the controller's own connections (no DI churn). */
+    private ?FormEncryptionService $formEncryptionService = null;
+
+    private function formEncryption(): ?FormEncryptionService
+    {
+        if ($this->mysql === null) {
+            return null;
+        }
+        return $this->formEncryptionService ??= new FormEncryptionService($this->mysql, $this->sqlite);
+    }
+
+    /**
+     * Private-form dispatch check. When the controller has no MySQL connection
+     * (narrow unit tests) this reports false — ResponseService carries its own
+     * always-on §9.2 gates, so a private form still cannot take the plaintext
+     * pipeline; it would be refused one layer down instead of dispatched.
+     */
+    private function isPrivateForm(string $formId): bool
+    {
+        $enc = $this->formEncryption();
+        return $enc !== null && $enc->isPrivate($formId);
+    }
+
+    /** Map the §9.2 typed refusal onto the canonical error shape. */
+    private function privateFormError(Response $response, PrivateFormEncryptedException $e): Response
+    {
+        return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
     }
 
     /**
@@ -339,8 +374,14 @@ class ResponseController
             $options['sortDir'] = (string) ($queryParams['dir'] ?? 'desc');
         }
 
-        $responses = $this->responseService->getFormResponses($formId, $options);
-        $responses = $this->resolveLinkedRecords($responses, $form, $form['userId']);
+        try {
+            $responses = $this->responseService->getFormResponses($formId, $options);
+            $responses = $this->resolveLinkedRecords($responses, $form, $form['userId']);
+        } catch (PrivateFormEncryptedException $e) {
+            // §9.2: answer filters / answer-field sorting on a private form. Plain
+            // listing (no content params) is allowed and never reaches here.
+            return $this->privateFormError($response, $e);
+        }
 
         return $this->jsonResponse($response, [
             'responses' => $responses,
@@ -397,6 +438,15 @@ class ResponseController
     public function create(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
+
+        // E2EE dispatch (plan §6): the private branch is taken at the VERY TOP —
+        // before sanitizeAnswers/normalizeAnswers or any other plaintext-shaped code
+        // can touch the body. A plaintext-answers write to a private form is
+        // rejected without ever entering the legacy pipeline.
+        if ($this->isPrivateForm($formId)) {
+            return $this->createPrivate($request, $response, $formId);
+        }
+
         $data = $request->getParsedBody();
 
         $key = (is_array($data) && isset($data['idempotencyKey']) && is_string($data['idempotencyKey']) && $data['idempotencyKey'] !== '')
@@ -461,6 +511,223 @@ class ResponseController
             }
         }
         return $this->jsonResponse($response, $result['payload'], $result['status']);
+    }
+
+    /**
+     * E2EE private-form submission (plan §6/§8): the RAW body is parsed with the
+     * duplicate-key-aware EnvelopeValidator; the only accepted request shape is
+     * {envelope, idempotencyKey?}; the envelope is validated STRUCTURALLY (no
+     * decryption) against the form's currently-acceptable manifest tuples and
+     * stored verbatim. Publication/closed/quota/rate-limit posture matches the
+     * plaintext pipeline; sanitation, calculated fields, the onSubmit script,
+     * webhooks, flow events and file commits are all skipped — none of them can
+     * see plaintext, so none of them run.
+     */
+    private function createPrivate(Request $request, Response $response, string $formId): Response
+    {
+        $enc = $this->formEncryption();
+        if ($enc === null) {
+            // Unreachable through routing (isPrivateForm() gated the dispatch), but
+            // fail closed rather than fall through to the plaintext pipeline.
+            return $this->jsonError($response, 'Private-form storage is unavailable.', 503, 'encryption_unavailable');
+        }
+        $validator = new EnvelopeValidator();
+        [$body, $errCode, $errMsg] = $validator->parseRequestBody((string) $request->getBody());
+        if ($body === null) {
+            $status = $errCode === 'payload_too_large' ? 413 : 400;
+            return $this->jsonError($response, $errMsg ?? 'Invalid request body', $status, $errCode ?? 'envelope_invalid');
+        }
+        foreach (array_keys($body) as $key) {
+            if (!in_array($key, ['envelope', 'idempotencyKey'], true)) {
+                return $this->jsonError($response, "Unexpected request key '{$key}' — private forms accept {envelope, idempotencyKey} only.", 400, 'envelope_invalid');
+            }
+        }
+        if (!array_key_exists('envelope', $body)) {
+            return $this->jsonError($response, 'envelope is required', 400, 'envelope_invalid');
+        }
+
+        // Publication + closure + quota checks — identical posture to the plaintext
+        // pipeline (rate limiting rides the route middleware unchanged).
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return $this->jsonError($response, 'Form not found', 404);
+        }
+        if ($form['status'] !== 'published') {
+            return $this->jsonError($response, 'Form is not accepting responses', 403);
+        }
+        if ($this->appService && $this->appService->isFormInAnyApp($formId)) {
+            return $this->jsonError($response, 'Form not found', 404);
+        }
+        $settings = $form['settings'] ?? [];
+        if (!empty($settings['isClosed'])) {
+            return $this->jsonError($response, (string) ($settings['closedMessage'] ?? 'This form is no longer accepting responses.'), 403);
+        }
+
+        $result = $validator->validateEnvelope($body['envelope'], $formId, $enc->acceptableManifests($formId), null);
+        if (!($result['ok'] ?? false)) {
+            $code = $result['code'] ?? 'envelope_invalid';
+            $status = match ($code) {
+                'payload_too_large' => 413,
+                'key_epoch_retired' => 409,
+                default => 400,
+            };
+            return $this->jsonError($response, $result['message'] ?? 'Invalid envelope', $status, $code);
+        }
+        $envelope = $result['envelope'];
+        if (array_key_exists('attachments', $envelope)) {
+            // P4 gate (plan §13): the claim pipeline doesn't exist yet, and the §9.1
+            // preflight blocks file fields — an attachment list has nothing to bind to.
+            return $this->jsonError($response, 'File attachments are not available on private forms yet.', 400, 'envelope_invalid');
+        }
+
+        $userId = $request->getAttribute('userId');
+        $userId = (is_string($userId) && $userId !== '') ? $userId : null;
+        $ip = $this->getClientIp($request);
+
+        // Idempotency: the same reserve-first ledger as the plaintext path, with
+        // payload_hash over the CIPHERTEXT envelope (plan §4).
+        $key = (isset($body['idempotencyKey']) && is_string($body['idempotencyKey']) && $body['idempotencyKey'] !== '')
+            ? $body['idempotencyKey'] : null;
+        $payloadHash = hash('sha256', (string) json_encode($envelope));
+        $scope = ['form_id' => $formId];
+        $ownsReservation = false;
+        $lease = '';
+        if ($key !== null) {
+            $reserved = $this->idem()->reserve('form_submission_idempotency', $scope, $userId, $key, $payloadHash);
+            if ($reserved['state'] === 'existing') {
+                if (($reserved['payload_hash'] ?? '') !== $payloadHash) {
+                    return $this->jsonResponse($response, ['error' => true, 'conflict' => true,
+                        'message' => 'This idempotency key was already used with a different submission.'], 409);
+                }
+                if (is_string($reserved['response_id'] ?? null) && $reserved['response_id'] !== '') {
+                    return $this->jsonResponse($response, ['response' => ['id' => $reserved['response_id']], 'idempotent' => true], 200);
+                }
+                $newLease = $this->idem()->takeOver('form_submission_idempotency', $scope, $userId, $key, $payloadHash);
+                if ($newLease === null) {
+                    return $this->jsonResponse($response, ['error' => true, 'processing' => true,
+                        'message' => 'This submission is already being processed. Please retry in a moment.'], 409);
+                }
+                $reserved = ['state' => 'owner', 'lease' => $newLease];
+            }
+            $ownsReservation = ($reserved['state'] === 'owner');
+            $lease = $ownsReservation ? $reserved['lease'] : '';
+        }
+
+        try {
+            // Atomic quota enforcement — same lock discipline as the plaintext path
+            // (row COUNTS are non-content and stay server-side, plan §9.2).
+            $quotaLock = null;
+            if (!empty($settings['quotaLimit'])) {
+                $quotaLock = $this->responseService->acquireFormLock($formId);
+                if ($quotaLock === null) {
+                    if ($ownsReservation && $key !== null) {
+                        $this->idem()->release('form_submission_idempotency', $scope, $key, $lease);
+                    }
+                    return $this->jsonResponse($response, ['error' => true, 'retryable' => true,
+                        'message' => 'The form is busy — please retry in a moment.'], 503);
+                }
+                if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
+                    $this->responseService->releaseFormLock($quotaLock);
+                    if ($ownsReservation && $key !== null) {
+                        $this->idem()->release('form_submission_idempotency', $scope, $key, $lease);
+                    }
+                    return $this->jsonError($response, (string) ($settings['closedMessage'] ?? 'This form has reached its maximum number of responses.'), 403);
+                }
+            }
+            try {
+                $created = $this->responseService->createEncryptedResponse($formId, $envelope, $userId, $ip);
+            } finally {
+                $this->responseService->releaseFormLock($quotaLock);
+            }
+        } catch (DuplicateResponseIdException $e) {
+            if ($ownsReservation && $key !== null) {
+                $this->idem()->release('form_submission_idempotency', $scope, $key, $lease);
+            }
+            return $this->jsonError($response, $e->getMessage(), 409, DuplicateResponseIdException::ERROR_CODE);
+        } catch (\Throwable $e) {
+            if ($ownsReservation && $key !== null) {
+                $this->idem()->release('form_submission_idempotency', $scope, $key, $lease);
+            }
+            $this->logger->error('Encrypted response creation error', ['formId' => $formId, 'exception' => $e->getMessage()]);
+            return $this->jsonError($response, 'An unexpected error occurred', 500);
+        }
+
+        if ($ownsReservation && $key !== null) {
+            $this->idem()->complete('form_submission_idempotency', $scope, $key, $lease, $created['id']);
+        }
+        $this->audit($request, 'response.create', 'response', $created['id'], ['formId' => $formId, 'stored' => true, 'private' => true]);
+        return $this->jsonResponse($response, ['response' => $created], 201);
+    }
+
+    /**
+     * E2EE private-form update (plan §6): {envelope, expectedRev} only; the swap is
+     * ONE atomic conditional UPDATE gated on the stored envelope's current rev —
+     * never read-then-write. The PATCH-merge plaintext path is bypassed entirely.
+     */
+    private function updatePrivate(Request $request, Response $response, string $formId, string $responseId): Response
+    {
+        $enc = $this->formEncryption();
+        if ($enc === null) {
+            return $this->jsonError($response, 'Private-form storage is unavailable.', 503, 'encryption_unavailable');
+        }
+        $validator = new EnvelopeValidator();
+        [$body, $errCode, $errMsg] = $validator->parseRequestBody((string) $request->getBody());
+        if ($body === null) {
+            $status = $errCode === 'payload_too_large' ? 413 : 400;
+            return $this->jsonError($response, $errMsg ?? 'Invalid request body', $status, $errCode ?? 'envelope_invalid');
+        }
+        foreach (array_keys($body) as $key) {
+            if (!in_array($key, ['envelope', 'expectedRev', 'idempotencyKey'], true)) {
+                return $this->jsonError($response, "Unexpected request key '{$key}' — private-form updates accept {envelope, expectedRev} only.", 400, 'envelope_invalid');
+            }
+        }
+        if (!array_key_exists('envelope', $body)) {
+            return $this->jsonError($response, 'envelope is required', 400, 'envelope_invalid');
+        }
+        $expectedRev = $body['expectedRev'] ?? null;
+        if (!is_int($expectedRev) || $expectedRev < 1) {
+            return $this->jsonError($response, 'expectedRev must be a positive integer', 400, 'envelope_invalid');
+        }
+
+        $result = $validator->validateEnvelope($body['envelope'], $formId, $enc->acceptableManifests($formId), $expectedRev);
+        if (!($result['ok'] ?? false)) {
+            $code = $result['code'] ?? 'envelope_invalid';
+            $status = match ($code) {
+                'payload_too_large' => 413,
+                'key_epoch_retired' => 409,
+                'revision_conflict' => 409,
+                default => 400,
+            };
+            return $this->jsonError($response, $result['message'] ?? 'Invalid envelope', $status, $code);
+        }
+        $envelope = $result['envelope'];
+        if (($envelope['recordId'] ?? null) !== $responseId) {
+            return $this->jsonError($response, 'envelope recordId must match the response being updated', 400, 'envelope_invalid');
+        }
+        if (array_key_exists('attachments', $envelope)) {
+            return $this->jsonError($response, 'File attachments are not available on private forms yet.', 400, 'envelope_invalid');
+        }
+
+        try {
+            $swap = $this->responseService->updateEncryptedResponse($formId, $responseId, $envelope, $expectedRev);
+        } catch (\Throwable $e) {
+            $this->logger->error('Encrypted response update error', ['formId' => $formId, 'responseId' => $responseId, 'exception' => $e->getMessage()]);
+            return $this->jsonError($response, 'An unexpected error occurred', 500);
+        }
+        if (!$swap['found']) {
+            return $this->jsonError($response, 'Response not found', 404);
+        }
+        if (!$swap['ok']) {
+            return $this->jsonError(
+                $response,
+                'The record changed since it was loaded — reload and re-encrypt against the current revision.',
+                409,
+                'revision_conflict',
+                ['currentRev' => $swap['currentRev']]
+            );
+        }
+        $this->audit($request, 'response.update', 'response', $responseId, ['formId' => $formId, 'private' => true]);
+        return $this->jsonResponse($response, ['response' => ['id' => $responseId, 'rev' => $swap['currentRev']]]);
     }
 
     /**
@@ -1007,6 +1274,12 @@ class ResponseController
             ], 404);
         }
 
+        // E2EE dispatch (plan §6): private-form updates are envelope CAS swaps —
+        // taken BEFORE the sanitize/normalize/calculated plaintext handling below.
+        if ($this->isPrivateForm($formId)) {
+            return $this->updatePrivate($request, $response, $formId, $responseId);
+        }
+
         // Normalize: an empty/non-JSON body parses to null, which would raise an
         // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
         $data = $request->getParsedBody() ?? [];
@@ -1167,7 +1440,13 @@ class ResponseController
             $matched = $this->responseService->getResponsesByIds($targetFormId, $requestedIds);
             $totalCount = count($matched);
         } elseif ($searchQuery !== '') {
-            $result = $this->responseService->getFormResponsesSearchable($targetFormId, $searchQuery, $searchFieldIds, ['limit' => $limit, 'offset' => $offset]);
+            try {
+                $result = $this->responseService->getFormResponsesSearchable($targetFormId, $searchQuery, $searchFieldIds, ['limit' => $limit, 'offset' => $offset]);
+            } catch (PrivateFormEncryptedException $e) {
+                // Defensive (§9.2): a private form can never be a linked-record
+                // target (enable preflight), but refuse loudly if one is asked for.
+                return $this->privateFormError($response, $e);
+            }
             $matched = $result['responses'];
             $totalCount = $result['total'];
         } else {
@@ -1369,9 +1648,14 @@ class ResponseController
         if (preg_match('/^[A-Za-z0-9_\-]{1,100}$/', $fieldId) !== 1) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid field id'], 400);
         }
+        try {
+            $count = $this->responseService->countResponsesWithFieldValue((string) $args['formId'], $fieldId);
+        } catch (PrivateFormEncryptedException $e) {
+            return $this->privateFormError($response, $e);
+        }
         return $this->jsonResponse($response, [
             'fieldId' => $fieldId,
-            'responsesWithValue' => $this->responseService->countResponsesWithFieldValue((string) $args['formId'], $fieldId),
+            'responsesWithValue' => $count,
         ]);
     }
 
@@ -1398,7 +1682,11 @@ class ResponseController
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Field still exists on the form — remove it first'], 409);
             }
         }
-        $purged = $this->responseService->purgeFieldData((string) $args['formId'], $fieldId);
+        try {
+            $purged = $this->responseService->purgeFieldData((string) $args['formId'], $fieldId);
+        } catch (PrivateFormEncryptedException $e) {
+            return $this->privateFormError($response, $e);
+        }
         $this->audit($request, 'response.field_data_purge', 'form', (string) $args['formId'], ['fieldId' => $fieldId, 'purged' => $purged]);
         return $this->jsonResponse($response, ['purged' => $purged]);
     }
@@ -1418,6 +1706,12 @@ class ResponseController
                 'error' => true,
                 'message' => 'Form not found or access denied',
             ], 404);
+        }
+
+        // §9.2: server-side CSV assembly is impossible over ciphertext — the client
+        // exports decrypted CSVs itself for private forms.
+        if ($this->isPrivateForm($formId)) {
+            return $this->privateFormError($response, new PrivateFormEncryptedException());
         }
 
         $this->audit($request, 'response.export', 'form', $formId, ['format' => 'csv']);
@@ -1452,6 +1746,11 @@ class ResponseController
                 'error' => true,
                 'message' => 'Form not found or access denied',
             ], 404);
+        }
+
+        // §9.2: scripts read answers — never over ciphertext.
+        if ($this->isPrivateForm($formId)) {
+            return $this->privateFormError($response, new PrivateFormEncryptedException());
         }
 
         // Get script from form
@@ -1554,6 +1853,11 @@ class ResponseController
                 'error' => true,
                 'message' => 'Form not found or access denied',
             ], 404);
+        }
+
+        // §9.2: CSV import writes plaintext answers — impossible on a private form.
+        if ($this->isPrivateForm($formId)) {
+            return $this->privateFormError($response, new PrivateFormEncryptedException());
         }
 
         // Use $_FILES to access the uploaded file (Slim may not parse multipart for files)
@@ -1846,6 +2150,12 @@ class ResponseController
                 'error' => true,
                 'message' => 'Form not found or access denied',
             ], 404);
+        }
+
+        // §9.2: JSON response export is a per-record plaintext export route — refuse
+        // for private forms (the sqlite-bundle export stays allowed: ciphertext verbatim).
+        if ($this->isPrivateForm($formId)) {
+            return $this->privateFormError($response, new PrivateFormEncryptedException());
         }
 
         // Stream JSON to avoid loading all responses into memory at once

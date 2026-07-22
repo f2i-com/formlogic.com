@@ -93,6 +93,10 @@ final class AccountBackupController
                 'files' => $result['files'],
             ]);
             return $this->jsonResponse($response, $result);
+        } catch (\FormLogic\Services\EncryptionRequestException $e) {
+            // Typed refusal (e.g. import_remint_refused — private forms require id preservation).
+            $this->audit($request, 'account.backup_import_failed', ['error' => substr($e->getMessage(), 0, 300)]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => $e->errorCode], $e->status);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             $this->audit($request, 'account.backup_import_failed', ['error' => substr($e->getMessage(), 0, 300)]);
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);

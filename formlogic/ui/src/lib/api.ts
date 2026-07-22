@@ -23,6 +23,13 @@ import type {
 import { logger } from './logger';
 import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
 import { API_BASE_URL } from './apiBase';
+import type { ResponseEnvelope } from './crypto/envelope';
+import type {
+  EnableEncryptionPayload,
+  FormEncryptionStateWire,
+  PublishSchemaPayload,
+  VaultWire,
+} from '../types/e2ee';
 
 interface ApiResponse<T> {
   data?: T;
@@ -1288,6 +1295,96 @@ class ApiClient {
   async deleteResponse(formId: string, responseId: string): Promise<ApiResponse<{ success: boolean }>> {
     return this.request(`/forms/${formId}/responses/${responseId}`, {
       method: 'DELETE',
+    });
+  }
+
+  // --- E2EE private forms (docs/E2EE_PRIVATE_FORMS_PLAN.md) ---
+  // All of these are owner-only surfaces: refused outright in admin acting-as mode and
+  // unavailable in the demo account (D9 / §9.2). They use requestWithMeta so typed
+  // error codes (vault_version_conflict 409, private_enable_blocked, revision_conflict)
+  // survive to the caller. Success bodies are wrapped in {data: …} and error bodies
+  // are {error:true, message, code, details?} — the backend's canonical envelope.
+
+  private privateFormsBlocked(): string | null {
+    if (this.isAdminActing()) return ApiClient.ACTING_BLOCKED_MESSAGE;
+    if (this._demoMode) return 'Private forms are not available in the demo.';
+    return null;
+  }
+
+  /** GET /api/vault — the caller's wrapped vault, or null when none exists yet (404). */
+  async getVault(): Promise<ApiResponse<{ vault: VaultWire | null }>> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { error: blocked, status: 403 };
+    const res = await this.requestWithMeta('/vault');
+    if (res.status === 404) return { data: { vault: null } };
+    if (!res.ok) {
+      return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
+    }
+    const vault = (res.body?.data as { vault?: VaultWire } | undefined)?.vault ?? null;
+    return { data: { vault } };
+  }
+
+  /** PUT /api/vault — create-only (409 vault_exists). Body = the vault fields at root. */
+  async createVault(vault: VaultWire): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
+    return this.requestWithMeta('/vault', { method: 'PUT', body: JSON.stringify(vault) });
+  }
+
+  /** POST /api/vault/change-passphrase — rewrap-only, version-checked (409 on stale).
+   *  Also the recovery-rewrap path: the rewrap payload is identical either way. */
+  async changeVaultPassphrase(
+    expectedVersion: number,
+    rewrap: Pick<VaultWire, 'kdf' | 'kdfSalt' | 'kdfMemlimit' | 'kdfOpslimit' | 'wrappedUmk'>,
+  ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
+    return this.requestWithMeta('/vault/change-passphrase', {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion, ...rewrap }),
+    });
+  }
+
+  /** POST /api/forms/{id}/encryption — atomic §9.1 enable with the client-computed key set. */
+  async enableFormEncryption(formId: string, payload: EnableEncryptionPayload): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
+    return this.requestWithMeta(`/forms/${formId}/encryption`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  /** GET /api/forms/{id}/encryption — owner state: grant + ingestion keys + manifest rows. */
+  async getFormEncryptionState(formId: string): Promise<ApiResponse<FormEncryptionStateWire>> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { error: blocked, status: 403 };
+    const res = await this.requestWithMeta(`/forms/${formId}/encryption`);
+    if (!res.ok) {
+      return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
+    }
+    return { data: (res.body?.data ?? {}) as FormEncryptionStateWire };
+  }
+
+  /** POST /api/forms/{id}/encryption/schema — cut a new schema version + signed manifest on field publish. */
+  async publishFormSchemaVersion(formId: string, payload: PublishSchemaPayload): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
+    return this.requestWithMeta(`/forms/${formId}/encryption/schema`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  /** POST /api/forms/{id}/responses with {envelope} — the only private-mode create shape (§6). */
+  async submitEncryptedResponse(formId: string, envelope: ResponseEnvelope, idempotencyKey?: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta(`/forms/${formId}/responses`, {
+      method: 'POST',
+      body: JSON.stringify({ envelope, idempotencyKey: idempotencyKey ?? newIdempotencyKey() }),
+    });
+  }
+
+  /** PUT /api/forms/{id}/responses/{id} with {envelope, expectedRev} — atomic rev CAS (§6). */
+  async updateEncryptedResponse(formId: string, responseId: string, envelope: ResponseEnvelope, expectedRev: number, idempotencyKey?: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    const blocked = this.privateFormsBlocked();
+    if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
+    return this.requestWithMeta(`/forms/${formId}/responses/${responseId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ envelope, expectedRev, idempotencyKey: idempotencyKey ?? newIdempotencyKey() }),
     });
   }
 

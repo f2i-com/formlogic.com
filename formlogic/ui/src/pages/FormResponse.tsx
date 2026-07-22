@@ -26,7 +26,7 @@ import type { FormField } from '../types/form';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 import { handleRovingKeys } from '../lib/a11y';
-import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
+import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME, normalizeFieldType } from '../types/form';
 
 // Field Response Component
 export function FieldResponse({
@@ -92,7 +92,10 @@ export function FieldResponse({
   }, [field.id, field.type]);
 
   const renderField = () => {
-    switch (field.type) {
+    // normalizeFieldType maps legacy aliases (text/textarea) onto canonical types —
+    // the backend normalizes on read too, but public-payload schema snapshots and
+    // cached/offline form payloads can still carry the old names.
+    switch (normalizeFieldType(field.type)) {
       case 'phone':
         return (
           <PhoneInput
@@ -834,6 +837,9 @@ export default function FormResponse() {
   // and keyboard/SR focus can land on the offending field.
   const [errorFieldId, setErrorFieldId] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  // Private forms: the served manifest signer differs from the TOFU-pinned key
+  // for this form - submission is refused until the user explicitly re-trusts.
+  const [pinConflict, setPinConflict] = useState<{ pinnedFingerprint: string; servedFingerprint: string } | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
   const [isLoadingForm, setIsLoadingForm] = useState(false);
@@ -1216,6 +1222,7 @@ export default function FormResponse() {
 
   const handleSubmit = async () => {
     setSubmitError(null);
+    setPinConflict(null);
     if (!form) return;
     // In-flight guard: pressing Enter twice or double-clicking Submit must not
     // POST the same answers twice (the server has no dedup, so it would create
@@ -1226,6 +1233,69 @@ export default function FormResponse() {
     // Capture completion time before the store clears in-progress state.
     const startTime = useResponseStore.getState().startTime;
     const completionTime = startTime ? Math.max(0, Date.now() - startTime) : undefined;
+
+    // PRIVATE (end-to-end encrypted) form: verify the signed manifest, seal the
+    // complete answer set in this browser, and POST {envelope, idempotencyKey}.
+    // The crypto module is dynamically imported so the sodium WASM never touches
+    // the base bundle. ANY failure is a blocking error - there is NO plaintext
+    // fallback, and plaintext never enters responseStore persistence.
+    if (form.encryption?.mode === 'private') {
+      try {
+        const crypto = await import('../lib/crypto/privateSubmit');
+        // Fold client-computed calculated/hidden values into the sealed answers -
+        // the server no longer derives anything for private forms.
+        const answers = { ...currentAnswers, ...calculatedValues };
+        const { envelope } = await crypto.sealPrivateSubmission({
+          formId: form.id,
+          encryption: form.encryption,
+          answers,
+          completionTime,
+          language: typeof navigator !== 'undefined' ? navigator.language : undefined,
+        });
+        const result = await api.submitEncryptedResponse(form.id, envelope);
+        if (!result.ok && navigator.onLine) {
+          // Typed server refusals (envelope_invalid / key_epoch_retired /
+          // payload_too_large) block the success screen honestly.
+          const body = (result.body ?? {}) as { code?: string; message?: string };
+          setSubmitError(
+            body.code === 'key_epoch_retired'
+              ? 'This form\'s encryption keys were rotated while you were filling it in. Reload the page and re-enter your response.'
+              : body.message ?? 'Your response could not be submitted. Please try again.',
+          );
+          setIsSubmitting(false);
+          return;
+        }
+        // Offline: the service worker queued the sealed envelope for background
+        // delivery - ciphertext only, same as the plain-form offline path.
+      } catch (err) {
+        const e = err as { code?: string; message?: string; pinChange?: { pinnedFingerprint: string; servedFingerprint: string } };
+        if (e && typeof e === 'object' && e.pinChange) {
+          setPinConflict(e.pinChange);
+        }
+        setSubmitError(e?.message || 'Could not encrypt your response. Nothing was submitted.');
+        setIsSubmitting(false);
+        return;
+      }
+      setIsSubmitting(false);
+      // Success: clear the in-progress answers WITHOUT recording them locally -
+      // no plaintext may enter responseStore persistence for private forms.
+      resetCurrentResponse();
+      updateForm(form.id, { responseCount: form.responseCount + 1 });
+      setIsSubmitted(true);
+      const privateRedirectUrl = form.settings?.redirectUrl;
+      if (privateRedirectUrl) {
+        try {
+          const url = new URL(privateRedirectUrl);
+          if (['http:', 'https:'].includes(url.protocol)) {
+            setIsRedirecting(true);
+            setTimeout(() => { window.location.href = url.toString(); }, 2000);
+          }
+        } catch {
+          // Invalid URL - don't redirect
+        }
+      }
+      return;
+    }
 
     // Server persistence. For a PUBLISHED (server-backed) form while ONLINE, a
     // server rejection means the response was NOT saved — surface it and keep the
@@ -1279,6 +1349,33 @@ export default function FormResponse() {
       }
     }
   };
+
+  // Explicit re-trust after a changed-signer refusal on a private form (TOFU
+  // posture: a rotated key is never adopted silently - only through this action).
+  const trustNewKeyAndResubmit = async () => {
+    if (!form?.encryption) return;
+    const crypto = await import('../lib/crypto/privateSubmit');
+    crypto.trustFormSignerKey(form.id, form.encryption.signerPk);
+    setPinConflict(null);
+    setSubmitError(null);
+    await handleSubmit();
+  };
+
+  // Changed-key refusal notice (rendered under the submit button in both modes).
+  const pinConflictNotice = pinConflict ? (
+    <div className="w-full max-w-xl mx-auto mt-4 rounded-lg border-2 border-red-400/70 bg-red-500/10 p-4 text-left text-sm" role="alert">
+      <p className="font-semibold mb-2">This form's security key has changed</p>
+      <p className="opacity-80">Previously trusted: <span className="font-mono">{pinConflict.pinnedFingerprint}</span></p>
+      <p className="opacity-80 mb-3">Now served: <span className="font-mono">{pinConflict.servedFingerprint}</span></p>
+      <p className="opacity-80 mb-3">
+        If the form owner told you they reset their encryption keys, you can trust the new key and submit.
+        If not, do not submit - someone may be intercepting this form.
+      </p>
+      <Button size="sm" variant="outline" onClick={trustNewKeyAndResubmit} disabled={isSubmitting}>
+        Trust the new key and submit again
+      </Button>
+    </div>
+  ) : null;
 
   // Enforce builder-configured number Min/Max/Step. These live on field.properties
   // and are only applied as native <input> attributes, which the custom submit flow
@@ -1715,6 +1812,7 @@ export default function FormResponse() {
             {submitError && (
               <p role="alert" aria-live="polite" className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
             )}
+            {pinConflictNotice}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -1784,6 +1882,7 @@ export default function FormResponse() {
             {submitError && (
               <p role="alert" aria-live="polite" className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
             )}
+            {pinConflictNotice}
 
             <div className="mt-10">
               <Button

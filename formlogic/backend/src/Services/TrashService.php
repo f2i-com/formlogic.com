@@ -77,12 +77,19 @@ final class TrashService
     {
         $pending = $this->capturePendingForm($formId, $userId);
         if ($pending === null) {
-            return ['deleted' => $this->formService->deleteForm($formId), 'trashed' => false];
+            $deleted = $this->formService->deleteForm($formId);
+            if ($deleted) {
+                // Hard delete with NO bin entry (empty draft): a private form's
+                // encryption rows have nothing to be restored for — purge them.
+                $this->formEncryptionLifecycle('purge', $formId);
+            }
+            return ['deleted' => $deleted, 'trashed' => false];
         }
         try {
             $deleted = $this->formService->deleteForm($formId);
         } catch (FormDeletionIncompleteException $e) {
             $this->commitPending($pending);
+            $this->formEncryptionLifecycle('trash', $formId);
             throw $e;
         } catch (\Throwable $e) {
             $this->discardPending($pending);
@@ -93,6 +100,9 @@ final class TrashService
             return ['deleted' => false, 'trashed' => false];
         }
         $this->commitPending($pending);
+        // E2EE (plan §7): key/grant rows are PARKED, never deleted, while the form
+        // sits in the bin — restore flips them back; purge removes them.
+        $this->formEncryptionLifecycle('trash', $formId);
         return ['deleted' => true, 'trashed' => true];
     }
 
@@ -220,6 +230,7 @@ final class TrashService
             $exists->execute(['id' => $pending['row']['original_id']]);
             if ($exists->fetchColumn() === false) {
                 $this->commitPending($pending); // uninstall really deleted it
+                $this->formEncryptionLifecycle('trash', (string) $pending['row']['original_id']);
             } else {
                 $this->discardPending($pending); // skipped/failed — form still live
             }
@@ -300,16 +311,22 @@ final class TrashService
         $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $trashId]);
         @unlink($zipAbs);
 
+        // E2EE: a restored private form gets its parked key/grant rows back
+        // ('trashed' → 'active'); manifests never moved.
+        if (($item['kind'] ?? '') === 'form') {
+            $this->formEncryptionLifecycle('restore', (string) $item['original_id']);
+        }
+
         return ['item' => $this->formatItem($item), 'restored' => $summary];
     }
 
     /** "Delete forever". False when the item doesn't exist or is mid-restore. */
     public function purgeItem(string $trashId, string $userId): bool
     {
-        $stmt = $this->pdo->prepare("SELECT zip_path FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
+        $stmt = $this->pdo->prepare("SELECT zip_path, kind, original_id FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
         $stmt->execute(['id' => $trashId, 'u' => $userId]);
-        $zipPath = $stmt->fetchColumn();
-        if (!is_string($zipPath)) {
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || !is_string($row['zip_path'])) {
             return false;
         }
         $del = $this->pdo->prepare("DELETE FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
@@ -317,7 +334,11 @@ final class TrashService
         if ($del->rowCount() !== 1) {
             return false;
         }
-        @unlink($this->trashDir . '/' . $zipPath);
+        @unlink($this->trashDir . '/' . $row['zip_path']);
+        // E2EE: "delete forever" removes the form's parked key/grant/manifest rows.
+        if (($row['kind'] ?? '') === 'form') {
+            $this->formEncryptionLifecycle('purge', (string) $row['original_id']);
+        }
         return true;
     }
 
@@ -330,10 +351,13 @@ final class TrashService
     public function purgeExpired(): array
     {
         $items = 0;
-        $stmt = $this->pdo->query('SELECT id, zip_path FROM trash_items WHERE expires_at < NOW()');
+        $stmt = $this->pdo->query('SELECT id, zip_path, kind, original_id FROM trash_items WHERE expires_at < NOW()');
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             @unlink($this->trashDir . '/' . $row['zip_path']);
             $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
+            if (($row['kind'] ?? '') === 'form') {
+                $this->formEncryptionLifecycle('purge', (string) $row['original_id']);
+            }
             $items++;
         }
 
@@ -360,11 +384,14 @@ final class TrashService
     public function purgeUser(string $userId): int
     {
         try {
-            $stmt = $this->pdo->prepare('SELECT id, zip_path FROM trash_items WHERE user_id = :u');
+            $stmt = $this->pdo->prepare('SELECT id, zip_path, kind, original_id FROM trash_items WHERE user_id = :u');
             $stmt->execute(['u' => $userId]);
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 @unlink($this->trashDir . '/' . $row['zip_path']);
                 $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
+                if (($row['kind'] ?? '') === 'form') {
+                    $this->formEncryptionLifecycle('purge', (string) $row['original_id']);
+                }
             }
             $userDir = $this->trashDir . '/' . $this->safeSegment($userId);
             if (is_dir($userDir)) {
@@ -497,6 +524,34 @@ final class TrashService
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * E2EE key-row lifecycle beside the bin (docs/E2EE_PRIVATE_FORMS_PLAN.md §7):
+     * trash parks form_encryption / form_ingestion_keys / form_key_grants rows as
+     * 'trashed' (manifests are append-only and stay put); restore flips them back
+     * to 'active'; purge hard-deletes every encryption row for the form. Always
+     * best-effort AFTER the authoritative operation succeeded — a lifecycle
+     * failure logs loudly but never fails the user's request.
+     */
+    private function formEncryptionLifecycle(string $op, string $formId): void
+    {
+        if ($formId === '') {
+            return;
+        }
+        try {
+            $enc = new FormEncryptionService($this->pdo, $this->sqlite);
+            match ($op) {
+                'trash' => $enc->markFormTrashed($formId),
+                'restore' => $enc->markFormRestored($formId),
+                'purge' => $enc->purgeFormRows($formId),
+                default => null,
+            };
+        } catch (\Throwable $e) {
+            $this->logger->error('Trash: form-encryption lifecycle step failed', [
+                'op' => $op, 'formId' => $formId, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
 
     private function formHasResponses(string $formId): bool
     {

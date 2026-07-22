@@ -45,6 +45,166 @@ class ResponseService
         return $this->formLogicService ??= new FormLogicService();
     }
 
+    // ── E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md §8/§9.2) ────────────
+
+    private ?FormEncryptionService $formEncryption = null;
+
+    /**
+     * Single source of truth for the §9.2 gates: is this form end-to-end
+     * encrypted? Lazily built from this service's own connections so EVERY
+     * caller (controllers, external API, chat/MCP tools, cloud flow nodes,
+     * imports) is gated even when no FormEncryptionService was injected.
+     */
+    public function isPrivateForm(string $formId): bool
+    {
+        $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
+        return $this->formEncryption->isPrivate($formId);
+    }
+
+    /** @throws PrivateFormEncryptedException fail closed (plan D6) — never silent. */
+    private function assertNotPrivate(string $formId): void
+    {
+        if ($this->isPrivateForm($formId)) {
+            throw new PrivateFormEncryptedException();
+        }
+    }
+
+    /**
+     * Store a validated __flenc:1 envelope as a new response row (plan §8 private
+     * branch). The caller (ResponseController::createPrivate) has already run
+     * EnvelopeValidator — this method NEVER touches plaintext-shaped code: no
+     * sanitize/normalize/calculated fields, no onSubmit script, no computed/tags,
+     * no webhooks, no flow events, no file commits. Row id = envelope recordId;
+     * answers = the envelope serialized EXACTLY as validated; SQLite metadata =
+     * submittedByUserId only; the MySQL mirror keeps ip_address for abuse
+     * forensics (30-day sweep, plan §12) with user_agent/completion_time NULL.
+     *
+     * @param array<string,mixed> $envelope
+     * @return array{id: string, status: string, submittedAt: string, updatedAt: string}
+     * @throws DuplicateResponseIdException when the recordId already exists
+     */
+    public function createEncryptedResponse(string $formId, array $envelope, ?string $submittedByUserId, ?string $ipAddress): array
+    {
+        if (!$this->formExists($formId)) {
+            throw new \RuntimeException('Form not found');
+        }
+        $id = (string) ($envelope['recordId'] ?? '');
+        if ($id === '') {
+            throw new \InvalidArgumentException('envelope recordId missing');
+        }
+        $answersJson = json_encode($envelope, JSON_UNESCAPED_SLASHES);
+        if ($answersJson === false) {
+            throw new \RuntimeException('Envelope could not be serialized');
+        }
+
+        $db = $this->sqlite->getFormDatabase($formId);
+        $this->sqlite->migrateFormDatabase($db);
+        $now = date('Y-m-d H:i:s');
+
+        $metadata = ($submittedByUserId !== null && $submittedByUserId !== '')
+            ? json_encode(['submittedByUserId' => $submittedByUserId])
+            : '{}';
+
+        try {
+            $stmt = $db->prepare("
+                INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
+                VALUES (:id, :answers, :metadata, 'submitted', :submitted_at, :updated_at)
+            ");
+            $stmt->execute([
+                'id' => $id,
+                'answers' => $answersJson,
+                'metadata' => $metadata,
+                'submitted_at' => $now,
+                'updated_at' => $now,
+            ]);
+        } catch (\PDOException $e) {
+            // SQLite UNIQUE violation on the primary key = duplicate client recordId.
+            if ($e->getCode() === '23000' || str_contains($e->getMessage(), 'UNIQUE constraint failed')) {
+                throw new DuplicateResponseIdException();
+            }
+            throw $e;
+        }
+
+        // MySQL mirror (metadata minimized per plan §12) with the same compensating
+        // delete as the plaintext path so the two stores never diverge.
+        try {
+            $this->mysql->prepare("
+                INSERT INTO response_metadata (id, form_id, status, submitted_at, ip_address, user_agent, completion_time)
+                VALUES (:id, :form_id, 'submitted', :submitted_at, :ip_address, NULL, NULL)
+            ")->execute([
+                'id' => $id,
+                'form_id' => $formId,
+                'submitted_at' => $now,
+                'ip_address' => $ipAddress,
+            ]);
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062)) {
+                // The recordId already exists in the mirror (e.g. reused across forms).
+                $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+                throw new DuplicateResponseIdException();
+            }
+            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+            throw $e;
+        } catch (\Throwable $e) {
+            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+            throw $e;
+        }
+
+        // Non-content bookkeeping only: completion analytics + the denormalized count.
+        try {
+            $this->updateAnalytics($formId, 'completion');
+        } catch (\Throwable $analyticsErr) {
+            $this->logger->error('Failed to update analytics after encrypted response create', [
+                'formId' => $formId, 'error' => $analyticsErr->getMessage(),
+            ]);
+        }
+        $this->syncResponseCount($formId);
+
+        return ['id' => $id, 'status' => 'submitted', 'submittedAt' => $now, 'updatedAt' => $now];
+    }
+
+    /**
+     * Compare-and-swap envelope update (plan §6): ONE atomic conditional UPDATE —
+     * never read-then-write. The stored envelope is replaced only when its current
+     * `rev` equals expectedRev; the current rev is fetched ONLY for the conflict
+     * error payload.
+     *
+     * @param array<string,mixed> $envelope validated, carrying rev == expectedRev + 1
+     * @return array{ok: bool, found: bool, currentRev: int|null}
+     */
+    public function updateEncryptedResponse(string $formId, string $responseId, array $envelope, int $expectedRev): array
+    {
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            return ['ok' => false, 'found' => false, 'currentRev' => null];
+        }
+        $answersJson = json_encode($envelope, JSON_UNESCAPED_SLASHES);
+        if ($answersJson === false) {
+            throw new \RuntimeException('Envelope could not be serialized');
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $stmt = $db->prepare("
+            UPDATE responses SET answers = :env, updated_at = :now
+            WHERE id = :id AND json_extract(answers, '$.rev') = :expectedRev
+        ");
+        $stmt->bindValue('env', $answersJson);
+        $stmt->bindValue('now', date('Y-m-d H:i:s'));
+        $stmt->bindValue('id', $responseId);
+        // PARAM_INT is load-bearing: json_extract yields an SQLite INTEGER, and
+        // SQLite's strict expression comparison would never match a TEXT-bound '1'.
+        $stmt->bindValue('expectedRev', $expectedRev, PDO::PARAM_INT);
+        $stmt->execute();
+        if ($stmt->rowCount() === 1) {
+            return ['ok' => true, 'found' => true, 'currentRev' => $expectedRev + 1];
+        }
+        $cur = $db->prepare("SELECT json_extract(answers, '$.rev') FROM responses WHERE id = :id");
+        $cur->execute(['id' => $responseId]);
+        $rev = $cur->fetchColumn();
+        if ($rev === false) {
+            return ['ok' => false, 'found' => false, 'currentRev' => null];
+        }
+        return ['ok' => false, 'found' => true, 'currentRev' => is_numeric($rev) ? (int) $rev : null];
+    }
+
     /**
      * Compute per-field visibility & effective-required, mirroring the client's
      * useConditionalLogic hook, so the server doesn't enforce `required` (or
@@ -776,8 +936,37 @@ class ResponseService
         return " ORDER BY submitted_at DESC";
     }
 
+    /**
+     * §9.2 gate: content-dependent list options (answer filters, answer-field
+     * sorting) are refused for private forms — the stored `answers` column is
+     * ciphertext, so any json_extract-based filter/sort would silently return
+     * wrong/empty results. Listing WITHOUT those options stays allowed (plan:
+     * list/paginate by non-content columns is a server responsibility).
+     *
+     * @throws PrivateFormEncryptedException
+     */
+    private function assertOptionsReadableOnPrivate(string $formId, array $options): void
+    {
+        $contentDependent =
+            !empty($options['answersEq'])
+            || !empty($options['answersGte'])
+            || !empty($options['answersLte'])
+            || !empty($options['answersPhoneEq'])
+            || (
+                isset($options['sort'])
+                && is_string($options['sort'])
+                && $options['sort'] !== ''
+                && !in_array($options['sort'], ['submittedAt', 'submitted_at', 'status'], true)
+            );
+        if ($contentDependent) {
+            $this->assertNotPrivate($formId);
+        }
+    }
+
     public function getFormResponses(string $formId, array $options = []): array
     {
+        $this->assertOptionsReadableOnPrivate($formId, $options);
+
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return [];
         }
@@ -1212,6 +1401,8 @@ class ResponseService
         if ($term === '' || !$this->sqlite->formDatabaseExists($formId)) {
             return [];
         }
+        // §9.2 gate: whole-answers substring search is content-dependent.
+        $this->assertNotPrivate($formId);
         $db = $this->sqlite->getFormDatabase($formId);
         $conditions = ["answers LIKE :q ESCAPE '\'"];
         $params = ['q' => '%' . strtr($term, ['%' => '\%', '_' => '\_']) . '%'];
@@ -1238,6 +1429,12 @@ class ResponseService
         array $options = [],
         array $extraMatches = []
     ): array {
+        // §9.2 gate: answer search is content-dependent; filter/sort options too.
+        if ($searchQuery !== '' || $extraMatches !== []) {
+            $this->assertNotPrivate($formId);
+        }
+        $this->assertOptionsReadableOnPrivate($formId, $options);
+
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return ['responses' => [], 'total' => 0];
         }
@@ -1418,6 +1615,12 @@ class ResponseService
      */
     public function createResponse(string $formId, array $data, ?string $script = null): array|ScriptRejection
     {
+        // §9.2 gate: a private form NEVER takes the plaintext pipeline — every entry
+        // point (public controller, external API, app runtime, chat/MCP tools, cloud
+        // flow nodes, CSV import) funnels through here, so this single check closes
+        // them all. Private writes go through createEncryptedResponse() only.
+        $this->assertNotPrivate($formId);
+
         // Guard against a form deleted between the controller's existence check and
         // now: getFormDatabase() would otherwise resurrect a per-form SQLite DB for
         // a form that no longer exists (orphaned file + a guaranteed MySQL FK 500).
@@ -1728,6 +1931,8 @@ class ResponseService
      */
     public function countResponsesWithFieldValue(string $formId, string $fieldId): int
     {
+        // §9.2 gate: json_extract over ciphertext would silently answer 0.
+        $this->assertNotPrivate($formId);
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }
@@ -1754,6 +1959,9 @@ class ResponseService
      */
     public function purgeFieldData(string $formId, string $fieldId): int
     {
+        // §9.2 gate: rewriting per-field values inside `answers` would CORRUPT
+        // stored envelopes (their AAD binds the exact ciphertext) — refuse.
+        $this->assertNotPrivate($formId);
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }
@@ -1851,6 +2059,8 @@ class ResponseService
      */
     public function recomputeResponse(string $formId, string $responseId, string $script): ScriptResult
     {
+        // §9.2 gate: scripts read answers — ciphertext must never feed user code.
+        $this->assertNotPrivate($formId);
         $response = $this->getResponse($formId, $responseId);
         if (!$response) {
             return ScriptResult::error('Response not found');
@@ -1989,6 +2199,10 @@ class ResponseService
      */
     public function updateResponse(string $formId, string $responseId, array $data): ?array
     {
+        // §9.2 gate: private-form updates are envelope CAS writes only
+        // (updateEncryptedResponse) — the PATCH-merge plaintext path is refused.
+        $this->assertNotPrivate($formId);
+
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return null;
         }
@@ -2586,6 +2800,10 @@ class ResponseService
      */
     public function exportResponsesStreaming(string $formId, array $fields, $outputStream): int
     {
+        // §9.2 gate: CSV assembly interprets answers per field — refuse for private
+        // forms (client-side decrypt-and-export replaces it; sqlite-bundle and
+        // account-backup exports stay allowed as they copy ciphertext verbatim).
+        $this->assertNotPrivate($formId);
         // Identify linked_record fields for display value resolution
         $linkedFields = [];
         foreach ($fields as $field) {
@@ -3003,6 +3221,10 @@ class ResponseService
      */
     public function importResponses(string $formId, array $rows, array $columnMapping, array $fields): array
     {
+        // §9.2 gate: CSV import writes PLAINTEXT answers — impossible on a private
+        // form (restoreResponses, which re-inserts stored rows verbatim for backup
+        // restore, deliberately stays allowed: it moves ciphertext, not plaintext).
+        $this->assertNotPrivate($formId);
         if (count($rows) > 1000) {
             throw new \RuntimeException('Maximum 1000 rows allowed per import');
         }

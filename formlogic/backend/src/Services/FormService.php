@@ -49,6 +49,50 @@ class FormService
     private ?WebhookService $webhookService;
     private ?FileStorageService $fileStorageService;
     private StoreOpService $storeOps;
+    private ?FormEncryptionService $formEncryption = null;
+
+    /**
+     * Legacy field-type aliases accepted from older/imported schemas, normalized to the
+     * canonical types on BOTH read and write so old data never reaches the renderer
+     * (which only knows the canonical set and would show "Field type not supported").
+     */
+    private const FIELD_TYPE_ALIASES = [
+        'text' => 'short_text',
+        'textarea' => 'long_text',
+    ];
+
+    /** Map a stored/inbound field type onto its canonical name (identity for current types). */
+    public static function normalizeFieldType(string $type): string
+    {
+        return self::FIELD_TYPE_ALIASES[$type] ?? $type;
+    }
+
+    /**
+     * E2EE post-enable invariant (docs/E2EE_PRIVATE_FORMS_PLAN.md §9.1): a private
+     * form can never GAIN a blocked field type (file_upload/camera until P4,
+     * linked_record in v1) — the §9.1 preflight bans them at enable time and this
+     * gate bans adding them afterwards (enforced on BOTH ends of the invariant).
+     *
+     * @throws PrivateFormEncryptedException
+     */
+    private function assertFieldsAllowedOnPrivate(string $formId, mixed $fields): void
+    {
+        if (!is_array($fields)) {
+            return;
+        }
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        if (!$this->formEncryption->isPrivate($formId)) {
+            return;
+        }
+        foreach ($fields as $field) {
+            $type = is_array($field) ? (string) ($field['type'] ?? '') : '';
+            if (in_array($type, FormEncryptionService::BLOCKED_FIELD_TYPES, true)) {
+                throw new PrivateFormEncryptedException(
+                    "Field type '{$type}' is not available on private (end-to-end encrypted) forms (private_form_encrypted)."
+                );
+            }
+        }
+    }
 
     public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null, ?FileStorageService $fileStorageService = null)
     {
@@ -66,7 +110,9 @@ class FormService
      */
     public function getAllForms(?string $userId = null, array $options = []): array
     {
-        $sql = "SELECT * FROM forms";
+        // is_private rides the SAME query (correlated EXISTS — no N+1): the forms
+        // list marks end-to-end-encrypted forms with a lock icon (plan §16-P3).
+        $sql = "SELECT forms.*, EXISTS(SELECT 1 FROM form_encryption fe WHERE fe.form_id = forms.id) AS is_private FROM forms";
         $params = [];
         $conditions = [];
 
@@ -125,6 +171,7 @@ class FormService
         $backfillIds = [];
         $respBackfillIds = [];
         while ($row = $stmt->fetch()) {
+            $isPrivate = !empty($row['is_private']);
             $form = Form::fromArray($row);
             // Only load fields from SQLite when explicitly requested (avoids N+1 for list views)
             if ($includeFields) {
@@ -163,7 +210,9 @@ class FormService
                     // Leave NULL; retry on the next list load.
                 }
             }
-            $forms[] = $form->toArray();
+            $out = $form->toArray();
+            $out['isPrivate'] = $isPrivate;
+            $forms[] = $out;
         }
 
         // Persist backfilled counts so this only happens once per form. Preserve
@@ -284,8 +333,8 @@ class FormService
 
             $customScreen = $this->screenForStorage($data['customScreen'] ?? null);
             $stmt = $this->mysql->prepare("
-                INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, custom_screen_trust, custom_screen_provenance, custom_logic, icon, created_at, updated_at)
-                VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :custom_screen_trust, :custom_screen_provenance, :custom_logic, :icon, :created_at, :updated_at)
+                INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, custom_screen_trust, custom_screen_provenance, custom_logic, icon, created_at, updated_at, ever_published_at)
+                VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :custom_screen_trust, :custom_screen_provenance, :custom_logic, :icon, :created_at, :updated_at, :ever_published_at)
             ");
 
             $stmt->execute([
@@ -294,6 +343,9 @@ class FormService
                 'title' => $data['title'] ?? 'Untitled Form',
                 'description' => $data['description'] ?? null,
                 'status' => $data['status'] ?? 'draft',
+                // E2EE (plan §7): a form CREATED already-published has publication
+                // history from birth — it can never become private.
+                'ever_published_at' => (($data['status'] ?? 'draft') === 'published') ? $now : null,
                 'settings' => json_encode($data['settings'] ?? []),
                 'theme' => json_encode($data['theme'] ?? []),
                 'logic_script' => $data['logicScript'] ?? null,
@@ -391,6 +443,12 @@ class FormService
             if ($newStatus === 'published' && $currentStatus !== 'published') {
                 $updates[] = "published_at = :published_at";
                 $params['published_at'] = date('Y-m-d H:i:s');
+                // E2EE Private Forms (plan §7): durable publication history — set on
+                // the FIRST publish only (COALESCE keeps the original stamp), never
+                // cleared by unpublish/archive. The private-enable preflight requires
+                // ever_published_at IS NULL, making the choice irreversible.
+                $updates[] = "ever_published_at = COALESCE(ever_published_at, :ever_published_at)";
+                $params['ever_published_at'] = date('Y-m-d H:i:s');
             }
         }
 
@@ -439,6 +497,11 @@ class FormService
         // silently didn't); a MySQL failure AFTER the fields saved compensates by
         // restoring the previous fields, so the update applies all-or-nothing.
         $fieldsProvided = isset($data['fields']);
+        // E2EE: refuse blocked field types on a private form BEFORE any store write
+        // (the preflight bans them at enable; this bans adding them afterwards).
+        if ($fieldsProvided) {
+            $this->assertFieldsAllowedOnPrivate($formId, $data['fields']);
+        }
         $opId = null;
         if ($fieldsProvided || !empty($updates)) {
             $opId = $this->storeOps->begin('form_update', 'form', $formId, $existing['userId'] ?? null, [
@@ -768,7 +831,7 @@ class FormService
         while ($row = $stmt->fetch()) {
             $fields[] = [
                 'id' => $row['id'],
-                'type' => $row['type'],
+                'type' => self::normalizeFieldType((string) $row['type']),
                 'label' => $row['label'],
                 'description' => $row['description'],
                 'placeholder' => $row['placeholder'],
@@ -848,7 +911,7 @@ class FormService
             foreach ($fields as $index => $field) {
                 $stmt->execute([
                     'id' => $field['id'],
-                    'type' => $field['type'],
+                    'type' => self::normalizeFieldType((string) $field['type']),
                     'label' => $field['label'] ?? null,
                     'description' => $field['description'] ?? null,
                     'placeholder' => $field['placeholder'] ?? null,

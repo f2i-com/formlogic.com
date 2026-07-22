@@ -133,6 +133,118 @@ if (!$columnExists($pdo, $db, 'aokie_companion_relay_frames', 'admission_grants'
     $applied[] = 'aokie_companion_relay_frames.admission_grants already present';
 }
 
+// 5. E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md §7). All byte fields are
+//    raw bytes in VARBINARY/MEDIUMBLOB; public keys are canonical base64 VARCHAR.
+//    Deliberately NO foreign keys to forms/users: these rows survive a form's
+//    trash → restore round trip and are lifecycle-managed by TrashService.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `user_vaults` (
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` int NOT NULL DEFAULT '1',
+  `kdf` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kdf_salt` varbinary(16) NOT NULL,
+  `kdf_memlimit` int unsigned NOT NULL,
+  `kdf_opslimit` int unsigned NOT NULL,
+  `wrapped_umk` varbinary(128) NOT NULL,
+  `wrapped_umk_recovery` varbinary(128) DEFAULT NULL,
+  `enc_key_bundle` varbinary(512) NOT NULL,
+  `x25519_pk` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ed25519_pk` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'user_vaults table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `form_encryption` (
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mode` enum('private') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `current_ingest_epoch` int NOT NULL DEFAULT '1',
+  `current_fk_epoch` int NOT NULL DEFAULT '1',
+  `state` enum('active','trashed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `enabled_by` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`form_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'form_encryption table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `form_schema_versions` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` int NOT NULL,
+  `schema_json` mediumblob NOT NULL,
+  `schema_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_form_version` (`form_id`,`version`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'form_schema_versions table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `form_ingestion_keys` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `epoch` int NOT NULL,
+  `public_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `wrapped_secret` varbinary(128) NOT NULL,
+  `fk_epoch` int NOT NULL,
+  `state` enum('active','retiring','retired','trashed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `accept_until` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_form_epoch` (`form_id`,`epoch`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'form_ingestion_keys table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `form_manifests` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `manifest_seq` int NOT NULL,
+  `key_id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ingest_epoch` int NOT NULL,
+  `schema_version` int NOT NULL,
+  `schema_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content_suite` varchar(48) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `wrap_suite` varchar(48) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signer_key_id` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signer_pk` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signed_bytes` mediumblob NOT NULL,
+  `signature` varbinary(64) NOT NULL,
+  `created_at` datetime NOT NULL,
+  `expires_at` datetime DEFAULT NULL,
+  `superseded_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_form_seq` (`form_id`,`manifest_seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'form_manifests table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `form_key_grants` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `fk_epoch` int NOT NULL,
+  `wrapped_key` varbinary(128) NOT NULL,
+  `wrap_suite` varchar(48) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `role` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'owner',
+  `grantor_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `grantor_key_id` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `grantee_pk` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `sig_version` smallint NOT NULL DEFAULT '1',
+  `signature` varbinary(64) NOT NULL,
+  `expires_at` datetime DEFAULT NULL,
+  `state` enum('active','revoked','trashed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_form_user_epoch` (`form_id`,`user_id`,`fk_epoch`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'form_key_grants table ensured';
+
+// Durable publication history: v1 private forms are strictly post-feature creations.
+if (!$columnExists($pdo, $db, 'forms', 'ever_published_at')) {
+    $pdo->exec('ALTER TABLE `forms` ADD COLUMN `ever_published_at` datetime DEFAULT NULL AFTER `published_at`');
+    $pdo->exec('UPDATE `forms` SET `ever_published_at` = NOW()');
+    $applied[] = 'forms.ever_published_at added + backfilled';
+} else {
+    $applied[] = 'forms.ever_published_at already present';
+}
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

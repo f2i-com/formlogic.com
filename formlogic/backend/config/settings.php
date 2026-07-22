@@ -51,6 +51,11 @@ $cloudPlanEnforced = filter_var(Environment::get('CLOUD_PLAN_ENFORCED', 'false')
 // BETA_MODE is on we DON'T enforce the plan (no lockouts) and don't require PayPal.
 $betaMode = filter_var(Environment::get('BETA_MODE', 'false'), FILTER_VALIDATE_BOOLEAN);
 $signupFreeDays = $betaMode ? max(1, (int) Environment::get('BETA_FREE_DAYS', '90')) : 30;
+
+// E2EE Private Forms beta gate (docs/E2EE_PRIVATE_FORMS_PLAN.md D9): advertised on
+// /api/health so the SPA shows/hides the feature; the vault-create + encryption-enable
+// endpoints enforce it server-side until Phase 5 completes.
+$privateForms = filter_var(Environment::get('PRIVATE_FORMS', 'false'), FILTER_VALIDATE_BOOLEAN);
 if ($betaMode) {
     $cloudPlanEnforced = false;
 }
@@ -199,6 +204,7 @@ return [
         'cloud' => [
             'planEnforced' => $cloudPlanEnforced,
             'betaMode' => $betaMode,
+            'privateForms' => $privateForms,
             'signupFreeDays' => $signupFreeDays,
             'maxForms' => (int) Environment::get('CLOUD_MAX_FORMS', '100'),
             'maxStorageBytes' => (int) Environment::get('CLOUD_MAX_STORAGE_BYTES', (string) (1024 * 1024 * 1024)), // 1 GB

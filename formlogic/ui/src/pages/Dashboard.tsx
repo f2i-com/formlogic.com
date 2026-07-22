@@ -51,6 +51,7 @@ import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
+import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 import type { FormTemplate } from '../data/formTemplates';
 import type { App } from '../types/app';
 import type { Form } from '../types/form';
@@ -1289,6 +1290,7 @@ export function Dashboard() {
                               >
                                 {form.status}
                               </Badge>
+                              {form.isPrivate && <PrivateLockBadge />}
                               {appOfForm[form.id] && (
                                 <Badge variant="info" size="sm" className="inline-flex items-center gap-1 max-w-[10rem]" title={`In the ${appOfForm[form.id]} app`}>
                                   <Boxes className="h-3 w-3 flex-shrink-0" />

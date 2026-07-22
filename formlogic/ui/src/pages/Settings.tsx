@@ -46,6 +46,7 @@ import { api } from '../lib/api';
 import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AccountBackupImportResult } from '../lib/api';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import { MfaPanel } from '../components/settings/MfaPanel';
+import { VaultPanel } from '../components/vault/VaultPanel';
 import { AiSourceCard } from '../components/settings/AiSourceCard';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
@@ -796,6 +797,12 @@ export function Settings() {
                   remembered browsers. Optional; hidden for the shared demo. */}
               <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
                 <MfaPanel />
+              </div>
+
+              {/* E2EE encryption vault (Private forms): create/unlock/lock +
+                  passphrase change. Hidden for the shared demo. */}
+              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
+                <VaultPanel />
               </div>
             </div>
           </CardContent>

@@ -76,7 +76,12 @@ class WebhookController
             }
         }
 
-        $webhook = $this->webhookService->createWebhook($formId, $userId, $url, $events, $description);
+        try {
+            $webhook = $this->webhookService->createWebhook($formId, $userId, $url, $events, $description);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            // E2EE §9.2: no webhooks on private forms — typed, never silent.
+            return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
+        }
         return $this->jsonResponse($response, ['webhook' => $webhook], 201);
     }
 

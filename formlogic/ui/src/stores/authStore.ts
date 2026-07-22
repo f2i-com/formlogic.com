@@ -54,6 +54,18 @@ async function clearUserSessionData(): Promise<void> {
   // Cancel pending debounced saves so stale callbacks can't fire after the purge.
   clearAllDebounceTimers();
 
+  // Lock the E2EE vault (terminates the crypto worker, bumps the vault
+  // generation so every decrypted cache drops, and propagates to other tabs).
+  // Dynamic import keeps the crypto worker out of the base bundle for sessions
+  // that never touch private forms.
+  try {
+    const vault = await import('./vaultStore');
+    vault.lockVaultForSessionTeardown();
+    vault.useVaultStore.setState({ status: 'unknown', vault: null });
+  } catch {
+    // Never let vault teardown block the logout path.
+  }
+
   useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
   useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
   useAppUserStore.getState().reset();

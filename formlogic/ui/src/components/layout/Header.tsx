@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { UserMenu } from '../auth/UserMenu';
 import { AuthModal } from '../auth/AuthModal';
+import { VaultChip } from '../vault/VaultChip';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { cn } from '../../lib/utils';
 
@@ -43,6 +44,8 @@ export function Header({ title, actions }: HeaderProps) {
               <div className="h-5 w-px bg-gray-200 dark:bg-slate-800" />
             </>
           )}
+          {/* E2EE vault lock state - renders only when the user has a vault. */}
+          <VaultChip />
           <ThemeToggle />
           <UserMenu onOpenAuth={() => setShowAuthModal(true)} />
         </div>

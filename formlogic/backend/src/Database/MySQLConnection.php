@@ -176,6 +176,7 @@ class MySQLConnection
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 published_at TIMESTAMP NULL,
+                ever_published_at DATETIME NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
                 INDEX idx_user_id (user_id),
                 INDEX idx_status (status),
@@ -946,6 +947,126 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // ── E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md §7) ──────────────────
+        // All byte fields are RAW bytes in VARBINARY/MEDIUMBLOB (base64 exists only at
+        // the API boundary); public keys are stored as canonical base64 VARCHAR.
+        // Deliberately NO foreign keys to forms/users: these rows must SURVIVE a form's
+        // trash → restore round trip (the form row itself is deleted while trashed) and
+        // are lifecycle-managed by TrashService (state flips + purge).
+
+        // Per-user vault: passphrase-wrapped User Master Key + sealed private-key bundle.
+        // The server stores wrapped/sealed material only — it can never unwrap any of it.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS user_vaults (
+                user_id VARCHAR(36) PRIMARY KEY,
+                version INT NOT NULL DEFAULT 1,
+                kdf VARCHAR(32) NOT NULL,
+                kdf_salt VARBINARY(16) NOT NULL,
+                kdf_memlimit INT UNSIGNED NOT NULL,
+                kdf_opslimit INT UNSIGNED NOT NULL,
+                wrapped_umk VARBINARY(128) NOT NULL,
+                wrapped_umk_recovery VARBINARY(128) NULL,
+                enc_key_bundle VARBINARY(512) NOT NULL,
+                x25519_pk VARCHAR(64) NOT NULL,
+                ed25519_pk VARCHAR(64) NOT NULL,
+                created_at DATETIME,
+                updated_at DATETIME
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Which forms are private (end-to-end encrypted). NO disable path exists (plan
+        // D8): no state value, no endpoint, no import flag can revert 'private'.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS form_encryption (
+                form_id VARCHAR(36) PRIMARY KEY,
+                mode ENUM('private') NOT NULL,
+                current_ingest_epoch INT NOT NULL DEFAULT 1,
+                current_fk_epoch INT NOT NULL DEFAULT 1,
+                state ENUM('active','trashed') NOT NULL DEFAULT 'active',
+                enabled_by VARCHAR(36) NOT NULL,
+                enabled_at DATETIME
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Immutable schema snapshots: EXACT bytes (MEDIUMBLOB so charset/collation can
+        // never mangle them), served verbatim, never re-encoded server-side.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS form_schema_versions (
+                id VARCHAR(40) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                version INT NOT NULL,
+                schema_json MEDIUMBLOB NOT NULL,
+                schema_hash CHAR(64) NOT NULL,
+                created_at DATETIME,
+                UNIQUE KEY uq_form_version (form_id, version)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Per-form × ingest-epoch X25519 ingestion keypairs. The secret is stored ONLY
+        // wrapped under the (epoched) Form Key. 'trashed' is additive to the plan's
+        // active/retiring/retired set — it parks keys while their form sits in trash.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS form_ingestion_keys (
+                id VARCHAR(40) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                epoch INT NOT NULL,
+                public_key VARCHAR(64) NOT NULL,
+                wrapped_secret VARBINARY(128) NOT NULL,
+                fk_epoch INT NOT NULL,
+                state ENUM('active','retiring','retired','trashed') NOT NULL DEFAULT 'active',
+                accept_until DATETIME NULL,
+                created_at DATETIME,
+                UNIQUE KEY uq_form_epoch (form_id, epoch)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // APPEND-ONLY signed manifests: the exact signed bytes + signature + the signer's
+        // verification key itself — the server can PROVE but never REGENERATE a manifest.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS form_manifests (
+                id VARCHAR(40) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                manifest_seq INT NOT NULL,
+                key_id VARCHAR(40) NOT NULL,
+                ingest_epoch INT NOT NULL,
+                schema_version INT NOT NULL,
+                schema_hash CHAR(64) NOT NULL,
+                content_suite VARCHAR(48) NOT NULL,
+                wrap_suite VARCHAR(48) NOT NULL,
+                signer_key_id VARCHAR(16) NOT NULL,
+                signer_pk VARCHAR(64) NOT NULL,
+                signed_bytes MEDIUMBLOB NOT NULL,
+                signature VARBINARY(64) NOT NULL,
+                created_at DATETIME NOT NULL,
+                expires_at DATETIME NULL,
+                superseded_at DATETIME NULL,
+                UNIQUE KEY uq_form_seq (form_id, manifest_seq)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Form-Key grants (sealed box of FK[fk_epoch] to the grantee) with their FULL
+        // verification context, so grant signatures verify against snapshotted state.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS form_key_grants (
+                id VARCHAR(40) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                fk_epoch INT NOT NULL,
+                wrapped_key VARBINARY(128) NOT NULL,
+                wrap_suite VARCHAR(48) NOT NULL,
+                role VARCHAR(16) NOT NULL DEFAULT 'owner',
+                grantor_user_id VARCHAR(36) NOT NULL,
+                grantor_key_id VARCHAR(16) NOT NULL,
+                grantee_pk VARCHAR(64) NOT NULL,
+                sig_version SMALLINT NOT NULL DEFAULT 1,
+                signature VARBINARY(64) NOT NULL,
+                expires_at DATETIME NULL,
+                state ENUM('active','revoked','trashed') NOT NULL DEFAULT 'active',
+                created_at DATETIME,
+                UNIQUE KEY uq_form_user_epoch (form_id, user_id, fk_epoch)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Seed the Site AI allowance (plan section 3 decision 2): the standard paid plan gets 500
         // hosted AI messages/month; enterprise is unlimited (-1). INSERT IGNORE so an
         // admin's later edits are never overwritten by a re-run migration.
@@ -1126,6 +1247,17 @@ class MySQLConnection
                 id INT AUTO_INCREMENT PRIMARY KEY
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // E2EE Private Forms (plan §7): durable publication history. Backfilled NOW()
+        // for EVERY pre-existing row (one-time — guarded by the column-existence check)
+        // so v1 private forms are strictly post-feature creations: the enable preflight
+        // requires ever_published_at IS NULL, and this column is set on first publish
+        // and never cleared (FormService::updateForm / createForm).
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'ever_published_at'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN ever_published_at DATETIME NULL AFTER published_at");
+            $pdo->exec("UPDATE forms SET ever_published_at = NOW()");
+        }
 
         // Add icon column to forms table if it doesn't exist
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'icon'");

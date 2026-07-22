@@ -335,7 +335,36 @@ $container->set(FormController::class, function (Container $c) {
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\PlanService::class),
         $c->get(\FormLogic\Services\AppReportService::class),
-        $c->get(\FormLogic\Services\TrashService::class)
+        $c->get(\FormLogic\Services\TrashService::class),
+        $c->get(\FormLogic\Services\FormEncryptionService::class)
+    );
+});
+
+// E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md): per-form encryption state +
+// the per-user vault. Byte fields cross the API as base64; rows store raw bytes.
+$container->set(\FormLogic\Services\FormEncryptionService::class, function (Container $c) {
+    $settings = $c->get('settings');
+    return new \FormLogic\Services\FormEncryptionService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $settings['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads'
+    );
+});
+$container->set(\FormLogic\Services\VaultService::class, function (Container $c) {
+    return new \FormLogic\Services\VaultService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\VaultController::class, function (Container $c) {
+    return new \FormLogic\Controllers\VaultController(
+        $c->get(\FormLogic\Services\VaultService::class),
+        (bool) ($c->get('settings')['cloud']['privateForms'] ?? false)
+    );
+});
+$container->set(\FormLogic\Controllers\FormEncryptionController::class, function (Container $c) {
+    return new \FormLogic\Controllers\FormEncryptionController(
+        $c->get(\FormLogic\Services\FormEncryptionService::class),
+        $c->get(FormService::class),
+        $c->get(LoggerInterface::class),
+        (bool) ($c->get('settings')['cloud']['privateForms'] ?? false)
     );
 });
 
@@ -1041,6 +1070,8 @@ $app->get('/api/health', function ($request, $response) use ($container) {
         'status' => 'ok',
         'timestamp' => date('c'),
         'betaMode' => (bool) ($settings['cloud']['betaMode'] ?? false),
+        // E2EE Private Forms beta flag (plan D9) — the SPA shows/hides the feature on this.
+        'privateForms' => (bool) ($settings['cloud']['privateForms'] ?? false),
         'emailConfigured' => $emailConfigured,
         'supportEmail' => (string) ($settings['supportEmail'] ?? 'hello@formlogic.com'),
         'maintenanceMode' => $maintenance['enabled'],
@@ -1529,6 +1560,33 @@ $app->group('/api/forms/{id}/flow-bindings', function (RouteCollectorProxy $grou
     });
 })->add($cloudWriteGate)->add($authRequired);
 
+// E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md §16-P2/P3).
+// Vault routes (protected; demo + acting-as refused in the controller). NOT mirrored
+// in AdminActingAsRoutes — administrators must never touch user key material.
+$app->get('/api/vault', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\VaultController::class)->getVault($request, $response);
+})->add($authRequired);
+$app->put('/api/vault', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\VaultController::class)->createVault($request, $response);
+})->add($authRequired);
+$app->post('/api/vault/change-passphrase', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\VaultController::class)->changePassphrase($request, $response);
+})->add($authRequired);
+
+// Per-form encryption routes (protected, owner-only; enable runs the §9.1 atomic
+// preflight; schema publish appends a signed manifest). Also NOT acting-as mirrored.
+$app->group('/api/forms/{formId}/encryption', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->post('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FormEncryptionController::class)->enable($request, $response, $getArgs($request));
+    });
+    $group->get('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FormEncryptionController::class)->getEncryption($request, $response, $getArgs($request));
+    });
+    $group->post('/schema', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FormEncryptionController::class)->publishSchema($request, $response, $getArgs($request));
+    });
+})->add($cloudWriteGate)->add($authRequired);
+
 // Form version routes (protected)
 $app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container, $getArgs) {
@@ -1719,6 +1777,30 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     if (isset($form['settings']) && is_array($form['settings'])) {
         unset($form['settings']['notifications']);
     }
+
+    // E2EE Private Forms (plan §8): private forms carry their signed manifest —
+    // key id/epoch, ingestion public key, suites, exact schema snapshot bytes,
+    // signer key + signature — and are served no-store so rotations/schema cuts
+    // reach submitters promptly. A private form with no manifest is a fault:
+    // fail CLOSED (503), never serve it as a plaintext form.
+    $enc = $container->get(\FormLogic\Services\FormEncryptionService::class);
+    if ($enc->isPrivate($args['id'])) {
+        $manifest = $enc->publicManifest($args['id']);
+        if ($manifest === null) {
+            $response->getBody()->write(json_encode([
+                'error' => true,
+                'code' => 'encryption_unavailable',
+                'message' => 'This private form is temporarily unavailable.',
+            ]));
+            return $response->withStatus(503)->withHeader('Content-Type', 'application/json');
+        }
+        $form['encryption'] = $manifest;
+        $response->getBody()->write(json_encode(['form' => $form]));
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withHeader('Cache-Control', 'no-store');
+    }
+
     $response->getBody()->write(json_encode(['form' => $form]));
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);

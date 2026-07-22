@@ -551,6 +551,20 @@ export default function FormBuilder() {
   const selectedFieldIndex = form?.fields.findIndex((f) => f.id === selectedFieldId) ?? -1;
   const formFields = useMemo(() => form?.fields ?? [], [form]);
   const currentFormId = form?.id;
+
+  // E2EE: is this an end-to-end-encrypted (private) form? Drives the badge, the
+  // field-palette blocks (no file/camera/linked_record - plan SS9.1), and the
+  // schema-publish path on Publish. Looked up once per form (owner-only endpoint).
+  const [isPrivateForm, setIsPrivateForm] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentFormId || storageMode !== 'api' || acting) { setIsPrivateForm(false); return; }
+    void import('../lib/crypto/formCrypto').then(async ({ getFormPrivacy }) => {
+      const priv = await getFormPrivacy(currentFormId).catch(() => false);
+      if (!cancelled) setIsPrivateForm(priv);
+    }).catch(() => { if (!cancelled) setIsPrivateForm(false); });
+    return () => { cancelled = true; };
+  }, [currentFormId, storageMode, acting]);
   // Flows work for ANY saved cloud form — draft or published (the binding routes gate on
   // ownership only). The disabled title must name the REAL blocker: a generic "save first"
   // message on a local-mode draft read as "flows need a published form" (user-reported).
@@ -654,6 +668,13 @@ export default function FormBuilder() {
   const handleAddField = useCallback((type: FieldType, preset?: string) => {
     if (!form) return;
 
+    // E2EE: private forms cannot host file/camera/linked_record fields yet (plan
+    // SS9.1). The palette disables them; this is the defensive backstop.
+    if (isPrivateForm && (type === 'file_upload' || type === 'linked_record' || preset === 'camera')) {
+      toast.warning('Not supported on private forms', 'File uploads, camera and linked records are not yet available on end-to-end encrypted forms.');
+      return;
+    }
+
     const defaultLabels: Partial<Record<FieldType, string>> = {
       short_text: 'Your answer',
       long_text: 'Your thoughts',
@@ -715,7 +736,7 @@ export default function FormBuilder() {
     setPaletteSheetOpen(false);
     setFlowsOpen(false);
     setSettingsCollapsed(false);
-  }, [form, addField, setSelectedField, setSettingsCollapsed]);
+  }, [form, addField, setSelectedField, setSettingsCollapsed, isPrivateForm]);
 
   // Keyboard shortcuts
   const handleSave = useCallback(() => {
@@ -1116,6 +1137,15 @@ export default function FormBuilder() {
             <div className="flex flex-none lg:hidden">
               <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} compact />
             </div>
+            {isPrivateForm && (
+              <span
+                className="hidden sm:inline-flex flex-none items-center gap-1 rounded-full border border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10 px-2 py-0.5 text-[11px] font-medium text-green-700 dark:text-green-300"
+                title="End-to-end encrypted — responses are sealed in the submitter's browser; the server cannot read them"
+                aria-label="End-to-end encrypted — responses are sealed in the submitter's browser; the server cannot read them"
+              >
+                🔒 Private
+              </span>
+            )}
           </div>
         </div>
 
@@ -1218,6 +1248,22 @@ export default function FormBuilder() {
                   return;
                 }
               }
+              // E2EE: publishing a private form must cut a new SIGNED schema version
+              // so the served manifest matches the current fields (plan SS8). Needs
+              // the vault unlocked; a no-op when the fields are unchanged.
+              if (storageMode === 'api' && isPrivateForm) {
+                try {
+                  const { publishPrivateFormSchema } = await import('../lib/crypto/formCrypto');
+                  await publishPrivateFormSchema(form.id, JSON.stringify(form.fields ?? []));
+                } catch (e) {
+                  const err = e as { code?: string; message?: string };
+                  if (err.code === 'vault_locked') {
+                    toast.warning('Unlock your vault', 'Published, but the encrypted schema was not re-signed. Unlock your vault and publish again so new submissions use the current fields.');
+                  } else {
+                    toast.error('Schema not re-signed', err.message ?? 'The encrypted form schema could not be published; new submissions may be rejected until you republish.');
+                  }
+                }
+              }
               // Only cloud-stored forms have a public link / embed; a local form
               // isn't on the server, so don't claim a shareable link for it.
               if (storageMode === 'api') {
@@ -1290,7 +1336,7 @@ export default function FormBuilder() {
             </div>
             {/* Own scroll, independent of the canvas */}
             <div className="flex-1 overflow-y-auto">
-              <FieldPalette onAddField={handleAddField} />
+              <FieldPalette onAddField={handleAddField} isPrivate={isPrivateForm} />
             </div>
           </aside>
         )}
@@ -1469,7 +1515,7 @@ export default function FormBuilder() {
 
       <BottomSheet title="Add a field" open={paletteSheetOpen} onClose={() => setPaletteSheetOpen(false)}>
         <div className="h-full min-h-0 overflow-y-auto pb-[calc(1rem+env(safe-area-inset-bottom))]">
-          <FieldPalette onAddField={handleAddField} />
+          <FieldPalette onAddField={handleAddField} isPrivate={isPrivateForm} />
         </div>
       </BottomSheet>
 
@@ -1579,6 +1625,8 @@ export default function FormBuilder() {
         settings={form.settings}
         formId={form.id}
         onSave={(settings) => updateForm(form.id, { settings })}
+        isPrivate={storageMode === 'api' && !acting ? isPrivateForm : undefined}
+        onEncryptionEnabled={() => setIsPrivateForm(true)}
       />
 
       {/* Version History */}

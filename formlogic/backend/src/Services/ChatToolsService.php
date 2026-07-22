@@ -441,12 +441,14 @@ class ChatToolsService
             case 'list_responses':
                 $this->assertFormInScope($ctx, (string) ($args['formId'] ?? ''));
                 $this->ownForm((string) ($args['formId'] ?? ''), $userId);
+                $this->assertNotPrivateForm((string) ($args['formId'] ?? ''));
                 $data = $this->responseService->getFormResponses((string) $args['formId'], ['limit' => min(200, max(1, (int) ($args['limit'] ?? 50)))]);
                 break;
             case 'add_response': {
                 $formId = (string) ($args['formId'] ?? '');
                 $this->assertFormInScope($ctx, $formId);
                 $form = $this->ownForm($formId, $userId);
+                $this->assertNotPrivateForm($formId);
                 // Owner PROGRAMMATIC write (same stance as the external API): only an explicitly
                 // archived form refuses; app-internal forms are typically 'draft' and must accept.
                 if (($form['status'] ?? '') === 'archived') {
@@ -497,6 +499,7 @@ class ChatToolsService
                 $responseId = (string) ($args['responseId'] ?? '');
                 $this->assertFormInScope($ctx, $formId);
                 $form = $this->ownForm($formId, $userId);
+                $this->assertNotPrivateForm($formId);
                 $existing = $responseId !== '' ? $this->responseService->getResponse($formId, $responseId) : null;
                 if (!$existing) {
                     throw new \Exception('Response not found');
@@ -530,6 +533,7 @@ class ChatToolsService
                 $responseId = (string) ($args['responseId'] ?? '');
                 $this->assertFormInScope($ctx, $formId);
                 $this->ownForm($formId, $userId);
+                $this->assertNotPrivateForm($formId);
                 if ($responseId === '' || !$this->responseService->deleteResponse($formId, $responseId)) {
                     throw new \Exception('Response not found');
                 }
@@ -541,6 +545,24 @@ class ChatToolsService
                 throw new \Exception("Unknown or unavailable tool: {$name}");
         }
         return $data;
+    }
+
+    /**
+     * E2EE §9.2 gate (docs/E2EE_PRIVATE_FORMS_PLAN.md): record tools never touch a
+     * private form — reads would feed ciphertext to models, writes would smuggle
+     * plaintext past the envelope pipeline. Ownership is checked FIRST by the
+     * callers, so this never leaks another account's privacy state.
+     *
+     * @throws ChatToolDeniedException reason 'private_form_encrypted'
+     */
+    private function assertNotPrivateForm(string $formId): void
+    {
+        if ($formId !== '' && $this->responseService->isPrivateForm($formId)) {
+            throw new ChatToolDeniedException(
+                'This form is end-to-end encrypted — its records cannot be read or written by chat/MCP tools.',
+                'private_form_encrypted'
+            );
+        }
     }
 
     // ── Helpers (moved verbatim from McpController) ─────────────────────────────────────

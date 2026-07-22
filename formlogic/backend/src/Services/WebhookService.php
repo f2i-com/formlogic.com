@@ -13,6 +13,7 @@ class WebhookService
 {
     private PDO $mysql;
     private LoggerInterface $logger;
+    private ?FormEncryptionService $formEncryption = null;
 
     public function __construct(MySQLConnection $mysql, ?LoggerInterface $logger = null)
     {
@@ -68,6 +69,14 @@ class WebhookService
 
     public function createWebhook(string $formId, string $userId, string $url, array $events, ?string $description = null): array
     {
+        // E2EE §9.2 gate: webhooks carry answer payloads — creation is refused on
+        // private forms (the enable preflight guarantees none pre-exist, so this
+        // closes the post-enable half of the two-ended invariant).
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        if ($this->formEncryption->isPrivate($formId)) {
+            throw new PrivateFormEncryptedException('Webhooks are not available on private (end-to-end encrypted) forms (private_form_encrypted).');
+        }
+
         // Vet the URL with the same SSRF guards used at delivery time, before storing.
         $this->validateWebhookUrl($url);
 

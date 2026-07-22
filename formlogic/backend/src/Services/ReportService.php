@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Helpers\RecordLabel;
 use PDO;
@@ -47,7 +48,33 @@ class ReportService
     // Drafts + archived never appear in reports; everything else (submitted, reviewed, approved, …) does.
     private const HIDDEN_STATUSES = "('draft', 'archived')";
 
-    public function __construct(private SQLiteConnection $sqlite, private ?FormService $formService = null) {}
+    public function __construct(
+        private SQLiteConnection $sqlite,
+        private ?FormService $formService = null,
+        private MySQLConnection|PDO|null $mysql = null,
+    ) {}
+
+    private ?FormEncryptionService $formEncryption = null;
+
+    /**
+     * E2EE §9.2 gate (docs/E2EE_PRIVATE_FORMS_PLAN.md): reports aggregate over
+     * `answers` — on a private form that column is ciphertext, so every report
+     * (base form AND every joined form) refuses loudly instead of returning
+     * wrong/empty aggregates. Skipped only when no MySQL connection was injected
+     * (narrow unit fixtures) — every controller wires one.
+     *
+     * @throws PrivateFormEncryptedException
+     */
+    private function assertNotPrivateForm(string $formId): void
+    {
+        if ($formId === '' || $this->mysql === null) {
+            return;
+        }
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        if ($this->formEncryption->isPrivate($formId)) {
+            throw new PrivateFormEncryptedException('Reports are not available on private (end-to-end encrypted) forms — open the records to view them (private_form_encrypted).');
+        }
+    }
 
     /**
      * @param array $spec  { viz, filters, filterMode?, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit?, dateRange?, seriesBy? }
@@ -61,6 +88,12 @@ class ReportService
     public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = []): array
     {
         $viz = in_array($spec['viz'] ?? 'table', self::VIZ, true) ? (string) $spec['viz'] : 'table';
+
+        // §9.2: refuse before any SQLite work — base form and every joined form.
+        $this->assertNotPrivateForm($formId);
+        foreach ($joins as $j) {
+            $this->assertNotPrivateForm((string) ($j['formId'] ?? ''));
+        }
 
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return ['viz' => $viz, 'columns' => [], 'rows' => [], 'series' => [], 'value' => 0];

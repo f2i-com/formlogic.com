@@ -960,6 +960,14 @@ class AppService
 
     public function addFormToApp(string $appId, string $formId, ?string $displayName = null): array
     {
+        // E2EE §9.1/§9.2 (docs/E2EE_PRIVATE_FORMS_PLAN.md): P3 private forms are
+        // standalone-only — attaching one to an app is refused at this feature's
+        // creation path, mirroring the enable preflight (app-runtime private
+        // forms arrive with grants in P5).
+        if ((new FormEncryptionService($this->mysql))->isPrivate($formId)) {
+            throw new PrivateFormEncryptedException('Private (end-to-end encrypted) forms cannot be added to an app (private_form_encrypted).');
+        }
+
         // Friendly duplicate guard — the same form CAN back multiple apps (shared
         // data), but attaching it twice to the SAME app is always a mistake. The
         // UNIQUE(app_id, form_id) index is the authoritative backstop; the catch

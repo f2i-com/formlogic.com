@@ -8,6 +8,7 @@ use FormLogic\Services\SubmissionIdempotencyService;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\FormService;
+use FormLogic\Services\PrivateFormEncryptedException;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\WebhookService;
 use FormLogic\Services\ScriptRejection;
@@ -300,6 +301,9 @@ class ExternalApiController
 
             $createdId = is_string($result['id'] ?? null) ? $result['id'] : null;
             return $this->jsonResponse($response, ['response' => $result], 201);
+        } catch (PrivateFormEncryptedException $e) {
+            // §9.2: plaintext writes to a private form refuse typed, before sanitation runs.
+            return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
@@ -434,6 +438,9 @@ class ExternalApiController
                     $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null, 'stored' => $stored];
                     $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId'], 'batch' => true, 'stored' => $stored]);
                 }
+            } catch (PrivateFormEncryptedException $e) {
+                // §9.2: batch drains are envelope-only for private forms.
+                $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage(), 'code' => PrivateFormEncryptedException::ERROR_CODE];
             } catch (\RuntimeException | \InvalidArgumentException $e) {
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage()];
             } catch (\Exception $e) {
@@ -497,7 +504,12 @@ class ExternalApiController
             'offset' => max(0, (int)($params['offset'] ?? 0)),
         ];
 
-        $responses = $this->responseService->getFormResponses($args['formId'], $options);
+        try {
+            $responses = $this->responseService->getFormResponses($args['formId'], $options);
+        } catch (PrivateFormEncryptedException $e) {
+            // §9.2: answer filters on a private form refuse typed, never wrong results.
+            return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
+        }
         $responses = array_map([$this, 'sanitizeResponseData'], $responses);
         return $this->jsonResponse($response, ['responses' => $responses]);
     }
@@ -584,6 +596,9 @@ class ExternalApiController
             return $this->jsonResponse($response, $canRead
                 ? ['response' => $this->sanitizeResponseData($formResponse)]
                 : ['success' => true, 'id' => $args['id']]);
+        } catch (PrivateFormEncryptedException $e) {
+            // §9.2: PATCH-merge over ciphertext is impossible — typed refusal.
+            return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
@@ -688,7 +703,12 @@ class ExternalApiController
             }
         }
 
-        $webhook = $this->webhookService->createWebhook($args['formId'], $userId, $url, $events, $description);
+        try {
+            $webhook = $this->webhookService->createWebhook($args['formId'], $userId, $url, $events, $description);
+        } catch (PrivateFormEncryptedException $e) {
+            // §9.2: no webhooks on private forms — typed, never silent.
+            return $this->jsonError($response, $e->getMessage(), 409, PrivateFormEncryptedException::ERROR_CODE);
+        }
         return $this->jsonResponse($response, ['webhook' => $this->sanitizeWebhook($webhook)], 201);
     }
 
