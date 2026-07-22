@@ -38,6 +38,14 @@ Options -Indexes
   SetEnvIf Request_URI "^/form/" IS_FORM_RUNTIME
   Header always unset X-Frame-Options env=IS_FORM_RUNTIME
   Header always set Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" env=IS_FORM_RUNTIME
+  # The sandboxed custom-screen host is framed SAME-ORIGIN by the app shell
+  # (CustomScreenRuntime.tsx). 'self' — deliberately NOT * — every ancestor must
+  # be our origin: an externally framed, UNsandboxed screen-host that accepted a
+  # hostile init postMessage would document.write attacker script AT THIS ORIGIN.
+  # The host's boot additionally refuses cross-origin init messages.
+  SetEnvIf Request_URI "^/screen-host\.html$" IS_SCREEN_HOST
+  Header always set X-Frame-Options "SAMEORIGIN" env=IS_SCREEN_HOST
+  Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_SCREEN_HOST
 </IfModule>
 
 # ---- Never serve secrets or server files over HTTP -------------------------

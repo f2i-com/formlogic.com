@@ -108,7 +108,9 @@ export default defineConfig(({ mode }) => {
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MiB for WASM
         // The Monaco editor + esbuild-wasm compiler are large, lazy, Studio-only chunks — they load on
         // demand (online authoring), so keep them OUT of the offline precache instead of bloating it.
-        globIgnores: ['**/esbuild-*.wasm', '**/ts.worker-*.js', '**/MonacoEditorImpl-*.js'],
+        // screen-host.html stays out too: its FRESH response headers (frame-ancestors scope in
+        // .htaccess) are load-bearing, and a precached copy would pin stale ones.
+        globIgnores: ['**/esbuild-*.wasm', '**/ts.worker-*.js', '**/MonacoEditorImpl-*.js', '**/screen-host.html'],
         navigateFallback: '/index.html',
         // SPA fallback for all client routes (the whole app is one SPA), except
         // the API and the sandboxed custom-screen host document (a REAL file the

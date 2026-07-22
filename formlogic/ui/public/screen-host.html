@@ -32,8 +32,14 @@
         window.addEventListener('message', function (e) {
           var m = e.data;
           if (initialized || !m || m.__flScreenDoc == null) return;
-          // Only the embedding host may initialize this sandbox, exactly once.
+          // Only the embedding host may initialize this sandbox, exactly once,
+          // and only from OUR origin: this document is served same-origin (the
+          // sandbox attribute is what makes the WRITTEN content run opaque), so
+          // accepting a cross-origin parent's doc would execute attacker markup
+          // at this origin in a non-sandboxed embedding. frame-ancestors 'self'
+          // (.htaccess) blocks that embedding; this check is defense in depth.
           if (e.source !== window.parent) return;
+          if (e.origin !== location.protocol + '//' + location.host) return;
           initialized = true;
           document.open();
           document.write(String(m.__flScreenDoc));

@@ -59,10 +59,20 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
       fail('public/screen-host.html meta CSP differs from SCREEN_CSP (sdkRuntime.ts) — keep them byte-identical');
     }
   }
-  // The host boot must accept exactly one parent init and nothing else.
-  // (Sandboxing itself is asserted on the embedding side — CustomScreenRuntime.tsx.)
+  // The host boot must accept exactly one parent init, from OUR origin only —
+  // a cross-origin init in a non-sandboxed embedding would document.write
+  // attacker markup at this origin. (Sandboxing itself is asserted on the
+  // embedding side — CustomScreenRuntime.tsx; framing is restricted to 'self'
+  // in public/.htaccess.)
   if (!host.includes('e.source !== window.parent')) {
     fail('screen-host.html must only accept init messages from window.parent');
+  }
+  if (!host.includes("e.origin !== location.protocol + '//' + location.host")) {
+    fail('screen-host.html must refuse cross-origin init messages');
+  }
+  const htaccess = readFileSync(resolve(root, 'public/.htaccess'), 'utf8');
+  if (!/screen-host\\?\.html[\s\S]{0,400}frame-ancestors 'self'/.test(htaccess)) {
+    fail(".htaccess must scope screen-host.html to frame-ancestors 'self' (never *)");
   }
 }
 
