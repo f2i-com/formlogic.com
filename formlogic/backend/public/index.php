@@ -288,7 +288,7 @@ $container->set(FormLogicRuntime::class, function (Container $c) {
 });
 
 $container->set(ResponseService::class, function (Container $c) {
-    return new ResponseService(
+    $service = new ResponseService(
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
         $c->get(FormLogicRuntime::class),
@@ -296,6 +296,16 @@ $container->set(ResponseService::class, function (Container $c) {
         $c->get(WebhookService::class),
         $c->get(FileStorageService::class),
         $c->get(\FormLogic\Services\FlowService::class)
+    );
+    // N3b signed op log (docs/FORMLOGIC_DATA_NODES.md §12): injection-only so
+    // the Cloud signing key resolves through ONE configured path.
+    $service->setDataOperationLog($c->get(\FormLogic\Services\DataOperationLogService::class));
+    return $service;
+});
+$container->set(\FormLogic\Services\DataOperationLogService::class, function (Container $c) {
+    return new \FormLogic\Services\DataOperationLogService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\DataCloudSigner::class)
     );
 });
 

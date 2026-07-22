@@ -92,6 +92,41 @@ class ResponseService
      * @return array{id: string, status: string, submittedAt: string, updatedAt: string}
      * @throws DuplicateResponseIdException when the recordId already exists
      */
+    /** N3b op log — injected via DI (setDataOperationLog); null = legacy behaviour. */
+    private ?DataOperationLogService $dataOperationLog = null;
+
+    /**
+     * Wire the signed operation log (docs/FORMLOGIC_DATA_NODES.md §12).
+     * Injection-only ON PURPOSE: a lazily self-built instance could resolve a
+     * DIFFERENT Cloud signing key path than the DI-configured one and split
+     * the signer identity. No injection = no op logging (legacy behaviour).
+     */
+    public function setDataOperationLog(?DataOperationLogService $service): void
+    {
+        $this->dataOperationLog = $service;
+    }
+
+    /**
+     * Undo a create whose MySQL mirror gate refused: row + its just-appended
+     * (never acknowledged) operation + head state, atomically.
+     */
+    private function compensateEncryptedCreate(\PDO $db, string $id, ?array $opContext): void
+    {
+        $db->beginTransaction();
+        try {
+            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+            if ($opContext !== null && $this->dataOperationLog !== null) {
+                $this->dataOperationLog->rollbackAppend($db, $opContext);
+            }
+            $db->commit();
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $this->logger->error('encrypted-create compensation failed', ['error' => $e->getMessage()]);
+        }
+    }
+
     public function createEncryptedResponse(string $formId, array $envelope, ?string $submittedByUserId, ?string $ipAddress): array
     {
         if (!$this->formExists($formId)) {
@@ -110,11 +145,24 @@ class ResponseService
         $this->sqlite->migrateFormDatabase($db);
         $now = date('Y-m-d H:i:s');
 
+        // N3b op log (docs/FORMLOGIC_DATA_NODES.md §12): a form with an
+        // owner-signed placement appends a signed flop:1 operation in the SAME
+        // SQLite transaction as the row (plan §10.2). Legacy forms (no signed
+        // placement, or no op-log service wired) keep the exact old path.
+        $placement = $this->dataOperationLog?->placementFor($formId);
+        if ($placement !== null) {
+            $this->dataOperationLog->ensureLogSchema($db);
+        }
+        $opContext = null;
+
         $metadata = ($submittedByUserId !== null && $submittedByUserId !== '')
             ? json_encode(['submittedByUserId' => $submittedByUserId])
             : '{}';
 
         try {
+            if ($placement !== null) {
+                $db->beginTransaction();
+            }
             $stmt = $db->prepare("
                 INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
                 VALUES (:id, :answers, :metadata, 'submitted', :submitted_at, :updated_at)
@@ -126,10 +174,22 @@ class ResponseService
                 'submitted_at' => $now,
                 'updated_at' => $now,
             ]);
+            if ($placement !== null) {
+                $opContext = $this->dataOperationLog->appendCreate($db, $formId, $placement, $envelope, $answersJson, $now);
+                $db->commit();
+            }
         } catch (\PDOException $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
             // SQLite UNIQUE violation on the primary key = duplicate client recordId.
             if ($e->getCode() === '23000' || str_contains($e->getMessage(), 'UNIQUE constraint failed')) {
                 throw new DuplicateResponseIdException();
+            }
+            throw $e;
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
             }
             throw $e;
         }
@@ -155,7 +215,7 @@ class ResponseService
                 'fe_form_id' => $formId,
             ]);
             if ($stmt->rowCount() === 0) {
-                $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+                $this->compensateEncryptedCreate($db, $id, $opContext);
                 $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
                 if ($this->formEncryption->encryptionState($formId) === 'enabling') {
                     throw new EncryptionEnablingException();
@@ -167,14 +227,26 @@ class ResponseService
         } catch (\PDOException $e) {
             if ($e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062)) {
                 // The recordId already exists in the mirror (e.g. reused across forms).
-                $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+                $this->compensateEncryptedCreate($db, $id, $opContext);
                 throw new DuplicateResponseIdException();
             }
-            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+            $this->compensateEncryptedCreate($db, $id, $opContext);
             throw $e;
         } catch (\Throwable $e) {
-            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
+            $this->compensateEncryptedCreate($db, $id, $opContext);
             throw $e;
+        }
+
+        if ($placement !== null) {
+            // Cloud anchor redundancy (plan §10.3) — best-effort after commit.
+            try {
+                $this->dataOperationLog->stageHighWater($db, $formId);
+                $this->dataOperationLog->syncHighWater($formId);
+            } catch (\Throwable $hwErr) {
+                $this->logger->error('data high-water sync failed after create', [
+                    'formId' => $formId, 'error' => $hwErr->getMessage(),
+                ]);
+            }
         }
 
         // Non-content bookkeeping only: completion analytics + the denormalized count.
@@ -209,12 +281,63 @@ class ResponseService
             throw new \RuntimeException('Envelope could not be serialized');
         }
         $db = $this->sqlite->getFormDatabase($formId);
+        $now = date('Y-m-d H:i:s');
+        // N3b op log: placed forms bump row_version in the SAME CAS statement and
+        // append the signed response.envelope.put in the same transaction.
+        $placement = $this->dataOperationLog?->placementFor($formId);
+        if ($placement !== null) {
+            $this->dataOperationLog->ensureLogSchema($db);
+            $db->beginTransaction();
+            try {
+                $stmt = $db->prepare("
+                    UPDATE responses SET answers = :env, updated_at = :now, row_version = row_version + 1
+                    WHERE id = :id AND json_extract(answers, '$.rev') = :expectedRev
+                ");
+                $stmt->bindValue('env', $answersJson);
+                $stmt->bindValue('now', $now);
+                $stmt->bindValue('id', $responseId);
+                $stmt->bindValue('expectedRev', $expectedRev, PDO::PARAM_INT);
+                $stmt->execute();
+                if ($stmt->rowCount() === 1) {
+                    $rv = $db->prepare('SELECT row_version FROM responses WHERE id = :id');
+                    $rv->execute(['id' => $responseId]);
+                    $newRowVersion = (int) $rv->fetchColumn();
+                    $this->dataOperationLog->appendEnvelopePut(
+                        $db, $formId, $placement, $envelope, $answersJson, $expectedRev, $newRowVersion, $now,
+                    );
+                    $db->commit();
+                    try {
+                        $this->dataOperationLog->stageHighWater($db, $formId);
+                        $this->dataOperationLog->syncHighWater($formId);
+                    } catch (\Throwable $hwErr) {
+                        $this->logger->error('data high-water sync failed after update', [
+                            'formId' => $formId, 'error' => $hwErr->getMessage(),
+                        ]);
+                    }
+                    return ['ok' => true, 'found' => true, 'currentRev' => $expectedRev + 1];
+                }
+                // CAS miss: nothing changed, nothing logged.
+                $db->rollBack();
+            } catch (\Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                throw $e;
+            }
+            $cur = $db->prepare("SELECT json_extract(answers, '$.rev') FROM responses WHERE id = :id");
+            $cur->execute(['id' => $responseId]);
+            $rev = $cur->fetchColumn();
+            if ($rev === false) {
+                return ['ok' => false, 'found' => false, 'currentRev' => null];
+            }
+            return ['ok' => false, 'found' => true, 'currentRev' => is_numeric($rev) ? (int) $rev : null];
+        }
         $stmt = $db->prepare("
             UPDATE responses SET answers = :env, updated_at = :now
             WHERE id = :id AND json_extract(answers, '$.rev') = :expectedRev
         ");
         $stmt->bindValue('env', $answersJson);
-        $stmt->bindValue('now', date('Y-m-d H:i:s'));
+        $stmt->bindValue('now', $now);
         $stmt->bindValue('id', $responseId);
         // PARAM_INT is load-bearing: json_extract yields an SQLite INTEGER, and
         // SQLite's strict expression comparison would never match a TEXT-bound '1'.

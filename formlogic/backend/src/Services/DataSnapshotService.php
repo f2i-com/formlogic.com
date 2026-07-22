@@ -150,163 +150,165 @@ final class DataSnapshotService
         $fkEpochs = [];
 
         // ── responses.ndjson.enc — exact stored envelope bytes, opaque ──────
+        // All per-form SQLite reads (rows + op log + head state) happen inside
+        // ONE read transaction so a concurrent write cannot interleave between
+        // them (WAL snapshot isolation).
         $responseCount = 0;
         $responsesLines = [];
+        $opLines = [];
+        $storedHead = null;
         if ($this->sqlite->formDatabaseExists($formId)) {
-            $rows = $this->sqlite->getFormDatabase($formId)->query(
-                'SELECT id, answers, status, submitted_at, updated_at FROM responses ORDER BY id'
-            );
-            foreach ($rows->fetchAll(\PDO::FETCH_ASSOC) as $row) {
-                $answersRaw = (string) $row['answers'];
-                $envelope = json_decode($answersRaw, true);
-                if (!is_array($envelope) || ($envelope['__flenc'] ?? null) !== 1) {
-                    // A non-envelope row inside a Private form is corruption,
-                    // not exportable data (review: authoritative tri-state).
-                    throw new \RuntimeException('snapshot_corrupt_row: non-envelope answers in a private form');
+            $formDb = $this->sqlite->getFormDatabase($formId);
+            $formDb->beginTransaction();
+            try {
+                try {
+                    $rows = $formDb->query(
+                        'SELECT id, answers, status, submitted_at, updated_at, row_version, lifecycle_state, trashed_at
+                         FROM responses ORDER BY id'
+                    )->fetchAll(\PDO::FETCH_ASSOC);
+                } catch (\PDOException) {
+                    // Legacy form: the N3b columns do not exist yet.
+                    $rows = $formDb->query(
+                        'SELECT id, answers, status, submitted_at, updated_at FROM responses ORDER BY id'
+                    )->fetchAll(\PDO::FETCH_ASSOC);
                 }
-                $rev = (int) ($envelope['rev'] ?? 1);
-                $cipherHash = hash('sha256', $answersRaw);
-                $line = json_encode([
-                    'id' => (string) $row['id'],
-                    'status' => (string) ($row['status'] ?? 'submitted'),
-                    'submittedAt' => (string) ($row['submitted_at'] ?? ''),
-                    'updatedAt' => (string) ($row['updated_at'] ?? ''),
-                    'rowVersion' => 1,
-                    'lifecycleState' => 'active',
-                    'trashedAt' => null,
-                    'rev' => $rev,
-                    'cipherHash' => $cipherHash,
-                    'answersRaw' => $answersRaw,
-                ], JSON_UNESCAPED_SLASHES);
-                if ($line === false) {
-                    throw new \RuntimeException('snapshot response row does not serialize');
+                foreach ($rows as $row) {
+                    $answersRaw = (string) $row['answers'];
+                    $envelope = json_decode($answersRaw, true);
+                    if (!is_array($envelope) || ($envelope['__flenc'] ?? null) !== 1) {
+                        // A non-envelope row inside a Private form is corruption,
+                        // not exportable data (review: authoritative tri-state).
+                        throw new \RuntimeException('snapshot_corrupt_row: non-envelope answers in a private form');
+                    }
+                    $rev = (int) ($envelope['rev'] ?? 1);
+                    $rowVersion = (int) ($row['row_version'] ?? 1);
+                    $cipherHash = hash('sha256', $answersRaw);
+                    $line = json_encode([
+                        'id' => (string) $row['id'],
+                        'status' => (string) ($row['status'] ?? 'submitted'),
+                        'submittedAt' => (string) ($row['submitted_at'] ?? ''),
+                        'updatedAt' => (string) ($row['updated_at'] ?? ''),
+                        'rowVersion' => $rowVersion,
+                        'lifecycleState' => (string) ($row['lifecycle_state'] ?? 'active'),
+                        'trashedAt' => $row['trashed_at'] ?? null,
+                        'rev' => $rev,
+                        'cipherHash' => $cipherHash,
+                        'answersRaw' => $answersRaw,
+                    ], JSON_UNESCAPED_SLASHES);
+                    if ($line === false) {
+                        throw new \RuntimeException('snapshot response row does not serialize');
+                    }
+                    $responsesLines[] = $line;
+                    $rootEntries[] = ['response', (string) $row['id'], $rowVersion, $rev, $cipherHash];
+                    $responseCount++;
                 }
-                $responsesLines[] = $line;
-                $rootEntries[] = ['response', (string) $row['id'], 1, $rev, $cipherHash];
-                $responseCount++;
+                // N3b op log: real operation history + the signed head checkpoint.
+                try {
+                    $opLines = array_map('strval', $formDb
+                        ->query('SELECT canonical_operation FROM replication_operations ORDER BY sequence')
+                        ->fetchAll(\PDO::FETCH_COLUMN));
+                    $headRaw = $formDb->query('SELECT head_checkpoint FROM op_log_state WHERE id = 1')->fetchColumn();
+                    if (is_string($headRaw) && $headRaw !== '') {
+                        $decoded = json_decode($headRaw, true);
+                        if (is_array($decoded)) {
+                            $storedHead = $decoded;
+                        }
+                    }
+                } catch (\PDOException) {
+                    // Legacy form: no op log yet.
+                }
+                $formDb->commit();
+            } catch (\Throwable $e) {
+                if ($formDb->inTransaction()) {
+                    $formDb->rollBack();
+                }
+                throw $e;
             }
         }
         $this->writeFile($dir . '/data/responses.ndjson.enc', implode("\n", $responsesLines) . ($responsesLines ? "\n" : ''));
 
         // ── control.ndjson — signed/wrapped E2EE control artifacts ───────────
+        // SHARED line builder (DataControlArtifacts): the per-write head
+        // checkpoints hash these exact bytes, so packages and checkpoints can
+        // never disagree about an artifact's root entry.
         $pdo = $this->mysql->getConnection();
+        $artifactLines = DataControlArtifacts::linesFor($pdo, $formId);
         $controlLines = [];
-        $addArtifact = function (string $kind, string $id, array $fields) use (&$controlLines, &$rootEntries): void {
-            $line = json_encode(['kind' => $kind, 'id' => $id] + $fields, JSON_UNESCAPED_SLASHES);
-            if ($line === false) {
-                throw new \RuntimeException('snapshot control artifact does not serialize');
+        foreach ($artifactLines as $artifact) {
+            $controlLines[] = $artifact['line'];
+            $decoded = json_decode($artifact['line'], true);
+            if (is_array($decoded)) {
+                if (isset($decoded['schemaVersion'])) {
+                    $schemaVersions[(int) $decoded['schemaVersion']] = true;
+                }
+                if ($artifact['kind'] === 'schema' && isset($decoded['version'])) {
+                    $schemaVersions[(int) $decoded['version']] = true;
+                }
+                if (isset($decoded['ingestEpoch'])) {
+                    $ingestEpochs[(int) $decoded['ingestEpoch']] = true;
+                }
+                if ($artifact['kind'] === 'ingestion' && isset($decoded['epoch'])) {
+                    $ingestEpochs[(int) $decoded['epoch']] = true;
+                }
+                if (isset($decoded['fkEpoch'])) {
+                    $fkEpochs[(int) $decoded['fkEpoch']] = true;
+                }
             }
-            $controlLines[] = $line;
-            $rootEntries[] = ['artifact', $kind, $id, hash('sha256', $line)];
-        };
-
-        $stmt = $pdo->prepare('SELECT * FROM form_manifests WHERE form_id = ? ORDER BY manifest_seq');
-        $stmt->execute([$formId]);
-        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $m) {
-            $schemaVersions[(int) $m['schema_version']] = true;
-            $ingestEpochs[(int) $m['ingest_epoch']] = true;
-            $addArtifact('manifest', (string) $m['id'], [
-                'manifestSeq' => (int) $m['manifest_seq'],
-                'keyId' => (string) $m['key_id'],
-                'ingestEpoch' => (int) $m['ingest_epoch'],
-                'schemaVersion' => (int) $m['schema_version'],
-                'schemaHash' => (string) $m['schema_hash'],
-                'contentSuite' => (string) $m['content_suite'],
-                'wrapSuite' => (string) $m['wrap_suite'],
-                'signerKeyId' => (string) $m['signer_key_id'],
-                'signerPk' => (string) $m['signer_pk'],
-                'signedBytes' => base64_encode((string) $m['signed_bytes']),
-                'signature' => base64_encode((string) $m['signature']),
-                'createdAt' => (string) $m['created_at'],
-                'expiresAt' => $m['expires_at'],
-                'supersededAt' => $m['superseded_at'],
-            ]);
         }
-        $stmt = $pdo->prepare('SELECT * FROM form_schema_versions WHERE form_id = ? ORDER BY version');
-        $stmt->execute([$formId]);
-        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $s) {
-            $schemaVersions[(int) $s['version']] = true;
-            $addArtifact('schema', (string) $s['id'], [
-                'version' => (int) $s['version'],
-                'schemaJson' => base64_encode((string) $s['schema_json']),
-                'schemaHash' => (string) $s['schema_hash'],
-                'createdAt' => (string) $s['created_at'],
-            ]);
-        }
-        $stmt = $pdo->prepare('SELECT * FROM form_ingestion_keys WHERE form_id = ? ORDER BY epoch');
-        $stmt->execute([$formId]);
-        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $k) {
-            $ingestEpochs[(int) $k['epoch']] = true;
-            $fkEpochs[(int) $k['fk_epoch']] = true;
-            $addArtifact('ingestion', (string) $k['id'], [
-                'epoch' => (int) $k['epoch'],
-                'publicKey' => (string) $k['public_key'],
-                'wrappedSecret' => base64_encode((string) $k['wrapped_secret']),
-                'fkEpoch' => (int) $k['fk_epoch'],
-                'state' => (string) $k['state'],
-                'acceptUntil' => $k['accept_until'],
-                'createdAt' => (string) $k['created_at'],
-            ]);
-        }
-        $stmt = $pdo->prepare('SELECT * FROM form_key_grants WHERE form_id = ? ORDER BY fk_epoch, user_id');
-        $stmt->execute([$formId]);
-        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $g) {
-            $fkEpochs[(int) $g['fk_epoch']] = true;
-            $addArtifact('grant', (string) $g['id'], [
-                'userId' => (string) $g['user_id'],
-                'fkEpoch' => (int) $g['fk_epoch'],
-                'wrappedKey' => base64_encode((string) $g['wrapped_key']),
-                'wrapSuite' => (string) $g['wrap_suite'],
-                'role' => (string) $g['role'],
-                'grantorUserId' => (string) $g['grantor_user_id'],
-                'grantorKeyId' => (string) $g['grantor_key_id'],
-                'granteePk' => (string) $g['grantee_pk'],
-                'sigVersion' => (int) $g['sig_version'],
-                'signature' => base64_encode((string) $g['signature']),
-                'expiresAt' => $g['expires_at'],
-                'state' => (string) $g['state'],
-            ]);
+        foreach (DataControlArtifacts::rootEntries($artifactLines) as $entry) {
+            $rootEntries[] = $entry;
         }
         $this->writeFile($dir . '/data/control.ndjson', implode("\n", $controlLines) . ($controlLines ? "\n" : ''));
 
-        // No tombstone/operation history exists before N3 — present but empty,
-        // so a restorer never has to guess whether the logs were omitted.
+        // Tombstones arrive with the N3c continuity ledger; operations are the
+        // REAL signed history when the form has an op log (empty for legacy).
         $this->writeFile($dir . '/data/tombstones.ndjson', '');
-        $this->writeFile($dir . '/data/operations.ndjson', '');
+        $this->writeFile($dir . '/data/operations.ndjson', implode("\n", $opLines) . ($opLines ? "\n" : ''));
 
         $logicalRoot = DataCanonicalJson::logicalRootHex($formId, $rootEntries);
         $identity = $this->signer->publicIdentity();
 
-        // ── synthesized Cloud checkpoint (legacy_cloud_primary: epoch 0) ────
         ksort($schemaVersions);
         ksort($ingestEpochs);
         ksort($fkEpochs);
-        $checkpoint = [
-            'protocol' => self::PROTOCOL,
-            'datasetId' => $formId,
-            'placementManifestHash' => null,
-            'storageEpoch' => 0,
-            'lastSequence' => 0,
-            'lastOperationHash' => null,
-            'recordCount' => $responseCount,
-            'tombstoneCount' => 0,
-            'tombstoneLedgerCoverageSequence' => 0,
-            'tombstoneLedgerRoot' => null,
-            'attachmentCount' => 0,
-            'chunkCount' => 0,
-            'versionsRepresented' => [
-                'schemaVersions' => array_map('intval', array_keys($schemaVersions)),
-                'ingestEpochs' => array_map('intval', array_keys($ingestEpochs)),
-                'fkEpochs' => array_map('intval', array_keys($fkEpochs)),
-            ],
-            'logicalRoot' => $logicalRoot,
-            'previousCheckpointHash' => null,
-            'replicaId' => 'cloud',
-            'createdAt' => $now,
-            'signerKeyId' => $identity['keyId'],
-            'signerKeyGeneration' => 1,
+        $versionsRepresented = [
+            'schemaVersions' => array_map('intval', array_keys($schemaVersions)),
+            'ingestEpochs' => array_map('intval', array_keys($ingestEpochs)),
+            'fkEpochs' => array_map('intval', array_keys($fkEpochs)),
         ];
-        $checkpoint['signature'] = $this->signer->sign(DataCanonicalJson::DOMAIN_CHECKPOINT, $checkpoint);
+
+        if ($storedHead !== null) {
+            // N3b: the REAL primary-signed head checkpoint rides along verbatim
+            // (its own signature stays valid). Its logicalRoot reflects state at
+            // the last WRITE — a later control-artifact publish can lag until
+            // the N3c publication barrier sequences those too; the package
+            // manifest's own logicalRoot below is always the packaged truth.
+            $checkpoint = $storedHead;
+        } else {
+            // Synthesized checkpoint for legacy_cloud_primary (epoch 0).
+            $checkpoint = [
+                'protocol' => self::PROTOCOL,
+                'datasetId' => $formId,
+                'placementManifestHash' => null,
+                'storageEpoch' => 0,
+                'lastSequence' => 0,
+                'lastOperationHash' => null,
+                'recordCount' => $responseCount,
+                'tombstoneCount' => 0,
+                'tombstoneLedgerCoverageSequence' => 0,
+                'tombstoneLedgerRoot' => null,
+                'attachmentCount' => 0,
+                'chunkCount' => 0,
+                'versionsRepresented' => $versionsRepresented,
+                'logicalRoot' => $logicalRoot,
+                'previousCheckpointHash' => null,
+                'replicaId' => 'cloud',
+                'createdAt' => $now,
+                'signerKeyId' => $identity['keyId'],
+                'signerKeyGeneration' => 1,
+            ];
+            $checkpoint['signature'] = $this->signer->sign(DataCanonicalJson::DOMAIN_CHECKPOINT, $checkpoint);
+        }
         $checkpointHash = DataCanonicalJson::hashHex(
             DataCanonicalJson::DOMAIN_CHECKPOINT,
             array_diff_key($checkpoint, ['signature' => true]),
@@ -343,17 +345,17 @@ final class DataSnapshotService
             'sourceReplicaId' => 'cloud',
             'datasets' => [['datasetId' => $formId, 'formId' => $formId]],
             'createdAt' => $now,
-            'storageEpoch' => 0,
+            'storageEpoch' => (int) ($checkpoint['storageEpoch'] ?? 0),
             'checkpointHash' => $checkpointHash,
-            'lastSequence' => 0,
-            'lastOperationHash' => null,
+            'lastSequence' => (int) ($checkpoint['lastSequence'] ?? 0),
+            'lastOperationHash' => $checkpoint['lastOperationHash'] ?? null,
             'counts' => [
                 'responses' => $responseCount,
                 'tombstones' => 0,
                 'attachments' => 0,
                 'chunks' => 0,
             ],
-            'versionsRepresented' => $checkpoint['versionsRepresented'],
+            'versionsRepresented' => $versionsRepresented,
             'files' => $files,
             'logicalRoot' => $logicalRoot,
             'incrementalParent' => null,

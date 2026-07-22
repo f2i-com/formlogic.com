@@ -2,8 +2,9 @@
 
 Status: N0 (protocol freeze) + N1 (Desktop encrypted store, read-only Data workspace) +
 N2 (Cloud-primary Desktop snapshots §9, account backups §10, scheduler) + N3a (node
-enrolment/approval + placement baseline, §11) implemented. N3b+ (relay, StorageRouter,
-op log, leases, cutover) pending. Plan authority:
+enrolment/approval + placement baseline, §11) + N3b (Cloud-primary signed op log, §12)
+implemented. N3c+ (leases, reservations, relay, StorageRouter, cutover, tombstone
+ledger) pending. Plan authority:
 [FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md](FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md).
 
 This document pins the *implementation-level* constants that the plan leaves to N0:
@@ -248,3 +249,34 @@ definition); instead the transfer and local storage are sealed:
 - UI: web Settings → Linked Desktops → "Data nodes" (approve/revoke, fingerprint
   confirm); Form Settings → Access → "Data storage" card (sign baseline); desktop Data
   workspace shows its Cloud enrolment state ("Awaiting approval in web Settings").
+
+## 12. N3b — Cloud-primary signed operation log
+
+For a Private form WITH the §11 signed placement, every envelope write appends an
+flop:1 operation (`DataOperationLogService`, injected into ResponseService — injection
+ONLY, so the Cloud signing key resolves through one configured path):
+
+- Row mutation + operation land in ONE per-form-SQLite transaction (plan §10.2):
+  `replication_operations` (desktop-compatible columns) + a single-row `op_log_state`
+  (last sequence/hash + the signed head checkpoint). The MySQL mirror gate stays after
+  commit; a gate refusal compensates row + op + state atomically (the op was never
+  acknowledged or served). `responses` gains row_version / lifecycle_state / trashed_at
+  (guarded ALTER; the CAS update bumps row_version in the same statement).
+- Ops are signed by the placement-bound Cloud authority, hash-chained
+  (previousOperationHash), sequence-contiguous, and carry
+  `encryptionManifestHash = sha256(exact form_manifests.signed_bytes of the accepted
+  tuple)`. CAS misses append NOTHING. **v1 caveat:** the pre-lease Cloud primary uses a
+  random per-op writeLeaseId + fencingGeneration 1 until the N3c lease service;
+  lease enforcement begins when a second primary becomes possible.
+- After each write the signed flcheckpoint:1 HEAD is rebuilt (flroot recomputed O(n) —
+  incremental root queued for N5) and the Cloud anchor row
+  (`data_dataset_high_water`) is upserted best-effort.
+- Artifact root entries hash the EXACT control.ndjson line bytes, built by the shared
+  `DataControlArtifacts` (used by BOTH snapshots and head checkpoints — never rebuild
+  those lines independently). A control-artifact publish (schema/key rotation) does not
+  yet refresh the head — that sequencing is the N3c publication barrier; the snapshot
+  manifest's own logicalRoot is always packaged truth.
+- Snapshots of placed forms now carry the REAL history: operations.ndjson = the
+  canonical op lines, checkpoint.json = the stored signed head (verbatim), and the
+  backup manifest's storageEpoch/lastSequence/lastOperationHash come from it.
+  legacy_cloud_primary forms are byte-for-byte untouched (no schema change, no ops).
