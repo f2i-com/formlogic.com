@@ -34,6 +34,25 @@ export function flowPickOptions(flows: FlowDefinition[]): FlowPickOption[] {
   });
 }
 
+/**
+ * The §6.4 input contract of one catalog service action — the service_action panel's
+ * checks reuse the flow_call machinery (same conservative rules, different source of
+ * truth: the Desktop v3 catalog's declared `inputSchema` instead of a sibling flow's).
+ * Null when the action declares no inputSchema: nothing provable, so nothing flagged.
+ */
+export function serviceActionContract(
+  action: { id: string; title?: string; inputSchema?: Record<string, unknown> } | null | undefined,
+): FlowPickOption | null {
+  if (!action?.inputSchema || typeof action.inputSchema !== 'object') return null;
+  return {
+    id: action.id,
+    name: action.title && action.title !== '' ? action.title : action.id,
+    slug: action.id,
+    declaredInputs: [],
+    inputSchema: action.inputSchema,
+  };
+}
+
 /** The lattice type of a LITERAL mapping value (never a selector — callers filter those). */
 export function literalPortType(value: unknown): NormalizedPortType {
   if (value === null) return { types: ['null'] };

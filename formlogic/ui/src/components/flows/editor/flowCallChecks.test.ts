@@ -3,7 +3,7 @@
 // mismatches error only at conversion-required/incompatible, and the child's contract is
 // the union of Trigger-declared names and inputSchema properties.
 import { describe, expect, it } from 'vitest';
-import { checkFlowCallInput, flowPickOptions, literalPortType } from './flowCallChecks';
+import { checkFlowCallInput, flowPickOptions, literalPortType, serviceActionContract } from './flowCallChecks';
 import type { FlowPickOption } from './nodeCatalog';
 import type { FlowDefinition } from '../../../types/flows';
 
@@ -36,6 +36,25 @@ describe('flowPickOptions', () => {
     const [option] = flowPickOptions([flow]);
     expect(option.declaredInputs).toEqual(['customerId', 'note']);
     expect(option.inputSchema).toEqual({ type: 'object', properties: { customerId: { type: 'string' } } });
+  });
+});
+
+describe('serviceActionContract', () => {
+  it('builds a checkable contract from a catalog action with an inputSchema', () => {
+    const contract = serviceActionContract({
+      id: 'chat.complete',
+      title: 'Chat completion',
+      inputSchema: { type: 'object', required: ['messages'], properties: { messages: { type: 'array' } } },
+    });
+    expect(contract?.name).toBe('Chat completion');
+    const issues = checkFlowCallInput({}, contract);
+    expect(issues.find((i) => i.key === 'messages')?.severity).toBe('error');
+  });
+
+  it('returns null (nothing provable, nothing flagged) without an inputSchema', () => {
+    expect(serviceActionContract({ id: 'models.list' })).toBeNull();
+    expect(serviceActionContract(null)).toBeNull();
+    expect(serviceActionContract(undefined)).toBeNull();
   });
 });
 

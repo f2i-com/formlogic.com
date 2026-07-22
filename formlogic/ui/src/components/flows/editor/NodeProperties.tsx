@@ -8,7 +8,7 @@
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import { AlertTriangle, Info, Plus, Search, Sparkles, Trash2, Zap } from 'lucide-react';
-import { checkFlowCallInput, type FlowCallIssue } from './flowCallChecks';
+import { checkFlowCallInput, serviceActionContract, type FlowCallIssue } from './flowCallChecks';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
@@ -31,7 +31,12 @@ import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
 import { listProviders } from '../../../client-runtime/flows/aiProviders';
 import { defaultSourceLabel, getAiPreferences } from '../../../client-runtime/flows/aiDefault';
 import { buildAiProviderOptions } from './aiProviderOptions';
-import { desktopClient, type DesktopServiceSnapshot } from '../../../client-runtime/desktop/desktopClient';
+import {
+  desktopClient,
+  type DesktopServiceCatalog,
+  type DesktopServiceDefinitionAction,
+  type DesktopServiceSnapshot,
+} from '../../../client-runtime/desktop/desktopClient';
 import { mergeKnownConnectorCommands } from '../flowEventCatalog';
 import { useAuthStore } from '../../../stores/authStore';
 
@@ -718,6 +723,175 @@ function DesktopServicePickerField({
   );
 }
 
+// ── service_action pickers (§6.4 consumer #2: the catalog's typed action schemas) ─────
+
+/** One session-cached Desktop v3 catalog fetch shared by every service_action field. */
+let serviceCatalogPromise: Promise<DesktopServiceCatalog | null> | null = null;
+function fetchServiceCatalogOnce(): Promise<DesktopServiceCatalog | null> {
+  if (!serviceCatalogPromise) {
+    serviceCatalogPromise = desktopClient.servicePlatform.catalog().then(
+      (res) => (res.ok ? res.data : null),
+      () => null,
+    );
+    // A transient failure (Desktop not paired yet) must not poison the session.
+    void serviceCatalogPromise.then((catalog) => {
+      if (catalog === null) serviceCatalogPromise = null;
+    });
+  }
+  return serviceCatalogPromise;
+}
+
+/** undefined = loading, null = no paired Desktop / catalog unavailable. */
+function useServiceCatalog(): DesktopServiceCatalog | null | undefined {
+  const [catalog, setCatalog] = useState<DesktopServiceCatalog | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchServiceCatalogOnce().then((next) => {
+      if (!cancelled) setCatalog(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return catalog;
+}
+
+function catalogAction(
+  catalog: DesktopServiceCatalog | null | undefined,
+  definitionId: unknown,
+  actionId: unknown,
+): DesktopServiceDefinitionAction | null {
+  if (!catalog || typeof definitionId !== 'string' || typeof actionId !== 'string') return null;
+  const definition = catalog.definitions.find((d) => d.id === definitionId);
+  return definition?.actions.find((a) => a.id === actionId) ?? null;
+}
+
+/** ServiceDefinition picker over the paired Desktop's v3 catalog; free text otherwise. */
+function ServiceDefinitionPickerField({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const catalog = useServiceCatalog();
+  const raw = typeof value === 'string' ? value : '';
+  if (catalog === undefined) {
+    return (
+      <label className="block">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <input type="text" value={raw} disabled placeholder="Loading the Desktop Services catalog…" className={INPUT_CLS + ' opacity-60'} />
+      </label>
+    );
+  }
+  if (!catalog || catalog.definitions.length === 0) {
+    return <Field spec={spec} value={value} onChange={onChange} />;
+  }
+  const known = catalog.definitions.some((d) => d.id === raw);
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <select
+        value={raw}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        aria-label="Service definition"
+        className={INPUT_CLS + ' cursor-pointer'}
+      >
+        <option value="">Pick a service…</option>
+        {raw !== '' && !known && <option value={raw}>{raw} (not in the catalog)</option>}
+        {catalog.definitions.map((d) => (
+          <option key={d.id} value={d.id}>{d.name || d.id}</option>
+        ))}
+      </select>
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
+/** Action picker within the node's chosen definition — schema-aware (§6.3): the picked
+ *  action's description surfaces under the field so authors see what they wired. */
+function ServiceActionPickerField({
+  spec,
+  value,
+  definitionId,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  definitionId: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const catalog = useServiceCatalog();
+  const raw = typeof value === 'string' ? value : '';
+  const definition = catalog && typeof definitionId === 'string'
+    ? catalog.definitions.find((d) => d.id === definitionId) ?? null
+    : null;
+  if (catalog === undefined) {
+    return (
+      <label className="block">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <input type="text" value={raw} disabled placeholder="Loading the Desktop Services catalog…" className={INPUT_CLS + ' opacity-60'} />
+      </label>
+    );
+  }
+  if (!definition || definition.actions.length === 0) {
+    return <Field spec={spec} value={value} onChange={onChange} />;
+  }
+  const selected = definition.actions.find((a) => a.id === raw) ?? null;
+  const known = selected !== null;
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <select
+        value={raw}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        aria-label="Service action"
+        className={INPUT_CLS + ' cursor-pointer'}
+      >
+        <option value="">Pick an action…</option>
+        {raw !== '' && !known && <option value={raw}>{raw} (not in this service)</option>}
+        {definition.actions.map((a) => (
+          <option key={a.id} value={a.id}>{a.title || a.id} ({a.id})</option>
+        ))}
+      </select>
+      {selected?.description ? (
+        <p className={HELP_CLS}>{selected.description}</p>
+      ) : (
+        spec.help && <p className={HELP_CLS}>{spec.help}</p>
+      )}
+    </label>
+  );
+}
+
+/** service_action's input editor + §6.4 advice against the action's declared inputSchema. */
+function ServiceActionInputField({
+  spec,
+  value,
+  definitionId,
+  actionId,
+  onChange,
+  setInserter,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  definitionId: unknown;
+  actionId: unknown;
+  onChange: (value: unknown) => void;
+  setInserter: (fn: ((text: string) => void) | null) => void;
+}) {
+  const catalog = useServiceCatalog();
+  const contract = serviceActionContract(catalogAction(catalog, definitionId, actionId));
+  const issues = contract ? checkFlowCallInput(value, contract) : [];
+  return (
+    <div className="space-y-1.5">
+      <CodeField spec={spec} value={value} onChange={onChange} setInserter={setInserter} />
+      {issues.length > 0 && <FlowCallInputIssues issues={issues} />}
+    </div>
+  );
+}
+
 export function AiProviderPickerField({
   spec,
   value,
@@ -1174,6 +1348,20 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 if (p.type === 'desktopService') {
                   return <DesktopServicePickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
                 }
+                if (p.type === 'serviceDefinition') {
+                  return <ServiceDefinitionPickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
+                }
+                if (p.type === 'serviceActionId') {
+                  return (
+                    <ServiceActionPickerField
+                      key={p.key}
+                      spec={p}
+                      value={data[p.key]}
+                      definitionId={data.definitionId}
+                      onChange={onChange}
+                    />
+                  );
+                }
                 if (p.type === 'aiProvider') {
                   return <AiProviderPickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
                 }
@@ -1190,6 +1378,21 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 }
                 if (p.type === 'code') {
                   const codeField = <CodeField key={p.key} spec={p} value={data[p.key]} onChange={onChange} setInserter={setInserter} />;
+                  // service_action: §6.4 advice against the catalog action's declared inputSchema
+                  // (consumer #2 of the assignability lattice — same conservative machinery).
+                  if (p.key === 'input' && type === 'service_action') {
+                    return (
+                      <ServiceActionInputField
+                        key={p.key}
+                        spec={p}
+                        value={data[p.key]}
+                        definitionId={data.definitionId}
+                        actionId={data.actionId}
+                        onChange={onChange}
+                        setInserter={setInserter}
+                      />
+                    );
+                  }
                   // flow_call: static §6.4 advice for the input mapping against the picked child's
                   // contract (declared Trigger inputs + optional inputSchema). Purely presentational.
                   if (p.key === 'input' && type === 'flow_call') {

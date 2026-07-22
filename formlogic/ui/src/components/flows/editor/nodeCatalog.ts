@@ -93,7 +93,11 @@ export type FieldType =
    * via `desktopClient.services.list()`), else free text when Desktop is unpaired/unreachable.
    * Desktop auto-starts services by id/port, so non-running entries are valid choices too.
    */
-  | 'desktopService';
+  | 'desktopService'
+  /** ServiceDefinition id — a select over the paired Desktop's v3 Services catalog, else free text. */
+  | 'serviceDefinition'
+  /** An action id within the node's chosen service definition (same catalog fetch), else free text. */
+  | 'serviceActionId';
 
 /**
  * A conditional-visibility predicate over the node's own data. A property with a `showIf` is only
@@ -847,7 +851,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     doc:
       'The generic service-action node (extensible-flows plan §7): stores only stable references — a service definition id, an action id, and the Desktop AI provider profile that holds the credential. '
       + 'Desktop resolves the action from its catalog, validates your input against the action’s declared inputSchema, injects credentials via its provider gateway, and validates the output. '
-      + 'v1 executes on FormLogic Desktop only — set the flow’s “Run on” to Desktop.',
+      + 'Runs on FormLogic Desktop; a browser-run flow reaches it too when this machine’s paired Desktop is running (anywhere else the node refuses with a typed Desktop-only message).',
     icon: Layers,
     accent: 'slate',
     executable: true,
@@ -855,8 +859,8 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'definitionId', label: 'Service definition', type: 'text', required: true, placeholder: 'openai-api', help: 'The Desktop Services catalog definition id.' },
-      { key: 'actionId', label: 'Action', type: 'text', required: true, placeholder: 'chat.complete', help: 'The action id within that definition.' },
+      { key: 'definitionId', label: 'Service definition', type: 'serviceDefinition', required: true, placeholder: 'openai-api', help: 'The Desktop Services catalog definition id.' },
+      { key: 'actionId', label: 'Action', type: 'serviceActionId', required: true, placeholder: 'chat.complete', help: 'The action id within that definition.' },
       { key: 'connection', label: 'Connection (provider id)', type: 'text', required: true, placeholder: 'openai-platform', help: 'The Desktop AI provider profile that holds the credential. An opaque id — never a URL or key.' },
       { key: 'input', label: 'Input', type: 'code', language: 'json', referenceSyntax: 'selector', placeholder: '{ "messages": [{ "role": "user", "content": "$inputs.prompt" }] }', help: 'An object matching the action’s inputSchema. String values may be $ selectors.' },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '(action default)', help: 'Optional override of the action’s declared timeout.' },
