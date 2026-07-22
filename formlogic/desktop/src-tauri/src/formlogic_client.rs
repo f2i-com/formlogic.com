@@ -277,6 +277,75 @@ impl FormLogicClient {
         .map(|_| ())
     }
 
+    /// `POST /api/v1/data-node/account-backups` — build a whole-account backup
+    /// sealed to the given ephemeral X25519 public key. Long timeout: the
+    /// server exports + seals the entire archive before answering.
+    pub async fn data_account_backup_create(&self, ephemeral_pk_b64: &str) -> FlResult<Value> {
+        self.send_inner(
+            reqwest::Method::POST,
+            "data-node/account-backups",
+            &[],
+            Some(&serde_json::json!({ "ephemeralPk": ephemeral_pk_b64 })),
+            Some(Duration::from_secs(300)),
+        )
+        .await
+        .map(|(_, v)| v)
+    }
+
+    /// `GET /api/v1/data-node/account-backups/{id}/payload` — stream the
+    /// sealed payload STRAIGHT to disk (it can be hundreds of MB; never
+    /// buffer it whole in memory).
+    pub async fn data_account_backup_payload_to_file(
+        &self,
+        backup_id: &str,
+        dest: &std::path::Path,
+    ) -> FlResult<u64> {
+        use futures_util::StreamExt;
+        let url = format!("{}/api/v1/data-node/account-backups/{}/payload", self.base, backup_id);
+        let resp = self
+            .http
+            .request(reqwest::Method::GET, &url)
+            .bearer_auth(&self.key)
+            .timeout(Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|e| FlError::Network(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(FlError::Http {
+                status: resp.status().as_u16(),
+                message: "account-backup payload download failed".to_string(),
+            });
+        }
+        let mut file = tokio::fs::File::create(dest)
+            .await
+            .map_err(|e| FlError::Network(format!("create {}: {e}", dest.display())))?;
+        let mut stream = resp.bytes_stream();
+        let mut written = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| FlError::Network(e.to_string()))?;
+            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+                .await
+                .map_err(|e| FlError::Network(format!("write payload: {e}")))?;
+            written += chunk.len() as u64;
+        }
+        tokio::io::AsyncWriteExt::flush(&mut file)
+            .await
+            .map_err(|e| FlError::Network(format!("flush payload: {e}")))?;
+        Ok(written)
+    }
+
+    /// `DELETE /api/v1/data-node/account-backups/{id}` — drop the staged copy.
+    pub async fn data_account_backup_delete(&self, backup_id: &str) -> FlResult<()> {
+        self.send(
+            reqwest::Method::DELETE,
+            &format!("data-node/account-backups/{backup_id}"),
+            &[],
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Cheap authenticated probe for the "Test connection" button. Hits a
     /// flows:read endpoint; a 2xx means the base URL + key + scope are good.
     pub async fn test_connection(&self) -> FlResult<()> {

@@ -104,6 +104,17 @@ pub struct DataStatus {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SelfTestReport {
+    pub ok: bool,
+    pub records: i64,
+    pub checked_operations: i64,
+    pub checked_envelopes: i64,
+    pub head_comparison: HeadComparison,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VerifyReport {
     pub dataset_id: String,
     pub ok: bool,
@@ -145,6 +156,11 @@ impl DataService {
         self.root.join("backups").join("staging")
     }
 
+    /// Sealed whole-account backups (.flaccount — docs/FORMLOGIC_DATA_NODES.md §10).
+    pub(crate) fn backups_account_dir(&self) -> PathBuf {
+        self.root.join("backups").join("account")
+    }
+
     fn node_dir(&self) -> PathBuf {
         self.root.join("node")
     }
@@ -169,6 +185,7 @@ impl DataService {
             self.forms_dir(),
             self.root.join("sync"),
             self.root.join("backups").join("data-only"),
+            self.root.join("backups").join("account"),
             self.root.join("backups").join("disaster-recovery"),
             self.root.join("quarantine"),
         ] {
@@ -690,6 +707,26 @@ impl DataService {
             checked_envelopes,
             logical_root,
             issues,
+        })
+    }
+
+    /// One-click storage self-test (the Data workspace's diagnostic): mint a
+    /// throwaway sample dataset through the REAL signed write path, verify it
+    /// end-to-end, then delete it. Leaves nothing behind on success.
+    pub fn storage_self_test(&self) -> Result<SelfTestReport, DataError> {
+        let view = self.create_sample_dataset(10)?;
+        let dataset_id = view.dataset_id.clone();
+        let verify = self.verify_dataset(&dataset_id);
+        let cleanup = self.delete_sample_dataset(&dataset_id);
+        let report = verify?;
+        cleanup?;
+        Ok(SelfTestReport {
+            ok: report.ok && view.records == 10,
+            records: view.records,
+            checked_operations: report.checked_operations,
+            checked_envelopes: report.checked_envelopes,
+            head_comparison: report.head_comparison,
+            issues: report.issues,
         })
     }
 

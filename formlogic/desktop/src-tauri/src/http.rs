@@ -2369,8 +2369,84 @@ async fn data_backup_test(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     let data = state.data.clone();
-    match tokio::task::spawn_blocking(move || crate::data::snapshots::structural_test_restore(&data, &id)).await {
+    // Dispatch by catalog kind: .flbackup packages get the structural restore,
+    // .flaccount packages get the sealed-archive verification.
+    match tokio::task::spawn_blocking(move || {
+        let kind = crate::data::snapshots::catalog(&data)
+            .into_iter()
+            .find(|b| b.backup_id == id)
+            .map(|b| b.kind);
+        match kind.as_deref() {
+            Some("account") => crate::data::account_backup::test_account_backup(&data, &id),
+            _ => crate::data::snapshots::structural_test_restore(&data, &id),
+        }
+    })
+    .await
+    {
         Ok(Ok(report)) => Json(serde_json::json!({ "ok": report.ok, "report": report })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+async fn data_account_backup_pull(State(state): State<AppState>) -> axum::response::Response {
+    let client = match data_cloud_client(&state) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    match crate::data::account_backup::pull_account_backup(&state.data, &client).await {
+        Ok(entry) => Json(serde_json::json!({ "ok": true, "backup": entry })).into_response(),
+        Err(e) => data_err(&e),
+    }
+}
+
+async fn data_self_test(State(state): State<AppState>) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || data.storage_self_test()).await {
+        Ok(Ok(report)) => Json(serde_json::json!({ "ok": report.ok, "report": report })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+async fn data_schedule_list(State(state): State<AppState>) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || crate::data::scheduler::list(&data)).await {
+        Ok(entries) => Json(serde_json::json!({ "entries": entries })).into_response(),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DataScheduleSetRequest {
+    kind: String,
+    #[serde(default)]
+    form_id: Option<String>,
+    #[serde(default)]
+    form_title: Option<String>,
+    /// None removes the schedule target.
+    #[serde(default)]
+    interval_hours: Option<u32>,
+}
+
+async fn data_schedule_set(
+    State(state): State<AppState>,
+    Json(body): Json<DataScheduleSetRequest>,
+) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::data::scheduler::set(
+            &data,
+            &body.kind,
+            body.form_id.as_deref(),
+            body.form_title.as_deref(),
+            body.interval_hours,
+        )
+    })
+    .await
+    {
+        Ok(Ok(entries)) => Json(serde_json::json!({ "ok": true, "entries": entries })).into_response(),
         Ok(Err(e)) => data_err(&e),
         Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
     }
@@ -4908,6 +4984,9 @@ pub async fn serve(
         let registry = registry.lock().unwrap_or_else(|e| e.into_inner());
         Arc::new(crate::data::DataService::new(registry.data_dir().to_path_buf()))
     };
+    // Scheduled data-only backups (deferred N2 deliverable): one background
+    // loop; idles while nothing is scheduled or no account is linked.
+    tokio::spawn(crate::data::scheduler::run_loop(data.clone(), flow_runtime.clone()));
     let state = AppState {
         config,
         registry,
@@ -4960,11 +5039,15 @@ pub async fn serve(
         .route("/api/data/sample", post(data_create_sample))
         .route("/api/data/datasets/:id/verify", post(data_verify_dataset))
         .route("/api/data/datasets/:id", delete(data_delete_dataset))
-        // N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9).
+        // N2 Cloud snapshots + sealed account backups + schedule
+        // (docs/FORMLOGIC_DATA_NODES.md §9-§10).
         .route("/api/data/cloud-forms", get(data_cloud_forms))
         .route("/api/data/backups", get(data_backups).post(data_backup_pull))
         .route("/api/data/backups/:id/test", post(data_backup_test))
         .route("/api/data/backups/:id", delete(data_backup_delete))
+        .route("/api/data/account-backup", post(data_account_backup_pull))
+        .route("/api/data/self-test", post(data_self_test))
+        .route("/api/data/schedule", get(data_schedule_list).post(data_schedule_set))
         // services
         .route("/api/services", get(list_services).post(add_service))
         // ServiceDefinition v3 is the cross-runtime catalog. Static routes are

@@ -12,6 +12,8 @@ import {
   openInExplorer,
   type DataBackupEntry,
   type DataCloudForm,
+  type DataScheduleEntry,
+  type DataSelfTestReport,
   type DataStatusSnapshot,
   type DataTestRestoreReport,
   type DataVerifyReport,
@@ -44,6 +46,8 @@ export default function DataPanel() {
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [pullFormId, setPullFormId] = useState('');
   const [lastRestore, setLastRestore] = useState<DataTestRestoreReport | null>(null);
+  const [lastSelfTest, setLastSelfTest] = useState<DataSelfTestReport | null>(null);
+  const [schedule, setSchedule] = useState<DataScheduleEntry[]>([]);
   const toast = useToast();
   const { confirm } = useConfirm();
   const reqSeq = useRef(0);
@@ -66,10 +70,15 @@ export default function DataPanel() {
     try {
       const res = await dataNodes.backups();
       setBackups(res.backups);
+      const sched = await dataNodes.schedule();
+      setSchedule(sched.entries);
     } catch {
       // Backups list is local; a failure surfaces via the main error banner.
     }
   }, []);
+
+  const scheduled = (kind: string, formId: string | null) =>
+    schedule.some((e) => e.kind === kind && (kind === 'account' || e.formId === formId));
 
   // Cloud form listing is on-demand (link + network), not polled.
   const loadCloudForms = useCallback(async () => {
@@ -110,6 +119,18 @@ export default function DataPanel() {
     },
     [refresh, toast],
   );
+
+  const toggleSchedule = (kind: string, formId: string | null, formTitle: string | null) =>
+    run(`sched-${kind}-${formId ?? ''}`, async () => {
+      const on = scheduled(kind, formId);
+      const res = await dataNodes.setSchedule(kind, formId, formTitle, on ? null : 24);
+      setSchedule(res.entries);
+      toast.push({
+        kind: 'success',
+        title: on ? 'Daily backup disabled' : 'Daily backup enabled',
+        body: on ? undefined : 'Runs in the background about once a day; the newest 5 are kept.',
+      });
+    });
 
   const summary = summarize(status);
   const failClosed = keyStoreBanner(status);
@@ -153,20 +174,22 @@ export default function DataPanel() {
               )}
               <button
                 type="button"
-                className="btn btn-primary btn-tiny"
+                className="btn btn-ghost btn-tiny"
                 disabled={busy !== null || !!failClosed}
+                title="Creates a throwaway encrypted sample dataset through the real signed write path, verifies it end-to-end, then deletes it."
                 onClick={() =>
-                  void run('sample', async () => {
-                    const res = await dataNodes.createSample(25);
+                  void run('selftest', async () => {
+                    const res = await dataNodes.selfTest();
+                    setLastSelfTest(res.report);
                     toast.push({
-                      kind: 'success',
-                      title: 'Sample dataset created',
-                      body: `${res.dataset.records} encrypted sample records`,
+                      kind: res.report.ok ? 'success' : 'error',
+                      title: res.report.ok ? 'Storage self-test passed' : 'Storage self-test FAILED',
+                      body: `${res.report.records} sample records written, verified and removed`,
                     });
                   })
                 }
               >
-                {busy === 'sample' ? 'Creating…' : 'Create sample dataset'}
+                {busy === 'selftest' ? 'Testing…' : 'Run storage self-test'}
               </button>
             </div>
           </div>
@@ -182,6 +205,19 @@ export default function DataPanel() {
             </span>
           )}
         </div>
+        {lastSelfTest && (
+          <div className="datadir-note">
+            Self-test: {lastSelfTest.ok ? 'passed' : 'FAILED'} · {lastSelfTest.checkedOperations}{' '}
+            operations and {lastSelfTest.checkedEnvelopes} envelopes verified
+            {lastSelfTest.issues.length > 0 && (
+              <ul>
+                {lastSelfTest.issues.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="model-section">
@@ -305,6 +341,18 @@ export default function DataPanel() {
                 </option>
               ))}
             </select>
+            <label className="datadir-note" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <input
+                type="checkbox"
+                checked={scheduled('form', pullFormId)}
+                disabled={busy !== null || !pullFormId}
+                onChange={() => {
+                  const form = cloudForms.find((f) => f.formId === pullFormId);
+                  void toggleSchedule('form', pullFormId, form?.title || null);
+                }}
+              />
+              Daily
+            </label>
             <button
               type="button"
               className="btn btn-primary btn-tiny"
@@ -326,6 +374,46 @@ export default function DataPanel() {
             </button>
           </div>
         )}
+
+        <div className="service-row">
+          <div style={{ minWidth: 0 }}>
+            <div>Whole-account backup</div>
+            <div className="datadir-note">
+              Everything on the linked account — ALL forms (plaintext ones too), apps and flows —
+              sealed end-to-end to this desktop before it leaves the Cloud, and stored encrypted
+              here (readable only by this desktop; the Cloud stays the primary copy).
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+            <label className="datadir-note" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <input
+                type="checkbox"
+                checked={scheduled('account', null)}
+                disabled={busy !== null}
+                onChange={() => void toggleSchedule('account', null, null)}
+              />
+              Daily
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary btn-tiny"
+              disabled={busy !== null || !!failClosed}
+              onClick={() =>
+                void run('acct', async () => {
+                  const res = await dataNodes.accountBackup();
+                  await refreshBackups();
+                  toast.push({
+                    kind: 'success',
+                    title: 'Account backup sealed and stored',
+                    body: `${formatBytes(res.backup.bytes)} → ${res.backup.fileName}`,
+                  });
+                })
+              }
+            >
+              {busy === 'acct' ? 'Backing up…' : 'Back up account now'}
+            </button>
+          </div>
+        </div>
 
         {backups.length === 0 ? (
           <div className="empty-state">No local backups yet.</div>

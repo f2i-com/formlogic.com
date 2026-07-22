@@ -50,9 +50,17 @@ pub struct CloudSignerPin {
     pub pinned_at: String,
 }
 
+fn default_kind() -> String {
+    "form".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupCatalogEntry {
+    /// `form` (Private-form snapshot, .flbackup) or `account` (whole-account
+    /// sealed backup, .flaccount).
+    #[serde(default = "default_kind")]
+    pub kind: String,
     pub backup_id: String,
     pub form_id: String,
     pub dataset_id: String,
@@ -110,10 +118,41 @@ pub fn delete_backup(svc: &DataService, backup_id: &str) -> Result<(), DataError
         return Err(DataError::NotFound(format!("backup {backup_id} not found")));
     };
     let entry = cat.backups.remove(pos);
-    let path = svc.backups_data_only_dir().join(&entry.file_name);
+    let dir = if entry.kind == "account" {
+        svc.backups_account_dir()
+    } else {
+        svc.backups_data_only_dir()
+    };
+    let path = dir.join(&entry.file_name);
     if path.is_file() {
         std::fs::remove_file(&path)
             .map_err(|e| DataError::StoreUnavailable(format!("remove backup: {e}")))?;
+    }
+    if entry.kind == "account" {
+        // Its NSMK-wrapped at-rest key is now useless — drop the wrap.
+        super::key_store::forget_dataset_key(&svc.node_dir_path(), &format!("acct-{backup_id}"))?;
+    }
+    write_catalog(svc, &cat)
+}
+
+/// Insert-or-replace a catalog entry (shared with the account-backup lane).
+pub(crate) fn catalog_upsert(svc: &DataService, entry: BackupCatalogEntry) -> Result<(), DataError> {
+    let _guard = svc.lifecycle_guard();
+    let mut cat = read_catalog(svc);
+    cat.backups.retain(|b| b.backup_id != entry.backup_id);
+    cat.backups.push(entry);
+    cat.backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    cat.v = 1;
+    write_catalog(svc, &cat)
+}
+
+/// Record a test outcome on a catalog entry (shared with the account lane).
+pub(crate) fn catalog_record_test(svc: &DataService, backup_id: &str, ok: bool) -> Result<(), DataError> {
+    let _guard = svc.lifecycle_guard();
+    let mut cat = read_catalog(svc);
+    if let Some(e) = cat.backups.iter_mut().find(|b| b.backup_id == backup_id) {
+        e.last_test_ok = Some(ok);
+        e.last_test_at = Some(utc_now_rfc3339());
     }
     write_catalog(svc, &cat)
 }
@@ -126,7 +165,7 @@ pub fn pinned_signer(svc: &DataService) -> Option<CloudSignerPin> {
         .and_then(|raw| serde_json::from_str(&raw).ok())
 }
 
-fn pin_or_verify_signer(svc: &DataService, identity: &Value) -> Result<CloudSignerPin, DataError> {
+pub(crate) fn pin_or_verify_signer(svc: &DataService, identity: &Value) -> Result<CloudSignerPin, DataError> {
     let public_key = identity.get("publicKey").and_then(Value::as_str).unwrap_or("");
     let key_id = identity.get("keyId").and_then(Value::as_str).unwrap_or("");
     let fingerprint = identity.get("fingerprint").and_then(Value::as_str).unwrap_or("");
@@ -164,7 +203,7 @@ fn pin_or_verify_signer(svc: &DataService, identity: &Value) -> Result<CloudSign
     Ok(pin)
 }
 
-fn signer_key(pin: &CloudSignerPin) -> Result<ed25519_dalek::VerifyingKey, DataError> {
+pub(crate) fn pinned_verifying_key(pin: &CloudSignerPin) -> Result<ed25519_dalek::VerifyingKey, DataError> {
     let raw = B64
         .decode(&pin.public_key)
         .ok()
@@ -331,7 +370,7 @@ pub async fn pull_cloud_snapshot(
         .await
         .map_err(|e| DataError::StoreUnavailable(format!("cloud signing key: {e:?}")))?;
     let pin = pin_or_verify_signer(svc, identity.get("data").unwrap_or(&Value::Null))?;
-    let verifying = signer_key(&pin)?;
+    let verifying = pinned_verifying_key(&pin)?;
 
     let created = client
         .data_snapshot_create(form_id)
@@ -420,6 +459,7 @@ async fn pull_verified(
     let bytes = std::fs::metadata(&finished).map(|m| m.len()).unwrap_or(0);
 
     let entry = BackupCatalogEntry {
+        kind: "form".to_string(),
         backup_id: backup_id.to_string(),
         form_id: form_id.to_string(),
         dataset_id: form_id.to_string(),
@@ -437,15 +477,7 @@ async fn pull_verified(
         last_test_ok: None,
         last_test_at: None,
     };
-    {
-        let _guard = svc.lifecycle_guard();
-        let mut cat = read_catalog(svc);
-        cat.backups.retain(|b| b.backup_id != entry.backup_id);
-        cat.backups.push(entry.clone());
-        cat.backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        cat.v = 1;
-        write_catalog(svc, &cat)?;
-    }
+    catalog_upsert(svc, entry.clone())?;
     Ok(entry)
 }
 
@@ -493,7 +525,7 @@ pub fn structural_test_restore(svc: &DataService, backup_id: &str) -> Result<Tes
     // honest "provenance unverified" state, never to silent trust.
     let provenance = match pinned_signer(svc) {
         Some(pin) => {
-            let key = signer_key(&pin)?;
+            let key = pinned_verifying_key(&pin)?;
             if canonical::verify_structure(DOMAIN_BACKUP, &manifest, &key) {
                 "cloud_signed_tofu".to_string()
             } else {
@@ -580,15 +612,7 @@ pub fn structural_test_restore(svc: &DataService, backup_id: &str) -> Result<Tes
         logical_root: Some(summary.logical_root),
         issues,
     };
-    {
-        let _guard = svc.lifecycle_guard();
-        let mut cat = read_catalog(svc);
-        if let Some(e) = cat.backups.iter_mut().find(|b| b.backup_id == backup_id) {
-            e.last_test_ok = Some(report.ok);
-            e.last_test_at = Some(utc_now_rfc3339());
-        }
-        write_catalog(svc, &cat)?;
-    }
+    catalog_record_test(svc, backup_id, report.ok)?;
     Ok(report)
 }
 
@@ -740,6 +764,7 @@ mod tests {
         let mut cat = read_catalog(svc);
         cat.v = 1;
         cat.backups.push(BackupCatalogEntry {
+            kind: "form".into(),
             backup_id: backup_id.into(),
             form_id: "11112222-3333-4333-8444-555566667777".into(),
             dataset_id: "11112222-3333-4333-8444-555566667777".into(),

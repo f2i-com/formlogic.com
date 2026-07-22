@@ -180,4 +180,38 @@ Frozen pins:
   `connector:relay` grandfathered until N3 enrolment): signing-key, eligible-forms,
   snapshots (create/file?path=/delete). All 403 `data_nodes_disabled` while the flag is
   off.
-- Deferred from N2: scheduled data-only backups (manual "Back up now" only so far).
+- Scheduled data-only backups: `data/node/backup-schedule.json`, one desktop loop
+  (15-min tick, hour-granular intervals; UI offers daily); after each successful run the
+  catalog is pruned to the newest 5 backups per target (logged, never silent).
+
+## 10. Sealed whole-account backups (`.flaccount`)
+
+The account-backup lane covers EVERYTHING on the account — including plaintext
+(non-Private) forms, apps, and flows — because users want a desktop-held copy of all
+their data. It is NOT record-level E2EE (the Cloud can read plaintext forms by
+definition); instead the transfer and local storage are sealed:
+
+- The desktop mints a fresh **ephemeral X25519 key per request** and sends the public
+  half over the authenticated API channel. The Cloud builds the existing
+  AccountBackupService archive, then — before the bytes leave the service — wraps a
+  random 32-byte file key to that ephemeral key (`crypto_box`, Cloud-side ephemeral
+  sender key) and chunk-encrypts the zip with XChaCha20-Poly1305
+  (nonce = 16-byte base || 64-bit BE chunk index; AAD `flaccount:1|backupId|i|count`,
+  so truncation/reorder/tamper fail closed). The plaintext zip is deleted after sealing.
+- The header (chunking, hashes, wrapped key, Cloud ephemeral pk) is signed by the
+  DataCloudSigner under `flbackup:1` with `kind: "account-backup"` — verifiers dispatch
+  on the signed kind, so an account header can never pass as a snapshot manifest.
+- The desktop verifies the header against the TOFU-pinned signer, decrypts chunk-by-chunk
+  in memory, checks size + SHA-256 (+ deep zip validation up to 64 MiB), and immediately
+  RE-encrypts each chunk under an NSMK-wrapped per-backup key
+  (AAD `flaccount-local:1|…`) — decrypted archive bytes never touch this disk. The
+  copy-safe `data/backups/account/<backupId>.flaccount` is a ZIP of
+  { local.json (incl. the original signed Cloud header, for provenance re-checks),
+  payload.bin }.
+- Consequence, disclosed in the UI: the local copy is readable ONLY by this desktop's
+  key store; the Cloud original remains the primary. Restore = the existing account
+  import (Cloud), or a future N7 recovery path.
+- API: `POST /api/v1/data-node/account-backups` {ephemeralPk} → signed header;
+  `GET …/{id}/payload` (streamed); `DELETE …/{id}`; staged copies sweep after 1h.
+- Errors: `account_backup_bad_ephemeral_key`, `account_backup_too_large`,
+  `account_backup_not_found`.

@@ -388,10 +388,20 @@ $container->set(\FormLogic\Services\DataSnapshotService::class, function (Contai
         dirname($uploads) . '/data-snapshots'
     );
 });
+$container->set(\FormLogic\Services\DataAccountBackupService::class, function (Container $c) {
+    $settings = $c->get('settings');
+    $uploads = $settings['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads';
+    return new \FormLogic\Services\DataAccountBackupService(
+        $c->get(\FormLogic\Services\AccountBackupService::class),
+        $c->get(\FormLogic\Services\DataCloudSigner::class),
+        dirname($uploads) . '/data-snapshots'
+    );
+});
 $container->set(\FormLogic\Controllers\DataNodeController::class, function (Container $c) {
     return new \FormLogic\Controllers\DataNodeController(
         $c->get(\FormLogic\Services\DataSnapshotService::class),
         $c->get(\FormLogic\Services\DataCloudSigner::class),
+        $c->get(\FormLogic\Services\DataAccountBackupService::class),
         (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false)
     );
 });
@@ -2571,6 +2581,15 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($dataNodeAuth);
     $group->delete('/data-node/snapshots/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->deleteSnapshot($request, $response, $getArgs($request));
+    })->add($dataNodeAuth);
+    $group->post('/data-node/account-backups', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->createAccountBackup($request, $response);
+    })->add($dataNodeAuth);
+    $group->get('/data-node/account-backups/{id}/payload', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->accountBackupPayload($request, $response, $getArgs($request));
+    })->add($dataNodeAuth);
+    $group->delete('/data-node/account-backups/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->deleteAccountBackup($request, $response, $getArgs($request));
     })->add($dataNodeAuth);
 
     $group->post('/desktop-ai/pubkey', function ($request, $response) use ($container) {

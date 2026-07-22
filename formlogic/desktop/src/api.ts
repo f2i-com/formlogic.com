@@ -1143,9 +1143,42 @@ export interface DataTestRestoreReport {
   issues: string[];
 }
 
+export interface DataScheduleEntry {
+  kind: string;
+  formId: string | null;
+  formTitle: string | null;
+  intervalHours: number;
+  lastRunAt: string | null;
+  lastOk: boolean | null;
+}
+
+export interface DataSelfTestReport {
+  ok: boolean;
+  records: number;
+  checkedOperations: number;
+  checkedEnvelopes: number;
+  headComparison: string;
+  issues: string[];
+}
+
 export const dataNodes = {
   status: () => request<DataStatusSnapshot>('/api/data/status'),
   cloudForms: () => request<{ ok: boolean; forms: DataCloudForm[] }>('/api/data/cloud-forms'),
+  selfTest: () =>
+    request<{ ok: boolean; report: DataSelfTestReport }>('/api/data/self-test', { method: 'POST' }, 120000),
+  accountBackup: () =>
+    request<{ ok: boolean; backup: DataBackupEntry }>(
+      '/api/data/account-backup',
+      { method: 'POST' },
+      // Whole-account export + seal + download + local re-seal.
+      600000,
+    ),
+  schedule: () => request<{ entries: DataScheduleEntry[] }>('/api/data/schedule'),
+  setSchedule: (kind: string, formId: string | null, formTitle: string | null, intervalHours: number | null) =>
+    request<{ ok: boolean; entries: DataScheduleEntry[] }>('/api/data/schedule', {
+      method: 'POST',
+      body: JSON.stringify({ kind, formId, formTitle, intervalHours }),
+    }),
   backups: () =>
     request<{ backups: DataBackupEntry[]; cloudSigner: DataCloudSigner | null }>('/api/data/backups'),
   pullBackup: (formId: string, formTitle: string) =>

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Services\DataAccountBackupService;
 use FormLogic\Services\DataCloudSigner;
 use FormLogic\Services\DataSnapshotService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -28,6 +29,7 @@ final class DataNodeController
     public function __construct(
         private DataSnapshotService $snapshots,
         private DataCloudSigner $signer,
+        private DataAccountBackupService $accountBackups,
         private bool $dataNodesEnabled,
     ) {
     }
@@ -104,6 +106,57 @@ final class DataNodeController
             return $gate;
         }
         $this->snapshots->deleteSnapshot((string) ($args['id'] ?? ''));
+        return $this->jsonResponse($response, ['data' => ['ok' => true]]);
+    }
+
+    public function createAccountBackup(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $body = json_decode((string) $request->getBody(), true);
+        $ephemeralPk = is_array($body) ? (string) ($body['ephemeralPk'] ?? '') : '';
+        try {
+            $result = $this->accountBackups->create($userId, $ephemeralPk);
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'account_backup_bad_ephemeral_key') {
+                return $this->jsonError($response, 'ephemeralPk must be a base64 X25519 public key', 400, 'account_backup_bad_ephemeral_key');
+            }
+            if ($e->getMessage() === 'account_backup_too_large') {
+                return $this->jsonError($response, 'Account backup exceeds the transfer cap', 413, 'account_backup_too_large');
+            }
+            throw $e;
+        }
+        return $this->jsonResponse($response, ['data' => $result], 201);
+    }
+
+    public function accountBackupPayload(Request $request, Response $response, array $args): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $path = $this->accountBackups->payloadPath((string) ($args['id'] ?? ''));
+        if ($path === null) {
+            return $this->jsonError($response, 'Unknown account backup', 404, 'account_backup_not_found');
+        }
+        $stream = fopen($path, 'rb');
+        if ($stream === false) {
+            return $this->jsonError($response, 'Could not read the sealed payload', 500);
+        }
+        return $response
+            ->withBody(new \Slim\Psr7\Stream($stream))
+            ->withHeader('Content-Type', 'application/octet-stream')
+            ->withHeader('Content-Length', (string) (int) filesize($path))
+            ->withHeader('Cache-Control', 'no-store');
+    }
+
+    public function deleteAccountBackup(Request $request, Response $response, array $args): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $this->accountBackups->delete((string) ($args['id'] ?? ''));
         return $this->jsonResponse($response, ['data' => ['ok' => true]]);
     }
 
