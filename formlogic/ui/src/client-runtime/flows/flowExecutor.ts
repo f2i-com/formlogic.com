@@ -114,13 +114,24 @@ export function validateWorkflowGraph(graph: unknown): string | null {
     if (ids.has(node.id)) return `Duplicate flow node id: '${node.id}'`;
     ids.add(node.id);
   }
+  const edgeIds = new Set<string>();
   for (let i = 0; i < g.edges.length; i++) {
-    const edge = g.edges[i] as { source?: unknown; target?: unknown } | null;
+    const edge = g.edges[i] as { id?: unknown; source?: unknown; target?: unknown } | null;
     if (!edge || typeof edge !== 'object' || typeof edge.source !== 'string' || typeof edge.target !== 'string') {
       return `Flow edge at index ${i} must have string source and target`;
     }
     if (!ids.has(edge.source) || !ids.has(edge.target)) {
       return `Flow edge at index ${i} references a missing node ('${edge.source}' → '${edge.target}')`;
+    }
+    // Graph v2 (additive): an edge MAY carry a stable id — when present it must be a
+    // non-empty string, ≤128 chars, unique across the graph (mirrors FlowService::
+    // sanitizeFlowJson and the desktop runner's parse_graph).
+    if (edge.id !== undefined) {
+      if (typeof edge.id !== 'string' || edge.id === '' || edge.id.length > 128) {
+        return `Flow edge at index ${i} has an invalid id`;
+      }
+      if (edgeIds.has(edge.id)) return `Duplicate flow edge id: '${edge.id}'`;
+      edgeIds.add(edge.id);
     }
   }
   return null;
@@ -224,13 +235,19 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
   const outputs: Record<string, unknown> = {};
   const executed = new Set<string>();
   const active = new Set<string>(); // nodes reachable through taken branches
-  const incoming = new Map<string, { source: string; sourceHandle?: string }[]>();
-  for (const edge of graph.edges) {
+  // Incoming wires per target, each carrying its edge's array index — the activation key.
+  // Activation is keyed by EDGE IDENTITY (index; stable within a stored graph), never by
+  // `${source}→${target}`: parallel edges between the same two nodes (e.g. a condition's
+  // true AND false handles wired to one node) must not share one activation key, or the
+  // untaken branch is miscounted as activated (extensible-flows plan §3.1/§15.4; the
+  // desktop runner keys identically).
+  const incoming = new Map<string, { source: string; edgeIndex: number }[]>();
+  graph.edges.forEach((edge, edgeIndex) => {
     const list = incoming.get(edge.target) ?? [];
-    list.push({ source: edge.source, sourceHandle: edge.sourceHandle });
+    list.push({ source: edge.source, edgeIndex });
     incoming.set(edge.target, list);
-  }
-  const activatedEdges = new Set<string>(); // `${source}→${target}` edges whose branch was taken
+  });
+  const activatedEdges = new Set<number>(); // edge indexes whose branch was taken
 
   for (const node of order) {
     if ((incoming.get(node.id) ?? []).length === 0) active.add(node.id);
@@ -256,7 +273,7 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
       // Upstream value: the single activated predecessor's output, or a map keyed by
       // node id when several branches converge.
       const activeIncoming = (incoming.get(node.id) ?? []).filter(
-        (e) => executed.has(e.source) && activatedEdges.has(`${e.source}→${node.id}`)
+        (e) => executed.has(e.source) && activatedEdges.has(e.edgeIndex)
       );
       let upstream: unknown;
       if (activeIncoming.length === 1) {
@@ -317,10 +334,11 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
         outputNodeResult = output;
       }
 
-      for (const edge of graph.edges) {
+      for (let i = 0; i < graph.edges.length; i++) {
+        const edge = graph.edges[i];
         if (edge.source !== node.id) continue;
         if (edgeIsActive(node, output, edge.sourceHandle)) {
-          activatedEdges.add(`${edge.source}→${edge.target}`);
+          activatedEdges.add(i);
           active.add(edge.target);
         }
       }

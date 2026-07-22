@@ -32,6 +32,71 @@ describe('validateWorkflowGraph', () => {
       validateWorkflowGraph({ nodes: [{ id: 'a', type: 'input' }], edges: [{ source: 'a', target: 'ghost' }] })
     ).toMatch(/missing node/);
   });
+
+  it('validates optional graph-v2 edge ids: string, non-empty, unique', () => {
+    const nodes = [{ id: 'a', type: 'input' }, { id: 'b', type: 'output' }];
+    expect(validateWorkflowGraph({ nodes, edges: [{ id: 'e1', source: 'a', target: 'b' }] })).toBeNull();
+    expect(validateWorkflowGraph({ nodes, edges: [{ id: '', source: 'a', target: 'b' }] })).toMatch(/invalid id/);
+    expect(validateWorkflowGraph({ nodes, edges: [{ id: 7, source: 'a', target: 'b' }] })).toMatch(/invalid id/);
+    expect(
+      validateWorkflowGraph({
+        nodes,
+        edges: [
+          { id: 'dup', source: 'a', target: 'b' },
+          { id: 'dup', source: 'a', target: 'b', sourceHandle: 'x' },
+        ],
+      })
+    ).toMatch(/Duplicate flow edge id/);
+    // Mixed: some edges with ids, some without — legal during migration.
+    expect(
+      validateWorkflowGraph({ nodes, edges: [{ id: 'e1', source: 'a', target: 'b' }, { source: 'a', target: 'b' }] })
+    ).toBeNull();
+  });
+});
+
+describe('executeFlow — parallel edges between the same two nodes', () => {
+  it('a condition with BOTH branches wired to one node passes a plain upstream (only the taken edge counts)', async () => {
+    // Regression (extensible-flows plan §3.1): activation used to be keyed `${source}→${target}`,
+    // so the UNTAKEN branch shared the taken branch's key and the target saw a merged
+    // `{cond: value}` map instead of the plain value.
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'check', type: 'condition', data: { expr: 'true' } },
+        { id: 'join', type: 'output' },
+      ],
+      edges: [
+        { source: 'in', target: 'check' },
+        { source: 'check', target: 'join', sourceHandle: 'true' },
+        { source: 'check', target: 'join', sourceHandle: 'false' },
+      ],
+    };
+    const deps = fakeDeps({ evaluateBoolean: vi.fn(async () => true) });
+    const outcome = await executeFlow(graph, { deps });
+    expect(outcome.status).toBe('done');
+    expect(outcome.result).toBe(true); // the condition's own output, NOT { check: true }
+    expect(outcome.nodesExecuted).toBe(3);
+  });
+
+  it('two genuinely-activated parallel edges from one source still converge as a merged map', async () => {
+    // Convergence semantics are unchanged: multiple ACTIVATED incoming wires merge keyed by
+    // source node id (parallel duplicates from one source dedupe into that one key).
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'tpl', type: 'template', data: { template: 'x' } },
+        { id: 'join', type: 'output' },
+      ],
+      edges: [
+        { source: 'in', target: 'tpl' },
+        { id: 'p1', source: 'tpl', target: 'join' },
+        { id: 'p2', source: 'tpl', target: 'join', sourceHandle: 'out' },
+      ],
+    };
+    const outcome = await executeFlow(graph, { deps: fakeDeps() });
+    expect(outcome.status).toBe('done');
+    expect(outcome.result).toEqual({ tpl: 'x' });
+  });
 });
 
 describe('executeFlow — condition routing', () => {

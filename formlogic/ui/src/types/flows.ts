@@ -14,8 +14,18 @@ export interface WorkflowGraphNode {
   position?: { x: number; y: number };
 }
 
-/** One edge of a WorkflowGraph ({source,target,sourceHandle?,targetHandle?}). */
+/**
+ * One edge of a WorkflowGraph ({source,target,sourceHandle?,targetHandle?}).
+ *
+ * Graph v2 (extensible-flows plan §6.2, additive): edges MAY carry a stable `id` (unique
+ * within the graph) and a `kind`. Legacy graphs have neither — runtimes key edge activation
+ * by edge position, which is stable within a stored revision, so absent ids never change
+ * behavior. `kind` is reserved for the typed data/control split; absent reads as
+ * 'legacy-combined' (today's semantics).
+ */
 export interface WorkflowGraphEdge {
+  id?: string;
+  kind?: 'control' | 'data' | 'legacy-combined';
   source: string;
   target: string;
   sourceHandle?: string;
@@ -24,6 +34,8 @@ export interface WorkflowGraphEdge {
 
 /** The stored flow graph shape (flow_definitions.flow_json). */
 export interface WorkflowGraph {
+  /** Absent = legacy v1. 2 = edges carry stable ids (plan §6.2); reserved, additive. */
+  graphVersion?: number;
   nodes: WorkflowGraphNode[];
   edges: WorkflowGraphEdge[];
 }
@@ -180,6 +192,12 @@ export interface FlowRunLog {
   responseId: string | null;
   bindingId: string | null;
   flowDefinitionId: string | null;
+  /**
+   * Immutable revision pin (extensible-flows plan §14.2): the flow_definition_versions row
+   * snapshotting the exact executable contract this run used. Null on legacy rows written
+   * before revision pinning shipped.
+   */
+  flowVersionId?: string | null;
   flow: string | null;
   triggerEvent: string;
   correlationId: string;

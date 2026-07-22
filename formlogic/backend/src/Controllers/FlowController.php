@@ -166,6 +166,13 @@ class FlowController
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
             }
             return $this->jsonResponse($response, ['flow' => $flow]);
+        } catch (\FormLogic\Services\FlowRevisionConflictException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'revision_conflict',
+                'message' => $e->getMessage(),
+                'currentVersion' => $e->currentVersion,
+            ], 409);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
@@ -334,6 +341,13 @@ class FlowController
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
             }
             return $this->jsonResponse($response, ['flow' => $flow]);
+        } catch (\FormLogic\Services\FlowRevisionConflictException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'revision_conflict',
+                'message' => $e->getMessage(),
+                'currentVersion' => $e->currentVersion,
+            ], 409);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }

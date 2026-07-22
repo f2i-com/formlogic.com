@@ -49,8 +49,30 @@ interface QuickConnectSource {
   handleId: string | null;
 }
 
-// One custom component for every known node type (+ a default fallback for foreign types).
+// One custom component for every known node type. Foreign/unknown stored types are added
+// per-graph inside the component (useUnknownAwareNodeTypes) so the registry's §4.5
+// missing-definition placeholder card renders instead of React Flow's bare default node.
 const NODE_TYPES: NodeTypes = Object.fromEntries(NODE_SPECS.map((s) => [s.type, FlowNode]));
+
+/**
+ * NODE_TYPES extended with FlowNode entries for any node types present in the graph but
+ * absent from the catalog. Keyed on the SORTED distinct unknown-type list so the returned
+ * object's identity is stable across drags/renders (React Flow warns on identity churn).
+ */
+function useUnknownAwareNodeTypes(nodes: FlowRFNode[]): NodeTypes {
+  const unknownKey = useMemo(() => {
+    const unknown = new Set<string>();
+    for (const n of nodes) {
+      const t = String(n.type ?? '');
+      if (t !== '' && !(t in NODE_TYPES)) unknown.add(t);
+    }
+    return JSON.stringify(Array.from(unknown).sort());
+  }, [nodes]);
+  return useMemo(() => {
+    if (unknownKey === '[]') return NODE_TYPES;
+    return { ...NODE_TYPES, ...Object.fromEntries((JSON.parse(unknownKey) as string[]).map((t) => [t, FlowNode])) };
+  }, [unknownKey]);
+}
 const EDGE_TYPES: EdgeTypes = { flow: FlowEdge };
 
 const PRO_OPTIONS = { hideAttribution: true } as const;
@@ -111,6 +133,8 @@ export function FlowCanvas({
   // Live Wire: read the current Test Run's per-node status (provided by FlowEditor, never stored
   // on the graph) so the canvas can light up executed edges and the minimap without any new props.
   const signals = useContext(FlowNodeSignalsContext);
+
+  const nodeTypes = useUnknownAwareNodeTypes(nodes);
 
   const nodeTypeById = useMemo(() => {
     const byId = new Map<string, string | undefined>();
@@ -238,7 +262,7 @@ export function FlowCanvas({
       <ReactFlow<FlowRFNode, FlowRFEdge>
         nodes={nodes}
         edges={styledEdges}
-        nodeTypes={NODE_TYPES}
+        nodeTypes={nodeTypes}
         edgeTypes={EDGE_TYPES}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

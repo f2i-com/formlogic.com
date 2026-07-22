@@ -328,6 +328,36 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `data_dataset_high_water` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'data_dataset_high_water table ensured';
 
+// 7. Immutable flow revisions (extensible-flows plan §14.2). Minted LAZILY at run-reserve
+//    time (FlowService::ensureFlowVersion) — no backfill needed: an existing flow gets its
+//    first revision row the next time it runs. definition_json is MEDIUMTEXT (never JSON —
+//    a JSON column re-normalizes bytes and the digest is over the exact bytes stored).
+$pdo->exec("CREATE TABLE IF NOT EXISTS `flow_definition_versions` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flow_definition_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` int NOT NULL,
+  `graph_version` int NOT NULL DEFAULT '1',
+  `definition_json` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `definition_digest` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_flow_def_version` (`flow_definition_id`,`version`),
+  KEY `idx_fdv_flow` (`flow_definition_id`),
+  CONSTRAINT `flow_definition_versions_ibfk_1` FOREIGN KEY (`flow_definition_id`) REFERENCES `flow_definitions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'flow_definition_versions table ensured';
+
+$hasFlowVersionCol = $pdo->prepare(
+    'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+);
+$hasFlowVersionCol->execute([$db, 'flow_run_logs', 'flow_version_id']);
+if ((int) $hasFlowVersionCol->fetchColumn() === 0) {
+    $pdo->exec("ALTER TABLE `flow_run_logs` ADD COLUMN `flow_version_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `flow_definition_id`");
+    $applied[] = 'flow_run_logs.flow_version_id added';
+} else {
+    $applied[] = 'flow_run_logs.flow_version_id already present';
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

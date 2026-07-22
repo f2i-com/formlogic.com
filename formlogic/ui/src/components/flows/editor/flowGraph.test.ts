@@ -5,7 +5,7 @@
 // round-trip has to be an identity (for a graph the editor fully models — placed nodes, data,
 // and condition handles).
 import { describe, expect, it } from 'vitest';
-import { edgeId, graphToReactFlow, reactFlowToGraph } from './flowGraph';
+import { assignEdgeIds, edgeId, graphToReactFlow, reactFlowToGraph } from './flowGraph';
 import type { WorkflowGraph } from '../../../types/flows';
 
 const GRAPH: WorkflowGraph = {
@@ -70,6 +70,49 @@ describe('flowGraph serialization', () => {
   it('edgeId is stable and handle-aware', () => {
     expect(edgeId({ source: 'a', target: 'b' })).toBe('e:a:->b:');
     expect(edgeId({ source: 'a', target: 'b', sourceHandle: 'true' })).toBe('e:a:true->b:');
+  });
+
+  it('STORED graph-v2 edge ids round-trip verbatim; editor-synthesized ids do not persist', () => {
+    const stored: WorkflowGraph = {
+      nodes: [
+        { id: 'a', type: 'input', position: { x: 0, y: 0 } },
+        { id: 'b', type: 'output', position: { x: 100, y: 0 } },
+      ],
+      edges: [{ id: 'edge-1', source: 'a', target: 'b' }],
+    };
+    const rf = graphToReactFlow(stored);
+    expect(rf.edges[0].id).toBe('edge-1'); // stored id wins over the synthesized endpoint id
+    const back = reactFlowToGraph(rf.nodes, rf.edges);
+    expect(back.edges[0].id).toBe('edge-1');
+    // An RF edge with no persistId marker (editor-created / legacy load) stays id-less.
+    const legacy = reactFlowToGraph(rf.nodes, [{ id: 'e:a:->b:', source: 'a', target: 'b' }]);
+    expect(legacy.edges[0]).not.toHaveProperty('id');
+  });
+
+  it('assignEdgeIds gives every edge a stable id, keeps stored ids, and dedupes collisions', () => {
+    const g: WorkflowGraph = {
+      nodes: [
+        { id: 'a', type: 'input' },
+        { id: 'b', type: 'output' },
+      ],
+      edges: [
+        { id: 'kept', source: 'a', target: 'b' },
+        { source: 'a', target: 'b', sourceHandle: 'x' },
+        { source: 'a', target: 'b' }, // collides with nothing (distinct endpoints hash)
+        { source: 'a', target: 'b' }, // true duplicate — needs a suffix
+      ],
+    };
+    const out = assignEdgeIds(g);
+    const ids = out.edges.map((e) => e.id);
+    expect(ids[0]).toBe('kept');
+    expect(ids[1]).toBe('e:a:x->b:');
+    expect(ids[2]).toBe('e:a:->b:');
+    expect(ids[3]).toBe('e:a:->b:#2');
+    expect(new Set(ids).size).toBe(4);
+    // Idempotent: a fully-id'd graph is returned as-is (same reference — no spurious dirty).
+    expect(assignEdgeIds(out)).toBe(out);
+    // Pure: the input graph was not mutated.
+    expect(g.edges[1]).not.toHaveProperty('id');
   });
 
   it('the round trip is a FIXPOINT — round-tripping its own output changes nothing', () => {

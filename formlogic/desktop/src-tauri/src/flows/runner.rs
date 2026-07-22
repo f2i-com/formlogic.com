@@ -225,6 +225,7 @@ fn parse_graph(v: &Value) -> Result<Graph, String> {
         });
     }
     let mut edges = Vec::with_capacity(edges_v.len());
+    let mut edge_ids: HashSet<String> = HashSet::new();
     for (i, e) in edges_v.iter().enumerate() {
         let source = e.get("source").and_then(Value::as_str)
             .ok_or_else(|| format!("Flow edge at index {i} must have string source and target"))?;
@@ -232,6 +233,15 @@ fn parse_graph(v: &Value) -> Result<Graph, String> {
             .ok_or_else(|| format!("Flow edge at index {i} must have string source and target"))?;
         if !ids.contains(source) || !ids.contains(target) {
             return Err(format!("Flow edge at index {i} references a missing node ('{source}' → '{target}')"));
+        }
+        // Graph v2 (additive): an edge MAY carry a stable id — non-empty string, ≤128
+        // chars, unique (mirrors validateWorkflowGraph / FlowService::sanitizeFlowJson).
+        if let Some(id_v) = e.get("id") {
+            let id = id_v.as_str().filter(|s| !s.is_empty() && s.len() <= 128)
+                .ok_or_else(|| format!("Flow edge at index {i} has an invalid id"))?;
+            if !edge_ids.insert(id.to_string()) {
+                return Err(format!("Duplicate flow edge id: '{id}'"));
+            }
         }
         edges.push(GraphEdge {
             source: source.to_string(),
@@ -312,16 +322,20 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
 
     let deadline = Instant::now() + Duration::from_millis(opts.timeout_ms.max(1));
 
-    // incoming[target] = [(source, handle)]
-    let mut incoming: HashMap<&str, Vec<(&str, Option<&str>)>> = HashMap::new();
-    for e in &graph.edges {
-        incoming.entry(e.target.as_str()).or_default().push((e.source.as_str(), e.source_handle.as_deref()));
+    // incoming[target] = [(source, edge index)]. Activation is keyed by EDGE IDENTITY
+    // (index; stable within a stored graph), never `${source}→${target}`: parallel edges
+    // between the same two nodes (a condition's true AND false handles wired to one node)
+    // must not share one activation key, or the untaken branch is miscounted as activated.
+    // The browser executor (flowExecutor.ts) keys identically — keep in lock-step.
+    let mut incoming: HashMap<&str, Vec<(&str, usize)>> = HashMap::new();
+    for (i, e) in graph.edges.iter().enumerate() {
+        incoming.entry(e.target.as_str()).or_default().push((e.source.as_str(), i));
     }
 
     let mut outputs: HashMap<String, Value> = HashMap::new();
     let mut executed: HashSet<String> = HashSet::new();
     let mut active: HashSet<String> = HashSet::new();
-    let mut activated_edges: HashSet<String> = HashSet::new();
+    let mut activated_edges: HashSet<usize> = HashSet::new();
     for n in &graph.nodes {
         if incoming.get(n.id.as_str()).map(|v| v.is_empty()).unwrap_or(true) {
             active.insert(n.id.clone());
@@ -357,7 +371,7 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
             .get(node.id.as_str())
             .map(|list| {
                 list.iter()
-                    .filter(|(s, _)| executed.contains(*s) && activated_edges.contains(&format!("{s}→{}", node.id)))
+                    .filter(|(s, edge_idx)| executed.contains(*s) && activated_edges.contains(edge_idx))
                     .map(|(s, _)| *s)
                     .collect()
             })
@@ -421,12 +435,12 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
         last_output = output.clone();
         outputs.insert(node.id.clone(), output.clone());
 
-        for e in &graph.edges {
+        for (i, e) in graph.edges.iter().enumerate() {
             if e.source != node.id {
                 continue;
             }
             if edge_is_active(node, &output, e.source_handle.as_deref()) {
-                activated_edges.insert(format!("{}→{}", e.source, e.target));
+                activated_edges.insert(i);
                 active.insert(e.target.clone());
             }
         }
@@ -2509,6 +2523,71 @@ mod tests {
         let out = execute_flow(&flow, &deps(), &opts()).await;
         assert_eq!(out.status, "done");
         assert_eq!(out.result, Some(json!("big")));
+    }
+
+    #[tokio::test]
+    async fn condition_with_both_branches_to_one_node_passes_a_plain_upstream() {
+        // Regression (extensible-flows plan §3.1): activation used to be keyed
+        // `${source}→${target}`, so the UNTAKEN branch shared the taken branch's key and
+        // the join node saw a merged {"c": value} map instead of the plain value. Keyed by
+        // edge index now — identical to the browser executor's fix (flowExecutor.test.ts).
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "c", "type": "condition", "data": { "expr": "inputs.x > 10" } },
+                { "id": "join", "type": "output" }
+            ],
+            "edges": [
+                { "source": "in", "target": "c" },
+                { "source": "c", "target": "join", "sourceHandle": "true" },
+                { "source": "c", "target": "join", "sourceHandle": "false" }
+            ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "done");
+        assert_eq!(out.result, Some(json!(true))); // plain condition output, NOT {"c": true}
+        assert_eq!(out.nodes_executed, 3);
+    }
+
+    #[tokio::test]
+    async fn graph_v2_edge_ids_are_validated_when_present() {
+        let base = json!({
+            "nodes": [ { "id": "a", "type": "input" }, { "id": "b", "type": "output" } ]
+        });
+        let with_edges = |edges: Value| {
+            let mut f = base.clone();
+            f["edges"] = edges;
+            f
+        };
+        // Valid: unique string ids (mixed with id-less legacy edges).
+        let ok = execute_flow(
+            &with_edges(json!([{ "id": "e1", "source": "a", "target": "b" }, { "source": "a", "target": "b" }])),
+            &deps(),
+            &opts(),
+        )
+        .await;
+        assert_eq!(ok.status, "done");
+        // Invalid: empty id.
+        let bad = execute_flow(
+            &with_edges(json!([{ "id": "", "source": "a", "target": "b" }])),
+            &deps(),
+            &opts(),
+        )
+        .await;
+        assert_eq!(bad.status, "error");
+        assert!(bad.error.as_ref().unwrap().message.contains("invalid id"), "got: {:?}", bad.error);
+        // Invalid: duplicate ids.
+        let dup = execute_flow(
+            &with_edges(json!([
+                { "id": "dup", "source": "a", "target": "b" },
+                { "id": "dup", "source": "a", "target": "b", "sourceHandle": "x" }
+            ])),
+            &deps(),
+            &opts(),
+        )
+        .await;
+        assert_eq!(dup.status, "error");
+        assert!(dup.error.as_ref().unwrap().message.contains("Duplicate flow edge id"), "got: {:?}", dup.error);
     }
 
     /// A busy-wait expression that blocks for roughly `ms` milliseconds (deterministic CPU

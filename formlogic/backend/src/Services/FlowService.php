@@ -104,6 +104,27 @@ class FlowService
     }
 
     /**
+     * Parse the optional `expectedVersion` optimistic-concurrency guard from an update
+     * payload (extensible-flows plan §14.2). Absent/null → no guard (today's behavior).
+     * @throws \InvalidArgumentException
+     */
+    private static function sanitizeExpectedVersion(array $data): ?int
+    {
+        if (!array_key_exists('expectedVersion', $data) || $data['expectedVersion'] === null) {
+            return null;
+        }
+        $v = $data['expectedVersion'];
+        if (!is_int($v) && !(is_string($v) && ctype_digit($v))) {
+            throw new \InvalidArgumentException('expectedVersion must be a positive integer');
+        }
+        $v = (int) $v;
+        if ($v < 1) {
+            throw new \InvalidArgumentException('expectedVersion must be a positive integer');
+        }
+        return $v;
+    }
+
+    /**
      * Validate a WorkflowGraph-compatible flow graph: { nodes: [{id,type,...}], edges: [{source,target,...}] }.
      * Node ids must be unique; every edge must reference existing nodes; encoded size ≤ 256 KiB.
      * Returns the normalized graph. @throws \InvalidArgumentException
@@ -135,6 +156,7 @@ class FlowService
             }
             $nodeIds[$id] = true;
         }
+        $edgeIds = [];
         foreach ($flowJson['edges'] as $i => $edge) {
             $source = is_array($edge) ? ($edge['source'] ?? null) : null;
             $target = is_array($edge) ? ($edge['target'] ?? null) : null;
@@ -144,9 +166,32 @@ class FlowService
             if (!isset($nodeIds[$source]) || !isset($nodeIds[$target])) {
                 throw new \InvalidArgumentException("Flow edge at index {$i} references a missing node ('{$source}' → '{$target}')");
             }
+            // Graph v2 (additive, extensible-flows plan §6.2): an edge MAY carry a stable id —
+            // non-empty string, ≤128 chars, unique. Mirrors validateWorkflowGraph (browser) and
+            // parse_graph (desktop runner); edges without ids stay legal (legacy v1).
+            if (is_array($edge) && array_key_exists('id', $edge)) {
+                $edgeId = $edge['id'];
+                if (!is_string($edgeId) || $edgeId === '' || strlen($edgeId) > 128) {
+                    throw new \InvalidArgumentException("Flow edge at index {$i} has an invalid id");
+                }
+                if (isset($edgeIds[$edgeId])) {
+                    throw new \InvalidArgumentException("Duplicate flow edge id: '{$edgeId}'");
+                }
+                $edgeIds[$edgeId] = true;
+            }
         }
 
-        return ['nodes' => array_values($flowJson['nodes']), 'edges' => array_values($flowJson['edges'])];
+        $out = ['nodes' => array_values($flowJson['nodes']), 'edges' => array_values($flowJson['edges'])];
+        // Carry graphVersion through (previously stripped): reserved graph-v2 marker; only
+        // 1 and 2 are meaningful today and anything else is rejected rather than laundered.
+        if (array_key_exists('graphVersion', $flowJson)) {
+            $gv = $flowJson['graphVersion'];
+            if (!is_int($gv) || $gv < 1 || $gv > 2) {
+                throw new \InvalidArgumentException('graphVersion must be 1 or 2');
+            }
+            $out['graphVersion'] = $gv;
+        }
+        return $out;
     }
 
     /**
@@ -408,12 +453,22 @@ class FlowService
         return $this->getFlow($appId, $id) ?? throw new \RuntimeException('Flow creation failed');
     }
 
-    /** Partial update; bumps version when flowJson changes. @throws \InvalidArgumentException */
+    /**
+     * Partial update; bumps version when any executable-contract field changes (flowJson,
+     * schemas, capabilities, executionLocation). An optional `expectedVersion` becomes an
+     * atomic optimistic-concurrency guard: stale saves throw FlowRevisionConflictException
+     * (HTTP 409) instead of clobbering a concurrent edit.
+     * @throws \InvalidArgumentException @throws FlowRevisionConflictException
+     */
     public function updateFlow(string $appId, string $flowId, array $data): ?array
     {
         $existing = $this->getFlow($appId, $flowId);
         if (!$existing) {
             return null;
+        }
+        $expectedVersion = self::sanitizeExpectedVersion($data);
+        if ($expectedVersion !== null && $expectedVersion !== (int) $existing['version']) {
+            throw new FlowRevisionConflictException((int) $existing['version']);
         }
 
         $sets = [];
@@ -435,23 +490,27 @@ class FlowService
             $sets[] = 'description = :descr';
             $params['descr'] = is_string($data['description']) ? substr($data['description'], 0, 2000) : null;
         }
+        $contractChanged = false;
         if (array_key_exists('flowJson', $data)) {
             $sets[] = 'flow_json = :flow_json';
-            $sets[] = 'version = version + 1';
+            $contractChanged = true;
             $params['flow_json'] = json_encode(self::sanitizeFlowJson($data['flowJson']));
         }
         if (array_key_exists('inputSchema', $data) || array_key_exists('outputSchema', $data) || array_key_exists('nodeCapabilities', $data)) {
             [$inputSchema, $outputSchema, $nodeCapabilities] = $this->sanitizeFlowMeta($data);
             if (array_key_exists('inputSchema', $data)) {
                 $sets[] = 'input_schema = :input_schema';
+                $contractChanged = true;
                 $params['input_schema'] = $inputSchema !== null ? json_encode($inputSchema) : null;
             }
             if (array_key_exists('outputSchema', $data)) {
                 $sets[] = 'output_schema = :output_schema';
+                $contractChanged = true;
                 $params['output_schema'] = $outputSchema !== null ? json_encode($outputSchema) : null;
             }
             if (array_key_exists('nodeCapabilities', $data)) {
                 $sets[] = 'node_capabilities = :node_caps';
+                $contractChanged = true;
                 $params['node_caps'] = $nodeCapabilities !== null ? json_encode($nodeCapabilities) : null;
             }
         }
@@ -461,21 +520,47 @@ class FlowService
         }
         if (array_key_exists('executionLocation', $data)) {
             $sets[] = 'execution_location = :exec_loc';
+            $contractChanged = true;
             $params['exec_loc'] = self::sanitizeExecutionLocation($data['executionLocation']);
         }
 
         if (empty($sets)) {
             return $existing;
         }
+        // Any executable-contract change bumps the version, so immutable revision rows
+        // (flow_definition_versions, minted lazily at run-reserve) never collide on
+        // UNIQUE(flow_definition_id, version) with different content.
+        if ($contractChanged) {
+            $sets[] = 'version = version + 1';
+        }
 
+        // The expectedVersion guard rides the UPDATE itself (atomic): a concurrent bump
+        // between the read above and this statement makes the WHERE miss.
+        $guardSql = '';
+        if ($expectedVersion !== null) {
+            $guardSql = ' AND version = :guard';
+            $params['guard'] = $expectedVersion;
+        }
         try {
-            $stmt = $this->mysql->prepare('UPDATE flow_definitions SET ' . implode(', ', $sets) . ' WHERE id = :id AND app_id = :a');
+            $stmt = $this->mysql->prepare('UPDATE flow_definitions SET ' . implode(', ', $sets) . ' WHERE id = :id AND app_id = :a' . $guardSql);
             $stmt->execute($params);
         } catch (\PDOException $e) {
             if ($this->isDuplicateKey($e)) {
                 throw new \InvalidArgumentException('A flow with this slug already exists in this app');
             }
             throw $e;
+        }
+        if ($expectedVersion !== null && $stmt->rowCount() === 0) {
+            // Zero affected rows = the guard missed OR a same-values no-op; only a moved
+            // version is a real conflict.
+            $current = $this->getFlow($appId, $flowId);
+            if (!$current) {
+                return null;
+            }
+            if ((int) $current['version'] !== $expectedVersion) {
+                throw new FlowRevisionConflictException((int) $current['version']);
+            }
+            return $current;
         }
 
         return $this->getFlow($appId, $flowId);
@@ -764,13 +849,14 @@ class FlowService
         $queued = ($data['queued'] ?? false) === true;
 
         $id = $this->uuidV4();
+        $flowVersionId = $this->ensureFlowVersion($flow['id']);
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
-                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, trigger_event,
+                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id, trigger_event,
                      correlation_id, idempotency_key, status, input_snapshot_json, started_at)
                 VALUES
-                    (:id, :app, :form, :resp, :binding, :flow, :event, :corr, :key, :status, :input, :started)
+                    (:id, :app, :form, :resp, :binding, :flow, :flow_version, :event, :corr, :key, :status, :input, :started)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -779,6 +865,7 @@ class FlowService
                 'resp' => $responseId,
                 'binding' => $bindingId,
                 'flow' => $flow['id'],
+                'flow_version' => $flowVersionId,
                 'event' => $triggerEvent,
                 'corr' => $correlationId,
                 'key' => $idempotencyKey,
@@ -807,6 +894,84 @@ class FlowService
         }
 
         return ['run' => $this->getRun($appId, $id) ?? throw new \RuntimeException('Run reservation failed'), 'created' => true];
+    }
+
+    /**
+     * Lazily materialise the immutable revision row for a flow's CURRENT executable
+     * contract and return its id (extensible-flows plan §14.2): draft edits keep using the
+     * mutable flow_definitions row; every RUN pins the exact revision it executed, so
+     * revisions exist precisely for contract states that ran. Idempotent per
+     * (flow_definition_id, version) via the UNIQUE key.
+     *
+     * definition_json is composed from the RAW stored column strings — never re-encoded
+     * through PHP arrays (json_encode turns {} into [], so a re-encode would not be
+     * byte-stable against the stored graph) — and the column is MEDIUMTEXT (not JSON) so
+     * the digest stays byte-exact against what was hashed.
+     *
+     * Returns null when the flow row vanished mid-flight — run reservation must not fail
+     * because of revision bookkeeping.
+     */
+    public function ensureFlowVersion(string $flowDefinitionId): ?string
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT engine, version, flow_json, input_schema, output_schema, node_capabilities, execution_location
+            FROM flow_definitions WHERE id = :id
+        ");
+        $stmt->execute(['id' => $flowDefinitionId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+        $version = (int) $row['version'];
+
+        $find = $this->mysql->prepare(
+            'SELECT id FROM flow_definition_versions WHERE flow_definition_id = :f AND version = :v'
+        );
+        $find->execute(['f' => $flowDefinitionId, 'v' => $version]);
+        $existingId = $find->fetchColumn();
+        if (is_string($existingId) && $existingId !== '') {
+            return $existingId;
+        }
+
+        $definitionJson = '{"engine":' . json_encode((string) $row['engine'])
+            . ',"version":' . $version
+            . ',"flowJson":' . ((string) $row['flow_json'])
+            . ',"inputSchema":' . (isset($row['input_schema']) ? (string) $row['input_schema'] : 'null')
+            . ',"outputSchema":' . (isset($row['output_schema']) ? (string) $row['output_schema'] : 'null')
+            . ',"nodeCapabilities":' . (isset($row['node_capabilities']) ? (string) $row['node_capabilities'] : 'null')
+            . ',"executionLocation":' . json_encode((string) $row['execution_location'])
+            . '}';
+        $graphVersion = 1;
+        $decodedGraph = json_decode((string) $row['flow_json'], true);
+        if (is_array($decodedGraph) && is_int($decodedGraph['graphVersion'] ?? null)) {
+            $graphVersion = (int) $decodedGraph['graphVersion'];
+        }
+
+        $id = $this->uuidV4();
+        try {
+            $ins = $this->mysql->prepare("
+                INSERT INTO flow_definition_versions
+                    (id, flow_definition_id, version, graph_version, definition_json, definition_digest)
+                VALUES (:id, :f, :v, :gv, :def, :digest)
+            ");
+            $ins->execute([
+                'id' => $id,
+                'f' => $flowDefinitionId,
+                'v' => $version,
+                'gv' => $graphVersion,
+                'def' => $definitionJson,
+                'digest' => hash('sha256', $definitionJson),
+            ]);
+        } catch (\PDOException $e) {
+            if (!$this->isDuplicateKey($e)) {
+                throw $e;
+            }
+            // Concurrent reserve minted it first — the winner's row is THE revision.
+            $find->execute(['f' => $flowDefinitionId, 'v' => $version]);
+            $winner = $find->fetchColumn();
+            return is_string($winner) && $winner !== '' ? $winner : null;
+        }
+        return $id;
     }
 
     public function getRun(string $appId, string $runId): ?array
@@ -1033,16 +1198,18 @@ class FlowService
             return null;
         }
         $id = $this->uuidV4();
+        $flowVersionId = $this->ensureFlowVersion($flow['id']);
         $stmt = $this->mysql->prepare("
             INSERT INTO flow_run_logs
-                (id, app_id, flow_definition_id, trigger_event, correlation_id, idempotency_key, status, started_at)
+                (id, app_id, flow_definition_id, flow_version_id, trigger_event, correlation_id, idempotency_key, status, started_at)
             VALUES
-                (:id, :app, :flow, 'test', :corr, :key, 'running', NOW())
+                (:id, :app, :flow, :flow_version, 'test', :corr, :key, 'running', NOW())
         ");
         $stmt->execute([
             'id' => $id,
             'app' => $appId,
             'flow' => $flow['id'],
+            'flow_version' => $flowVersionId,
             'corr' => 'test-' . $id,
             'key' => 'test:' . $id,
         ]);
@@ -1153,6 +1320,10 @@ class FlowService
         if (!$existing) {
             return null;
         }
+        $expectedVersion = self::sanitizeExpectedVersion($data);
+        if ($expectedVersion !== null && $expectedVersion !== (int) $existing['version']) {
+            throw new FlowRevisionConflictException((int) $existing['version']);
+        }
 
         $sets = [];
         $params = ['id' => $flowId, 'o' => $ownerUserId];
@@ -1177,23 +1348,27 @@ class FlowService
             $sets[] = 'description = :descr';
             $params['descr'] = is_string($data['description']) ? substr($data['description'], 0, 2000) : null;
         }
+        $contractChanged = false;
         if (array_key_exists('flowJson', $data)) {
             $sets[] = 'flow_json = :flow_json';
-            $sets[] = 'version = version + 1';
+            $contractChanged = true;
             $params['flow_json'] = json_encode(self::sanitizeFlowJson($data['flowJson']));
         }
         if (array_key_exists('inputSchema', $data) || array_key_exists('outputSchema', $data) || array_key_exists('nodeCapabilities', $data)) {
             [$inputSchema, $outputSchema, $nodeCapabilities] = $this->sanitizeFlowMeta($data);
             if (array_key_exists('inputSchema', $data)) {
                 $sets[] = 'input_schema = :input_schema';
+                $contractChanged = true;
                 $params['input_schema'] = $inputSchema !== null ? json_encode($inputSchema) : null;
             }
             if (array_key_exists('outputSchema', $data)) {
                 $sets[] = 'output_schema = :output_schema';
+                $contractChanged = true;
                 $params['output_schema'] = $outputSchema !== null ? json_encode($outputSchema) : null;
             }
             if (array_key_exists('nodeCapabilities', $data)) {
                 $sets[] = 'node_capabilities = :node_caps';
+                $contractChanged = true;
                 $params['node_caps'] = $nodeCapabilities !== null ? json_encode($nodeCapabilities) : null;
             }
         }
@@ -1203,15 +1378,34 @@ class FlowService
         }
         if (array_key_exists('executionLocation', $data)) {
             $sets[] = 'execution_location = :exec_loc';
+            $contractChanged = true;
             $params['exec_loc'] = self::sanitizeExecutionLocation($data['executionLocation']);
         }
 
         if (empty($sets)) {
             return $existing;
         }
+        if ($contractChanged) {
+            $sets[] = 'version = version + 1';
+        }
 
-        $stmt = $this->mysql->prepare('UPDATE flow_definitions SET ' . implode(', ', $sets) . ' WHERE id = :id AND owner_user_id = :o AND app_id IS NULL');
+        $guardSql = '';
+        if ($expectedVersion !== null) {
+            $guardSql = ' AND version = :guard';
+            $params['guard'] = $expectedVersion;
+        }
+        $stmt = $this->mysql->prepare('UPDATE flow_definitions SET ' . implode(', ', $sets) . ' WHERE id = :id AND owner_user_id = :o AND app_id IS NULL' . $guardSql);
         $stmt->execute($params);
+        if ($expectedVersion !== null && $stmt->rowCount() === 0) {
+            $current = $this->getWorkspaceFlow($ownerUserId, $flowId);
+            if (!$current) {
+                return null;
+            }
+            if ((int) $current['version'] !== $expectedVersion) {
+                throw new FlowRevisionConflictException((int) $current['version']);
+            }
+            return $current;
+        }
 
         return $this->getWorkspaceFlow($ownerUserId, $flowId);
     }
@@ -1737,13 +1931,14 @@ class FlowService
         $queued = ($data['queued'] ?? false) === true;
 
         $id = $this->uuidV4();
+        $flowVersionId = $this->ensureFlowVersion($flow['id']);
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
-                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, trigger_event,
+                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id, trigger_event,
                      correlation_id, idempotency_key, status, input_snapshot_json, started_at)
                 VALUES
-                    (:id, :app, :form, :resp, :binding, :flow, :event, :corr, :key, :status, :input, :started)
+                    (:id, :app, :form, :resp, :binding, :flow, :flow_version, :event, :corr, :key, :status, :input, :started)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -1752,6 +1947,7 @@ class FlowService
                 'resp' => $responseId,
                 'binding' => $bindingId,
                 'flow' => $flow['id'],
+                'flow_version' => $flowVersionId,
                 'event' => $triggerEvent,
                 'corr' => $correlationId,
                 'key' => $idempotencyKey,
@@ -1941,13 +2137,14 @@ class FlowService
         }
 
         $id = $this->uuidV4();
+        $flowVersionId = $this->ensureFlowVersion($flow['id']);
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
-                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, trigger_event,
+                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id, trigger_event,
                      correlation_id, idempotency_key, status, input_snapshot_json, started_at)
                 VALUES
-                    (:id, :app, :form, :resp, :binding, :flow, :event, :corr, :key, 'queued', :input, NULL)
+                    (:id, :app, :form, :resp, :binding, :flow, :flow_version, :event, :corr, :key, 'queued', :input, NULL)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -1956,6 +2153,7 @@ class FlowService
                 'resp' => $opts['responseId'] ?? null,
                 'binding' => $opts['bindingId'] ?? null,
                 'flow' => $flow['id'],
+                'flow_version' => $flowVersionId,
                 'event' => $opts['triggerEvent'],
                 'corr' => substr($opts['correlationId'], 0, 150),
                 'key' => substr($opts['idempotencyKey'], 0, 255),
@@ -2406,6 +2604,7 @@ class FlowService
             'responseId' => $row['response_id'],
             'bindingId' => $row['binding_id'],
             'flowDefinitionId' => $row['flow_definition_id'],
+            'flowVersionId' => $row['flow_version_id'] ?? null,
             'flow' => $row['flow_slug'] ?? null,
             'triggerEvent' => $row['trigger_event'],
             'correlationId' => $row['correlation_id'],

@@ -64,6 +64,8 @@ class CloudFlowRunner
     private const MAX_DEEP_RESOLVE_DEPTH = 8;
 
     private PDO $mysql;
+    /** Same-connection FlowService — only for ensureFlowVersion (run revision pinning). */
+    private FlowService $flowService;
     /** @var null|callable(string, string, array, ?string): array{status: int, body: string} */
     private $httpTransport;
 
@@ -78,6 +80,7 @@ class CloudFlowRunner
         private int $maxWallClockSeconds = self::MAX_WALL_CLOCK_SECONDS,
     ) {
         $this->mysql = $mysql->getConnection();
+        $this->flowService = new FlowService($mysql);
         $this->siteBaseUrl = rtrim($siteBaseUrl, '/');
         $this->httpTransport = $httpTransport;
     }
@@ -144,16 +147,18 @@ class CloudFlowRunner
         $this->plans->checkAndIncrement($userId, 'cloud_flow_runs', 1);
 
         $runId = $this->uuid();
+        $flowVersionId = $this->flowService->ensureFlowVersion((string) $flow['id']);
         $this->mysql->prepare("
             INSERT INTO flow_run_logs
-                (id, app_id, flow_definition_id, trigger_event, correlation_id, idempotency_key,
+                (id, app_id, flow_definition_id, flow_version_id, trigger_event, correlation_id, idempotency_key,
                  status, runtime, execution_location, input_snapshot_json, started_at)
             VALUES
-                (:id, :app, :flow, 'manual', :corr, :key, 'running', 'cloud', 'cloud', :input, NOW())
+                (:id, :app, :flow, :flow_version, 'manual', :corr, :key, 'running', 'cloud', 'cloud', :input, NOW())
         ")->execute([
             'id' => $runId,
             'app' => $flow['appId'],
             'flow' => $flow['id'],
+            'flow_version' => $flowVersionId,
             'corr' => 'cloud-run-' . $runId,
             'key' => 'cloud:' . $runId,
             'input' => $snapshot,
@@ -214,9 +219,14 @@ class CloudFlowRunner
 
         $deadline = microtime(true) + max(0, $this->maxWallClockSeconds);
 
-        $incoming = []; // target => [[source, handle], ...]
-        foreach ($edges as $e) {
-            $incoming[$e['target']][] = [$e['source'], $e['sourceHandle']];
+        // target => [[source, edge index], ...]. Activation is keyed by EDGE IDENTITY
+        // (index), never "source→target", in lock-step with the browser and desktop
+        // runners: parallel edges between the same two nodes must not share one key.
+        // (No routing effect while condition isn't cloud-executable — every edge always
+        // activates — but the keying must not drift between runtimes.)
+        $incoming = [];
+        foreach ($edges as $i => $e) {
+            $incoming[$e['target']][] = [$e['source'], $i];
         }
 
         $outputs = [];
@@ -250,8 +260,8 @@ class CloudFlowRunner
             // Upstream: the single activated predecessor's output, or a map when
             // several branches converge (the executor's join semantics).
             $activeIn = [];
-            foreach ($incoming[$node['id']] ?? [] as [$src]) {
-                if (isset($executed[$src], $activatedEdges[$src . '→' . $node['id']])) {
+            foreach ($incoming[$node['id']] ?? [] as [$src, $edgeIndex]) {
+                if (isset($executed[$src], $activatedEdges[$edgeIndex])) {
                     $activeIn[] = $src;
                 }
             }
@@ -285,14 +295,14 @@ class CloudFlowRunner
             $lastOutput = $output;
             $outputs[$node['id']] = $output;
 
-            foreach ($edges as $e) {
+            foreach ($edges as $i => $e) {
                 if ($e['source'] !== $node['id']) {
                     continue;
                 }
                 // Non-condition nodes activate every outgoing edge; condition nodes are
                 // not cloud-executable (preflight), so the Rust runner's handle routing
                 // has no live case here.
-                $activatedEdges[$e['source'] . '→' . $e['target']] = true;
+                $activatedEdges[$i] = true;
                 $active[$e['target']] = true;
             }
         }

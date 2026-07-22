@@ -852,6 +852,7 @@ CREATE TABLE `flow_run_logs` (
   `response_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `binding_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `flow_definition_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flow_version_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `trigger_event` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
   `correlation_id` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
   `idempotency_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -876,6 +877,22 @@ CREATE TABLE `flow_run_logs` (
   CONSTRAINT `flow_run_logs_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
   CONSTRAINT `flow_run_logs_ibfk_2` FOREIGN KEY (`flow_definition_id`) REFERENCES `flow_definitions` (`id`) ON DELETE CASCADE,
   CONSTRAINT `flow_run_logs_ibfk_3` FOREIGN KEY (`binding_id`) REFERENCES `app_flow_bindings` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `flow_definition_versions` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flow_definition_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` int NOT NULL,
+  `graph_version` int NOT NULL DEFAULT '1',
+  `definition_json` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `definition_digest` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_flow_def_version` (`flow_definition_id`,`version`),
+  KEY `idx_fdv_flow` (`flow_definition_id`),
+  CONSTRAINT `flow_definition_versions_ibfk_1` FOREIGN KEY (`flow_definition_id`) REFERENCES `flow_definitions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

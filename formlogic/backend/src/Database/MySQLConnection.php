@@ -642,6 +642,7 @@ class MySQLConnection
                 binding_id VARCHAR(36) NULL,
                 flow_definition_id VARCHAR(36) NOT NULL,
                 trigger_event VARCHAR(150) NOT NULL,
+                flow_version_id VARCHAR(36) NULL,
                 correlation_id VARCHAR(150) NOT NULL,
                 idempotency_key VARCHAR(255) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'running',
@@ -664,6 +665,27 @@ class MySQLConnection
                 INDEX idx_frl_binding (binding_id),
                 INDEX idx_frl_status (app_id, status),
                 INDEX idx_frl_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Immutable executable revisions (extensible-flows plan §14.2): minted LAZILY at
+        // run-reserve time (FlowService::ensureFlowVersion) — draft edits keep mutating
+        // flow_definitions; a revision row exists exactly for contract states that RAN.
+        // definition_json is MEDIUMTEXT (NOT JSON): the digest is over the exact bytes and a
+        // JSON column would re-normalize them. flow_run_logs.flow_version_id points here
+        // (no FK — informational pin; both tables already cascade on flow delete).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_definition_versions (
+                id VARCHAR(36) PRIMARY KEY,
+                flow_definition_id VARCHAR(36) NOT NULL,
+                version INT NOT NULL,
+                graph_version INT NOT NULL DEFAULT 1,
+                definition_json MEDIUMTEXT NOT NULL,
+                definition_digest VARCHAR(64) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (flow_definition_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_flow_def_version (flow_definition_id, version),
+                INDEX idx_fdv_flow (flow_definition_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -1979,6 +2001,12 @@ class MySQLConnection
         }
         if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'execution_location'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN execution_location VARCHAR(8) NULL AFTER runtime");
+        }
+        // flow_run_logs.flow_version_id: immutable-revision pin recorded at reserve time
+        // (extensible-flows plan §14.2). The flow_definition_versions table itself comes
+        // from createFlowTables above; pre-existing installs only lack this column.
+        if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'flow_version_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN flow_version_id VARCHAR(36) NULL AFTER flow_definition_id");
         }
         // desktop_connections.api_key_id (OAuth device-link → minted flk_ key) for installs that
         // predate the OAuth linking flow. Fresh installs already carry it (createFlowTables above).

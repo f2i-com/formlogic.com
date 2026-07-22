@@ -14,7 +14,6 @@ import { Switch } from '../../ui/Switch';
 import { CodeEditor } from '../../ui/CodeEditor';
 import { ErrorBoundary } from '../../ErrorBoundary';
 import {
-  getNodeSpec,
   evalShowIf,
   effectiveNodeData,
   getReferenceSyntax,
@@ -25,6 +24,7 @@ import {
   type NodePropertySpec,
   type ReferenceSyntax,
 } from './nodeCatalog';
+import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
 import { listProviders } from '../../../client-runtime/flows/aiProviders';
@@ -979,7 +979,9 @@ function InsertHints({ hints, onInsert }: { hints: string[]; onInsert: (h: strin
 }
 
 export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], onOpenTriggers, className }: NodePropertiesProps) {
-  const spec = getNodeSpec(type);
+  // Registry resolution (never undefined): unknown types get the §4.5 missing-definition
+  // placeholder — the panel explains the situation and shows the raw config read-only.
+  const spec = flowNodeRegistry.resolveNodeSpec(type, context);
   // The selected form's fields power the filter-field select + the answers datalist (static form only).
   const formId = staticFormId(data.form);
   const selectedForm = formId ? forms.find((f) => f.id === formId) ?? null : null;
@@ -1049,9 +1051,17 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 </Button>
               </div>
             )}
-            {type !== 'input' && <InsertHints hints={insertHints} onInsert={insertOrCopy} />}
+            {spec.missing && Object.keys(data).length > 0 && (
+              <div>
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Stored configuration (read-only)</p>
+                <pre className="scrollbar-thin max-h-64 overflow-auto rounded-lg bg-gray-100/80 px-2.5 py-2 font-mono text-[11px] leading-snug text-gray-600 dark:bg-slate-800/60 dark:text-slate-300">
+                  {JSON.stringify(data, null, 2)}
+                </pre>
+              </div>
+            )}
+            {type !== 'input' && !spec.missing && <InsertHints hints={insertHints} onInsert={insertOrCopy} />}
             {visibleProps.length === 0 ? (
-              <p className="text-xs text-gray-400 dark:text-slate-500">This node has no editable settings.</p>
+              !spec.missing && <p className="text-xs text-gray-400 dark:text-slate-500">This node has no editable settings.</p>
             ) : (
               visibleProps.map((p) => {
                 const onChange = (value: unknown) => onPatch({ [p.key]: value });

@@ -30,7 +30,7 @@ import { ExecutionLocationNotice, ExecutionLocationSelect } from './ExecutionLoc
 import { flowExecutionLocation, type FlowExecutionLocation } from './executionLocation';
 import { declaredInputNames } from './nodeSummary';
 import { getNodeSpec, initialNodeData, EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './nodeCatalog';
-import { graphToReactFlow, reactFlowToGraph, type FlowRFEdge, type FlowRFNode } from './flowGraph';
+import { assignEdgeIds, graphToReactFlow, reactFlowToGraph, type FlowRFEdge, type FlowRFNode } from './flowGraph';
 import {
   computeCapabilitiesFromGraph,
   patchHistoryKey,
@@ -120,9 +120,10 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
   // Last-saved snapshot as state (not a ref) so `dirty` derives cleanly at render time.
   // Seeded with the ROUND-TRIPPED stored graph (same graphToReactFlow→reactFlowToGraph pass
   // `serialized` goes through), NOT the raw flowJson string: the round trip normalizes key
-  // order, fills fallback positions, rounds coordinates and drops edge ids, so comparing
-  // against the raw JSON made every pack-authored/desktop-written flow "dirty" the moment
-  // it was OPENED — and the autosave then bumped a new version without any edit.
+  // order, fills fallback positions, rounds coordinates and drops editor-synthesized edge
+  // ids (STORED graph-v2 edge ids round-trip verbatim), so comparing against the raw JSON
+  // made every pack-authored/desktop-written flow "dirty" the moment it was OPENED — and
+  // the autosave then bumped a new version without any edit.
   const [savedGraph, setSavedGraph] = useState<string>(() => JSON.stringify(reactFlowToGraph(initialGraph.nodes, initialGraph.edges)));
   const dirty = serialized !== savedGraph;
   const saveFailed = dirty && failedSaveGraph === serialized;
@@ -320,7 +321,10 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
   const save = useCallback(async () => {
     if (saving) return;
     const snapshot = serialized;
-    const graph = JSON.parse(snapshot) as WorkflowGraph;
+    // Intentional save = the graph-v2 write point: every edge gains a stable persisted id
+    // (stored ids kept, legacy edges get deterministic endpoint ids). The dirty baseline
+    // keeps comparing the id-less serialization, so this never re-dirties the editor.
+    const graph = assignEdgeIds(JSON.parse(snapshot) as WorkflowGraph);
     setSaving(true);
     const ok = await onSave({ flowJson: graph, nodeCapabilities: computeCapabilitiesFromGraph(graph) });
     setSaving(false);

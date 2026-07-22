@@ -13,9 +13,9 @@
 // node (FlowEdge) now carries the duration, so the card doesn't need to repeat it.
 import { memo, useContext, useState, type ReactNode } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { AlertTriangle, Check, HelpCircle, Loader2, MonitorDown, X } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, MonitorDown, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { getNodeSpec } from './nodeCatalog';
+import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
 import { describeNode, declaredInputNames } from './nodeSummary';
 import { FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
 import { ACCENT_CHIP } from './accents';
@@ -122,7 +122,9 @@ function LintBadge({ issues }: { issues: string[] }) {
 
 function FlowNodeInner({ id, type, data, selected }: NodeProps) {
   const typeStr = String(type);
-  const spec = getNodeSpec(typeStr);
+  // Registry resolution (never undefined): unknown types render the §4.5 missing-definition
+  // placeholder card — dashed/disabled, generic in/out handles, no invented summary.
+  const spec = flowNodeRegistry.resolveNodeSpec(typeStr);
   const nodeData = (data ?? {}) as Record<string, unknown>;
   const forms = useContext(FlowFormsContext);
   const signals = useContext(FlowNodeSignalsContext);
@@ -130,16 +132,16 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
   const triggerBindings = useContext(FlowTriggerBindingsContext);
   const run = signals.status[id];
   const issues = signals.issues[id] ?? [];
-  const accentChip = ACCENT_CHIP[spec?.accent ?? 'slate'] ?? ACCENT_CHIP.slate;
-  const Icon = spec?.icon ?? HelpCircle;
-  const disabled = spec ? !spec.executable : false;
+  const accentChip = ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate;
+  const Icon = spec.icon;
+  const disabled = !spec.executable;
   const desktopOffline = desktopPresence.kind === 'none';
   const isTrigger = typeStr === 'input';
   const triggerInputs = isTrigger ? declaredInputNames(nodeData) : [];
   const triggerEvents = isTrigger ? [...new Set(triggerBindings.map((binding) => binding.event))] : [];
-  const summary = spec && !isTrigger ? describeNode(typeStr, nodeData, forms ?? undefined) : null;
-  const inputs = spec?.inputs ?? [{ id: 'in', label: 'In' }];
-  const outputs = spec?.outputs ?? [{ id: 'out', label: 'Out' }];
+  const summary = !spec.missing && !isTrigger ? describeNode(typeStr, nodeData, forms ?? undefined) : null;
+  const inputs = spec.inputs;
+  const outputs = spec.outputs;
 
   // Run-status ring wins over the selection ring so the live/failed node is unmistakable. Running
   // and selected now both speak in the primary token — the run rail + spinner (below) tell them

@@ -40,7 +40,12 @@ import {
 import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
 
 /** Palette grouping (order here is the palette section order). */
-export type NodeCategory = 'io' | 'logic' | 'ai' | 'formlogic' | 'connector' | 'storage' | 'desktop';
+/**
+ * 'missing' is deliberately absent from NODE_CATEGORIES: it exists only for the registry's
+ * unknown-type placeholder specs (registry/FlowNodeRegistry.ts), which never enter the
+ * palette — a missing definition stays visible on the canvas, never insertable.
+ */
+export type NodeCategory = 'io' | 'logic' | 'ai' | 'formlogic' | 'connector' | 'storage' | 'desktop' | 'missing';
 
 export interface NodeCategoryMeta {
   id: NodeCategory;
@@ -267,6 +272,13 @@ export interface NodeSpec {
    * message when it isn't reachable.
    */
   requiresDesktopService?: string;
+  /**
+   * Set ONLY on registry-synthesized placeholder specs for unknown node types (a Pack /
+   * Service definition that isn't installed). The node stays visible and deletable on the
+   * canvas but is never insertable, and summaries/properties render the explanation instead
+   * of guessing (extensible-flows plan §4.5).
+   */
+  missing?: true;
 }
 
 /** Info about a connector available to the current flow context (drives palette + connector pickers). */
