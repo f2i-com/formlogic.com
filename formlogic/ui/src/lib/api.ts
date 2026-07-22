@@ -2748,6 +2748,43 @@ class ApiClient {
     return this.request(`/flow-runs/queued${limit ? `?limit=${limit}` : ''}`);
   }
 
+  // ── Blueprints (extensible-flows plan §11/§14) ──────────────────────────────────────
+
+  async listBlueprints(): Promise<ApiResponse<{ blueprints: import('../types/blueprints').Blueprint[] }>> {
+    return this.request('/blueprints');
+  }
+
+  async createBlueprint(payload: { name: string; appId?: string }): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
+    return this.request('/blueprints', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async getBlueprint(blueprintId: string): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`);
+  }
+
+  async deleteBlueprint(blueprintId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
+  }
+
+  /**
+   * Commit one §14.3 operation batch. Semantic batches carry baseSemanticRevision —
+   * a stale value returns 409 {code:'revision_conflict', currentSemanticRevision};
+   * layout-only batches omit it (a drag never conflicts with a semantic edit).
+   */
+  async commitBlueprintOperations(
+    blueprintId: string,
+    batch: {
+      baseSemanticRevision?: number;
+      origin?: 'manual' | 'copilot' | 'launcher';
+      operations: import('../types/blueprints').BlueprintOperation[];
+    }
+  ): Promise<ApiResponse<import('../types/blueprints').BlueprintCommitResult>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/operations/commit`, {
+      method: 'POST',
+      body: JSON.stringify(batch),
+    });
+  }
+
   /** Claim a queued run (owner scope — workspace runs + any run of a flow the user owns). */
   /**
    * Owner-scoped run reserve (POST /api/flow-runs) — workspace flow_call children ride

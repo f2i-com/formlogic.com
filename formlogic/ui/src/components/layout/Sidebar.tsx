@@ -9,6 +9,7 @@ import {
   Boxes,
   Cloud,
   HardDrive,
+  Map,
   ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -37,6 +38,8 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     { path: '/apps', icon: Boxes, label: 'Apps' },
     // Settings moved into the profile menu (Header); Flows is now a first-class section.
     { path: '/flows', icon: Workflow, label: 'Flows' },
+    // Blueprints (extensible-flows §11) — real accounts only (the demo has no blueprint API).
+    ...(!isDemo ? [{ path: '/blueprints', icon: Map, label: 'Blueprints' }] : []),
     // Platform administrators only — instance maintenance, users, upgrades.
     ...(isAdmin ? [{ path: '/admin', icon: ShieldCheck, label: 'Admin' }] : []),
   ];

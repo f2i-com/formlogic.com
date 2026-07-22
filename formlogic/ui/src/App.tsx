@@ -72,6 +72,7 @@ const AdminDoctor = lazyWithRetry(() => import('./pages/admin/AdminDoctor').then
 const AdminActingBoundary = lazyWithRetry(() => import('./components/admin/AdminActingBoundary').then(m => ({ default: m.AdminActingBoundary })));
 const AdminRecordCounts = lazyWithRetry(() => import('./components/admin/AdminRecordCounts').then(m => ({ default: m.AdminRecordCounts })));
 const FlowsWorkspace = lazyWithRetry(() => import('./pages/flows/FlowsWorkspace').then(m => ({ default: m.FlowsWorkspace })));
+const BlueprintsWorkspace = lazyWithRetry(() => import('./pages/blueprints/BlueprintsWorkspace'));
 const Billing = lazyWithRetry(() => import('./pages/Billing').then(m => ({ default: m.Billing })));
 const FormBuilder = lazyWithRetry(() => import('./pages/FormBuilder'));
 const FormPreview = lazyWithRetry(() => import('./pages/FormPreview'));
@@ -382,6 +383,8 @@ function AppRoutes() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/forms" element={<FormsList />} />
         <Route path="/flows" element={<FlowsWorkspace />} />
+        {/* Blueprints (extensible-flows §11): authenticated accounts only — no demo overlay. */}
+        <Route path="/blueprints" element={<BlueprintsWorkspace />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/trash" element={<TrashPage />} />
         {/* Doctor now lives inside the admin panel (server-side admin-gated too) */}
