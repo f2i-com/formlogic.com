@@ -3050,6 +3050,28 @@ $app->group('/api/flows', function (RouteCollectorProxy $group) use ($container,
     });
 })->add($cloudWriteGate)->add($authRequired);
 
+// Blueprints (extensible-flows plan §11/§14, Phase 6): the persistent high-level Diagram.
+// Owner-scoped session auth like /api/flows; ALL diagram mutations flow through the
+// operation-batch commit gateway (revision preconditions, audited inverses) — no direct
+// element writes exist by design.
+$app->group('/api/blueprints', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->list($request, $response);
+    });
+    $group->post('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->create($request, $response);
+    });
+    $group->get('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->get($request, $response, $getArgs($request));
+    });
+    $group->delete('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->delete($request, $response, $getArgs($request));
+    });
+    $group->post('/{blueprintId}/operations/commit', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->commitOperations($request, $response, $getArgs($request));
+    });
+})->add($cloudWriteGate)->add($authRequired);
+
 // Owner-wide run history + queued/claim/complete across every flow the user owns (workspace +
 // app flows) — the same lifecycle FormLogic Desktop drives over /api/v1 with an API key.
 $app->group('/api/flow-runs', function (RouteCollectorProxy $group) use ($container, $getArgs, $flowRunRateLimiter) {

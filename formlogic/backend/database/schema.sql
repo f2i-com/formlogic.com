@@ -922,6 +922,73 @@ CREATE TABLE `flow_outcome_events` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `blueprints` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
+  `semantic_revision` int NOT NULL DEFAULT '0',
+  `layout_revision` int NOT NULL DEFAULT '0',
+  `viewport_json` json DEFAULT NULL,
+  `created_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `updated_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_bp_owner` (`owner_user_id`,`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `blueprint_elements` (
+  `id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `blueprint_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `element_type` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resource_ref_json` json DEFAULT NULL,
+  `properties_json` json DEFAULT NULL,
+  `semantic_revision` int NOT NULL DEFAULT '0',
+  `deleted_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`blueprint_id`,`id`),
+  KEY `idx_bpe_live` (`blueprint_id`,`deleted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `blueprint_layouts` (
+  `blueprint_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `element_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `layout_json` json NOT NULL,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`blueprint_id`,`element_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `blueprint_operations` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `operation_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `blueprint_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `change_set_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `seq` int NOT NULL DEFAULT '0',
+  `op_type` varchar(48) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `target_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `payload_json` json DEFAULT NULL,
+  `inverse_json` json DEFAULT NULL,
+  `semantic_revision` int DEFAULT NULL,
+  `layout_revision` int DEFAULT NULL,
+  `actor_user_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `origin` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_bpop_op` (`blueprint_id`,`operation_id`),
+  KEY `idx_bpop_bp` (`blueprint_id`,`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `form_analytics` (
   `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `form_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,

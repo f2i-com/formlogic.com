@@ -719,6 +719,75 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Blueprints (extensible-flows plan §11/§14, Phase 6 groundwork): the persistent
+        // high-level Diagram. SEPARATE semantic vs layout revisions (§11.2 — a node drag
+        // never conflicts with a semantic edit); elements hold BOTH nodes and relationship
+        // edges (element_type 'edge', endpoints in properties_json) with tombstones;
+        // layouts are canvas-only; operations are the §14.3 ID-addressed audited edits
+        // (payload + inverse per op, batch = change_set_id, UNIQUE operation_id per
+        // blueprint makes replays idempotent). Never store credentials or runtime data.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS blueprints (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                name VARCHAR(120) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'draft',
+                semantic_revision INT NOT NULL DEFAULT 0,
+                layout_revision INT NOT NULL DEFAULT 0,
+                viewport_json JSON NULL,
+                created_by VARCHAR(36) NULL,
+                updated_by VARCHAR(36) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_bp_owner (owner_user_id, updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS blueprint_elements (
+                id VARCHAR(64) NOT NULL,
+                blueprint_id VARCHAR(36) NOT NULL,
+                element_type VARCHAR(24) NOT NULL,
+                resource_ref_json JSON NULL,
+                properties_json JSON NULL,
+                semantic_revision INT NOT NULL DEFAULT 0,
+                deleted_at TIMESTAMP NULL DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (blueprint_id, id),
+                INDEX idx_bpe_live (blueprint_id, deleted_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS blueprint_layouts (
+                blueprint_id VARCHAR(36) NOT NULL,
+                element_id VARCHAR(64) NOT NULL,
+                layout_json JSON NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (blueprint_id, element_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS blueprint_operations (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                operation_id VARCHAR(64) NOT NULL,
+                blueprint_id VARCHAR(36) NOT NULL,
+                change_set_id VARCHAR(64) NOT NULL,
+                seq INT NOT NULL DEFAULT 0,
+                op_type VARCHAR(48) NOT NULL,
+                target_id VARCHAR(64) NULL,
+                payload_json JSON NULL,
+                inverse_json JSON NULL,
+                semantic_revision INT NULL,
+                layout_revision INT NULL,
+                actor_user_id VARCHAR(36) NULL,
+                origin VARCHAR(24) NOT NULL DEFAULT 'manual',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_bpop_op (blueprint_id, operation_id),
+                INDEX idx_bpop_bp (blueprint_id, id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Flow KV storage: small persistent key/value state for flows (owner + optional app +
         // scope like 'flow:<slug>' or 'app'). app_id uses '' (empty string) — NOT NULL — for the
         // workspace scope so the UNIQUE key actually dedupes (MySQL UNIQUE ignores NULLs); there is
