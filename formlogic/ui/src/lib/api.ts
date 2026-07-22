@@ -2590,6 +2590,12 @@ class ApiClient {
       responseId?: string;
       /** true = reserve as 'queued' (no execution yet); a runtime claims it later. */
       queued?: boolean;
+      /**
+       * Run lineage (extensible-flows plan §8.7): the reserving run's parent run and the
+       * flow_call node that spawned it. Root/depth are SERVER-derived from the parent row.
+       */
+      parentRunId?: string;
+      callNodeId?: string;
     }
   ): Promise<ApiResponse<{ runId: string; idempotent?: boolean; run: FlowRunLog }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/flow-runs`, {

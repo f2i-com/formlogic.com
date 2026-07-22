@@ -358,6 +358,38 @@ if ((int) $hasFlowVersionCol->fetchColumn() === 0) {
     $applied[] = 'flow_run_logs.flow_version_id already present';
 }
 
+// 8. Run lineage (extensible-flows plan §8.7/§14.1): parent/root/call-node/depth on
+//    flow_run_logs, server-derived at reserve time. Roots keep NULL parent/root, depth 0.
+$hasLineageCol = $pdo->prepare(
+    'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+);
+foreach ([
+    'parent_run_id' => "ALTER TABLE `flow_run_logs` ADD COLUMN `parent_run_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `flow_version_id`",
+    'root_run_id' => "ALTER TABLE `flow_run_logs` ADD COLUMN `root_run_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `parent_run_id`",
+    'call_node_id' => "ALTER TABLE `flow_run_logs` ADD COLUMN `call_node_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `root_run_id`",
+    'depth' => "ALTER TABLE `flow_run_logs` ADD COLUMN `depth` int NOT NULL DEFAULT '0' AFTER `call_node_id`",
+] as $column => $ddl) {
+    $hasLineageCol->execute([$db, 'flow_run_logs', $column]);
+    if ((int) $hasLineageCol->fetchColumn() === 0) {
+        $pdo->exec($ddl);
+        $applied[] = "flow_run_logs.{$column} added";
+    } else {
+        $applied[] = "flow_run_logs.{$column} already present";
+    }
+}
+$hasLineageIdx = $pdo->prepare(
+    'SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?'
+);
+foreach (['idx_frl_root' => 'root_run_id', 'idx_frl_parent' => 'parent_run_id'] as $index => $column) {
+    $hasLineageIdx->execute([$db, 'flow_run_logs', $index]);
+    if ((int) $hasLineageIdx->fetchColumn() === 0) {
+        $pdo->exec("ALTER TABLE `flow_run_logs` ADD INDEX `{$index}` (`{$column}`)");
+        $applied[] = "flow_run_logs.{$index} added";
+    } else {
+        $applied[] = "flow_run_logs.{$index} already present";
+    }
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

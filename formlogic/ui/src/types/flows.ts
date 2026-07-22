@@ -203,6 +203,13 @@ export interface FlowRunLog {
    * before revision pinning shipped.
    */
   flowVersionId?: string | null;
+  /** Run lineage (plan §8.7) — null/0 on root runs and legacy rows. */
+  parentRunId?: string | null;
+  /** The tree root's run id (null when this run IS the root). */
+  rootRunId?: string | null;
+  /** The parent's flow_call node that spawned this run. */
+  callNodeId?: string | null;
+  depth?: number;
   flow: string | null;
   triggerEvent: string;
   correlationId: string;

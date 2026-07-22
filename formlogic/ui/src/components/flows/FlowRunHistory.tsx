@@ -39,6 +39,23 @@ function runtimeChip(run: FlowRunLog) {
   );
 }
 
+/**
+ * Lineage chip (extensible-flows plan §8.7): a run spawned by a flow_call names its
+ * parent run + calling node. The run history is per-flow, so the chip carries the
+ * provenance inline; the full cross-flow run TREE arrives with the /children endpoint.
+ */
+function lineageChip(run: FlowRunLog) {
+  if (!run.parentRunId) return null;
+  return (
+    <span
+      className="inline-block rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:border-violet-500/25 dark:bg-violet-500/10 dark:text-violet-300"
+      title={`Child run — called from run ${run.parentRunId}${run.callNodeId ? ` (node ${run.callNodeId})` : ''}`}
+    >
+      child · d{run.depth ?? 1}
+    </span>
+  );
+}
+
 function runDuration(run: FlowRunLog): string {
   if (!run.startedAt || !run.finishedAt) return '-';
   // parseServerDate: offsetless UTC MySQL datetimes — Safari can't even parse them raw.
@@ -257,6 +274,7 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
           <div className="flex flex-wrap items-center gap-1.5">
             {statusChip(run)}
             {runtimeChip(run)}
+            {lineageChip(run)}
           </div>
         </td>
         <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{location}</td>
@@ -268,6 +286,16 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
       {expanded && (
         <tr className="border-b border-gray-100 dark:border-slate-800">
           <td colSpan={5} className="bg-gray-50/70 px-3 py-2 dark:bg-slate-800/40">
+            {run.parentRunId && (
+              <p className="mb-1.5 text-[11px] text-gray-500 dark:text-slate-400">
+                Called from run <span className="font-mono">{run.parentRunId}</span>
+                {run.callNodeId && <> via node <span className="font-mono">{run.callNodeId}</span></>}
+                {run.rootRunId && run.rootRunId !== run.parentRunId && (
+                  <> · root <span className="font-mono">{run.rootRunId}</span></>
+                )}
+                {typeof run.depth === 'number' && run.depth > 0 && <> · depth {run.depth}</>}
+              </p>
+            )}
             {run.error && (
               <div className="mb-1.5 text-xs text-red-600 dark:text-red-400">
                 <p>{run.error.code}: {run.error.message}</p>

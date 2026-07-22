@@ -643,6 +643,10 @@ class MySQLConnection
                 flow_definition_id VARCHAR(36) NOT NULL,
                 trigger_event VARCHAR(150) NOT NULL,
                 flow_version_id VARCHAR(36) NULL,
+                parent_run_id VARCHAR(36) NULL,
+                root_run_id VARCHAR(36) NULL,
+                call_node_id VARCHAR(128) NULL,
+                depth INT NOT NULL DEFAULT 0,
                 correlation_id VARCHAR(150) NOT NULL,
                 idempotency_key VARCHAR(255) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'running',
@@ -664,7 +668,9 @@ class MySQLConnection
                 INDEX idx_frl_flow (flow_definition_id),
                 INDEX idx_frl_binding (binding_id),
                 INDEX idx_frl_status (app_id, status),
-                INDEX idx_frl_created (created_at)
+                INDEX idx_frl_created (created_at),
+                INDEX idx_frl_root (root_run_id),
+                INDEX idx_frl_parent (parent_run_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -2007,6 +2013,25 @@ class MySQLConnection
         // from createFlowTables above; pre-existing installs only lack this column.
         if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'flow_version_id'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN flow_version_id VARCHAR(36) NULL AFTER flow_definition_id");
+        }
+        // Run lineage (extensible-flows plan §8.7/§14.1): parent/root/call-node/depth,
+        // SERVER-derived from the parent row at reserve time (client lineage is never
+        // trusted). Roots keep NULL parent/root and depth 0.
+        foreach ([
+            'parent_run_id' => "ALTER TABLE flow_run_logs ADD COLUMN parent_run_id VARCHAR(36) NULL AFTER flow_version_id",
+            'root_run_id' => "ALTER TABLE flow_run_logs ADD COLUMN root_run_id VARCHAR(36) NULL AFTER parent_run_id",
+            'call_node_id' => "ALTER TABLE flow_run_logs ADD COLUMN call_node_id VARCHAR(128) NULL AFTER root_run_id",
+            'depth' => "ALTER TABLE flow_run_logs ADD COLUMN depth INT NOT NULL DEFAULT 0 AFTER call_node_id",
+        ] as $column => $ddl) {
+            if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE '{$column}'")->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
+        }
+        if ($pdo->query("SHOW INDEX FROM flow_run_logs WHERE Key_name = 'idx_frl_root'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD INDEX idx_frl_root (root_run_id)");
+        }
+        if ($pdo->query("SHOW INDEX FROM flow_run_logs WHERE Key_name = 'idx_frl_parent'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD INDEX idx_frl_parent (parent_run_id)");
         }
         // desktop_connections.api_key_id (OAuth device-link → minted flk_ key) for installs that
         // predate the OAuth linking flow. Fresh installs already carry it (createFlowTables above).

@@ -83,6 +83,12 @@ export interface ExecuteFlowOptions {
    */
   callStack?: readonly string[];
   /**
+   * This run's reserved run-log id — flow_call's child reservations name it as
+   * `parentRunId` so the server records lineage (plan §8.7). Absent when the execution
+   * has no run log (e.g. a workspace Test Run without a reservation).
+   */
+  runId?: string;
+  /**
    * BROWSER-ONLY, ADDITIVE observer. Called immediately BEFORE a node runs ('running') and
    * again AFTER it settles ('done' with its output, or 'error' with the message). It NEVER
    * influences execution — it only observes, so the desktop Rust runner (which renders no
@@ -324,6 +330,7 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
             capabilities: options.capabilities,
             flowSlug: options.flowSlug,
             callStack: options.callStack,
+            runId: options.runId,
           }).then((value) => ({ value })),
           aborted,
         ]);

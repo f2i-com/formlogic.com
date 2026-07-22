@@ -202,6 +202,95 @@ class FlowVersioningTest extends TestCase
         $this->assertSame(1, (int) $this->versionRow($run['flowVersionId'])['version']);
     }
 
+    // ── Run lineage (extensible-flows plan §8.7/§14.1) ───────────────────────────────────
+
+    private function reserve(array $extra = []): array
+    {
+        return self::$flows->reserveRun($this->appId, $this->userId, array_merge([
+            'flowSlug' => 'ver-flow',
+            'triggerEvent' => 'flow.call',
+            'correlationId' => 'corr-' . bin2hex(random_bytes(6)),
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(8)),
+        ], $extra))['run'];
+    }
+
+    public function testRunLineageIsServerDerivedFromTheParentRow(): void
+    {
+        $this->makeFlow();
+        $root = $this->reserve();
+        $this->assertNull($root['parentRunId']);
+        $this->assertNull($root['rootRunId']);
+        $this->assertSame(0, $root['depth']);
+
+        $child = $this->reserve(['parentRunId' => $root['runId'], 'callNodeId' => 'call-1']);
+        $this->assertSame($root['runId'], $child['parentRunId']);
+        $this->assertSame($root['runId'], $child['rootRunId'], 'a root run IS the root even though it stores NULL');
+        $this->assertSame(1, $child['depth']);
+        $this->assertSame('call-1', $child['callNodeId']);
+
+        $grand = $this->reserve(['parentRunId' => $child['runId'], 'callNodeId' => 'call-2']);
+        $this->assertSame($child['runId'], $grand['parentRunId']);
+        $this->assertSame($root['runId'], $grand['rootRunId'], 'root propagates down the chain');
+        $this->assertSame(2, $grand['depth']);
+
+        // Client-supplied depth/root are IGNORED — always derived from the parent row.
+        $forged = $this->reserve([
+            'parentRunId' => $root['runId'],
+            'depth' => 99,
+            'rootRunId' => 'not-a-real-run',
+        ]);
+        $this->assertSame(1, $forged['depth']);
+        $this->assertSame($root['runId'], $forged['rootRunId']);
+    }
+
+    public function testForeignParentRunIsRefusedOpaquely(): void
+    {
+        $this->makeFlow();
+        // A second user's app + flow + run: naming its run id as parent from THIS app
+        // must refuse without confirming the foreign run exists.
+        $otherUser = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'O')")
+            ->execute([$otherUser, $otherUser . '@test.local']);
+        $otherApp = 'a-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO apps (id, owner_id, name, slug, status) VALUES (?, ?, 'Other', ?, 'published')")
+            ->execute([$otherApp, $otherUser, 'otherapp-' . bin2hex(random_bytes(6))]);
+        try {
+            self::$flows->createFlow($otherApp, $otherUser, [
+                'name' => 'Other flow',
+                'slug' => 'other-flow',
+                'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input']], 'edges' => []],
+            ]);
+            $foreignRun = self::$flows->reserveRun($otherApp, $otherUser, [
+                'flowSlug' => 'other-flow',
+                'triggerEvent' => 'test',
+                'correlationId' => 'corr-x',
+                'idempotencyKey' => 'k-' . bin2hex(random_bytes(8)),
+            ])['run'];
+
+            try {
+                $this->reserve(['parentRunId' => $foreignRun['runId']]);
+                $this->fail('foreign parent must be refused');
+            } catch (\InvalidArgumentException $e) {
+                $this->assertSame('Unknown parent run', $e->getMessage(), 'opaque — never confirms the foreign run');
+            }
+            // A nonexistent parent reads identically (no existence oracle).
+            try {
+                $this->reserve(['parentRunId' => 'no-such-run']);
+                $this->fail('missing parent must be refused');
+            } catch (\InvalidArgumentException $e) {
+                $this->assertSame('Unknown parent run', $e->getMessage());
+            }
+        } finally {
+            self::$pdo->prepare('DELETE FROM flow_run_logs WHERE app_id = ?')->execute([$otherApp]);
+            self::$pdo->prepare(
+                'DELETE v FROM flow_definition_versions v JOIN flow_definitions f ON f.id = v.flow_definition_id WHERE f.app_id = ?'
+            )->execute([$otherApp]);
+            self::$pdo->prepare('DELETE FROM flow_definitions WHERE app_id = ?')->execute([$otherApp]);
+            self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$otherApp]);
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$otherUser]);
+        }
+    }
+
     // ── Graph v2 validation in sanitizeFlowJson ──────────────────────────────────────────
 
     public function testSanitizeFlowJsonValidatesEdgeIdsAndGraphVersion(): void

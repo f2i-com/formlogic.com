@@ -229,6 +229,8 @@ export interface FlowExecutorDeps {
     callNodeId: string;
     /** Awaited ancestry INCLUDING the calling flow (stable ids, root first). */
     callStack: readonly string[];
+    /** The calling run's log id — recorded as the child's parent (lineage, plan §8.7). */
+    parentRunId?: string;
     timeoutMs?: number;
     signal?: AbortSignal;
   }): Promise<{
@@ -252,6 +254,8 @@ export interface FlowNodeContext {
   flowSlug?: string;
   /** Awaited-call ancestry incl. this flow (flow_call guards — plan §8.8). */
   callStack?: readonly string[];
+  /** This run's reserved run-log id (flow_call lineage — plan §8.7). */
+  runId?: string;
 }
 
 /**
@@ -1357,6 +1361,7 @@ async function runFlowCall(ctx: FlowNodeContext): Promise<unknown> {
       inputs,
       callNodeId: node.id,
       callStack: ctx.callStack,
+      parentRunId: ctx.runId,
       timeoutMs,
       signal: ctx.signal,
     });

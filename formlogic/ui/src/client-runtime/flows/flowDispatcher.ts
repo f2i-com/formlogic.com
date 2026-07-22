@@ -140,6 +140,9 @@ export interface FlowDispatcherDeps {
       inputSnapshot?: Record<string, unknown>;
       formId?: string;
       responseId?: string;
+      /** Run lineage (plan §8.7): root/depth are SERVER-derived from the parent row. */
+      parentRunId?: string;
+      callNodeId?: string;
     }
   ): Promise<{ runId: string; idempotent?: boolean } | { error: string }>;
   completeRun(
@@ -670,6 +673,7 @@ async function invokeChildFlow(req: {
   inputs: Record<string, unknown>;
   callNodeId: string;
   callStack: readonly string[];
+  parentRunId?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<{
@@ -701,6 +705,9 @@ async function invokeChildFlow(req: {
     correlationId,
     idempotencyKey: `flowcall:${req.callNodeId}:${correlationId}`,
     inputSnapshot: req.inputs,
+    // Lineage (plan §8.7): the server derives root/depth from the parent row.
+    parentRunId: req.parentRunId,
+    callNodeId: req.callNodeId,
   });
   if ('error' in reservation) {
     throw new Error(`transport_failed: child run reservation failed: ${reservation.error}`);
@@ -715,6 +722,7 @@ async function invokeChildFlow(req: {
     flowSlug: flow.slug,
     signal: req.signal,
     callStack: [...req.callStack, req.targetFlowId],
+    runId: reservation.runId,
   });
   try {
     if (outcome.status === 'done') {
@@ -885,6 +893,8 @@ async function executeRun(opts: {
   actionDeps: OutputActionDeps;
   app: Record<string, unknown>;
   timeoutMs?: number;
+  /** This run's reserved run-log id (flow_call lineage seed — plan §8.7). */
+  runId?: string;
   complete(payload: {
     status: 'done' | 'error' | 'timeout' | 'cancelled';
     result?: Record<string, unknown> | null;
@@ -912,6 +922,7 @@ async function executeRun(opts: {
       // flow_call ancestry seed (plan §8.8) — absent id (older runtime payloads) leaves
       // flow_call refusing typed rather than running unguarded.
       callStack: flow.id ? [flow.id] : undefined,
+      runId: opts.runId,
     });
     if (outcome.status === 'done') break;
     if (attempt < maxAttempts) {
@@ -977,6 +988,7 @@ async function executeAndComplete(
     executorDeps: d.executorDeps,
     actionDeps: appActionDeps(),
     app: d.getAppContext(),
+    runId,
     complete: (payload) => d.completeRun(slug, runId, payload),
   });
 }
@@ -1130,6 +1142,7 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
       capabilities: flow.nodeCapabilities,
       flowSlug: flow.slug,
       callStack: flow.id ? [flow.id] : undefined,
+      runId: reservation.runId,
     });
     try {
       if (outcome.status === 'done') {
@@ -1248,6 +1261,7 @@ async function executeClaimedRun(opts: {
     executorDeps: opts.executorDeps,
     actionDeps: opts.actionDeps,
     app: opts.app,
+    runId: run.runId,
     complete: opts.complete,
   });
 }

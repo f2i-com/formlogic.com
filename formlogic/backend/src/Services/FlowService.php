@@ -853,13 +853,16 @@ class FlowService
 
         $id = $this->uuidV4();
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
+        [$parentRunId, $rootRunId, $depth, $callNodeId] = $this->resolveRunLineage($data, $appId, null);
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
-                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id, trigger_event,
+                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id,
+                     parent_run_id, root_run_id, call_node_id, depth, trigger_event,
                      correlation_id, idempotency_key, status, input_snapshot_json, started_at)
                 VALUES
-                    (:id, :app, :form, :resp, :binding, :flow, :flow_version, :event, :corr, :key, :status, :input, :started)
+                    (:id, :app, :form, :resp, :binding, :flow, :flow_version,
+                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :input, :started)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -869,6 +872,10 @@ class FlowService
                 'binding' => $bindingId,
                 'flow' => $flow['id'],
                 'flow_version' => $flowVersionId,
+                'parent_run' => $parentRunId,
+                'root_run' => $rootRunId,
+                'call_node' => $callNodeId,
+                'depth' => $depth,
                 'event' => $triggerEvent,
                 'corr' => $correlationId,
                 'key' => $idempotencyKey,
@@ -975,6 +982,60 @@ class FlowService
             return is_string($winner) && $winner !== '' ? $winner : null;
         }
         return $id;
+    }
+
+    /** Server-side ceiling on run-lineage depth (extensible-flows plan §8.8/§15.8; the
+     * browser invoker enforces the tighter awaited-depth-8 limit before reserving). */
+    public const RUN_LINEAGE_MAX_DEPTH = 16;
+
+    /**
+     * Resolve reserve-time run lineage (extensible-flows plan §8.7/§14.1). The caller may
+     * name only its parent run + calling node; root and depth are DERIVED from the parent
+     * row here — client-supplied lineage is never trusted. The parent must already be
+     * visible to the caller (same app for app runs, same flow owner for owner runs);
+     * anything else refuses with an OPAQUE error so foreign run ids can't be probed.
+     *
+     * @return array{0: ?string, 1: ?string, 2: int, 3: ?string} [parentRunId, rootRunId, depth, callNodeId]
+     * @throws \InvalidArgumentException
+     */
+    private function resolveRunLineage(array $data, ?string $appId, ?string $ownerUserId): array
+    {
+        $callNodeId = isset($data['callNodeId']) && is_string($data['callNodeId']) && $data['callNodeId'] !== ''
+            ? substr($data['callNodeId'], 0, 128)
+            : null;
+        $parentRunId = isset($data['parentRunId']) && is_string($data['parentRunId']) && $data['parentRunId'] !== ''
+            ? substr($data['parentRunId'], 0, 36)
+            : null;
+        if ($parentRunId === null) {
+            return [null, null, 0, $callNodeId];
+        }
+
+        $stmt = $this->mysql->prepare("
+            SELECT r.id, r.app_id, r.root_run_id, r.depth, f.owner_user_id AS flow_owner
+            FROM flow_run_logs r
+            LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
+            WHERE r.id = :id LIMIT 1
+        ");
+        $stmt->execute(['id' => $parentRunId]);
+        $parent = $stmt->fetch();
+        $visible = $parent && (
+            ($appId !== null && ($parent['app_id'] ?? null) === $appId)
+            || ($ownerUserId !== null && ($parent['flow_owner'] ?? null) === $ownerUserId)
+        );
+        if (!$visible) {
+            throw new \InvalidArgumentException('Unknown parent run');
+        }
+
+        $depth = (int) ($parent['depth'] ?? 0) + 1;
+        if ($depth > self::RUN_LINEAGE_MAX_DEPTH) {
+            throw new \InvalidArgumentException(
+                'Run lineage depth limit exceeded (' . self::RUN_LINEAGE_MAX_DEPTH . ')'
+            );
+        }
+        $rootRunId = is_string($parent['root_run_id'] ?? null) && $parent['root_run_id'] !== ''
+            ? $parent['root_run_id']
+            : $parentRunId;
+        return [$parentRunId, $rootRunId, $depth, $callNodeId];
     }
 
     public function getRun(string $appId, string $runId): ?array
@@ -1935,13 +1996,16 @@ class FlowService
 
         $id = $this->uuidV4();
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
+        [$parentRunId, $rootRunId, $depth, $callNodeId] = $this->resolveRunLineage($data, null, $ownerUserId);
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
-                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id, trigger_event,
+                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id,
+                     parent_run_id, root_run_id, call_node_id, depth, trigger_event,
                      correlation_id, idempotency_key, status, input_snapshot_json, started_at)
                 VALUES
-                    (:id, :app, :form, :resp, :binding, :flow, :flow_version, :event, :corr, :key, :status, :input, :started)
+                    (:id, :app, :form, :resp, :binding, :flow, :flow_version,
+                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :input, :started)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -1951,6 +2015,10 @@ class FlowService
                 'binding' => $bindingId,
                 'flow' => $flow['id'],
                 'flow_version' => $flowVersionId,
+                'parent_run' => $parentRunId,
+                'root_run' => $rootRunId,
+                'call_node' => $callNodeId,
+                'depth' => $depth,
                 'event' => $triggerEvent,
                 'corr' => $correlationId,
                 'key' => $idempotencyKey,
@@ -2608,6 +2676,10 @@ class FlowService
             'bindingId' => $row['binding_id'],
             'flowDefinitionId' => $row['flow_definition_id'],
             'flowVersionId' => $row['flow_version_id'] ?? null,
+            'parentRunId' => $row['parent_run_id'] ?? null,
+            'rootRunId' => $row['root_run_id'] ?? null,
+            'callNodeId' => $row['call_node_id'] ?? null,
+            'depth' => (int) ($row['depth'] ?? 0),
             'flow' => $row['flow_slug'] ?? null,
             'triggerEvent' => $row['trigger_event'],
             'correlationId' => $row['correlation_id'],
