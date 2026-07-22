@@ -28,6 +28,8 @@ interface TriggersPanelProps {
   loading?: boolean;
   forms: FlowFormOption[];
   context?: FlowEditorContext;
+  /** The selected flow's sibling flows (same app) — source options for flow.* outcome triggers (§9.1). */
+  appFlows?: FlowDefinition[];
   onRefresh: () => Promise<void>;
 }
 
@@ -54,6 +56,7 @@ export function TriggersPanel({
   loading = false,
   forms,
   context = EMPTY_FLOW_EDITOR_CONTEXT,
+  appFlows,
   onRefresh,
 }: TriggersPanelProps) {
   const navigate = useNavigate();
@@ -252,6 +255,7 @@ export function TriggersPanel({
                     <BindingEditor
                       binding={binding}
                       flows={editorFlows}
+                      sourceFlows={appFlows}
                       connectors={editorContext.connectors}
                       forms={forms}
                       context={editorContext}
@@ -271,6 +275,7 @@ export function TriggersPanel({
               <BindingEditor
                 binding={null}
                 flows={editorFlows}
+                sourceFlows={appFlows}
                 connectors={editorContext.connectors}
                 forms={forms}
                 context={editorContext}

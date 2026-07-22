@@ -10,7 +10,8 @@ import { toast } from '../../../stores/toastStore';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
 import { EventPicker } from '../EventPicker';
-import { mergeKnownConnectorCommands } from '../flowEventCatalog';
+import { mergeKnownConnectorCommands, payloadHintsForEvent } from '../flowEventCatalog';
+import { isFlowOutcomeEvent, sourceFlowCondition, sourceFlowFromCondition } from './outcomeTrigger';
 import { filterForms, formsForContext, shouldSearch } from '../editor/formPicker';
 import {
   EMPTY_FLOW_EDITOR_CONTEXT,
@@ -75,6 +76,12 @@ export interface BindingDraft {
 interface BindingEditorProps {
   binding: FlowBinding | null;
   flows: FlowDefinition[];
+  /**
+   * Flows that can be the SOURCE of a flow.* outcome trigger (§9.1 "Another Flow"): the
+   * app's full flow list. Callers that lock `flows` to the bound flow (the /flows rail)
+   * pass this separately; when absent, `flows` doubles as the source list.
+   */
+  sourceFlows?: FlowDefinition[];
   connectors?: FlowConnectorInfo[];
   forms?: FlowFormOption[];
   context?: FlowEditorContext;
@@ -171,7 +178,7 @@ function draftToPayload(draft: BindingDraft): Record<string, unknown> {
   return payload;
 }
 
-function ChipRow({ mode, onInsert }: { mode: ReferenceSyntax; onInsert: (formatted: string) => 'inserted' | 'copied' }) {
+function ChipRow({ mode, hints = EVENT_DATA_HINTS, onInsert }: { mode: ReferenceSyntax; hints?: readonly string[]; onInsert: (formatted: string) => 'inserted' | 'copied' }) {
   const [flash, setFlash] = useState<{ h: string; kind: 'inserted' | 'copied' } | null>(null);
   const activate = (h: string) => {
     const kind = onInsert(formatChipInsert(h, mode));
@@ -180,7 +187,7 @@ function ChipRow({ mode, onInsert }: { mode: ReferenceSyntax; onInsert: (formatt
   };
   return (
     <div className="mt-1.5 flex flex-wrap gap-1">
-      {EVENT_DATA_HINTS.map((h) => (
+      {hints.map((h) => (
         <button
           key={h}
           type="button"
@@ -287,6 +294,7 @@ function BindingFormPicker({
 export function BindingEditor({
   binding,
   flows,
+  sourceFlows,
   connectors = [],
   forms = [],
   context = EMPTY_FLOW_EDITOR_CONTEXT,
@@ -317,6 +325,17 @@ export function BindingEditor({
     const trigger = selectedFlowDef?.flowJson?.nodes?.find((n) => n.type === 'input');
     return trigger ? declaredInputNames(trigger.data ?? {}) : [];
   }, [selectedFlowDef]);
+
+  // §9.1 "Another Flow" outcome trigger: the source-flow picker manages the condition
+  // expression (claim-time enforced) instead of asking authors to hand-write it.
+  const outcomeEvent = !workspaceFormOnly && isFlowOutcomeEvent(draft.event.trim());
+  const outcomeSourceOptions = sourceFlows ?? flows;
+  const managedSourceFlowId = outcomeEvent ? sourceFlowFromCondition(draft.conditionExpr) : null;
+  const customOutcomeCondition = outcomeEvent && draft.conditionExpr.trim() !== '' && managedSourceFlowId === null;
+  const eventHints = useMemo(() => {
+    const hints = payloadHintsForEvent(draft.event.trim());
+    return hints ? ['$event.data', ...hints] : EVENT_DATA_HINTS;
+  }, [draft.event]);
 
   const conditionInputRef = useRef<HTMLInputElement | null>(null);
   const activeInputRowRef = useRef<HTMLInputElement | null>(null);
@@ -437,6 +456,49 @@ export function BindingEditor({
         </div>
       )}
 
+      {outcomeEvent && (
+        <div>
+          <label className={LABEL_CLS}>Source flow (managed via the condition below)</label>
+          <select
+            value={customOutcomeCondition ? '__custom__' : managedSourceFlowId ?? ''}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next === '__custom__') return;
+              patch({ conditionExpr: next === '' ? '' : sourceFlowCondition(next) ?? '' });
+            }}
+            aria-label="Outcome source flow"
+            className={INPUT_CLS + ' cursor-pointer'}
+          >
+            <option value="">Any flow in this app</option>
+            {customOutcomeCondition && <option value="__custom__" disabled>Custom condition (edit below)</option>}
+            {managedSourceFlowId !== null && !outcomeSourceOptions.some((f) => f.id === managedSourceFlowId) && (
+              <option value={managedSourceFlowId}>Missing flow ({managedSourceFlowId.slice(0, 8)}...)</option>
+            )}
+            {outcomeSourceOptions.map((f) => (
+              <option key={f.id} value={f.id}>{f.name} ({f.slug})</option>
+            ))}
+          </select>
+          {managedSourceFlowId !== null && selectedFlowDef !== null && managedSourceFlowId === selectedFlowDef.id && (
+            <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3 w-3 flex-none" />
+              This flow handles its own outcome. A run never re-triggers the binding that started it and each
+              run tree fires this trigger once, so it cannot loop forever - but self-handling is usually a mistake.
+            </p>
+          )}
+          {draft.mode === 'manual' && (
+            <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3 w-3 flex-none" />
+              Manual-mode bindings never receive outcome events - pick sync, async or background.
+            </p>
+          )}
+          <p className="mt-1 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+            Runs as an independent queued run when the source flow finishes. Loop guards: a run never
+            re-triggers its own source binding, each trigger fires at most once per run tree, and chains stop
+            at lineage depth 16.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr,8rem]">
         <div>
           <label className={LABEL_CLS}>Condition (sandboxed boolean over <span className="font-mono">event</span>; optional)</label>
@@ -448,7 +510,7 @@ export function BindingEditor({
             aria-label="Binding condition expression"
             className={MONO_INPUT_CLS}
           />
-          <ChipRow mode="quickjs" onInsert={(formatted) => insertOrCopy(conditionInputRef.current, formatted)} />
+          <ChipRow mode="quickjs" hints={eventHints} onInsert={(formatted) => insertOrCopy(conditionInputRef.current, formatted)} />
         </div>
         <div>
           <label className={LABEL_CLS}>Timeout (ms)</label>
@@ -472,7 +534,7 @@ export function BindingEditor({
           </Button>
         </div>
         <p className="text-[10px] text-gray-400 dark:text-slate-500">Insert into the focused value field:</p>
-        <ChipRow mode="selector" onInsert={(formatted) => insertOrCopy(activeInputRowRef.current, formatted)} />
+        <ChipRow mode="selector" hints={eventHints} onInsert={(formatted) => insertOrCopy(activeInputRowRef.current, formatted)} />
         {draft.inputRows.length === 0 && (
           <p className="mt-1.5 text-xs text-gray-400 dark:text-slate-500">No inputs - the flow runs with an empty inputs object.</p>
         )}

@@ -477,7 +477,7 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     group: 'formlogic',
     event: 'flow.succeeded',
     label: 'Flow succeeded',
-    description: 'Another flow in this app finished successfully. Result included when small; add a condition to filter the source flow.',
+    description: 'Another flow in this app finished successfully. Result included when small; the trigger editor can filter to one source flow.',
     payloadHints: FLOW_OUTCOME_HINTS,
   },
   {
@@ -520,6 +520,15 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
 
 export function flowEventsForGroup(group: FlowEventGroupId): readonly FlowEventCatalogEntry[] {
   return FLOW_EVENT_CATALOG.filter((entry) => entry.group === group);
+}
+
+/**
+ * Payload chips for a known catalog event, or null for unknown/custom events and catalog
+ * entries with no documented payload (callers fall back to their generic hint list).
+ */
+export function payloadHintsForEvent(event: string): readonly string[] | null {
+  const entry = FLOW_EVENT_CATALOG.find((candidate) => candidate.kind === 'event' && candidate.event === event);
+  return entry && entry.payloadHints.length > 0 ? entry.payloadHints : null;
 }
 
 export function flowEventGroupsForConnectors(connectorIds: readonly string[] = []): readonly FlowEventGroupMeta[] {

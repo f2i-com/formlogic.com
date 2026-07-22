@@ -169,6 +169,11 @@ export function FlowsWorkspace() {
   }, [selectedFlow, groups]);
   const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
+  // The selected flow's sibling flows (same app) feed the §9.1 outcome-trigger source picker.
+  const selectedAppFlows = useMemo(
+    () => (selectedFlow ? allFlows.filter((flow) => flow.appId === selectedFlow.appId) : []),
+    [allFlows, selectedFlow],
+  );
   const availableConnectorIds = useMemo(
     () => [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort(),
     [apps],
@@ -628,6 +633,7 @@ export function FlowsWorkspace() {
               loading={!!flowBindingsLoading[selectedFlow.id]}
               forms={forms}
               context={editorContext}
+              appFlows={selectedAppFlows}
               onRefresh={() => fetchFlowBindings(selectedFlow)}
             />
           </div>
@@ -659,6 +665,7 @@ export function FlowsWorkspace() {
             loading={!!flowBindingsLoading[selectedFlow.id]}
             forms={forms}
             context={editorContext}
+            appFlows={selectedAppFlows}
             onRefresh={() => fetchFlowBindings(selectedFlow)}
           />
         </FlowMobileDrawer>
