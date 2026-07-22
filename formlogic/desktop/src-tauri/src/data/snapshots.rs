@@ -69,6 +69,9 @@ pub struct BackupCatalogEntry {
     pub bytes: u64,
     pub file_name: String,
     pub responses: i64,
+    /// Account backups only: forms contained (signed count from the header).
+    #[serde(default)]
+    pub forms: Option<i64>,
     pub source: String,
     /// `cloud_signed_tofu` until the N3 owner chain exists (plan §18.5).
     pub provenance: String,
@@ -472,6 +475,7 @@ async fn pull_verified(
         bytes,
         file_name,
         responses: summary.responses,
+        forms: None,
         source: "cloud".to_string(),
         provenance: "cloud_signed_tofu".to_string(),
         last_test_ok: None,
@@ -773,6 +777,7 @@ mod tests {
             bytes: 0,
             file_name,
             responses: rows,
+            forms: None,
             source: "cloud".into(),
             provenance: "cloud_signed_tofu".into(),
             last_test_ok: None,

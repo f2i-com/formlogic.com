@@ -1112,6 +1112,7 @@ export interface DataCloudForm {
 }
 
 export interface DataBackupEntry {
+  kind: string;
   backupId: string;
   formId: string;
   datasetId: string;
@@ -1120,6 +1121,7 @@ export interface DataBackupEntry {
   bytes: number;
   fileName: string;
   responses: number;
+  forms: number | null;
   source: string;
   provenance: string;
   lastTestOk: boolean | null;
@@ -1202,6 +1204,12 @@ export const dataNodes = {
     request<{ ok: boolean }>(`/api/data/backups/${encodeURIComponent(backupId)}`, {
       method: 'DELETE',
     }),
+  exportBackup: (backupId: string) =>
+    request<{ ok: boolean; path: string }>(
+      `/api/data/backups/${encodeURIComponent(backupId)}/export`,
+      { method: 'POST' },
+      120000,
+    ),
   createSample: (records: number) =>
     request<{ ok: boolean; dataset: DataDatasetView }>('/api/data/sample', {
       method: 'POST',

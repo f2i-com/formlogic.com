@@ -108,10 +108,27 @@ final class DataAccountBackupService
                 fclose($out);
             }
 
+            // Real content counts for the catalog/UI, read from the archive's
+            // own manifest (forms/apps/flows/responses/files) and SIGNED with
+            // the header so a tampered count cannot misrepresent a backup.
+            $counts = ['forms' => 0, 'apps' => 0, 'flows' => 0, 'responses' => 0, 'files' => 0];
+            $za = new \ZipArchive();
+            if ($za->open($zipPath) === true) {
+                $manifestRaw = $za->getFromName('manifest.json');
+                if (is_string($manifestRaw)) {
+                    $decoded = json_decode($manifestRaw, true);
+                    foreach (array_keys($counts) as $key) {
+                        $counts[$key] = (int) ($decoded['counts'][$key] ?? 0);
+                    }
+                }
+                $za->close();
+            }
+
             $identity = $this->signer->publicIdentity();
             $header = [
                 'v' => 1,
                 'kind' => 'account-backup',
+                'counts' => $counts,
                 'protocol' => self::PROTOCOL,
                 'backupId' => $backupId,
                 'accountId' => $userId,

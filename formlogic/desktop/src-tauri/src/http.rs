@@ -2464,6 +2464,18 @@ async fn data_schedule_set(
     }
 }
 
+async fn data_backup_export(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || crate::data::account_backup::export_backup(&data, &id)).await {
+        Ok(Ok(path)) => Json(serde_json::json!({ "ok": true, "path": path.display().to_string() })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
 async fn data_backup_delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -5056,6 +5068,7 @@ pub async fn serve(
         .route("/api/data/cloud-forms", get(data_cloud_forms))
         .route("/api/data/backups", get(data_backups).post(data_backup_pull))
         .route("/api/data/backups/:id/test", post(data_backup_test))
+        .route("/api/data/backups/:id/export", post(data_backup_export))
         .route("/api/data/backups/:id", delete(data_backup_delete))
         .route("/api/data/account-backup", post(data_account_backup_pull))
         .route("/api/data/self-test", post(data_self_test))

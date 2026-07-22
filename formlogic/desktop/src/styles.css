@@ -2533,3 +2533,89 @@ code {
       inset 0 0 48px rgba(0, 0, 0, 0);
   }
 }
+
+/* ── Data workspace (encrypted data node) ──────────────────────────────── */
+.data-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.data-stat {
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.data-stat b { display: block; font-size: 18px; font-weight: 650; color: var(--ink); }
+.data-stat span {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-dim);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.data-card {
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.data-card + .data-card { margin-top: 10px; }
+.data-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 10px;
+}
+.data-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 13.5px;
+}
+.data-card-title svg { color: var(--ink-dim); flex-shrink: 0; }
+.data-fingerprint {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  padding: 4px 8px;
+  display: inline-block;
+}
+.data-backup-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.data-backup-row + .data-backup-row { margin-top: 8px; }
+.data-backup-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--ink-dim);
+  margin-top: 1px;
+}
+.data-row-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.data-restore-hint {
+  border: 1px dashed var(--line-2);
+  border-radius: 10px;
+  padding: 9px 12px;
+  color: var(--ink-dim);
+  font-size: 12px;
+}

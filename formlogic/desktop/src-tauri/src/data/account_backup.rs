@@ -48,6 +48,9 @@ struct WireHeader {
     cloud_epk: [u8; 32],
     key_nonce: [u8; 24],
     wrapped_key: Vec<u8>,
+    /// Signed content counts (responses/forms) for the catalog display.
+    responses: i64,
+    forms: i64,
 }
 
 fn parse_header(header: &Value) -> Result<WireHeader, DataError> {
@@ -80,6 +83,8 @@ fn parse_header(header: &Value) -> Result<WireHeader, DataError> {
         cloud_epk: b64_exact("cloudEphemeralPk", 32)?.try_into().unwrap(),
         key_nonce: b64_exact("keyNonce", 24)?.try_into().unwrap(),
         wrapped_key: b64_exact("wrappedKey", 48)?,
+        responses: header.pointer("/counts/responses").and_then(Value::as_i64).unwrap_or(0),
+        forms: header.pointer("/counts/forms").and_then(Value::as_i64).unwrap_or(0),
     })
 }
 
@@ -294,7 +299,8 @@ async fn pull_verified(
         created_at: if header.created_at.is_empty() { utc_now_rfc3339() } else { header.created_at.clone() },
         bytes,
         file_name,
-        responses: 0,
+        responses: header.responses,
+        forms: Some(header.forms),
         source: "cloud".to_string(),
         provenance: "cloud_signed_tofu".to_string(),
         last_test_ok: None,
@@ -426,6 +432,98 @@ pub fn test_account_backup(svc: &DataService, backup_id: &str) -> Result<TestRes
     };
     snapshots::catalog_record_test(svc, backup_id, report.ok)?;
     Ok(report)
+}
+
+/// USER-INVOKED export of a stored backup to the Downloads folder — the
+/// "restore-ready" artifact. A `form` snapshot copies its .flbackup verbatim
+/// (its content is E2EE envelopes). An `account` backup DECRYPTS to a plain
+/// .zip: that is deliberate and explicit (the plan forbids only AUTOMATIC
+/// plaintext export) — the zip is exactly what the web app's
+/// Settings → Backup → Import restores.
+pub fn export_backup(svc: &DataService, backup_id: &str) -> Result<std::path::PathBuf, DataError> {
+    let entry = snapshots::catalog(svc)
+        .into_iter()
+        .find(|b| b.backup_id == backup_id)
+        .ok_or_else(|| DataError::NotFound(format!("backup {backup_id} not found")))?;
+    let downloads = std::env::var("USERPROFILE")
+        .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+        .ok()
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| svc.data_root().join("exports"));
+    std::fs::create_dir_all(&downloads)
+        .map_err(|e| DataError::StoreUnavailable(format!("export dir: {e}")))?;
+
+    if entry.kind != "account" {
+        let src = svc.backups_data_only_dir().join(&entry.file_name);
+        let dest = downloads.join(&entry.file_name);
+        std::fs::copy(&src, &dest)
+            .map_err(|e| DataError::StoreUnavailable(format!("export copy: {e}")))?;
+        return Ok(dest);
+    }
+
+    let path = svc.backups_account_dir().join(&entry.file_name);
+    let file = std::fs::File::open(&path)
+        .map_err(|e| DataError::NotFound(format!("backup file missing: {e}")))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| DataError::Integrity(format!(".flaccount is not readable: {e}")))?;
+    let local_json: Value = {
+        let mut entry_file = archive
+            .by_name("local.json")
+            .map_err(|_| DataError::Integrity(".flaccount has no local.json".into()))?;
+        let mut raw = String::new();
+        entry_file
+            .read_to_string(&mut raw)
+            .map_err(|e| DataError::Integrity(format!("local.json: {e}")))?;
+        serde_json::from_str(&raw).map_err(|_| DataError::Integrity("local.json does not parse".into()))?
+    };
+    let chunk_count = local_json.get("chunkCount").and_then(Value::as_u64).unwrap_or(0);
+    let zip_sha = local_json.get("zipSha256").and_then(Value::as_str).unwrap_or("").to_string();
+    let base_nonce: [u8; 16] = B64
+        .decode(local_json.get("baseNonce").and_then(Value::as_str).unwrap_or(""))
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| DataError::Integrity("local.json baseNonce is malformed".into()))?;
+    let local_key = key_store::get_or_create_dataset_key(&svc.node_dir_path(), &format!("acct-{backup_id}"))?;
+    let cipher = XChaCha20Poly1305::new((&local_key).into());
+
+    let stamp = entry.created_at.replace([':', 'T'], "-").replace('Z', "");
+    let dest = downloads.join(format!("formlogic-account-backup-{stamp}.zip"));
+    let mut out = std::fs::File::create(&dest)
+        .map_err(|e| DataError::StoreUnavailable(format!("export create: {e}")))?;
+    let mut payload = archive
+        .by_name("payload.bin")
+        .map_err(|_| DataError::Integrity(".flaccount has no payload.bin".into()))?;
+    let result = (|| -> Result<(), DataError> {
+        let mut sha = Sha256::new();
+        for i in 0..chunk_count {
+            let mut len_buf = [0u8; 4];
+            payload
+                .read_exact(&mut len_buf)
+                .map_err(|_| DataError::Integrity("payload truncated".into()))?;
+            let mut ct = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+            payload
+                .read_exact(&mut ct)
+                .map_err(|_| DataError::Integrity("payload truncated".into()))?;
+            let aad = format!("{LOCAL_AAD_PREFIX}|{backup_id}|{i}|{chunk_count}");
+            let pt = cipher
+                .decrypt(
+                    XNonce::from_slice(&chunk_nonce(&base_nonce, i)),
+                    Payload { msg: &ct, aad: aad.as_bytes() },
+                )
+                .map_err(|_| DataError::Integrity(format!("chunk {i} does not open")))?;
+            sha.update(&pt);
+            out.write_all(&pt)
+                .map_err(|e| DataError::StoreUnavailable(format!("export write: {e}")))?;
+        }
+        if hex_lower(&sha.finalize()) != zip_sha {
+            return Err(DataError::Integrity("exported archive hash mismatch".into()));
+        }
+        out.flush().map_err(|e| DataError::StoreUnavailable(format!("export flush: {e}")))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&dest);
+    }
+    result.map(|()| dest)
 }
 
 #[cfg(test)]
