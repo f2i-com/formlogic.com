@@ -7,6 +7,7 @@ import ModelsPanel from './ModelsPanel';
 import PythonPanel from './PythonPanel';
 import SettingsPanel from './SettingsPanel';
 import ConnectionsPanel from './ConnectionsPanel';
+import DataPanel from './DataPanel';
 import { DesktopOverview } from './DesktopOverview';
 import { DesktopSidebar, SECTION_META, type SectionId } from './DesktopSidebar';
 import { useDesktopOverview } from './useDesktopOverview';
@@ -346,6 +347,7 @@ export default function App() {
           )}
           {deferredSection === 'python' && <PythonPanel />}
           {deferredSection === 'connections' && <ConnectionsPanel />}
+          {deferredSection === 'data' && <DataPanel />}
           {deferredSection === 'settings' && <SettingsPanel />}
           {/* PLG-203: a plugin-contributed section — the plugin-shipped
               sandboxed bundle when the nav entry declares a `screen`, else the

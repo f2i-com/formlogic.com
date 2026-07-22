@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test:ui": "node --test src/pluginContributions.test.ts src/pluginScreens.test.ts src/serviceCenterModel.test.ts src/setupWizard.test.ts src/speechEngineArgs.test.ts",
+    "test:ui": "node --test src/dataPanelModel.test.ts src/pluginContributions.test.ts src/pluginScreens.test.ts src/serviceCenterModel.test.ts src/setupWizard.test.ts src/speechEngineArgs.test.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --features gui",

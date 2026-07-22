@@ -1,0 +1,166 @@
+{
+  "meta": {
+    "format": "formlogic-data-vectors.1",
+    "note": "Deterministic flcanon/1 + domain preimage + Ed25519 + logical-root vectors. Byte-identical across JS/PHP/Rust. Regenerate: FORMLOGIC_DATA_VECTORS_WRITE=1 npx vitest run src/lib/data/vectors.test.ts. Fixed test-only seed."
+  },
+  "canonicalize": [
+    {
+      "name": "key-sort-ascii",
+      "json": "{\"b\":1,\"a\":2}",
+      "canonical": "{\"a\":2,\"b\":1}"
+    },
+    {
+      "name": "nested-mixed",
+      "json": "{\"z\":[1,true,null,\"x\"],\"a\":{\"nested\":{\"deep\":[[]]},\"empty\":{}},\"s\":\"h\\u00e9llo \\u2713\"}",
+      "canonical": "{\"a\":{\"empty\":{},\"nested\":{\"deep\":[[]]}},\"s\":\"héllo ✓\",\"z\":[1,true,null,\"x\"]}"
+    },
+    {
+      "name": "utf16-key-order",
+      "json": "{\"\\ufffd\":2,\"\\ud83d\\ude00\":1}",
+      "canonical": "{\"😀\":1,\"�\":2}"
+    },
+    {
+      "name": "integer-bounds",
+      "json": "{\"max\":9007199254740991,\"min\":-9007199254740991,\"zero\":0}",
+      "canonical": "{\"max\":9007199254740991,\"min\":-9007199254740991,\"zero\":0}"
+    },
+    {
+      "name": "empty-string-key",
+      "json": "{\"\":1,\"a\":2}",
+      "canonical": "{\"\":1,\"a\":2}"
+    },
+    {
+      "name": "string-escapes",
+      "json": "{\"controls\":\"\\u0000\\u0001\\u001f\",\"five\":\"\\b\\f\\n\\r\\t\",\"quote\":\"\\\"\\\\\",\"raw\":\"日本語\"}",
+      "canonical": "{\"controls\":\"\\u0000\\u0001\\u001f\",\"five\":\"\\b\\f\\n\\r\\t\",\"quote\":\"\\\"\\\\\",\"raw\":\"日本語\"}"
+    }
+  ],
+  "reject": [
+    {
+      "name": "float",
+      "json": "{\"a\":1.5}",
+      "reason": "non-integer number"
+    },
+    {
+      "name": "exponent",
+      "json": "{\"a\":1e3}",
+      "reason": "exponent form re-serializes differently (or float)"
+    },
+    {
+      "name": "minus-zero",
+      "json": "{\"a\":-0}",
+      "reason": "-0 invalid"
+    },
+    {
+      "name": "unsafe-integer",
+      "json": "{\"a\":9007199254740992}",
+      "reason": "beyond 2^53-1"
+    },
+    {
+      "name": "duplicate-key",
+      "json": "{\"a\":1,\"a\":2}",
+      "reason": "duplicate keys invalid"
+    },
+    {
+      "name": "whitespace",
+      "json": "{ \"a\": 1 }",
+      "reason": "whitespace re-serializes differently"
+    },
+    {
+      "name": "unsorted-keys",
+      "json": "{\"b\":1,\"a\":2}",
+      "reason": "byte-verification requires sorted form"
+    },
+    {
+      "name": "lone-surrogate",
+      "json": "{\"a\":\"\\ud800\"}",
+      "reason": "lone surrogate invalid"
+    }
+  ],
+  "hashes": [
+    {
+      "name": "placement-mini",
+      "domain": "flplacement:1",
+      "json": "{\"datasetId\":\"ds-fixture\",\"protocol\":\"formlogic-data-sync/1\",\"storageEpoch\":1}",
+      "sha256": "d1add54a2d868e4fe154778538a456462e0f3a5b764ade2a3851978b1e1bcbcb"
+    },
+    {
+      "name": "operation-mini",
+      "domain": "flop:1",
+      "json": "{\"datasetId\":\"ds-fixture\",\"kind\":\"response.create\",\"sequence\":1}",
+      "sha256": "7af7bbfd300cca109a6aec333c9aa1083961d6f79773cdacf3bb5fb85adb7219"
+    },
+    {
+      "name": "high-water",
+      "domain": "flhw:1",
+      "json": "{\"datasetId\":\"ds-fixture\",\"lastAcknowledgedSequence\":42,\"storageEpoch\":3,\"v\":1}",
+      "sha256": "edf7956cf21a9665f8f76c8a630e549911c6ae91da2ef9f26681ec776caa958a"
+    }
+  ],
+  "ed25519": {
+    "seed_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+    "public_key_b64": "IVL40Zt5HSRFMkLhXy6rbLfP+ntqXtMAl5YOBpiB2xI=",
+    "key_id": "3097e2dee2cb4a34",
+    "fingerprint": "3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+    "signatures": [
+      {
+        "name": "operation-signed",
+        "domain": "flop:1",
+        "json": "{\"datasetId\":\"ds-fixture\",\"kind\":\"response.create\",\"sequence\":1,\"storageEpoch\":1}",
+        "signature_b64": "wgxJn94L6M867eYROr2FvFp0HNrX99P566gaVgqWx6HsxOV/EKj9BQpeNGvWq0TGGLU2jxvkMyY/gmpfYokdCw=="
+      },
+      {
+        "name": "checkpoint-signed",
+        "domain": "flcheckpoint:1",
+        "json": "{\"datasetId\":\"ds-fixture\",\"lastSequence\":7,\"logicalRoot\":\"abababababababababababababababababababababababababababababababab\",\"storageEpoch\":1}",
+        "signature_b64": "bASxFsu1jA/CePBi74ou5qiWB8lkq/ZJMU+xXhu/oFxO/GVHuJcInJ79rT47yNtF2iLimX/+2rBR4Hs8xpm4AQ=="
+      }
+    ]
+  },
+  "logical_roots": [
+    {
+      "name": "mixed-entries",
+      "dataset_id": "ds-fixture",
+      "entries": [
+        [
+          "response",
+          "7d444840-9dc0-41a2-8da8-ff8cb9fca735",
+          2,
+          2,
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "response",
+          "11111111-2222-4333-8444-555555555555",
+          1,
+          1,
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "tombstone",
+          "99999999-8888-4777-a666-555555555555",
+          3,
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        [
+          "artifact",
+          "manifest",
+          "man_1",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        [
+          "attachment",
+          "fil_fixture01",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ]
+      ],
+      "root_hex": "a9528d048b4d79b65c85cc3e9c48297e5497f1454c5cc6f6fa313523af7abf04"
+    },
+    {
+      "name": "empty-dataset",
+      "dataset_id": "ds-empty",
+      "entries": [],
+      "root_hex": "73ecebbd75f249bd83a326d598d319fc1bfa4eed7c7d968f63df5c9f13f48a82"
+    }
+  ]
+}

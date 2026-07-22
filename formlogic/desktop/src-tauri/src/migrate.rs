@@ -22,6 +22,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Subdirs that are safe to relocate (see module docs).
+///
+/// `data/` (encrypted data-node datasets, src/data) is DELIBERATELY absent:
+/// copying a live SQLCipher database + WAL mid-write is not a consistent
+/// copy (data-nodes plan §10.4). Dataset relocation gets its own quiesce →
+/// checkpoint → backup-API copy → verify → switch path in a later phase;
+/// until then a data-dir move leaves datasets in the old root rather than
+/// silently corrupting them.
 pub const MIGRATE_SUBDIRS: &[&str] = &["models", "templates", "bin"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]

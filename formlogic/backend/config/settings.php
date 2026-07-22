@@ -56,6 +56,12 @@ $signupFreeDays = $betaMode ? max(1, (int) Environment::get('BETA_FREE_DAYS', '9
 // /api/health so the SPA shows/hides the feature; the vault-create + encryption-enable
 // endpoints enforce it server-side until Phase 5 completes.
 $privateForms = filter_var(Environment::get('PRIVATE_FORMS', 'false'), FILTER_VALIDATE_BOOLEAN);
+
+// Encrypted data nodes gate (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §29):
+// advertised on /api/health; every data-node Cloud mutation 403s data_nodes_disabled
+// while off. Depends on Private Forms — a data node only ever hosts E2EE datasets.
+$dataNodes = $privateForms
+    && filter_var(Environment::get('DATA_NODES', 'false'), FILTER_VALIDATE_BOOLEAN);
 if ($betaMode) {
     $cloudPlanEnforced = false;
 }
@@ -205,6 +211,7 @@ return [
             'planEnforced' => $cloudPlanEnforced,
             'betaMode' => $betaMode,
             'privateForms' => $privateForms,
+            'dataNodes' => $dataNodes,
             'signupFreeDays' => $signupFreeDays,
             'maxForms' => (int) Environment::get('CLOUD_MAX_FORMS', '100'),
             'maxStorageBytes' => (int) Environment::get('CLOUD_MAX_STORAGE_BYTES', (string) (1024 * 1024 * 1024)), // 1 GB

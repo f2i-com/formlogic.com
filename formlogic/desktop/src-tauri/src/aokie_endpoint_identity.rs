@@ -1257,6 +1257,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_credential_manager_identity_survives_restart() {
+        // Serialized with every other credential-store test: parallel
+        // hammering of Credential Manager can transiently miss a fresh read,
+        // which this identity path answers by minting a new key (observed as
+        // a thumbprint mismatch here under full-suite load).
+        let _cred = crate::data::test_cred_lock();
         let dir = temp_dir("wincred");
         let key_name = format!("test-aokie-endpoint-{}", uuid::Uuid::new_v4().simple());
         let first = AokieEndpointIdentity::new_with_options(dir.clone(), key_name.clone(), true);

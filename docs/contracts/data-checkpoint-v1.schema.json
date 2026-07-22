@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/data-checkpoint-v1.schema.json",
+  "title": "Data sync checkpoint (formlogic-data-sync/1)",
+  "description": "Signed statement of applied replication state (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §12.4). Serialized with flcanon/1; signature domain flcheckpoint:1. The signer key/generation must be authorised by the owner-signed placement manifest; an embedded public key is informational, never the trust anchor. 'Current' means equality with the latest verified primary-signed head checkpoint anchored to the current owner-signed placement manifest (plan D19) — never a timestamp. Logical roots (flroot:1, docs/FORMLOGIC_DATA_NODES.md §3) are replication truth; raw SQLite file hashes never are (plan D23).",
+  "type": "object",
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "keyId16": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "b64Signature": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" },
+    "safeInt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "checkpoint": {
+      "title": "Checkpoint",
+      "type": "object",
+      "required": [
+        "protocol", "datasetId", "placementManifestHash", "storageEpoch", "lastSequence",
+        "lastOperationHash", "recordCount", "tombstoneCount",
+        "tombstoneLedgerCoverageSequence", "tombstoneLedgerRoot",
+        "attachmentCount", "chunkCount", "versionsRepresented", "logicalRoot",
+        "previousCheckpointHash", "replicaId", "createdAt",
+        "signerKeyId", "signerKeyGeneration", "signature"
+      ],
+      "properties": {
+        "protocol": { "const": "formlogic-data-sync/1" },
+        "datasetId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "placementManifestHash": { "$ref": "#/$defs/hex64" },
+        "storageEpoch": { "$ref": "#/$defs/safeInt" },
+        "lastSequence": { "$ref": "#/$defs/safeInt" },
+        "lastOperationHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }] },
+        "recordCount": { "$ref": "#/$defs/safeInt" },
+        "tombstoneCount": { "$ref": "#/$defs/safeInt" },
+        "tombstoneLedgerCoverageSequence": { "$ref": "#/$defs/safeInt" },
+        "tombstoneLedgerRoot": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }] },
+        "attachmentCount": { "$ref": "#/$defs/safeInt" },
+        "chunkCount": { "$ref": "#/$defs/safeInt" },
+        "versionsRepresented": {
+          "type": "object",
+          "required": ["schemaVersions", "ingestEpochs", "fkEpochs"],
+          "properties": {
+            "schemaVersions": { "type": "array", "items": { "$ref": "#/$defs/safeInt" } },
+            "ingestEpochs": { "type": "array", "items": { "$ref": "#/$defs/safeInt" } },
+            "fkEpochs": { "type": "array", "items": { "$ref": "#/$defs/safeInt" } }
+          },
+          "additionalProperties": false
+        },
+        "logicalRoot": { "$ref": "#/$defs/hex64" },
+        "previousCheckpointHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }] },
+        "replicaId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "createdAt": { "type": "string", "description": "RFC3339 UTC, integer seconds, 'Z'." },
+        "signerKeyId": { "$ref": "#/$defs/keyId16" },
+        "signerKeyGeneration": { "$ref": "#/$defs/safeInt" },
+        "signature": { "$ref": "#/$defs/b64Signature" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/checkpoint"
+}

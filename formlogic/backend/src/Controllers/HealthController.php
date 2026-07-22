@@ -39,6 +39,8 @@ class HealthController
             'betaMode' => (bool) ($this->settings['cloud']['betaMode'] ?? false),
             // E2EE Private Forms beta flag (plan D9).
             'privateForms' => (bool) ($this->settings['cloud']['privateForms'] ?? false),
+            // Encrypted data nodes flag (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §29).
+            'dataNodes' => (bool) ($this->settings['cloud']['dataNodes'] ?? false),
         ]);
     }
 

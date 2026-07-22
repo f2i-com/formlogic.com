@@ -603,6 +603,75 @@ CREATE TABLE `connector_capabilities` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+-- Encrypted data nodes — N0 schema skeleton
+-- (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §22, docs/FORMLOGIC_DATA_NODES.md).
+-- Signed artifacts store their exact canonical bytes (flcanon/1) so hashes/signatures
+-- re-verify byte-for-byte. data_nodes has no FK to desktop_connections on purpose:
+-- unlinking a connection revokes the node (status), it never silently deletes history.
+CREATE TABLE `data_dataset_high_water` (
+  `dataset_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `storage_epoch` int NOT NULL,
+  `last_acknowledged_sequence` bigint NOT NULL DEFAULT '0',
+  `last_operation_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `checkpoint_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `placement_manifest_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tombstone_ledger_coverage_sequence` bigint NOT NULL DEFAULT '0',
+  `tombstone_ledger_root` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`dataset_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `data_nodes` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `workspace_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `display_name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signing_public_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signing_key_id` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signing_key_generation` int NOT NULL DEFAULT '1',
+  `fingerprint` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `transport_key_fingerprint` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `owner_signed_certificate` mediumblob DEFAULT NULL,
+  `certificate_expires_at` datetime DEFAULT NULL,
+  `protocol_min` int NOT NULL DEFAULT '1',
+  `protocol_max` int NOT NULL DEFAULT '1',
+  `capabilities_json` json DEFAULT NULL,
+  `roster_revision` int NOT NULL DEFAULT '1',
+  `last_seen_at` datetime DEFAULT NULL,
+  `last_storage_heartbeat_at` datetime DEFAULT NULL,
+  `status` enum('pending','approved','revoked') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `revoked_at` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_data_node_connection` (`desktop_connection_id`),
+  KEY `idx_data_node_owner` (`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `data_placement_manifests` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dataset_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `storage_epoch` int NOT NULL,
+  `manifest_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `previous_manifest_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `primary_replica_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signed_bytes` mediumblob NOT NULL,
+  `owner_signer_key_id` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_signer_fingerprint` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_dataset_epoch` (`dataset_id`,`storage_epoch`),
+  KEY `idx_placement_form` (`form_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `desktop_ai_frames` (
   `seq` bigint unsigned NOT NULL AUTO_INCREMENT,
   `request_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,

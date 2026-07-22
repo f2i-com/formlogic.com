@@ -6,6 +6,7 @@ import {
   LinkIcon,
   PuzzleIcon,
   ServerIcon,
+  ShieldIcon,
   TerminalSquareIcon,
 } from './Icons';
 import { PluginIcon } from './PluginContributedUi';
@@ -19,6 +20,7 @@ export type SectionId =
   | 'plugins'
   | 'python'
   | 'connections'
+  | 'data'
   | 'settings';
 
 export const SECTION_META: Record<SectionId, { title: string; subtitle: string }> = {
@@ -28,6 +30,7 @@ export const SECTION_META: Record<SectionId, { title: string; subtitle: string }
   plugins: { title: 'Plugins', subtitle: 'Manage supervised connectors that bridge apps to local capability.' },
   python: { title: 'Python', subtitle: 'A portable runtime and reusable environments for local services.' },
   connections: { title: 'Connections', subtitle: 'Link FormLogic Cloud and manage trusted browser access.' },
+  data: { title: 'Data', subtitle: 'Encrypted datasets hosted on this computer — storage, health and backups.' },
   settings: { title: 'Settings', subtitle: 'Storage, folders, tokens and desktop preferences.' },
 };
 
@@ -96,6 +99,7 @@ export function DesktopSidebar({
           badge: pendingPairing > 0 ? String(pendingPairing) : undefined,
           badgeTone: 'warn',
         },
+        { id: 'data', label: 'Data', icon: ShieldIcon },
         { id: 'settings', label: 'Settings', icon: GearIcon },
       ],
     },

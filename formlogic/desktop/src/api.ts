@@ -1048,6 +1048,82 @@ export const trustedOrigins = {
     ),
 };
 
+// ----- encrypted data nodes (N1 Data workspace; docs/FORMLOGIC_DATA_NODES.md) -----
+
+export interface DataNodeView {
+  nodeId: string;
+  signingPublicKey: string;
+  keyId: string;
+  fingerprint: string;
+  displayFingerprint: string;
+  createdAt: string;
+}
+
+export interface DataDatasetView {
+  datasetId: string;
+  formId: string;
+  isSample: boolean;
+  role: string;
+  storageEpoch: number;
+  protocolVersion: number;
+  lastSequence: number;
+  lastCheckpointHash: string | null;
+  records: number;
+  tombstones: number;
+  operations: number;
+  sizeBytes: number;
+  fileName: string;
+  health: string;
+  headComparison: string;
+}
+
+export interface DataDatasetError {
+  datasetId: string;
+  code: string;
+  message: string;
+}
+
+export interface DataStatusSnapshot {
+  protocol: string;
+  keyStoreAvailable: boolean;
+  dataRoot: string;
+  node: DataNodeView | null;
+  nodeError: string | null;
+  datasets: DataDatasetView[];
+  datasetErrors: DataDatasetError[];
+}
+
+export interface DataVerifyReport {
+  datasetId: string;
+  ok: boolean;
+  health: string;
+  headComparison: string;
+  checkedOperations: number;
+  checkedEnvelopes: number;
+  logicalRoot: string | null;
+  issues: string[];
+}
+
+export const dataNodes = {
+  status: () => request<DataStatusSnapshot>('/api/data/status'),
+  createSample: (records: number) =>
+    request<{ ok: boolean; dataset: DataDatasetView }>('/api/data/sample', {
+      method: 'POST',
+      body: JSON.stringify({ records }),
+    }),
+  verify: (datasetId: string) =>
+    request<{ ok: boolean; report: DataVerifyReport }>(
+      `/api/data/datasets/${encodeURIComponent(datasetId)}/verify`,
+      { method: 'POST' },
+      // A full verify walks every operation + envelope — allow it time.
+      60000,
+    ),
+  deleteSample: (datasetId: string) =>
+    request<{ ok: boolean }>(`/api/data/datasets/${encodeURIComponent(datasetId)}`, {
+      method: 'DELETE',
+    }),
+};
+
 // ----- formatting helpers used by multiple components -----
 
 export function formatBytes(n: number | null | undefined): string {

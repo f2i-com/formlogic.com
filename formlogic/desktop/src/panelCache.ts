@@ -54,6 +54,7 @@ export const PANEL_CACHE_KEYS = {
   pluginsList: 'plugins.list',
   aiProviders: 'ai.providers',
   aiSources: 'ai.sources',
+  dataStatus: 'data.status',
 } as const;
 
 /** Warm the slow section endpoints once at app start (fire-and-forget). */

@@ -245,6 +245,89 @@ if (!$columnExists($pdo, $db, 'forms', 'ever_published_at')) {
 } else {
     $applied[] = 'forms.ever_published_at already present';
 }
+// 5b. form_encryption.state was created here without 'enabling' while schema.sql and
+//     FormEncryptionService::beginEnable both use it (enable-race hardening, commit
+//     a15b04e). Widen the enum on DBs that came through the old migrate block.
+$stateType = $pdo->prepare(
+    'SELECT COLUMN_TYPE FROM information_schema.columns
+     WHERE table_schema = ? AND table_name = ? AND column_name = ?'
+);
+$stateType->execute([$db, 'form_encryption', 'state']);
+$stateColumn = (string) $stateType->fetchColumn();
+if ($stateColumn !== '' && !str_contains($stateColumn, 'enabling')) {
+    $pdo->exec("ALTER TABLE `form_encryption` MODIFY `state`
+        enum('enabling','active','trashed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active'");
+    $applied[] = "form_encryption.state widened to include 'enabling'";
+} else {
+    $applied[] = 'form_encryption.state already includes enabling';
+}
+
+// 6. Encrypted data nodes — N0 schema skeleton
+//    (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §22, docs/FORMLOGIC_DATA_NODES.md).
+//    Signed artifacts store their exact canonical bytes (flcanon/1) so hashes/signatures
+//    re-verify byte-for-byte. data_nodes carries no FK to desktop_connections on purpose:
+//    unlinking a connection revokes the node (status), it never silently deletes history.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `data_nodes` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `workspace_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `display_name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signing_public_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signing_key_id` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signing_key_generation` int NOT NULL DEFAULT '1',
+  `fingerprint` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `transport_key_fingerprint` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `owner_signed_certificate` mediumblob DEFAULT NULL,
+  `certificate_expires_at` datetime DEFAULT NULL,
+  `protocol_min` int NOT NULL DEFAULT '1',
+  `protocol_max` int NOT NULL DEFAULT '1',
+  `capabilities_json` json DEFAULT NULL,
+  `roster_revision` int NOT NULL DEFAULT '1',
+  `last_seen_at` datetime DEFAULT NULL,
+  `last_storage_heartbeat_at` datetime DEFAULT NULL,
+  `status` enum('pending','approved','revoked') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `revoked_at` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_data_node_connection` (`desktop_connection_id`),
+  KEY `idx_data_node_owner` (`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'data_nodes table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `data_placement_manifests` (
+  `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dataset_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `storage_epoch` int NOT NULL,
+  `manifest_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `previous_manifest_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `primary_replica_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `signed_bytes` mediumblob NOT NULL,
+  `owner_signer_key_id` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_signer_fingerprint` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_dataset_epoch` (`dataset_id`,`storage_epoch`),
+  KEY `idx_placement_form` (`form_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'data_placement_manifests table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `data_dataset_high_water` (
+  `dataset_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `storage_epoch` int NOT NULL,
+  `last_acknowledged_sequence` bigint NOT NULL DEFAULT '0',
+  `last_operation_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `checkpoint_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `placement_manifest_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tombstone_ledger_coverage_sequence` bigint NOT NULL DEFAULT '0',
+  `tombstone_ledger_root` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`dataset_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'data_dataset_high_water table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

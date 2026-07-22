@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/data-backup-v1.schema.json",
+  "title": "Data backup manifest (formlogic-data-sync/1)",
+  "description": "Signed manifest of a portable logical backup package (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §18). Serialized with flcanon/1; signature domain flbackup:1. The package is logical (canonical __flenc envelopes, tombstones, operations, signed control artifacts) — never a copy of the SQLCipher file; a restore mints a fresh local database key. A data-only package contains no recovery-capable raw key. A disaster-recovery package adds the independently password-wrapped recovery/encrypted-key-bundle.flkeys member (plan §18.3). The signer public key inside a package is NEVER a sufficient trust anchor: authenticated restore validates through an owner-signed authority chain to an independently pinned owner/vault fingerprint; otherwise the UI shows 'Integrity checked; provenance unverified'.",
+  "type": "object",
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "keyId16": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "b64Signature": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" },
+    "safeInt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "backupManifest": {
+      "title": "Backup manifest",
+      "type": "object",
+      "required": [
+        "protocol", "formatVersion", "backupType", "backupId", "accountId",
+        "sourceReplicaId", "datasets", "createdAt", "storageEpoch",
+        "checkpointHash", "lastSequence", "lastOperationHash", "counts",
+        "versionsRepresented", "files", "logicalRoot", "incrementalParent",
+        "requiredRestoreCapabilities", "signerKeyId", "signerKeyGeneration",
+        "authorityCertificateRef", "signature"
+      ],
+      "properties": {
+        "protocol": { "const": "formlogic-data-sync/1" },
+        "formatVersion": { "const": 1 },
+        "backupType": { "type": "string", "enum": ["data_only", "disaster_recovery"] },
+        "backupId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "vaultId": { "type": "string", "maxLength": 64, "description": "Present for disaster_recovery packages." },
+        "sourceReplicaId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "datasets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["datasetId", "formId"],
+            "properties": {
+              "datasetId": { "type": "string" },
+              "formId": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "createdAt": { "type": "string", "description": "RFC3339 UTC, integer seconds, 'Z'." },
+        "storageEpoch": { "$ref": "#/$defs/safeInt" },
+        "checkpointHash": { "$ref": "#/$defs/hex64", "description": "flcheckpoint:1 hash of the source checkpoint this package snapshots." },
+        "lastSequence": { "$ref": "#/$defs/safeInt" },
+        "lastOperationHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }] },
+        "counts": {
+          "type": "object",
+          "required": ["responses", "tombstones", "attachments", "chunks"],
+          "properties": {
+            "responses": { "$ref": "#/$defs/safeInt" },
+            "tombstones": { "$ref": "#/$defs/safeInt" },
+            "attachments": { "$ref": "#/$defs/safeInt" },
+            "chunks": { "$ref": "#/$defs/safeInt" }
+          },
+          "additionalProperties": false
+        },
+        "versionsRepresented": {
+          "type": "object",
+          "required": ["schemaVersions", "ingestEpochs", "fkEpochs"],
+          "properties": {
+            "schemaVersions": { "type": "array", "items": { "$ref": "#/$defs/safeInt" } },
+            "ingestEpochs": { "type": "array", "items": { "$ref": "#/$defs/safeInt" } },
+            "fkEpochs": { "type": "array", "items": { "$ref": "#/$defs/safeInt" } }
+          },
+          "additionalProperties": false
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256", "bytes"],
+            "properties": {
+              "path": { "type": "string", "description": "Package-relative path (opaque IDs only — never form titles, respondent names, or field values)." },
+              "sha256": { "$ref": "#/$defs/hex64", "description": "Hash of the exact file bytes (ciphertext for payload files)." },
+              "bytes": { "$ref": "#/$defs/safeInt" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "logicalRoot": { "$ref": "#/$defs/hex64", "description": "flroot:1 logical root of the packaged dataset state (docs/FORMLOGIC_DATA_NODES.md §3)." },
+        "incrementalParent": { "oneOf": [{ "type": "string" }, { "type": "null" }], "description": "Parent backupId for incremental packages; null for full." },
+        "requiredRestoreCapabilities": { "type": "array", "items": { "type": "string" }, "description": "Capability strings a restorer must support; unknown capability blocks restore (never skip)." },
+        "signerKeyId": { "$ref": "#/$defs/keyId16" },
+        "signerKeyGeneration": { "$ref": "#/$defs/safeInt" },
+        "authorityCertificateRef": { "oneOf": [{ "type": "string" }, { "type": "null" }], "description": "Reference to the owner-signed node/Cloud authority certificate (flnodecert:1) that certifies the signer; null only in offline 'provenance unverified' handling." },
+        "signature": { "$ref": "#/$defs/b64Signature" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/backupManifest"
+}

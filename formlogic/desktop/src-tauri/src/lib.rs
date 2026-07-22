@@ -10,6 +10,7 @@ pub mod connectors;
 pub mod aokie_endpoint_identity;
 pub mod aokie_companion_publisher;
 pub mod consent_signing;
+pub mod data;
 pub mod desktop_ops;
 pub mod events;
 pub mod external_url;

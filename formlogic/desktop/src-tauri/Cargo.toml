@@ -129,6 +129,13 @@ base64 = "0.22"
 # X25519 ECDH → HSalsa20 → XSalsa20-Poly1305, guaranteed tweetnacl interop.
 crypto_box = "0.9"
 
+# Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §4-§5): SQLCipher-encrypted
+# per-dataset SQLite stores. The vendored-OpenSSL flavour keeps the build
+# hermetic (no system OpenSSL), at the cost of needing a native Perl
+# (Strawberry Perl on Windows + the Text::Template module) at BUILD time only.
+# There is deliberately NO plain-SQLite fallback feature (plan D17).
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+
 # Aokie Companion owner pairing payloads are rendered locally as QR SVGs.
 # The payload contains only public identity/binding material and a one-use
 # challenge; no admission/API bearer is ever encoded in the QR.

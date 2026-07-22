@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/data-placement-v1.schema.json",
+  "title": "Data placement manifest (formlogic-data-sync/1)",
+  "description": "Owner-signed per-form storage placement (docs/FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md §6). Serialized with flcanon/1 (docs/FORMLOGIC_DATA_NODES.md §1); signature domain flplacement:1; hashes are SHA-256 over domain-separated preimages. The manifest is epoch-stable: mutable progress lives in the primary-signed head checkpoint (data-checkpoint-v1), never here. Verifiers check ownerSigner* against the owner/vault Ed25519 fingerprint pinned at vault setup or node pairing — never against a mutable roster.",
+  "type": "object",
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "keyId16": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "b64Ed25519Pk": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$", "description": "Raw 32-byte Ed25519 public key, standard base64 with padding." },
+    "b64Signature": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$", "description": "64-byte Ed25519 detached signature, standard base64 with padding." },
+    "safeInt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "authorityKey": {
+      "type": "object",
+      "required": ["keyId", "generation", "ed25519PublicKey", "fingerprint"],
+      "properties": {
+        "keyId": { "$ref": "#/$defs/keyId16" },
+        "generation": { "$ref": "#/$defs/safeInt" },
+        "ed25519PublicKey": { "$ref": "#/$defs/b64Ed25519Pk" },
+        "fingerprint": { "$ref": "#/$defs/hex64" }
+      },
+      "additionalProperties": false
+    },
+    "replica": {
+      "type": "object",
+      "required": ["replicaId", "kind", "role", "desiredState", "authoritySigningKey", "transportKeyFingerprint"],
+      "properties": {
+        "replicaId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "kind": { "type": "string", "enum": ["cloud", "desktop"] },
+        "role": { "type": "string", "enum": ["primary", "live", "backup", "archive"] },
+        "desiredState": { "type": "string", "enum": ["active", "paused", "removing"] },
+        "authoritySigningKey": { "$ref": "#/$defs/authorityKey" },
+        "transportKeyFingerprint": { "$ref": "#/$defs/hex64" }
+      },
+      "additionalProperties": false
+    },
+    "placementManifest": {
+      "title": "DataPlacementManifest",
+      "type": "object",
+      "required": [
+        "protocol", "datasetId", "formId", "protocolVersion", "storageEpoch",
+        "primaryReplicaId", "replicas", "offlineSubmissionPolicy", "readFallbackPolicy",
+        "leaseAuthority", "cutoverCheckpointHash", "recoveryAuthorization",
+        "previousManifestHash", "createdAt", "ownerSignerKeyId", "ownerSignerGeneration",
+        "ownerSignerFingerprint", "signature"
+      ],
+      "properties": {
+        "protocol": { "const": "formlogic-data-sync/1" },
+        "datasetId": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Equals formId in v1 (plan D1)." },
+        "formId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "protocolVersion": { "const": 1 },
+        "storageEpoch": { "$ref": "#/$defs/safeInt", "description": "Monotonic routing generation; legacy_cloud_primary forms sign epoch 1 on first placement visit." },
+        "primaryReplicaId": { "type": "string" },
+        "replicas": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/$defs/replica" } },
+        "offlineSubmissionPolicy": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": { "type": "string", "enum": ["reject", "encrypted_queue"] },
+            "ttlSeconds": { "$ref": "#/$defs/safeInt" },
+            "maxBytes": { "$ref": "#/$defs/safeInt" },
+            "maxItems": { "$ref": "#/$defs/safeInt" }
+          },
+          "additionalProperties": false
+        },
+        "readFallbackPolicy": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": { "mode": { "type": "string", "enum": ["none", "verified_live_replica"] } },
+          "additionalProperties": false
+        },
+        "leaseAuthority": { "$ref": "#/$defs/authorityKey", "description": "Cloud HSM lease-signing key; owner-bound here so nodes never trust an arbitrary control-plane signer (plan §6.3)." },
+        "cutoverCheckpointHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }], "description": "Signed cutover checkpoint (M,H) for epoch > 1; null for epoch 1." },
+        "recoveryAuthorization": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": [
+                "highestKnownSequence", "highestKnownOperationHash", "restoredCheckpointSequence",
+                "restoredCheckpointHash", "snapshotLogicalRoot", "recoveredLogicalRootAfterTombstones",
+                "abandonedRangeStart", "abandonedRangeEnd", "tombstoneLedgerCoverageSequence",
+                "tombstoneLedgerRoot", "additionalUncertainty", "reason", "approvedAt"
+              ],
+              "properties": {
+                "highestKnownSequence": { "$ref": "#/$defs/safeInt" },
+                "highestKnownOperationHash": { "$ref": "#/$defs/hex64" },
+                "restoredCheckpointSequence": { "$ref": "#/$defs/safeInt" },
+                "restoredCheckpointHash": { "$ref": "#/$defs/hex64" },
+                "snapshotLogicalRoot": { "$ref": "#/$defs/hex64" },
+                "recoveredLogicalRootAfterTombstones": { "$ref": "#/$defs/hex64" },
+                "abandonedRangeStart": { "$ref": "#/$defs/safeInt" },
+                "abandonedRangeEnd": { "$ref": "#/$defs/safeInt" },
+                "tombstoneLedgerCoverageSequence": { "$ref": "#/$defs/safeInt" },
+                "tombstoneLedgerRoot": { "$ref": "#/$defs/hex64" },
+                "additionalUncertainty": { "type": "string", "maxLength": 2000 },
+                "reason": { "type": "string", "maxLength": 2000 },
+                "approvedAt": { "type": "string", "description": "RFC3339 UTC, integer seconds, 'Z'." }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "Present only for a dataset.recovery.restore epoch (plan §17.2). The dataset.recovery.restore operation payload must byte-for-byte match this block."
+        },
+        "previousManifestHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }], "description": "flplacement:1 hash of the previous epoch's manifest; null for epoch 1." },
+        "createdAt": { "type": "string", "description": "RFC3339 UTC, integer seconds, 'Z'." },
+        "ownerSignerKeyId": { "$ref": "#/$defs/keyId16" },
+        "ownerSignerGeneration": { "$ref": "#/$defs/safeInt" },
+        "ownerSignerFingerprint": { "$ref": "#/$defs/hex64" },
+        "signature": { "$ref": "#/$defs/b64Signature", "description": "Ed25519 over 'flplacement:1' || 0x0A || flcanon(manifest without signature), by the owner's vault Ed25519 key." }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/placementManifest"
+}

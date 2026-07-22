@@ -1,0 +1,337 @@
+{
+  "meta": {
+    "format": "formlogic-data-envelope-adversarial.1",
+    "note": "Shared __flenc:1 adversarial corpus (plan §12.2): PHP EnvelopeValidator and the Rust desktop validator must agree case-for-case. body is the RAW request body (duplicate keys are invisible after lenient parses). expectedRev null = create."
+  },
+  "cases": [
+    {
+      "name": "valid-create",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": true
+    },
+    {
+      "name": "valid-update",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":4,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": 3,
+      "ok": true
+    },
+    {
+      "name": "duplicate-key-envelope",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "duplicate-key-root",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"},\"envelope\":{}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "plaintext-smuggle-key",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\",\"answers\":{\"secret\":\"plaintext\"}}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid",
+      "note": "an 'answers' key on the envelope is plaintext smuggling"
+    },
+    {
+      "name": "wrong-content-suite",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"aes-gcm.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "wrong-wrap-suite",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"rsa-oaep.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "wrong-version",
+      "body": "{\"envelope\":{\"__flenc\":2,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "rev-float",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1.0,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "rev-string",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":\"1\",\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "record-id-uppercase",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7D444840-9DC0-41A2-8DA8-FF8CB9FCA735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "wrapped-dek-wrong-length",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ==\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "nonce-wrong-length",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "ct-empty",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "ct-invalid-b64",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"!!!!\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "attachments-unsorted",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\",\"attachments\":[\"fil_b0000001\",\"fil_a0000001\"]}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "attachments-empty",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\",\"attachments\":[]}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "tuple-mismatch-epoch",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":2,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "key_epoch_retired"
+    },
+    {
+      "name": "update-rev-conflict",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":3,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": 3,
+      "ok": false,
+      "code": "revision_conflict"
+    },
+    {
+      "name": "create-rev-2",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":2,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wrappedDek\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "missing-wrapped-dek",
+      "body": "{\"envelope\":{\"__flenc\":1,\"recordId\":\"7d444840-9dc0-41a2-8da8-ff8cb9fca735\",\"rev\":1,\"keyId\":\"fik_fixture01\",\"epoch\":1,\"content\":\"xchacha20p1305.1\",\"wrap\":\"sealedbox-x25519xsalsa20p1305.1\",\"schemaVersion\":1,\"schemaHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"nonce\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC\",\"ct\":\"Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND\"}}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    },
+    {
+      "name": "envelope-not-object",
+      "body": "{\"envelope\":[1,2]}",
+      "manifests": [
+        {
+          "key_id": "fik_fixture01",
+          "ingest_epoch": 1,
+          "schema_version": 1,
+          "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expectedRev": null,
+      "ok": false,
+      "code": "envelope_invalid"
+    }
+  ]
+}

@@ -127,6 +127,9 @@ struct AppState {
     /// At most two simultaneous server-to-server voice sessions (one live
     /// call plus a bounded preconnect/waiting call).
     realtime_sessions: Arc<tokio::sync::Semaphore>,
+    /// Encrypted data-node store (docs/FORMLOGIC_DATA_NODES.md): the N1
+    /// Data-workspace surface (`/api/data/*`).
+    data: crate::data::DataHandle,
 }
 
 /// Current companion id, reported by `/api/health` + `/api/desktop/info`.
@@ -2227,6 +2230,75 @@ struct DesktopState {
     /// unreachable AND the verification is younger than `OFFLINE_GRACE_MAX_AGE`.
     capability_last_known:
         Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, std::time::Instant)>>>,
+}
+
+// ---------- Encrypted data nodes (N1 Data workspace; docs/FORMLOGIC_DATA_NODES.md) ----------
+
+/// Map a typed [`crate::data::DataError`] onto the contract error envelope.
+/// Fail-closed states surface as 503 so the UI shows the disabled state, not
+/// a crash.
+fn data_err(e: &crate::data::DataError) -> axum::response::Response {
+    use crate::data::DataError;
+    let status = match e {
+        DataError::KeyStoreUnavailable | DataError::StoreUnavailable(_) => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        DataError::Integrity(_) => StatusCode::CONFLICT,
+        DataError::NotFound(_) => StatusCode::NOT_FOUND,
+        DataError::Invalid(_) => StatusCode::BAD_REQUEST,
+    };
+    desktop_err(status, e.code(), &e.message())
+}
+
+async fn data_status(State(state): State<AppState>) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || data.status()).await {
+        Ok(status) => Json(status).into_response(),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DataSampleRequest {
+    records: Option<u32>,
+}
+
+async fn data_create_sample(
+    State(state): State<AppState>,
+    body: Option<Json<DataSampleRequest>>,
+) -> axum::response::Response {
+    let records = body.and_then(|b| b.0.records).unwrap_or(25);
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || data.create_sample_dataset(records)).await {
+        Ok(Ok(view)) => Json(serde_json::json!({ "ok": true, "dataset": view })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+async fn data_verify_dataset(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || data.verify_dataset(&id)).await {
+        Ok(Ok(report)) => Json(serde_json::json!({ "ok": report.ok, "report": report })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+async fn data_delete_dataset(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || data.delete_sample_dataset(&id)).await {
+        Ok(Ok(())) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
 }
 
 /// `{ok:false, error:{code, message}}` — the contract error envelope.
@@ -4745,6 +4817,10 @@ pub async fn serve(
         let registry = registry.lock().unwrap_or_else(|e| e.into_inner());
         crate::ai::codex::CodexAgent::new(registry.data_dir().to_path_buf())
     });
+    let data = {
+        let registry = registry.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::new(crate::data::DataService::new(registry.data_dir().to_path_buf()))
+    };
     let state = AppState {
         config,
         registry,
@@ -4755,6 +4831,7 @@ pub async fn serve(
         ai_providers,
         codex_agent,
         realtime_sessions: Arc::new(tokio::sync::Semaphore::new(2)),
+        data,
     };
 
     let desktop_state = DesktopState {
@@ -4790,6 +4867,12 @@ pub async fn serve(
         .route("/api/desktop/journals", get(desktop_journals))
         .route("/api/desktop/journals/clear", post(desktop_journals_clear))
         .route("/api/config", get(get_config))
+        // Encrypted data nodes (N1 Data workspace — operational only, no
+        // record CRUD; plan D9).
+        .route("/api/data/status", get(data_status))
+        .route("/api/data/sample", post(data_create_sample))
+        .route("/api/data/datasets/:id/verify", post(data_verify_dataset))
+        .route("/api/data/datasets/:id", delete(data_delete_dataset))
         // services
         .route("/api/services", get(list_services).post(add_service))
         // ServiceDefinition v3 is the cross-runtime catalog. Static routes are

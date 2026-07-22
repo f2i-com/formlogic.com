@@ -109,6 +109,7 @@ mod tests {
     /// name so it can't collide with a live secret, and cleans up.
     #[test]
     fn windows_keyring_round_trips_and_deletes() {
+        let _cred = crate::data::test_cred_lock();
         let name = format!("test-secret-{}", uuid::Uuid::new_v4().simple());
         assert!(available());
         assert_eq!(get(&name).unwrap(), None, "unused name starts empty");
