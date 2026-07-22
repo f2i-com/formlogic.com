@@ -32,11 +32,12 @@
     <meta name="twitter:description" content="Turn forms into connected apps, dashboards and automations — cloud or self-hosted. Add FormLogic Desktop for local AI, devices and headless flows, including Aokie, your AI phone receptionist." />
     <meta name="twitter:image" content="/og-image.png" />
 
-    <!-- Fonts: load non-render-blocking (preload as style, then promote to
-         stylesheet) so the third-party round-trip doesn't delay first paint. -->
+    <!-- Fonts: load non-render-blocking (preload as style, then main.tsx promotes
+         to stylesheet — an inline onload handler would violate the app-shell CSP,
+         which has no 'unsafe-inline'/'unsafe-hashes' for scripts). -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" as="style" data-fl-font-promote href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap"></noscript>
   </head>
   <body>

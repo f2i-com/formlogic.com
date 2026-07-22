@@ -42,6 +42,30 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   }
 }
 
+// ── screen-host.html must carry the SAME policy ─────────────────────────────
+// The sandbox host document (public/screen-host.html) exists because srcdoc
+// inherits the app shell's CSP; its own meta CSP must stay byte-identical to
+// SCREEN_CSP or the two policies drift and one side silently loosens.
+{
+  const src = readFileSync(resolve(root, 'src/components/custom-screen/sdkRuntime.ts'), 'utf8');
+  const m = src.match(/export const SCREEN_CSP\s*=\s*((?:"[^"]*"\s*\+?\s*)+);/);
+  const host = readFileSync(resolve(root, 'public/screen-host.html'), 'utf8');
+  const hostCsp = host.match(/http-equiv="Content-Security-Policy"\s*\n?\s*content="([^"]*)"/);
+  if (!m || !hostCsp) {
+    fail('could not compare SCREEN_CSP with public/screen-host.html');
+  } else {
+    const csp = (m[1].match(/"([^"]*)"/g) || []).map((s) => s.slice(1, -1)).join('');
+    if (hostCsp[1] !== csp) {
+      fail('public/screen-host.html meta CSP differs from SCREEN_CSP (sdkRuntime.ts) — keep them byte-identical');
+    }
+  }
+  // The host boot must accept exactly one parent init and nothing else.
+  // (Sandboxing itself is asserted on the embedding side — CustomScreenRuntime.tsx.)
+  if (!host.includes('e.source !== window.parent')) {
+    fail('screen-host.html must only accept init messages from window.parent');
+  }
+}
+
 if (process.exitCode) {
   console.error('\nSecurity invariants FAILED. See docs/CUSTOM_SCREEN_DASHBOARD_KIT.md (CSP rule).');
 } else {

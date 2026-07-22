@@ -31,7 +31,15 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
     "font-src 'self' data: https://fonts.gstatic.com",
     `img-src 'self' data: blob:${apiOrigin} https://www.paypal.com https://www.paypalobjects.com`,
     `media-src 'self' data: blob:${apiOrigin}`,
-    `connect-src 'self' wss:${apiOrigin} https://www.paypal.com`,
+    // http://127.0.0.1:17872 is FormLogic Desktop's loopback bridge (detection
+    // probe, pairing, connector/AI lanes, SSE) — without it every desktop
+    // feature dies from a CSP'd page. The bridge itself still enforces
+    // pairing-token auth (LOCAL-SEC-001); this only lets the browser ask.
+    `connect-src 'self' wss:${apiOrigin} http://127.0.0.1:17872 https://www.paypal.com`,
+    // Per-app PWA manifests are served by the API (AppRuntimeRoot injects
+    // <link rel="manifest"> to /api/app/{slug}/manifest.json), which is a
+    // separate origin on split-host installs.
+    `manifest-src 'self'${apiOrigin}`,
     "worker-src 'self' blob:",
     "frame-src 'self' https://www.paypal.com https://*.paypal.com",
     "object-src 'none'",
@@ -103,9 +111,11 @@ export default defineConfig(({ mode }) => {
         globIgnores: ['**/esbuild-*.wasm', '**/ts.worker-*.js', '**/MonacoEditorImpl-*.js'],
         navigateFallback: '/index.html',
         // SPA fallback for all client routes (the whole app is one SPA), except
-        // the API. Was limited to '/app/', which broke offline routing for the
-        // platform shell now that scope is '/'.
-        navigateFallbackAllowlist: [/^\/(?!api\/)/],
+        // the API and the sandboxed custom-screen host document (a REAL file the
+        // iframe must load — serving index.html there would break every screen).
+        // Was limited to '/app/', which broke offline routing for the platform
+        // shell now that scope is '/'.
+        navigateFallbackAllowlist: [/^\/(?!api\/|screen-host\.html)/],
         runtimeCaching: [
           // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
           // .../forms/{id}, .../responses) are intentionally NOT cached. Workbox

@@ -1,7 +1,8 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { CapabilityReview, isConnectorGrant } from './TrustBadge';
+import { CapabilityReview } from './TrustBadge';
+import { isConnectorGrant } from '../../lib/packTrust';
 import type { PackCapabilitySummary, PackVendorSigning } from '../../lib/api';
 
 // APP-502 install review: connector grants become an approve/deny checklist

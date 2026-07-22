@@ -84,6 +84,9 @@ export function DesktopStatusPanel() {
   }, []);
 
   useEffect(() => {
+    // Deliberate load-on-mount/-on-change: the sync early-return inside
+    // loadDesktopDetails only clears stale state before the async fetch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadDesktopDetails();
   }, [info.available, paired, loadDesktopDetails]);
 

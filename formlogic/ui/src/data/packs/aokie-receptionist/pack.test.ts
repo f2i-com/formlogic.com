@@ -441,7 +441,7 @@ describe('aokieReceptionistPack â€” deterministic Realtime appointment requ
     const node = flow.flowJson.nodes.find((n) => n.id === nodeId)!;
     return (node.data as { expr: string }).expr;
   };
-  const evaluate = (expr: string, inputs: Record<string, unknown>, nodes: Record<string, unknown>): any =>
+  const evaluate = (expr: string, inputs: Record<string, unknown>, nodes: Record<string, unknown>): unknown =>
     new Function('inputs', 'nodes', `return ${expr};`)(inputs, nodes);
   const futureDate = (): string => {
     const d = new Date(Date.now() + 5 * 86400000);

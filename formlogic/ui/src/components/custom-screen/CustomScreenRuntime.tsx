@@ -30,7 +30,17 @@ import { resolveScreenAssets } from '../../lib/screenCompile';
  * the API directly (cross-origin, no credentials). The ONLY way out is window.FormLogic, which
  * postMessages the trusted parent here; the parent authorizes the request (this user, THIS form) and
  * makes the real API call. So a custom screen can only do what the SDK exposes — nothing more.
+ *
+ * DELIVERY: the iframe loads /screen-host.html (a real same-origin document) and receives the
+ * composed screen document via postMessage + document.write. It is deliberately NOT srcdoc:
+ * srcdoc/blob/data documents inherit the app shell's strict CSP (E2EE §14 hardening), which would
+ * block every screen's inline bootstrap. The host document does not inherit — it carries its own
+ * copy of SCREEN_CSP (pinned to sdkRuntime.ts by scripts/check-security-invariants.mjs), and
+ * document.open() keeps that policy container for the written screen document.
  */
+
+/** Same-origin sandbox host document (see DELIVERY above). */
+const SCREEN_HOST_URL = '/screen-host.html';
 
 // Injected into the iframe — exposes window.FormLogic as a postMessage RPC bridge to the parent.
 const SDK_SHIM = `
@@ -279,6 +289,25 @@ export function CustomScreenRuntime({
     // the live iframe's srcdoc — which adds a browser history entry (the
     // "press Back twice" bug). Identical content ⇒ same deps ⇒ no rebuild.
   }, [assets.html, assets.css, assets.js, accentColor]);
+
+  // Hand the composed document to the sandbox host. Both sides of the load
+  // race are covered: the host pings __flScreenHostReady once its listener is
+  // up (it may beat this effect), and the iframe's onLoad below re-sends —
+  // the host accepts exactly one init, so duplicates are inert.
+  const sendDoc = () => {
+    iframeRef.current?.contentWindow?.postMessage({ __flScreenDoc: srcDoc }, '*');
+  };
+  const sendDocRef = useRef(sendDoc);
+  sendDocRef.current = sendDoc;
+  useEffect(() => {
+    const onReady = (e: MessageEvent) => {
+      if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
+      if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      sendDocRef.current();
+    };
+    window.addEventListener('message', onReady);
+    return () => window.removeEventListener('message', onReady);
+  }, []);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -567,10 +596,16 @@ export function CustomScreenRuntime({
 
   return (
     <iframe
+      // A changed document needs a FRESH host document (document.write is
+      // one-shot per host): keying on the generation stamp (bumped when the
+      // doc rebuilds) remounts the iframe, preserving the old srcdoc reload
+      // semantics (gen bump + subs cleanup).
+      key={genRef.current}
       ref={iframeRef}
       title="Custom screen"
       sandbox="allow-scripts"
-      srcDoc={srcDoc}
+      src={SCREEN_HOST_URL}
+      onLoad={() => sendDocRef.current()}
       className={className || 'w-full h-full border-0'}
     />
   );

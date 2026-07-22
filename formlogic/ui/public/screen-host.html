@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Sandboxed custom-screen HOST document (CustomScreenRuntime.tsx).
+
+      Why this file exists: srcdoc/blob/data documents INHERIT the embedding
+      page's Content-Security-Policy, so the strict app-shell CSP (vite.config.ts)
+      would block every screen's inline bootstrap. A real same-origin http
+      document does NOT inherit the parent policy — it carries its OWN CSP below,
+      which must stay byte-identical to SCREEN_CSP in
+      src/components/custom-screen/sdkRuntime.ts (pinned by
+      scripts/check-security-invariants.mjs). document.open() keeps this policy
+      container, so the written screen document runs under it too.
+
+      The iframe is still sandbox="allow-scripts" WITHOUT allow-same-origin: the
+      screen runs in an opaque origin, its only capability is the postMessage SDK
+      bridge, and this CSP keeps it no-egress (connect-src 'none').
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'"
+    />
+    <title>FormLogic screen</title>
+  </head>
+  <body>
+    <script>
+      (function () {
+        'use strict';
+        var initialized = false;
+        window.addEventListener('message', function (e) {
+          var m = e.data;
+          if (initialized || !m || m.__flScreenDoc == null) return;
+          // Only the embedding host may initialize this sandbox, exactly once.
+          if (e.source !== window.parent) return;
+          initialized = true;
+          document.open();
+          document.write(String(m.__flScreenDoc));
+          document.close();
+        });
+        // The parent also re-sends on the iframe load event; this ready ping
+        // covers the reverse race (listener attached before the parent's).
+        window.parent.postMessage({ __flScreenHostReady: true }, '*');
+      })();
+    </script>
+  </body>
+</html>

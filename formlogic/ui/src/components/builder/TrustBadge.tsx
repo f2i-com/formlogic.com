@@ -2,22 +2,9 @@ import type { ReactNode } from 'react';
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Cpu, Plug, KeyRound, LayoutGrid, Code2, BadgeCheck } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import type { PackCapabilitySummary, PackVendorSigning } from '../../lib/api';
-
-/** A pack permission string is a powered connector grant (vs a low-risk effect perm). */
-export function isConnectorGrant(p: string): boolean {
-  return p.startsWith('connector.');
-}
-
-/**
- * The REVIEWABLE connector grants for a pack — the set importPack can actually
- * strip (APP-502): the server's connectorGrants field, with a connector-prefixed
- * permissions fallback for an older server that doesn't send it. Every install
- * surface (builder pack browser, marketplace page) must derive its checklist +
- * approved set from THIS so the UI never offers a decline import can't honor.
- */
-export function reviewableConnectorGrants(caps: PackCapabilitySummary): string[] {
-  return caps.connectorGrants ?? caps.permissions.filter(isConnectorGrant);
-}
+// isConnectorGrant/reviewableConnectorGrants moved to lib/packTrust.ts so this
+// file only exports components (react-refresh rule).
+import { isConnectorGrant, reviewableConnectorGrants } from '../../lib/packTrust';
 
 /**
  * Trust badge for a marketplace listing / application package. `trust` is ALWAYS server-computed
