@@ -59,7 +59,16 @@ class CloudFlowRunner
         'llm_chat',
         'http_request',
         'connector_request',
+        // Awaited flow-to-flow composition (extensible-flows plan §8, cloud leg): the
+        // child runs in the same app (or the caller's workspace), inherits the parent's
+        // REMAINING wall-clock, is metered + reserved as its own lineage-linked run, and
+        // executes recursively in-process. Same guard/refusal contract as the browser
+        // and desktop invokers; a cloud-ineligible child is a routeable child failure.
+        'flow_call',
     ];
+
+    /** Maximum awaited flow_call depth (plan §8.8; the ancestry includes the root flow). */
+    private const FLOW_CALL_MAX_DEPTH = 8;
 
     private const MAX_DEEP_RESOLVE_DEPTH = 8;
 
@@ -110,7 +119,6 @@ class CloudFlowRunner
                 'logic_block' => 'JS logic blocks cannot run in FormLogic Cloud (v1)',
                 'condition' => 'JS condition nodes cannot run in FormLogic Cloud (v1)',
                 'service_action' => 'service actions run on FormLogic Desktop (the ServiceActionHost lives there)',
-                'flow_call' => 'flow-to-flow calls run in the browser app runtime (v1)',
                 default => "node type '{$type}' is not supported by the cloud runner (v1)",
             };
             $offenders[] = ['nodeId' => $id, 'type' => $type !== '' ? $type : '(unknown)', 'reason' => $reason];
@@ -167,7 +175,7 @@ class CloudFlowRunner
         ]);
 
         try {
-            $outcome = $this->execute($flow, $userId, $inputs);
+            $outcome = $this->execute($flow, $userId, $inputs, null, [(string) $flow['id']], $runId);
         } catch (CloudFlowNodeError $e) {
             $this->finalizeRun($runId, 'error', null, [
                 'code' => $e->flowErrorCode,
@@ -205,11 +213,22 @@ class CloudFlowRunner
     // ── Graph execution (mirrors execute_flow in the desktop Rust runner) ─────────────────
 
     /**
+     * `$deadline`/`$callStack`/`$runId` thread flow_call context (plan §8): a child run
+     * inherits the PARENT's remaining wall-clock (never a fresh budget), the awaited
+     * ancestry guards recursion/depth, and the run id becomes the child's parent linkage.
+     *
+     * @param array<int, string> $callStack
      * @return array{result: mixed, nodesExecuted: int}
      * @throws CloudFlowNodeError
      */
-    private function execute(array $flow, string $userId, array $inputs): array
-    {
+    private function execute(
+        array $flow,
+        string $userId,
+        array $inputs,
+        ?float $deadline = null,
+        array $callStack = [],
+        ?string $runId = null,
+    ): array {
         [$nodes, $edges] = $this->parseGraph($flow['flowJson'] ?? null);
         if ($nodes === []) {
             return ['result' => [], 'nodesExecuted' => 0];
@@ -219,7 +238,8 @@ class CloudFlowRunner
         }
         $order = $this->topologicalOrder($nodes, $edges); // throws on a cycle
 
-        $deadline = microtime(true) + max(0, $this->maxWallClockSeconds);
+        $deadline ??= microtime(true) + max(0, $this->maxWallClockSeconds);
+        $runCtx = ['deadline' => $deadline, 'callStack' => $callStack, 'runId' => $runId];
 
         // target => [[source, edge index], ...]. Activation is keyed by EDGE IDENTITY
         // (index), never "source→target", in lock-step with the browser and desktop
@@ -286,7 +306,7 @@ class CloudFlowRunner
                 'result' => null,
             ];
 
-            $output = $this->executeNode($node, $scope, $flow, $userId);
+            $output = $this->executeNode($node, $scope, $flow, $userId, $runCtx);
 
             $nodesExecuted++;
             $executed[$node['id']] = true;
@@ -301,9 +321,13 @@ class CloudFlowRunner
                 if ($e['source'] !== $node['id']) {
                     continue;
                 }
-                // Non-condition nodes activate every outgoing edge; condition nodes are
-                // not cloud-executable (preflight), so the Rust runner's handle routing
-                // has no live case here.
+                // flow_call routes Success/Failure handles by child status (plan §8.3),
+                // in lock-step with the browser/desktop edge_is_active. Every other
+                // supported node activates all outgoing edges (condition stays
+                // cloud-ineligible at preflight).
+                if (!$this->edgeIsActive($node, $output, $e['sourceHandle'] ?? null)) {
+                    continue;
+                }
                 $activatedEdges[$i] = true;
                 $active[$e['target']] = true;
             }
@@ -392,13 +416,26 @@ class CloudFlowRunner
 
     // ── Node executors ──
 
+    /** Which outgoing edges a finished node activates (flow_call routes by handle). */
+    private function edgeIsActive(array $node, mixed $output, ?string $sourceHandle): bool
+    {
+        if (($node['type'] ?? '') !== 'flow_call') {
+            return true;
+        }
+        $branch = (is_array($output) && ($output['status'] ?? null) === 'failed') ? 'failure' : 'success';
+        return ($sourceHandle === null || $sourceHandle === '') ? $branch === 'success' : $sourceHandle === $branch;
+    }
+
     /** @throws CloudFlowNodeError */
-    private function executeNode(array $node, array $scope, array $flow, string $userId): mixed
+    private function executeNode(array $node, array $scope, array $flow, string $userId, array $runCtx): mixed
     {
         $data = is_array($node['data']) ? $node['data'] : [];
         switch ($node['type']) {
             case 'input':
                 return $scope['inputs'];
+
+            case 'flow_call':
+                return $this->runFlowCall($node, $data, $scope, $flow, $userId, $runCtx);
 
             case 'output':
                 return array_key_exists('value', $data)
@@ -1093,6 +1130,127 @@ class CloudFlowRunner
         $stmt->execute(['id' => $appId]);
         $row = $stmt->fetch();
         return $row ?: null;
+    }
+
+    /**
+     * Awaited flow_call (extensible-flows plan §8, cloud leg). Resolution stays inside
+     * the caller's scope (same app, or the caller's own workspace for workspace flows —
+     * cross-scope calls are structurally impossible); recursion/depth guards mirror the
+     * browser/desktop invokers; the child is METERED like any started cloud run, reserved
+     * as its own lineage-linked run (server derives root/depth from parentRunId), and
+     * executes recursively with the PARENT'S remaining wall-clock. A cloud-ineligible
+     * child, exhausted allowance, or failed reservation is a routeable CHILD failure —
+     * only fail-parent mode escalates it into this flow's own failure.
+     *
+     * @return array{status: string, result?: mixed, error?: array, runId: ?string}
+     * @throws CloudFlowNodeError
+     */
+    private function runFlowCall(array $node, array $data, array $scope, array $parentFlow, string $userId, array $runCtx): array
+    {
+        $targetId = $this->requireString($node, $data, ['flowId', 'flow']);
+        $failureMode = ($data['failureMode'] ?? null) === 'route' ? 'route' : 'fail-parent';
+        $input = isset($data['input']) ? $this->resolveDeep($data['input'], $scope) : [];
+        if (!is_array($input)) {
+            $input = [];
+        }
+
+        $appId = isset($parentFlow['appId']) && is_string($parentFlow['appId']) && $parentFlow['appId'] !== ''
+            ? $parentFlow['appId'] : null;
+        $child = $appId !== null
+            ? $this->flowService->getFlow($appId, $targetId)
+            : $this->flowService->getWorkspaceFlow($userId, $targetId);
+        if (!$child || !($child['enabled'] ?? false)) {
+            throw new CloudFlowNodeError(
+                'node_failed',
+                "Node '{$node['id']}': dependency_missing: flow '{$targetId}' is not available here (missing or disabled)",
+                $node['id']
+            );
+        }
+        if (in_array($targetId, $runCtx['callStack'], true)) {
+            throw new CloudFlowNodeError(
+                'node_failed',
+                "Node '{$node['id']}': recursion_detected: flow '{$child['slug']}' is already running in this awaited call chain",
+                $node['id']
+            );
+        }
+        if (count($runCtx['callStack']) >= self::FLOW_CALL_MAX_DEPTH) {
+            throw new CloudFlowNodeError(
+                'node_failed',
+                "Node '{$node['id']}': root_budget_exceeded: awaited flow_call depth limit (" . self::FLOW_CALL_MAX_DEPTH . ') reached',
+                $node['id']
+            );
+        }
+
+        $childRunId = null;
+        $childError = null;
+        $childResult = null;
+        $offenders = self::validateCloudEligible($child['flowJson'] ?? null);
+        if ($offenders !== []) {
+            $names = implode(', ', array_map(static fn (array $o) => $o['type'], array_slice($offenders, 0, 5)));
+            $childError = [
+                'code' => 'cloud_unsupported_node',
+                'message' => "child flow '{$child['slug']}' contains nodes FormLogic Cloud cannot execute ({$names})",
+            ];
+        } else {
+            try {
+                // A started child consumes a cloud_flow_runs credit like any cloud run.
+                $this->plans->checkAndIncrement($userId, 'cloud_flow_runs', 1);
+            } catch (\RuntimeException $e) {
+                $childError = ['code' => 'flow_credits_exceeded', 'message' => "this month's cloud flow-run allowance is used up"];
+            }
+        }
+        if ($childError === null) {
+            $reservePayload = [
+                'flowSlug' => (string) $child['slug'],
+                'triggerEvent' => 'flow.call',
+                'correlationId' => 'flowcall-' . $this->uuid(),
+                'idempotencyKey' => 'flowcall:' . $node['id'] . ':' . $this->uuid(),
+                'inputSnapshot' => $input,
+                'parentRunId' => $runCtx['runId'],
+                'callNodeId' => (string) $node['id'],
+            ];
+            try {
+                $reserved = $appId !== null
+                    ? $this->flowService->reserveRun($appId, $userId, $reservePayload)
+                    : $this->flowService->reserveOwnerRun($userId, $reservePayload);
+                $childRunId = (string) $reserved['run']['runId'];
+            } catch (\Throwable $e) {
+                $childError = ['code' => 'transport_failed', 'message' => 'child run reservation failed: ' . $e->getMessage()];
+            }
+        }
+        if ($childError === null && $childRunId !== null) {
+            try {
+                $childOutcome = $this->execute(
+                    $child,
+                    $userId,
+                    $input,
+                    $runCtx['deadline'],
+                    [...$runCtx['callStack'], $targetId],
+                    $childRunId
+                );
+                $childResult = $childOutcome['result'];
+                $this->finalizeRun($childRunId, 'done', $childResult, null);
+            } catch (CloudFlowNodeError $e) {
+                $childError = ['code' => $e->flowErrorCode, 'message' => $e->getMessage(), 'nodeId' => $e->nodeId];
+                $this->finalizeRun($childRunId, 'error', null, $childError);
+            } catch (\Throwable $e) {
+                error_log('CloudFlowRunner: flow_call child ' . $childRunId . ' failed unexpectedly: ' . $e->getMessage());
+                $childError = ['code' => 'node_failed', 'message' => 'The child flow run failed'];
+                $this->finalizeRun($childRunId, 'error', null, $childError);
+            }
+        }
+
+        if ($childError === null) {
+            return ['status' => 'succeeded', 'result' => $childResult, 'runId' => $childRunId];
+        }
+        if ($failureMode === 'route') {
+            return ['status' => 'failed', 'error' => $childError, 'runId' => $childRunId];
+        }
+        throw new CloudFlowNodeError(
+            'node_failed',
+            "Node '{$node['id']}': child_flow_failed: flow '{$targetId}' {$childError['code']}: {$childError['message']}",
+            $node['id']
+        );
     }
 
     private function finalizeRun(string $runId, string $status, mixed $result, ?array $error): void

@@ -848,7 +848,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     doc:
       'Awaited flow-to-flow composition (extensible-flows plan §8, v1): the child flow is referenced by its STABLE id (never its slug), runs with the mapped input, and gets its own run-log entry. '
       + 'Success routes the Success handle with { status, result, runId }; with Failure mode “Route”, a failed child routes the Failure handle carrying the structured error instead of failing this flow. '
-      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. Runs in the browser (app runtime AND workspace, Test Run included) and on FormLogic Desktop — children execute inline on the same worker; cloud execution lands later.',
+      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. Runs in ALL THREE runtimes: the browser (app runtime and workspace, Test Run included), FormLogic Desktop (children inline on the same worker), and FormLogic Cloud (children metered, sharing the parent’s time budget).',
     icon: Workflow,
     accent: 'slate',
     executable: true,

@@ -725,4 +725,93 @@ class CloudFlowRunnerTest extends TestCase
         $this->assertNotEmpty($runs['runs']);
         $this->assertSame('cloud', $runs['runs'][0]['executionLocation']);
     }
+
+    // ── flow_call (extensible-flows plan §8, cloud leg) ─────────────────────────────────
+
+    public function testFlowCallExecutesChildInlineWithLineageAndRoutesSuccess(): void
+    {
+        $userId = $this->makeUser();
+        $child = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 't', 'type' => 'template', 'data' => ['template' => 'child says {{inputs.n}}']],
+            ['id' => 'out', 'type' => 'output'],
+        ], [
+            ['source' => 'in', 'target' => 't'],
+            ['source' => 't', 'target' => 'out'],
+        ]);
+        $parent = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 'call', 'type' => 'flow_call', 'data' => [
+                'flowId' => $child['id'], 'failureMode' => 'route', 'input' => ['n' => '$inputs.n'],
+            ]],
+            ['id' => 'ok', 'type' => 'template', 'data' => ['template' => 'ok: {{nodes.call.result}}']],
+            ['id' => 'bad', 'type' => 'template', 'data' => ['template' => 'bad: {{nodes.call.error.code}}']],
+            ['id' => 'out', 'type' => 'output'],
+        ], [
+            ['source' => 'in', 'target' => 'call'],
+            ['source' => 'call', 'target' => 'ok', 'sourceHandle' => 'success'],
+            ['source' => 'call', 'target' => 'bad', 'sourceHandle' => 'failure'],
+            ['source' => 'ok', 'target' => 'out'],
+            ['source' => 'bad', 'target' => 'out'],
+        ]);
+
+        $outcome = $this->runner()->run($parent, $userId, ['n' => 7]);
+        $this->assertSame('done', $outcome['status']);
+        $this->assertSame('ok: child says 7', $outcome['result'], 'success handle routed with the child result');
+
+        // The child ran as its OWN lineage-linked run (trigger flow.call, parent = the
+        // parent's run row, depth 1, calling node recorded).
+        $stmt = self::$pdo->prepare(
+            "SELECT * FROM flow_run_logs WHERE trigger_event = 'flow.call' AND parent_run_id = ?"
+        );
+        $stmt->execute([$outcome['runId']]);
+        $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(1, $children);
+        $this->assertSame('done', $children[0]['status']);
+        $this->assertSame(1, (int) $children[0]['depth']);
+        $this->assertSame('call', $children[0]['call_node_id']);
+        $this->assertSame($outcome['runId'], $children[0]['root_run_id']);
+    }
+
+    public function testFlowCallFailureRoutingAndRecursionGuard(): void
+    {
+        $userId = $this->makeUser();
+        // A child whose template node is missing its required key fails typed.
+        $broken = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 't', 'type' => 'template', 'data' => []],
+        ], [['source' => 'in', 'target' => 't']]);
+        $parent = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 'call', 'type' => 'flow_call', 'data' => ['flowId' => $broken['id'], 'failureMode' => 'route']],
+            ['id' => 'bad', 'type' => 'template', 'data' => ['template' => 'handled: {{nodes.call.error.code}}']],
+            ['id' => 'out', 'type' => 'output'],
+        ], [
+            ['source' => 'in', 'target' => 'call'],
+            ['source' => 'call', 'target' => 'bad', 'sourceHandle' => 'failure'],
+            ['source' => 'bad', 'target' => 'out'],
+        ]);
+        $outcome = $this->runner()->run($parent, $userId, []);
+        $this->assertSame('done', $outcome['status'], 'the PARENT succeeds — the failure path handled it');
+        $this->assertSame('handled: invalid_flow', $outcome['result']);
+
+        // Self-recursion (fail-parent default) refuses typed without reserving a child.
+        $loop = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 'call', 'type' => 'flow_call', 'data' => ['flowId' => 'SELF']],
+        ], [['source' => 'in', 'target' => 'call']]);
+        self::$flows->updateWorkspaceFlow($userId, $loop['id'], [
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input'],
+                    ['id' => 'call', 'type' => 'flow_call', 'data' => ['flowId' => $loop['id']]],
+                ],
+                'edges' => [['source' => 'in', 'target' => 'call']],
+            ],
+        ]);
+        $loopFlow = self::$flows->getWorkspaceFlow($userId, $loop['id']);
+        $outcome = $this->runner()->run($loopFlow, $userId, []);
+        $this->assertSame('error', $outcome['status']);
+        $this->assertStringContainsString('recursion_detected', $outcome['error']['message']);
+    }
 }
