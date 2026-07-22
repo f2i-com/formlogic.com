@@ -70,7 +70,8 @@ export type CryptoOp =
   | 'publishSchemaVersion'
   | 'loadFormKeys'
   | 'sealResponse'
-  | 'openResponses';
+  | 'openResponses'
+  | 'signDataStructure';
 
 export interface CryptoWorkerRequest {
   id: number;
@@ -739,6 +740,9 @@ export async function handleCryptoRequest(request: CryptoWorkerRequest): Promise
       case 'openResponses':
         result = await handleOpenResponses(request.payload as Parameters<typeof handleOpenResponses>[0]);
         break;
+      case 'signDataStructure':
+        result = await handleSignDataStructure(request.payload as Parameters<typeof handleSignDataStructure>[0]);
+        break;
       default:
         throw new WorkerError('unknown_op', `Unknown crypto op: ${String(op)}`);
     }
@@ -749,6 +753,40 @@ export async function handleCryptoRequest(request: CryptoWorkerRequest): Promise
       : 'crypto_error';
     return { id, ok: false, error: { code, message: e instanceof Error ? e.message : String(e) } };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Data-node structure signing (docs/FORMLOGIC_DATA_NODES.md §2, §11)
+// ---------------------------------------------------------------------------
+
+const DATA_SIGN_DOMAINS = new Set(['flplacement:1', 'flnodecert:1']);
+
+/**
+ * Sign a data-node structure (placement manifest / node-authority certificate)
+ * with the vault Ed25519 key under a WHITELISTED flcanon/1 domain. The
+ * structure's ownerSigner* fields must already match this vault — the worker
+ * never signs an identity claim it does not hold, and the allowlist keeps this
+ * op from ever producing an operation/checkpoint/backup signature (those are
+ * node/Cloud authorities, not the owner).
+ */
+async function handleSignDataStructure(payload: {
+  domain: string;
+  structure: Record<string, unknown>;
+}): Promise<{ signature: string; signerKeyId: string; signerFingerprint: string }> {
+  const secrets = requireUnlocked();
+  if (!DATA_SIGN_DOMAINS.has(payload.domain)) {
+    throw new WorkerError('data_sign_domain', `The vault does not sign ${payload.domain} structures`);
+  }
+  const { signStructure, dataKeyId, dataKeyFingerprint } = await import('../data/canonical');
+  const signerKeyId = await dataKeyId(secrets.ed25519Pk);
+  const signerFingerprint = await dataKeyFingerprint(secrets.ed25519Pk);
+  const claimedKeyId = payload.structure['ownerSignerKeyId'];
+  const claimedFp = payload.structure['ownerSignerFingerprint'];
+  if (claimedKeyId !== signerKeyId || claimedFp !== signerFingerprint) {
+    throw new WorkerError('data_sign_identity', 'ownerSigner fields do not match this vault');
+  }
+  const signature = await signStructure(payload.domain, payload.structure, secrets.ed25519Sk);
+  return { signature, signerKeyId, signerFingerprint };
 }
 
 // Bind inside a real worker only (excluded in node tests and jsdom, where `window` exists).

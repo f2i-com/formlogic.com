@@ -30,8 +30,46 @@ final class DataNodeController
         private DataSnapshotService $snapshots,
         private DataCloudSigner $signer,
         private DataAccountBackupService $accountBackups,
+        private \FormLogic\Services\DataNodeService $nodes,
         private bool $dataNodesEnabled,
     ) {
+    }
+
+    /** POST /api/v1/data-node/register — enrol/heartbeat this desktop's node identity. */
+    public function register(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $apiKeyId = (string) $request->getAttribute('apiKeyId');
+        $body = json_decode((string) $request->getBody(), true);
+        if (!is_array($body)) {
+            return $this->jsonError($response, 'A JSON body is required', 400, 'invalid_request');
+        }
+        try {
+            $node = $this->nodes->register($userId, $apiKeyId, $body);
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'data_node_no_connection') {
+                return $this->jsonError($response, 'No desktop connection matches this API key', 409, 'data_node_no_connection');
+            }
+            if ($e->getMessage() === 'data_node_bad_key') {
+                return $this->jsonError($response, 'signingPublicKey must be a base64 Ed25519 public key', 400, 'data_node_bad_key');
+            }
+            throw $e;
+        }
+        return $this->jsonResponse($response, ['data' => ['node' => $node]]);
+    }
+
+    /** GET /api/v1/data-node/self — this desktop's node record (approval state). */
+    public function self(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $apiKeyId = (string) $request->getAttribute('apiKeyId');
+        return $this->jsonResponse($response, ['data' => ['node' => $this->nodes->selfForConnection($userId, $apiKeyId)]]);
     }
 
     public function signingKey(Request $request, Response $response): Response

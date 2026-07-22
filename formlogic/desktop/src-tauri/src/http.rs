@@ -2400,6 +2400,18 @@ async fn data_account_backup_pull(State(state): State<AppState>) -> axum::respon
     }
 }
 
+async fn data_node_cloud_status(State(state): State<AppState>) -> axum::response::Response {
+    let client = match data_cloud_client(&state) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    match client.data_node_self().await {
+        Ok(v) => Json(serde_json::json!({ "ok": true, "node": v.pointer("/data/node").cloned().unwrap_or(serde_json::Value::Null) }))
+            .into_response(),
+        Err(e) => desktop_err(StatusCode::BAD_GATEWAY, "cloud_error", &format!("node status failed: {e:?}")),
+    }
+}
+
 async fn data_self_test(State(state): State<AppState>) -> axum::response::Response {
     let data = state.data.clone();
     match tokio::task::spawn_blocking(move || data.storage_self_test()).await {
@@ -5048,6 +5060,7 @@ pub async fn serve(
         .route("/api/data/account-backup", post(data_account_backup_pull))
         .route("/api/data/self-test", post(data_self_test))
         .route("/api/data/schedule", get(data_schedule_list).post(data_schedule_set))
+        .route("/api/data/node-cloud-status", get(data_node_cloud_status))
         // services
         .route("/api/services", get(list_services).post(add_service))
         // ServiceDefinition v3 is the cross-runtime catalog. Static routes are

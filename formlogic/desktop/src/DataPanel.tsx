@@ -48,6 +48,7 @@ export default function DataPanel() {
   const [lastRestore, setLastRestore] = useState<DataTestRestoreReport | null>(null);
   const [lastSelfTest, setLastSelfTest] = useState<DataSelfTestReport | null>(null);
   const [schedule, setSchedule] = useState<DataScheduleEntry[]>([]);
+  const [cloudNode, setCloudNode] = useState<{ status: string; approved: boolean } | null | 'unlinked'>('unlinked');
   const toast = useToast();
   const { confirm } = useConfirm();
   const reqSeq = useRef(0);
@@ -90,6 +91,12 @@ export default function DataPanel() {
     } catch (e) {
       setCloudForms(null);
       setCloudError(e instanceof Error ? e.message : String(e));
+    }
+    try {
+      const status = await dataNodes.nodeCloudStatus();
+      setCloudNode(status.node);
+    } catch {
+      setCloudNode('unlinked');
     }
   }, []);
 
@@ -160,6 +167,20 @@ export default function DataPanel() {
                 key id <code className="path-code">{status.node.keyId}</code> · created{' '}
                 {status.node.createdAt} · store:{' '}
                 <code className="path-code">{status.dataRoot}</code>
+              </div>
+              <div className="datadir-note">
+                Cloud enrolment:{' '}
+                {cloudNode === 'unlinked' || cloudNode === null ? (
+                  <span className="badge badge-neutral">Not enrolled yet</span>
+                ) : cloudNode.approved ? (
+                  <span className="badge badge-ok">Approved by owner</span>
+                ) : cloudNode.status === 'revoked' ? (
+                  <span className="badge badge-err">Revoked</span>
+                ) : (
+                  <span className="badge badge-pending" title="Approve this node in the web app: Settings → Linked Desktops → Data nodes.">
+                    Awaiting approval in web Settings
+                  </span>
+                )}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>

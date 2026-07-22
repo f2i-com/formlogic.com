@@ -1070,6 +1070,69 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Encrypted data nodes — N0/N3a skeleton (docs/FORMLOGIC_DATA_NODES.md;
+        // mirrored in schema.sql + database/migrate.php block 6). data_nodes has
+        // no FK to desktop_connections on purpose: unlinking revokes (status),
+        // it never silently deletes enrolment history.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS data_nodes (
+                id VARCHAR(40) PRIMARY KEY,
+                desktop_connection_id VARCHAR(36) NOT NULL,
+                owner_user_id VARCHAR(36) NOT NULL,
+                workspace_id VARCHAR(36) NULL,
+                display_name VARCHAR(120) NOT NULL,
+                signing_public_key VARCHAR(64) NOT NULL,
+                signing_key_id VARCHAR(16) NOT NULL,
+                signing_key_generation INT NOT NULL DEFAULT 1,
+                fingerprint CHAR(64) NOT NULL,
+                transport_key_fingerprint CHAR(64) NULL,
+                owner_signed_certificate MEDIUMBLOB NULL,
+                certificate_expires_at DATETIME NULL,
+                protocol_min INT NOT NULL DEFAULT 1,
+                protocol_max INT NOT NULL DEFAULT 1,
+                capabilities_json JSON NULL,
+                roster_revision INT NOT NULL DEFAULT 1,
+                last_seen_at DATETIME NULL,
+                last_storage_heartbeat_at DATETIME NULL,
+                status ENUM('pending','approved','revoked') NOT NULL DEFAULT 'pending',
+                revoked_at DATETIME NULL,
+                created_at DATETIME NULL,
+                updated_at DATETIME NULL,
+                UNIQUE KEY uq_data_node_connection (desktop_connection_id),
+                KEY idx_data_node_owner (owner_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS data_placement_manifests (
+                id VARCHAR(40) PRIMARY KEY,
+                dataset_id VARCHAR(36) NOT NULL,
+                form_id VARCHAR(36) NOT NULL,
+                storage_epoch INT NOT NULL,
+                manifest_hash CHAR(64) NOT NULL,
+                previous_manifest_hash CHAR(64) NULL,
+                primary_replica_id VARCHAR(64) NOT NULL,
+                signed_bytes MEDIUMBLOB NOT NULL,
+                owner_signer_key_id VARCHAR(16) NOT NULL,
+                owner_signer_fingerprint CHAR(64) NOT NULL,
+                created_at DATETIME NULL,
+                UNIQUE KEY uq_dataset_epoch (dataset_id, storage_epoch),
+                KEY idx_placement_form (form_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS data_dataset_high_water (
+                dataset_id VARCHAR(36) PRIMARY KEY,
+                storage_epoch INT NOT NULL,
+                last_acknowledged_sequence BIGINT NOT NULL DEFAULT 0,
+                last_operation_hash CHAR(64) NULL,
+                checkpoint_hash CHAR(64) NULL,
+                placement_manifest_hash CHAR(64) NULL,
+                tombstone_ledger_coverage_sequence BIGINT NOT NULL DEFAULT 0,
+                tombstone_ledger_root CHAR(64) NULL,
+                updated_at DATETIME NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Seed the Site AI allowance (plan section 3 decision 2): the standard paid plan gets 500
         // hosted AI messages/month; enterprise is unlimited (-1). INSERT IGNORE so an
         // admin's later edits are never overwritten by a re-run migration.

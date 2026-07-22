@@ -1,8 +1,9 @@
 # FormLogic Data Nodes — implementation contract (v1)
 
 Status: N0 (protocol freeze) + N1 (Desktop encrypted store, read-only Data workspace) +
-N2 (Cloud-primary Desktop snapshots, §9 — scheduled backups still pending) implemented.
-N3+ pending. Plan authority:
+N2 (Cloud-primary Desktop snapshots §9, account backups §10, scheduler) + N3a (node
+enrolment/approval + placement baseline, §11) implemented. N3b+ (relay, StorageRouter,
+op log, leases, cutover) pending. Plan authority:
 [FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md](FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md).
 
 This document pins the *implementation-level* constants that the plan leaves to N0:
@@ -215,3 +216,35 @@ definition); instead the transfer and local storage are sealed:
   `GET …/{id}/payload` (streamed); `DELETE …/{id}`; staged copies sweep after 1h.
 - Errors: `account_backup_bad_ephemeral_key`, `account_backup_too_large`,
   `account_backup_not_found`.
+
+## 11. N3a — node enrolment, owner approval, placement baseline
+
+- **Enrolment** (`POST /api/v1/data-node/register`, desktop flk_ channel; also the
+  heartbeat, hourly): the server derives keyId/fingerprint FROM the raw Ed25519 key
+  (client-sent values are ignored) and binds the node to the desktop_connections row
+  owning the API key — never a self-reported instance id. One node per connection.
+  A changed signing key = rotation: status drops to `pending`, the certificate is
+  cleared, the key generation increments — owner re-approval is mandatory.
+- **Approval** (`POST /api/data-nodes/{id}/approve`, session): the browser vault worker
+  signs an **flnodecert:1** node-authority certificate (op `signDataStructure`, domain
+  ALLOWLISTED to flnodecert:1/flplacement:1 so the vault can never mint an
+  operation/checkpoint/backup signature, and the worker refuses ownerSigner* fields
+  that do not match the vault). Frozen cert fields: protocol, kind `node-authority`,
+  nodeId, connectionId, ownerUserId, signingKeyId, signingKeyGeneration,
+  signingPublicKey, fingerprint, capabilities, issuedAt, expiresAt (nullable),
+  ownerSignerKeyId, ownerSignerFingerprint, signature. The server re-verifies every
+  field against the node row AND the signature against the vault public key. The web
+  approval dialog shows the node fingerprint for out-of-band comparison with the
+  desktop's Data page.
+- **Placement baseline** (`PUT /api/forms/{id}/data-placement`, session): the epoch-1
+  flplacement:1 manifest for a Private form — Cloud as the single primary replica with
+  the DataCloudSigner identity bound as `authoritySigningKey` AND `leaseAuthority`
+  (owner-anchoring the Cloud signer). Structure is fully pinned server-side (every
+  signed field must equal the expected baseline; epoch 1 only in N3a); CAS =
+  UNIQUE(dataset, storage_epoch). `GET` returns `legacyCloudPrimary: true` until it
+  exists. Errors: `placement_conflict`, `placement_signature_invalid`,
+  `placement_form_ineligible`, `signed_structure_mismatch`, `vault_required`,
+  `data_node_cert_signature`, `data_node_revoked`, `data_node_no_connection`.
+- UI: web Settings → Linked Desktops → "Data nodes" (approve/revoke, fingerprint
+  confirm); Form Settings → Access → "Data storage" card (sign baseline); desktop Data
+  workspace shows its Cloud enrolment state ("Awaiting approval in web Settings").

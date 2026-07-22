@@ -334,6 +334,21 @@ impl FormLogicClient {
         Ok(written)
     }
 
+    /// `POST /api/v1/data-node/register` — enrol/heartbeat this desktop's
+    /// data-node signing identity (docs/FORMLOGIC_DATA_NODES.md §11).
+    pub async fn data_node_register(&self, body: &Value) -> FlResult<Value> {
+        self.send(reqwest::Method::POST, "data-node/register", &[], Some(body))
+            .await
+            .map(|(_, v)| v)
+    }
+
+    /// `GET /api/v1/data-node/self` — this desktop's node record (approval state).
+    pub async fn data_node_self(&self) -> FlResult<Value> {
+        self.send(reqwest::Method::GET, "data-node/self", &[], None)
+            .await
+            .map(|(_, v)| v)
+    }
+
     /// `DELETE /api/v1/data-node/account-backups/{id}` — drop the staged copy.
     pub async fn data_account_backup_delete(&self, backup_id: &str) -> FlResult<()> {
         self.send(

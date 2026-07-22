@@ -129,7 +129,37 @@ pub async fn run_loop(
     let Some(runtime) = flow_runtime else {
         return;
     };
+    let mut tick: u64 = 0;
     loop {
+        // Node enrolment/heartbeat (plan §13.1): once shortly after start,
+        // then hourly. Registration is idempotent server-side; a changed key
+        // drops the node back to pending for owner re-approval.
+        if tick % 4 == 0 {
+            let config = runtime.config();
+            if let Some(client) = crate::formlogic_client::FormLogicClient::new(&config) {
+                match svc.node_identity_public() {
+                    Ok(identity) => {
+                        let display_name = std::env::var("COMPUTERNAME")
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .map(|s| format!("FormLogic Desktop ({s})"))
+                            .unwrap_or_else(|| "FormLogic Desktop".to_string());
+                        let body = serde_json::json!({
+                            "signingPublicKey": identity.signing_public_key,
+                            "displayName": display_name,
+                            "capabilities": ["storage"],
+                            "protocolMin": 1,
+                            "protocolMax": 1,
+                        });
+                        if let Err(e) = client.data_node_register(&body).await {
+                            log::debug!("data node register skipped: {e:?}");
+                        }
+                    }
+                    Err(e) => log::debug!("data node identity unavailable: {e}"),
+                }
+            }
+        }
+        tick += 1;
         tokio::time::sleep(std::time::Duration::from_secs(TICK_SECONDS)).await;
         let due: Vec<ScheduleEntry> = {
             let now = chrono::Utc::now();

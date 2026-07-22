@@ -1174,6 +1174,10 @@ export const dataNodes = {
       600000,
     ),
   schedule: () => request<{ entries: DataScheduleEntry[] }>('/api/data/schedule'),
+  nodeCloudStatus: () =>
+    request<{ ok: boolean; node: { status: string; approved: boolean } | null }>(
+      '/api/data/node-cloud-status',
+    ),
   setSchedule: (kind: string, formId: string | null, formTitle: string | null, intervalHours: number | null) =>
     request<{ ok: boolean; entries: DataScheduleEntry[] }>('/api/data/schedule', {
       method: 'POST',

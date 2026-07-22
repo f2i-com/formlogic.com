@@ -177,6 +177,12 @@ impl DataService {
         self.dataset_dir(dataset_id).join("data.sqlite3.enc")
     }
 
+    /// This node's public signing identity (minting it on first use).
+    pub fn node_identity_public(&self) -> Result<identity::PublicIdentity, DataError> {
+        self.ensure_layout()?;
+        identity::load_or_create(&self.node_dir()).map(|n| n.public)
+    }
+
     /// Managed folder layout (plan §10.4). Idempotent.
     pub fn ensure_layout(&self) -> Result<(), DataError> {
         let _guard = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());

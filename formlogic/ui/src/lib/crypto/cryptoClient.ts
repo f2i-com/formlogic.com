@@ -235,6 +235,18 @@ export class CryptoClient {
     return this.call('sealResponse', args);
   }
 
+  /**
+   * Sign a data-node structure (flplacement:1 / flnodecert:1 only — the worker
+   * enforces the domain allowlist) with the vault Ed25519 key
+   * (docs/FORMLOGIC_DATA_NODES.md §11).
+   */
+  signDataStructure(
+    domain: string,
+    structure: Record<string, unknown>,
+  ): Promise<{ signature: string; signerKeyId: string; signerFingerprint: string }> {
+    return this.call('signDataStructure', { domain, structure });
+  }
+
   openResponses(
     formId: string,
     items: { envelope: unknown }[],

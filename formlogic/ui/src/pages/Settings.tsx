@@ -14,6 +14,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { ConnectorRoutingPanel } from '../components/desktop/ConnectorRoutingPanel';
+import { DataNodesPanel } from '../components/desktop/DataNodesPanel';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { parseServerDate, formatRelativeTime } from '../lib/utils';
 import {
@@ -1072,6 +1073,9 @@ export function Settings() {
               {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
                 <ConnectorRoutingPanel />
               )}
+              {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
+                  owner approval. Hides itself while the DATA_NODES flag is off. */}
+              <DataNodesPanel />
             </div>
           </CardContent>
         </Card>

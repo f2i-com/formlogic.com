@@ -1384,6 +1384,47 @@ class ApiClient {
     return this.requestWithMeta(`/forms/${formId}/encryption/schema`, { method: 'POST', body: JSON.stringify(payload) });
   }
 
+  // --- Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11) ---
+
+  /** GET /api/data-nodes — this owner's enrolled desktop data nodes. */
+  async getDataNodes(): Promise<ApiResponse<{ nodes: import('../types/dataPlacement').DataNodeWire[] }>> {
+    const res = await this.requestWithMeta('/data-nodes');
+    if (!res.ok) {
+      return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
+    }
+    return { data: (res.body?.data ?? { nodes: [] }) as { nodes: import('../types/dataPlacement').DataNodeWire[] } };
+  }
+
+  /** POST /api/data-nodes/{id}/approve — store the owner-signed flnodecert:1. */
+  async approveDataNode(nodeId: string, certificate: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta(`/data-nodes/${nodeId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ certificate }),
+    });
+  }
+
+  /** DELETE /api/data-nodes/{id} — revoke node authority (credentials/data are separate actions). */
+  async revokeDataNode(nodeId: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta(`/data-nodes/${nodeId}`, { method: 'DELETE' });
+  }
+
+  /** GET /api/forms/{id}/data-placement — signed placement state for a Private form. */
+  async getDataPlacement(formId: string): Promise<ApiResponse<import('../types/dataPlacement').DataPlacementState>> {
+    const res = await this.requestWithMeta(`/forms/${formId}/data-placement`);
+    if (!res.ok) {
+      return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
+    }
+    return { data: (res.body?.data ?? {}) as import('../types/dataPlacement').DataPlacementState };
+  }
+
+  /** PUT /api/forms/{id}/data-placement — the owner-signed epoch-1 baseline (CAS). */
+  async putDataPlacement(formId: string, manifest: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta(`/forms/${formId}/data-placement`, {
+      method: 'PUT',
+      body: JSON.stringify({ manifest }),
+    });
+  }
+
   /** POST /api/forms/{id}/responses with {envelope} — the only private-mode create shape (§6). */
   async submitEncryptedResponse(formId: string, envelope: ResponseEnvelope, idempotencyKey?: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
     return this.requestWithMeta(`/forms/${formId}/responses`, {

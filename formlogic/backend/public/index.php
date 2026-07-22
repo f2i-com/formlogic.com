@@ -397,11 +397,29 @@ $container->set(\FormLogic\Services\DataAccountBackupService::class, function (C
         dirname($uploads) . '/data-snapshots'
     );
 });
+$container->set(\FormLogic\Services\DataNodeService::class, function (Container $c) {
+    return new \FormLogic\Services\DataNodeService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Services\DataPlacementService::class, function (Container $c) {
+    return new \FormLogic\Services\DataPlacementService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\DataCloudSigner::class)
+    );
+});
 $container->set(\FormLogic\Controllers\DataNodeController::class, function (Container $c) {
     return new \FormLogic\Controllers\DataNodeController(
         $c->get(\FormLogic\Services\DataSnapshotService::class),
         $c->get(\FormLogic\Services\DataCloudSigner::class),
         $c->get(\FormLogic\Services\DataAccountBackupService::class),
+        $c->get(\FormLogic\Services\DataNodeService::class),
+        (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false)
+    );
+});
+$container->set(\FormLogic\Controllers\DataPlacementController::class, function (Container $c) {
+    return new \FormLogic\Controllers\DataPlacementController(
+        $c->get(\FormLogic\Services\DataNodeService::class),
+        $c->get(\FormLogic\Services\DataPlacementService::class),
+        $c->get(\FormLogic\Services\VaultService::class),
         (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false)
     );
 });
@@ -1601,6 +1619,25 @@ $app->group('/api/forms/{id}/flow-bindings', function (RouteCollectorProxy $grou
 })->add($cloudWriteGate)->add($authRequired);
 
 // E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md §16-P2/P3).
+// Data-node owner routes (docs/FORMLOGIC_DATA_NODES.md §11): node roster/approval and
+// the epoch-1 placement baseline. Owner-signed structures verified against the vault key;
+// demo + acting-as refused in the controller. Not acting-as mirrored.
+$app->get('/api/data-nodes', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DataPlacementController::class)->listNodes($request, $response);
+})->add($authRequired);
+$app->post('/api/data-nodes/{id}/approve', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DataPlacementController::class)->approveNode($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->delete('/api/data-nodes/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DataPlacementController::class)->revokeNode($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->get('/api/forms/{formId}/data-placement', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DataPlacementController::class)->getPlacement($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->put('/api/forms/{formId}/data-placement', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DataPlacementController::class)->putPlacement($request, $response, $getArgs($request));
+})->add($authRequired);
+
 // Vault routes (protected; demo + acting-as refused in the controller). NOT mirrored
 // in AdminActingAsRoutes — administrators must never touch user key material.
 $app->get('/api/vault', function ($request, $response) use ($container) {
@@ -2581,6 +2618,12 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($dataNodeAuth);
     $group->delete('/data-node/snapshots/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->deleteSnapshot($request, $response, $getArgs($request));
+    })->add($dataNodeAuth);
+    $group->post('/data-node/register', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->register($request, $response);
+    })->add($dataNodeAuth);
+    $group->get('/data-node/self', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->self($request, $response);
     })->add($dataNodeAuth);
     $group->post('/data-node/account-backups', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->createAccountBackup($request, $response);

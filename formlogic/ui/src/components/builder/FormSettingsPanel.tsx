@@ -8,6 +8,7 @@ import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
 import { WebhookManager } from './WebhookManager';
 import { EncryptionSettings } from './EncryptionSettings';
+import { DataPlacementCard } from './DataPlacementCard';
 import { normalizeFormSettings, type FormSettings } from '../../types/form';
 
 interface FormSettingsModalProps {
@@ -349,6 +350,9 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
                     isPrivate={isPrivate}
                     onEnabled={() => onEncryptionEnabled?.()}
                   />
+                  {/* Data-node placement (owner-signed storage baseline) — Private forms only;
+                      hides itself while the DATA_NODES flag is off. */}
+                  {isPrivate && <DataPlacementCard formId={formId} />}
                 </div>
               )}
             </div>
