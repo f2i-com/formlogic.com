@@ -390,6 +390,27 @@ foreach (['idx_frl_root' => 'root_run_id', 'idx_frl_parent' => 'parent_run_id'] 
     }
 }
 
+// 9. Canonical terminal outcome events (extensible-flows plan §9/§14.5): the outbox rows
+//    behind flow.succeeded/failed/timed_out/cancelled triggers. UNIQUE run_id =
+//    exactly-once emission; dispatch is inline post-commit + the recovery sweep.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `flow_outcome_events` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `run_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flow_definition_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `event_name` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `payload_json` json NOT NULL,
+  `dispatch_status` varchar(12) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `attempts` int NOT NULL DEFAULT '0',
+  `dispatched_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_outcome_run` (`run_id`),
+  KEY `idx_foe_pending` (`dispatch_status`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'flow_outcome_events table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

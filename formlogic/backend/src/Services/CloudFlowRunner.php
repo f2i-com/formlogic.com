@@ -1107,6 +1107,8 @@ class CloudFlowRunner
             'error' => $error !== null ? json_encode($error) : null,
             'id' => $runId,
         ]);
+        // Canonical outcome event (extensible-flows plan §9) — idempotent, never throws.
+        $this->flowService->emitRunOutcome($runId);
     }
 
     private function uuid(): string

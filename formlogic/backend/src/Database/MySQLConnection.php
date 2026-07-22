@@ -695,6 +695,30 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Canonical terminal outcome events (extensible-flows plan §9/§14.5): ONE row per
+        // terminal run THAT HAS SUBSCRIBERS (UNIQUE run_id = exactly-once emission; the
+        // guarded terminal UPDATE is the transition gate, this is the outbox). Inserted in
+        // the SAME transaction as the terminal transition where possible; dispatch runs
+        // after commit (inline) with bin/flow-outcome-dispatch.php as the at-least-once
+        // recovery sweep. payload_json is the redacted §9 event payload.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_outcome_events (
+                id VARCHAR(36) PRIMARY KEY,
+                run_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                owner_user_id VARCHAR(36) NOT NULL,
+                flow_definition_id VARCHAR(36) NOT NULL,
+                event_name VARCHAR(32) NOT NULL,
+                payload_json JSON NOT NULL,
+                dispatch_status VARCHAR(12) NOT NULL DEFAULT 'pending',
+                attempts INT NOT NULL DEFAULT 0,
+                dispatched_at TIMESTAMP NULL DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_outcome_run (run_id),
+                INDEX idx_foe_pending (dispatch_status, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Flow KV storage: small persistent key/value state for flows (owner + optional app +
         // scope like 'flow:<slug>' or 'app'). app_id uses '' (empty string) — NOT NULL — for the
         // workspace scope so the UNIQUE key actually dedupes (MySQL UNIQUE ignores NULLs); there is

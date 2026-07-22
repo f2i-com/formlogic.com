@@ -68,6 +68,18 @@ const DEVICE_ERROR_HINTS = ['$event.data.dongleId', '$event.data.severity', '$ev
 const SMS_RECEIVED_HINTS = ['$event.data.messageId', '$event.data.from', '$event.data.phone', '$event.data.body', '$event.data.text', '$event.data.receivedAt'] as const;
 const SMS_SENT_HINTS = ['$event.data.messageId', '$event.data.to', '$event.data.status'] as const;
 const FORM_SUBMITTED_HINTS = ['$event.data.formId', '$event.data.responseId', '$event.data.answers'] as const;
+const FLOW_OUTCOME_HINTS = [
+  '$event.data.runId',
+  '$event.data.rootRunId',
+  '$event.data.flowId',
+  '$event.data.flowSlug',
+  '$event.data.status',
+  '$event.data.error.code',
+  '$event.data.error.message',
+  '$event.data.result',
+  '$event.data.correlationId',
+  '$event.data.depth',
+] as const;
 
 export const AOKIE_EVENT_NAMES = [
   'aokie.dongle.detected',
@@ -454,6 +466,46 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
     label: 'Form submitted',
     description: 'A FormLogic form response was submitted.',
     payloadHints: FORM_SUBMITTED_HINTS,
+  },
+  // Canonical flow terminal outcomes (extensible-flows plan §9): decoupled follow-up,
+  // recovery and escalation. The handler runs as an INDEPENDENT durable run with §9.2
+  // loop guards (same-root dedupe, per-event/binding idempotency, lineage depth ceiling).
+  // Filter to one source flow with a condition like: event.data.flowId === '<flow id>'.
+  {
+    kind: 'event',
+    id: 'flow.succeeded',
+    group: 'formlogic',
+    event: 'flow.succeeded',
+    label: 'Flow succeeded',
+    description: 'Another flow in this app finished successfully. Result included when small; add a condition to filter the source flow.',
+    payloadHints: FLOW_OUTCOME_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'flow.failed',
+    group: 'formlogic',
+    event: 'flow.failed',
+    label: 'Flow failed',
+    description: 'Another flow in this app failed — notification, recovery and escalation handlers hook here.',
+    payloadHints: FLOW_OUTCOME_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'flow.timed_out',
+    group: 'formlogic',
+    event: 'flow.timed_out',
+    label: 'Flow timed out',
+    description: 'Another flow in this app hit its run deadline.',
+    payloadHints: FLOW_OUTCOME_HINTS,
+  },
+  {
+    kind: 'event',
+    id: 'flow.cancelled',
+    group: 'formlogic',
+    event: 'flow.cancelled',
+    label: 'Flow cancelled',
+    description: 'Another flow in this app was cancelled before finishing.',
+    payloadHints: FLOW_OUTCOME_HINTS,
   },
   {
     kind: 'event',

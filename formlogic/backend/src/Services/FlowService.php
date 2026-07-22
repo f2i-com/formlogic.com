@@ -988,6 +988,280 @@ class FlowService
      * browser invoker enforces the tighter awaited-depth-8 limit before reserving). */
     public const RUN_LINEAGE_MAX_DEPTH = 16;
 
+    // ── Canonical terminal outcome events (extensible-flows plan §9) ─────────────────────
+
+    /** Terminal run status → canonical outcome event name. */
+    public const OUTCOME_EVENTS = [
+        'done' => 'flow.succeeded',
+        'error' => 'flow.failed',
+        'timeout' => 'flow.timed_out',
+        'cancelled' => 'flow.cancelled',
+    ];
+    /** Success results larger than this are omitted from the event payload (redaction/size, §9). */
+    private const OUTCOME_RESULT_MAX_BYTES = 16384;
+    /** Dispatch attempts before a pending event is parked as 'failed' (sweep stops retrying). */
+    private const OUTCOME_MAX_ATTEMPTS = 5;
+
+    /**
+     * Emit + dispatch the canonical outcome event for an ALREADY-terminal run (plan §9).
+     * Convenience wrapper for finalisation paths that can't couple the insert into their
+     * own transaction (cloud runner, stuck-run reclaim). Exactly-once rides the UNIQUE
+     * run_id (a duplicate emission is a silent no-op); rows are only written when the
+     * app/owner actually has outcome subscribers. NEVER throws — outcome bookkeeping must
+     * not break run finalisation.
+     */
+    public function emitRunOutcome(string $runId): void
+    {
+        try {
+            $event = $this->insertOutcomeEventForRun($runId);
+            if ($event !== null) {
+                $this->dispatchOutcomeEvent($event);
+            }
+        } catch (\Throwable $e) {
+            error_log("FlowService: outcome emission failed for run {$runId}: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Insert the outcome-event row for a terminal run and return it (with the source run
+     * attached) — or null when the run isn't terminal, has no subscribers, or was already
+     * emitted. Safe to call INSIDE the terminal transaction (plan §14.5: outbox insert
+     * couples to the owning transaction; dispatch happens after commit). Internal errors
+     * are logged, never thrown, so a bookkeeping failure can't roll back a completion.
+     */
+    private function insertOutcomeEventForRun(string $runId): ?array
+    {
+        try {
+            $stmt = $this->mysql->prepare("
+                SELECT r.*, f.slug AS flow_slug, f.owner_user_id AS flow_owner
+                FROM flow_run_logs r
+                JOIN flow_definitions f ON f.id = r.flow_definition_id
+                WHERE r.id = :id LIMIT 1
+            ");
+            $stmt->execute(['id' => $runId]);
+            $run = $stmt->fetch();
+            if (!$run || !isset(self::OUTCOME_EVENTS[(string) $run['status']])) {
+                return null;
+            }
+            $eventName = self::OUTCOME_EVENTS[(string) $run['status']];
+            $ownerUserId = (string) $run['flow_owner'];
+            $appId = isset($run['app_id']) && is_string($run['app_id']) && $run['app_id'] !== '' ? $run['app_id'] : null;
+            if ($this->outcomeSubscribers($appId, $ownerUserId) === []) {
+                return null; // no consumers → no row (the terminal run row stays the truth)
+            }
+
+            $error = null;
+            if (isset($run['error_json']) && is_string($run['error_json'])) {
+                $decoded = json_decode($run['error_json'], true);
+                if (is_array($decoded)) {
+                    // Redacted error projection: stable code + message (+ node attribution).
+                    $error = array_intersect_key($decoded, ['code' => 1, 'message' => 1, 'nodeId' => 1]);
+                }
+            }
+            $result = null;
+            $resultOmitted = false;
+            if ($eventName === 'flow.succeeded' && isset($run['result_json']) && is_string($run['result_json'])) {
+                if (strlen($run['result_json']) <= self::OUTCOME_RESULT_MAX_BYTES) {
+                    $result = json_decode($run['result_json'], true);
+                } else {
+                    $resultOmitted = true;
+                }
+            }
+            $payload = [
+                'runId' => $run['id'],
+                'rootRunId' => (isset($run['root_run_id']) && is_string($run['root_run_id']) && $run['root_run_id'] !== '')
+                    ? $run['root_run_id'] : $run['id'],
+                'flowId' => $run['flow_definition_id'],
+                'flowSlug' => $run['flow_slug'],
+                'flowVersionId' => $run['flow_version_id'] ?? null,
+                'status' => substr($eventName, strlen('flow.')),
+                'error' => $error,
+                'result' => $result,
+                'correlationId' => $run['correlation_id'],
+                'depth' => (int) ($run['depth'] ?? 0),
+                'finishedAt' => $run['finished_at'],
+            ];
+            if ($resultOmitted) {
+                $payload['resultOmitted'] = true;
+            }
+
+            $eventId = $this->uuidV4();
+            try {
+                $ins = $this->mysql->prepare("
+                    INSERT INTO flow_outcome_events
+                        (id, run_id, app_id, owner_user_id, flow_definition_id, event_name, payload_json)
+                    VALUES (:id, :run, :app, :owner, :flow, :event, :payload)
+                ");
+                $ins->execute([
+                    'id' => $eventId,
+                    'run' => $run['id'],
+                    'app' => $appId,
+                    'owner' => $ownerUserId,
+                    'flow' => $run['flow_definition_id'],
+                    'event' => $eventName,
+                    'payload' => json_encode($payload),
+                ]);
+            } catch (\PDOException $e) {
+                if ($this->isDuplicateKey($e)) {
+                    return null; // already emitted for this run — exactly-once holds
+                }
+                throw $e;
+            }
+            return [
+                'id' => $eventId,
+                'run_id' => $run['id'],
+                'app_id' => $appId,
+                'owner_user_id' => $ownerUserId,
+                'flow_definition_id' => $run['flow_definition_id'],
+                'event_name' => $eventName,
+                'payload' => $payload,
+                'source_run' => $run,
+            ];
+        } catch (\Throwable $e) {
+            error_log("FlowService: outcome insert failed for run {$runId}: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Enabled, non-manual outcome bindings visible to this app/owner: the app's own
+     * bindings plus the owner's workspace bindings. The flow itself must be enabled.
+     * @return array[]
+     */
+    private function outcomeSubscribers(?string $appId, string $ownerUserId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT b.id, b.event_name, b.flow_definition_id, b.condition_json,
+                   f.app_id AS flow_app_id, f.owner_user_id AS flow_owner
+            FROM app_flow_bindings b
+            JOIN flow_definitions f ON f.id = b.flow_definition_id
+            WHERE b.enabled = 1 AND b.mode != 'manual' AND f.enabled = 1
+              AND b.event_name IN ('flow.succeeded', 'flow.failed', 'flow.timed_out', 'flow.cancelled')
+              AND ((:app1 IS NOT NULL AND b.app_id = :app2) OR (b.app_id IS NULL AND f.owner_user_id = :o))
+        ");
+        $stmt->execute(['app1' => $appId, 'app2' => $appId, 'o' => $ownerUserId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Dispatch one outcome event: enqueue an INDEPENDENT durable handler run per matching
+     * binding (plan §9 — handlers ride the normal queued-run claim path). §9.2 loop guards:
+     *   - never dispatch to the binding that produced the source run (direct self-loop);
+     *   - never re-trigger the same (root, binding, event) pair within one root;
+     *   - handler runs carry parentRunId = source run, so the lineage depth ceiling (16)
+     *     terminates any indirect chain;
+     *   - per-event/binding idempotency key makes replays no-ops.
+     */
+    private function dispatchOutcomeEvent(array $event): void
+    {
+        $run = $event['source_run'];
+        $rootRunId = (isset($run['root_run_id']) && is_string($run['root_run_id']) && $run['root_run_id'] !== '')
+            ? $run['root_run_id'] : (string) $run['id'];
+        $subscribers = array_filter(
+            $this->outcomeSubscribers($event['app_id'], (string) $event['owner_user_id']),
+            fn (array $b) => $b['event_name'] === $event['event_name']
+        );
+
+        $failed = false;
+        foreach ($subscribers as $binding) {
+            try {
+                if (($run['binding_id'] ?? null) === $binding['id']) {
+                    continue; // the handler's own output — never re-trigger itself directly
+                }
+                $seen = $this->mysql->prepare("
+                    SELECT 1 FROM flow_run_logs
+                    WHERE root_run_id = :root AND binding_id = :b AND trigger_event = :e AND id != :self
+                    LIMIT 1
+                ");
+                $seen->execute([
+                    'root' => $rootRunId,
+                    'b' => $binding['id'],
+                    'e' => $event['event_name'],
+                    'self' => $run['id'],
+                ]);
+                if ($seen->fetchColumn()) {
+                    continue; // same source/handler pair already fired within this root (§9.2)
+                }
+                $this->enqueueRun(
+                    [
+                        'id' => $binding['flow_definition_id'],
+                        'appId' => $binding['flow_app_id'],
+                        'ownerUserId' => $binding['flow_owner'],
+                    ],
+                    [
+                        'triggerEvent' => $event['event_name'],
+                        'correlationId' => (string) ($event['payload']['correlationId'] ?? ('outcome-' . $run['id'])),
+                        'idempotencyKey' => 'flowoutcome:' . $run['id'] . ':' . $binding['id'],
+                        'inputSnapshot' => ['event' => ['name' => $event['event_name'], 'data' => $event['payload']]],
+                        'bindingId' => $binding['id'],
+                        'parentRunId' => (string) $run['id'],
+                    ]
+                );
+            } catch (\InvalidArgumentException $e) {
+                // Depth ceiling / validation refusals circuit-break THIS binding only.
+                error_log("FlowService: outcome handler skipped (binding {$binding['id']}): " . $e->getMessage());
+            } catch (\Throwable $e) {
+                $failed = true;
+                error_log("FlowService: outcome dispatch failed (binding {$binding['id']}): " . $e->getMessage());
+            }
+        }
+
+        $mark = $this->mysql->prepare("
+            UPDATE flow_outcome_events
+            SET dispatch_status = :s, attempts = attempts + 1, dispatched_at = NOW()
+            WHERE id = :id
+        ");
+        $mark->execute(['s' => $failed ? 'pending' : 'done', 'id' => $event['id']]);
+        if ($failed) {
+            $this->mysql->prepare("
+                UPDATE flow_outcome_events SET dispatch_status = 'failed'
+                WHERE id = :id AND attempts >= :max
+            ")->execute(['id' => $event['id'], 'max' => self::OUTCOME_MAX_ATTEMPTS]);
+        }
+    }
+
+    /**
+     * At-least-once recovery sweep (bin/flow-outcome-dispatch.php): dispatch events whose
+     * inline dispatch never completed. Returns how many events were processed.
+     */
+    public function dispatchPendingOutcomeEvents(int $limit = 50): int
+    {
+        $limit = max(1, min(500, $limit));
+        $stmt = $this->mysql->query("
+            SELECT * FROM flow_outcome_events
+            WHERE dispatch_status = 'pending'
+            ORDER BY created_at ASC, id ASC
+            LIMIT {$limit}
+        ");
+        $processed = 0;
+        foreach ($stmt->fetchAll() as $row) {
+            $runStmt = $this->mysql->prepare("
+                SELECT r.*, f.slug AS flow_slug, f.owner_user_id AS flow_owner
+                FROM flow_run_logs r JOIN flow_definitions f ON f.id = r.flow_definition_id
+                WHERE r.id = :id LIMIT 1
+            ");
+            $runStmt->execute(['id' => $row['run_id']]);
+            $run = $runStmt->fetch();
+            if (!$run) {
+                $this->mysql->prepare("UPDATE flow_outcome_events SET dispatch_status = 'failed' WHERE id = :id")
+                    ->execute(['id' => $row['id']]);
+                continue;
+            }
+            $this->dispatchOutcomeEvent([
+                'id' => $row['id'],
+                'run_id' => $row['run_id'],
+                'app_id' => $row['app_id'],
+                'owner_user_id' => $row['owner_user_id'],
+                'flow_definition_id' => $row['flow_definition_id'],
+                'event_name' => $row['event_name'],
+                'payload' => json_decode((string) $row['payload_json'], true) ?: [],
+                'source_run' => $run,
+            ]);
+            $processed++;
+        }
+        return $processed;
+    }
+
     /**
      * Resolve reserve-time run lineage (extensible-flows plan §8.7/§14.1). The caller may
      * name only its parent run + calling node; root and depth are DERIVED from the parent
@@ -1069,24 +1343,46 @@ class FlowService
         $clean = $this->sanitizeCompletion($data);
         $instanceId = $this->sanitizeCompletionInstanceId($data);
 
-        $stmt = $this->mysql->prepare("
-            UPDATE flow_run_logs
-            SET status = :s, result_json = :result, error_json = :error, output_actions_json = :actions, finished_at = NOW()
-            WHERE id = :id AND app_id = :a AND status IN ('running', 'queued')
-              AND (claimed_by IS NULL OR :cb1 IS NULL OR claimed_by = :cb2)
-        ");
-        $stmt->execute([
-            's' => $clean['status'],
-            'result' => $clean['resultJson'],
-            'error' => $clean['errorJson'],
-            'actions' => $clean['actionsJson'],
-            'id' => $runId,
-            'a' => $appId,
-            'cb1' => $instanceId,
-            'cb2' => $instanceId,
-        ]);
+        // The guarded transition + the outcome-event outbox insert share one transaction
+        // (plan §14.5/§15.7: the FINALIZER owns terminal state AND outbox insertion);
+        // dispatch runs after commit. The guarded UPDATE stays the exactly-once gate.
+        $wrapped = !$this->mysql->inTransaction();
+        if ($wrapped) {
+            $this->mysql->beginTransaction();
+        }
+        $outcomeEvent = null;
+        try {
+            $stmt = $this->mysql->prepare("
+                UPDATE flow_run_logs
+                SET status = :s, result_json = :result, error_json = :error, output_actions_json = :actions, finished_at = NOW()
+                WHERE id = :id AND app_id = :a AND status IN ('running', 'queued')
+                  AND (claimed_by IS NULL OR :cb1 IS NULL OR claimed_by = :cb2)
+            ");
+            $stmt->execute([
+                's' => $clean['status'],
+                'result' => $clean['resultJson'],
+                'error' => $clean['errorJson'],
+                'actions' => $clean['actionsJson'],
+                'id' => $runId,
+                'a' => $appId,
+                'cb1' => $instanceId,
+                'cb2' => $instanceId,
+            ]);
+            $transitioned = $stmt->rowCount() > 0;
+            if ($transitioned) {
+                $outcomeEvent = $this->insertOutcomeEventForRun($runId);
+            }
+            if ($wrapped) {
+                $this->mysql->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($wrapped && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
 
-        if ($stmt->rowCount() === 0) {
+        if (!$transitioned) {
             $existing = $this->getRun($appId, $runId);
             if ($existing === null) {
                 return null;
@@ -1095,6 +1391,9 @@ class FlowService
                 throw new \RuntimeException('claimed_elsewhere');
             }
             throw new \RuntimeException('already_finalized');
+        }
+        if ($outcomeEvent !== null) {
+            $this->dispatchOutcomeEvent($outcomeEvent);
         }
 
         return $this->getRun($appId, $runId);
@@ -1110,26 +1409,47 @@ class FlowService
         $clean = $this->sanitizeCompletion($data);
         $instanceId = $this->sanitizeCompletionInstanceId($data);
 
-        $stmt = $this->mysql->prepare("
-            UPDATE flow_run_logs r
-            JOIN flow_definitions f ON f.id = r.flow_definition_id
-            SET r.status = :s, r.result_json = :result, r.error_json = :error,
-                r.output_actions_json = :actions, r.finished_at = NOW()
-            WHERE r.id = :id AND f.owner_user_id = :o AND r.status IN ('running', 'queued')
-              AND (r.claimed_by IS NULL OR :cb1 IS NULL OR r.claimed_by = :cb2)
-        ");
-        $stmt->execute([
-            's' => $clean['status'],
-            'result' => $clean['resultJson'],
-            'error' => $clean['errorJson'],
-            'actions' => $clean['actionsJson'],
-            'id' => $runId,
-            'o' => $ownerUserId,
-            'cb1' => $instanceId,
-            'cb2' => $instanceId,
-        ]);
+        // Same finalizer discipline as completeRun: transition + outbox insert in one
+        // transaction, dispatch after commit.
+        $wrapped = !$this->mysql->inTransaction();
+        if ($wrapped) {
+            $this->mysql->beginTransaction();
+        }
+        $outcomeEvent = null;
+        try {
+            $stmt = $this->mysql->prepare("
+                UPDATE flow_run_logs r
+                JOIN flow_definitions f ON f.id = r.flow_definition_id
+                SET r.status = :s, r.result_json = :result, r.error_json = :error,
+                    r.output_actions_json = :actions, r.finished_at = NOW()
+                WHERE r.id = :id AND f.owner_user_id = :o AND r.status IN ('running', 'queued')
+                  AND (r.claimed_by IS NULL OR :cb1 IS NULL OR r.claimed_by = :cb2)
+            ");
+            $stmt->execute([
+                's' => $clean['status'],
+                'result' => $clean['resultJson'],
+                'error' => $clean['errorJson'],
+                'actions' => $clean['actionsJson'],
+                'id' => $runId,
+                'o' => $ownerUserId,
+                'cb1' => $instanceId,
+                'cb2' => $instanceId,
+            ]);
+            $transitioned = $stmt->rowCount() > 0;
+            if ($transitioned) {
+                $outcomeEvent = $this->insertOutcomeEventForRun($runId);
+            }
+            if ($wrapped) {
+                $this->mysql->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($wrapped && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
 
-        if ($stmt->rowCount() === 0) {
+        if (!$transitioned) {
             $existing = $this->getOwnerRun($ownerUserId, $runId);
             if ($existing === null) {
                 return null;
@@ -1138,6 +1458,9 @@ class FlowService
                 throw new \RuntimeException('claimed_elsewhere');
             }
             throw new \RuntimeException('already_finalized');
+        }
+        if ($outcomeEvent !== null) {
+            $this->dispatchOutcomeEvent($outcomeEvent);
         }
 
         return $this->getOwnerRun($ownerUserId, $runId);
@@ -1878,15 +2201,29 @@ class FlowService
         $batch = 5000;
         $total = 0;
         do {
-            $stmt = $this->mysql->prepare("
-                UPDATE flow_run_logs
-                SET status = 'error', error_json = :error, finished_at = NOW()
+            // Select-then-update so each reclaimed run can emit its outcome event (plan §9)
+            // — the blind batch UPDATE never knew which ids it flipped.
+            $pick = $this->mysql->query("
+                SELECT id FROM flow_run_logs
                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < {$cutoffExpr}
                 LIMIT {$batch}
             ");
-            $stmt->execute(['error' => $errorJson]);
+            $ids = array_map(static fn (array $row) => (string) $row['id'], $pick->fetchAll());
+            if ($ids === []) {
+                break;
+            }
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $stmt = $this->mysql->prepare("
+                UPDATE flow_run_logs
+                SET status = 'error', error_json = ?, finished_at = NOW()
+                WHERE status = 'running' AND id IN ({$placeholders})
+            ");
+            $stmt->execute([$errorJson, ...$ids]);
             $affected = $stmt->rowCount();
             $total += $affected;
+            foreach ($ids as $id) {
+                $this->emitRunOutcome($id); // best-effort; never throws
+            }
         } while ($affected === $batch);
 
         return $total;
@@ -2253,13 +2590,22 @@ class FlowService
 
         $id = $this->uuidV4();
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
+        // Lineage (plan §8.7): outcome-handler enqueues name their source run as parent so
+        // event-driven chains inherit root/depth (and the depth ceiling terminates loops).
+        [$parentRunId, $rootRunId, $depth, $callNodeId] = $this->resolveRunLineage(
+            $opts,
+            isset($flow['appId']) && is_string($flow['appId']) && $flow['appId'] !== '' ? $flow['appId'] : null,
+            isset($flow['ownerUserId']) && is_string($flow['ownerUserId']) ? $flow['ownerUserId'] : null
+        );
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
-                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id, trigger_event,
+                    (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id,
+                     parent_run_id, root_run_id, call_node_id, depth, trigger_event,
                      correlation_id, idempotency_key, status, input_snapshot_json, started_at)
                 VALUES
-                    (:id, :app, :form, :resp, :binding, :flow, :flow_version, :event, :corr, :key, 'queued', :input, NULL)
+                    (:id, :app, :form, :resp, :binding, :flow, :flow_version,
+                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, 'queued', :input, NULL)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -2269,6 +2615,10 @@ class FlowService
                 'binding' => $opts['bindingId'] ?? null,
                 'flow' => $flow['id'],
                 'flow_version' => $flowVersionId,
+                'parent_run' => $parentRunId,
+                'root_run' => $rootRunId,
+                'call_node' => $callNodeId,
+                'depth' => $depth,
                 'event' => $opts['triggerEvent'],
                 'corr' => substr($opts['correlationId'], 0, 150),
                 'key' => substr($opts['idempotencyKey'], 0, 255),
