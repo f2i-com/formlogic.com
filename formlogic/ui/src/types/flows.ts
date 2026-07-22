@@ -132,6 +132,11 @@ export interface FlowBinding {
 
 /** Enabled flow definition as served to the app runtime (no owner-only fields). */
 export interface RuntimeFlowDefinition {
+  /**
+   * Stable flow id — the DURABLE reference flow_call nodes store (plan §8.1: slugs are
+   * presentation aliases). Optional: pre-slice-3 backends omit it.
+   */
+  id?: string;
   slug: string;
   name: string;
   engine: string;

@@ -355,6 +355,10 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     getAppAiBase: () => null,
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
     listDesktopServices: () => listDesktopServices(),
+    // flow_call's browser FlowInvoker (plan §8.5 v1) — app-runtime scope only; the
+    // workspace deps deliberately omit it (Test Run there refuses typed until the
+    // workspace invoker lands).
+    invokeChildFlow: (req) => invokeChildFlow(req),
   };
 }
 
@@ -645,6 +649,88 @@ function findFlow(slug: string): RuntimeFlowDefinition | undefined {
   return runtime?.flows.find((f) => f.slug === slug);
 }
 
+/** flow_call target resolution — by STABLE id (plan §8.1; slugs are aliases). */
+function findFlowById(flowId: string): RuntimeFlowDefinition | undefined {
+  return runtime?.flows.find((f) => f.id === flowId);
+}
+
+/** Maximum awaited flow_call depth (plan §8.8; ancestry includes the root). */
+const FLOW_CALL_MAX_DEPTH = 8;
+
+/**
+ * The browser FlowInvoker (plan §8.5, v1 awaited mode): resolve the child by stable id
+ * WITHIN the current app runtime (cross-app calls are structurally impossible — the
+ * runtime list is the allowlist), guard recursion/depth over the awaited ancestry,
+ * reserve a run log, execute inline with the ancestry extended, complete the run, and
+ * return the typed envelope. Refusals throw with a §6.7 code prefix; the flow_call node
+ * wraps them into its FlowExecError.
+ */
+async function invokeChildFlow(req: {
+  targetFlowId: string;
+  inputs: Record<string, unknown>;
+  callNodeId: string;
+  callStack: readonly string[];
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<{
+  status: 'done' | 'error' | 'timeout' | 'cancelled';
+  result?: unknown;
+  error?: FlowRunError;
+  runId?: string;
+}> {
+  const d = getDeps();
+  const slug = d.getAppSlug();
+  if (!slug) throw new Error('dependency_missing: flow_call requires an app runtime');
+  const flow = findFlowById(req.targetFlowId);
+  if (!flow) {
+    throw new Error(
+      `dependency_missing: flow '${req.targetFlowId}' is not available in this app (missing, disabled, or not yet loaded)`,
+    );
+  }
+  if (req.callStack.includes(req.targetFlowId)) {
+    throw new Error(`recursion_detected: flow '${flow.slug}' is already running in this awaited call chain`);
+  }
+  if (req.callStack.length >= FLOW_CALL_MAX_DEPTH) {
+    throw new Error(`root_budget_exceeded: awaited flow_call depth limit (${FLOW_CALL_MAX_DEPTH}) reached`);
+  }
+
+  const correlationId = newIdempotencyKey();
+  const reservation = await d.reserveRun(slug, {
+    flowSlug: flow.slug,
+    triggerEvent: 'flow.call',
+    correlationId,
+    idempotencyKey: `flowcall:${req.callNodeId}:${correlationId}`,
+    inputSnapshot: req.inputs,
+  });
+  if ('error' in reservation) {
+    throw new Error(`transport_failed: child run reservation failed: ${reservation.error}`);
+  }
+
+  const outcome = await executeFlow(flow.flowJson, {
+    inputs: req.inputs,
+    app: d.getAppContext(),
+    timeoutMs: req.timeoutMs,
+    deps: d.executorDeps,
+    capabilities: flow.nodeCapabilities,
+    flowSlug: flow.slug,
+    signal: req.signal,
+    callStack: [...req.callStack, req.targetFlowId],
+  });
+  try {
+    if (outcome.status === 'done') {
+      await d.completeRun(slug, reservation.runId, { status: 'done', result: normalizeResult(outcome.result) ?? {} });
+    } else {
+      await d.completeRun(slug, reservation.runId, {
+        status: outcome.status,
+        error: outcome.error ?? { code: 'node_failed', message: 'Flow failed' },
+      });
+    }
+  } catch (err) {
+    logger.warn('[flows] child completeRun failed:', err);
+  }
+  return { status: outcome.status, result: outcome.result, error: outcome.error, runId: reservation.runId };
+}
+
 function bindingMatches(binding: RuntimeFlowBinding, event: FlowTriggerEvent): boolean {
   if (binding.mode === 'manual') return false;
   if (binding.event !== event.name) return false;
@@ -767,7 +853,7 @@ type ClaimableBinding = Pick<
 >;
 
 /** The flow fields execution needs (RuntimeFlowDefinition ⊂, FlowDefinition ⊂). */
-type ExecutableFlow = Pick<RuntimeFlowDefinition, 'slug' | 'flowJson' | 'nodeCapabilities'>;
+type ExecutableFlow = Pick<RuntimeFlowDefinition, 'id' | 'slug' | 'flowJson' | 'nodeCapabilities'>;
 
 /** The write capabilities outputActions go through (app-scoped by default; workspace injects its own). */
 interface OutputActionDeps {
@@ -823,6 +909,9 @@ async function executeRun(opts: {
       deps: opts.executorDeps,
       capabilities: flow.nodeCapabilities,
       flowSlug: flow.slug,
+      // flow_call ancestry seed (plan §8.8) — absent id (older runtime payloads) leaves
+      // flow_call refusing typed rather than running unguarded.
+      callStack: flow.id ? [flow.id] : undefined,
     });
     if (outcome.status === 'done') break;
     if (attempt < maxAttempts) {
@@ -1040,6 +1129,7 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
       deps: d.executorDeps,
       capabilities: flow.nodeCapabilities,
       flowSlug: flow.slug,
+      callStack: flow.id ? [flow.id] : undefined,
     });
     try {
       if (outcome.status === 'done') {

@@ -748,6 +748,9 @@ class FlowService
                 continue;
             }
             $flows[] = [
+                // Stable flow id — the DURABLE reference flow_call nodes store (extensible-flows
+                // plan §8.1: slugs are presentation/routing aliases and can change).
+                'id' => $flow['id'],
                 'slug' => $flow['slug'],
                 'name' => $flow['name'],
                 'engine' => $flow['engine'],

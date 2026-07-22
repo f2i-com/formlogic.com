@@ -972,6 +972,18 @@ async fn execute_node(
         // ServiceActionHost). §6.7 codes ride the message as `code: detail`.
         "service_action" => run_service_action(node, scope, deps).await,
 
+        // Awaited flow-to-flow composition (extensible-flows plan §8) — browser-first v1.
+        // The desktop invoker (inline child execution + lineage, §8.5) lands with the
+        // orchestrator slice; until then refuse typed, never silently diverge (§15.5).
+        "flow_call" => Err(FlowError::new(
+            FlowErrorCode::NodeFailed,
+            format!(
+                "Node '{}': flow_call runs in the browser app runtime in v1 — desktop execution lands with the orchestrator slice",
+                node.id
+            ),
+            Some(node.id.clone()),
+        )),
+
         "http_request" => run_http_request(node, scope, deps).await,
 
         // Desktop-service-backed nodes (docs §4) — drive a local loopback service.

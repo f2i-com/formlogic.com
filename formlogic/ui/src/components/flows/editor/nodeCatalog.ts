@@ -36,6 +36,7 @@ import {
   MousePointerClick,
   Server,
   Layers,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
@@ -837,6 +838,41 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'connection', label: 'Connection (provider id)', type: 'text', required: true, placeholder: 'openai-platform', help: 'The Desktop AI provider profile that holds the credential. An opaque id — never a URL or key.' },
       { key: 'input', label: 'Input', type: 'code', language: 'json', referenceSyntax: 'selector', placeholder: '{ "messages": [{ "role": "user", "content": "$inputs.prompt" }] }', help: 'An object matching the action’s inputSchema. String values may be $ selectors.' },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '(action default)', help: 'Optional override of the action’s declared timeout.' },
+    ],
+  },
+  {
+    type: 'flow_call',
+    label: 'Run flow',
+    category: 'logic',
+    description: 'Run another flow from this app and wait for its result, with separate success and failure paths.',
+    doc:
+      'Awaited flow-to-flow composition (extensible-flows plan §8, v1): the child flow is referenced by its STABLE id (never its slug), runs with the mapped input, and gets its own run-log entry. '
+      + 'Success routes the Success handle with { status, result, runId }; with Failure mode “Route”, a failed child routes the Failure handle carrying the structured error instead of failing this flow. '
+      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. v1 runs in the browser app runtime (live triggers, queued runs, flow.run) — desktop/cloud execution and the workspace Test Run drawer land with the orchestrator slice.',
+    icon: Workflow,
+    accent: 'slate',
+    executable: true,
+    output: 'Object { status, result, error?, runId } — child result as $nodes.<id>.result, error as $nodes.<id>.error, run id as $nodes.<id>.runId.',
+    inputs: IN,
+    outputs: [
+      { id: 'success', label: 'Success', tone: 'true' },
+      { id: 'failure', label: 'Failure', tone: 'false' },
+    ],
+    properties: [
+      { key: 'flowId', label: 'Flow (stable id)', type: 'text', required: true, placeholder: 'e.g. 3f2a9c…', help: 'The target flow’s id (Flows workspace → flow → copy id). Ids survive renames; slugs do not.' },
+      { key: 'input', label: 'Input', type: 'code', language: 'json', referenceSyntax: 'selector', placeholder: '{ "customerId": "$inputs.customerId" }', help: 'The child flow’s inputs. String values may be $ selectors.' },
+      {
+        key: 'failureMode',
+        label: 'Failure mode',
+        type: 'select',
+        default: 'fail-parent',
+        options: [
+          { value: 'fail-parent', label: 'Fail this flow (default)' },
+          { value: 'route', label: 'Route the Failure path' },
+        ],
+        help: '“Fail this flow” makes a child failure fail this run loudly; “Route” sends { status: "failed", error } down the Failure handle instead.',
+      },
+      { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '(child default)', help: 'Optional wall-clock budget for the child run.' },
     ],
   },
   {

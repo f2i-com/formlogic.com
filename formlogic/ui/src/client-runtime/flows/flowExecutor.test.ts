@@ -77,6 +77,102 @@ describe('executeFlow — service_action (desktop-only v1)', () => {
   });
 });
 
+describe('executeFlow — flow_call (awaited composition v1)', () => {
+  const routedGraph: WorkflowGraph = {
+    nodes: [
+      { id: 'in', type: 'input' },
+      { id: 'call', type: 'flow_call', data: { flowId: 'child-1', failureMode: 'route', input: { n: '$inputs.n' } } },
+      { id: 'ok', type: 'template', data: { template: 'child said {{nodes.call.result.msg}}' } },
+      { id: 'bad', type: 'template', data: { template: 'child failed: {{nodes.call.error.code}}' } },
+      { id: 'out', type: 'output' },
+    ],
+    edges: [
+      { source: 'in', target: 'call' },
+      { source: 'call', target: 'ok', sourceHandle: 'success' },
+      { source: 'call', target: 'bad', sourceHandle: 'failure' },
+      { source: 'ok', target: 'out' },
+      { source: 'bad', target: 'out' },
+    ],
+  };
+
+  it('routes the success handle with the child result and threads inputs/ancestry', async () => {
+    const invokeChildFlow = vi.fn(async () => ({ status: 'done' as const, result: { msg: 'hi' }, runId: 'run-1' }));
+    const outcome = await executeFlow(routedGraph, {
+      inputs: { n: 7 },
+      deps: fakeDeps({ invokeChildFlow }),
+      callStack: ['parent-1'],
+    });
+    expect(outcome.status).toBe('done');
+    expect(outcome.result).toBe('child said hi');
+    expect(invokeChildFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ targetFlowId: 'child-1', inputs: { n: 7 }, callNodeId: 'call', callStack: ['parent-1'] }),
+    );
+  });
+
+  it("failureMode 'route' sends the structured child error down the failure handle", async () => {
+    const invokeChildFlow = vi.fn(async () => ({
+      status: 'error' as const,
+      error: { code: 'node_failed', message: 'boom' },
+      runId: 'run-2',
+    }));
+    const outcome = await executeFlow(routedGraph, { deps: fakeDeps({ invokeChildFlow }), callStack: ['parent-1'] });
+    expect(outcome.status).toBe('done'); // the PARENT succeeds — the failure path handled it
+    expect(outcome.result).toBe('child failed: node_failed');
+  });
+
+  it("failureMode 'fail-parent' (default) fails the run with child_flow_failed", async () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'call', type: 'flow_call', data: { flowId: 'child-1' } },
+        { id: 'out', type: 'output' },
+      ],
+      edges: [
+        { source: 'in', target: 'call' },
+        { source: 'call', target: 'out', sourceHandle: 'success' },
+      ],
+    };
+    const invokeChildFlow = vi.fn(async () => ({
+      status: 'error' as const,
+      error: { code: 'timeout', message: 'child ran out of time' },
+    }));
+    const outcome = await executeFlow(graph, { deps: fakeDeps({ invokeChildFlow }), callStack: ['parent-1'] });
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.message).toMatch(/child_flow_failed/);
+    expect(outcome.error?.message).toMatch(/timeout/);
+    expect(outcome.error?.nodeId).toBe('call');
+  });
+
+  it('refuses typed when the context has no child invoker or ancestry', async () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'call', type: 'flow_call', data: { flowId: 'child-1' } },
+      ],
+      edges: [{ source: 'in', target: 'call' }],
+    };
+    // No invokeChildFlow dep at all (e.g. workspace Test Run v1).
+    const noDep = await executeFlow(graph, { deps: fakeDeps(), callStack: ['parent-1'] });
+    expect(noDep.status).toBe('error');
+    expect(noDep.error?.message).toMatch(/not available in this context/);
+    // Invoker present but no ancestry seed (a context that cannot host children).
+    const invokeChildFlow = vi.fn(async () => ({ status: 'done' as const, result: null }));
+    const noStack = await executeFlow(graph, { deps: fakeDeps({ invokeChildFlow }) });
+    expect(noStack.status).toBe('error');
+    expect(invokeChildFlow).not.toHaveBeenCalled();
+  });
+
+  it('a missing flowId is invalid_flow', async () => {
+    const graph: WorkflowGraph = {
+      nodes: [{ id: 'call', type: 'flow_call' }],
+      edges: [],
+    };
+    const outcome = await executeFlow(graph, { deps: fakeDeps(), callStack: ['p'] });
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.code).toBe('invalid_flow');
+  });
+});
+
 describe('executeFlow — parallel edges between the same two nodes', () => {
   it('a condition with BOTH branches wired to one node passes a plain upstream (only the taken edge counts)', async () => {
     // Regression (extensible-flows plan §3.1): activation used to be keyed `${source}→${target}`,

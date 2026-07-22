@@ -41,6 +41,9 @@ export const EXECUTABLE_NODE_TYPES = [
   // but v1 executes only on FormLogic Desktop — the browser case is a typed, actionable
   // refusal until the browser→Desktop invoke route lands.
   'service_action',
+  // Awaited flow-to-flow composition (plan §8, browser v1) — the child invoker lives in
+  // deps.invokeChildFlow (dispatcher-wired); contexts without it refuse typed.
+  'flow_call',
   'http_request',
   'formlogic_list_responses',
   'formlogic_submit_response',
@@ -212,6 +215,28 @@ export interface FlowExecutorDeps {
   listDesktopServices?(): Promise<
     Array<{ id: string; name: string; category: string; status: string; port: number; url: string }>
   >;
+  /**
+   * Invoke a child flow for the `flow_call` node (extensible-flows plan §8, the browser
+   * FlowInvoker — wired by flowDispatcher). The implementation owns resolution (stable
+   * flow id → this app's runtime flows), recursion/depth guards over `callStack`, run
+   * reservation, execution and completion. It throws Error whose message starts with a
+   * §6.7 code (`dependency_missing:` / `recursion_detected:` / `root_budget_exceeded:`)
+   * on refusal; contexts without an app runtime omit the dep entirely.
+   */
+  invokeChildFlow?(req: {
+    targetFlowId: string;
+    inputs: Record<string, unknown>;
+    callNodeId: string;
+    /** Awaited ancestry INCLUDING the calling flow (stable ids, root first). */
+    callStack: readonly string[];
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  }): Promise<{
+    status: 'done' | 'error' | 'timeout' | 'cancelled';
+    result?: unknown;
+    error?: { code: string; message: string; nodeId?: string };
+    runId?: string;
+  }>;
 }
 
 /** Everything one node execution can see. */
@@ -225,6 +250,8 @@ export interface FlowNodeContext {
   capabilities?: string[] | null;
   /** The running flow's slug — the default KV scope is 'flow:<slug>' (docs §9). */
   flowSlug?: string;
+  /** Awaited-call ancestry incl. this flow (flow_call guards — plan §8.8). */
+  callStack?: readonly string[];
 }
 
 /**
@@ -1287,6 +1314,79 @@ async function runTtsSpeak(ctx: FlowNodeContext): Promise<unknown> {
 }
 
 /**
+ * flow_call — awaited flow-to-flow composition (extensible-flows plan §8, browser v1).
+ * data: `flowId` (the target flow's STABLE id, §8.1 — never a slug), `input?` (object;
+ * `$` selectors resolve), `timeoutMs?`, `failureMode?` ('fail-parent' default | 'route').
+ * Output: { status: 'succeeded'|'failed', result?, error?, runId? } — downstream refs
+ * $nodes.<id>.result / .error / .runId, and the executor routes 'success'/'failure'
+ * handles by `status` (edgeIsActive). fail-parent throws child_flow_failed instead of
+ * routing, so an unwired failure is loud (§8.3). Resolution, recursion/depth guards and
+ * child run reservation live in deps.invokeChildFlow (the dispatcher's FlowInvoker).
+ */
+async function runFlowCall(ctx: FlowNodeContext): Promise<unknown> {
+  const { node, deps } = ctx;
+  const data = (node.data ?? {}) as Record<string, unknown>;
+  const targetFlowId = typeof data.flowId === 'string' ? data.flowId.trim() : '';
+  if (targetFlowId === '') {
+    throw new FlowExecError(
+      'invalid_flow',
+      `Node '${node.id}': flow_call requires flowId — the target flow's stable id`,
+      node.id,
+    );
+  }
+  if (!deps.invokeChildFlow || !ctx.callStack || ctx.callStack.length === 0) {
+    throw new FlowExecError(
+      'node_failed',
+      `Node '${node.id}': flow_call is not available in this context (no app flow invoker)`,
+      node.id,
+    );
+  }
+  const failureMode = data.failureMode === 'route' ? 'route' : 'fail-parent';
+  const rawInput = data.input !== undefined ? resolveDeep(data.input, ctx.scope) : {};
+  const inputs =
+    rawInput !== null && typeof rawInput === 'object' && !Array.isArray(rawInput)
+      ? (rawInput as Record<string, unknown>)
+      : {};
+  const timeoutMs =
+    typeof data.timeoutMs === 'number' && Number.isFinite(data.timeoutMs) ? data.timeoutMs : undefined;
+
+  let outcome: Awaited<ReturnType<NonNullable<FlowExecutorDeps['invokeChildFlow']>>>;
+  try {
+    outcome = await deps.invokeChildFlow({
+      targetFlowId,
+      inputs,
+      callNodeId: node.id,
+      callStack: ctx.callStack,
+      timeoutMs,
+      signal: ctx.signal,
+    });
+  } catch (err) {
+    // Invoker refusals (dependency_missing / recursion_detected / root_budget_exceeded)
+    // carry their §6.7 code as the message prefix.
+    throw new FlowExecError(
+      'node_failed',
+      `Node '${node.id}': ${err instanceof Error ? err.message : String(err)}`,
+      node.id,
+    );
+  }
+  if (outcome.status === 'done') {
+    return { status: 'succeeded', result: outcome.result ?? null, runId: outcome.runId };
+  }
+  const childError = outcome.error ?? {
+    code: outcome.status === 'timeout' ? 'timeout' : outcome.status === 'cancelled' ? 'cancelled' : 'node_failed',
+    message: `Child flow ${outcome.status}`,
+  };
+  if (failureMode === 'route') {
+    return { status: 'failed', error: childError, runId: outcome.runId };
+  }
+  throw new FlowExecError(
+    'node_failed',
+    `Node '${node.id}': child_flow_failed: flow '${targetFlowId}' ${childError.code}: ${childError.message}`,
+    node.id,
+  );
+}
+
+/**
  * Execute one node and return its output value. Throws FlowExecError (typed) or a plain
  * Error (wrapped by the executor into node_failed).
  */
@@ -1359,6 +1459,9 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
         `Node '${node.id}': service_action nodes run on FormLogic Desktop — set the flow's "Run on" to Desktop (or wire a desktop-executed trigger)`,
         node.id,
       );
+
+    case 'flow_call':
+      return await runFlowCall(ctx);
 
     case 'http_request':
       return await runHttpRequest(ctx);

@@ -76,6 +76,13 @@ export interface ExecuteFlowOptions {
   /** The flow's slug — default KV scope 'flow:<slug>' for storage nodes / logic_block ctx.kv. */
   flowSlug?: string;
   /**
+   * Awaited-call ancestry INCLUDING this flow (stable flow ids, root first) — flow_call's
+   * recursion/depth guard (extensible-flows plan §8.8). Callers that can host child flows
+   * (the dispatcher, Test Run) seed it with [thisFlowId]; the child invoker extends it.
+   * Absent = a context that cannot invoke children (guards then refuse in the dep).
+   */
+  callStack?: readonly string[];
+  /**
    * BROWSER-ONLY, ADDITIVE observer. Called immediately BEFORE a node runs ('running') and
    * again AFTER it settles ('done' with its output, or 'error' with the message). It NEVER
    * influences execution — it only observes, so the desktop Rust runner (which renders no
@@ -169,12 +176,23 @@ function topologicalOrder(graph: WorkflowGraph): WorkflowGraphNode[] | null {
 
 /** Which outgoing edges a finished node activates (condition nodes route by sourceHandle). */
 function edgeIsActive(node: WorkflowGraphNode, output: unknown, sourceHandle: string | undefined): boolean {
-  if (node.type !== 'condition') return true;
-  const branch = output ? 'true' : 'false';
-  // A condition edge without a handle follows the truthy branch (sensible default).
-  return sourceHandle === undefined || sourceHandle === null || sourceHandle === ''
-    ? branch === 'true'
-    : sourceHandle === branch;
+  if (node.type === 'condition') {
+    const branch = output ? 'true' : 'false';
+    // A condition edge without a handle follows the truthy branch (sensible default).
+    return sourceHandle === undefined || sourceHandle === null || sourceHandle === ''
+      ? branch === 'true'
+      : sourceHandle === branch;
+  }
+  if (node.type === 'flow_call') {
+    // flow_call routes success/failure by handle (plan §8.3). A failed child only reaches
+    // routing under failureMode 'route' (fail-parent throws instead — no edges activate);
+    // a handle-less edge follows success, mirroring condition's default-branch shape.
+    const branch = (output as { status?: unknown } | null)?.status === 'failed' ? 'failure' : 'success';
+    return sourceHandle === undefined || sourceHandle === null || sourceHandle === ''
+      ? branch === 'success'
+      : sourceHandle === branch;
+  }
+  return true;
 }
 
 /**
@@ -305,6 +323,7 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
             deps: options.deps,
             capabilities: options.capabilities,
             flowSlug: options.flowSlug,
+            callStack: options.callStack,
           }).then((value) => ({ value })),
           aborted,
         ]);

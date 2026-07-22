@@ -129,7 +129,12 @@ class FlowRunLogTest extends TestCase
         $this->assertCount(1, $runtime['flows']);
         $this->assertCount(1, $runtime['bindings']);
         $this->assertArrayNotHasKey('ownerUserId', $runtime['flows'][0], 'runtime payload must not carry owner fields');
-        $this->assertArrayNotHasKey('id', $runtime['flows'][0], 'runtime flows are addressed by slug');
+        // Extensible-flows plan §8.1: the stable flow id IS part of the runtime payload now —
+        // it is the durable reference flow_call nodes store (slugs are renameable aliases).
+        // Opaque and owner-gated like the binding ids this payload always carried; supersedes
+        // the earlier "runtime flows are addressed by slug" pin.
+        $this->assertSame($runtime['flows'][0]['id'], self::$flows->getRuntimeFlows($this->appId)['flows'][0]['id']);
+        $this->assertNotSame('', (string) $runtime['flows'][0]['id']);
 
         // Disabled flows/bindings drop out of the runtime payload.
         self::$flows->updateBinding($this->appId, $binding['id'], ['enabled' => false]);
