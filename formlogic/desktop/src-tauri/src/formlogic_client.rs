@@ -191,6 +191,92 @@ impl FormLogicClient {
         })
     }
 
+    /// `send_url`, but returning the RAW response body — the snapshot file
+    /// download needs exact bytes (hashes are computed over them), never a
+    /// JSON re-parse.
+    async fn send_bytes(
+        &self,
+        url: &str,
+        query: &[(&str, &str)],
+        timeout: Option<Duration>,
+    ) -> FlResult<Vec<u8>> {
+        let mut req = self.http.request(reqwest::Method::GET, url).bearer_auth(&self.key);
+        if let Some(t) = timeout {
+            req = req.timeout(t);
+        }
+        if !query.is_empty() {
+            req = req.query(query);
+        }
+        let resp = req.send().await.map_err(|e| FlError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(FlError::Http {
+                status: status.as_u16(),
+                message: "snapshot file download failed".to_string(),
+            });
+        }
+        resp.bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| FlError::Network(e.to_string()))
+    }
+
+    // ── Encrypted data nodes — N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9) ──
+
+    /// `GET /api/v1/data-node/signing-key` — the Cloud snapshot signer's public
+    /// identity, pinned TOFU by data/snapshots.rs.
+    pub async fn data_signing_key(&self) -> FlResult<Value> {
+        self.send(reqwest::Method::GET, "data-node/signing-key", &[], None)
+            .await
+            .map(|(_, v)| v)
+    }
+
+    /// `GET /api/v1/data-node/eligible-forms` — this owner's snapshot-eligible
+    /// Private forms.
+    pub async fn data_eligible_forms(&self) -> FlResult<Value> {
+        self.send(reqwest::Method::GET, "data-node/eligible-forms", &[], None)
+            .await
+            .map(|(_, v)| v)
+    }
+
+    /// `POST /api/v1/data-node/snapshots` — build a staged snapshot package
+    /// server-side. Generous timeout: the server assembles + hashes the whole
+    /// package before answering.
+    pub async fn data_snapshot_create(&self, form_id: &str) -> FlResult<Value> {
+        self.send_inner(
+            reqwest::Method::POST,
+            "data-node/snapshots",
+            &[],
+            Some(&serde_json::json!({ "formId": form_id })),
+            Some(Duration::from_secs(120)),
+        )
+        .await
+        .map(|(_, v)| v)
+    }
+
+    /// `GET /api/v1/data-node/snapshots/{id}/file?path=…` — one exact package
+    /// file, raw bytes.
+    pub async fn data_snapshot_file(&self, snapshot_id: &str, path: &str) -> FlResult<Vec<u8>> {
+        let url = format!(
+            "{}/api/v1/data-node/snapshots/{}/file",
+            self.base, snapshot_id
+        );
+        self.send_bytes(&url, &[("path", path)], Some(Duration::from_secs(120)))
+            .await
+    }
+
+    /// `DELETE /api/v1/data-node/snapshots/{id}` — drop the staged package.
+    pub async fn data_snapshot_delete(&self, snapshot_id: &str) -> FlResult<()> {
+        self.send(
+            reqwest::Method::DELETE,
+            &format!("data-node/snapshots/{snapshot_id}"),
+            &[],
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Cheap authenticated probe for the "Test connection" button. Hits a
     /// flows:read endpoint; a 2xx means the base URL + key + scope are good.
     pub async fn test_connection(&self) -> FlResult<()> {

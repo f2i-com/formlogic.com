@@ -23,7 +23,7 @@
       "properties": {
         "protocol": { "const": "formlogic-data-sync/1" },
         "datasetId": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "placementManifestHash": { "$ref": "#/$defs/hex64" },
+        "placementManifestHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }], "description": "Null ONLY for a legacy_cloud_primary dataset that predates its first signed placement (storageEpoch 0, e.g. the synthesized N2 snapshot checkpoint); always a hash from epoch 1 onward." },
         "storageEpoch": { "$ref": "#/$defs/safeInt" },
         "lastSequence": { "$ref": "#/$defs/safeInt" },
         "lastOperationHash": { "oneOf": [{ "$ref": "#/$defs/hex64" }, { "type": "null" }] },

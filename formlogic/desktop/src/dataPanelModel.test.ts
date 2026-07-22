@@ -1,10 +1,12 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 import {
+  backupTestBadge,
   datasetLabel,
   headComparisonLabel,
   healthBadge,
   keyStoreBanner,
+  provenanceBadge,
   summarize,
 } from './dataPanelModel.ts';
 import type { DataDatasetView, DataStatusSnapshot } from './api.ts';
@@ -73,6 +75,20 @@ test('summarize totals datasets and counts unhealthy + errored ones', () => {
   assert.equal(s.sizeBytes, 41984);
   assert.equal(s.unhealthy, 2);
   assert.equal(summarize(null).datasets, 0);
+});
+
+test('provenanceBadge never claims full authentication before the owner chain', () => {
+  assert.equal(provenanceBadge('cloud_signed_tofu').tone, 'ok');
+  assert.match(provenanceBadge('cloud_signed_tofu').label, /owner chain pending/i);
+  assert.equal(provenanceBadge('provenance_unverified').tone, 'pending');
+  assert.equal(provenanceBadge('signature_invalid').tone, 'err');
+  assert.equal(provenanceBadge('??').label, '??');
+});
+
+test('backupTestBadge covers never/passed/failed', () => {
+  assert.deepEqual(backupTestBadge(null, null), { label: 'Never tested', tone: 'pending' });
+  assert.equal(backupTestBadge(true, '2026-07-22T01:02:03Z').label, 'Test passed · 2026-07-22');
+  assert.equal(backupTestBadge(false, null).tone, 'err');
 });
 
 test('datasetLabel marks samples; keyStoreBanner reflects fail-closed states', () => {

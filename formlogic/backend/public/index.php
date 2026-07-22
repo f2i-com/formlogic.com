@@ -369,6 +369,33 @@ $container->set(\FormLogic\Controllers\FormEncryptionController::class, function
     );
 });
 
+// Encrypted data nodes — N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9).
+$container->set(\FormLogic\Services\DataCloudSigner::class, function (Container $c) {
+    $settings = $c->get('settings');
+    $uploads = $settings['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads';
+    return new \FormLogic\Services\DataCloudSigner(
+        dirname($uploads) . '/keys/data-cloud-signing.key',
+        \FormLogic\Support\Environment::get('DATA_CLOUD_SIGNING_SEED', '') ?: null
+    );
+});
+$container->set(\FormLogic\Services\DataSnapshotService::class, function (Container $c) {
+    $settings = $c->get('settings');
+    $uploads = $settings['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads';
+    return new \FormLogic\Services\DataSnapshotService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(\FormLogic\Services\DataCloudSigner::class),
+        dirname($uploads) . '/data-snapshots'
+    );
+});
+$container->set(\FormLogic\Controllers\DataNodeController::class, function (Container $c) {
+    return new \FormLogic\Controllers\DataNodeController(
+        $c->get(\FormLogic\Services\DataSnapshotService::class),
+        $c->get(\FormLogic\Services\DataCloudSigner::class),
+        (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false)
+    );
+});
+
 $container->set(WebhookController::class, function (Container $c) {
     return new WebhookController(
         $c->get(WebhookService::class),
@@ -1073,6 +1100,8 @@ $app->get('/api/health', function ($request, $response) use ($container) {
         'betaMode' => (bool) ($settings['cloud']['betaMode'] ?? false),
         // E2EE Private Forms beta flag (plan D9) — the SPA shows/hides the feature on this.
         'privateForms' => (bool) ($settings['cloud']['privateForms'] ?? false),
+        // Encrypted data nodes flag (docs/FORMLOGIC_DATA_NODES.md §7).
+        'dataNodes' => (bool) ($settings['cloud']['dataNodes'] ?? false),
         'emailConfigured' => $emailConfigured,
         'supportEmail' => (string) ($settings['supportEmail'] ?? 'hello@formlogic.com'),
         'maintenanceMode' => $maintenance['enabled'],
@@ -2522,6 +2551,27 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     // (plan section 7) -- the controller checks scopes itself, so the middleware
     // authenticates without a required-scope list.
     $desktopAiRelayAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+
+    // Encrypted data nodes — N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9).
+    // Scope: data:snapshot, with legacy connector:relay keys grandfathered until the
+    // N3 enrolment flow mints least-privilege data-plane scopes — the controller
+    // checks scopes itself, so the middleware authenticates without a scope list.
+    $dataNodeAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+    $group->get('/data-node/signing-key', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->signingKey($request, $response);
+    })->add($dataNodeAuth);
+    $group->get('/data-node/eligible-forms', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->eligibleForms($request, $response);
+    })->add($dataNodeAuth);
+    $group->post('/data-node/snapshots', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->createSnapshot($request, $response);
+    })->add($dataNodeAuth);
+    $group->get('/data-node/snapshots/{id}/file', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->snapshotFile($request, $response, $getArgs($request));
+    })->add($dataNodeAuth);
+    $group->delete('/data-node/snapshots/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->deleteSnapshot($request, $response, $getArgs($request));
+    })->add($dataNodeAuth);
 
     $group->post('/desktop-ai/pubkey', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->publishPubkeyV1($request, $response);

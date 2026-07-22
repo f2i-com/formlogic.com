@@ -18,6 +18,7 @@ pub mod envelope_validator;
 pub mod high_water;
 pub mod identity;
 pub mod key_store;
+pub mod snapshots;
 pub mod store;
 pub mod strict_json;
 

@@ -10,14 +10,19 @@ import {
   formatBytes,
   isTauri,
   openInExplorer,
+  type DataBackupEntry,
+  type DataCloudForm,
   type DataStatusSnapshot,
+  type DataTestRestoreReport,
   type DataVerifyReport,
 } from './api';
 import {
+  backupTestBadge,
   datasetLabel,
   headComparisonLabel,
   healthBadge,
   keyStoreBanner,
+  provenanceBadge,
   summarize,
 } from './dataPanelModel';
 import { getPanelCache, setPanelCache, PANEL_CACHE_KEYS } from './panelCache';
@@ -34,6 +39,11 @@ export default function DataPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [lastReport, setLastReport] = useState<DataVerifyReport | null>(null);
+  const [backups, setBackups] = useState<DataBackupEntry[]>([]);
+  const [cloudForms, setCloudForms] = useState<DataCloudForm[] | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [pullFormId, setPullFormId] = useState('');
+  const [lastRestore, setLastRestore] = useState<DataTestRestoreReport | null>(null);
   const toast = useToast();
   const { confirm } = useConfirm();
   const reqSeq = useRef(0);
@@ -52,11 +62,35 @@ export default function DataPanel() {
     }
   }, []);
 
+  const refreshBackups = useCallback(async () => {
+    try {
+      const res = await dataNodes.backups();
+      setBackups(res.backups);
+    } catch {
+      // Backups list is local; a failure surfaces via the main error banner.
+    }
+  }, []);
+
+  // Cloud form listing is on-demand (link + network), not polled.
+  const loadCloudForms = useCallback(async () => {
+    try {
+      const res = await dataNodes.cloudForms();
+      setCloudForms(res.forms);
+      setCloudError(null);
+      setPullFormId((prev) => prev || res.forms[0]?.formId || '');
+    } catch (e) {
+      setCloudForms(null);
+      setCloudError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
+    void refreshBackups();
+    void loadCloudForms();
     const t = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, refreshBackups, loadCloudForms]);
 
   const run = useCallback(
     async (label: string, action: () => Promise<void>) => {
@@ -235,6 +269,147 @@ export default function DataPanel() {
             Dataset <code className="path-code">{e.datasetId}</code>: {e.code} — {e.message}
           </div>
         ))}
+      </section>
+
+      <section className="model-section">
+        <h3 className="section-title">Cloud form backups</h3>
+        <p className="datadir-note">
+          Pull a signed, verified snapshot of a Private form from FormLogic Cloud into a
+          copy-safe <code className="path-code">.flbackup</code> on this computer. Everything
+          inside stays end-to-end encrypted; this node never receives a decryption key.
+        </p>
+        {cloudError && (
+          <div className="banner banner-err banner-dismissable">
+            Cloud unavailable: {cloudError}
+            <button type="button" className="btn btn-ghost btn-tiny" onClick={() => void loadCloudForms()}>
+              Retry
+            </button>
+          </div>
+        )}
+        {cloudForms && cloudForms.length === 0 && (
+          <div className="empty-state">
+            No Private forms found on the linked account. Only Private (end-to-end encrypted)
+            forms can be hosted or backed up on a data node.
+          </div>
+        )}
+        {cloudForms && cloudForms.length > 0 && (
+          <div className="service-row">
+            <select
+              value={pullFormId}
+              onChange={(e) => setPullFormId(e.target.value)}
+              style={{ minWidth: 0, flex: 1 }}
+            >
+              {cloudForms.map((f) => (
+                <option key={f.formId} value={f.formId}>
+                  {f.title} · {f.responses} record{f.responses === 1 ? '' : 's'}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn btn-primary btn-tiny"
+              disabled={busy !== null || !pullFormId}
+              onClick={() =>
+                void run('pull', async () => {
+                  const form = cloudForms.find((f) => f.formId === pullFormId);
+                  const res = await dataNodes.pullBackup(pullFormId, form?.title || '');
+                  await refreshBackups();
+                  toast.push({
+                    kind: 'success',
+                    title: 'Backup created and verified',
+                    body: `${res.backup.responses} encrypted records → ${res.backup.fileName}`,
+                  });
+                })
+              }
+            >
+              {busy === 'pull' ? 'Backing up…' : 'Back up now'}
+            </button>
+          </div>
+        )}
+
+        {backups.length === 0 ? (
+          <div className="empty-state">No local backups yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {backups.map((b) => {
+              const prov = provenanceBadge(b.provenance);
+              const test = backupTestBadge(b.lastTestOk, b.lastTestAt);
+              return (
+                <div key={b.backupId} className="service-row">
+                  <div style={{ minWidth: 0 }}>
+                    <div>
+                      {b.formTitle || b.formId}{' '}
+                      <span className={`badge badge-${prov.tone}`}>{prov.label}</span>{' '}
+                      <span className={`badge badge-${test.tone}`}>{test.label}</span>
+                    </div>
+                    <div className="datadir-note">
+                      {b.createdAt} · {b.responses} records · {formatBytes(b.bytes)} ·{' '}
+                      <code className="path-code">{b.fileName}</code>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-tiny"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void run(`test-${b.backupId}`, async () => {
+                          const res = await dataNodes.testRestore(b.backupId);
+                          setLastRestore(res.report);
+                          await refreshBackups();
+                          toast.push({
+                            kind: res.report.ok ? 'success' : 'error',
+                            title: res.report.ok
+                              ? 'Test restore passed'
+                              : 'Test restore found problems',
+                            body: `${res.report.responses} records restored into an isolated encrypted store`,
+                          });
+                        })
+                      }
+                    >
+                      {busy === `test-${b.backupId}` ? 'Testing…' : 'Test restore'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-tiny"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void run(`delbk-${b.backupId}`, async () => {
+                          const ok = await confirm({
+                            title: 'Delete this backup?',
+                            body: 'The local .flbackup file is removed from this computer. The Cloud copy of the form is not affected.',
+                            confirmLabel: 'Delete backup',
+                            danger: true,
+                          });
+                          if (!ok) return;
+                          await dataNodes.deleteBackup(b.backupId);
+                          await refreshBackups();
+                          toast.push({ kind: 'success', title: 'Backup deleted' });
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {lastRestore && (
+          <div className="datadir-note">
+            Last test restore ({datasetShort(lastRestore.backupId)}…):{' '}
+            {lastRestore.ok ? 'passed' : 'FAILED'} · {lastRestore.responses} records,{' '}
+            {lastRestore.artifacts} control artifacts
+            {lastRestore.issues.length > 0 && (
+              <ul>
+                {lastRestore.issues.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </section>
 
       {lastReport && (

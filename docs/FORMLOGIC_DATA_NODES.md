@@ -1,7 +1,8 @@
 # FormLogic Data Nodes — implementation contract (v1)
 
-Status: N0 (protocol freeze) + N1 (Desktop encrypted store, read-only Data workspace)
-implemented. N2+ pending. Plan authority:
+Status: N0 (protocol freeze) + N1 (Desktop encrypted store, read-only Data workspace) +
+N2 (Cloud-primary Desktop snapshots, §9 — scheduled backups still pending) implemented.
+N3+ pending. Plan authority:
 [FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md](FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md).
 
 This document pins the *implementation-level* constants that the plan leaves to N0:
@@ -144,3 +145,39 @@ and always available in the workspace, labelled beta.
 `data_key_store_unavailable`, `encrypted_store_unavailable`, `rollback_detected`,
 `history_diverged`, `replica_integrity_failed`, `data_nodes_disabled`. The full catalog is
 plan §21.3.
+
+## 9. N2 — Cloud snapshot package (`.flbackup`) pins
+
+A `.flbackup` is a ZIP of the plan §18.4 layout (backup-index.json,
+manifests/{backup-manifest,checkpoint}.json, data/{responses.ndjson.enc, control.ndjson,
+tombstones.ndjson, operations.ndjson}; no recovery/ member — data-only). Built by
+`backend DataSnapshotService`, pulled + verified + assembled by
+`desktop src/data/snapshots.rs`; staged Cloud copies live under
+`<storage>/data-snapshots/<id>/` with a 1-hour TTL.
+
+Frozen pins:
+
+- **responses.ndjson.enc** line: `{id, status, submittedAt, updatedAt, rowVersion,
+  lifecycleState, trashedAt, rev, cipherHash, answersRaw}`. `answersRaw` is the EXACT
+  stored envelope string (opaque, so no re-encode can drift `cipherHash =
+  sha256(answersRaw)`). Until N3 adds the row-version columns to the Cloud schema,
+  `rowVersion=1 / lifecycleState=active / trashedAt=null` are derived defaults.
+- **control.ndjson** line: `{kind: manifest|schema|ingestion|grant, id, …}` — every
+  secret stays in its existing wrapped/signed form. An artifact's logical-root hash is
+  sha256 over the EXACT line bytes (no trailing newline).
+- **flroot:1 entries**: `["response", id, rowVersion, rev, cipherHash]` and
+  `["artifact", kind, id, lineSha256]` — identical to what a restored desktop store
+  recomputes from its own tables (that equality IS the Structural Test Restore gate).
+- **legacy_cloud_primary** (no signed placement yet): `storageEpoch 0`, checkpoint
+  `placementManifestHash null`, no placement-manifest.json in the package.
+- **Cloud signer**: `DataCloudSigner` (seed at `<storage>/keys/data-cloud-signing.key`,
+  env override `DATA_CLOUD_SIGNING_SEED`; a malformed key file fails closed rather than
+  silently rotating). Desktops pin its public identity TOFU over the authenticated API
+  channel (`data/node/cloud-signer.json`) and REFUSE a changed key. Until N3 placement
+  binds the fingerprint under the owner's vault signature, provenance is
+  `cloud_signed_tofu` ("Cloud-signed · owner chain pending") — never "authenticated".
+- **API** (`/api/v1/data-node/*`, desktop flk_ key; scope `data:snapshot` with
+  `connector:relay` grandfathered until N3 enrolment): signing-key, eligible-forms,
+  snapshots (create/file?path=/delete). All 403 `data_nodes_disabled` while the flag is
+  off.
+- Deferred from N2: scheduled data-only backups (manual "Back up now" only so far).

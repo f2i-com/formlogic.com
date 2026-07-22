@@ -70,6 +70,27 @@ export function datasetLabel(d: DataDatasetView): string {
   return d.isSample ? `Sample dataset ${d.datasetId.slice(0, 8)}` : d.formId;
 }
 
+/** Provenance chip for a backup entry (plan §18.5 wording — never "authenticated"). */
+export function provenanceBadge(provenance: string): { label: string; tone: BadgeTone } {
+  switch (provenance) {
+    case 'cloud_signed_tofu':
+      return { label: 'Cloud-signed · owner chain pending', tone: 'ok' };
+    case 'provenance_unverified':
+      return { label: 'Integrity checked · provenance unverified', tone: 'pending' };
+    case 'signature_invalid':
+      return { label: 'Signature invalid', tone: 'err' };
+    default:
+      return { label: provenance || 'Unknown', tone: 'neutral' };
+  }
+}
+
+/** Last-test chip for a backup entry. */
+export function backupTestBadge(lastTestOk: boolean | null, lastTestAt: string | null): { label: string; tone: BadgeTone } {
+  if (lastTestOk === null) return { label: 'Never tested', tone: 'pending' };
+  if (lastTestOk) return { label: `Test passed${lastTestAt ? ` · ${lastTestAt.slice(0, 10)}` : ''}`, tone: 'ok' };
+  return { label: 'Last test FAILED', tone: 'err' };
+}
+
 /** The fail-closed banner message, or null when hosting is available. */
 export function keyStoreBanner(status: DataStatusSnapshot | null): string | null {
   if (!status) return null;

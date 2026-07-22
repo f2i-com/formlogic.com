@@ -2301,6 +2301,93 @@ async fn data_delete_dataset(
     }
 }
 
+/// The linked-cloud client for the N2 snapshot lane, or an honest typed error
+/// when no account is linked / the key is incomplete.
+fn data_cloud_client(state: &AppState) -> Result<crate::formlogic_client::FormLogicClient, axum::response::Response> {
+    let config = state
+        .flow_runtime
+        .as_ref()
+        .map(|rt| rt.config())
+        .ok_or_else(|| desktop_err(StatusCode::SERVICE_UNAVAILABLE, "cloud_not_linked", "No FormLogic account is linked."))?;
+    crate::formlogic_client::FormLogicClient::new(&config)
+        .ok_or_else(|| desktop_err(StatusCode::SERVICE_UNAVAILABLE, "cloud_not_linked", "No FormLogic account is linked."))
+}
+
+async fn data_cloud_forms(State(state): State<AppState>) -> axum::response::Response {
+    let client = match data_cloud_client(&state) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    match client.data_eligible_forms().await {
+        Ok(v) => Json(serde_json::json!({ "ok": true, "forms": v.pointer("/data/forms").cloned().unwrap_or(serde_json::json!([])) }))
+            .into_response(),
+        Err(e) => desktop_err(
+            StatusCode::BAD_GATEWAY,
+            "cloud_error",
+            &format!("Cloud form listing failed: {e:?}"),
+        ),
+    }
+}
+
+async fn data_backups(State(state): State<AppState>) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || {
+        (crate::data::snapshots::catalog(&data), crate::data::snapshots::pinned_signer(&data))
+    })
+    .await
+    {
+        Ok((backups, signer)) => Json(serde_json::json!({ "backups": backups, "cloudSigner": signer })).into_response(),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DataBackupPullRequest {
+    form_id: String,
+    #[serde(default)]
+    form_title: Option<String>,
+}
+
+async fn data_backup_pull(
+    State(state): State<AppState>,
+    Json(body): Json<DataBackupPullRequest>,
+) -> axum::response::Response {
+    let client = match data_cloud_client(&state) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let title = body.form_title.unwrap_or_default();
+    match crate::data::snapshots::pull_cloud_snapshot(&state.data, &client, &body.form_id, &title).await {
+        Ok(entry) => Json(serde_json::json!({ "ok": true, "backup": entry })).into_response(),
+        Err(e) => data_err(&e),
+    }
+}
+
+async fn data_backup_test(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || crate::data::snapshots::structural_test_restore(&data, &id)).await {
+        Ok(Ok(report)) => Json(serde_json::json!({ "ok": report.ok, "report": report })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
+async fn data_backup_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let data = state.data.clone();
+    match tokio::task::spawn_blocking(move || crate::data::snapshots::delete_backup(&data, &id)).await {
+        Ok(Ok(())) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(Err(e)) => data_err(&e),
+        Err(e) => desktop_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &format!("join: {e}")),
+    }
+}
+
 /// `{ok:false, error:{code, message}}` — the contract error envelope.
 fn desktop_err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
     (
@@ -4873,6 +4960,11 @@ pub async fn serve(
         .route("/api/data/sample", post(data_create_sample))
         .route("/api/data/datasets/:id/verify", post(data_verify_dataset))
         .route("/api/data/datasets/:id", delete(data_delete_dataset))
+        // N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9).
+        .route("/api/data/cloud-forms", get(data_cloud_forms))
+        .route("/api/data/backups", get(data_backups).post(data_backup_pull))
+        .route("/api/data/backups/:id/test", post(data_backup_test))
+        .route("/api/data/backups/:id", delete(data_backup_delete))
         // services
         .route("/api/services", get(list_services).post(add_service))
         // ServiceDefinition v3 is the cross-runtime catalog. Static routes are

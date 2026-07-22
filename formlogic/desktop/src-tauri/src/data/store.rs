@@ -125,6 +125,26 @@ impl DataService {
         &self.root
     }
 
+    /// Serialize dataset/backup lifecycle mutations (used by snapshots.rs too).
+    pub(crate) fn lifecycle_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.lifecycle.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(crate) fn node_dir_path(&self) -> PathBuf {
+        self.node_dir()
+    }
+
+    /// Copy-safe finished-backup folder (plan §10.4).
+    pub(crate) fn backups_data_only_dir(&self) -> PathBuf {
+        self.root.join("backups").join("data-only")
+    }
+
+    /// Bounded staging for package assembly — partial packages never appear
+    /// in the copy-safe folder (plan §10.4).
+    pub(crate) fn backups_staging_dir(&self) -> PathBuf {
+        self.root.join("backups").join("staging")
+    }
+
     fn node_dir(&self) -> PathBuf {
         self.root.join("node")
     }
@@ -769,7 +789,9 @@ fn authority_from_placement(placement: &Value) -> Option<ed25519_dalek::Verifyin
 }
 
 /// flroot:1 over the live rows/tombstones/artifacts (docs/FORMLOGIC_DATA_NODES.md §3).
-fn compute_logical_root(conn: &Connection, dataset_id: &str) -> Result<String, DataError> {
+/// pub(crate): the structural test restore recomputes the root from its
+/// imported temp store through this exact function.
+pub(crate) fn compute_logical_root(conn: &Connection, dataset_id: &str) -> Result<String, DataError> {
     let mut entries: Vec<Value> = Vec::new();
     {
         let mut stmt = conn

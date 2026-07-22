@@ -1104,8 +1104,67 @@ export interface DataVerifyReport {
   issues: string[];
 }
 
+export interface DataCloudForm {
+  formId: string;
+  title: string;
+  responses: number;
+  state: string;
+}
+
+export interface DataBackupEntry {
+  backupId: string;
+  formId: string;
+  datasetId: string;
+  formTitle: string;
+  createdAt: string;
+  bytes: number;
+  fileName: string;
+  responses: number;
+  source: string;
+  provenance: string;
+  lastTestOk: boolean | null;
+  lastTestAt: string | null;
+}
+
+export interface DataCloudSigner {
+  publicKey: string;
+  keyId: string;
+  fingerprint: string;
+  pinnedAt: string;
+}
+
+export interface DataTestRestoreReport {
+  backupId: string;
+  ok: boolean;
+  provenance: string;
+  responses: number;
+  artifacts: number;
+  logicalRoot: string | null;
+  issues: string[];
+}
+
 export const dataNodes = {
   status: () => request<DataStatusSnapshot>('/api/data/status'),
+  cloudForms: () => request<{ ok: boolean; forms: DataCloudForm[] }>('/api/data/cloud-forms'),
+  backups: () =>
+    request<{ backups: DataBackupEntry[]; cloudSigner: DataCloudSigner | null }>('/api/data/backups'),
+  pullBackup: (formId: string, formTitle: string) =>
+    request<{ ok: boolean; backup: DataBackupEntry }>(
+      '/api/data/backups',
+      { method: 'POST', body: JSON.stringify({ formId, formTitle }) },
+      // Snapshot build + download + verify can take a while on big forms.
+      180000,
+    ),
+  testRestore: (backupId: string) =>
+    request<{ ok: boolean; report: DataTestRestoreReport }>(
+      `/api/data/backups/${encodeURIComponent(backupId)}/test`,
+      { method: 'POST' },
+      120000,
+    ),
+  deleteBackup: (backupId: string) =>
+    request<{ ok: boolean }>(`/api/data/backups/${encodeURIComponent(backupId)}`, {
+      method: 'DELETE',
+    }),
   createSample: (records: number) =>
     request<{ ok: boolean; dataset: DataDatasetView }>('/api/data/sample', {
       method: 'POST',
