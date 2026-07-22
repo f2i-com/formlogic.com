@@ -54,6 +54,29 @@ describe('validateWorkflowGraph', () => {
   });
 });
 
+describe('executeFlow — service_action (desktop-only v1)', () => {
+  it('refuses in the browser with an actionable desktop diagnostic', async () => {
+    // v1: the ServiceActionHost lives on FormLogic Desktop. The browser must fail with a
+    // precise, actionable message (extensible-flows plan §15.5) — never silently skip.
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        {
+          id: 'svc',
+          type: 'service_action',
+          data: { definitionId: 'openai-api', actionId: 'chat.complete', connection: 'openai-platform' },
+        },
+      ],
+      edges: [{ source: 'in', target: 'svc' }],
+    };
+    const outcome = await executeFlow(graph, { deps: fakeDeps() });
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.code).toBe('node_failed');
+    expect(outcome.error?.message).toMatch(/FormLogic Desktop/);
+    expect(outcome.error?.nodeId).toBe('svc');
+  });
+});
+
 describe('executeFlow — parallel edges between the same two nodes', () => {
   it('a condition with BOTH branches wired to one node passes a plain upstream (only the taken edge counts)', async () => {
     // Regression (extensible-flows plan §3.1): activation used to be keyed `${source}→${target}`,

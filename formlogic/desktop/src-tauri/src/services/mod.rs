@@ -18,6 +18,7 @@
 
 pub mod catalog;
 pub mod downloads;
+pub mod invocation;
 pub mod platform;
 pub mod python;
 pub mod registry;

@@ -966,6 +966,12 @@ async fn execute_node(
 
         "llm_chat" => run_llm_chat(node, scope, deps).await,
 
+        // Generic ServiceDefinition action (extensible-flows plan §7, slice 2): stable
+        // definitionId/actionId/connection refs only — resolution, §6.5 schema validation,
+        // credential injection and transport live in services::invocation (the
+        // ServiceActionHost). §6.7 codes ride the message as `code: detail`.
+        "service_action" => run_service_action(node, scope, deps).await,
+
         "http_request" => run_http_request(node, scope, deps).await,
 
         // Desktop-service-backed nodes (docs §4) — drive a local loopback service.
@@ -1350,6 +1356,39 @@ async fn discover_default_model(chat_endpoint: &str, http: &reqwest::Client) -> 
         }
     }
     None
+}
+
+/// Generic `service_action` node (extensible-flows plan §7, slice 2 v1). The node stores
+/// ONLY stable references (§7.3): `definitionId`/`actionId` into the Desktop's v3 catalog
+/// and an opaque `connection` (AI provider profile id). `input` is an object whose values
+/// pass through the normal selector resolution; `timeoutMs` overrides the action's
+/// declared budget within the standard node bounds.
+async fn run_service_action(
+    node: &GraphNode,
+    scope: &SelectorScope,
+    deps: &RunDeps,
+) -> Result<Value, FlowError> {
+    let definition_id = require_string(node, &["definitionId", "definition"])?;
+    let action_id = require_string(node, &["actionId", "action"])?;
+    let connection = require_string(node, &["connection", "provider"])?;
+    let data = node_data(node);
+    let input = data
+        .get("input")
+        .map(|raw| crate::flows::selectors::resolve_deep(raw, scope))
+        .unwrap_or_else(|| json!({}));
+    let timeout_override = clamp_declared_timeout(data).map(|d| d.as_millis() as u64);
+
+    let node_err = |e: crate::services::invocation::InvokeError| {
+        FlowError::new(
+            FlowErrorCode::NodeFailed,
+            format!("Node '{}': {}", node.id, e.to_message()),
+            Some(node.id.clone()),
+        )
+    };
+    let action = crate::services::invocation::resolve_action(&definition_id, &action_id).map_err(node_err)?;
+    crate::services::invocation::invoke(&deps.http, &action, &connection, &input, timeout_override)
+        .await
+        .map_err(node_err)
 }
 
 fn named_ai_provider_endpoint(provider: &str) -> Result<String, String> {
@@ -2588,6 +2627,45 @@ mod tests {
         .await;
         assert_eq!(dup.status, "error");
         assert!(dup.error.as_ref().unwrap().message.contains("Duplicate flow edge id"), "got: {:?}", dup.error);
+    }
+
+    #[tokio::test]
+    async fn service_action_surfaces_typed_invocation_codes() {
+        // Unknown definition → service_unavailable, attributed to the node (§6.7 taxonomy
+        // rides the message as `code: detail`).
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "svc", "type": "service_action", "data": {
+                    "definitionId": "nope", "actionId": "x", "connection": "openai-platform" } }
+            ],
+            "edges": [ { "source": "in", "target": "svc" } ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "error");
+        let err = out.error.expect("error envelope");
+        assert!(err.message.contains("service_unavailable"), "got: {}", err.message);
+        assert_eq!(err.node_id.as_deref(), Some("svc"));
+    }
+
+    #[tokio::test]
+    async fn service_action_validates_input_before_any_transport() {
+        // chat.complete requires `messages`; the §6.5 subset validator refuses BEFORE any
+        // gateway/credential work — no provider profile exists in this test environment.
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "svc", "type": "service_action", "data": {
+                    "definitionId": "openai-api", "actionId": "chat.complete",
+                    "connection": "openai-platform", "input": { "model": "gpt-x" } } }
+            ],
+            "edges": [ { "source": "in", "target": "svc" } ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "error");
+        let err = out.error.expect("error envelope");
+        assert!(err.message.contains("input_invalid"), "got: {}", err.message);
+        assert!(err.message.contains("messages"), "names the missing property: {}", err.message);
     }
 
     /// A busy-wait expression that blocks for roughly `ms` milliseconds (deterministic CPU

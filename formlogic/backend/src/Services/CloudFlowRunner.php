@@ -109,6 +109,7 @@ class CloudFlowRunner
             $reason = match ($type) {
                 'logic_block' => 'JS logic blocks cannot run in FormLogic Cloud (v1)',
                 'condition' => 'JS condition nodes cannot run in FormLogic Cloud (v1)',
+                'service_action' => 'service actions run on FormLogic Desktop (the ServiceActionHost lives there)',
                 default => "node type '{$type}' is not supported by the cloud runner (v1)",
             };
             $offenders[] = ['nodeId' => $id, 'type' => $type !== '' ? $type : '(unknown)', 'reason' => $reason];

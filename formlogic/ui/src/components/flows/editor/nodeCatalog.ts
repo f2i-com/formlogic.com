@@ -35,6 +35,7 @@ import {
   Image,
   MousePointerClick,
   Server,
+  Layers,
   type LucideIcon,
 } from 'lucide-react';
 import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
@@ -813,6 +814,29 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'model', label: 'Model', type: 'text', placeholder: '(service default)', help: 'Optional. For an OpenAI-compatible endpoint.' },
       { key: 'service', label: 'Service id', type: 'desktopService', placeholder: 'krea2', help: 'Optional. The Desktop service id (default krea2).' },
       { key: 'endpoint', label: 'Endpoint override', type: 'text', placeholder: '(auto) http://127.0.0.1:17910/generate', help: 'Optional. A full loopback POST URL (native /generate or /v1/images/generations).' },
+    ],
+  },
+  {
+    type: 'service_action',
+    label: 'Service action',
+    category: 'desktop',
+    description: 'Invoke a typed action from the Desktop Services catalog — validated against the action’s declared schemas, with credentials held by Desktop.',
+    doc:
+      'The generic service-action node (extensible-flows plan §7): stores only stable references — a service definition id, an action id, and the Desktop AI provider profile that holds the credential. '
+      + 'Desktop resolves the action from its catalog, validates your input against the action’s declared inputSchema, injects credentials via its provider gateway, and validates the output. '
+      + 'v1 executes on FormLogic Desktop only — set the flow’s “Run on” to Desktop.',
+    icon: Layers,
+    accent: 'slate',
+    executable: true,
+    output: 'The action’s outputSchema-validated result object — reference as $nodes.<id>.<field>.',
+    inputs: IN,
+    outputs: OUT,
+    properties: [
+      { key: 'definitionId', label: 'Service definition', type: 'text', required: true, placeholder: 'openai-api', help: 'The Desktop Services catalog definition id.' },
+      { key: 'actionId', label: 'Action', type: 'text', required: true, placeholder: 'chat.complete', help: 'The action id within that definition.' },
+      { key: 'connection', label: 'Connection (provider id)', type: 'text', required: true, placeholder: 'openai-platform', help: 'The Desktop AI provider profile that holds the credential. An opaque id — never a URL or key.' },
+      { key: 'input', label: 'Input', type: 'code', language: 'json', referenceSyntax: 'selector', placeholder: '{ "messages": [{ "role": "user", "content": "$inputs.prompt" }] }', help: 'An object matching the action’s inputSchema. String values may be $ selectors.' },
+      { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '(action default)', help: 'Optional override of the action’s declared timeout.' },
     ],
   },
   {

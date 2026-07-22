@@ -37,6 +37,10 @@ export const EXECUTABLE_NODE_TYPES = [
   'template',
   'logic_block',
   'llm_chat',
+  // Generic ServiceDefinition action (extensible-flows plan §7). Executable contract-wise,
+  // but v1 executes only on FormLogic Desktop — the browser case is a typed, actionable
+  // refusal until the browser→Desktop invoke route lands.
+  'service_action',
   'http_request',
   'formlogic_list_responses',
   'formlogic_submit_response',
@@ -1343,6 +1347,18 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
 
     case 'llm_chat':
       return await runLlmChat(ctx);
+
+    // Generic ServiceDefinition action (extensible-flows plan §7, slice 2). v1 executes
+    // ONLY on FormLogic Desktop (the ServiceActionHost lives there — catalog resolution,
+    // schema validation, credential-holding gateway transport). The browser refuses with
+    // a precise, actionable diagnostic instead of silently pretending (§15.5) — the
+    // browser→Desktop invoke route lands with the progress/cancellation slice.
+    case 'service_action':
+      throw new FlowExecError(
+        'node_failed',
+        `Node '${node.id}': service_action nodes run on FormLogic Desktop — set the flow's "Run on" to Desktop (or wire a desktop-executed trigger)`,
+        node.id,
+      );
 
     case 'http_request':
       return await runHttpRequest(ctx);
