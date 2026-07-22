@@ -2562,6 +2562,10 @@ code {
   border-radius: 10px;
   padding: 12px 14px;
   min-width: 0;
+  /* Equal-height cards in a grid row: flex column + margin-top:auto on the
+     action row pins actions to the bottom edge of every card. */
+  display: flex;
+  flex-direction: column;
 }
 .data-card + .data-card { margin-top: 10px; }
 .data-actions {
@@ -2618,4 +2622,38 @@ code {
   padding: 9px 12px;
   color: var(--ink-dim);
   font-size: 12px;
+}
+
+.data-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 8px;
+  min-width: 0;
+}
+/* The form picker shrinks with the card; Chromium ellipsizes the selected
+   value (option labels are ALSO length-limited dynamically in DataPanel). */
+.data-select {
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-backup-row { flex-wrap: wrap; }
+.data-backup-row .datadir-note { overflow-wrap: anywhere; }
+.data-backup-row > div:nth-child(2) { flex: 1 1 220px; }
+@media (max-width: 680px) {
+  .data-stats { grid-template-columns: repeat(2, 1fr); }
+  .data-actions { grid-template-columns: 1fr; }
+  .data-backup-row { flex-direction: column; }
+  .data-backup-row .data-backup-icon { display: none; }
+  .data-row-actions { justify-content: flex-start; }
+}
+@media (max-width: 420px) {
+  .data-stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .data-stat b { font-size: 15px; }
 }

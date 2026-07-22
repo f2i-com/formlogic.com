@@ -55,6 +55,24 @@ export default function DataPanel() {
   const { confirm } = useConfirm();
   const reqSeq = useRef(0);
 
+  // Dynamically shorten form-picker option labels as the card narrows, so the
+  // select reads well at every width (the full title stays in the tooltip).
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const [labelChars, setLabelChars] = useState(48);
+  useEffect(() => {
+    const el = pickerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      // ~7.2px per character at the panel font size, minus room for the
+      // record count, Daily toggle and button sharing the row.
+      setLabelChars(Math.max(10, Math.floor((el.clientWidth - 170) / 7.2)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [cloudForms]);
+  const shorten = (title: string) =>
+    title.length > labelChars ? `${title.slice(0, Math.max(1, labelChars - 1))}…` : title;
+
   const refresh = useCallback(async () => {
     const seq = ++reqSeq.current;
     try {
@@ -289,15 +307,16 @@ export default function DataPanel() {
               </div>
             )}
             {cloudForms && cloudForms.length > 0 && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="data-card-actions" ref={pickerRef}>
                 <select
+                  className="data-select"
                   value={pullFormId}
                   onChange={(e) => setPullFormId(e.target.value)}
-                  style={{ minWidth: 0, flex: 1 }}
+                  title={cloudForms.find((f) => f.formId === pullFormId)?.title || ''}
                 >
                   {cloudForms.map((f) => (
-                    <option key={f.formId} value={f.formId}>
-                      {f.title} · {f.responses} record{f.responses === 1 ? '' : 's'}
+                    <option key={f.formId} value={f.formId} title={f.title}>
+                      {shorten(f.title)} · {f.responses} record{f.responses === 1 ? '' : 's'}
                     </option>
                   ))}
                 </select>
@@ -345,7 +364,7 @@ export default function DataPanel() {
               Everything on the linked account — every form (including unencrypted ones), app and
               flow. Sealed to this desktop before it leaves the Cloud and stored encrypted here.
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="data-card-actions">
               <label className="datadir-note" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <input
                   type="checkbox"
