@@ -73,6 +73,114 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
   );
 }
 
+const SKETCH_FIELD_TYPES = ['short_text', 'long_text', 'number', 'date', 'email', 'phone', 'checkbox', 'dropdown'] as const;
+
+/**
+ * §11A D2: the selection editor — a right rail that edits the selected element through
+ * ONE element.update operation on Save. Form entities edit title + sketched fields;
+ * relation edges edit cardinality + the FK field the materialiser (D3) will create.
+ * Draft state is local until Save, so typing never floods the gateway.
+ */
+function SelectionPanel({
+  element,
+  busy,
+  onSave,
+}: {
+  element: BlueprintElement;
+  busy: boolean;
+  onSave: (properties: Record<string, unknown>) => void;
+}) {
+  const isRelation = element.elementType === 'edge'
+    && (element.properties as { edgeType?: string }).edgeType === 'relation';
+  const isForm = element.elementType === 'form';
+  const [title, setTitle] = useState(String((element.properties as { title?: unknown }).title ?? ''));
+  const [fields, setFields] = useState<SketchField[]>(() => sketchFields(element.properties));
+  const [cardinality, setCardinality] = useState(String((element.properties as { cardinality?: unknown }).cardinality ?? '1:N'));
+  const [fkField, setFkField] = useState(String((element.properties as { fkField?: unknown }).fkField ?? ''));
+
+  if (!isForm && !isRelation) return null;
+
+  const save = () => {
+    if (isRelation) {
+      onSave({ ...element.properties, cardinality, fkField: fkField.trim() });
+      return;
+    }
+    onSave({
+      ...element.properties,
+      title: title.trim() === '' ? 'Untitled form' : title.trim(),
+      fields: fields.filter((field) => field.name.trim() !== '').map((field) => ({ name: field.name.trim(), type: field.type })),
+    });
+  };
+
+  return (
+    <div className="scrollbar-thin w-64 flex-none overflow-y-auto border-l border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
+      {isForm ? (
+        <>
+          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">Form title</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+          <div className="mt-3 mb-1 flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-500 dark:text-slate-400">Fields</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setFields((rows) => [...rows, { name: '', type: 'short_text' }])}
+              leftIcon={<Plus className="h-3.5 w-3.5" />}
+            >
+              Add
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            {fields.length === 0 && (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">No fields sketched yet — the materialised form starts empty.</p>
+            )}
+            {fields.map((field, index) => (
+              <div key={index} className="flex items-center gap-1.5">
+                <input
+                  value={field.name}
+                  onChange={(e) => setFields((rows) => rows.map((row, i) => (i === index ? { ...row, name: e.target.value } : row)))}
+                  placeholder="field_name"
+                  aria-label={`Field name ${index + 1}`}
+                  className={INPUT_CLS + ' w-full font-mono text-xs'}
+                />
+                <select
+                  value={field.type}
+                  onChange={(e) => setFields((rows) => rows.map((row, i) => (i === index ? { ...row, type: e.target.value } : row)))}
+                  aria-label={`Field type ${index + 1}`}
+                  className={INPUT_CLS + ' w-24 flex-none cursor-pointer text-xs'}
+                >
+                  {SKETCH_FIELD_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+                <Button
+                  variant="ghost"
+                  size="iconOnly"
+                  onClick={() => setFields((rows) => rows.filter((_, i) => i !== index))}
+                  aria-label={`Remove field ${index + 1}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="mb-2 text-xs font-medium text-gray-500 dark:text-slate-400">Relation</p>
+          <label className="mb-1 block text-[11px] text-gray-400 dark:text-slate-500">Cardinality</label>
+          <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="Relation cardinality" className={INPUT_CLS + ' w-full cursor-pointer'}>
+            <option value="1:N">1:N — one source, many targets</option>
+            <option value="1:1">1:1 — one to one</option>
+          </select>
+          <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">FK field (created on the target form)</label>
+          <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
+        </>
+      )}
+      <Button size="sm" className="mt-3 w-full" isLoading={busy} disabled={busy} onClick={save}>
+        Save
+      </Button>
+    </div>
+  );
+}
+
 /** The sketched field list on a form element (properties.fields), shape-tolerant. */
 function sketchFields(properties: Record<string, unknown>): SketchField[] {
   const raw = properties.fields;
@@ -321,6 +429,27 @@ export function DiagramCanvas({
   }, [commit, elements, selectedId]);
 
   const edges = initial.edges;
+  const selectedElement = selectedId !== null
+    ? elements.find((element) => element.id === selectedId) ?? null
+    : null;
+
+  const saveSelectedProperties = useCallback(
+    (properties: Record<string, unknown>) => {
+      if (!selectedId) return;
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.update',
+            targetId: selectedId,
+            properties,
+          },
+        ],
+        true,
+      );
+    },
+    [commit, selectedId],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -370,8 +499,9 @@ export function DiagramCanvas({
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1">
-        <ReactFlow
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
+          <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
@@ -389,6 +519,15 @@ export function DiagramCanvas({
           <Background gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
+        </div>
+        {selectedElement && (
+          <SelectionPanel
+            key={selectedElement.id}
+            element={selectedElement}
+            busy={busy}
+            onSave={saveSelectedProperties}
+          />
+        )}
       </div>
     </div>
   );
