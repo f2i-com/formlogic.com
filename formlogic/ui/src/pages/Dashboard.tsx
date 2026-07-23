@@ -20,6 +20,7 @@ import {
   Clock,
   ArrowRight,
   Inbox,
+  Map as MapIcon,
   Sparkles,
   BookOpen,
   Package,
@@ -51,6 +52,7 @@ import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
+import { GenerateAppModal } from '../components/ai-app-builder/GenerateAppModal';
 import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 import type { FormTemplate } from '../data/formTemplates';
 import type { App } from '../types/app';
@@ -710,6 +712,8 @@ export function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
   const [showHandToAi, setShowHandToAi] = useState(false);
+  const [showAiBuilder, setShowAiBuilder] = useState(false);
+  const [creatingDiagram, setCreatingDiagram] = useState(false);
 
   // Apps panel (cloud mode only — apps live on the server). Reuses the app store, which
   // persists across visits, so the section renders instantly on revisit.
@@ -1127,12 +1131,30 @@ export function Dashboard() {
           <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
             {headline}
           </h1>
+          {/* The three ways to START (§11A): a form, a diagram of the app, or a description
+              the AI turns into one — then the secondary actions. */}
           <div className="mt-4 flex flex-wrap gap-3">
             <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-              New form
+              Start with a form
             </Button>
             {storageMode === 'api' && (
               <>
+                <Button
+                  variant="outline"
+                  isLoading={creatingDiagram}
+                  onClick={async () => {
+                    setCreatingDiagram(true);
+                    const res = await api.createBlueprint({ name: 'Untitled diagram' });
+                    setCreatingDiagram(false);
+                    if (res.data?.blueprint) navigate(`/diagrams/${res.data.blueprint.id}`);
+                  }}
+                  leftIcon={<MapIcon className="h-4 w-4" />}
+                >
+                  Start with a diagram
+                </Button>
+                <Button variant="outline" onClick={() => setShowAiBuilder(true)} leftIcon={<Sparkles className="h-4 w-4" />}>
+                  Describe it with AI
+                </Button>
                 <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Boxes className="h-4 w-4" />}>
                   Create app
                 </Button>
@@ -1574,6 +1596,7 @@ export function Dashboard() {
       />
 
       <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
+      <GenerateAppModal isOpen={showAiBuilder} onClose={() => { setShowAiBuilder(false); fetchApps(); }} />
 
       {/* Delete Confirmation */}
       <ConfirmDialog

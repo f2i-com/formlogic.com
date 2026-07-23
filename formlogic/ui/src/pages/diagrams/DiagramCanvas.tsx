@@ -1,16 +1,14 @@
-// Blueprints workspace (extensible-flows plan §11, §25 step 7 — the scoped first UI):
-// list/create blueprints and edit ONE small diagram: place existing Forms and Flows as
-// concept elements and wire a 'triggers' relationship between them. EVERY mutation rides
-// the §14.3 operation-commit gateway (semantic batches carry baseSemanticRevision and
-// reconcile on 409; drags are layout-only batches that can never conflict). Elements and
-// edges are CONCEPT-ONLY here (§11.5) — materialisation into real bindings is a later
-// slice, so this page never mutates forms, flows, or bindings.
+// Diagram canvas (extensible-flows plan §11/§11A): ONE diagram's editing surface — place
+// existing Forms and Flows as concept elements and wire a 'triggers' relationship. EVERY
+// mutation rides the §14.3 operation-commit gateway (semantic batches carry
+// baseSemanticRevision and reconcile on 409; drags are layout-only batches that can never
+// conflict). Elements and edges are CONCEPT-ONLY here (§11.5) — materialisation is the
+// §11A.2 D3 slice, so this canvas never mutates forms, flows, or bindings.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   Controls,
   ReactFlow,
-  ReactFlowProvider,
   applyNodeChanges,
   type Connection,
   type Edge,
@@ -19,18 +17,19 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { FileText, Loader2, Map as MapIcon, Plus, Trash2, Workflow } from 'lucide-react';
+import { FileText, Loader2, Plus, Trash2, Workflow } from 'lucide-react';
 import { api } from '../../lib/api';
-import { cn, generateId } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
+import { cn, generateId } from '../../lib/utils';
 import { Button } from '../../components/ui/Button';
-import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import type { Blueprint, BlueprintElement, BlueprintOperation } from '../../types/blueprints';
 import type { FlowDefinition } from '../../types/flows';
 import type { Form } from '../../types/form';
 
-const INPUT_CLS =
+export const DIAGRAM_INPUT_CLS =
   'rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
+const INPUT_CLS = DIAGRAM_INPUT_CLS;
+
 
 type BlueprintNodeData = { title: string; elementType: string; concept: boolean };
 
@@ -97,7 +96,7 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
   return { nodes, edges };
 }
 
-function BlueprintCanvas({
+export function DiagramCanvas({
   blueprint,
   onReload,
   onRevisions,
@@ -320,161 +319,6 @@ function BlueprintCanvas({
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
-    </div>
-  );
-}
-
-export default function BlueprintsWorkspace() {
-  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
-  const [selected, setSelected] = useState<Blueprint | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [newName, setNewName] = useState('');
-  const [pendingDelete, setPendingDelete] = useState<Blueprint | null>(null);
-
-  const refreshList = useCallback(async () => {
-    const res = await api.listBlueprints();
-    setBlueprints(res.data?.blueprints ?? []);
-    setLoading(false);
-  }, []);
-
-  const openBlueprint = useCallback(async (id: string) => {
-    const res = await api.getBlueprint(id);
-    if (res.data?.blueprint) setSelected(res.data.blueprint);
-    else toast.error('Failed to load blueprint', typeof res.error === 'string' ? res.error : undefined);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void api.listBlueprints().then((res) => {
-      if (cancelled) return;
-      setBlueprints(res.data?.blueprints ?? []);
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const create = useCallback(async () => {
-    const name = newName.trim();
-    if (name === '') return;
-    const res = await api.createBlueprint({ name });
-    if (res.error || !res.data) {
-      toast.error('Failed to create blueprint', typeof res.error === 'string' ? res.error : undefined);
-      return;
-    }
-    setNewName('');
-    await refreshList();
-    setSelected(res.data.blueprint);
-  }, [newName, refreshList]);
-
-  const confirmDelete = useCallback(async () => {
-    const target = pendingDelete;
-    setPendingDelete(null);
-    if (!target) return;
-    await api.deleteBlueprint(target.id);
-    if (selected?.id === target.id) setSelected(null);
-    await refreshList();
-  }, [pendingDelete, refreshList, selected]);
-
-  return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-0">
-      <aside className="flex w-72 flex-none flex-col border-r border-gray-200 bg-white dark:border-slate-700/60 dark:bg-slate-900">
-        <div className="border-b border-gray-200 p-3 dark:border-slate-700/60">
-          <h1 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-            <MapIcon className="h-4 w-4 text-primary-600 dark:text-primary-300" />
-            Blueprints
-          </h1>
-          <p className="mt-1 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-            The high-level diagram of what you're building — place forms and flows, wire what triggers what.
-          </p>
-          <div className="mt-2 flex gap-2">
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}
-              placeholder="New blueprint name"
-              aria-label="New blueprint name"
-              className={INPUT_CLS + ' w-full'}
-            />
-            <Button size="sm" disabled={newName.trim() === ''} onClick={() => void create()} aria-label="Create blueprint">
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-auto p-2">
-          {loading ? (
-            <p className="flex items-center gap-2 px-2 py-3 text-xs text-gray-400 dark:text-slate-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
-            </p>
-          ) : blueprints.length === 0 ? (
-            <p className="px-2 py-3 text-xs text-gray-400 dark:text-slate-500">No blueprints yet — create one above.</p>
-          ) : (
-            blueprints.map((blueprint) => (
-              <div
-                key={blueprint.id}
-                className={cn(
-                  'group mb-1 flex items-center gap-2 rounded-lg px-2.5 py-2',
-                  selected?.id === blueprint.id
-                    ? 'bg-primary-50 dark:bg-primary-500/10'
-                    : 'hover:bg-gray-50 dark:hover:bg-slate-800',
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={() => void openBlueprint(blueprint.id)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{blueprint.name}</p>
-                  <p className="text-[10px] text-gray-400 dark:text-slate-500">
-                    {blueprint.status} · rev {blueprint.semanticRevision}
-                  </p>
-                </button>
-                <Button
-                  variant="ghost"
-                  size="iconOnly"
-                  className="opacity-0 group-hover:opacity-100"
-                  onClick={() => setPendingDelete(blueprint)}
-                  aria-label={`Delete blueprint ${blueprint.name}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
-                </Button>
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
-      <main className="min-h-0 min-w-0 flex-1 bg-gray-50 dark:bg-slate-950">
-        {selected ? (
-          <ReactFlowProvider>
-            <BlueprintCanvas
-              key={selected.id}
-              blueprint={selected}
-              onReload={() => openBlueprint(selected.id)}
-              onRevisions={(semantic, layout) =>
-                setSelected((current) =>
-                  current ? { ...current, semanticRevision: semantic, layoutRevision: layout } : current,
-                )
-              }
-            />
-          </ReactFlowProvider>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <p className="max-w-sm text-center text-sm text-gray-400 dark:text-slate-500">
-              Pick a blueprint on the left (or create one) to sketch what you're building.
-            </p>
-          </div>
-        )}
-      </main>
-      <ConfirmDialog
-        isOpen={pendingDelete !== null}
-        onClose={() => setPendingDelete(null)}
-        onConfirm={() => void confirmDelete()}
-        title="Delete blueprint"
-        message={pendingDelete ? `Delete '${pendingDelete.name}'? The forms and flows it references are kept.` : ''}
-        confirmLabel="Delete"
-        variant="danger"
-      />
     </div>
   );
 }
