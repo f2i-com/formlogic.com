@@ -13,11 +13,23 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 /**
  * Desktop-facing data-node control surface — N2 subset (plan §21.2;
- * docs/FORMLOGIC_DATA_NODES.md §9): Cloud signing identity, snapshot-eligible
- * Private forms, snapshot build/download/delete. Authenticated by the desktop
- * flk_ API key; scope `data:snapshot`, with legacy `connector:relay` keys
- * grandfathered until the N3 node-enrolment flow mints least-privilege
- * data-plane scopes (same posture as the AI/flow relays).
+ * docs/FORMLOGIC_DATA_NODES.md §9). Authenticated by the desktop flk_ API key.
+ *
+ * Two authority tiers (review FL-001):
+ *  - ENROLMENT tier (register, self, signing-key, eligible-forms): scope
+ *    `data:snapshot` (legacy `connector:relay` grandfathered) — this is the
+ *    chicken-and-egg surface a desktop needs BEFORE the owner approves it.
+ *  - DATA-PLANE tier (snapshot build/download/delete, whole-account backup):
+ *    additionally requires the API key to resolve — via its desktop
+ *    connection — to an APPROVED data node with a valid, unexpired
+ *    owner-signed certificate granting `storage`. A legacy relay key alone
+ *    can never export data; every failure mode is the same opaque 403.
+ *    `connector:relay` on this tier is a documented migration shim and goes
+ *    away once enrolment mints least-privilege `data:snapshot` keys.
+ *
+ * Staged artifacts (snapshots + sealed account backups) are additionally
+ * bound to their owner in data_staged_artifacts (review FL-002): GET/DELETE
+ * of another tenant's artifact ID is indistinguishable from a missing ID.
  *
  * Everything is gated on the DATA_NODES flag (403 data_nodes_disabled while
  * off) and scoped to the authenticated key's own user.
@@ -94,6 +106,10 @@ final class DataNodeController
         if (($gate = $this->gate($request, $response)) !== null) {
             return $gate;
         }
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
         $userId = (string) $request->getAttribute('userId');
         $body = json_decode((string) $request->getBody(), true);
         $formId = is_array($body) ? (string) ($body['formId'] ?? '') : '';
@@ -101,7 +117,7 @@ final class DataNodeController
             return $this->jsonError($response, 'formId is required', 400, 'invalid_request');
         }
         try {
-            $result = $this->snapshots->createSnapshot($userId, $formId);
+            $result = $this->snapshots->createSnapshot($userId, $formId, (string) $node['id']);
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'snapshot_form_ineligible') {
                 return $this->jsonError(
@@ -124,10 +140,15 @@ final class DataNodeController
         if (($gate = $this->gate($request, $response)) !== null) {
             return $gate;
         }
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        $userId = (string) $request->getAttribute('userId');
         $snapshotId = (string) ($args['id'] ?? '');
         $params = $request->getQueryParams();
         $path = (string) ($params['path'] ?? '');
-        $file = $this->snapshots->snapshotFilePath($snapshotId, $path);
+        $file = $this->snapshots->snapshotFilePath($userId, $snapshotId, $path);
         if ($file === null) {
             return $this->jsonError($response, 'Unknown snapshot file', 404, 'snapshot_file_not_found');
         }
@@ -143,7 +164,14 @@ final class DataNodeController
         if (($gate = $this->gate($request, $response)) !== null) {
             return $gate;
         }
-        $this->snapshots->deleteSnapshot((string) ($args['id'] ?? ''));
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        if (!$this->snapshots->deleteSnapshotOwned($userId, (string) ($args['id'] ?? ''))) {
+            return $this->jsonError($response, 'Unknown snapshot', 404, 'snapshot_not_found');
+        }
         return $this->jsonResponse($response, ['data' => ['ok' => true]]);
     }
 
@@ -152,14 +180,28 @@ final class DataNodeController
         if (($gate = $this->gate($request, $response)) !== null) {
             return $gate;
         }
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
         $userId = (string) $request->getAttribute('userId');
         $body = json_decode((string) $request->getBody(), true);
-        $ephemeralPk = is_array($body) ? (string) ($body['ephemeralPk'] ?? '') : '';
+        if (!is_array($body)) {
+            return $this->jsonError($response, 'A JSON body is required', 400, 'invalid_request');
+        }
         try {
-            $result = $this->accountBackups->create($userId, $ephemeralPk);
+            $result = $this->accountBackups->create($userId, $body, $node);
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'account_backup_bad_ephemeral_key') {
                 return $this->jsonError($response, 'ephemeralPk must be a base64 X25519 public key', 400, 'account_backup_bad_ephemeral_key');
+            }
+            if ($e->getMessage() === 'account_backup_key_unbound') {
+                return $this->jsonError(
+                    $response,
+                    'The transfer key must carry a fresh signature by this node\'s enrolled signing key',
+                    403,
+                    'account_backup_key_unbound',
+                );
             }
             if ($e->getMessage() === 'account_backup_too_large') {
                 return $this->jsonError($response, 'Account backup exceeds the transfer cap', 413, 'account_backup_too_large');
@@ -174,7 +216,12 @@ final class DataNodeController
         if (($gate = $this->gate($request, $response)) !== null) {
             return $gate;
         }
-        $path = $this->accountBackups->payloadPath((string) ($args['id'] ?? ''));
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $path = $this->accountBackups->payloadPath($userId, (string) ($args['id'] ?? ''));
         if ($path === null) {
             return $this->jsonError($response, 'Unknown account backup', 404, 'account_backup_not_found');
         }
@@ -194,10 +241,18 @@ final class DataNodeController
         if (($gate = $this->gate($request, $response)) !== null) {
             return $gate;
         }
-        $this->accountBackups->delete((string) ($args['id'] ?? ''));
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        if (!$this->accountBackups->deleteOwned($userId, (string) ($args['id'] ?? ''))) {
+            return $this->jsonError($response, 'Unknown account backup', 404, 'account_backup_not_found');
+        }
         return $this->jsonResponse($response, ['data' => ['ok' => true]]);
     }
 
+    /** Feature flag + scope — the ENROLMENT tier gate. */
     private function gate(Request $request, Response $response): ?Response
     {
         if (!$this->dataNodesEnabled) {
@@ -209,5 +264,28 @@ final class DataNodeController
             return $this->jsonError($response, 'This API key lacks the data:snapshot scope', 403, 'insufficient_scope');
         }
         return null;
+    }
+
+    /**
+     * DATA-PLANE tier: resolve the key's approved node or refuse uniformly.
+     * Every failure (no node, pending, revoked, expired certificate, missing
+     * capability, foreign key) is the same 403 — no enrolment-state oracle.
+     *
+     * @return array<string,mixed>|Response
+     */
+    private function approvedNode(Request $request, Response $response): array|Response
+    {
+        $userId = (string) $request->getAttribute('userId');
+        $apiKeyId = (string) $request->getAttribute('apiKeyId');
+        try {
+            return $this->nodes->resolveApprovedNode($userId, $apiKeyId);
+        } catch (\RuntimeException) {
+            return $this->jsonError(
+                $response,
+                'This API key is not bound to an approved data node',
+                403,
+                'data_node_unauthorized',
+            );
+        }
     }
 }

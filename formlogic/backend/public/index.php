@@ -404,7 +404,8 @@ $container->set(\FormLogic\Services\DataAccountBackupService::class, function (C
     return new \FormLogic\Services\DataAccountBackupService(
         $c->get(\FormLogic\Services\AccountBackupService::class),
         $c->get(\FormLogic\Services\DataCloudSigner::class),
-        dirname($uploads) . '/data-snapshots'
+        dirname($uploads) . '/data-snapshots',
+        $c->get(MySQLConnection::class)
     );
 });
 $container->set(\FormLogic\Services\DataNodeService::class, function (Container $c) {
@@ -2626,9 +2627,11 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $desktopAiRelayAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
 
     // Encrypted data nodes — N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9).
-    // Scope: data:snapshot, with legacy connector:relay keys grandfathered until the
-    // N3 enrolment flow mints least-privilege data-plane scopes — the controller
-    // checks scopes itself, so the middleware authenticates without a scope list.
+    // Scope: data:snapshot (legacy connector:relay grandfathered for the ENROLMENT
+    // tier only during migration). Data-plane operations additionally require the
+    // key to resolve to an APPROVED node with an unexpired owner-signed certificate
+    // (review FL-001) — the controller enforces both tiers itself, so the middleware
+    // authenticates without a scope list.
     $dataNodeAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
     $group->get('/data-node/signing-key', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->signingKey($request, $response);

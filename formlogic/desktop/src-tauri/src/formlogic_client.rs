@@ -278,14 +278,16 @@ impl FormLogicClient {
     }
 
     /// `POST /api/v1/data-node/account-backups` — build a whole-account backup
-    /// sealed to the given ephemeral X25519 public key. Long timeout: the
-    /// server exports + seals the entire archive before answering.
-    pub async fn data_account_backup_create(&self, ephemeral_pk_b64: &str) -> FlResult<Value> {
+    /// sealed to a NODE-SIGNED ephemeral X25519 public key (review FL-001: the
+    /// server refuses transfer keys that are not provably this node's own, so
+    /// the body is {ephemeralPk, requestedAt, ephemeralPkSignature}). Long
+    /// timeout: the server exports + seals the entire archive before answering.
+    pub async fn data_account_backup_create(&self, body: &Value) -> FlResult<Value> {
         self.send_inner(
             reqwest::Method::POST,
             "data-node/account-backups",
             &[],
-            Some(&serde_json::json!({ "ephemeralPk": ephemeral_pk_b64 })),
+            Some(body),
             Some(Duration::from_secs(300)),
         )
         .await

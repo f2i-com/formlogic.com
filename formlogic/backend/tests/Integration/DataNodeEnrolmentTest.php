@@ -148,6 +148,59 @@ final class DataNodeEnrolmentTest extends E2eeTestCase
         self::$pdo->prepare('DELETE FROM desktop_connections WHERE id = ?')->execute([$conn['connectionId']]);
     }
 
+    public function testCertificateTimestampsAreStrictlyValidated(): void
+    {
+        $vault = $this->makeVault($this->userId);
+        $conn = $this->makeConnection();
+        $pair = sodium_crypto_sign_keypair();
+        $node = self::$nodes->register($this->userId, $conn['apiKeyId'], [
+            'signingPublicKey' => base64_encode(sodium_crypto_sign_publickey($pair)),
+        ]);
+        $edPkRaw = base64_decode($vault['ed25519PkB64']);
+
+        // Review FL-001: strict RFC 3339 — offsets, fractions, lowercase z,
+        // future issuance, already-expired, and unreasonable windows all fail
+        // closed BEFORE any authority is stored.
+        $cases = [
+            'issuedAt offset' => [['issuedAt' => '2026-07-23T10:00:00+00:00'], 'data_node_cert_time:issuedAt'],
+            'issuedAt lowercase z' => [['issuedAt' => '2026-07-23T10:00:00z'], 'data_node_cert_time:issuedAt'],
+            'issuedAt fractional' => [['issuedAt' => '2026-07-23T10:00:00.123Z'], 'data_node_cert_time:issuedAt'],
+            'issuedAt impossible date' => [['issuedAt' => '2026-13-45T10:00:00Z'], 'data_node_cert_time:issuedAt'],
+            'issuedAt far future' => [['issuedAt' => gmdate('Y-m-d\TH:i:s\Z', time() + 3600)], 'data_node_cert_time:issuedAt'],
+            'expiresAt malformed' => [['expiresAt' => 'soon'], 'data_node_cert_time:expiresAt'],
+            'already expired at approval' => [['expiresAt' => gmdate('Y-m-d\TH:i:s\Z', time() - 60)], 'data_node_cert_time:expired'],
+            'unreasonable window' => [
+                [
+                    'issuedAt' => gmdate('Y-m-d\TH:i:s\Z'),
+                    'expiresAt' => gmdate('Y-m-d\TH:i:s\Z', time() + DataNodeService::CERT_MAX_VALIDITY_SECONDS + 86400),
+                ],
+                'data_node_cert_time:window',
+            ],
+        ];
+        foreach ($cases as $label => [$over, $expected]) {
+            try {
+                self::$nodes->approve($this->userId, (string) $node['id'], $this->signedCert($node, $vault, $over), $edPkRaw);
+                self::fail("{$label} must be refused");
+            } catch (\RuntimeException $e) {
+                self::assertSame($expected, $e->getMessage(), $label);
+            }
+        }
+
+        // A reasonable bounded window approves and expires access later
+        // (the expiry gate itself is covered in DataNodeAuthorityTest).
+        $approved = self::$nodes->approve(
+            $this->userId,
+            (string) $node['id'],
+            $this->signedCert($node, $vault, ['expiresAt' => gmdate('Y-m-d\TH:i:s\Z', time() + 31536000)]),
+            $edPkRaw,
+        );
+        self::assertSame('approved', $approved['status']);
+        self::assertNotNull($approved['certificateExpiresAt']);
+
+        self::$pdo->prepare('DELETE FROM data_nodes WHERE id = ?')->execute([$node['id']]);
+        self::$pdo->prepare('DELETE FROM desktop_connections WHERE id = ?')->execute([$conn['connectionId']]);
+    }
+
     /** @return array<string,mixed> */
     private function signedBaseline(string $formId, array $vault, array $over = []): array
     {

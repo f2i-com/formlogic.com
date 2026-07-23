@@ -160,16 +160,28 @@ final class DataSnapshotServiceTest extends E2eeTestCase
     {
         ['snapshot' => $snapshot, 'dir' => $dir] = $this->makeSnapshottedForm(1);
         $id = $snapshot['snapshotId'];
-        self::assertNotNull(self::$service->snapshotFilePath($id, 'manifests/backup-manifest.json'));
-        self::assertNotNull(self::$service->snapshotFilePath($id, 'data/responses.ndjson.enc'));
-        self::assertNull(self::$service->snapshotFilePath($id, '../../.env'));
-        self::assertNull(self::$service->snapshotFilePath($id, 'data/../backup-index.json'));
-        self::assertNull(self::$service->snapshotFilePath($id, 'unknown.bin'));
-        self::assertNull(self::$service->snapshotFilePath('not-a-snapshot-id', 'backup-index.json'));
+        $uid = $this->userId;
+        self::assertNotNull(self::$service->snapshotFilePath($uid, $id, 'manifests/backup-manifest.json'));
+        self::assertNotNull(self::$service->snapshotFilePath($uid, $id, 'data/responses.ndjson.enc'));
+        self::assertNull(self::$service->snapshotFilePath($uid, $id, '../../.env'));
+        self::assertNull(self::$service->snapshotFilePath($uid, $id, 'data/../backup-index.json'));
+        self::assertNull(self::$service->snapshotFilePath($uid, $id, 'unknown.bin'));
+        self::assertNull(self::$service->snapshotFilePath($uid, 'not-a-snapshot-id', 'backup-index.json'));
 
-        self::$service->deleteSnapshot($id);
+        // A LEAKED valid ID is worthless to another tenant (review FL-002):
+        // reads and deletes miss identically, and a denied delete leaves every
+        // byte in place.
+        $stranger = $this->makeUser();
+        self::assertNull(self::$service->snapshotFilePath($stranger, $id, 'manifests/backup-manifest.json'));
+        self::assertFalse(self::$service->deleteSnapshotOwned($stranger, $id));
+        self::assertFileExists($dir . '/manifests/backup-manifest.json');
+        self::assertNotNull(self::$service->snapshotFilePath($uid, $id, 'manifests/backup-manifest.json'));
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
+
+        self::assertTrue(self::$service->deleteSnapshotOwned($uid, $id));
         self::assertDirectoryDoesNotExist($dir);
-        self::assertNull(self::$service->snapshotFilePath($id, 'backup-index.json'));
+        self::assertNull(self::$service->snapshotFilePath($uid, $id, 'backup-index.json'));
+        self::assertFalse(self::$service->deleteSnapshotOwned($uid, $id), 'second delete misses like an unknown id');
     }
 
     public function testEligibleFormsListsOnlyOwnPrivateForms(): void

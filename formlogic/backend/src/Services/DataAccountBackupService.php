@@ -39,25 +39,59 @@ final class DataAccountBackupService
     public const CHUNK_BYTES = 4_194_304; // 4 MiB
     public const MAX_ZIP_BYTES = 268_435_456; // 256 MiB — matches the snapshot cap
     public const TTL_SECONDS = 3600;
+    /** Domain prefix of the node-signed ephemeral-key challenge (review FL-001). */
+    public const REQUEST_SIGNATURE_DOMAIN = 'flaccountreq:1';
+    /** Freshness window for the signed challenge, either direction. */
+    public const REQUEST_SIGNATURE_WINDOW_SECONDS = 600;
+
+    private DataStagedArtifactIndex $artifacts;
 
     public function __construct(
         private AccountBackupService $backups,
         private DataCloudSigner $signer,
         private string $stagingRoot,
+        \FormLogic\Database\MySQLConnection $mysql,
     ) {
+        $this->artifacts = new DataStagedArtifactIndex($mysql);
     }
 
     /**
-     * Build a sealed account backup for the given desktop ephemeral key.
+     * Build a sealed account backup for the requesting node's ephemeral key.
      *
+     * The transfer key is BOUND to the approved node (review FL-001): the
+     * request must carry an Ed25519 signature by the node's enrolled signing
+     * key over `flaccountreq:1|<requestedAt>|<ephemeralPk>`, with requestedAt
+     * inside a short freshness window. An attacker holding only the API key
+     * cannot substitute their own X25519 key — they cannot produce the node
+     * signature — so a captured request can only ever seal data back to the
+     * enrolled desktop.
+     *
+     * @param array<string,mixed> $request {ephemeralPk, requestedAt, ephemeralPkSignature}
+     * @param array<string,mixed> $node    the resolved approved data_nodes row
      * @return array{backupId: string, header: array<string,mixed>}
      */
-    public function create(string $userId, string $desktopEphemeralPkB64): array
+    public function create(string $userId, array $request, array $node): array
     {
         $this->sweepExpired();
+        $desktopEphemeralPkB64 = (string) ($request['ephemeralPk'] ?? '');
         $desktopPk = base64_decode($desktopEphemeralPkB64, true);
         if (!is_string($desktopPk) || strlen($desktopPk) !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES) {
             throw new \RuntimeException('account_backup_bad_ephemeral_key');
+        }
+        $requestedAt = (string) ($request['requestedAt'] ?? '');
+        $ts = DataNodeService::parseRfc3339Utc($requestedAt);
+        if ($ts === null || abs(time() - $ts) > self::REQUEST_SIGNATURE_WINDOW_SECONDS) {
+            throw new \RuntimeException('account_backup_key_unbound');
+        }
+        $sig = base64_decode((string) ($request['ephemeralPkSignature'] ?? ''), true);
+        $nodePk = base64_decode((string) ($node['signing_public_key'] ?? ''), true);
+        $message = self::REQUEST_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . $desktopEphemeralPkB64;
+        if (
+            !is_string($sig) || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES
+            || !is_string($nodePk) || strlen($nodePk) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES
+            || !sodium_crypto_sign_verify_detached($sig, $message, $nodePk)
+        ) {
+            throw new \RuntimeException('account_backup_key_unbound');
         }
 
         $zipPath = $this->backups->exportAccount($userId);
@@ -76,6 +110,15 @@ final class DataAccountBackupService
             if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
                 throw new \RuntimeException('could not create the account-backup staging directory');
             }
+            // Ownership row FIRST (review FL-002): bound to owner + node before
+            // any sealed byte exists.
+            $this->artifacts->record(
+                $backupId,
+                DataStagedArtifactIndex::KIND_ACCOUNT_BACKUP,
+                $userId,
+                is_string($node['id'] ?? null) ? $node['id'] : null,
+                self::TTL_SECONDS,
+            );
 
             $fileKey = random_bytes(32);
             $baseNonce = random_bytes(16);
@@ -160,17 +203,42 @@ final class DataAccountBackupService
         }
     }
 
-    /** Absolute payload path, or null for an unknown/expired id. */
-    public function payloadPath(string $backupId): ?string
+    /**
+     * Absolute payload path, or null when the caller does not own the staged
+     * backup. Ownership misses and unknown IDs are indistinguishable
+     * (review FL-002).
+     */
+    public function payloadPath(string $ownerUserId, string $backupId): ?string
     {
         if (!preg_match('/^acct-[0-9a-f]{32}$/', $backupId)) {
+            return null;
+        }
+        if (!$this->artifacts->resolveOwned($backupId, DataStagedArtifactIndex::KIND_ACCOUNT_BACKUP, $ownerUserId)) {
             return null;
         }
         $path = $this->stagingRoot . '/' . $backupId . '/payload.bin';
         return is_file($path) ? $path : null;
     }
 
-    public function delete(string $backupId): void
+    /**
+     * Owner-checked delete. Returns false — leaving files and metadata
+     * untouched — when the caller does not own the staged backup.
+     */
+    public function deleteOwned(string $ownerUserId, string $backupId): bool
+    {
+        if (!preg_match('/^acct-[0-9a-f]{32}$/', $backupId)) {
+            return false;
+        }
+        if (!$this->artifacts->beginDelete($backupId, DataStagedArtifactIndex::KIND_ACCOUNT_BACKUP, $ownerUserId)) {
+            return false;
+        }
+        $this->purgeFiles($backupId);
+        $this->artifacts->finishDelete($backupId);
+        return true;
+    }
+
+    /** Unlink staged files without ownership semantics (internal + sweep). */
+    private function purgeFiles(string $backupId): void
     {
         if (!preg_match('/^acct-[0-9a-f]{32}$/', $backupId)) {
             return;
@@ -184,6 +252,10 @@ final class DataAccountBackupService
 
     public function sweepExpired(): void
     {
+        foreach ($this->artifacts->sweepable(DataStagedArtifactIndex::KIND_ACCOUNT_BACKUP) as $id) {
+            $this->purgeFiles($id);
+            $this->artifacts->finishDelete($id);
+        }
         if (!is_dir($this->stagingRoot)) {
             return;
         }
@@ -193,7 +265,8 @@ final class DataAccountBackupService
             }
             $dir = $this->stagingRoot . '/' . $entry;
             if (is_dir($dir) && filemtime($dir) < time() - self::TTL_SECONDS) {
-                $this->delete($entry);
+                $this->purgeFiles($entry);
+                $this->artifacts->finishDelete($entry);
             }
         }
     }

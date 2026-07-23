@@ -1261,6 +1261,22 @@ class MySQLConnection
                 KEY idx_data_node_owner (owner_user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // Staged artifact ownership (review FL-002; mirrored in schema.sql +
+        // database/migrate.php block 15): random IDs are not authorization —
+        // every staged snapshot/account backup binds to its owner and node.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS data_staged_artifacts (
+                id VARCHAR(64) PRIMARY KEY,
+                kind ENUM('snapshot','account_backup') NOT NULL,
+                owner_user_id VARCHAR(36) NOT NULL,
+                node_id VARCHAR(40) NULL,
+                state ENUM('active','deleting') NOT NULL DEFAULT 'active',
+                created_at DATETIME NULL,
+                expires_at DATETIME NOT NULL,
+                KEY idx_staged_artifact_owner (owner_user_id),
+                KEY idx_staged_artifact_expiry (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS data_placement_manifests (
                 id VARCHAR(40) PRIMARY KEY,

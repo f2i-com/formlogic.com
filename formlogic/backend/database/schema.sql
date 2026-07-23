@@ -653,6 +653,21 @@ CREATE TABLE `data_nodes` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `data_staged_artifacts` (
+  `id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` enum('snapshot','account_backup') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `node_id` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `state` enum('active','deleting') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `created_at` datetime DEFAULT NULL,
+  `expires_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_staged_artifact_owner` (`owner_user_id`),
+  KEY `idx_staged_artifact_expiry` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `data_placement_manifests` (
   `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
   `dataset_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,

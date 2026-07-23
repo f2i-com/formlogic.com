@@ -157,7 +157,7 @@ final class DataOperationLogTest extends E2eeTestCase
         self::assertSame($head['logicalRoot'], $packagedHead['logicalRoot']);
         // Head root == package root (shared artifact-line builder guarantees it).
         self::assertSame($snapshot['manifest']['logicalRoot'], $packagedHead['logicalRoot']);
-        self::$snapshots->deleteSnapshot($snapshot['snapshotId']);
+        self::$snapshots->deleteSnapshotOwned($this->userId, $snapshot['snapshotId']);
         self::$pdo->prepare('DELETE FROM data_placement_manifests WHERE dataset_id = ?')->execute([$formId]);
         self::$pdo->prepare('DELETE FROM data_dataset_high_water WHERE dataset_id = ?')->execute([$formId]);
     }

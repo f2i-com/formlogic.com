@@ -25,9 +25,75 @@ use FormLogic\Support\DataCanonicalJson;
 final class DataNodeService
 {
     public const PROTOCOL = 'formlogic-data-sync/1';
+    /** Longest acceptable certificate validity window (review FL-001). */
+    public const CERT_MAX_VALIDITY_SECONDS = 315_576_000; // 10 years
+    /** Clock-skew allowance for issuedAt (certificates minted "now" in a browser). */
+    public const CERT_ISSUED_SKEW_SECONDS = 300;
 
     public function __construct(private MySQLConnection $mysql)
     {
+    }
+
+    /**
+     * Strict RFC 3339 UTC with integer seconds — the frozen signed-timestamp
+     * shape (`2026-07-23T10:00:00Z`). Returns the unix timestamp, or null for
+     * anything malformed (lowercase z, offsets, fractions, impossible dates).
+     */
+    public static function parseRfc3339Utc(string $value): ?int
+    {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $value)) {
+            return null;
+        }
+        $dt = \DateTimeImmutable::createFromFormat('Y-m-d\TH:i:s\Z', $value, new \DateTimeZone('UTC'));
+        if ($dt === false || $dt->format('Y-m-d\TH:i:s\Z') !== $value) {
+            return null;
+        }
+        return $dt->getTimestamp();
+    }
+
+    /**
+     * Resolve the authenticated API key to its APPROVED data node, or refuse
+     * (review FL-001). Every data-plane operation (snapshot build/download/
+     * delete, whole-account backup) must pass through here: an API key that is
+     * not bound — via its desktop connection — to exactly one enrolled node in
+     * `approved` state with a stored owner-signed certificate that is
+     * unexpired and grants the `storage` capability gets the SAME opaque
+     * refusal regardless of which precondition failed (no enrolment-state
+     * oracle). Legacy `connector:relay` scope never reaches data export
+     * without this binding.
+     *
+     * @return array<string,mixed> the raw data_nodes row
+     * @throws \RuntimeException `data_node_unauthorized` on any failure
+     */
+    public function resolveApprovedNode(string $userId, string $apiKeyId): array
+    {
+        $stmt = $this->mysql->getConnection()->prepare(
+            'SELECT n.* FROM data_nodes n
+             JOIN desktop_connections c ON c.id = n.desktop_connection_id
+             WHERE n.owner_user_id = ? AND c.owner_user_id = ? AND c.api_key_id = ?'
+        );
+        $stmt->execute([$userId, $userId, $apiKeyId]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (
+            !is_array($row)
+            || $row['status'] !== 'approved'
+            || !is_string($row['owner_signed_certificate'])
+            || $row['owner_signed_certificate'] === ''
+        ) {
+            throw new \RuntimeException('data_node_unauthorized');
+        }
+        $cert = json_decode((string) $row['owner_signed_certificate'], true);
+        $certCaps = is_array($cert) ? (array) ($cert['capabilities'] ?? []) : [];
+        if (!in_array('storage', $certCaps, true)) {
+            throw new \RuntimeException('data_node_unauthorized');
+        }
+        if ($row['certificate_expires_at'] !== null) {
+            $expiresTs = strtotime(((string) $row['certificate_expires_at']) . ' UTC');
+            if ($expiresTs === false || $expiresTs <= time()) {
+                throw new \RuntimeException('data_node_unauthorized');
+            }
+        }
+        return $row;
     }
 
     /**
@@ -174,6 +240,26 @@ final class DataNodeService
         $expiresAt = $certificate['expiresAt'] ?? null;
         if ($expiresAt !== null && !is_string($expiresAt)) {
             throw new \RuntimeException('data_node_cert_mismatch:expiresAt');
+        }
+        // Strict RFC 3339 timestamps (review FL-001): a malformed issuedAt, a
+        // certificate already expired at approval, or an unreasonable validity
+        // window is refused BEFORE the signature is even checked — lenient
+        // date parsing must never widen a signed authority window.
+        $issuedTs = self::parseRfc3339Utc((string) $certificate['issuedAt']);
+        if ($issuedTs === null || $issuedTs > time() + self::CERT_ISSUED_SKEW_SECONDS) {
+            throw new \RuntimeException('data_node_cert_time:issuedAt');
+        }
+        if ($expiresAt !== null) {
+            $expiresTs = self::parseRfc3339Utc($expiresAt);
+            if ($expiresTs === null) {
+                throw new \RuntimeException('data_node_cert_time:expiresAt');
+            }
+            if ($expiresTs <= time()) {
+                throw new \RuntimeException('data_node_cert_time:expired');
+            }
+            if ($expiresTs - $issuedTs > self::CERT_MAX_VALIDITY_SECONDS) {
+                throw new \RuntimeException('data_node_cert_time:window');
+            }
         }
         if (!DataCanonicalJson::verify(DataCanonicalJson::DOMAIN_NODE_CERT, $certificate, $ownerEd25519PkRaw)) {
             throw new \RuntimeException('data_node_cert_signature');

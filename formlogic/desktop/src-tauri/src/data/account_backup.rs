@@ -119,8 +119,23 @@ pub async fn pull_account_backup(
     let esk = crypto_box::SecretKey::from(esk_bytes);
     let epk_b64 = B64.encode(esk.public_key().as_bytes());
 
+    // Node-signed transfer-key challenge (review FL-001): prove the ephemeral
+    // key is OURS with the enrolled node signing key, so the server never
+    // seals an account export to an unbound key.
+    let identity = super::identity::load_or_create(&svc.node_dir_path())?;
+    let requested_at = super::utc_now_rfc3339();
+    let challenge = format!("flaccountreq:1|{requested_at}|{epk_b64}");
+    let signature = {
+        use ed25519_dalek::Signer as _;
+        identity.signing_key().sign(challenge.as_bytes())
+    };
+
     let created = client
-        .data_account_backup_create(&epk_b64)
+        .data_account_backup_create(&serde_json::json!({
+            "ephemeralPk": epk_b64,
+            "requestedAt": requested_at,
+            "ephemeralPkSignature": B64.encode(signature.to_bytes()),
+        }))
         .await
         .map_err(|e| DataError::StoreUnavailable(format!("account-backup create: {e:?}")))?;
     let header_value = created.pointer("/data/header").cloned().unwrap_or(Value::Null);

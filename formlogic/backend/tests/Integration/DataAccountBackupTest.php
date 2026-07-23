@@ -40,7 +40,38 @@ final class DataAccountBackupTest extends E2eeTestCase
             self::$uploadsPath,
         );
         self::$signer = new DataCloudSigner(self::$tmpRoot . '/keys/data-cloud-signing.key');
-        self::$service = new DataAccountBackupService($backups, self::$signer, self::$tmpRoot . '/data-snapshots');
+        self::$service = new DataAccountBackupService($backups, self::$signer, self::$tmpRoot . '/data-snapshots', self::$mysql);
+    }
+
+    /**
+     * A synthetic approved-node identity + the node-signed transfer-key
+     * challenge (review FL-001): requests are only accepted when the ephemeral
+     * key is signed by the node's enrolled Ed25519 key inside the freshness
+     * window.
+     *
+     * @return array{node: array{id: string, signing_public_key: string}, request: array<string,string>, sk: string}
+     */
+    private function signedRequest(string $epkB64, ?string $requestedAt = null): array
+    {
+        $pair = sodium_crypto_sign_keypair();
+        $node = [
+            'id' => 'dn_test' . bin2hex(random_bytes(4)),
+            'signing_public_key' => base64_encode(sodium_crypto_sign_publickey($pair)),
+        ];
+        $requestedAt ??= gmdate('Y-m-d\TH:i:s\Z');
+        $sig = sodium_crypto_sign_detached(
+            DataAccountBackupService::REQUEST_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . $epkB64,
+            sodium_crypto_sign_secretkey($pair),
+        );
+        return [
+            'node' => $node,
+            'request' => [
+                'ephemeralPk' => $epkB64,
+                'requestedAt' => $requestedAt,
+                'ephemeralPkSignature' => base64_encode($sig),
+            ],
+            'sk' => sodium_crypto_sign_secretkey($pair),
+        ];
     }
 
     public function testSealedRoundTripTamperAndTruncationFailClosed(): void
@@ -57,7 +88,8 @@ final class DataAccountBackupTest extends E2eeTestCase
         $desktopPk = sodium_crypto_box_publickey($desktopPair);
         $desktopSk = sodium_crypto_box_secretkey($desktopPair);
 
-        $result = self::$service->create($this->userId, base64_encode($desktopPk));
+        $bound = $this->signedRequest(base64_encode($desktopPk));
+        $result = self::$service->create($this->userId, $bound['request'], $bound['node']);
         $header = $result['header'];
         $backupId = $result['backupId'];
 
@@ -70,8 +102,14 @@ final class DataAccountBackupTest extends E2eeTestCase
         ));
 
         // The staged payload must not leak the canary (or any zip magic).
-        $payloadPath = self::$service->payloadPath($backupId);
+        $payloadPath = self::$service->payloadPath($this->userId, $backupId);
         self::assertNotNull($payloadPath);
+        // A LEAKED valid ID is worthless to another tenant (review FL-002).
+        $stranger = $this->makeUser();
+        self::assertNull(self::$service->payloadPath($stranger, $backupId));
+        self::assertFalse(self::$service->deleteOwned($stranger, $backupId));
+        self::assertFileExists($payloadPath);
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
         $payload = (string) file_get_contents($payloadPath);
         self::assertStringNotContainsString($canary, $payload);
         self::assertStringNotContainsString('backup.json', $payload);
@@ -153,17 +191,64 @@ final class DataAccountBackupTest extends E2eeTestCase
             $wrongBox,
         ));
 
-        self::$service->delete($backupId);
-        self::assertNull(self::$service->payloadPath($backupId));
+        self::assertTrue(self::$service->deleteOwned($this->userId, $backupId));
+        self::assertNull(self::$service->payloadPath($this->userId, $backupId));
     }
 
     public function testBadEphemeralKeyIsRefused(): void
     {
+        $bound = $this->signedRequest(base64_encode(random_bytes(32)));
+        $bound['request']['ephemeralPk'] = 'not-base64!!';
         try {
-            self::$service->create($this->userId, 'not-base64!!');
+            self::$service->create($this->userId, $bound['request'], $bound['node']);
             self::fail('malformed ephemeral key must be refused');
         } catch (\RuntimeException $e) {
             self::assertSame('account_backup_bad_ephemeral_key', $e->getMessage());
+        }
+    }
+
+    public function testUnboundOrStaleTransferKeysAreRefused(): void
+    {
+        $epkB64 = base64_encode(sodium_crypto_box_publickey(sodium_crypto_box_keypair()));
+
+        // No signature at all.
+        $bound = $this->signedRequest($epkB64);
+        try {
+            self::$service->create($this->userId, ['ephemeralPk' => $epkB64], $bound['node']);
+            self::fail('unsigned ephemeral key must be refused');
+        } catch (\RuntimeException $e) {
+            self::assertSame('account_backup_key_unbound', $e->getMessage());
+        }
+
+        // Signature by a DIFFERENT key than the enrolled node key — the
+        // attacker-substituted-ephemeral-key case.
+        $bound = $this->signedRequest($epkB64);
+        $mallory = $this->signedRequest($epkB64, $bound['request']['requestedAt']);
+        try {
+            self::$service->create($this->userId, $mallory['request'], $bound['node']);
+            self::fail('foreign-signed ephemeral key must be refused');
+        } catch (\RuntimeException $e) {
+            self::assertSame('account_backup_key_unbound', $e->getMessage());
+        }
+
+        // Signature over a DIFFERENT ephemeral key than the one submitted.
+        $bound = $this->signedRequest($epkB64);
+        $bound['request']['ephemeralPk'] = base64_encode(sodium_crypto_box_publickey(sodium_crypto_box_keypair()));
+        try {
+            self::$service->create($this->userId, $bound['request'], $bound['node']);
+            self::fail('swapped ephemeral key must be refused');
+        } catch (\RuntimeException $e) {
+            self::assertSame('account_backup_key_unbound', $e->getMessage());
+        }
+
+        // Stale challenge outside the freshness window.
+        $stale = gmdate('Y-m-d\TH:i:s\Z', time() - DataAccountBackupService::REQUEST_SIGNATURE_WINDOW_SECONDS - 60);
+        $bound = $this->signedRequest($epkB64, $stale);
+        try {
+            self::$service->create($this->userId, $bound['request'], $bound['node']);
+            self::fail('stale challenge must be refused');
+        } catch (\RuntimeException $e) {
+            self::assertSame('account_backup_key_unbound', $e->getMessage());
         }
     }
 }

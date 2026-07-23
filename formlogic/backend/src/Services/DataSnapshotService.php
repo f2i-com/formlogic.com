@@ -54,12 +54,15 @@ final class DataSnapshotService
         'data/operations.ndjson',
     ];
 
+    private DataStagedArtifactIndex $artifacts;
+
     public function __construct(
         private MySQLConnection $mysql,
         private SQLiteConnection $sqlite,
         private DataCloudSigner $signer,
         private string $snapshotRoot,
     ) {
+        $this->artifacts = new DataStagedArtifactIndex($mysql);
     }
 
     /**
@@ -98,7 +101,7 @@ final class DataSnapshotService
      *
      * @return array{snapshotId: string, backupId: string, manifest: array<string,mixed>, files: list<array{path: string, sha256: string, bytes: int}>}
      */
-    public function createSnapshot(string $ownerUserId, string $formId): array
+    public function createSnapshot(string $ownerUserId, string $formId, ?string $nodeId = null): array
     {
         $this->sweepExpired();
         $pdo = $this->mysql->getConnection();
@@ -131,11 +134,16 @@ final class DataSnapshotService
                 throw new \RuntimeException('could not create the snapshot staging directory');
             }
         }
+        // Ownership row FIRST (review FL-002): the artifact is bound to its
+        // owner/node before any content exists; a crash mid-build leaves an
+        // expired row + dir the sweep finishes.
+        $this->artifacts->record($snapshotId, DataStagedArtifactIndex::KIND_SNAPSHOT, $ownerUserId, $nodeId, self::SNAPSHOT_TTL_SECONDS);
 
         try {
             return $this->buildPackage($dir, $snapshotId, $backupId, $ownerUserId, $formId);
         } catch (\Throwable $e) {
-            $this->deleteSnapshot($snapshotId);
+            $this->purgeSnapshotFiles($snapshotId);
+            $this->artifacts->finishDelete($snapshotId);
             throw $e;
         }
     }
@@ -377,10 +385,17 @@ final class DataSnapshotService
         ];
     }
 
-    /** Absolute path of a staged package file, or null when outside the allowlist. */
-    public function snapshotFilePath(string $snapshotId, string $relativePath): ?string
+    /**
+     * Absolute path of a staged package file, or null when the caller does not
+     * own the snapshot or the path is outside the allowlist. Ownership misses
+     * and missing IDs are indistinguishable (review FL-002).
+     */
+    public function snapshotFilePath(string $ownerUserId, string $snapshotId, string $relativePath): ?string
     {
         if (!preg_match('/^[0-9a-f]{32}$/', $snapshotId)) {
+            return null;
+        }
+        if (!$this->artifacts->resolveOwned($snapshotId, DataStagedArtifactIndex::KIND_SNAPSHOT, $ownerUserId)) {
             return null;
         }
         $allowed = array_merge(self::PACKAGE_FILES, ['manifests/backup-manifest.json']);
@@ -391,7 +406,25 @@ final class DataSnapshotService
         return is_file($path) ? $path : null;
     }
 
-    public function deleteSnapshot(string $snapshotId): void
+    /**
+     * Owner-checked delete. Returns false — leaving every file and the
+     * ownership row untouched — when the caller does not own the snapshot.
+     */
+    public function deleteSnapshotOwned(string $ownerUserId, string $snapshotId): bool
+    {
+        if (!preg_match('/^[0-9a-f]{32}$/', $snapshotId)) {
+            return false;
+        }
+        if (!$this->artifacts->beginDelete($snapshotId, DataStagedArtifactIndex::KIND_SNAPSHOT, $ownerUserId)) {
+            return false;
+        }
+        $this->purgeSnapshotFiles($snapshotId);
+        $this->artifacts->finishDelete($snapshotId);
+        return true;
+    }
+
+    /** Unlink staged files without any ownership semantics (internal + sweep). */
+    private function purgeSnapshotFiles(string $snapshotId): void
     {
         if (!preg_match('/^[0-9a-f]{32}$/', $snapshotId)) {
             return;
@@ -412,6 +445,13 @@ final class DataSnapshotService
 
     public function sweepExpired(): void
     {
+        // Finish crash-interrupted deletes and expire stale rows first…
+        foreach ($this->artifacts->sweepable(DataStagedArtifactIndex::KIND_SNAPSHOT) as $id) {
+            $this->purgeSnapshotFiles($id);
+            $this->artifacts->finishDelete($id);
+        }
+        // …then reap orphan directories (pre-ownership-index stagings or rows
+        // lost to a partial failure) by mtime.
         if (!is_dir($this->snapshotRoot)) {
             return;
         }
@@ -421,7 +461,8 @@ final class DataSnapshotService
             }
             $dir = $this->snapshotRoot . '/' . $entry;
             if (is_dir($dir) && filemtime($dir) < time() - self::SNAPSHOT_TTL_SECONDS) {
-                $this->deleteSnapshot($entry);
+                $this->purgeSnapshotFiles($entry);
+                $this->artifacts->finishDelete($entry);
             }
         }
     }

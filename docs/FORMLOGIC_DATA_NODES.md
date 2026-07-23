@@ -178,10 +178,28 @@ Frozen pins:
   channel (`data/node/cloud-signer.json`) and REFUSE a changed key. Until N3 placement
   binds the fingerprint under the owner's vault signature, provenance is
   `cloud_signed_tofu` ("Cloud-signed · owner chain pending") — never "authenticated".
-- **API** (`/api/v1/data-node/*`, desktop flk_ key; scope `data:snapshot` with
-  `connector:relay` grandfathered until N3 enrolment): signing-key, eligible-forms,
-  snapshots (create/file?path=/delete). All 403 `data_nodes_disabled` while the flag is
-  off.
+- **API** (`/api/v1/data-node/*`, desktop flk_ key): signing-key, eligible-forms,
+  snapshots (create/file?path=/delete), account-backups. All 403 `data_nodes_disabled`
+  while the flag is off. Two authority tiers (review FL-001):
+  - *Enrolment tier* (register/self/signing-key/eligible-forms): scope `data:snapshot`
+    (`connector:relay` grandfathered during migration only).
+  - *Data-plane tier* (snapshot build/download/delete, whole-account backup): the key
+    must ALSO resolve — via its desktop connection — to an **approved** data node with
+    an unexpired owner-signed `flnodecert:1` granting `storage`. Every failure mode
+    (no node, pending, revoked, expired, foreign key) is the same opaque 403
+    `data_node_unauthorized`. A legacy relay key alone can never export data;
+    `connector:relay` on this tier is a migration shim slated for removal once
+    enrolment mints least-privilege `data:snapshot` keys.
+  - Certificate timestamps are strict RFC 3339 UTC (`YYYY-MM-DDTHH:MM:SSZ`); approval
+    refuses malformed/expired/future-issued certs and validity windows over 10 years.
+  - Account-backup requests carry a node-signed transfer-key challenge: Ed25519 over
+    `flaccountreq:1|<requestedAt>|<ephemeralPk>` by the enrolled node signing key,
+    ±600 s freshness — an arbitrary (attacker-supplied) X25519 key is refused
+    (`account_backup_key_unbound`).
+  - Staged artifacts (snapshots + sealed account backups) are owner-bound in
+    `data_staged_artifacts` (review FL-002): GET/DELETE of a foreign artifact ID is
+    indistinguishable from a missing ID, and deletion is a crash-resumable
+    active→deleting→gone state machine finished by the TTL sweep.
 - Scheduled data-only backups: `data/node/backup-schedule.json`, one desktop loop
   (15-min tick, hour-granular intervals; UI offers daily); after each successful run the
   catalog is pruned to the newest 5 backups per target (logged, never silent).

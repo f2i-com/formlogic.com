@@ -537,6 +537,25 @@ foreach ([
     }
 }
 
+// 15. Staged data-node artifact ownership (review FL-002): every staged snapshot /
+//     sealed account backup gets an owner/node row; GET/DELETE require an exact
+//     ownership match, and deletion is a crash-resumable active→deleting→gone
+//     state machine. Artifact IDs alone (128 random bits) are no longer treated
+//     as authorization.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `data_staged_artifacts` (
+  `id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` enum('snapshot','account_backup') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `node_id` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `state` enum('active','deleting') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `created_at` datetime DEFAULT NULL,
+  `expires_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_staged_artifact_owner` (`owner_user_id`),
+  KEY `idx_staged_artifact_expiry` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'data_staged_artifacts table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";
