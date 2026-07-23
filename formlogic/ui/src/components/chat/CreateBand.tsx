@@ -155,7 +155,7 @@ export function CreateBand() {
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <button
           type="button"
-          onClick={() => navigate('/settings')}
+          onClick={() => navigate('/connect-ai')}
           className="rounded-xl border border-primary-300 bg-primary-50/60 p-3.5 text-left hover:border-primary-400 dark:border-primary-500/40 dark:bg-primary-500/10"
         >
           <p className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
