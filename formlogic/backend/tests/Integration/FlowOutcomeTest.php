@@ -161,6 +161,66 @@ class FlowOutcomeTest extends TestCase
         $this->assertCount(1, $this->handlerRuns($handler['id'], 'flow.failed'));
     }
 
+    public function testOutboxInsertFailureRollsBackTheTerminalTransition(): void
+    {
+        // Audit FL-03: the outbox insert is FAIL-CLOSED — when it cannot be written, the
+        // coupled terminal transition must roll back (the run stays retryable) rather than
+        // committing a completion whose flow.* event is silently lost forever.
+        $this->makeFlow('src-atomic');
+        $handler = $this->makeFlow('on-atomic');
+        self::$flows->createBinding($this->appId, ['flow' => 'on-atomic', 'event' => 'flow.succeeded', 'mode' => 'async']);
+
+        $source = $this->reserve('src-atomic');
+
+        // Fault injection: make the outbox INSERT fail hard (table temporarily absent).
+        self::$pdo->exec('RENAME TABLE flow_outcome_events TO flow_outcome_events_flt');
+        try {
+            try {
+                self::$flows->completeRun($this->appId, $source['runId'], ['status' => 'done', 'result' => ['ok' => true]]);
+                $this->fail('completion must fail when the outcome outbox cannot be written');
+            } catch (\PDOException) {
+                // expected — the insertion failure propagates out of the finaliser
+            }
+        } finally {
+            self::$pdo->exec('RENAME TABLE flow_outcome_events_flt TO flow_outcome_events');
+        }
+
+        $status = self::$pdo->prepare('SELECT status FROM flow_run_logs WHERE id = ?');
+        $status->execute([$source['runId']]);
+        $this->assertSame('running', $status->fetchColumn(), 'the terminal transition must have rolled back');
+
+        // Retry completes normally and emits exactly one event + one handler run.
+        self::$flows->completeRun($this->appId, $source['runId'], ['status' => 'done', 'result' => ['ok' => true]]);
+        $events = self::$pdo->prepare('SELECT COUNT(*) FROM flow_outcome_events WHERE run_id = ?');
+        $events->execute([$source['runId']]);
+        $this->assertSame(1, (int) $events->fetchColumn());
+        $this->assertCount(1, $this->handlerRuns($handler['id'], 'flow.succeeded'));
+    }
+
+    public function testReconcileReEmitsALostOutcomeEvent(): void
+    {
+        // Audit FL-03: the reconciliation sweep re-emits an outcome event that was lost
+        // AFTER its run turned terminal (cloud-runner / reclaim emission failures), and
+        // the replayed dispatch stays idempotent for already-enqueued handlers.
+        $this->makeFlow('src-rec');
+        $handler = $this->makeFlow('on-rec');
+        self::$flows->createBinding($this->appId, ['flow' => 'on-rec', 'event' => 'flow.succeeded', 'mode' => 'async']);
+
+        $source = $this->reserve('src-rec');
+        self::$flows->completeRun($this->appId, $source['runId'], ['status' => 'done', 'result' => ['ok' => true]]);
+        $this->assertCount(1, $this->handlerRuns($handler['id'], 'flow.succeeded'));
+
+        // Simulate the lost emission.
+        self::$pdo->prepare('DELETE FROM flow_outcome_events WHERE run_id = ?')->execute([$source['runId']]);
+
+        self::$flows->reconcileMissingOutcomeEvents();
+
+        $events = self::$pdo->prepare('SELECT COUNT(*) FROM flow_outcome_events WHERE run_id = ?');
+        $events->execute([$source['runId']]);
+        $this->assertSame(1, (int) $events->fetchColumn(), 'the sweep must restore the missing event');
+        $this->assertCount(1, $this->handlerRuns($handler['id'], 'flow.succeeded'), 'handler replay must stay idempotent');
+    }
+
     public function testNoSubscribersMeansNoOutboxRow(): void
     {
         $this->makeFlow('lonely-flow');

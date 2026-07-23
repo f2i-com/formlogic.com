@@ -62,6 +62,7 @@ class AuthService
     private array $adminEmails = [];
     /** Per-request memo of the global session epoch (system_meta 'session_epoch'). */
     private ?int $sessionEpochCache = null;
+    private ?int $sessionGenerationCache = null;
 
     public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [], ?EmailService $emailService = null, int $signupFreeDays = 30, array $adminEmails = [])
     {
@@ -372,12 +373,28 @@ class AuthService
                 return null;
             }
             // Global session boot (admin panel "sign everyone out"): tokens issued
-            // before the epoch are rejected for everyone EXCEPT platform admins —
+            // before the boot are rejected for everyone EXCEPT platform admins —
             // the admin who pressed the button must keep their session to manage
             // the maintenance window and let people back in.
-            $iat = isset($decoded->iat) ? (int) $decoded->iat : 0;
-            if (!$this->isPlatformAdmin($user) && $iat < $this->getSessionEpoch()) {
-                return null;
+            //
+            // Audit FL-17: the authority is a MONOTONIC session generation ('sg'
+            // claim), not the second-resolution timestamp — a token minted in the
+            // same second as the boot carried iat == session_epoch and survived the
+            // old comparison. Legacy tokens without 'sg' fall back to the timestamp
+            // check, closed at the boundary (iat <= epoch rejects), so the
+            // same-second hole no longer exists in either path.
+            if (!$this->isPlatformAdmin($user)) {
+                if (isset($decoded->sg)) {
+                    if ((int) $decoded->sg < $this->getSessionGeneration()) {
+                        return null;
+                    }
+                } else {
+                    $iat = isset($decoded->iat) ? (int) $decoded->iat : 0;
+                    $epoch = $this->getSessionEpoch();
+                    if ($epoch > 0 && $iat <= $epoch) {
+                        return null;
+                    }
+                }
             }
             return $user;
         } catch (\Firebase\JWT\ExpiredException $e) {
@@ -447,9 +464,33 @@ class AuthService
     }
 
     /**
-     * Sign every non-admin user out everywhere: stamps the global session epoch
-     * so all previously-issued non-admin tokens fail validation. Admin sessions
-     * survive (they must be able to reopen the site). Returns the new epoch.
+     * The monotonic global session generation (audit FL-17): every issued JWT
+     * carries the generation current at mint time ('sg'); "boot all sessions"
+     * increments it, and validation rejects non-admin tokens minted under an
+     * older generation. Unlike the second-resolution epoch, two boots in the
+     * same second still produce distinct generations. 0 = never booted.
+     * Memoized per request; fails open (0) on a pre-migration DB.
+     */
+    public function getSessionGeneration(): int
+    {
+        if ($this->sessionGenerationCache !== null) {
+            return $this->sessionGenerationCache;
+        }
+        try {
+            $stmt = $this->mysql->query("SELECT meta_value FROM system_meta WHERE meta_key = 'session_generation'");
+            $val = $stmt ? $stmt->fetchColumn() : false;
+            $this->sessionGenerationCache = ($val !== false && $val !== null) ? (int) $val : 0;
+        } catch (\Throwable) {
+            $this->sessionGenerationCache = 0;
+        }
+        return $this->sessionGenerationCache;
+    }
+
+    /**
+     * Sign every non-admin user out everywhere: increments the monotonic session
+     * generation (the authority — see getSessionGeneration) and stamps the legacy
+     * timestamp epoch for pre-'sg' tokens. Admin sessions survive (they must be
+     * able to reopen the site). Returns the new epoch.
      */
     public function bootAllSessions(): int
     {
@@ -460,6 +501,16 @@ class AuthService
         ");
         $stmt->execute(['v' => (string) $epoch, 'v2' => (string) $epoch]);
         $this->sessionEpochCache = $epoch;
+
+        // Atomic increment: concurrent boots each get their own generation.
+        $gen = $this->mysql->prepare("
+            INSERT INTO system_meta (meta_key, meta_value) VALUES ('session_generation', '1')
+            ON DUPLICATE KEY UPDATE meta_value = CAST(CAST(meta_value AS UNSIGNED) + 1 AS CHAR)
+        ");
+        $gen->execute();
+        $this->sessionGenerationCache = null;
+        $this->getSessionGeneration();
+
         return $epoch;
     }
 
@@ -902,6 +953,7 @@ class AuthService
             'nbf' => $now, // Not valid before now
             'exp' => $now + $this->jwtConfig['expiry'],
             'tv' => $this->getTokenVersion($user->id), // for revocation on credential change
+            'sg' => $this->getSessionGeneration(), // monotonic boot generation (audit FL-17)
         ];
 
         return JWT::encode($payload, $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);

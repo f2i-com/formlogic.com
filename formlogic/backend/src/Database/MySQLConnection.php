@@ -663,7 +663,7 @@ class MySQLConnection
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
                 FOREIGN KEY (flow_definition_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
                 FOREIGN KEY (binding_id) REFERENCES app_flow_bindings(id) ON DELETE SET NULL,
-                UNIQUE KEY uniq_flow_run_idem (idempotency_key),
+                UNIQUE KEY uniq_flow_run_idem (flow_definition_id, idempotency_key),
                 INDEX idx_frl_app (app_id),
                 INDEX idx_frl_flow (flow_definition_id),
                 INDEX idx_frl_binding (binding_id),
@@ -894,7 +894,7 @@ class MySQLConnection
                 expires_at TIMESTAMP NOT NULL,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
-                UNIQUE KEY uniq_desktop_command_idem (idempotency_key),
+                UNIQUE KEY uniq_desktop_command_idem (owner_user_id, idempotency_key),
                 INDEX idx_desktop_command_poll (owner_user_id, status, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
@@ -924,7 +924,7 @@ class MySQLConnection
                 expires_at TIMESTAMP NOT NULL,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (requesting_user_id) REFERENCES users(id) ON DELETE CASCADE,
-                UNIQUE KEY uniq_desktop_ai_idem (idempotency_key),
+                UNIQUE KEY uniq_desktop_ai_idem (owner_user_id, idempotency_key),
                 INDEX idx_desktop_ai_poll (owner_user_id, status, created_at),
                 INDEX idx_desktop_ai_target (owner_user_id, target_instance_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -971,7 +971,7 @@ class MySQLConnection
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (requesting_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (flow_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
-                UNIQUE KEY uniq_desktop_flow_run_idem (idempotency_key),
+                UNIQUE KEY uniq_desktop_flow_run_idem (owner_user_id, idempotency_key),
                 INDEX idx_desktop_flow_runs_poll (owner_user_id, status, created_at),
                 INDEX idx_desktop_flow_runs_target (owner_user_id, target_instance_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -2306,6 +2306,22 @@ class MySQLConnection
         // Per-user default reasoning effort for the Codex/ChatGPT desktop connector.
         if ($pdo->query("SHOW COLUMNS FROM user_ai_settings LIKE 'desktop_reasoning'")->rowCount() === 0) {
             $pdo->exec('ALTER TABLE user_ai_settings ADD COLUMN desktop_reasoning VARCHAR(16) NULL AFTER chat_tool_mode');
+        }
+
+        // Tenant-scoped idempotency keys (audit FL-08): these gates were globally UNIQUE on
+        // idempotency_key alone, so one tenant could consume (or probe) another tenant's key.
+        // Desktop lanes scope by owner; flow runs scope by flow definition. The composite
+        // index is strictly weaker than the old global one, so existing rows never violate it.
+        foreach ([
+            ['desktop_ai_requests', 'uniq_desktop_ai_idem', 'owner_user_id'],
+            ['desktop_commands', 'uniq_desktop_command_idem', 'owner_user_id'],
+            ['desktop_flow_runs', 'uniq_desktop_flow_run_idem', 'owner_user_id'],
+            ['flow_run_logs', 'uniq_flow_run_idem', 'flow_definition_id'],
+        ] as [$idemTable, $idemIndex, $idemScopeCol]) {
+            $idemCols = $pdo->query("SHOW INDEX FROM {$idemTable} WHERE Key_name = '{$idemIndex}'")->rowCount();
+            if ($idemCols === 1) {
+                $pdo->exec("ALTER TABLE {$idemTable} DROP INDEX {$idemIndex}, ADD UNIQUE KEY {$idemIndex} ({$idemScopeCol}, idempotency_key)");
+            }
         }
 
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.

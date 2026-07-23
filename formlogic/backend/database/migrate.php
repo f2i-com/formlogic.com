@@ -513,6 +513,30 @@ if (!$columnExists($pdo, $db, 'user_ai_settings', 'desktop_reasoning')) {
     $applied[] = 'user_ai_settings.desktop_reasoning already present';
 }
 
+// 14. Tenant-scoped idempotency keys (audit FL-08): the desktop relay/command lanes and the
+//     flow-run reserve gate were globally UNIQUE on idempotency_key alone, letting one tenant
+//     consume (or probe) another tenant's predictable key. Desktop lanes scope by owner; flow
+//     runs scope by flow definition. Composite uniqueness is strictly weaker than the old
+//     global one, so existing rows can never violate the new index — no data migration needed.
+$idemIndexCols = $pdo->prepare(
+    'SELECT COUNT(*) FROM information_schema.statistics
+     WHERE table_schema = ? AND table_name = ? AND index_name = ?'
+);
+foreach ([
+    ['desktop_ai_requests', 'uniq_desktop_ai_idem', 'owner_user_id'],
+    ['desktop_commands', 'uniq_desktop_command_idem', 'owner_user_id'],
+    ['desktop_flow_runs', 'uniq_desktop_flow_run_idem', 'owner_user_id'],
+    ['flow_run_logs', 'uniq_flow_run_idem', 'flow_definition_id'],
+] as [$idemTable, $idemIndex, $idemScopeCol]) {
+    $idemIndexCols->execute([$db, $idemTable, $idemIndex]);
+    if ((int) $idemIndexCols->fetchColumn() === 1) {
+        $pdo->exec("ALTER TABLE `{$idemTable}` DROP INDEX `{$idemIndex}`, ADD UNIQUE KEY `{$idemIndex}` (`{$idemScopeCol}`, `idempotency_key`)");
+        $applied[] = "{$idemTable}.{$idemIndex} rescoped to ({$idemScopeCol}, idempotency_key)";
+    } else {
+        $applied[] = "{$idemTable}.{$idemIndex} already scoped";
+    }
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

@@ -888,13 +888,15 @@ class FlowService
                 throw $e;
             }
             // Already reserved (or complete): return the existing run — idempotent replay.
+            // Lookup uses the SAME scope as the unique index (audit FL-08): keys are only
+            // unique per flow definition now.
             $find = $this->mysql->prepare("
                 SELECT r.*, f.slug AS flow_slug
                 FROM flow_run_logs r
                 LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
-                WHERE r.idempotency_key = :k LIMIT 1
+                WHERE r.flow_definition_id = :f AND r.idempotency_key = :k LIMIT 1
             ");
-            $find->execute(['k' => $idempotencyKey]);
+            $find->execute(['f' => $flow['id'], 'k' => $idempotencyKey]);
             $row = $find->fetch();
             if (!$row || ($row['app_id'] ?? null) !== $appId) {
                 // The key belongs to ANOTHER app (or vanished): never leak a foreign run id.
@@ -1026,101 +1028,143 @@ class FlowService
      * Insert the outcome-event row for a terminal run and return it (with the source run
      * attached) — or null when the run isn't terminal, has no subscribers, or was already
      * emitted. Safe to call INSIDE the terminal transaction (plan §14.5: outbox insert
-     * couples to the owning transaction; dispatch happens after commit). Internal errors
-     * are logged, never thrown, so a bookkeeping failure can't roll back a completion.
+     * couples to the owning transaction; dispatch happens after commit).
+     *
+     * FAIL-CLOSED outbox (audit FL-03): only a positively identified duplicate-key
+     * conflict is an idempotent no-op. Every OTHER insertion failure THROWS so the
+     * terminal transition it is coupled to rolls back and the completion can retry —
+     * a transient DB failure must never silently lose flow.succeeded/flow.failed
+     * events while presenting the completion as atomic. Paths that finalise OUTSIDE
+     * a coupled transaction (cloud runner, stuck-run reclaim) go through
+     * emitRunOutcome(), which catches and defers to the reconciliation sweep.
      */
     private function insertOutcomeEventForRun(string $runId): ?array
     {
-        try {
-            $stmt = $this->mysql->prepare("
-                SELECT r.*, f.slug AS flow_slug, f.owner_user_id AS flow_owner
-                FROM flow_run_logs r
-                JOIN flow_definitions f ON f.id = r.flow_definition_id
-                WHERE r.id = :id LIMIT 1
-            ");
-            $stmt->execute(['id' => $runId]);
-            $run = $stmt->fetch();
-            if (!$run || !isset(self::OUTCOME_EVENTS[(string) $run['status']])) {
-                return null;
-            }
-            $eventName = self::OUTCOME_EVENTS[(string) $run['status']];
-            $ownerUserId = (string) $run['flow_owner'];
-            $appId = isset($run['app_id']) && is_string($run['app_id']) && $run['app_id'] !== '' ? $run['app_id'] : null;
-            if ($this->outcomeSubscribers($appId, $ownerUserId) === []) {
-                return null; // no consumers → no row (the terminal run row stays the truth)
-            }
-
-            $error = null;
-            if (isset($run['error_json']) && is_string($run['error_json'])) {
-                $decoded = json_decode($run['error_json'], true);
-                if (is_array($decoded)) {
-                    // Redacted error projection: stable code + message (+ node attribution).
-                    $error = array_intersect_key($decoded, ['code' => 1, 'message' => 1, 'nodeId' => 1]);
-                }
-            }
-            $result = null;
-            $resultOmitted = false;
-            if ($eventName === 'flow.succeeded' && isset($run['result_json']) && is_string($run['result_json'])) {
-                if (strlen($run['result_json']) <= self::OUTCOME_RESULT_MAX_BYTES) {
-                    $result = json_decode($run['result_json'], true);
-                } else {
-                    $resultOmitted = true;
-                }
-            }
-            $payload = [
-                'runId' => $run['id'],
-                'rootRunId' => (isset($run['root_run_id']) && is_string($run['root_run_id']) && $run['root_run_id'] !== '')
-                    ? $run['root_run_id'] : $run['id'],
-                'flowId' => $run['flow_definition_id'],
-                'flowSlug' => $run['flow_slug'],
-                'flowVersionId' => $run['flow_version_id'] ?? null,
-                'status' => substr($eventName, strlen('flow.')),
-                'error' => $error,
-                'result' => $result,
-                'correlationId' => $run['correlation_id'],
-                'depth' => (int) ($run['depth'] ?? 0),
-                'finishedAt' => $run['finished_at'],
-            ];
-            if ($resultOmitted) {
-                $payload['resultOmitted'] = true;
-            }
-
-            $eventId = $this->uuidV4();
-            try {
-                $ins = $this->mysql->prepare("
-                    INSERT INTO flow_outcome_events
-                        (id, run_id, app_id, owner_user_id, flow_definition_id, event_name, payload_json)
-                    VALUES (:id, :run, :app, :owner, :flow, :event, :payload)
-                ");
-                $ins->execute([
-                    'id' => $eventId,
-                    'run' => $run['id'],
-                    'app' => $appId,
-                    'owner' => $ownerUserId,
-                    'flow' => $run['flow_definition_id'],
-                    'event' => $eventName,
-                    'payload' => json_encode($payload),
-                ]);
-            } catch (\PDOException $e) {
-                if ($this->isDuplicateKey($e)) {
-                    return null; // already emitted for this run — exactly-once holds
-                }
-                throw $e;
-            }
-            return [
-                'id' => $eventId,
-                'run_id' => $run['id'],
-                'app_id' => $appId,
-                'owner_user_id' => $ownerUserId,
-                'flow_definition_id' => $run['flow_definition_id'],
-                'event_name' => $eventName,
-                'payload' => $payload,
-                'source_run' => $run,
-            ];
-        } catch (\Throwable $e) {
-            error_log("FlowService: outcome insert failed for run {$runId}: " . $e->getMessage());
+        $stmt = $this->mysql->prepare("
+            SELECT r.*, f.slug AS flow_slug, f.owner_user_id AS flow_owner
+            FROM flow_run_logs r
+            JOIN flow_definitions f ON f.id = r.flow_definition_id
+            WHERE r.id = :id LIMIT 1
+        ");
+        $stmt->execute(['id' => $runId]);
+        $run = $stmt->fetch();
+        if (!$run || !isset(self::OUTCOME_EVENTS[(string) $run['status']])) {
             return null;
         }
+        $eventName = self::OUTCOME_EVENTS[(string) $run['status']];
+        $ownerUserId = (string) $run['flow_owner'];
+        $appId = isset($run['app_id']) && is_string($run['app_id']) && $run['app_id'] !== '' ? $run['app_id'] : null;
+        if ($this->outcomeSubscribers($appId, $ownerUserId) === []) {
+            return null; // no consumers → no row (the terminal run row stays the truth)
+        }
+
+        $error = null;
+        if (isset($run['error_json']) && is_string($run['error_json'])) {
+            $decoded = json_decode($run['error_json'], true);
+            if (is_array($decoded)) {
+                // Redacted error projection: stable code + message (+ node attribution).
+                $error = array_intersect_key($decoded, ['code' => 1, 'message' => 1, 'nodeId' => 1]);
+            }
+        }
+        $result = null;
+        $resultOmitted = false;
+        if ($eventName === 'flow.succeeded' && isset($run['result_json']) && is_string($run['result_json'])) {
+            if (strlen($run['result_json']) <= self::OUTCOME_RESULT_MAX_BYTES) {
+                $result = json_decode($run['result_json'], true);
+            } else {
+                $resultOmitted = true;
+            }
+        }
+        $payload = [
+            'runId' => $run['id'],
+            'rootRunId' => (isset($run['root_run_id']) && is_string($run['root_run_id']) && $run['root_run_id'] !== '')
+                ? $run['root_run_id'] : $run['id'],
+            'flowId' => $run['flow_definition_id'],
+            'flowSlug' => $run['flow_slug'],
+            'flowVersionId' => $run['flow_version_id'] ?? null,
+            'status' => substr($eventName, strlen('flow.')),
+            'error' => $error,
+            'result' => $result,
+            'correlationId' => $run['correlation_id'],
+            'depth' => (int) ($run['depth'] ?? 0),
+            'finishedAt' => $run['finished_at'],
+        ];
+        if ($resultOmitted) {
+            $payload['resultOmitted'] = true;
+        }
+
+        $eventId = $this->uuidV4();
+        try {
+            $ins = $this->mysql->prepare("
+                INSERT INTO flow_outcome_events
+                    (id, run_id, app_id, owner_user_id, flow_definition_id, event_name, payload_json)
+                VALUES (:id, :run, :app, :owner, :flow, :event, :payload)
+            ");
+            $ins->execute([
+                'id' => $eventId,
+                'run' => $run['id'],
+                'app' => $appId,
+                'owner' => $ownerUserId,
+                'flow' => $run['flow_definition_id'],
+                'event' => $eventName,
+                'payload' => json_encode($payload),
+            ]);
+        } catch (\PDOException $e) {
+            if ($this->isDuplicateKey($e)) {
+                return null; // already emitted for this run — exactly-once holds
+            }
+            throw $e;
+        }
+        return [
+            'id' => $eventId,
+            'run_id' => $run['id'],
+            'app_id' => $appId,
+            'owner_user_id' => $ownerUserId,
+            'flow_definition_id' => $run['flow_definition_id'],
+            'event_name' => $eventName,
+            'payload' => $payload,
+            'source_run' => $run,
+        ];
+    }
+
+    /**
+     * Reconciliation (audit FL-03): find terminal runs that finished recently but have NO
+     * outcome-event row (an emission that failed after its transaction committed — e.g. the
+     * cloud runner / reclaim paths, whose emitRunOutcome() never throws) and re-emit them.
+     * emitRunOutcome() no-ops runs without subscribers, so this stays cheap. Bounded window
+     * + batch so the sweep never scans deep history. @return int events emitted
+     */
+    public function reconcileMissingOutcomeEvents(int $windowSeconds = 21600, int $limit = 500): int
+    {
+        $windowSeconds = max(60, $windowSeconds);
+        $limit = max(1, min(2000, $limit));
+        $stmt = $this->mysql->prepare("
+            SELECT r.id FROM flow_run_logs r
+            LEFT JOIN flow_outcome_events e ON e.run_id = r.id
+            WHERE e.run_id IS NULL
+              AND r.status IN ('done', 'error', 'timeout', 'cancelled')
+              AND r.finished_at IS NOT NULL
+              AND r.finished_at > (NOW() - INTERVAL {$windowSeconds} SECOND)
+            ORDER BY r.finished_at ASC
+            LIMIT {$limit}
+        ");
+        $stmt->execute();
+        $emitted = 0;
+        foreach ($stmt->fetchAll() as $row) {
+            $before = $this->countOutcomeEventForRun((string) $row['id']);
+            $this->emitRunOutcome((string) $row['id']);
+            if (!$before && $this->countOutcomeEventForRun((string) $row['id'])) {
+                $emitted++;
+            }
+        }
+        return $emitted;
+    }
+
+    private function countOutcomeEventForRun(string $runId): bool
+    {
+        $stmt = $this->mysql->prepare('SELECT 1 FROM flow_outcome_events WHERE run_id = :r LIMIT 1');
+        $stmt->execute(['r' => $runId]);
+        return $stmt->fetchColumn() !== false;
     }
 
     /**
@@ -2369,13 +2413,14 @@ class FlowService
             }
             // Already reserved (or complete): return the existing run — idempotent replay,
             // but only within the caller's own flows (never leak a foreign run id).
+            // Same scope as the unique index (audit FL-08).
             $find = $this->mysql->prepare("
                 SELECT r.*, f.slug AS flow_slug, f.owner_user_id AS flow_owner
                 FROM flow_run_logs r
                 LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
-                WHERE r.idempotency_key = :k LIMIT 1
+                WHERE r.flow_definition_id = :f AND r.idempotency_key = :k LIMIT 1
             ");
-            $find->execute(['k' => $idempotencyKey]);
+            $find->execute(['f' => $flow['id'], 'k' => $idempotencyKey]);
             $row = $find->fetch();
             if (!$row || ($row['flow_owner'] ?? null) !== $ownerUserId) {
                 throw new \InvalidArgumentException('This idempotency key was already used');
@@ -2629,13 +2674,14 @@ class FlowService
                 throw $e;
             }
             // Replay: return the existing run — but only within the same owner's flows.
+            // Same scope as the unique index (audit FL-08).
             $find = $this->mysql->prepare("
                 SELECT r.*, f.slug AS flow_slug, f.owner_user_id AS flow_owner
                 FROM flow_run_logs r
                 LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
-                WHERE r.idempotency_key = :k LIMIT 1
+                WHERE r.flow_definition_id = :f AND r.idempotency_key = :k LIMIT 1
             ");
-            $find->execute(['k' => substr($opts['idempotencyKey'], 0, 255)]);
+            $find->execute(['f' => $flow['id'], 'k' => substr($opts['idempotencyKey'], 0, 255)]);
             $row = $find->fetch();
             if (!$row || ($row['flow_owner'] ?? null) !== ($flow['ownerUserId'] ?? null)) {
                 throw new \InvalidArgumentException('This idempotency key was already used');

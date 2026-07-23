@@ -104,6 +104,12 @@ class ApiKeyService
         // Use transaction to prevent race condition on key count check
         $pdo->beginTransaction();
         try {
+            // Serialize per user (audit FL-18): a transaction alone doesn't stop two
+            // concurrent creates from both counting below the cap — lock the owner's
+            // users row so the count + insert are atomic per account.
+            $lock = $pdo->prepare('SELECT id FROM users WHERE id = ? FOR UPDATE');
+            $lock->execute([$userId]);
+
             // Check key limit (within transaction for atomicity)
             $stmt = $pdo->prepare('SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1');
             $stmt->execute([$userId]);

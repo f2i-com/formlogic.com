@@ -83,16 +83,65 @@ final class DataCloudSigner
             // brick every pinned node until re-pairing).
             throw new \RuntimeException('data-cloud-signing.key is malformed; refusing to rotate silently');
         }
-        $seed = random_bytes(SODIUM_CRYPTO_SIGN_SEEDBYTES);
         $dir = dirname($this->keyFilePath);
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new \RuntimeException('could not create the signing key directory');
         }
-        $tmp = $this->keyFilePath . '.tmp';
-        if (file_put_contents($tmp, base64_encode($seed)) === false || !rename($tmp, $this->keyFilePath)) {
-            throw new \RuntimeException('could not persist the cloud signing seed');
+
+        // First-boot generation is SERIALIZED across workers (audit FL-07): without a
+        // lock, concurrent workers each generate a different seed, race one fixed temp
+        // path, and split the signing identity (desktops pin the public key — a split
+        // identity breaks verification for whichever nodes pinned the loser). The lock
+        // file is separate from the key file so the key is only ever observed complete.
+        $lockPath = $this->keyFilePath . '.lock';
+        $lock = fopen($lockPath, 'c');
+        if ($lock === false) {
+            throw new \RuntimeException('could not open the cloud signing key lock file');
         }
-        @chmod($this->keyFilePath, 0600);
-        return $this->seed = $seed;
+        try {
+            if (!flock($lock, LOCK_EX)) {
+                throw new \RuntimeException('could not lock the cloud signing key file');
+            }
+            // Another worker may have published while we waited on the lock.
+            if (!is_file($this->keyFilePath)) {
+                $seed = random_bytes(SODIUM_CRYPTO_SIGN_SEEDBYTES);
+                // Unique temp name (never a shared fixed path) + exclusive create;
+                // permissions are restricted BEFORE the secret is written, so the
+                // seed is never readable under a permissive umask even briefly.
+                $tmp = $this->keyFilePath . '.tmp.' . bin2hex(random_bytes(8));
+                $fh = fopen($tmp, 'x');
+                if ($fh === false) {
+                    throw new \RuntimeException('could not create the cloud signing seed temp file');
+                }
+                try {
+                    @chmod($tmp, 0600);
+                    if (fwrite($fh, base64_encode($seed)) === false || !fflush($fh)) {
+                        throw new \RuntimeException('could not write the cloud signing seed');
+                    }
+                    if (function_exists('fsync')) {
+                        fsync($fh);
+                    }
+                } finally {
+                    fclose($fh);
+                }
+                if (!rename($tmp, $this->keyFilePath)) {
+                    @unlink($tmp);
+                    throw new \RuntimeException('could not persist the cloud signing seed');
+                }
+                @chmod($this->keyFilePath, 0600);
+            }
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+
+        // ALWAYS re-read and validate the persisted file before caching: every worker
+        // must end up signing with the seed that actually won publication, never the
+        // one it happened to generate locally.
+        $decoded = base64_decode(trim((string) file_get_contents($this->keyFilePath)), true);
+        if (!is_string($decoded) || strlen($decoded) !== SODIUM_CRYPTO_SIGN_SEEDBYTES) {
+            throw new \RuntimeException('persisted cloud signing seed failed validation');
+        }
+        return $this->seed = $decoded;
     }
 }

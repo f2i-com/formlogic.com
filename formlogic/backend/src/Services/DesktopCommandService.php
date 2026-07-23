@@ -172,9 +172,10 @@ class DesktopCommandService
                 throw $e;
             }
             // Reserved already: return the existing row — but only within the same owner (never
-            // leak a foreign command id under a reused key).
-            $find = $this->mysql->prepare("SELECT * FROM desktop_commands WHERE idempotency_key = :k LIMIT 1");
-            $find->execute(['k' => $idempotencyKey]);
+            // leak a foreign command id under a reused key). Same owner scope as the unique
+            // index (audit FL-08).
+            $find = $this->mysql->prepare("SELECT * FROM desktop_commands WHERE owner_user_id = :o AND idempotency_key = :k LIMIT 1");
+            $find->execute(['o' => $ownerUserId, 'k' => $idempotencyKey]);
             $row = $find->fetch();
             if (!$row || ($row['owner_user_id'] ?? null) !== $ownerUserId) {
                 throw new \InvalidArgumentException('This idempotency key was already used');
@@ -246,9 +247,20 @@ class DesktopCommandService
             $where .= " AND target_instance_id IS NULL";
         }
         if ($sinceId !== null && $sinceId !== '') {
-            $where .= " AND created_at > (SELECT created_at FROM desktop_commands WHERE id = :since AND owner_user_id = :o2)";
-            $params['since'] = $sinceId;
-            $params['o2'] = $ownerUserId;
+            // Composite (created_at, id) cursor (audit FL-06): created_at is second-precision,
+            // so "strictly after the cursor's timestamp" permanently skipped same-second rows,
+            // and an unknown/deleted cursor made the old scalar subquery NULL (empty stream
+            // forever). Unknown cursor → reset (cursor-less): only still-pending rows are ever
+            // returned, so re-delivery is harmless.
+            $cur = $this->mysql->prepare('SELECT created_at FROM desktop_commands WHERE id = :since AND owner_user_id = :o2');
+            $cur->execute(['since' => $sinceId, 'o2' => $ownerUserId]);
+            $cursorCreatedAt = $cur->fetchColumn();
+            if ($cursorCreatedAt !== false && $cursorCreatedAt !== null) {
+                $where .= " AND (created_at > :cts OR (created_at = :cts2 AND id > :cid))";
+                $params['cts'] = $cursorCreatedAt;
+                $params['cts2'] = $cursorCreatedAt;
+                $params['cid'] = $sinceId;
+            }
         }
         $stmt = $this->mysql->prepare("SELECT * FROM desktop_commands WHERE {$where} ORDER BY created_at ASC, id ASC LIMIT {$limit}");
         $stmt->execute($params);

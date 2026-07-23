@@ -125,17 +125,26 @@ class DesktopFlowRelayService
 
         // Lane caps (plan §5.2) count every non-terminal row for the lane — a pending row is
         // queued, a claimed/streaming one is being serviced; both occupy the single flight.
-        // Expire stale rows first so the caps reflect live occupancy.
+        // Expire stale rows first so the caps reflect live occupancy (BEFORE the enqueue
+        // transaction — expireStale manages its own). The count + insert are SERIALIZED per
+        // owner behind a FOR UPDATE lock on the owner's users row (audit FL-18): without
+        // it, concurrent enqueues both pass the count and overshoot the cap.
         $this->expireStale($ownerUserId);
-        if ($this->countInFlightForUser($ownerUserId, $requestingUserId) >= self::MAX_IN_FLIGHT_PER_USER) {
-            throw new \RuntimeException('queue_full_user');
-        }
-        if ($this->countInFlightForTarget($ownerUserId, $targetInstanceId) >= self::MAX_IN_FLIGHT_PER_TARGET) {
-            throw new \RuntimeException('queue_full_desktop');
-        }
-
         $id = $this->uuid();
+        $wrapped = !$this->mysql->inTransaction();
+        if ($wrapped) {
+            $this->mysql->beginTransaction();
+        }
         try {
+            $lock = $this->mysql->prepare('SELECT id FROM users WHERE id = :o FOR UPDATE');
+            $lock->execute(['o' => $ownerUserId]);
+            if ($this->countInFlightForUser($ownerUserId, $requestingUserId) >= self::MAX_IN_FLIGHT_PER_USER) {
+                throw new \RuntimeException('queue_full_user');
+            }
+            if ($this->countInFlightForTarget($ownerUserId, $targetInstanceId) >= self::MAX_IN_FLIGHT_PER_TARGET) {
+                throw new \RuntimeException('queue_full_desktop');
+            }
+
             $stmt = $this->mysql->prepare("
                 INSERT INTO desktop_flow_runs
                     (id, owner_user_id, requesting_user_id, target_instance_id, flow_id,
@@ -154,16 +163,23 @@ class DesktopFlowRelayService
                 'key' => $idempotencyKey,
                 'exp' => date('Y-m-d H:i:s', time() + self::REQUEST_TTL_SECONDS),
             ]);
-        } catch (\PDOException $e) {
-            if (!$this->isDuplicateKey($e)) {
+            if ($wrapped) {
+                $this->mysql->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($wrapped && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            if (!($e instanceof \PDOException) || !$this->isDuplicateKey($e)) {
                 throw $e;
             }
             // Reserved already: return the existing row — but only within the same owner (never
-            // leak a foreign run id under a reused key).
-            $find = $this->mysql->prepare("SELECT * FROM desktop_flow_runs WHERE idempotency_key = :k LIMIT 1");
-            $find->execute(['k' => $idempotencyKey]);
+            // leak a foreign run id under a reused key). Same owner scope as the unique
+            // index (audit FL-08).
+            $find = $this->mysql->prepare("SELECT * FROM desktop_flow_runs WHERE owner_user_id = :o AND idempotency_key = :k LIMIT 1");
+            $find->execute(['o' => $ownerUserId, 'k' => $idempotencyKey]);
             $row = $find->fetch();
-            if (!$row || ($row['owner_user_id'] ?? null) !== $ownerUserId) {
+            if (!$row) {
                 throw new \InvalidArgumentException('This idempotency key was already used');
             }
             return ['request' => $this->format($row), 'created' => false];
@@ -259,9 +275,16 @@ class DesktopFlowRelayService
             $where .= " AND target_instance_id IS NULL";
         }
         if ($sinceId !== null && $sinceId !== '') {
-            $where .= " AND created_at > (SELECT created_at FROM desktop_flow_runs WHERE id = :since AND owner_user_id = :o2)";
-            $params['since'] = $sinceId;
-            $params['o2'] = $ownerUserId;
+            // Composite (created_at, id) cursor (audit FL-06) — see DesktopCommandService::listPending.
+            $cur = $this->mysql->prepare('SELECT created_at FROM desktop_flow_runs WHERE id = :since AND owner_user_id = :o2');
+            $cur->execute(['since' => $sinceId, 'o2' => $ownerUserId]);
+            $cursorCreatedAt = $cur->fetchColumn();
+            if ($cursorCreatedAt !== false && $cursorCreatedAt !== null) {
+                $where .= " AND (created_at > :cts OR (created_at = :cts2 AND id > :cid))";
+                $params['cts'] = $cursorCreatedAt;
+                $params['cts2'] = $cursorCreatedAt;
+                $params['cid'] = $sinceId;
+            }
         }
         $stmt = $this->mysql->prepare("SELECT * FROM desktop_flow_runs WHERE {$where} ORDER BY created_at ASC, id ASC LIMIT {$limit}");
         $stmt->execute($params);

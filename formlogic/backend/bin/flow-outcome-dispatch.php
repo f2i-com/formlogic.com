@@ -46,8 +46,17 @@ if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
 $flows = new FlowService($mysql);
 
 try {
+    // Audit FL-03: first re-emit outcome rows that were LOST after their terminal
+    // transition committed (cloud-runner / reclaim emission failures) — then
+    // re-dispatch anything still pending.
+    $reconciled = $flows->reconcileMissingOutcomeEvents();
     $processed = $flows->dispatchPendingOutcomeEvents(200);
-    fwrite(STDOUT, sprintf("[%s] flow-outcome dispatch: processed %d pending event(s).\n", date('c'), $processed));
+    fwrite(STDOUT, sprintf(
+        "[%s] flow-outcome dispatch: reconciled %d missing event(s), processed %d pending event(s).\n",
+        date('c'),
+        $reconciled,
+        $processed
+    ));
     exit(0);
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] flow-outcome dispatch failed: %s\n", date('c'), $e->getMessage()));

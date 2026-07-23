@@ -175,6 +175,61 @@ class DesktopOAuthLinkTest extends TestCase
         return (string) $q['code'];
     }
 
+    // ── compensation (audit FL-19) ──
+
+    public function testFailedConnectionCreationRevokesTheMintedKey(): void
+    {
+        // When the desktop_connections insert fails AFTER the API key was minted,
+        // compensation must revoke the key: a failed link must never leave an active,
+        // never-disclosed credential consuming the account's key quota.
+        $failingFlows = new class(self::$mysql) extends FlowService {
+            public function createOAuthDesktopConnection(string $userId, ?string $deviceLabel, string $apiKeyId): array
+            {
+                throw new \RuntimeException('injected connection failure');
+            }
+        };
+        $sqlite = new SQLiteConnection(sys_get_temp_dir() . '/formlogic-oauth-comp-' . bin2hex(random_bytes(4)));
+        $apps = new AppService(self::$mysql, new FormService(self::$mysql, $sqlite));
+        $failingCtrl = new McpOAuthController(self::$oauth, $apps, null, null, self::$apiKeys, $failingFlows);
+
+        $pkce = $this->pkce();
+        $code = $this->mintCode($this->authorizeParams($pkce['challenge']));
+
+        $stream = (new StreamFactory())->createStream(http_build_query([
+            'grant_type' => 'authorization_code',
+            'code' => $code,
+            'redirect_uri' => 'http://127.0.0.1:51999/callback',
+            'client_id' => McpOAuthService::DESKTOP_CLIENT_ID,
+            'code_verifier' => $pkce['verifier'],
+        ]));
+        $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/oauth/token')
+            ->withHeader('Content-Type', 'application/x-www-form-urlencoded')
+            ->withBody($stream);
+        $resp = $failingCtrl->token($req, (new ResponseFactory())->createResponse());
+        $this->assertSame(500, $resp->getStatusCode());
+
+        // No active key and no connection may remain.
+        $keys = self::$pdo->prepare('SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1');
+        $keys->execute([$this->userId]);
+        $this->assertSame(0, (int) $keys->fetchColumn(), 'the orphaned key must be revoked');
+        $conns = self::$pdo->prepare('SELECT COUNT(*) FROM desktop_connections WHERE owner_user_id = ?');
+        $conns->execute([$this->userId]);
+        $this->assertSame(0, (int) $conns->fetchColumn());
+
+        // A retry with a fresh grant succeeds cleanly through the healthy controller.
+        $pkce2 = $this->pkce();
+        $code2 = $this->mintCode($this->authorizeParams($pkce2['challenge']));
+        $r = $this->token([
+            'grant_type' => 'authorization_code',
+            'code' => $code2,
+            'redirect_uri' => 'http://127.0.0.1:51999/callback',
+            'client_id' => McpOAuthService::DESKTOP_CLIENT_ID,
+            'code_verifier' => $pkce2['verifier'],
+        ]);
+        $this->assertSame(200, $r['status'], 'retry after compensation must succeed: ' . json_encode($r['body']));
+        $this->assertNotSame('', (string) ($r['body']['formlogic_api_key'] ?? ''));
+    }
+
     // ── the seeded client + consent ──
 
     public function testDesktopClientIsSeededAndPublic(): void

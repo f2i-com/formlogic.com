@@ -302,6 +302,31 @@ class FlowRuntimeAuthorizationTest extends TestCase
         $this->assertNotNull($byId[$freeRun['runId']]['inputSnapshot']);
     }
 
+    // ── Completion visibility (audit FL-02) ─────────────────────────────────────────────────
+
+    public function testHiddenFormRunCannotBeCompletedByRunId(): void
+    {
+        // Completion re-applies the exact claim visibility predicate: an execute-only
+        // member who cannot list/claim a form-tied run must not be able to complete it
+        // by UUID either (result-action injection + outcome triggers ride completion).
+        // Invisible runs are a non-enumerating 404, identical to claimRun.
+        $this->grant($this->roleId, 'execute_flows');
+        $formRun = $this->reserveQueued($this->formId);
+        $slugArgs = ['slug' => $this->slug];
+
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), ['status' => 'done']);
+        $this->assertSame(404, $code, 'an invisible run must not be completable');
+
+        $row = self::$pdo->prepare('SELECT status FROM flow_run_logs WHERE id = ?');
+        $row->execute([$formRun['runId']]);
+        $this->assertSame('queued', $row->fetchColumn(), 'the hidden run must be untouched');
+
+        // Granting form visibility opens completion (the authorized path keeps working).
+        $this->grant($this->roleId, 'view_all_responses', $this->formId);
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), ['status' => 'done']);
+        $this->assertSame(200, $code);
+    }
+
     // ── Claimant-bound completion ───────────────────────────────────────────────────────────
 
     public function testClaimedRunCanOnlyBeCompletedByItsClaimant(): void

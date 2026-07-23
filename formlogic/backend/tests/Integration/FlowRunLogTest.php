@@ -357,26 +357,37 @@ class FlowRunLogTest extends TestCase
         $this->assertSame(2, $byFlow['total']);
     }
 
-    public function testIdempotencyKeyReusedByAnotherAppIsRejectedWithoutLeaking(): void
+    public function testIdempotencyKeyIsScopedPerFlowNeverLeaksAcrossApps(): void
     {
+        // Audit FL-08: run idempotency keys are scoped per FLOW DEFINITION. A second
+        // app reusing the same key gets its OWN independent run — it can neither
+        // receive the first app's run (no leak) nor be blocked by a foreign key
+        // reservation (one app/tenant can't consume another's key). Same-flow
+        // replays still dedupe onto the original run.
         $this->makeFlow();
         $key = 'k-' . bin2hex(random_bytes(6));
-        self::$flows->reserveRun($this->appId, $this->userId, [
+        $first = self::$flows->reserveRun($this->appId, $this->userId, [
             'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'c', 'idempotencyKey' => $key,
         ]);
+        $this->assertTrue($first['created']);
 
-        // A second app of the same user reusing the key must NOT receive the first app's run.
         $otherApp = 'a-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO apps (id, owner_id, name, slug, status) VALUES (?, ?, 'Other', ?, 'published')")
             ->execute([$otherApp, $this->userId, 'flowapp-' . bin2hex(random_bytes(6))]);
         try {
             self::$flows->createFlow($otherApp, $this->userId, ['name' => 'Other flow', 'slug' => 'call-triage']);
-            self::$flows->reserveRun($otherApp, $this->userId, [
+            $second = self::$flows->reserveRun($otherApp, $this->userId, [
                 'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'c', 'idempotencyKey' => $key,
             ]);
-            $this->fail('cross-app key reuse must be rejected');
-        } catch (\InvalidArgumentException $e) {
-            $this->assertStringContainsString('already used', $e->getMessage());
+            $this->assertTrue($second['created'], 'a foreign reservation must not block this app\'s key');
+            $this->assertNotSame($first['run']['runId'], $second['run']['runId'], 'never leak the other app\'s run');
+
+            // Same-flow replay still dedupes onto the original run.
+            $replay = self::$flows->reserveRun($this->appId, $this->userId, [
+                'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'c', 'idempotencyKey' => $key,
+            ]);
+            $this->assertFalse($replay['created']);
+            $this->assertSame($first['run']['runId'], $replay['run']['runId']);
         } finally {
             self::$pdo->prepare('DELETE FROM flow_run_logs WHERE app_id = ?')->execute([$otherApp]);
             self::$pdo->prepare('DELETE FROM flow_definitions WHERE app_id = ?')->execute([$otherApp]);

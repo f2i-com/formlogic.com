@@ -167,16 +167,15 @@ class FlowOwnerReserveTest extends TestCase
             $this->assertStringContainsString('Unknown or disabled flow', $e->getMessage());
         }
 
-        // A key already held by user A's run must not leak to user B.
+        // A key already held by user A's run must not leak to user B — and (audit FL-08:
+        // keys are scoped per flow definition now) must not BLOCK user B either. B's
+        // reservation on B's own flow gets an independent run.
         $key = 'flow:bx:aokie:call_9:incoming:v1';
-        self::$flows->reserveOwnerRun($this->userA, $this->reservePayload(['idempotencyKey' => $key, 'appId' => $this->appId]));
+        $aRun = self::$flows->reserveOwnerRun($this->userA, $this->reservePayload(['idempotencyKey' => $key, 'appId' => $this->appId]));
         self::$flows->createWorkspaceFlow($this->userB, ['name' => 'Desk', 'slug' => 'desk', 'flowJson' => $this->graph()]);
-        try {
-            self::$flows->reserveOwnerRun($this->userB, $this->reservePayload(['idempotencyKey' => $key]));
-            $this->fail('expected InvalidArgumentException');
-        } catch (\InvalidArgumentException $e) {
-            $this->assertStringContainsString('already used', $e->getMessage());
-        }
+        $bRun = self::$flows->reserveOwnerRun($this->userB, $this->reservePayload(['idempotencyKey' => $key]));
+        $this->assertTrue($bRun['created'], "a foreign owner's key must not block this owner");
+        $this->assertNotSame($aRun['run']['runId'], $bRun['run']['runId'], "never leak the other owner's run");
     }
 
     public function testReserveValidatesBindingOwnershipAndPayload(): void

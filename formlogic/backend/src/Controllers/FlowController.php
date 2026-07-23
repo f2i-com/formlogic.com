@@ -700,15 +700,28 @@ class FlowController
         return $this->jsonResponse($response, ['runId' => $result['run']['runId'], 'idempotent' => true, 'run' => $result['run']], 200);
     }
 
-    /** Complete a run (status/result/error per flow-run-result.schema.json); only from running/queued. */
+    /**
+     * Complete a run (status/result/error per flow-run-result.schema.json); only from running/queued.
+     *
+     * Visibility (audit FL-02): completion re-applies the EXACT claim predicate
+     * (canSeeRunSnapshot) — a member who could never list/claim a hidden-form run must not
+     * be able to complete it by run UUID either (completion injects result actions and fires
+     * outcome triggers). Invisible runs are a non-enumerating 404, same as claimRun.
+     */
     public function completeRun(Request $request, Response $response, array $args): Response
     {
-        [$app, , $error] = $this->resolveRuntime($request, $response, $args['slug'] ?? '');
+        [$app, $userId, $error] = $this->resolveRuntime($request, $response, $args['slug'] ?? '');
         if ($error) {
             return $error;
         }
+        $runId = (string) ($args['runId'] ?? '');
+        $permCache = [];
+        $existing = $this->flows->getRun($app['id'], $runId);
+        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $existing['formId'] ?? null, $permCache)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
+        }
         try {
-            $run = $this->flows->completeRun($app['id'], (string) ($args['runId'] ?? ''), $request->getParsedBody() ?? []);
+            $run = $this->flows->completeRun($app['id'], $runId, $request->getParsedBody() ?? []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {

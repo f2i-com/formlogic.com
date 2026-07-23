@@ -156,6 +156,18 @@ class AdminPanelTest extends TestCase
         ], self::JWT_SECRET, 'HS256');
     }
 
+    /** A token carrying the session-generation claim, exactly as AuthService issues it (FL-17). */
+    private function tokenWithSg(string $userId, int $iat, int $sg): string
+    {
+        $stmt = self::$pdo->prepare('SELECT email FROM users WHERE id = ?');
+        $stmt->execute([$userId]);
+        return JWT::encode([
+            'iss' => 'formlogic', 'aud' => 'formlogic-api', 'sub' => $userId,
+            'email' => (string) $stmt->fetchColumn(),
+            'iat' => $iat, 'nbf' => $iat, 'exp' => time() + 3600, 'tv' => 0, 'sg' => $sg,
+        ], self::JWT_SECRET, 'HS256');
+    }
+
     private function userModel(string $userId): User
     {
         $stmt = self::$pdo->prepare('SELECT * FROM users WHERE id = ?');
@@ -303,6 +315,35 @@ class AdminPanelTest extends TestCase
         sleep(1); // a token minted after the epoch is valid again
         $freshToken = $this->tokenFor($this->userId, time());
         $this->assertNotNull($auth2->validateToken($freshToken));
+    }
+
+    public function testBootRejectsTokensMintedInTheSameSecond(): void
+    {
+        // Audit FL-17: revocation authority is the MONOTONIC session generation ('sg'),
+        // not the second-resolution timestamp — a token minted immediately before the
+        // boot in the very same second used to satisfy iat == session_epoch and survive.
+        $genBefore = self::$auth->getSessionGeneration();
+        $preBoot = $this->tokenWithSg($this->userId, time(), $genBefore);
+        $this->assertNotNull(self::$auth->validateToken($preBoot), 'pre-boot token must validate');
+
+        self::$auth->bootAllSessions();
+
+        $auth2 = new AuthService(self::$mysql, [
+            'secret' => self::JWT_SECRET, 'expiry' => 3600, 'algorithm' => 'HS256',
+            'issuer' => 'formlogic', 'audience' => 'formlogic-api',
+        ]);
+        $this->assertNull($auth2->validateToken($preBoot), 'a token minted in the boot second must be rejected');
+
+        // A post-boot token is valid IMMEDIATELY (no sleep — the generation is exact).
+        $postBoot = $this->tokenWithSg($this->userId, time(), $auth2->getSessionGeneration());
+        $this->assertNotNull($auth2->validateToken($postBoot));
+
+        // Legacy tokens without 'sg' fail closed at the boundary second (iat == epoch).
+        $epoch = (int) self::$pdo->query("SELECT meta_value FROM system_meta WHERE meta_key = 'session_epoch'")->fetchColumn();
+        $this->assertNull(
+            $auth2->validateToken($this->tokenFor($this->userId, $epoch)),
+            'a legacy token with iat == session_epoch must be rejected'
+        );
     }
 
     // ── maintenance mode ────────────────────────────────────────────────────

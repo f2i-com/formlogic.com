@@ -448,10 +448,27 @@ class McpOAuthController
         // every one is a valid ApiKeyService scope. Name the key for the device.
         $scopes = array_values($grant['scopes']);
         $keyName = substr($device !== null ? "FormLogic Desktop on {$device}" : 'FormLogic Desktop', 0, 255);
+        $key = null;
         try {
             $key = $this->apiKeys->createKey($userId, $keyName, $scopes);
             $connection = $this->flows->createOAuthDesktopConnection($userId, $device, $key['id']);
         } catch (\Throwable $e) {
+            // Compensation (audit FL-19): a failed link must not leave an active,
+            // never-disclosed key consuming quota — revoke it and audit the outcome.
+            if ($key !== null) {
+                try {
+                    $revoked = $this->apiKeys->revokeKey($key['id'], $userId);
+                    $this->audit($request, 'desktop.oauth.link.compensated', $userId, [
+                        'apiKeyId' => $key['id'],
+                        'revoked' => $revoked,
+                    ]);
+                } catch (\Throwable $revokeError) {
+                    $this->logger?->error('Desktop OAuth compensation failed: orphaned key remains active', [
+                        'apiKeyId' => $key['id'],
+                        'reason' => $revokeError->getMessage(),
+                    ]);
+                }
+            }
             $this->logger?->warning('Desktop OAuth key mint failed', ['reason' => $e->getMessage()]);
             return $this->oauthError($response, 'server_error', 'Could not complete desktop linking', 500);
         }
