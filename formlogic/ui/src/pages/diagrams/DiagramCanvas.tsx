@@ -4,12 +4,13 @@
 // baseSemanticRevision and reconcile on 409; drags are layout-only batches that can never
 // conflict). Elements and edges are CONCEPT-ONLY here (§11.5) — materialisation is the
 // §11A.2 D3 slice, so this canvas never mutates forms, flows, or bindings.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Background,
   Controls,
   ReactFlow,
   applyNodeChanges,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -31,7 +32,8 @@ export const DIAGRAM_INPUT_CLS =
 const INPUT_CLS = DIAGRAM_INPUT_CLS;
 
 
-type BlueprintNodeData = { title: string; elementType: string; concept: boolean };
+type SketchField = { name: string; type: string };
+type BlueprintNodeData = { title: string; elementType: string; concept: boolean; fields: SketchField[] };
 
 function BlueprintNodeCard({ data, selected }: NodeProps) {
   const d = data as BlueprintNodeData;
@@ -53,8 +55,36 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
         {d.elementType}
         {d.concept ? ' · concept' : ''}
       </p>
+      {/* §11A D2: the ER look — a form entity shows its sketched fields as rows. */}
+      {d.elementType === 'form' && d.fields.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 border-t border-gray-100 pt-1.5 dark:border-slate-800">
+          {d.fields.slice(0, 8).map((field) => (
+            <li key={field.name} className="flex items-baseline justify-between gap-2 text-[11px]">
+              <span className="truncate font-mono text-gray-700 dark:text-slate-300">{field.name}</span>
+              <span className="flex-none text-gray-400 dark:text-slate-500">{field.type}</span>
+            </li>
+          ))}
+          {d.fields.length > 8 && (
+            <li className="text-[10px] text-gray-400 dark:text-slate-500">+{d.fields.length - 8} more</li>
+          )}
+        </ul>
+      )}
     </div>
   );
+}
+
+/** The sketched field list on a form element (properties.fields), shape-tolerant. */
+function sketchFields(properties: Record<string, unknown>): SketchField[] {
+  const raw = properties.fields;
+  if (!Array.isArray(raw)) return [];
+  const out: SketchField[] = [];
+  for (const row of raw) {
+    const name = typeof (row as { name?: unknown })?.name === 'string' ? (row as { name: string }).name.trim() : '';
+    if (name === '') continue;
+    const type = typeof (row as { type?: unknown })?.type === 'string' ? (row as { type: string }).type : 'short_text';
+    out.push({ name, type });
+  }
+  return out;
 }
 
 const NODE_TYPES = { blueprint: BlueprintNodeCard };
@@ -66,12 +96,18 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
   let autoIndex = 0;
   for (const element of elements) {
     if (element.elementType === 'edge') {
-      const props = element.properties as { edgeType?: string; sourceId?: string; targetId?: string };
+      const props = element.properties as {
+        edgeType?: string; sourceId?: string; targetId?: string; cardinality?: string; fkField?: string;
+      };
+      const isRelation = props.edgeType === 'relation';
       edges.push({
         id: element.id,
         source: String(props.sourceId ?? ''),
         target: String(props.targetId ?? ''),
-        label: String(props.edgeType ?? 'relation'),
+        // ER reading for relations: cardinality + the FK field that will hold the link.
+        label: isRelation
+          ? `${props.cardinality ?? '1:N'}${props.fkField ? ` · ${props.fkField}` : ''}`
+          : String(props.edgeType ?? 'relation'),
         animated: props.edgeType === 'triggers',
       });
       continue;
@@ -90,6 +126,7 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
         title: String((element.properties as { title?: unknown }).title ?? element.id),
         elementType: element.elementType,
         concept: element.resourceRef === null,
+        fields: sketchFields(element.properties),
       } satisfies BlueprintNodeData,
     });
   }
@@ -187,6 +224,16 @@ export function DiagramCanvas({
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target || connection.source === connection.target) return;
+      // §11A D2: connecting two FORM entities sketches an ER RELATION (1:N with a
+      // suggested FK field named after the source entity); anything involving a flow
+      // stays the 'triggers' wire. The materialiser (D3) turns relations into
+      // linked_record fields.
+      const typeOf = (id: string) => elements.find((element) => element.id === id)?.elementType;
+      const isRelation = typeOf(connection.source) === 'form' && typeOf(connection.target) === 'form';
+      const sourceTitle = String(
+        (elements.find((element) => element.id === connection.source)?.properties as { title?: unknown } | undefined)?.title ?? 'parent',
+      );
+      const fkField = sourceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'parent';
       void commit(
         [
           {
@@ -194,18 +241,40 @@ export function DiagramCanvas({
             type: 'blueprint.element.create',
             targetId: `el-${generateId()}`,
             elementType: 'edge',
-            properties: {
-              edgeType: 'triggers',
-              sourceId: connection.source,
-              targetId: connection.target,
-              state: 'concept',
-            },
+            properties: isRelation
+              ? { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, cardinality: '1:N', fkField, state: 'concept' }
+              : { edgeType: 'triggers', sourceId: connection.source, targetId: connection.target, state: 'concept' },
           },
         ],
         true,
       );
     },
-    [commit],
+    [commit, elements],
+  );
+
+  // §11A D2: double-click empty canvas = a fresh CONCEPT form entity (no resourceRef —
+  // the materialiser creates the real form later). Zoom-on-double-click is disabled so
+  // this gesture is unambiguous; double-clicks on nodes/edges don't land on the pane.
+  const reactFlow = useReactFlow();
+  const onPaneDoubleClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (!(event.target as HTMLElement).classList.contains('react-flow__pane')) return;
+      const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.create',
+            targetId: `el-${generateId()}`,
+            elementType: 'form',
+            properties: { title: 'New form', fields: [] },
+            layout: { x: Math.round(position.x), y: Math.round(position.y) },
+          },
+        ],
+        true,
+      );
+    },
+    [commit, reactFlow],
   );
 
   const onNodeDragStop = useCallback(
@@ -289,7 +358,7 @@ export function DiagramCanvas({
           Place flow
         </Button>
         <span className="mx-1 hidden text-xs text-gray-400 dark:text-slate-500 sm:inline">
-          Drag between cards to wire a <span className="font-mono">triggers</span> relationship.
+          Double-click the canvas for a new form entity; drag form→form for a relation, form→flow for a trigger.
         </span>
         <div className="ml-auto flex items-center gap-2">
           {busy && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
@@ -309,6 +378,8 @@ export function DiagramCanvas({
           onNodesChange={onNodesChange}
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
+          onDoubleClick={onPaneDoubleClick}
+          zoomOnDoubleClick={false}
           onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) =>
             setSelectedId(selectedNodes[0]?.id ?? selectedEdges[0]?.id ?? null)
           }
