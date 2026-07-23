@@ -47,17 +47,17 @@ jobs:
       E2E_EMAIL: test@example.com
       E2E_PASSWORD: password123
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.3'
           extensions: pdo, pdo_mysql, pdo_sqlite, mbstring, curl, gd, zip
           coverage: none
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: npm
@@ -95,22 +95,49 @@ jobs:
           npm ci
           npm run build
 
+      # Audit FL-32: readiness FAILS the job when the server never comes up —
+      # the old loop fell through after 30 tries and let Playwright produce 60
+      # confusing connection-refused failures instead of one clear one.
       - name: Start the app (SPA + API on one origin)
         run: |
           php -S 127.0.0.1:8080 -t formlogic/ui/dist formlogic/ci/router.php > php-server.log 2>&1 &
+          ready=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1 || curl -fsS http://127.0.0.1:8080/ >/dev/null 2>&1; then
-              echo "server up"; break
+              echo "server up"; ready=1; break
             fi
             sleep 1
           done
+          if [ "$ready" != "1" ]; then
+            echo "::error::server did not become ready within 30s"
+            cat php-server.log || true
+            exit 1
+          fi
 
+      # Audit FL-32: registration succeeds, or is the one explicit
+      # "already exists" answer — every OTHER failure (500, validation)
+      # stops the job immediately instead of limping into Playwright.
+      # The response body is logged (it carries no secrets: a typed error
+      # or the user object of the throwaway CI account).
       - name: Seed the E2E test account
         run: |
-          curl -fsS -X POST http://127.0.0.1:8080/api/auth/register \
+          status=$(curl -sS -o register-response.json -w '%{http_code}' \
+            -X POST http://127.0.0.1:8080/api/auth/register \
             -H 'Content-Type: application/json' \
-            -d '{"email":"test@example.com","password":"password123","name":"E2E Test"}' \
-            || echo "register returned non-2xx (user may already exist) — continuing"
+            -d '{"email":"test@example.com","password":"password123","name":"E2E Test"}')
+          echo "register HTTP ${status}"
+          cat register-response.json || true
+          case "$status" in
+            2??) echo "registered" ;;
+            *)
+              if grep -qi 'already' register-response.json; then
+                echo "user already exists — continuing"
+              else
+                echo "::error::registration failed with HTTP ${status}"
+                exit 1
+              fi
+              ;;
+          esac
 
       # Seed the marketplace catalog + the shared Demo account's apps (idempotent). The pack sources
       # are the committed resources/marketplace-packs/*.json, so no emit-marketplace step is needed.
@@ -133,7 +160,7 @@ jobs:
 
       - name: Upload Playwright artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: |

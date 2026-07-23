@@ -35,3 +35,40 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+
+  # Desktop (Tauri shell) — audit FL-33: both native lockfiles were previously
+  # uncovered by any update automation. Monthly + grouped keeps PR volume low.
+  - package-ecosystem: npm
+    directory: /formlogic/desktop
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      desktop-npm-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: cargo
+    directory: /formlogic/desktop/src-tauri
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      desktop-cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # Native runtime (Tauri desktop/Android surface) — audit FL-33.
+  - package-ecosystem: npm
+    directory: /formlogic/native-runtime
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      native-npm-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: cargo
+    directory: /formlogic/native-runtime/src-tauri
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      native-cargo-minor-patch:
+        update-types: [minor, patch]
