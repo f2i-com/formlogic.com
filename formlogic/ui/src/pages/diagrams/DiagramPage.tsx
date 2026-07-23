@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
-import { ArrowLeft, Loader2, Map as MapIcon } from 'lucide-react';
+import { ArrowLeft, History, Loader2, Map as MapIcon, Sparkles, User as UserIcon, Wand2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import type { Blueprint } from '../../types/blueprints';
@@ -15,6 +15,7 @@ export default function DiagramPage() {
   const [diagram, setDiagram] = useState<Blueprint | null>(null);
   const [missing, setMissing] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const load = useCallback(async () => {
     if (!diagramId) return;
@@ -50,6 +51,17 @@ export default function DiagramPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
           Diagrams
         </Link>
+        <button
+          type="button"
+          onClick={() => setShowHistory((open) => !open)}
+          title="Build timeline"
+          aria-label="Toggle the build timeline"
+          aria-pressed={showHistory}
+          className="order-last ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <History className="h-3.5 w-3.5" />
+          Timeline
+        </button>
         <span className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
           <MapIcon className="h-4 w-4 flex-none text-primary-600 dark:text-primary-300" />
           {diagram && renaming ? (
@@ -84,7 +96,11 @@ export default function DiagramPage() {
           )}
         </span>
       </div>
-      <div className="min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
+      <div className="flex min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
+        {diagram && showHistory && (
+          <BuildTimeline blueprintId={diagram.id} semanticRevision={diagram.semanticRevision} />
+        )}
+        <div className="min-h-0 min-w-0 flex-1">
         {diagram ? (
           <ReactFlowProvider>
             <DiagramCanvas
@@ -109,7 +125,77 @@ export default function DiagramPage() {
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
+  );
+}
+
+/** One short line per operation ("added 2 elements", …) for the timeline rows. */
+function summarizeOps(operations: Array<{ type: string; targetId: string | null }>): string {
+  const counts: Record<string, number> = {};
+  for (const op of operations) {
+    if (op.type.startsWith('undo-of:')) return 'Undid an earlier change';
+    const key = op.type === 'blueprint.element.create'
+      ? 'added'
+      : op.type === 'blueprint.element.update'
+        ? 'updated'
+        : op.type === 'blueprint.element.delete'
+          ? 'removed'
+          : 'arranged';
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  const parts = Object.entries(counts).map(([verb, n]) => `${verb} ${n} element${n === 1 ? '' : 's'}`);
+  return parts.length > 0 ? parts.join(', ') : 'No changes';
+}
+
+/**
+ * §11B O3 — the Build Timeline: every AI and manual action is already an audited
+ * operation, so this is a read-only projection of the shared command stream. Copilot
+ * batches wear a sparkle, the launcher a wand, your own edits a person.
+ */
+function BuildTimeline({ blueprintId, semanticRevision }: { blueprintId: string; semanticRevision: number }) {
+  const [history, setHistory] = useState<Array<{
+    changeSetId: string; origin: string; createdAt: string;
+    semanticRevision: number | null; operations: Array<{ type: string; targetId: string | null }>;
+  }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void api.listBlueprintHistory(blueprintId).then((res) => {
+      if (!cancelled) setHistory(res.data?.history ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [blueprintId, semanticRevision]);
+
+  return (
+    <aside className="scrollbar-thin w-64 flex-none overflow-y-auto border-r border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Build timeline</p>
+      {history.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500">No changes yet — every edit (yours and the AI's) lands here.</p>
+      ) : (
+        <ol className="space-y-2">
+          {history.map((entry) => (
+            <li key={entry.changeSetId} className="rounded-lg border border-gray-100 px-2.5 py-2 dark:border-slate-800">
+              <p className="flex items-center gap-1.5 text-[11px] font-medium text-gray-700 dark:text-slate-200">
+                {entry.origin === 'copilot' ? (
+                  <Sparkles className="h-3 w-3 flex-none text-primary-500" />
+                ) : entry.origin === 'launcher' ? (
+                  <Wand2 className="h-3 w-3 flex-none text-primary-500" />
+                ) : (
+                  <UserIcon className="h-3 w-3 flex-none text-gray-400" />
+                )}
+                {summarizeOps(entry.operations)}
+              </p>
+              <p className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500">
+                {entry.createdAt}
+                {entry.semanticRevision !== null ? ` · rev ${entry.semanticRevision}` : ''}
+              </p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </aside>
   );
 }

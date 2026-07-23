@@ -2770,6 +2770,16 @@ class ApiClient {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
   }
 
+  /** §11B O3 Build Timeline: the audited operation log grouped by change set, newest first. */
+  async listBlueprintHistory(blueprintId: string, limit = 30): Promise<ApiResponse<{
+    history: Array<{
+      changeSetId: string; origin: string; actorUserId: string | null; createdAt: string;
+      semanticRevision: number | null; operations: Array<{ type: string; targetId: string | null }>;
+    }>;
+  }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/history?limit=${limit}`);
+  }
+
   /** §14 undo: apply the newest change set's stored inverses as a new audited batch. */
   async undoBlueprint(blueprintId: string): Promise<ApiResponse<import('../types/blueprints').BlueprintCommitResult & { undid: string }>> {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/undo`, { method: 'POST' });

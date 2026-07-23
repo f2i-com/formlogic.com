@@ -389,6 +389,57 @@ class BlueprintService
         return $result + ['undid' => (string) $changeSetId];
     }
 
+    /**
+     * §11B O3 Build Timeline: the audited operation log grouped into change sets,
+     * newest first. Every AI and manual action is already an operation row — this is
+     * a read-only projection of what both actors did, in one stream.
+     *
+     * @return array[] [{changeSetId, origin, actorUserId, createdAt, semanticRevision, operations: [{type, targetId}]}]
+     */
+    public function listHistory(string $ownerUserId, string $blueprintId, int $limit = 30): array
+    {
+        if ($this->ownedRow($ownerUserId, $blueprintId) === null) {
+            return [];
+        }
+        $limit = max(1, min(100, $limit));
+        $stmt = $this->mysql->prepare("
+            SELECT change_set_id, op_type, target_id, origin, actor_user_id, semantic_revision, created_at
+            FROM blueprint_operations
+            WHERE blueprint_id = :b
+            ORDER BY id DESC
+            LIMIT " . ($limit * 10) . '
+        ');
+        $stmt->execute(['b' => $blueprintId]);
+        $sets = [];
+        $order = [];
+        foreach ($stmt->fetchAll() as $op) {
+            $cs = (string) $op['change_set_id'];
+            if (!isset($sets[$cs])) {
+                if (count($order) >= $limit) {
+                    continue;
+                }
+                $sets[$cs] = [
+                    'changeSetId' => $cs,
+                    'origin' => (string) $op['origin'],
+                    'actorUserId' => $op['actor_user_id'] !== null ? (string) $op['actor_user_id'] : null,
+                    'createdAt' => (string) $op['created_at'],
+                    'semanticRevision' => $op['semantic_revision'] !== null ? (int) $op['semantic_revision'] : null,
+                    'operations' => [],
+                ];
+                $order[] = $cs;
+            }
+            $sets[$cs]['operations'][] = [
+                'type' => (string) $op['op_type'],
+                'targetId' => $op['target_id'] !== null ? (string) $op['target_id'] : null,
+            ];
+        }
+        // Rows arrived newest-first; present each set's operations oldest-first.
+        return array_map(static function (array $set): array {
+            $set['operations'] = array_reverse($set['operations']);
+            return $set;
+        }, array_map(static fn (string $cs) => $sets[$cs], $order));
+    }
+
     /** @return array<string, mixed> */
     private function loadProposed(string $ownerUserId, string $blueprintId, string $changeSetId): array
     {

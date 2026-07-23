@@ -96,6 +96,19 @@ class BlueprintController
         return $this->jsonResponse($response, ['deleted' => true]);
     }
 
+    /** §11B O3: the Build Timeline — the audited operation log grouped by change set. */
+    public function history(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $limit = (int) ($request->getQueryParams()['limit'] ?? 30);
+        return $this->jsonResponse($response, [
+            'history' => $this->blueprints->listHistory((string) $userId, (string) ($args['blueprintId'] ?? ''), $limit),
+        ]);
+    }
+
     /** §14 undo: apply the newest change set's stored inverses as a new audited batch. */
     public function undo(Request $request, Response $response, array $args): Response
     {
