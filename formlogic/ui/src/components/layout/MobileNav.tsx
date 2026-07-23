@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Plus, Boxes, Workflow, Plug, FilePlus2 } from 'lucide-react';
+import { LayoutDashboard, FileText, Plus, Boxes, Workflow, Plug, FilePlus2, Map as MapIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { api } from '../../lib/api';
 import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 import { useAuthStore } from '../../stores/authStore';
 import { ConnectAiModal } from '../mcp/ConnectAiModal';
@@ -39,6 +40,13 @@ export function MobileNav() {
     // ?new=1 tells the flows workspace to open the New-flow dialog immediately.
     navigate('/flows?new=1');
   };
+  const handleNewDiagram = () => {
+    closeMenu();
+    // §11A: same entry as the Dashboard's "Start with a diagram" — create and land on it.
+    void api.createBlueprint({ name: 'Untitled diagram' }).then((res) => {
+      if (res.data?.blueprint) navigate(`/diagrams/${res.data.blueprint.id}`);
+    });
+  };
   const handleHandToAi = () => {
     closeMenu();
     setShowHandToAi(true);
@@ -70,6 +78,7 @@ export function MobileNav() {
           className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] left-1/2 z-[60] w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl border border-gray-200/80 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-scale-in dark:border-slate-800 dark:bg-slate-900 dark:ring-white/[0.06] md:hidden"
         >
           <QuickMenuItem icon={FilePlus2} label="New form" onClick={handleNewForm} />
+          {!isDemo && <QuickMenuItem icon={MapIcon} label="New diagram" onClick={handleNewDiagram} />}
           <QuickMenuItem icon={Boxes} label="New app" onClick={handleNewApp} />
           <QuickMenuItem icon={Workflow} label="New flow" onClick={handleNewFlow} />
           <QuickMenuItem icon={Plug} label="Connect an AI" onClick={handleHandToAi} />
