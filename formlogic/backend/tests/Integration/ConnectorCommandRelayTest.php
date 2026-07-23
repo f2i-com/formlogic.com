@@ -454,8 +454,8 @@ class ConnectorCommandRelayTest extends TestCase
         self::$commands->expireStale($this->ownerId);
         $this->assertSame('claimed', $this->read($this->ownerId, $id)['body']['command']['status']);
 
-        // ...and can still be completed normally.
-        $this->assertSame(200, $this->complete($id, ['status' => 'done'])['status']);
+        // ...and can still be completed normally (by its claimant — audit FL-01).
+        $this->assertSame(200, $this->complete($id, ['status' => 'done', 'instanceId' => 'desk-1'])['status']);
     }
 
     public function testClaimedCommandPastExpiresAtButRecentlyClaimedIsNeverReaped(): void
@@ -474,8 +474,8 @@ class ConnectorCommandRelayTest extends TestCase
         $this->assertSame('claimed', $this->read($this->ownerId, $id)['body']['command']['status'],
             'a claimed row must never be reaped merely because its creation-anchored expires_at passed');
 
-        // The legitimate, slightly-delayed completion must still succeed.
-        $this->assertSame(200, $this->complete($id, ['status' => 'done'])['status']);
+        // The legitimate, slightly-delayed completion (by its claimant) must still succeed.
+        $this->assertSame(200, $this->complete($id, ['status' => 'done', 'instanceId' => 'desk-1'])['status']);
     }
 
     public function testGlobalExpireStaleSweepsClaimedRowsAcrossOwners(): void

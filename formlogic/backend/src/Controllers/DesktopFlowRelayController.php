@@ -160,6 +160,29 @@ class DesktopFlowRelayController
     // ── Desktop surface (flk_ key; userId == owner; scope flows:relay or connector:relay) ──
 
     /**
+     * Server-derived caller identity for the desktop surface (audit FL-01): the API key's
+     * connection binding is the authority — a claimed instanceId that belongs to a sibling
+     * key is refused BEFORE any service call. @return array{0: ?string, 1: ?Response}
+     */
+    private function resolveCallerInstance(Request $request, Response $response, string $ownerUserId, ?string $claimed): array
+    {
+        $apiKeyId = $request->getAttribute('apiKeyId');
+        try {
+            $resolved = $this->commands->resolveDesktopIdentity(
+                $ownerUserId,
+                is_string($apiKeyId) && $apiKeyId !== '' ? $apiKeyId : null,
+                $claimed
+            );
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'instance_mismatch') {
+                return [null, $this->jsonError($response, 'This desktop instance identity belongs to a different API key', 403, 'instance_mismatch')];
+            }
+            throw $e;
+        }
+        return [$resolved, null];
+    }
+
+    /**
      * GET /api/v1/desktop-flows/pending?instanceId=&wait=<ms>&since= — long-poll the lane.
      * A targeted run is visible only to its target instance; untargeted rows fan out.
      */
@@ -173,7 +196,11 @@ class DesktopFlowRelayController
         $since = isset($q['since']) && $q['since'] !== '' ? (string) $q['since'] : null;
         $wait = (int) ($q['wait'] ?? 0);
         $limit = (int) ($q['limit'] ?? 50);
-        $instanceId = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        $claimed = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        [$instanceId, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         $requests = $this->relay->pollPending((string) $userId, $since, $wait, $limit, $instanceId);
         return $this->jsonResponse($response, ['requests' => $requests]);
     }
@@ -185,8 +212,17 @@ class DesktopFlowRelayController
         if ($err !== null) {
             return $err;
         }
+        $body = $request->getParsedBody() ?? [];
+        $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;
+        [$resolvedInstance, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        if (is_array($body)) {
+            $body['instanceId'] = $resolvedInstance;
+        }
         try {
-            $req = $this->relay->claim((string) ($args['id'] ?? ''), (string) $userId, $request->getParsedBody() ?? []);
+            $req = $this->relay->claim((string) ($args['id'] ?? ''), (string) $userId, is_array($body) ? $body : []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         } catch (\RuntimeException $e) {
@@ -213,9 +249,13 @@ class DesktopFlowRelayController
         }
         $body = $request->getParsedBody() ?? [];
         $envelope = is_array($body) && is_string($body['envelope'] ?? null) ? (string) $body['envelope'] : '';
-        $instanceId = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== ''
+        $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== ''
             ? (string) $body['instanceId']
             : null;
+        [$instanceId, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         try {
             $result = $this->relay->appendFrame((string) ($args['id'] ?? ''), (string) $userId, $envelope, $instanceId);
         } catch (\InvalidArgumentException $e) {
@@ -243,8 +283,17 @@ class DesktopFlowRelayController
         if ($err !== null) {
             return $err;
         }
+        $body = $request->getParsedBody() ?? [];
+        $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;
+        [$resolvedInstance, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        if (is_array($body)) {
+            $body['instanceId'] = $resolvedInstance;
+        }
         try {
-            $req = $this->relay->complete((string) ($args['id'] ?? ''), (string) $userId, $request->getParsedBody() ?? []);
+            $req = $this->relay->complete((string) ($args['id'] ?? ''), (string) $userId, is_array($body) ? $body : []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         } catch (\RuntimeException $e) {

@@ -232,7 +232,7 @@ class FlowWorkspaceQueueTest extends TestCase
         $this->assertNull(self::$flows->claimOwnerRun($this->userB, $run['runId'], ['runtime' => 'browser']));
 
         // The claimer completes it through the owner-scoped PATCH path.
-        $done = self::$flows->completeOwnerRun($this->userA, $run['runId'], ['status' => 'done', 'result' => ['ok' => true]]);
+        $done = self::$flows->completeOwnerRun($this->userA, $run['runId'], ['status' => 'done', 'result' => ['ok' => true], 'instanceId' => 'desk-1']);
         $this->assertSame('done', $done['status']);
     }
 

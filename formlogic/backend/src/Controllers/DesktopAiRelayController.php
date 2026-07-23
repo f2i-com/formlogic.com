@@ -206,6 +206,29 @@ class DesktopAiRelayController
     // ── Desktop surface (flk_ key; userId == owner; scope ai:relay or connector:relay) ────
 
     /**
+     * Server-derived caller identity for the desktop surface (audit FL-01): the API key's
+     * connection binding is the authority — a claimed instanceId that belongs to a sibling
+     * key is refused BEFORE any service call. @return array{0: ?string, 1: ?Response}
+     */
+    private function resolveCallerInstance(Request $request, Response $response, string $ownerUserId, ?string $claimed): array
+    {
+        $apiKeyId = $request->getAttribute('apiKeyId');
+        try {
+            $resolved = $this->commands->resolveDesktopIdentity(
+                $ownerUserId,
+                is_string($apiKeyId) && $apiKeyId !== '' ? $apiKeyId : null,
+                $claimed
+            );
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'instance_mismatch') {
+                return [null, $this->jsonError($response, 'This desktop instance identity belongs to a different API key', 403, 'instance_mismatch')];
+            }
+            throw $e;
+        }
+        return [$resolved, null];
+    }
+
+    /**
      * POST /api/v1/desktop-ai/pubkey {instanceId, publicKey} — publish/rotate the desktop's
      * long-term X25519 public key (plan §5.1: on boot when absent). The instance must already
      * have a connection row (the desktop heartbeats first).
@@ -226,6 +249,14 @@ class DesktopAiRelayController
         if ($decoded === false || strlen($decoded) !== 32 || strlen($publicKey) > 88) {
             return $this->jsonError($response, 'publicKey must be a base64-encoded 32-byte X25519 public key', 400);
         }
+        // Audit FL-01: only the key BOUND to this instance may publish/rotate its E2E
+        // public key — a sibling key rotating another install's key would let it read
+        // that install's sealed traffic.
+        [$resolvedInstance, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $instanceId);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        $instanceId = $resolvedInstance ?? $instanceId;
         if (!$this->relay->publishPubkey((string) $userId, $instanceId, $publicKey)) {
             return $this->jsonError($response, 'Unknown desktop instance — heartbeat the connection first', 404, 'unknown_desktop_instance');
         }
@@ -246,7 +277,11 @@ class DesktopAiRelayController
         $since = isset($q['since']) && $q['since'] !== '' ? (string) $q['since'] : null;
         $wait = (int) ($q['wait'] ?? 0);
         $limit = (int) ($q['limit'] ?? 50);
-        $instanceId = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        $claimed = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        [$instanceId, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         $requests = $this->relay->pollPending((string) $userId, $since, $wait, $limit, $instanceId);
         return $this->jsonResponse($response, ['requests' => $requests]);
     }
@@ -258,8 +293,17 @@ class DesktopAiRelayController
         if ($err !== null) {
             return $err;
         }
+        $body = $request->getParsedBody() ?? [];
+        $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;
+        [$resolvedInstance, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        if (is_array($body)) {
+            $body['instanceId'] = $resolvedInstance;
+        }
         try {
-            $req = $this->relay->claim((string) ($args['id'] ?? ''), (string) $userId, $request->getParsedBody() ?? []);
+            $req = $this->relay->claim((string) ($args['id'] ?? ''), (string) $userId, is_array($body) ? $body : []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         } catch (\RuntimeException $e) {
@@ -286,9 +330,13 @@ class DesktopAiRelayController
         }
         $body = $request->getParsedBody() ?? [];
         $envelope = is_array($body) && is_string($body['envelope'] ?? null) ? (string) $body['envelope'] : '';
-        $instanceId = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== ''
+        $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== ''
             ? (string) $body['instanceId']
             : null;
+        [$instanceId, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         try {
             $result = $this->relay->appendFrame((string) ($args['id'] ?? ''), (string) $userId, $envelope, $instanceId);
         } catch (\InvalidArgumentException $e) {
@@ -314,7 +362,11 @@ class DesktopAiRelayController
         }
         $q = $request->getQueryParams();
         $since = (int) ($q['since'] ?? 0);
-        $instanceId = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        $claimed = isset($q['instanceId']) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        [$instanceId, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         try {
             $result = $this->relay->fetchInput((string) ($args['id'] ?? ''), (string) $userId, $since, $instanceId);
         } catch (\RuntimeException $e) {
@@ -336,8 +388,17 @@ class DesktopAiRelayController
         if ($err !== null) {
             return $err;
         }
+        $body = $request->getParsedBody() ?? [];
+        $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;
+        [$resolvedInstance, $identityError] = $this->resolveCallerInstance($request, $response, (string) $userId, $claimed);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        if (is_array($body)) {
+            $body['instanceId'] = $resolvedInstance;
+        }
         try {
-            $req = $this->relay->complete((string) ($args['id'] ?? ''), (string) $userId, $request->getParsedBody() ?? []);
+            $req = $this->relay->complete((string) ($args['id'] ?? ''), (string) $userId, is_array($body) ? $body : []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         } catch (\RuntimeException $e) {

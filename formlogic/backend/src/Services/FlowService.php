@@ -1376,11 +1376,11 @@ class FlowService
      *   \RuntimeException('already_finalized') — the run is already terminal (controller → 409),
      *   \RuntimeException('claimed_elsewhere') — a DIFFERENT instance claimed this run (→ 409).
      *
-     * Claimant binding (audit FL-AUTH-001): a CLAIMED run (claimed_by set at claim time) may
-     * only be completed by a caller presenting the same instanceId. A completion that omits
-     * instanceId is still accepted (already-deployed runtimes never sent one — rejecting them
-     * would silently lose results, because their complete() swallows 409 as success), but every
-     * current client sends it, so two live claim loops can no longer stomp each other's lease.
+     * Claimant binding (audit FL-AUTH-001, hardened per audit FL-01): a CLAIMED run
+     * (claimed_by set at claim time) may ONLY be completed by a caller presenting the same
+     * instanceId — omitting it no longer bypasses the lease. Queued, never-claimed work is
+     * not completable either: a runtime claims (queued→running) before it may finalise, so
+     * a bare run UUID can't be used to terminate work some other runtime owns.
      */
     public function completeRun(string $appId, string $runId, array $data): ?array
     {
@@ -1399,8 +1399,8 @@ class FlowService
             $stmt = $this->mysql->prepare("
                 UPDATE flow_run_logs
                 SET status = :s, result_json = :result, error_json = :error, output_actions_json = :actions, finished_at = NOW()
-                WHERE id = :id AND app_id = :a AND status IN ('running', 'queued')
-                  AND (claimed_by IS NULL OR :cb1 IS NULL OR claimed_by = :cb2)
+                WHERE id = :id AND app_id = :a AND status = 'running'
+                  AND (claimed_by IS NULL OR (:cb1 IS NOT NULL AND claimed_by = :cb2))
             ");
             $stmt->execute([
                 's' => $clean['status'],
@@ -1466,8 +1466,8 @@ class FlowService
                 JOIN flow_definitions f ON f.id = r.flow_definition_id
                 SET r.status = :s, r.result_json = :result, r.error_json = :error,
                     r.output_actions_json = :actions, r.finished_at = NOW()
-                WHERE r.id = :id AND f.owner_user_id = :o AND r.status IN ('running', 'queued')
-                  AND (r.claimed_by IS NULL OR :cb1 IS NULL OR r.claimed_by = :cb2)
+                WHERE r.id = :id AND f.owner_user_id = :o AND r.status = 'running'
+                  AND (r.claimed_by IS NULL OR (:cb1 IS NOT NULL AND r.claimed_by = :cb2))
             ");
             $stmt->execute([
                 's' => $clean['status'],
@@ -2839,12 +2839,27 @@ class FlowService
         // ('oauth-…' synthetic instance id) for the same key before the desktop's
         // first real heartbeat; absorb it here (one install = ONE row, ghost-free)
         // instead of accumulating a sibling that would trip ambiguity resolution.
+        //
+        // BIND-ONCE (audit FL-01): an instance already bound to a DIFFERENT active key
+        // refuses the heartbeat — a sibling key under the same account must never
+        // re-bind (impersonate) another install's identity. Unbound legacy rows bind
+        // exactly once on their next keyed heartbeat.
         if ($apiKeyId !== null) {
             $existing = $this->mysql->prepare(
-                "SELECT id FROM desktop_connections WHERE owner_user_id = :o AND desktop_instance_id = :i"
+                "SELECT id, api_key_id FROM desktop_connections WHERE owner_user_id = :o AND desktop_instance_id = :i"
             );
             $existing->execute(['o' => $userId, 'i' => $instanceId]);
-            if ($existing->fetch() === false) {
+            $existingRow = $existing->fetch();
+            if (
+                $existingRow !== false
+                && $existingRow['api_key_id'] !== null
+                && (string) $existingRow['api_key_id'] !== $apiKeyId
+            ) {
+                throw new \InvalidArgumentException(
+                    'This desktop instance is bound to a different API key — unlink it in Settings before re-pairing'
+                );
+            }
+            if ($existingRow === false) {
                 $absorb = $this->mysql->prepare("
                     UPDATE desktop_connections
                     SET desktop_instance_id = :i, device_name = :name,
@@ -2939,6 +2954,16 @@ class FlowService
         $find->execute(['id' => $id]);
         $row = $find->fetch();
         return $row ? $this->formatDesktopConnection($row) : throw new \RuntimeException('Desktop connection creation failed');
+    }
+
+    /**
+     * Delegates to the ONE FL-01 identity contract — see
+     * DesktopCommandService::resolveDesktopIdentity for the full rules.
+     * @throws \RuntimeException 'instance_mismatch' on an impersonation attempt
+     */
+    public function resolveDesktopIdentity(string $ownerUserId, ?string $apiKeyId, ?string $claimedInstanceId): ?string
+    {
+        return DesktopCommandService::resolveDesktopIdentityWithPdo($this->mysql, $ownerUserId, $apiKeyId, $claimedInstanceId);
     }
 
     /** @return array[] */

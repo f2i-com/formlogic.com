@@ -542,6 +542,38 @@ class FlowController
         return $this->jsonResponse($response, $result);
     }
 
+    /**
+     * Server-derived caller identity for the owner-run surface (audit FL-01): when the call
+     * rides an API key, the key's desktop-connection binding is the authority — a claimed
+     * instanceId that belongs to a sibling key is refused. Session callers (browser tabs)
+     * pass through untouched. @return array{0: array, 1: ?Response} [body, errorResponse]
+     */
+    private function bindOwnerRunIdentity(Request $request, Response $response, string $userId): array
+    {
+        $body = $request->getParsedBody() ?? [];
+        if (!is_array($body)) {
+            $body = [];
+        }
+        $claimed = is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;
+        $apiKeyId = $request->getAttribute('apiKeyId');
+        if (!is_string($apiKeyId) || $apiKeyId === '') {
+            return [$body, null];
+        }
+        try {
+            $body['instanceId'] = $this->flows->resolveDesktopIdentity($userId, $apiKeyId, $claimed);
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'instance_mismatch') {
+                return [$body, $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'instance_mismatch',
+                    'message' => 'This desktop instance identity belongs to a different API key',
+                ], 403)];
+            }
+            throw $e;
+        }
+        return [$body, null];
+    }
+
     /** Claim a queued run (queued→running exactly once): 200 {run, claimed:true} | 409 when taken. */
     public function claimOwnerRun(Request $request, Response $response, array $args): Response
     {
@@ -549,8 +581,12 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
+        [$body, $identityError] = $this->bindOwnerRunIdentity($request, $response, (string) $userId);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         try {
-            $run = $this->flows->claimOwnerRun($userId, (string) ($args['runId'] ?? ''), $request->getParsedBody() ?? []);
+            $run = $this->flows->claimOwnerRun($userId, (string) ($args['runId'] ?? ''), $body);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {
@@ -572,8 +608,12 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
+        [$body, $identityError] = $this->bindOwnerRunIdentity($request, $response, (string) $userId);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         try {
-            $run = $this->flows->completeOwnerRun($userId, (string) ($args['runId'] ?? ''), $request->getParsedBody() ?? []);
+            $run = $this->flows->completeOwnerRun($userId, (string) ($args['runId'] ?? ''), $body);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {

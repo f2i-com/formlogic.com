@@ -427,9 +427,10 @@ class DesktopFlowRelayService
                 $this->mysql->rollBack();
                 throw new \RuntimeException('not_found');
             }
+            // Claimant binding is ALWAYS enforced (audit FL-01): an identity-claimed run may
+            // only be streamed to by that identity — an anonymous append no longer bypasses.
             if (
-                $instanceId !== null
-                && in_array($row['status'] ?? '', ['claimed', 'streaming'], true)
+                in_array($row['status'] ?? '', ['claimed', 'streaming'], true)
                 && ($row['claimed_by'] ?? null) !== null
                 && $row['claimed_by'] !== $instanceId
             ) {
@@ -526,21 +527,19 @@ class DesktopFlowRelayService
             $resultBytes = $decoded;
         }
 
-        // Claimant binding (same rule as the AI lane): when the completer identifies itself,
-        // it must be the SAME instance that claimed the run. The envelope is nulled by the
-        // same UPDATE so terminal rows never retain the request body.
-        $claimantSql = $instanceId !== null ? ' AND (claimed_by IS NULL OR claimed_by = :cb)' : '';
-        $params = ['s' => $status, 'result' => $resultBytes, 'id' => $id, 'o' => $ownerUserId];
-        if ($instanceId !== null) {
-            $params['cb'] = $instanceId;
-        }
+        // Claimant binding is ALWAYS enforced (audit FL-01, same rule as the AI lane): an
+        // identity-claimed run may only be completed by that identity — omitting instanceId
+        // no longer bypasses. The envelope is nulled by the same UPDATE so terminal rows
+        // never retain the request body.
+        $params = ['s' => $status, 'result' => $resultBytes, 'id' => $id, 'o' => $ownerUserId, 'cb1' => $instanceId, 'cb2' => $instanceId];
 
         $this->mysql->beginTransaction();
         try {
             $stmt = $this->mysql->prepare("
                 UPDATE desktop_flow_runs
                 SET status = :s, envelope = NULL, result_envelope = :result, finished_at = NOW()
-                WHERE id = :id AND owner_user_id = :o AND status IN ('claimed', 'streaming'){$claimantSql}
+                WHERE id = :id AND owner_user_id = :o AND status IN ('claimed', 'streaming')
+                  AND (claimed_by IS NULL OR (:cb1 IS NOT NULL AND claimed_by = :cb2))
             ");
             $stmt->execute($params);
             if ($stmt->rowCount() === 0) {
@@ -550,8 +549,7 @@ class DesktopFlowRelayService
                     return null;
                 }
                 if (
-                    $instanceId !== null
-                    && in_array($existing['status'] ?? '', ['claimed', 'streaming'], true)
+                    in_array($existing['status'] ?? '', ['claimed', 'streaming'], true)
                     && ($existing['claimedBy'] ?? null) !== null
                     && $existing['claimedBy'] !== $instanceId
                 ) {

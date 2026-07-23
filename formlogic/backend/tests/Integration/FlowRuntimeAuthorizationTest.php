@@ -314,17 +314,38 @@ class FlowRuntimeAuthorizationTest extends TestCase
         $formRun = $this->reserveQueued($this->formId);
         $slugArgs = ['slug' => $this->slug];
 
-        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), ['status' => 'done']);
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), ['status' => 'done', 'instanceId' => 'tab-x']);
         $this->assertSame(404, $code, 'an invisible run must not be completable');
 
         $row = self::$pdo->prepare('SELECT status FROM flow_run_logs WHERE id = ?');
         $row->execute([$formRun['runId']]);
         $this->assertSame('queued', $row->fetchColumn(), 'the hidden run must be untouched');
 
-        // Granting form visibility opens completion (the authorized path keeps working).
+        // Granting form visibility opens the normal claim → complete path (audit FL-01:
+        // queued, never-claimed work is not directly completable).
         $this->grant($this->roleId, 'view_all_responses', $this->formId);
-        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), ['status' => 'done']);
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), [
+            'runtime' => 'browser', 'instanceId' => 'tab-x',
+        ]);
         $this->assertSame(200, $code);
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $formRun['runId']]), ['status' => 'done', 'instanceId' => 'tab-x']);
+        $this->assertSame(200, $code);
+    }
+
+    public function testQueuedNeverClaimedRunCannotBeCompleted(): void
+    {
+        // Audit FL-01: a bare run UUID must not terminate work no runtime owns yet —
+        // queued rows must be CLAIMED (queued→running) before they can be finalised.
+        $this->grant($this->roleId, 'execute_flows');
+        $run = $this->reserveQueued();
+        $slugArgs = ['slug' => $this->slug];
+
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $run['runId']]), ['status' => 'done', 'instanceId' => 'tab-q']);
+        $this->assertSame(409, $code, 'queued, never-claimed work is not completable');
+
+        $row = self::$pdo->prepare('SELECT status FROM flow_run_logs WHERE id = ?');
+        $row->execute([$run['runId']]);
+        $this->assertSame('queued', $row->fetchColumn());
     }
 
     // ── Claimant-bound completion ───────────────────────────────────────────────────────────
@@ -361,10 +382,11 @@ class FlowRuntimeAuthorizationTest extends TestCase
         $this->assertArrayNotHasKey('code', $payload);
     }
 
-    public function testLegacyCompletionWithoutInstanceIdStillLands(): void
+    public function testOmittedInstanceIdNeverBypassesTheClaimantLease(): void
     {
-        // Already-deployed runtimes never sent instanceId and swallow 409 as success —
-        // rejecting them would silently lose results, so an omitted instanceId is accepted.
+        // Audit FL-01 (reverses the earlier legacy allowance): a run claimed WITH an
+        // identity may only be completed by that identity — omitting instanceId is no
+        // longer a bypass. Runs claimed WITHOUT an identity stay completable (legacy).
         $this->grant($this->roleId, 'execute_flows');
         $run = $this->reserveQueued();
         $slugArgs = ['slug' => $this->slug];
@@ -372,7 +394,24 @@ class FlowRuntimeAuthorizationTest extends TestCase
         $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $slugArgs + ['runId' => $run['runId']]), [
             'runtime' => 'browser', 'instanceId' => 'tab-a',
         ]);
+        [$code, $payload] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $run['runId']]), [
+            'status' => 'done',
+        ]);
+        $this->assertSame(409, $code, 'an anonymous completion must not bypass the lease');
+        $this->assertSame('claimed_elsewhere', $payload['code'] ?? null);
+
+        // The claimant still lands normally.
         [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $run['runId']]), [
+            'status' => 'done', 'instanceId' => 'tab-a',
+        ]);
+        $this->assertSame(200, $code);
+
+        // A run claimed WITHOUT an identity (legacy runtimes) remains completable.
+        $legacy = $this->reserveQueued();
+        $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $slugArgs + ['runId' => $legacy['runId']]), [
+            'runtime' => 'browser',
+        ]);
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $legacy['runId']]), [
             'status' => 'done',
         ]);
         $this->assertSame(200, $code);

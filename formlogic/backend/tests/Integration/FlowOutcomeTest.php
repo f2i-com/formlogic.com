@@ -273,6 +273,8 @@ class FlowOutcomeTest extends TestCase
 
         // Handler A itself FAILS: its own binding must not re-trigger (self-loop guard),
         // and handler B must not fire again within the same root (§9.2 pair dedupe).
+        // Queued handler runs are claimed before completion (audit FL-01).
+        self::$flows->claimRun($this->appId, $aRuns[0]['id'], ['runtime' => 'browser']);
         self::$flows->completeRun($this->appId, $aRuns[0]['id'], [
             'status' => 'error',
             'error' => ['code' => 'node_failed', 'message' => 'handler broke too'],

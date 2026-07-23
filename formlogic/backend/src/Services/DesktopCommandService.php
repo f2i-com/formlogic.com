@@ -385,18 +385,16 @@ class DesktopCommandService
             $errorJson = $json;
         }
 
-        // The claimant filter applies only when the completer identifies itself AND the
-        // claim recorded an identity — legacy desktops (no instanceId on either side)
-        // keep working unchanged.
-        $claimantSql = $instanceId !== null ? ' AND (claimed_by IS NULL OR claimed_by = :cb)' : '';
-        $params = ['s' => $status, 'result' => $resultJson, 'error' => $errorJson, 'id' => $id, 'o' => $ownerUserId];
-        if ($instanceId !== null) {
-            $params['cb'] = $instanceId;
-        }
+        // Claimant binding is ALWAYS enforced (audit FL-01): a command claimed WITH an
+        // identity may only be completed by that identity — omitting instanceId no longer
+        // bypasses the check. Rows claimed without one (legacy) stay completable by anyone
+        // holding the owner's key until the one-time key binding upgrades them.
+        $params = ['s' => $status, 'result' => $resultJson, 'error' => $errorJson, 'id' => $id, 'o' => $ownerUserId, 'cb1' => $instanceId, 'cb2' => $instanceId];
         $stmt = $this->mysql->prepare("
             UPDATE desktop_commands
             SET status = :s, result_json = :result, error_json = :error, finished_at = NOW()
-            WHERE id = :id AND owner_user_id = :o AND status = 'claimed'{$claimantSql}
+            WHERE id = :id AND owner_user_id = :o AND status = 'claimed'
+              AND (claimed_by IS NULL OR (:cb1 IS NOT NULL AND claimed_by = :cb2))
         ");
         $stmt->execute($params);
 
@@ -406,8 +404,7 @@ class DesktopCommandService
                 return null;
             }
             if (
-                $instanceId !== null
-                && ($existing['status'] ?? '') === 'claimed'
+                ($existing['status'] ?? '') === 'claimed'
                 && ($existing['claimedBy'] ?? null) !== null
                 && $existing['claimedBy'] !== $instanceId
             ) {
@@ -416,6 +413,60 @@ class DesktopCommandService
             throw new \RuntimeException('not_claimed');
         }
         return $this->get($id, $ownerUserId);
+    }
+
+    /**
+     * Server-derived desktop identity (audit FL-01). The desktop_connections row BOUND to
+     * the authenticated API key is the authority for "which install is calling":
+     *   - key bound to a real instance → that instance; a DIFFERENT claimed id is refused
+     *     (a sibling key under the same account can never impersonate another install);
+     *   - any key claiming an instance whose row is bound to ANOTHER key → refused;
+     *   - unbound key + unbound/unknown claim → the claim passes through (legacy
+     *     hand-entered keys; the next api-key heartbeat binds the row once).
+     * 'oauth-…' placeholder rows (minted at link time, absorbed by the first heartbeat)
+     * are synthetic and never authoritative for derivation.
+     *
+     * @throws \RuntimeException 'instance_mismatch' on an impersonation attempt
+     */
+    public function resolveDesktopIdentity(string $ownerUserId, ?string $apiKeyId, ?string $claimedInstanceId): ?string
+    {
+        return self::resolveDesktopIdentityWithPdo($this->mysql, $ownerUserId, $apiKeyId, $claimedInstanceId);
+    }
+
+    /**
+     * The ONE implementation of the FL-01 identity contract (see resolveDesktopIdentity's
+     * docblock) — static + PDO-parameterised so services that don't hold this class
+     * (FlowService's owner-run surface) enforce the identical rule without duplicating it.
+     * @throws \RuntimeException 'instance_mismatch' on an impersonation attempt
+     */
+    public static function resolveDesktopIdentityWithPdo(PDO $pdo, string $ownerUserId, ?string $apiKeyId, ?string $claimedInstanceId): ?string
+    {
+        $claimed = $claimedInstanceId !== null && $claimedInstanceId !== '' ? $claimedInstanceId : null;
+        $key = $apiKeyId !== null && $apiKeyId !== '' ? $apiKeyId : null;
+        if ($key !== null) {
+            $stmt = $pdo->prepare(
+                'SELECT desktop_instance_id FROM desktop_connections WHERE owner_user_id = :o AND api_key_id = :k LIMIT 1'
+            );
+            $stmt->execute(['o' => $ownerUserId, 'k' => $key]);
+            $bound = $stmt->fetchColumn();
+            if (is_string($bound) && $bound !== '' && !str_starts_with($bound, 'oauth-')) {
+                if ($claimed !== null && $claimed !== $bound) {
+                    throw new \RuntimeException('instance_mismatch');
+                }
+                return $bound;
+            }
+        }
+        if ($claimed !== null) {
+            $stmt = $pdo->prepare(
+                'SELECT api_key_id FROM desktop_connections WHERE owner_user_id = :o AND desktop_instance_id = :i LIMIT 1'
+            );
+            $stmt->execute(['o' => $ownerUserId, 'i' => $claimed]);
+            $row = $stmt->fetch();
+            if ($row !== false && $row['api_key_id'] !== null && (string) $row['api_key_id'] !== $key) {
+                throw new \RuntimeException('instance_mismatch');
+            }
+        }
+        return $claimed;
     }
 
     /**

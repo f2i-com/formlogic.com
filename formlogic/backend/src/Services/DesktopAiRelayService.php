@@ -429,9 +429,11 @@ class DesktopAiRelayService
                 $this->mysql->rollBack();
                 throw new \RuntimeException('not_found');
             }
+            // Claimant binding is ALWAYS enforced (audit FL-01): a request claimed WITH an
+            // identity may only be streamed to by that identity — an anonymous append no
+            // longer bypasses the check.
             if (
-                $instanceId !== null
-                && in_array($row['status'] ?? '', ['claimed', 'streaming'], true)
+                in_array($row['status'] ?? '', ['claimed', 'streaming'], true)
                 && ($row['claimed_by'] ?? null) !== null
                 && $row['claimed_by'] !== $instanceId
             ) {
@@ -502,13 +504,15 @@ class DesktopAiRelayService
         if ($existing === null) {
             return null;
         }
-        if ($instanceId !== null) {
-            if (($existing['claimedBy'] ?? null) === null) {
-                throw new \RuntimeException('not_claimed');
-            }
+        // Claimant binding is ALWAYS enforced (audit FL-01): an identity-claimed request's
+        // input channel is readable only by that identity — an anonymous read no longer
+        // bypasses the check. Legacy identity-less claims stay readable by the owner's key.
+        if (($existing['claimedBy'] ?? null) !== null) {
             if ($existing['claimedBy'] !== $instanceId) {
                 throw new \RuntimeException('claimed_elsewhere');
             }
+        } elseif ($instanceId !== null) {
+            throw new \RuntimeException('not_claimed');
         }
         return [
             'frames' => $this->fetchFrames($id, 'in', $since),
@@ -558,21 +562,19 @@ class DesktopAiRelayService
             $instanceId = $data['instanceId'];
         }
 
-        // Claimant binding (same rule as DesktopCommandService): when the completer identifies
-        // itself, it must be the SAME instance that claimed the request. The envelope is nulled
-        // by the same UPDATE so terminal rows never retain sealed content.
-        $claimantSql = $instanceId !== null ? ' AND (claimed_by IS NULL OR claimed_by = :cb)' : '';
-        $params = ['s' => $status, 'id' => $id, 'o' => $ownerUserId];
-        if ($instanceId !== null) {
-            $params['cb'] = $instanceId;
-        }
+        // Claimant binding is ALWAYS enforced (audit FL-01, same rule as
+        // DesktopCommandService): an identity-claimed request may only be completed by
+        // that identity — omitting instanceId no longer bypasses the check. The envelope
+        // is nulled by the same UPDATE so terminal rows never retain sealed content.
+        $params = ['s' => $status, 'id' => $id, 'o' => $ownerUserId, 'cb1' => $instanceId, 'cb2' => $instanceId];
 
         $this->mysql->beginTransaction();
         try {
             $stmt = $this->mysql->prepare("
                 UPDATE desktop_ai_requests
                 SET status = :s, envelope = NULL, finished_at = NOW()
-                WHERE id = :id AND owner_user_id = :o AND status IN ('claimed', 'streaming'){$claimantSql}
+                WHERE id = :id AND owner_user_id = :o AND status IN ('claimed', 'streaming')
+                  AND (claimed_by IS NULL OR (:cb1 IS NOT NULL AND claimed_by = :cb2))
             ");
             $stmt->execute($params);
             if ($stmt->rowCount() === 0) {
@@ -582,8 +584,7 @@ class DesktopAiRelayService
                     return null;
                 }
                 if (
-                    $instanceId !== null
-                    && in_array($existing['status'] ?? '', ['claimed', 'streaming'], true)
+                    in_array($existing['status'] ?? '', ['claimed', 'streaming'], true)
                     && ($existing['claimedBy'] ?? null) !== null
                     && $existing['claimedBy'] !== $instanceId
                 ) {
