@@ -252,7 +252,8 @@ export function AppCreateWizard() {
       const app = await createApp(payload);
       if (app) {
         try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }
-        navigate(`/apps/${app.id}/settings`);
+        // Land in the App Studio — brand-new apps start at the Plan step.
+        navigate(`/apps/${app.id}/studio`);
         return; // Skip setIsCreating after navigate
       }
       // Stay on the review step and surface the server's friendly message (captured by the store).
@@ -286,7 +287,7 @@ export function AppCreateWizard() {
       // Refresh the apps slice so the new app exists in the store before we land on its settings.
       await useAppStore.getState().fetchApps();
       try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }
-      navigate(`/apps/${newApp.id}/settings`);
+      navigate(`/apps/${newApp.id}/studio`);
       return; // Skip setIsCreating after navigate
     } catch {
       toast.error('Could not create companion app', 'An unexpected error occurred. Please try again.');

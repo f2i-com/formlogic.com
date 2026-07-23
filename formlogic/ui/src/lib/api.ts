@@ -3,7 +3,7 @@
  */
 
 import type { Form } from '../types/form';
-import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, FormAppContext } from '../types/app';
+import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
 import type {
   ClaimResult,
   ConnectorCommand,
@@ -1787,6 +1787,22 @@ class ApiClient {
     return this.request(`/apps/${id}`, {
       method: 'DELETE',
     });
+  }
+
+  /**
+   * App Studio publish: status → published, published_version bumped, history row
+   * recorded server-side (owner-only). `label` is an optional release note (≤160 chars).
+   */
+  async publishApp(id: string, label?: string): Promise<ApiResponse<{ app: App; version: number }>> {
+    return this.request(`/apps/${id}/publish`, {
+      method: 'POST',
+      body: JSON.stringify(label ? { label } : {}),
+    });
+  }
+
+  /** Publish history for an app, newest first (owner or member). */
+  async listAppVersions(id: string): Promise<ApiResponse<{ versions: AppVersion[] }>> {
+    return this.request(`/apps/${id}/versions`);
   }
 
   /**

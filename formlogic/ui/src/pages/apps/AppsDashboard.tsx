@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo, type CSSProperties } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText, LayoutGrid, List, Settings } from 'lucide-react';
-import { DynamicIcon } from '../../components/ui/DynamicIcon';
+import { AppTile } from '../../components/apps/AppTile';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -23,7 +23,6 @@ const APPS_PAGE = 9;
 
 // Accent hex lands in an inline CSS custom property, so keep the format strict
 // (mirrors the marketplace's DemoAppCard identity-tile pattern).
-const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9a-fA-F]{3,8}$/.test(v);
 
 export function AppsDashboard() {
   const navigate = useNavigate();
@@ -178,7 +177,7 @@ export function AppsDashboard() {
                     key={app.id}
                     app={app}
                     packName={appPackMap[app.id] ?? null}
-                    onClick={() => navigate(`/apps/${app.id}/settings`)}
+                    onClick={() => navigate(`/apps/${app.id}/studio`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
@@ -192,7 +191,8 @@ export function AppsDashboard() {
                     key={app.id}
                     app={app}
                     packName={appPackMap[app.id] ?? null}
-                    onManage={() => navigate(`/apps/${app.id}/settings`)}
+                    onManage={() => navigate(`/apps/${app.id}/studio`)}
+                    onSettings={() => navigate(`/apps/${app.id}/settings`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
@@ -225,41 +225,8 @@ export function AppsDashboard() {
   );
 }
 
-// App identity tile (logo → curated icon on accent → monogram), shared by card + row.
-function AppTile({ app, size = 'md' }: { app: App; size?: 'sm' | 'md' }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const showLogo = Boolean(app.logoUrl) && !imgFailed;
-  const icon = app.settings?.icon;
-  const accent = app.theme?.primaryColor;
-  const accented = !showLogo && isHexColor(accent);
-  const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
-  const box = size === 'sm' ? 'w-9 h-9 rounded-lg' : 'w-10 h-10 rounded-xl';
-  const glyph = size === 'sm' ? 'h-4.5 w-4.5' : 'h-5 w-5';
-  return (
-    <div
-      style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
-      className={cn(
-        'flex items-center justify-center flex-shrink-0 overflow-hidden', box,
-        showLogo
-          ? 'bg-gray-50 dark:bg-slate-800/60'
-          : accented
-            ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
-            : 'bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-400'
-      )}
-    >
-      {showLogo ? (
-        <img src={app.logoUrl} alt="" loading="lazy" onError={() => setImgFailed(true)} className="h-full w-full object-cover" />
-      ) : icon ? (
-        <DynamicIcon name={icon} className={glyph} fallback={<span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>} />
-      ) : (
-        <span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>
-      )}
-    </div>
-  );
-}
-
-// Compact list-mode row: click opens Manage; explicit View app / Manage / Remove actions.
-function AppRow({ app, packName, onManage, onDelete }: { app: App; packName: string | null; onManage: () => void; onDelete: () => void }) {
+// Compact list-mode row: click opens the App Studio; explicit View app / Settings / Remove actions.
+function AppRow({ app, packName, onManage, onSettings, onDelete }: { app: App; packName: string | null; onManage: () => void; onSettings: () => void; onDelete: () => void }) {
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
   return (
     <div
@@ -267,7 +234,7 @@ function AppRow({ app, packName, onManage, onDelete }: { app: App; packName: str
       tabIndex={0}
       onClick={onManage}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onManage(); } }}
-      title="Manage app"
+      title="Edit app"
       className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
     >
       <AppTile app={app} size="sm" />
@@ -307,9 +274,9 @@ function AppRow({ app, packName, onManage, onDelete }: { app: App; packName: str
         )}
         <button
           type="button"
-          onClick={onManage}
-          title="Manage app"
-          aria-label={`Manage ${app.name}`}
+          onClick={onSettings}
+          title="App settings"
+          aria-label={`Settings for ${app.name}`}
           className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
         >
           <Settings className="h-4 w-4" />
@@ -329,13 +296,6 @@ function AppRow({ app, packName, onManage, onDelete }: { app: App; packName: str
 }
 
 function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: string | null; onClick: () => void; onDelete: () => void }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  // App identity tile: logo image → curated icon on the app's accent → monogram initial (muted, on the accent).
-  const showLogo = Boolean(app.logoUrl) && !imgFailed;
-  const icon = app.settings?.icon;
-  const accent = app.theme?.primaryColor;
-  const accented = !showLogo && isHexColor(accent);
-  const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
   // Real count from the list endpoint; navConfig is only a stale-cache fallback (it can be empty
   // on pack-provisioned apps — the "0 forms" bug).
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
@@ -347,7 +307,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
-      aria-label={`Manage ${app.name}`}
+      aria-label={`Edit ${app.name}`}
       className={cn(
         'flex h-full flex-col bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03] p-6',
         'hover:shadow-lg hover:shadow-gray-900/[0.06] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600',
@@ -357,31 +317,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
     >
       <div className="flex items-start justify-between gap-2 mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div
-            style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
-            className={cn(
-              'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden',
-              showLogo
-                ? 'bg-gray-50 dark:bg-slate-800/60'
-                : accented
-                  ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
-                  : 'bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-400'
-            )}
-          >
-            {showLogo ? (
-              <img
-                src={app.logoUrl}
-                alt=""
-                loading="lazy"
-                onError={() => setImgFailed(true)}
-                className="h-full w-full object-cover"
-              />
-            ) : icon ? (
-              <DynamicIcon name={icon} className="h-5 w-5" fallback={<span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>} />
-            ) : (
-              <span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>
-            )}
-          </div>
+          <AppTile app={app} />
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors truncate">
               {app.name}

@@ -556,6 +556,34 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `data_staged_artifacts` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'data_staged_artifacts table ensured';
 
+// 16. App Studio publish/version state: apps.published_version + apps.published_at,
+//     and the app_versions publish-history table (one row per publish; version
+//     copied from apps.published_version after the bump).
+foreach ([
+    'published_version' => 'ALTER TABLE `apps` ADD COLUMN `published_version` int NOT NULL DEFAULT 0 AFTER `custom_logic`',
+    'published_at' => 'ALTER TABLE `apps` ADD COLUMN `published_at` timestamp NULL DEFAULT NULL AFTER `published_version`',
+] as $column => $ddl) {
+    if (!$columnExists($pdo, $db, 'apps', $column)) {
+        $pdo->exec($ddl);
+        $applied[] = "apps.{$column} added";
+    } else {
+        $applied[] = "apps.{$column} already present";
+    }
+}
+$pdo->exec("CREATE TABLE IF NOT EXISTS `app_versions` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` int NOT NULL,
+  `label` varchar(160) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `published_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_app_version` (`app_id`,`version`),
+  KEY `idx_av_app` (`app_id`),
+  CONSTRAINT `app_versions_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'app_versions table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

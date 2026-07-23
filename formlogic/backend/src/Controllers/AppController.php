@@ -246,6 +246,45 @@ class AppController
         }
     }
 
+    /**
+     * Publish the app (App Studio): status → published, version bumped, history row
+     * recorded. Owner-only. Body: { label?: string } — an optional release note.
+     */
+    public function publish(Request $request, Response $response, array $args): Response
+    {
+        $app = $this->authorizeAppOwnership($request, $args['id']);
+        if (!$app) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+
+        $data = $request->getParsedBody() ?? [];
+        $label = isset($data['label']) && is_string($data['label']) ? $data['label'] : null;
+
+        try {
+            $result = $this->appService->publishApp($args['id'], $label, $request->getAttribute('userId'));
+            if ($result === null) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+            }
+            $this->audit($request, 'app.publish', 'app', $args['id']);
+            return $this->jsonResponse($response, ['app' => $result['app'], 'version' => $result['version']]);
+        } catch (\Exception $e) {
+            $this->logger->error('App publish error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
+        }
+    }
+
+    /** Publish history (newest first). Visible to the owner and app members. */
+    public function versions(Request $request, Response $response, array $args): Response
+    {
+        $app = $this->authorizeAppAccess($request, $args['id']);
+        if (!$app) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+
+        $versions = $this->appService->listAppVersions($args['id']);
+        return $this->jsonResponse($response, ['versions' => $versions]);
+    }
+
     public function delete(Request $request, Response $response, array $args): Response
     {
         if ($blocked = $this->blockIfDemo($request, $response, 'This is a shared live demo — apps can\'t be deleted here.')) {

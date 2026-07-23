@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, FileBarChart, Link2 } from 'lucide-react';
+import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, FileBarChart, Link2, PencilRuler } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { interleaveMenu, menuForms, menuLinks } from './appMenu';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -291,6 +291,21 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           ))}
         </nav>
         <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
+          {/* Owner bridge back to the App Studio (Use app ↔ Edit app). */}
+          {isOwner() && (
+            <button
+              onClick={() => navigate(`/apps/${config.app.id}/studio`)}
+              className={cn(
+                'flex items-center gap-3 w-full px-3 py-2 mb-1 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 hover:text-gray-900 dark:hover:text-slate-200 transition-colors duration-150 cursor-pointer',
+                'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
+                sidebarCollapsed && 'justify-center px-0'
+              )}
+              title={sidebarCollapsed ? 'Edit app' : undefined}
+            >
+              <PencilRuler className="h-4 w-4" />
+              {!sidebarCollapsed && <span>Edit app</span>}
+            </button>
+          )}
           <div className={cn('flex gap-1', sidebarCollapsed ? 'flex-col items-center' : 'items-center')}>
             <button
               onClick={() => navigate(`${basePath}/profile`)}
@@ -434,6 +449,15 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               ))}
             </nav>
             <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
+              {isOwner() && (
+                <button
+                  onClick={() => { navigate(`/apps/${config.app.id}/studio`); setMobileMenuOpen(false); }}
+                  className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+                >
+                  <PencilRuler className="h-4 w-4" />
+                  <span>Edit app</span>
+                </button>
+              )}
               <button
                 onClick={() => { navigate(`${basePath}/profile`); setMobileMenuOpen(false); }}
                 className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"

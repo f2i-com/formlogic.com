@@ -2771,6 +2771,14 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->post('/{id}/companion', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->createCompanion($request, $response, $getArgs($request));
     });
+    // App Studio publish flow: status → published + version bump + history row (owner-only).
+    $group->post('/{id}/publish', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->publish($request, $response, $getArgs($request));
+    });
+    // Publish history, newest first (owner or member).
+    $group->get('/{id}/versions', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->versions($request, $response, $getArgs($request));
+    });
     // Export the whole app (forms + screens + scripts + roles) as a self-contained pack JSON.
     $group->get('/{id}/export', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportApp($request, $response, $getArgs($request));

@@ -630,6 +630,96 @@ class AppService
         return $this->getApp($appId);
     }
 
+    /**
+     * Publish an app (App Studio publish flow): status → published, version bumped,
+     * published_at stamped, and a history row inserted — atomically. Returns the
+     * updated app array plus the new version number, or null when the app is missing.
+     *
+     * @return array{app: array, version: int}|null
+     */
+    public function publishApp(string $appId, ?string $label = null, ?string $publishedBy = null): ?array
+    {
+        $existing = $this->getApp($appId);
+        if (!$existing) {
+            return null;
+        }
+
+        $label = $label !== null ? mb_substr(trim($label), 0, 160) : null;
+        if ($label === '') {
+            $label = null;
+        }
+
+        $this->mysql->beginTransaction();
+        try {
+            // Atomic bump; read the new version back inside the txn so concurrent
+            // publishes can never insert duplicate history versions.
+            $stmt = $this->mysql->prepare(
+                "UPDATE apps
+                 SET status = 'published',
+                     published_version = published_version + 1,
+                     published_at = :published_at,
+                     updated_at = :updated_at
+                 WHERE id = :id"
+            );
+            $now = date('Y-m-d H:i:s');
+            $stmt->execute(['id' => $appId, 'published_at' => $now, 'updated_at' => $now]);
+
+            $versionStmt = $this->mysql->prepare("SELECT published_version FROM apps WHERE id = :id FOR UPDATE");
+            $versionStmt->execute(['id' => $appId]);
+            $version = (int) $versionStmt->fetchColumn();
+
+            $insert = $this->mysql->prepare(
+                "INSERT INTO app_versions (id, app_id, version, label, published_by)
+                 VALUES (:id, :app_id, :version, :label, :published_by)"
+            );
+            $insert->execute([
+                'id' => $this->generateUuid(),
+                'app_id' => $appId,
+                'version' => $version,
+                'label' => $label,
+                'published_by' => $publishedBy,
+            ]);
+
+            $this->mysql->commit();
+        } catch (\Throwable $e) {
+            $this->mysql->rollBack();
+            throw $e;
+        }
+
+        $app = $this->getApp($appId);
+        return $app === null ? null : ['app' => $app, 'version' => $version];
+    }
+
+    /**
+     * Publish history for an app, newest first.
+     *
+     * @return array<int, array{id:string, version:int, label:?string, publishedBy:?string, createdAt:?string}>
+     */
+    public function listAppVersions(string $appId, int $limit = 20): array
+    {
+        $limit = max(1, min(100, $limit));
+        $stmt = $this->mysql->prepare(
+            "SELECT id, version, label, published_by, created_at
+             FROM app_versions
+             WHERE app_id = :app_id
+             ORDER BY version DESC
+             LIMIT {$limit}"
+        );
+        $stmt->execute(['app_id' => $appId]);
+
+        $versions = [];
+        while ($row = $stmt->fetch()) {
+            $versions[] = [
+                'id' => (string) $row['id'],
+                'version' => (int) $row['version'],
+                'label' => $row['label'] !== null ? (string) $row['label'] : null,
+                'publishedBy' => $row['published_by'] !== null ? (string) $row['published_by'] : null,
+                'createdAt' => $row['created_at'] !== null ? (string) $row['created_at'] : null,
+            ];
+        }
+        return $versions;
+    }
+
     public function deleteApp(string $appId): bool
     {
         $this->mysql->beginTransaction();

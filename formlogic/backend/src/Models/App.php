@@ -22,6 +22,8 @@ class App
         public array $customScreenProvenance = [],
         public array $reports = [],
         public array $customLogic = [],
+        public int $publishedVersion = 0,
+        public ?string $publishedAt = null,
         public ?string $createdAt = null,
         public ?string $updatedAt = null
     ) {}
@@ -58,6 +60,8 @@ class App
             customLogic: is_string($data['custom_logic'] ?? null)
                 ? json_decode($data['custom_logic'], true) ?? []
                 : ($data['customLogic'] ?? []),
+            publishedVersion: (int) ($data['published_version'] ?? $data['publishedVersion'] ?? 0),
+            publishedAt: $data['published_at'] ?? $data['publishedAt'] ?? null,
             createdAt: $data['created_at'] ?? $data['createdAt'] ?? null,
             updatedAt: $data['updated_at'] ?? $data['updatedAt'] ?? null
         );
@@ -84,6 +88,8 @@ class App
             'customScreen' => $customScreen,
             'reports' => $this->reports,
             'customLogic' => $this->customLogic,
+            'publishedVersion' => $this->publishedVersion,
+            'publishedAt' => $this->publishedAt,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
         ];

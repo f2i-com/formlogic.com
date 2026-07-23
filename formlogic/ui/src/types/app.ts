@@ -97,8 +97,21 @@ export interface App {
   /** REAL attached-form count from the apps list endpoint (app_forms). Use this for list displays —
    *  navConfig.length is NOT a forms count (empty on pack-provisioned apps). */
   formCount?: number;
+  /** App Studio version state: bumped on every publish; 0 = never published. */
+  publishedVersion?: number;
+  /** When the app was last published — anchors "unpublished changes since" comparisons. */
+  publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** One publish event from GET /api/apps/{id}/versions (newest first). */
+export interface AppVersion {
+  id: string;
+  version: number;
+  label: string | null;
+  publishedBy: string | null;
+  createdAt: string | null;
 }
 
 /** An app as returned by the apps LIST endpoint (GET /api/apps): the base App plus list-only

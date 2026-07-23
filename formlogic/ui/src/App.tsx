@@ -92,6 +92,8 @@ const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default
 
 // Lazy load app admin pages
 const AppsDashboard = lazyWithRetry(() => import('./pages/apps/AppsDashboard').then(m => ({ default: m.AppsDashboard })));
+// App Studio: the app-first workspace — six prefilled, skippable steps per app.
+const AppStudio = lazyWithRetry(() => import('./pages/apps/AppStudio').then(m => ({ default: m.AppStudio })));
 const AppCreateWizard = lazyWithRetry(() => import('./pages/apps/AppCreateWizard').then(m => ({ default: m.AppCreateWizard })));
 const AppSettingsPage = lazyWithRetry(() => import('./pages/apps/AppSettings').then(m => ({ default: m.AppSettings })));
 const AppFormManager = lazyWithRetry(() => import('./pages/apps/AppFormManager').then(m => ({ default: m.AppFormManager })));
@@ -348,6 +350,8 @@ function AppRoutes() {
           <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
           <Route path="/apps" element={<AppsDashboard />} />
           <Route path="/apps/new" element={<AppCreateWizard />} />
+          <Route path="/apps/:appId/studio" element={<AppStudio />} />
+          <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
           <Route path="/apps/:appId/forms" element={<AppFormManager />} />
           <Route path="/apps/:appId/users" element={<AppUserManager />} />
@@ -420,6 +424,9 @@ function AppRoutes() {
         {/* App admin routes */}
         <Route path="/apps" element={<AppsDashboard />} />
         <Route path="/apps/new" element={<AppCreateWizard />} />
+        {/* App Studio — the app-first workspace (Plan/Data/Screens/Automations/Access/Publish) */}
+        <Route path="/apps/:appId/studio" element={<AppStudio />} />
+        <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
         <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
         <Route path="/apps/:appId/forms" element={<AppFormManager />} />
         <Route path="/apps/:appId/users" element={<AppUserManager />} />

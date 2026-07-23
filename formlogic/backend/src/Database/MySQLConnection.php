@@ -269,12 +269,31 @@ class MySQLConnection
                 custom_screen_provenance JSON DEFAULT NULL,
                 reports JSON DEFAULT NULL,
                 custom_logic MEDIUMTEXT DEFAULT NULL,
+                published_version INT NOT NULL DEFAULT 0,
+                published_at TIMESTAMP NULL DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
                 INDEX idx_owner_id (owner_id),
                 INDEX idx_slug (slug),
                 INDEX idx_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Publish history: one row per publish (App Studio version state). The version
+        // number is copied from apps.published_version AFTER the bump so history rows
+        // and the live pointer can never drift.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_versions (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                version INT NOT NULL,
+                label VARCHAR(160) DEFAULT NULL,
+                published_by VARCHAR(36) DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_app_version (app_id, version),
+                INDEX idx_av_app (app_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -1390,6 +1409,19 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_logic'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER reports");
+        }
+
+        // App Studio publish/version state (published_version bumps on every publish;
+        // published_at anchors "unpublished changes since" comparisons). The
+        // app_versions history table itself is created in initializeSchema (CREATE IF
+        // NOT EXISTS runs on existing installs too).
+        foreach ([
+            'published_version' => "ALTER TABLE apps ADD COLUMN published_version INT NOT NULL DEFAULT 0 AFTER custom_logic",
+            'published_at' => "ALTER TABLE apps ADD COLUMN published_at TIMESTAMP NULL DEFAULT NULL AFTER published_version",
+        ] as $column => $ddl) {
+            if ($pdo->query("SHOW COLUMNS FROM apps LIKE '{$column}'")->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
         }
 
         // Unique (app_id, form_id) on app_forms — present in the CREATE TABLE but
