@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Services\BlueprintMaterializeService;
 use FormLogic\Services\BlueprintRevisionConflictException;
 use FormLogic\Services\BlueprintService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -19,8 +20,10 @@ class BlueprintController
 {
     use JsonResponseTrait;
 
-    public function __construct(private BlueprintService $blueprints)
-    {
+    public function __construct(
+        private BlueprintService $blueprints,
+        private ?BlueprintMaterializeService $materializer = null,
+    ) {
     }
 
     public function list(Request $request, Response $response): Response
@@ -69,6 +72,24 @@ class BlueprintController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Blueprint not found'], 404);
         }
         return $this->jsonResponse($response, ['deleted' => true]);
+    }
+
+    /** POST /api/blueprints/{id}/materialize — §11A D3: create the app from the diagram. */
+    public function materialize(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if ($this->materializer === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Materialisation unavailable'], 503);
+        }
+        try {
+            $result = $this->materializer->materialize((string) $userId, (string) ($args['blueprintId'] ?? ''));
+            return $this->jsonResponse($response, $result, 201);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
     }
 
     public function validateOperations(Request $request, Response $response, array $args): Response

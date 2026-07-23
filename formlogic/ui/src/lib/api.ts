@@ -2766,6 +2766,14 @@ class ApiClient {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
   }
 
+  /** §11A D3: create the app from the diagram (concept forms → real forms, relations →
+   *  linked_record fields, all attached to a NEW app; the blueprint links to it). */
+  async materializeBlueprint(blueprintId: string): Promise<ApiResponse<{
+    appId: string; appSlug: string | null; createdFormIds: string[]; reusedFormIds: string[]; relations: number;
+  }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/materialize`, { method: 'POST' });
+  }
+
   /**
    * Commit one §14.3 operation batch. Semantic batches carry baseSemanticRevision —
    * a stale value returns 409 {code:'revision_conflict', currentSemanticRevision};

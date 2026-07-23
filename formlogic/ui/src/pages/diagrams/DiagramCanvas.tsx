@@ -1,9 +1,11 @@
-// Diagram canvas (extensible-flows plan §11/§11A): ONE diagram's editing surface — place
-// existing Forms and Flows as concept elements and wire a 'triggers' relationship. EVERY
-// mutation rides the §14.3 operation-commit gateway (semantic batches carry
-// baseSemanticRevision and reconcile on 409; drags are layout-only batches that can never
-// conflict). Elements and edges are CONCEPT-ONLY here (§11.5) — materialisation is the
-// §11A.2 D3 slice, so this canvas never mutates forms, flows, or bindings.
+// Diagram canvas (extensible-flows plan §11/§11A): ONE diagram's design surface. A
+// CREATION tool by design (owner direction): sketch form entities (typed fields on the
+// card), concept flows, actors and post-it notes; wire meanings (form→form relation,
+// →flow trigger, actor→ uses); then "Create app" materialises the sketch (D3). It
+// deliberately does NOT place existing cross-app forms — referencing live forms from a
+// sketch got confusing fast. EVERY mutation rides the §14.3 operation-commit gateway
+// (semantic batches carry baseSemanticRevision and reconcile on 409; drags are
+// layout-only batches that can never conflict).
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Background,
@@ -35,13 +37,12 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { cn, generateId } from '../../lib/utils';
 import { Button } from '../../components/ui/Button';
 import type { Blueprint, BlueprintElement, BlueprintOperation } from '../../types/blueprints';
-import type { FlowDefinition } from '../../types/flows';
-import type { Form } from '../../types/form';
 
 export const DIAGRAM_INPUT_CLS =
   'rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
@@ -49,7 +50,18 @@ const INPUT_CLS = DIAGRAM_INPUT_CLS;
 
 
 type SketchField = { name: string; type: string };
-type BlueprintNodeData = { title: string; elementType: string; concept: boolean; fields: SketchField[] };
+type BlueprintNodeData = {
+  title: string;
+  elementType: string;
+  concept: boolean;
+  fields: SketchField[];
+  /** Note post-its: the note's body text (properties.text). */
+  text?: string;
+  /** Injected per-node: quick-add a field typed DIRECTLY on the card (short_text default). */
+  onAddField?: (name: string) => void;
+  /** Injected per-node (notes): save the post-it's text on blur. */
+  onSetText?: (text: string) => void;
+};
 
 /** §11.4 node vocabulary → icon (also the canvas tool palette's source of truth). */
 const ELEMENT_ICONS: Record<string, LucideIcon> = {
@@ -66,19 +78,54 @@ const ELEMENT_ICONS: Record<string, LucideIcon> = {
   note: StickyNote,
 };
 
-/** The quick-sketch tools on the toolbar — draw the app's shape before anything exists. */
+/**
+ * The quick-sketch tools — each earns its place by meaning something (§11A):
+ *   Form  → materialises into a real form (D3);
+ *   Flow  → a concept automation ("what should happen") — placeable before it's built;
+ *   Actor → a human/system role (maps onto app roles in a later slice);
+ *   Note  → annotation, never materialises.
+ * Deliberately absent: Screen (returns as an image/paint concept node later), Decision
+ * (branching belongs to flows), Group (needs REAL containment semantics first — a frame
+ * that doesn't contain is a lie). Existing elements of those kinds still render.
+ */
 const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string }> = [
   { elementType: 'form', label: 'Form', title: 'New form' },
-  { elementType: 'screen', label: 'Screen', title: 'New screen' },
-  { elementType: 'decision', label: 'Decision', title: 'New decision' },
+  { elementType: 'flow', label: 'Flow', title: 'New flow (concept)' },
   { elementType: 'actor', label: 'Actor', title: 'New actor / role' },
   { elementType: 'note', label: 'Note', title: 'New note' },
-  { elementType: 'group', label: 'Group', title: 'New group / frame' },
 ];
 
 function BlueprintNodeCard({ data, selected }: NodeProps) {
   const d = data as BlueprintNodeData;
   const Icon = ELEMENT_ICONS[d.elementType] ?? Workflow;
+  // Notes are sticky post-its you WRITE IN: select one and type; the text saves on blur.
+  if (d.elementType === 'note') {
+    return (
+      <div
+        className={cn(
+          'min-h-[6.5rem] w-44 rounded-lg border border-amber-200 bg-amber-100 px-2.5 py-2 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/15',
+          selected && 'ring-2 ring-amber-400/60',
+        )}
+      >
+        {selected && d.onSetText ? (
+          <textarea
+            defaultValue={d.text ?? ''}
+            rows={4}
+            placeholder="Write a note…"
+            aria-label="Note text"
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onBlur={(e) => d.onSetText?.(e.currentTarget.value)}
+            className="nodrag w-full resize-none bg-transparent text-[12px] leading-snug text-amber-900 placeholder:text-amber-700/50 focus:outline-none dark:text-amber-100 dark:placeholder:text-amber-200/40"
+          />
+        ) : (
+          <p className="whitespace-pre-wrap text-[12px] leading-snug text-amber-900 dark:text-amber-100">
+            {d.text?.trim() ? d.text : 'Select to write…'}
+          </p>
+        )}
+      </div>
+    );
+  }
   return (
     <div
       className={cn(
@@ -109,6 +156,26 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
             <li className="text-[10px] text-gray-400 dark:text-slate-500">+{d.fields.length - 8} more</li>
           )}
         </ul>
+      )}
+      {/* Type a field name straight onto the SELECTED card — Enter adds it as short_text
+          (refine the type in the side panel). 'nodrag' keeps typing from moving the node. */}
+      {d.elementType === 'form' && selected && d.onAddField && (
+        <input
+          type="text"
+          placeholder="+ add field…"
+          aria-label="Quick-add field"
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key !== 'Enter') return;
+            const input = e.currentTarget;
+            const name = input.value.trim();
+            if (name === '') return;
+            d.onAddField?.(name);
+            input.value = '';
+          }}
+          className="nodrag mt-1.5 w-full rounded-md border border-dashed border-gray-300 bg-transparent px-1.5 py-1 font-mono text-[11px] text-gray-700 placeholder:text-gray-400 focus:border-primary-400 focus:outline-none dark:border-slate-700 dark:text-slate-200 dark:placeholder:text-slate-500"
+        />
       )}
     </div>
   );
@@ -287,6 +354,9 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
         elementType: element.elementType,
         concept: element.resourceRef === null,
         fields: sketchFields(element.properties),
+        text: typeof (element.properties as { text?: unknown }).text === 'string'
+          ? (element.properties as { text: string }).text
+          : undefined,
       } satisfies BlueprintNodeData,
     });
   }
@@ -306,25 +376,33 @@ export function DiagramCanvas({
   const initial = useMemo(() => toCanvas(elements), [elements]);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [forms, setForms] = useState<Form[]>([]);
-  const [flows, setFlows] = useState<FlowDefinition[]>([]);
-  const [placeFormId, setPlaceFormId] = useState('');
-  const [placeFlowId, setPlaceFlowId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [materializing, setMaterializing] = useState(false);
+  const navigate = useNavigate();
   // The CURRENT semantic revision (updated by every commit) — held in a ref so callbacks
   // never carry a stale precondition after a sibling commit in the same session.
   const semanticRef = useRef(blueprint.semanticRevision);
 
+  // Card-level editing callbacks ride refs so node data stays stable even though
+  // `commit` is declared further down.
+  const addFieldRef = useRef<(elementId: string, name: string) => void>(() => undefined);
+  const setTextRef = useRef<(elementId: string, text: string) => void>(() => undefined);
+
   useEffect(() => {
-    setNodes(initial.nodes);
+    setNodes(
+      initial.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          onAddField: (name: string) => addFieldRef.current(node.id, name),
+          onSetText: (text: string) => setTextRef.current(node.id, text),
+        },
+      })),
+    );
   }, [initial]);
   useEffect(() => {
     semanticRef.current = blueprint.semanticRevision;
   }, [blueprint.semanticRevision]);
-  useEffect(() => {
-    void api.getForms({ limit: 100 }).then((res) => setForms(res.data?.forms ?? []));
-    void api.listWorkspaceFlows().then((res) => setFlows(res.data?.flows ?? []));
-  }, []);
 
   const commit = useCallback(
     async (operations: BlueprintOperation[], semantic: boolean): Promise<boolean> => {
@@ -360,6 +438,58 @@ export function DiagramCanvas({
     [],
   );
 
+  // Append a field typed on a card as short_text (refine in the panel) — one element.update.
+  const addFieldToElement = useCallback(
+    (elementId: string, name: string) => {
+      const element = elements.find((candidate) => candidate.id === elementId);
+      if (!element) return;
+      const existing = sketchFields(element.properties);
+      if (existing.some((field) => field.name === name)) return;
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.update',
+            targetId: elementId,
+            properties: { ...element.properties, fields: [...existing, { name, type: 'short_text' }] },
+          },
+        ],
+        true,
+      );
+    },
+    [commit, elements],
+  );
+  useEffect(() => {
+    addFieldRef.current = addFieldToElement;
+  }, [addFieldToElement]);
+
+  // Post-it text saves on blur — skip no-op saves so clicking away never dirties.
+  const setNoteText = useCallback(
+    (elementId: string, text: string) => {
+      const element = elements.find((candidate) => candidate.id === elementId);
+      if (!element) return;
+      const current = typeof (element.properties as { text?: unknown }).text === 'string'
+        ? (element.properties as { text: string }).text
+        : '';
+      if (current === text) return;
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.update',
+            targetId: elementId,
+            properties: { ...element.properties, text },
+          },
+        ],
+        true,
+      );
+    },
+    [commit, elements],
+  );
+  useEffect(() => {
+    setTextRef.current = setNoteText;
+  }, [setNoteText]);
+
   // §11A: quick-sketch — drop a fresh CONCEPT element of any §11.4 kind at a spawn
   // point. This is the design-tool half of the canvas; "place existing" is the other.
   const sketchElement = useCallback(
@@ -381,40 +511,33 @@ export function DiagramCanvas({
     [commit],
   );
 
-  const placeElement = useCallback(
-    (elementType: 'form' | 'flow', resourceId: string, title: string) => {
-      const targetId = `el-${generateId()}`;
-      void commit(
-        [
-          {
-            operationId: `op-${generateId()}`,
-            type: 'blueprint.element.create',
-            targetId,
-            elementType,
-            resourceRef: { kind: elementType, id: resourceId },
-            properties: { title },
-            layout: { x: 120 + Math.round(Math.random() * 240), y: 120 + Math.round(Math.random() * 160) },
-          },
-        ],
-        true,
-      );
-    },
-    [commit],
-  );
-
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target || connection.source === connection.target) return;
-      // §11A D2: connecting two FORM entities sketches an ER RELATION (1:N with a
-      // suggested FK field named after the source entity); anything involving a flow
-      // stays the 'triggers' wire. The materialiser (D3) turns relations into
-      // linked_record fields.
+      // §11A D2: the wire's MEANING comes from what it connects (§11.5) — form→form is
+      // an ER RELATION (1:N, FK suggested from the source title; the D3 materialiser
+      // turns it into a linked_record field), anything→flow is a TRIGGER, and
+      // actor→anything is USES ("this role works with that"). Combinations with no
+      // meaning yet refuse honestly instead of drawing a decorative line.
       const typeOf = (id: string) => elements.find((element) => element.id === id)?.elementType;
-      const isRelation = typeOf(connection.source) === 'form' && typeOf(connection.target) === 'form';
-      const sourceTitle = String(
-        (elements.find((element) => element.id === connection.source)?.properties as { title?: unknown } | undefined)?.title ?? 'parent',
-      );
-      const fkField = sourceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'parent';
+      const sourceType = typeOf(connection.source);
+      const targetType = typeOf(connection.target);
+      let properties: Record<string, unknown> | null = null;
+      if (sourceType === 'form' && targetType === 'form') {
+        const sourceTitle = String(
+          (elements.find((element) => element.id === connection.source)?.properties as { title?: unknown } | undefined)?.title ?? 'parent',
+        );
+        const fkField = sourceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'parent';
+        properties = { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, cardinality: '1:N', fkField, state: 'concept' };
+      } else if (targetType === 'flow') {
+        properties = { edgeType: 'triggers', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+      } else if (sourceType === 'actor') {
+        properties = { edgeType: 'uses', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+      }
+      if (properties === null) {
+        toast.info('No connection there yet', `A ${sourceType ?? 'node'} → ${targetType ?? 'node'} wire has no meaning — relations join forms, triggers point at flows, actors use things.`);
+        return;
+      }
       void commit(
         [
           {
@@ -422,9 +545,7 @@ export function DiagramCanvas({
             type: 'blueprint.element.create',
             targetId: `el-${generateId()}`,
             elementType: 'edge',
-            properties: isRelation
-              ? { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, cardinality: '1:N', fkField, state: 'concept' }
-              : { edgeType: 'triggers', sourceId: connection.source, targetId: connection.target, state: 'concept' },
+            properties,
           },
         ],
         true,
@@ -501,6 +622,22 @@ export function DiagramCanvas({
     );
   }, [commit, elements, selectedId]);
 
+  // Delete/Backspace removes the selected element (same edges-first gateway batch as
+  // the toolbar button) — unless the user is typing in an input. React Flow's own
+  // delete handling stays OFF so nothing bypasses the operation log.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (selectedId === null) return;
+      event.preventDefault();
+      deleteSelected();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [deleteSelected, selectedId]);
+
   const edges = initial.edges;
   const selectedElement = selectedId !== null
     ? elements.find((element) => element.id === selectedId) ?? null
@@ -547,38 +684,6 @@ export function DiagramCanvas({
           })}
         </div>
         <span className="h-6 w-px bg-gray-200 dark:bg-slate-700" />
-        <select value={placeFormId} onChange={(e) => setPlaceFormId(e.target.value)} aria-label="Form to place" className={INPUT_CLS + ' max-w-[14rem] cursor-pointer'}>
-          <option value="">Pick a form…</option>
-          {forms.map((form) => <option key={form.id} value={form.id}>{form.title}</option>)}
-        </select>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy || placeFormId === ''}
-          onClick={() => {
-            const form = forms.find((candidate) => candidate.id === placeFormId);
-            if (form) placeElement('form', form.id, form.title);
-          }}
-          leftIcon={<Plus className="h-3.5 w-3.5" />}
-        >
-          Place form
-        </Button>
-        <select value={placeFlowId} onChange={(e) => setPlaceFlowId(e.target.value)} aria-label="Flow to place" className={INPUT_CLS + ' max-w-[14rem] cursor-pointer'}>
-          <option value="">Pick a flow…</option>
-          {flows.map((flow) => <option key={flow.id} value={flow.id}>{flow.name} ({flow.slug})</option>)}
-        </select>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy || placeFlowId === ''}
-          onClick={() => {
-            const flow = flows.find((candidate) => candidate.id === placeFlowId);
-            if (flow) placeElement('flow', flow.id, flow.name);
-          }}
-          leftIcon={<Plus className="h-3.5 w-3.5" />}
-        >
-          Place flow
-        </Button>
         <span className="mx-1 hidden text-xs text-gray-400 dark:text-slate-500 sm:inline">
           Double-click the canvas for a new form entity; drag form→form for a relation, form→flow for a trigger.
         </span>
@@ -590,6 +695,33 @@ export function DiagramCanvas({
           <Button variant="ghost" size="sm" disabled={busy || selectedId === null} onClick={deleteSelected} aria-label="Delete selected element">
             <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
           </Button>
+          {/* §11A D3: the sketch becomes real — or, once linked, jumps to its app. */}
+          {blueprint.appId !== null ? (
+            <Button variant="outline" size="sm" onClick={() => navigate(`/apps/${blueprint.appId}/records`)}>
+              Open app
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              isLoading={materializing}
+              disabled={busy || materializing}
+              onClick={() => {
+                setMaterializing(true);
+                void api.materializeBlueprint(blueprint.id).then((res) => {
+                  setMaterializing(false);
+                  if (res.error || !res.data) {
+                    toast.error('Could not create the app', typeof res.error === 'string' ? res.error : undefined);
+                    void onReload();
+                    return;
+                  }
+                  toast.success('App created from your diagram', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s)`);
+                  navigate(`/apps/${res.data.appId}/records`);
+                });
+              }}
+            >
+              Create app
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
@@ -603,6 +735,7 @@ export function DiagramCanvas({
           onNodeDragStop={onNodeDragStop}
           onDoubleClick={onPaneDoubleClick}
           zoomOnDoubleClick={false}
+          deleteKeyCode={null}
           onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) =>
             setSelectedId(selectedNodes[0]?.id ?? selectedEdges[0]?.id ?? null)
           }

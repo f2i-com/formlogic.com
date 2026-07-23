@@ -3067,6 +3067,9 @@ $app->group('/api/blueprints', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->delete($request, $response, $getArgs($request));
     });
+    $group->post('/{blueprintId}/materialize', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->materialize($request, $response, $getArgs($request));
+    });
     $group->post('/{blueprintId}/operations/validate', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->validateOperations($request, $response, $getArgs($request));
     });
