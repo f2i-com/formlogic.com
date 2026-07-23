@@ -2770,6 +2770,21 @@ class ApiClient {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
   }
 
+  // §12 Copilot change sets: proposals parked for approval (the canvas ghost layer).
+  async listBlueprintChangeSets(blueprintId: string): Promise<ApiResponse<{
+    changeSets: Array<{ id: string; origin: string; summary: string | null; baseSemanticRevision: number; operations: import('../types/blueprints').BlueprintOperation[]; createdAt: string }>;
+  }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/change-sets`);
+  }
+
+  async approveBlueprintChangeSet(blueprintId: string, changeSetId: string): Promise<ApiResponse<import('../types/blueprints').BlueprintCommitResult>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/change-sets/${encodeURIComponent(changeSetId)}/approve`, { method: 'POST' });
+  }
+
+  async discardBlueprintChangeSet(blueprintId: string, changeSetId: string): Promise<ApiResponse<{ discarded: boolean }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/change-sets/${encodeURIComponent(changeSetId)}/discard`, { method: 'POST' });
+  }
+
   /** §11A D3: create the app from the diagram (concept forms → real forms, relations →
    *  linked_record fields, all attached to a NEW app; the blueprint links to it). */
   async materializeBlueprint(blueprintId: string): Promise<ApiResponse<{

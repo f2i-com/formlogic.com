@@ -96,6 +96,86 @@ class BlueprintController
         return $this->jsonResponse($response, ['deleted' => true]);
     }
 
+    /** §12: park a validated batch for approval (the canvas ghost layer reads it). */
+    public function proposeChangeSet(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        try {
+            $result = $this->blueprints->proposeChangeSet(
+                (string) $userId,
+                (string) ($args['blueprintId'] ?? ''),
+                (array) ($request->getParsedBody() ?? [])
+            );
+            return $this->jsonResponse($response, $result, 201);
+        } catch (BlueprintRevisionConflictException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'revision_conflict',
+                'message' => 'The blueprint changed since you loaded it — reload and retry',
+                'currentSemanticRevision' => $e->currentRevision,
+            ], 409);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
+    public function listChangeSets(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        return $this->jsonResponse($response, [
+            'changeSets' => $this->blueprints->listProposedChangeSets((string) $userId, (string) ($args['blueprintId'] ?? '')),
+        ]);
+    }
+
+    public function approveChangeSet(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        try {
+            $result = $this->blueprints->approveChangeSet(
+                (string) $userId,
+                (string) ($args['blueprintId'] ?? ''),
+                (string) ($args['changeSetId'] ?? '')
+            );
+            return $this->jsonResponse($response, $result);
+        } catch (BlueprintRevisionConflictException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'revision_conflict',
+                'message' => 'The blueprint changed since this was proposed — ask for a fresh proposal',
+                'currentSemanticRevision' => $e->currentRevision,
+            ], 409);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
+    public function discardChangeSet(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        try {
+            $this->blueprints->discardChangeSet(
+                (string) $userId,
+                (string) ($args['blueprintId'] ?? ''),
+                (string) ($args['changeSetId'] ?? '')
+            );
+            return $this->jsonResponse($response, ['discarded' => true]);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
     /** POST /api/blueprints/{id}/materialize — §11A D3: create the app from the diagram. */
     public function materialize(Request $request, Response $response, array $args): Response
     {

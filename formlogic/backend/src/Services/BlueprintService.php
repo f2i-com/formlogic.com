@@ -230,6 +230,107 @@ class BlueprintService
         ];
     }
 
+    // ─── §12 Copilot change sets: propose (ghost preview) → approve/discard ─────
+
+    /**
+     * Park a VALIDATED batch as a proposed change set (§12): the canvas renders it as
+     * ghosts, and only an explicit approval commits it — through the ordinary gateway,
+     * re-validated at approval time. Validation failures refuse the proposal outright
+     * (a proposal the user could never apply is noise, not a preview).
+     */
+    public function proposeChangeSet(string $ownerUserId, string $blueprintId, array $batch): array
+    {
+        [$row, , $semanticOps, ] = $this->planBatch($ownerUserId, $blueprintId, $batch);
+        $id = 'cs_' . bin2hex(random_bytes(10));
+        $summary = isset($batch['summary']) && is_string($batch['summary'])
+            ? mb_substr(trim($batch['summary']), 0, 300)
+            : null;
+        $this->mysql->prepare('
+            INSERT INTO builder_change_sets
+                (id, blueprint_id, owner_user_id, status, origin, intent_summary, base_semantic_revision, operations_json)
+            VALUES (:id, :b, :o, :status, :origin, :summary, :base, :ops)
+        ')->execute([
+            'id' => $id,
+            'b' => $blueprintId,
+            'o' => $ownerUserId,
+            'status' => 'proposed',
+            'origin' => in_array($batch['origin'] ?? null, ['manual', 'copilot', 'launcher'], true) ? $batch['origin'] : 'copilot',
+            'summary' => $summary,
+            'base' => $semanticOps > 0 ? (int) ($batch['baseSemanticRevision'] ?? 0) : (int) $row['semantic_revision'],
+            'ops' => json_encode(array_values((array) $batch['operations'])),
+        ]);
+        return ['changeSetId' => $id, 'status' => 'proposed', 'summary' => $summary];
+    }
+
+    /** Proposed change sets for the canvas's ghost layer (oldest first). @return array[] */
+    public function listProposedChangeSets(string $ownerUserId, string $blueprintId): array
+    {
+        if ($this->ownedRow($ownerUserId, $blueprintId) === null) {
+            return [];
+        }
+        $stmt = $this->mysql->prepare("
+            SELECT id, origin, intent_summary, base_semantic_revision, operations_json, created_at
+            FROM builder_change_sets
+            WHERE blueprint_id = :b AND status = 'proposed'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 20
+        ");
+        $stmt->execute(['b' => $blueprintId]);
+        return array_map(static fn (array $cs) => [
+            'id' => (string) $cs['id'],
+            'origin' => (string) $cs['origin'],
+            'summary' => $cs['intent_summary'] !== null ? (string) $cs['intent_summary'] : null,
+            'baseSemanticRevision' => (int) $cs['base_semantic_revision'],
+            'operations' => json_decode((string) $cs['operations_json'], true) ?: [],
+            'createdAt' => (string) $cs['created_at'],
+        ], $stmt->fetchAll());
+    }
+
+    /**
+     * Approve = commit the stored batch through the ordinary gateway (fresh validation;
+     * a stale base still conflicts — the proposal then needs re-proposing). The change
+     * set resolves 'committed' only when the commit succeeded.
+     */
+    public function approveChangeSet(string $ownerUserId, string $blueprintId, string $changeSetId): array
+    {
+        $cs = $this->loadProposed($ownerUserId, $blueprintId, $changeSetId);
+        $result = $this->commitOperations($ownerUserId, $blueprintId, [
+            'baseSemanticRevision' => (int) $cs['base_semantic_revision'],
+            'origin' => (string) $cs['origin'],
+            'operations' => json_decode((string) $cs['operations_json'], true) ?: [],
+        ]);
+        $this->mysql->prepare("
+            UPDATE builder_change_sets SET status = 'committed', resolved_at = NOW() WHERE id = :id
+        ")->execute(['id' => $changeSetId]);
+        return $result;
+    }
+
+    public function discardChangeSet(string $ownerUserId, string $blueprintId, string $changeSetId): void
+    {
+        $this->loadProposed($ownerUserId, $blueprintId, $changeSetId);
+        $this->mysql->prepare("
+            UPDATE builder_change_sets SET status = 'discarded', resolved_at = NOW() WHERE id = :id
+        ")->execute(['id' => $changeSetId]);
+    }
+
+    /** @return array<string, mixed> */
+    private function loadProposed(string $ownerUserId, string $blueprintId, string $changeSetId): array
+    {
+        if ($this->ownedRow($ownerUserId, $blueprintId) === null) {
+            throw new \InvalidArgumentException('Unknown blueprint');
+        }
+        $stmt = $this->mysql->prepare("
+            SELECT * FROM builder_change_sets
+            WHERE id = :id AND blueprint_id = :b AND status = 'proposed' LIMIT 1
+        ");
+        $stmt->execute(['id' => $changeSetId, 'b' => $blueprintId]);
+        $cs = $stmt->fetch();
+        if (!$cs) {
+            throw new \InvalidArgumentException('Unknown or already-resolved change set');
+        }
+        return $cs;
+    }
+
     // ─── internals ─────────────────────────────────────────────────────────────
 
     /**

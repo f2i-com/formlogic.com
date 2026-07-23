@@ -82,6 +82,8 @@ type BlueprintNodeData = {
   onResize?: (w: number, h: number) => void;
   /** §11A D4: live resource state for materialised elements. */
   sync?: { state: 'synced' | 'stale' | 'missing'; title?: string; fieldCount?: number };
+  /** §12: part of a PROPOSED change set — rendered as a ghost until approved. */
+  ghost?: boolean;
 };
 
 /** §11.4 node vocabulary → icon (also the canvas tool palette's source of truth). */
@@ -243,6 +245,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
         className={cn(
           'relative min-h-[6.5rem] w-44 rounded-lg border border-amber-200 bg-amber-100 px-2.5 py-2 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/15',
           selected && 'ring-2 ring-amber-400/60',
+          d.ghost && 'border-dashed opacity-70',
         )}
       >
         {selected && d.onSetText ? (
@@ -271,6 +274,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
       className={cn(
         'relative min-w-[10rem] rounded-xl border bg-white px-3 py-2.5 shadow-sm dark:bg-slate-900',
         selected ? 'border-primary-500 ring-2 ring-primary-500/30' : 'border-gray-200 dark:border-slate-700',
+        d.ghost && 'border-dashed border-primary-300 opacity-70 dark:border-primary-500/40',
       )}
     >
       <div className="flex items-center gap-2">
@@ -1211,6 +1215,70 @@ export function DiagramCanvas({
     ? String((linkedNote.properties as { text?: unknown }).text ?? '')
     : null;
 
+  // §12: proposed change sets render as GHOSTS with an approval bar — the Copilot's
+  // preview loop. Refetched whenever the semantic revision moves.
+  const [proposals, setProposals] = useState<Array<{ id: string; summary: string | null; operations: BlueprintOperation[] }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void api.listBlueprintChangeSets(blueprint.id).then((res) => {
+      if (!cancelled) setProposals(res.data?.changeSets ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [blueprint.id, blueprint.semanticRevision]);
+
+  const ghost = useMemo(() => {
+    const pseudo: BlueprintElement[] = [];
+    for (const proposal of proposals) {
+      for (const op of proposal.operations) {
+        if (op?.type !== 'blueprint.element.create' || typeof op.targetId !== 'string' || !op.elementType) continue;
+        pseudo.push({
+          id: op.targetId,
+          elementType: op.elementType,
+          resourceRef: (op.resourceRef as Record<string, unknown> | null | undefined) ?? null,
+          properties: (op.properties as Record<string, unknown> | undefined) ?? {},
+          layout: (op.layout as Record<string, unknown> | undefined) ?? null,
+        });
+      }
+    }
+    const rendered = toCanvas(pseudo);
+    return {
+      nodes: rendered.nodes.map((node) => ({
+        ...node,
+        selectable: false,
+        draggable: false,
+        connectable: false,
+        data: { ...node.data, ghost: true },
+      })),
+      edges: rendered.edges.map((edge) => ({
+        ...edge,
+        selectable: false,
+        style: { strokeDasharray: '6 4', opacity: 0.5 },
+      })),
+    };
+  }, [proposals]);
+
+  const resolveProposal = useCallback(
+    (changeSetId: string, approve: boolean) => {
+      setBusy(true);
+      const call = approve
+        ? api.approveBlueprintChangeSet(blueprint.id, changeSetId)
+        : api.discardBlueprintChangeSet(blueprint.id, changeSetId);
+      void call.then((res) => {
+        setBusy(false);
+        setProposals((current) => current.filter((candidate) => candidate.id !== changeSetId));
+        if (res.error) {
+          toast.error(approve ? 'Could not apply the proposal' : 'Could not discard', typeof res.error === 'string' ? res.error : undefined);
+        } else if (approve) {
+          toast.success('Proposal applied');
+        }
+        void onReload();
+      });
+    },
+    [blueprint.id, onReload],
+  );
+
   const saveSelectedProperties = useCallback(
     (properties: Record<string, unknown>, noteText?: string) => {
       if (!selectedId) return;
@@ -1418,8 +1486,8 @@ export function DiagramCanvas({
           }}
         >
           <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={[...nodes, ...ghost.nodes]}
+          edges={[...edges, ...ghost.edges]}
           nodeTypes={NODE_TYPES}
           onNodesChange={onNodesChange}
           onConnect={onConnect}
@@ -1444,6 +1512,22 @@ export function DiagramCanvas({
           <Background gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
+        {/* §12: the first pending AI proposal's approval bar — ghosts show above. */}
+        {proposals.length > 0 && (
+          <div className="absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-primary-200 bg-white/95 px-3 py-2 shadow-lg dark:border-primary-500/30 dark:bg-slate-900/95">
+            <Sparkles className="h-4 w-4 flex-none text-primary-600 dark:text-primary-300" />
+            <span className="min-w-0 truncate text-xs text-gray-700 dark:text-slate-200">
+              {proposals[0].summary ?? 'AI proposal'}
+              {proposals.length > 1 ? ` (+${proposals.length - 1} more)` : ''}
+            </span>
+            <Button size="sm" disabled={busy} onClick={() => resolveProposal(proposals[0].id, true)}>
+              Apply
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => resolveProposal(proposals[0].id, false)}>
+              Discard
+            </Button>
+          </div>
+        )}
         {/* Pen overlay: captures the stroke in screen coords (live preview), converts to
             flow coords on release and commits ONE ink element. Covers the canvas, so
             pan/select pause while drawing — toggle the pen off to interact again. */}

@@ -487,6 +487,24 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `blueprint_resource_links` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'blueprint_resource_links table ensured';
 
+// 12. Copilot change sets (extensible-flows plan §12/§14.1): proposed batches awaiting
+//     user approval, rendered as ghost previews on the diagram canvas.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `builder_change_sets` (
+  `id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `blueprint_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'proposed',
+  `origin` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'copilot',
+  `intent_summary` varchar(300) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `base_semantic_revision` int NOT NULL DEFAULT '0',
+  `operations_json` json NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `resolved_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_bcs_bp` (`blueprint_id`,`status`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'builder_change_sets table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

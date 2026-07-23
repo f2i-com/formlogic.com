@@ -255,6 +255,57 @@ class BlueprintTest extends TestCase
         }
     }
 
+    public function testChangeSetsProposeApproveDiscardWithConflicts(): void
+    {
+        $blueprint = $this->createBlueprint();
+        // Propose: validates and PARKS — the diagram itself is untouched.
+        $proposal = self::$blueprints->proposeChangeSet($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'origin' => 'copilot',
+            'summary' => 'Add a customers entity',
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'g1', 'elementType' => 'form', 'properties' => ['title' => 'Customers']])],
+        ]);
+        $this->assertSame('proposed', $proposal['status']);
+        $this->assertCount(0, self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements']);
+        $listed = self::$blueprints->listProposedChangeSets($this->userId, $blueprint['id']);
+        $this->assertCount(1, $listed);
+        $this->assertSame('Add a customers entity', $listed[0]['summary']);
+
+        // Approve = the ordinary gateway commit; the change set resolves.
+        $result = self::$blueprints->approveChangeSet($this->userId, $blueprint['id'], $proposal['changeSetId']);
+        $this->assertSame(1, $result['semanticRevision']);
+        $this->assertCount(1, self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements']);
+        $this->assertCount(0, self::$blueprints->listProposedChangeSets($this->userId, $blueprint['id']));
+        // Resolved change sets can't approve twice.
+        try {
+            self::$blueprints->approveChangeSet($this->userId, $blueprint['id'], $proposal['changeSetId']);
+            $this->fail('expected an already-resolved refusal');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('already-resolved', $e->getMessage());
+        }
+
+        // A proposal parked against a revision that then MOVES conflicts at approval.
+        $stale = self::$blueprints->proposeChangeSet($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 1,
+            'summary' => 'Stale proposal',
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'g2', 'elementType' => 'note'])],
+        ]);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 1,
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'user-edit', 'elementType' => 'note'])],
+        ]);
+        try {
+            self::$blueprints->approveChangeSet($this->userId, $blueprint['id'], $stale['changeSetId']);
+            $this->fail('expected a revision conflict at approval');
+        } catch (BlueprintRevisionConflictException $e) {
+            $this->assertSame(2, $e->currentRevision);
+        }
+        // Still proposed (approval failed) — discard resolves it.
+        $this->assertCount(1, self::$blueprints->listProposedChangeSets($this->userId, $blueprint['id']));
+        self::$blueprints->discardChangeSet($this->userId, $blueprint['id'], $stale['changeSetId']);
+        $this->assertCount(0, self::$blueprints->listProposedChangeSets($this->userId, $blueprint['id']));
+    }
+
     public function testOperationLogRecordsInversesAndRefusesReplays(): void
     {
         $blueprint = $this->createBlueprint();

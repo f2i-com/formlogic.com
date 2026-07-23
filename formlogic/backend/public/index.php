@@ -3070,6 +3070,18 @@ $app->group('/api/blueprints', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->delete($request, $response, $getArgs($request));
     });
+    $group->post('/{blueprintId}/change-sets', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->proposeChangeSet($request, $response, $getArgs($request));
+    });
+    $group->get('/{blueprintId}/change-sets', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->listChangeSets($request, $response, $getArgs($request));
+    });
+    $group->post('/{blueprintId}/change-sets/{changeSetId}/approve', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->approveChangeSet($request, $response, $getArgs($request));
+    });
+    $group->post('/{blueprintId}/change-sets/{changeSetId}/discard', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->discardChangeSet($request, $response, $getArgs($request));
+    });
     $group->post('/{blueprintId}/materialize', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->materialize($request, $response, $getArgs($request));
     });

@@ -786,6 +786,24 @@ class MySQLConnection
                 INDEX idx_bprl_resource (resource_type, resource_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // §12 Copilot: PROPOSED change sets — a validated batch parked for user approval.
+        // The canvas renders them as ghost previews; approve re-validates and commits
+        // through the ordinary gateway, discard just marks them. Never auto-applied.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS builder_change_sets (
+                id VARCHAR(64) PRIMARY KEY,
+                blueprint_id VARCHAR(36) NOT NULL,
+                owner_user_id VARCHAR(36) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'proposed',
+                origin VARCHAR(24) NOT NULL DEFAULT 'copilot',
+                intent_summary VARCHAR(300) NULL,
+                base_semantic_revision INT NOT NULL DEFAULT 0,
+                operations_json JSON NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP NULL DEFAULT NULL,
+                INDEX idx_bcs_bp (blueprint_id, status, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS blueprint_operations (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
