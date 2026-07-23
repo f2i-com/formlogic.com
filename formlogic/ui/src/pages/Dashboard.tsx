@@ -52,7 +52,6 @@ import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
-import { GenerateAppModal } from '../components/ai-app-builder/GenerateAppModal';
 import { CreateBand } from '../components/chat/CreateBand';
 import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 import type { FormTemplate } from '../data/formTemplates';
@@ -713,8 +712,6 @@ export function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
   const [showHandToAi, setShowHandToAi] = useState(false);
-  const [showAiBuilder, setShowAiBuilder] = useState(false);
-  const [creatingDiagram, setCreatingDiagram] = useState(false);
 
   // Apps panel (cloud mode only — apps live on the server). Reuses the app store, which
   // persists across visits, so the section renders instantly on revisit.
@@ -1146,21 +1143,12 @@ export function Dashboard() {
               <>
                 <Button
                   variant="outline"
-                  isLoading={creatingDiagram}
-                  onClick={async () => {
-                    setCreatingDiagram(true);
-                    const res = await api.createBlueprint({ name: 'Untitled diagram' });
-                    setCreatingDiagram(false);
-                    if (res.data?.blueprint) navigate(`/diagrams/${res.data.blueprint.id}`);
-                  }}
+                  onClick={() => navigate('/diagrams/new')}
                   leftIcon={<MapIcon className="h-4 w-4" />}
                 >
                   Start with a diagram
                 </Button>
-                <Button variant="outline" onClick={() => setShowAiBuilder(true)} leftIcon={<Sparkles className="h-4 w-4" />}>
-                  Describe it with AI
-                </Button>
-                <Button variant="outline" onClick={() => navigate('/diagrams')} leftIcon={<MapIcon className="h-4 w-4" />}>
+                <Button variant="outline" onClick={() => navigate('/diagrams/all')} leftIcon={<MapIcon className="h-4 w-4" />}>
                   My diagrams
                 </Button>
                 <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Boxes className="h-4 w-4" />}>
@@ -1604,7 +1592,6 @@ export function Dashboard() {
       />
 
       <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
-      <GenerateAppModal isOpen={showAiBuilder} onClose={() => { setShowAiBuilder(false); fetchApps(); }} />
 
       {/* Delete Confirmation */}
       <ConfirmDialog

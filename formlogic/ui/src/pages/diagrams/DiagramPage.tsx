@@ -1,8 +1,8 @@
 // One diagram at /diagrams/:diagramId (§11A D1): the canvas with a light header. The
 // diagram IS a blueprint row — the create path (Dashboard "Start with a diagram") lands
 // here, and later slices link it to a materialised app for bi-directional updates.
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { ArrowLeft, History, Loader2, Map as MapIcon, Sparkles, User as UserIcon, Wand2 } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -10,14 +10,57 @@ import { toast } from '../../stores/toastStore';
 import type { Blueprint } from '../../types/blueprints';
 import { DiagramCanvas } from './DiagramCanvas';
 
+/** The local pre-persistence draft: /diagrams/new renders this until a change lands. */
+function draftBlueprint(): Blueprint {
+  return {
+    id: '',
+    appId: null,
+    name: 'Untitled diagram',
+    status: 'draft',
+    semanticRevision: 0,
+    layoutRevision: 0,
+    viewport: null,
+    createdAt: '',
+    updatedAt: '',
+    elements: [],
+  };
+}
+
 export default function DiagramPage() {
   const { diagramId } = useParams<{ diagramId: string }>();
-  const [diagram, setDiagram] = useState<Blueprint | null>(null);
+  const navigate = useNavigate();
+  // /diagrams/new = a DEFERRED canvas: nothing persists until the first real
+  // change (owner direction: never save an empty canvas). The row is created
+  // lazily by ensureId() when the canvas commits its first operation; the URL
+  // flips to the real id on the next reload.
+  const isNew = diagramId === 'new';
+  const createdRef = useRef<string | null>(null);
+  const [diagram, setDiagram] = useState<Blueprint | null>(() => (isNew ? draftBlueprint() : null));
   const [missing, setMissing] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const nameRef = useRef('Untitled diagram');
+  useEffect(() => {
+    if (diagram) nameRef.current = diagram.name;
+  }, [diagram]);
+
+  const ensureId = useCallback(async (): Promise<string | null> => {
+    if (createdRef.current) return createdRef.current;
+    const res = await api.createBlueprint({ name: nameRef.current });
+    if (!res.data?.blueprint) {
+      toast.error('Could not create the diagram', typeof res.error === 'string' ? res.error : undefined);
+      return null;
+    }
+    createdRef.current = res.data.blueprint.id;
+    return createdRef.current;
+  }, []);
 
   const load = useCallback(async () => {
+    if (isNew) {
+      // First committed change on a draft: swap to the real diagram URL.
+      if (createdRef.current) navigate(`/diagrams/${createdRef.current}`, { replace: true });
+      return;
+    }
     if (!diagramId) return;
     const res = await api.getBlueprint(diagramId);
     if (res.data?.blueprint) {
@@ -26,11 +69,26 @@ export default function DiagramPage() {
       setMissing(true);
       toast.error('Diagram not found', typeof res.error === 'string' ? res.error : undefined);
     }
-  }, [diagramId]);
+  }, [diagramId, isNew, navigate]);
+
+  // Route-param change while mounted (e.g. back to /diagrams/new from a real
+  // diagram): reset synchronously during render — the sanctioned derived-state
+  // pattern — so the draft never flashes stale content.
+  const [lastParam, setLastParam] = useState(diagramId);
+  if (lastParam !== diagramId) {
+    setLastParam(diagramId);
+    setDiagram(isNew ? draftBlueprint() : null);
+    setMissing(false);
+  }
+
+  // A fresh /diagrams/new visit starts un-persisted again (ref writes belong in effects).
+  useEffect(() => {
+    if (isNew) createdRef.current = null;
+  }, [diagramId, isNew]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!diagramId) return;
+    if (isNew || !diagramId) return;
     void api.getBlueprint(diagramId).then((res) => {
       if (cancelled) return;
       if (res.data?.blueprint) setDiagram(res.data.blueprint);
@@ -39,13 +97,13 @@ export default function DiagramPage() {
     return () => {
       cancelled = true;
     };
-  }, [diagramId]);
+  }, [diagramId, isNew]);
 
   return (
     <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col">
       <div className="flex flex-none items-center gap-3 border-b border-gray-200 bg-white px-4 py-2.5 dark:border-slate-700/60 dark:bg-slate-900">
         <Link
-          to="/diagrams"
+          to="/diagrams/all"
           className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -77,6 +135,10 @@ export default function DiagramPage() {
                 setRenaming(false);
                 const name = e.currentTarget.value.trim();
                 if (name === '' || name === diagram.name) return;
+                if (diagram.id === '') {
+                  setDiagram((current) => (current ? { ...current, name } : current));
+                  return;
+                }
                 void api.renameBlueprint(diagram.id, name).then((res) => {
                   if (res.data?.blueprint) setDiagram((current) => (current ? { ...current, name } : current));
                   else toast.error('Rename failed', typeof res.error === 'string' ? res.error : undefined);
@@ -97,7 +159,7 @@ export default function DiagramPage() {
         </span>
       </div>
       <div className="flex min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
-        {diagram && showHistory && (
+        {diagram && diagram.id !== '' && showHistory && (
           <BuildTimeline blueprintId={diagram.id} semanticRevision={diagram.semanticRevision} />
         )}
         <div className="min-h-0 min-w-0 flex-1">
@@ -106,6 +168,7 @@ export default function DiagramPage() {
             <DiagramCanvas
               key={diagram.id}
               blueprint={diagram}
+              onEnsureId={ensureId}
               onReload={load}
               onRevisions={(semantic, layout) =>
                 setDiagram((current) =>
@@ -118,7 +181,7 @@ export default function DiagramPage() {
           <div className="flex h-full items-center justify-center">
             {missing ? (
               <p className="text-sm text-gray-400 dark:text-slate-500">
-                This diagram doesn't exist (or isn't yours). <Link to="/diagrams" className="text-primary-600 underline dark:text-primary-300">Back to Diagrams</Link>
+                This diagram doesn't exist (or isn't yours). <Link to="/diagrams/all" className="text-primary-600 underline dark:text-primary-300">Back to Diagrams</Link>
               </p>
             ) : (
               <Loader2 className="h-5 w-5 animate-spin text-gray-400" />

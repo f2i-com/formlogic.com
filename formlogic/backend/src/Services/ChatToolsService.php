@@ -41,6 +41,7 @@ class ChatToolsService
         'list_flows' => 'apps:read', 'get_flow' => 'apps:read',
         'create_flow' => 'apps:write', 'update_flow' => 'apps:write', 'delete_flow' => 'apps:write',
         'blueprint_propose_elements' => 'apps:write',
+        'list_blueprints' => 'apps:read', 'get_blueprint' => 'apps:read',
         'list_flow_bindings' => 'apps:read', 'create_flow_binding' => 'apps:write',
         'update_flow_binding' => 'apps:write', 'delete_flow_binding' => 'apps:write',
         // Record writes are an explicit opt-in scope (never in DEFAULT_SCOPES) and run the SAME
@@ -57,6 +58,9 @@ class ChatToolsService
         // §25 step 8: the Copilot's Blueprint proposals ride the typed operation gateway
         // (validate-preview first, user-approved commit second — origin 'copilot').
         'blueprint_propose_elements',
+        // Diagram read access: the AI must SEE a diagram (elements + semanticRevision)
+        // before proposing changes to it, and find the right one by name.
+        'list_blueprints', 'get_blueprint',
     ];
 
     public function __construct(
@@ -341,6 +345,29 @@ class ChatToolsService
                 if (!$data) {
                     throw new \Exception('Flow not found in this app');
                 }
+                break;
+            }
+            case 'list_blueprints': {
+                $blueprints = $this->blueprintService
+                    ?? throw new \InvalidArgumentException('Blueprints are unavailable in this context');
+                $data = ['blueprints' => array_map(static fn (array $b): array => [
+                    'blueprintId' => $b['id'],
+                    'name' => $b['name'],
+                    'appId' => $b['appId'],
+                    'semanticRevision' => $b['semanticRevision'],
+                    'updatedAt' => $b['updatedAt'],
+                ], $blueprints->listBlueprints($userId))];
+                break;
+            }
+            case 'get_blueprint': {
+                $blueprints = $this->blueprintService
+                    ?? throw new \InvalidArgumentException('Blueprints are unavailable in this context');
+                $blueprintId = is_string($args['blueprintId'] ?? null) ? trim((string) $args['blueprintId']) : '';
+                if ($blueprintId === '') {
+                    throw new \InvalidArgumentException('blueprintId is required');
+                }
+                $data = $blueprints->getBlueprint($userId, $blueprintId)
+                    ?? throw new \Exception('Blueprint not found');
                 break;
             }
             case 'blueprint_propose_elements': {
@@ -892,6 +919,8 @@ class ChatToolsService
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed QuickJS event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'customLogic' => $customLogic], ['appId'])],
             ['name' => 'create_flow', 'scope' => 'apps:write', 'description' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, QuickJS logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. After creating it, wire it to its trigger with create_flow_binding. Set nodeCapabilities to the union of the capabilities your nodes need (see get_started § Flows), e.g. ['formlogic.responses.read','formlogic.responses.write'].", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'lowercase letters/digits/hyphens; defaults from name.'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => "Capabilities the flow's nodes need: formlogic.responses.read / formlogic.responses.write / formlogic.kv.write / model.llm.local / connector.<id>.<command>."], 'enabled' => ['type' => 'boolean']], ['name'])],
+            ['name' => 'list_blueprints', 'scope' => 'apps:read', 'description' => "List the owner's blueprints (DIAGRAMS — the visual sketches of apps at /diagrams): blueprintId, name, appId (null until materialised into a real app), semanticRevision, updatedAt. Use get_blueprint before proposing changes.", 'inputSchema' => $obj([])],
+            ['name' => 'get_blueprint', 'scope' => 'apps:read', 'description' => 'Get one blueprint (diagram) including its elements (nodes AND relationship edges) and current semanticRevision — you need that revision for blueprint_propose_elements.', 'inputSchema' => $obj(['blueprintId' => ['type' => 'string']], ['blueprintId'])],
             ['name' => 'blueprint_propose_elements', 'scope' => 'apps:write', 'description' => "Propose (and, after user approval, commit) elements on a BLUEPRINT — the high-level diagram of what's being built. Operations are typed entries: blueprint.element.create {operationId, targetId (you mint, e.g. 'el-orders'), elementType (app|form|screen|event|flow|intelligence|service|actor|decision|group|note|edge), properties {title,...}, resourceRef? {kind,id}, layout? {x,y}}, blueprint.element.update, blueprint.element.delete, blueprint.layout.set. Edge elements express relationships via properties {edgeType: contains|triggers|sends-data|success|failure|invokes|uses|relation|exposes, sourceId, targetId} — endpoints must be existing non-edge elements. ALWAYS call with commit=false first: it validates the whole batch and PARKS it as a proposed change set the user sees as a GHOST PREVIEW on their diagram canvas (with its own Apply/Discard buttons) - describe the plan, and the user approves on the canvas, or you re-call with commit=true and the SAME operations after they approve in chat. Pass a short `summary` describing the proposal. Semantic batches require baseSemanticRevision = the blueprint's current semanticRevision.", 'inputSchema' => $obj(['blueprintId' => ['type' => 'string', 'description' => 'An existing blueprint id.'], 'createBlueprintName' => ['type' => 'string', 'description' => 'Create a new blueprint with this name instead of passing blueprintId.'], 'baseSemanticRevision' => ['type' => 'number', 'description' => "The blueprint's current semanticRevision (required for element create/update/delete)."], 'commit' => ['type' => 'boolean', 'description' => 'false (default) = validate + park as a ghost-preview change set; true = apply after the user approved.'], 'summary' => ['type' => 'string', 'description' => 'Short human summary of the proposal (shown on the canvas approval bar).'], 'operations' => ['type' => 'array', 'items' => ['type' => 'object'], 'description' => 'The typed operation batch (see tool description).']], ['operations'])],
             ['name' => 'create_flow_binding', 'scope' => 'apps:write', 'description' => "Make a flow RUN automatically by binding it to a trigger EVENT. Common triggers: event 'form.submitted' + formId (a form received a new record), or a connector event + connectorId (e.g. event 'aokie.call.incoming', connectorId 'aokie' — an incoming phone call). flow = the flow's SLUG (not id). mode: async (default) | sync (the triggering caller waits for the result) | background | manual. inputMap maps the flow's trigger inputs from the event, e.g. { callerPhone: '\$event.data.from', name: '\$event.data.answers.name' }. outputActions (optional) run with the flow result, e.g. [{ type:'formlogic.submitResponse', form:'<formId>', answers:{ note:'\$result.summary' } }] — types: formlogic.submitResponse | formlogic.updateResponse | formlogic.toast | connector.request | call.speak | formlogic.store.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'flow' => ['type' => 'string', 'description' => "The flow's slug."], 'event' => ['type' => 'string', 'description' => "e.g. form.submitted, aokie.call.incoming, aokie.call.ended"], 'formId' => ['type' => 'string', 'description' => 'For form events: the form this binding listens to (must belong to the app).'], 'connectorId' => ['type' => 'string', 'description' => "For connector events: e.g. 'aokie'."], 'mode' => ['type' => 'string', 'enum' => ['sync', 'async', 'background', 'manual'], 'description' => 'Default async.'], 'condition' => ['type' => 'object', 'description' => "Optional gate: { type:'expression', expr:'<QuickJS boolean over event>' }."], 'inputMap' => ['type' => 'object', 'description' => 'flow input name → $event selector.'], 'outputActions' => ['type' => 'array', 'items' => ['type' => 'object'], 'description' => 'Actions run with the flow result (see tool description).'], 'timeoutMs' => ['type' => 'number', 'description' => '250–300000 (default 30000).'], 'enabled' => ['type' => 'boolean']], ['flow', 'event'])],
             ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],

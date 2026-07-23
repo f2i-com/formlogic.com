@@ -702,10 +702,13 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
 
 export function DiagramCanvas({
   blueprint,
+  onEnsureId,
   onReload,
   onRevisions,
 }: {
   blueprint: Blueprint;
+  /** Deferred drafts: creates the blueprint row on the first change (id '' until then). */
+  onEnsureId?: () => Promise<string | null>;
   onReload: () => Promise<void>;
   onRevisions: (semantic: number, layout: number) => void;
 }) {
@@ -755,7 +758,14 @@ export function DiagramCanvas({
     async (operations: BlueprintOperation[], semantic: boolean): Promise<boolean> => {
       setBusy(true);
       try {
-        const res = await api.commitBlueprintOperations(blueprint.id, {
+        // Deferred drafts (/diagrams/new): the row is created on the FIRST real
+        // change — an untouched canvas never persists (owner direction).
+        let blueprintId = blueprint.id;
+        if (blueprintId === '') {
+          blueprintId = (await onEnsureId?.()) ?? '';
+          if (blueprintId === '') return false;
+        }
+        const res = await api.commitBlueprintOperations(blueprintId, {
           ...(semantic ? { baseSemanticRevision: semanticRef.current } : {}),
           operations,
         });
@@ -777,7 +787,7 @@ export function DiagramCanvas({
         setBusy(false);
       }
     },
-    [blueprint.id, onReload, onRevisions],
+    [blueprint.id, onEnsureId, onReload, onRevisions],
   );
 
   const onNodesChange = useCallback(
@@ -1229,13 +1239,28 @@ export function DiagramCanvas({
   const [proposals, setProposals] = useState<Array<{ id: string; summary: string | null; operations: BlueprintOperation[] }>>([]);
   useEffect(() => {
     let cancelled = false;
-    void api.listBlueprintChangeSets(blueprint.id).then((res) => {
-      if (!cancelled) setProposals(res.data?.changeSets ?? []);
-    });
+    if (blueprint.id === '') return;
+    const fetchProposals = () => {
+      void api.listBlueprintChangeSets(blueprint.id).then((res) => {
+        if (cancelled) return;
+        const next = res.data?.changeSets ?? [];
+        setProposals((previous) => {
+          // A proposal that vanished was resolved elsewhere (approved in chat →
+          // committed): reload so the canvas shows the applied elements.
+          if (previous.some((p) => !next.some((n) => n.id === p.id))) void onReload();
+          return next;
+        });
+      });
+    };
+    fetchProposals();
+    // The AI can park a proposal from the chat at any moment — poll so the user
+    // SEES the ghosts appear without reloading (owner direction: visible AI work).
+    const timer = window.setInterval(fetchProposals, 8000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, [blueprint.id, blueprint.semanticRevision]);
+  }, [blueprint.id, blueprint.semanticRevision, onReload]);
 
   const ghost = useMemo(() => {
     const pseudo: BlueprintElement[] = [];
@@ -1423,6 +1448,7 @@ export function DiagramCanvas({
             aria-label="Undo last change"
             title="Undo the last change"
             onClick={() => {
+              if (blueprint.id === '') return;
               void api.undoBlueprint(blueprint.id).then((res) => {
                 if (res.error) {
                   toast.info('Nothing to undo', typeof res.error === 'string' ? res.error : undefined);
@@ -1447,6 +1473,7 @@ export function DiagramCanvas({
                 isLoading={materializing}
                 disabled={busy || materializing}
                 onClick={() => {
+                  if (blueprint.id === '') return;
                   setMaterializing(true);
                   void api.materializeBlueprint(blueprint.id).then((res) => {
                     setMaterializing(false);
@@ -1472,6 +1499,7 @@ export function DiagramCanvas({
               isLoading={materializing}
               disabled={busy || materializing}
               onClick={() => {
+                if (blueprint.id === '') return;
                 setMaterializing(true);
                 void api.materializeBlueprint(blueprint.id).then((res) => {
                   setMaterializing(false);

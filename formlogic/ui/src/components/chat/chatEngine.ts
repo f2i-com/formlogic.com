@@ -127,7 +127,7 @@ export interface ChatToolActivity {
   detail?: string;
   error?: string;
   /** Deep-link target when the tool result names a created/updated record. */
-  link?: { kind: 'form' | 'app' | 'flow' | 'response'; id: string };
+  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram'; id: string };
 }
 
 /** A confirm-mode tool proposal awaiting the user's decision (desktop source). */
@@ -231,6 +231,8 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
     if (appId) return { kind: 'app', id: appId };
     const flowId = firstString(rec.flowId, rec.flow_id);
     if (flowId) return { kind: 'flow', id: flowId };
+    const blueprintId = firstString(rec.blueprintId, rec.blueprint_id);
+    if (blueprintId) return { kind: 'diagram', id: blueprintId };
     const responseId = firstString(rec.responseId, rec.response_id);
     if (responseId) return { kind: 'response', id: responseId };
     const bareId = firstString(rec.id);
@@ -238,6 +240,7 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
       if (toolName.includes('form')) return { kind: 'form', id: bareId };
       if (toolName.includes('app')) return { kind: 'app', id: bareId };
       if (toolName.includes('flow')) return { kind: 'flow', id: bareId };
+      if (toolName.includes('blueprint') || toolName.includes('diagram')) return { kind: 'diagram', id: bareId };
     }
     seen.push(...Object.values(rec).slice(0, 12));
   }

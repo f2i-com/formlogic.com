@@ -73,6 +73,7 @@ const AdminActingBoundary = lazyWithRetry(() => import('./components/admin/Admin
 const AdminRecordCounts = lazyWithRetry(() => import('./components/admin/AdminRecordCounts').then(m => ({ default: m.AdminRecordCounts })));
 const FlowsWorkspace = lazyWithRetry(() => import('./pages/flows/FlowsWorkspace').then(m => ({ default: m.FlowsWorkspace })));
 const DiagramsIndex = lazyWithRetry(() => import('./pages/diagrams/DiagramsIndex'));
+const DiagramsEntry = lazyWithRetry(() => import('./pages/diagrams/DiagramsEntry'));
 const ConnectAiWizard = lazyWithRetry(() => import('./pages/ConnectAiWizard'));
 const DiagramPage = lazyWithRetry(() => import('./pages/diagrams/DiagramPage'));
 const Billing = lazyWithRetry(() => import('./pages/Billing').then(m => ({ default: m.Billing })));
@@ -389,7 +390,8 @@ function AppRoutes() {
         <Route path="/connect-ai" element={<ConnectAiWizard />} />
         {/* Diagrams (extensible-flows §11A): the user-facing Blueprint surface — authenticated
             accounts only (no demo overlay). /blueprints kept as a compatibility redirect. */}
-        <Route path="/diagrams" element={<DiagramsIndex />} />
+        <Route path="/diagrams" element={<DiagramsEntry />} />
+        <Route path="/diagrams/all" element={<DiagramsIndex />} />
         <Route path="/diagrams/:diagramId" element={<DiagramPage />} />
         <Route path="/blueprints" element={<Navigate to="/diagrams" replace />} />
         <Route path="/settings" element={<Settings />} />

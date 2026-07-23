@@ -1,21 +1,18 @@
-// Diagrams index (§11A D1): the management list behind /diagrams. Creation is primarily
-// the Dashboard's "Start with a diagram" entry; this page lists, opens, creates and
-// deletes. Each diagram is a blueprint row — the §11 machinery unchanged.
+// Diagrams index (§11A D1): the management list behind /diagrams/all (the sidebar's
+// /diagrams is the smart resume-or-new entry). New diagrams open a deferred canvas —
+// nothing persists until the first real change. Each diagram is a blueprint row.
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { toast } from '../../stores/toastStore';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import type { Blueprint } from '../../types/blueprints';
-import { DIAGRAM_INPUT_CLS } from './DiagramCanvas';
 
 export default function DiagramsIndex() {
   const navigate = useNavigate();
   const [diagrams, setDiagrams] = useState<Blueprint[]>([]);
   const [loading, setLoading] = useState(true);
-  const [newName, setNewName] = useState('');
   const [pendingDelete, setPendingDelete] = useState<Blueprint | null>(null);
 
   useEffect(() => {
@@ -34,17 +31,6 @@ export default function DiagramsIndex() {
     const res = await api.listBlueprints();
     setDiagrams(res.data?.blueprints ?? []);
   }, []);
-
-  const create = useCallback(async () => {
-    const name = newName.trim();
-    if (name === '') return;
-    const res = await api.createBlueprint({ name });
-    if (res.error || !res.data) {
-      toast.error('Failed to create diagram', typeof res.error === 'string' ? res.error : undefined);
-      return;
-    }
-    navigate(`/diagrams/${res.data.blueprint.id}`);
-  }, [navigate, newName]);
 
   const confirmDelete = useCallback(async () => {
     const target = pendingDelete;
@@ -67,17 +53,9 @@ export default function DiagramsIndex() {
           </p>
         </div>
       </div>
-      <div className="mb-6 flex gap-2">
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}
-          placeholder="New diagram name"
-          aria-label="New diagram name"
-          className={DIAGRAM_INPUT_CLS + ' w-full max-w-sm'}
-        />
-        <Button disabled={newName.trim() === ''} onClick={() => void create()} leftIcon={<Plus className="h-4 w-4" />}>
-          Create
+      <div className="mb-6">
+        <Button onClick={() => navigate('/diagrams/new')} leftIcon={<Plus className="h-4 w-4" />}>
+          New diagram
         </Button>
       </div>
       {loading ? (

@@ -17,6 +17,8 @@ export function chatToolLinkPath(link: NonNullable<ChatToolActivity['link']>): s
       return `/apps/${encodeURIComponent(link.id)}/forms`;
     case 'flow':
       return `/flows?flow=${encodeURIComponent(link.id)}`;
+    case 'diagram':
+      return `/diagrams/${encodeURIComponent(link.id)}`;
     case 'response':
       return null;
   }

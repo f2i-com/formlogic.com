@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, FileText, Plus, Boxes, Workflow, Plug, FilePlus2, Map as MapIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { api } from '../../lib/api';
 import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 import { useAuthStore } from '../../stores/authStore';
 import { ConnectAiModal } from '../mcp/ConnectAiModal';
@@ -42,10 +41,8 @@ export function MobileNav() {
   };
   const handleNewDiagram = () => {
     closeMenu();
-    // §11A: same entry as the Dashboard's "Start with a diagram" — create and land on it.
-    void api.createBlueprint({ name: 'Untitled diagram' }).then((res) => {
-      if (res.data?.blueprint) navigate(`/diagrams/${res.data.blueprint.id}`);
-    });
+    // §11A: a fresh canvas — nothing persists until the first real change.
+    navigate('/diagrams/new');
   };
   const handleHandToAi = () => {
     closeMenu();
