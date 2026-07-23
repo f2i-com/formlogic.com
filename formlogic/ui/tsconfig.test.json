@@ -1,0 +1,41 @@
+{
+  // Audit FL-28: tests/specs are EXCLUDED from tsconfig.app.json, so a mistyped
+  // mock or prop in a test never failed any type gate. This config type-checks
+  // exactly the test files (plus the sources they import) with the same strict
+  // settings; `npm run typecheck:test` is the gate.
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "types": ["vite/client", "vitest/globals", "node"],
+    "skipLibCheck": true,
+
+    /* Bundler mode (mirrors tsconfig.app.json) */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "formlogic/kit": ["./src/lib/screen-kit/kit.tsx"]
+    },
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting — same strictness as the app config, except unused-var checks:
+       test files legitimately keep unused fixture bindings. */
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
+}

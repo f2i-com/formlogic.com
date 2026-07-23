@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "typecheck:test": "tsc -p tsconfig.test.json",
     "test:unit": "vitest",
     "test:e2e": "playwright test"
   },
@@ -44,6 +45,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.61.1",
     "@types/jsdom": "^28.0.3",

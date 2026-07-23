@@ -27,6 +27,7 @@ function prefs(patch: Partial<AiPreferencesState>): AiPreferencesState {
     desktopProviderId: null,
     desktopModel: null,
     customProviderId: null,
+    desktopReasoning: null,
     chatToolMode: 'auto',
     ...patch,
   };

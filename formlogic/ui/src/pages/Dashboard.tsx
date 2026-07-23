@@ -1249,7 +1249,7 @@ export function Dashboard() {
             </div>
 
             {formsLoading && recentForms.length === 0 ? (
-              <div className="space-y-3" aria-busy="true" aria-label="Loading recent forms">
+              <div className="space-y-3" role="status" aria-busy="true" aria-label="Loading recent forms">
                 {Array.from({ length: 4 }).map((_, i) => <ListRowSkeleton key={i} />)}
               </div>
             ) : recentForms.length === 0 ? (
@@ -1487,7 +1487,7 @@ export function Dashboard() {
             <Card>
               <CardContent className="p-0">
                 {statsLoading ? (
-                  <div className="space-y-3 p-4" aria-busy="true" aria-label="Loading recent activity">
+                  <div className="space-y-3 p-4" role="status" aria-busy="true" aria-label="Loading recent activity">
                     {Array.from({ length: 4 }).map((_, i) => <ListRowSkeleton key={i} />)}
                   </div>
                 ) : recentResponses.length === 0 ? (

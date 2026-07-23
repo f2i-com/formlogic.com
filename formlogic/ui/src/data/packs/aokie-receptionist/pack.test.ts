@@ -441,7 +441,11 @@ describe('aokieReceptionistPack â€” deterministic Realtime appointment requ
     const node = flow.flowJson.nodes.find((n) => n.id === nodeId)!;
     return (node.data as { expr: string }).expr;
   };
-  const evaluate = (expr: string, inputs: Record<string, unknown>, nodes: Record<string, unknown>): unknown =>
+  // Evaluated pack expressions are free-form plan objects assembled by embedded
+  // JS — assertions dig into their nested fields, so the return type is a
+  // deliberately permissive `any` (audit FL-28: tests are type-checked now).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const evaluate = (expr: string, inputs: Record<string, unknown>, nodes: Record<string, unknown>): any =>
     new Function('inputs', 'nodes', `return ${expr};`)(inputs, nodes);
   const futureDate = (): string => {
     const d = new Date(Date.now() + 5 * 86400000);
@@ -458,7 +462,9 @@ describe('aokieReceptionistPack â€” deterministic Realtime appointment requ
     agreementTurn: 6,
     at: new Date().toISOString(),
   });
-  const emptyNodes = (callId: string) => ({
+  // responses are unknown[] so tests can seed arbitrary fixture rows without
+  // fighting never[] inference (audit FL-28: tests are type-checked now).
+  const emptyNodes = (callId: string): Record<string, { responses: unknown[] }> => ({
     requestAppointments: { responses: [] },
     callAppointments: { responses: [] },
     requestTasks: { responses: [] },

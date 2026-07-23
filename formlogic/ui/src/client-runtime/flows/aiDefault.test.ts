@@ -344,7 +344,7 @@ describe('defaultSiteChat (interim contract fetch for POST /api/ai/chat)', () =>
     );
 
     expect(out).toEqual({ ok: true, data: { source: 'site', content: 'hosted pong', usage: { total: 9 } } });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toMatch(/\/ai\/chat$/);
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ messages: MESSAGES, stream: false });

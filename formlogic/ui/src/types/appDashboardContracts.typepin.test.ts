@@ -51,8 +51,11 @@ export type AppReportSpecPins = [
 
 // ── DashboardWidget / DashboardScreen shapes ─────────────────────────────────
 export type DashboardShapePins = [
-  // The five host-rendered kinds — nothing that could carry author code (no 'code'/'iframe'/'html').
-  Expect<Equal<DashboardWidgetKind, 'report' | 'list' | 'text' | 'actions' | 'activity'>>,
+  // The six host-rendered kinds — nothing that could carry author code (no
+  // 'code'/'iframe'/'html'). 'grid' is the records-grid widget (linked-records
+  // feature) — host-rendered, added after this pin was written and caught by
+  // typecheck:test (audit FL-28) when tests joined the type gate.
+  Expect<Equal<DashboardWidgetKind, 'report' | 'list' | 'grid' | 'text' | 'actions' | 'activity'>>,
   Expect<Equal<DashboardWidget['kind'], DashboardWidgetKind>>,
   Expect<Equal<DashboardWidget['id'], string>>,
   Expect<Equal<DashboardWidget['title'], string | undefined>>,

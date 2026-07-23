@@ -68,6 +68,6 @@ describe('triggerInputNamesFromFlow', () => {
   it('returns an empty list when the flow has no Trigger', () => {
     expect(triggerInputNamesFromFlow({
       flowJson: { nodes: [{ id: 'out', type: 'output' }], edges: [] },
-    } as FlowDefinition)).toEqual([]);
+    } as unknown as FlowDefinition)).toEqual([]);
   });
 });

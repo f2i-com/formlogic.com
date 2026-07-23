@@ -148,9 +148,103 @@ class ReconcileService
         }
     }
 
+    /**
+     * ROW-level response-mirror repair (audit FL-04): the per-form SQLite store
+     * is authoritative — reinsert response_metadata rows it has that MySQL lost
+     * (a mirror insert that failed AFTER the durable commit now defers here
+     * instead of destroying the committed row), and drop metadata rows whose
+     * authoritative response no longer exists. Idempotent (INSERT IGNORE /
+     * keyed DELETE); scans only forms whose counts disagree, so the cron cost
+     * stays proportional to actual drift. (Equal counts with a 1-for-1 id swap
+     * would evade the gate — accepted: that shape requires two independent
+     * partial failures and still surfaces in the Doctor's drift report.)
+     *
+     * @return array{inserted:int, orphansDeleted:int, formsRepaired:string[]}
+     */
+    public function repairResponseMirrors(): array
+    {
+        $inserted = 0;
+        $orphansDeleted = 0;
+        $formsRepaired = [];
+
+        $metaCounts = [];
+        foreach ($this->mysql->query('SELECT form_id, COUNT(*) AS c FROM response_metadata GROUP BY form_id') as $r) {
+            $metaCounts[$r['form_id']] = (int) $r['c'];
+        }
+
+        foreach ($this->formIds() as $formId) {
+            $sqliteCount = $this->sqliteResponseCount($formId);
+            if ($sqliteCount === null) {
+                continue; // no/unreadable SQLite store — fileDrift reports it
+            }
+            if ($sqliteCount === ($metaCounts[$formId] ?? 0)) {
+                continue;
+            }
+
+            try {
+                $db = $this->sqlite->getFormDatabase($formId);
+                $rows = $db->query('SELECT id, status, submitted_at FROM responses')
+                    ->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            } catch (\Throwable $e) {
+                continue;
+            }
+            $sqliteById = [];
+            foreach ($rows as $row) {
+                $sqliteById[(string) $row['id']] = $row;
+            }
+
+            $metaStmt = $this->mysql->prepare('SELECT id FROM response_metadata WHERE form_id = ?');
+            $metaStmt->execute([$formId]);
+            $metaIds = array_map('strval', $metaStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
+            $metaIdSet = array_fill_keys($metaIds, true);
+
+            $repairedThisForm = false;
+            $insertStmt = $this->mysql->prepare(
+                'INSERT IGNORE INTO response_metadata (id, form_id, status, submitted_at)
+                 VALUES (:id, :form_id, :status, :submitted_at)'
+            );
+            foreach ($sqliteById as $id => $row) {
+                if (isset($metaIdSet[$id])) {
+                    continue;
+                }
+                $insertStmt->execute([
+                    'id' => $id,
+                    'form_id' => $formId,
+                    'status' => (string) ($row['status'] ?? 'submitted'),
+                    'submitted_at' => (string) ($row['submitted_at'] ?? gmdate('Y-m-d H:i:s')),
+                ]);
+                $inserted += $insertStmt->rowCount();
+                $repairedThisForm = true;
+            }
+
+            $orphaned = array_values(array_filter($metaIds, static fn (string $id) => !isset($sqliteById[$id])));
+            foreach (array_chunk($orphaned, 500) as $chunk) {
+                $ph = implode(',', array_fill(0, count($chunk), '?'));
+                $del = $this->mysql->prepare("DELETE FROM response_metadata WHERE form_id = ? AND id IN ($ph)");
+                $del->execute(array_merge([$formId], $chunk));
+                $orphansDeleted += $del->rowCount();
+                $repairedThisForm = true;
+            }
+
+            if ($repairedThisForm) {
+                $formsRepaired[] = $formId;
+            }
+        }
+
+        return [
+            'inserted' => $inserted,
+            'orphansDeleted' => $orphansDeleted,
+            'formsRepaired' => $formsRepaired,
+        ];
+    }
+
     /** Apply safe repairs. @return array<string, int|string[]> summary of what changed. */
     public function fix(): array
     {
+        // Audit FL-04: row-level mirror repair runs FIRST, so the count resync
+        // below reconciles against the repaired metadata state.
+        $mirror = $this->repairResponseMirrors();
+
         $report = $this->report();
         $resynced = [];
         foreach ($report['countDrift'] as $d) {
@@ -180,6 +274,9 @@ class ReconcileService
         }
 
         return [
+            'mirrorRowsInserted' => $mirror['inserted'],
+            'mirrorOrphansDeleted' => $mirror['orphansDeleted'],
+            'mirrorFormsRepaired' => $mirror['formsRepaired'],
             'responseCountsResynced' => $resynced,
             'orphanedLinksDeleted' => (int) $linksDeleted,
             'deleteCleanupsRetried' => $cleanupRetries['retried'],

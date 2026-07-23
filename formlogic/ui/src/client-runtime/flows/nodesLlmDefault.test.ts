@@ -159,7 +159,7 @@ describe('llm_chat "Default (from Settings)" alias order (plan §5.6)', () => {
     const resolveDesktopLlmEndpoint = vi.fn(async () => ({ endpoint: 'http://127.0.0.1:11434/v1/chat/completions', service: 'ollama' }));
     const deps = fakeDeps({ runDefaultAiChat, fetchFn, resolveDesktopLlmEndpoint });
 
-    const err = await executeNode(ctxFor(llmNode({}), deps)).catch((e: FlowExecError) => e);
+    const err = (await executeNode(ctxFor(llmNode({}), deps)).catch((e: FlowExecError) => e)) as FlowExecError;
 
     expect(err).toBeInstanceOf(FlowExecError);
     expect(err.code).toBe('node_failed');
@@ -176,7 +176,7 @@ describe('llm_chat "Default (from Settings)" alias order (plan §5.6)', () => {
     const fetchFn = okFetch();
     const deps = fakeDeps({ runDefaultAiChat, fetchFn });
 
-    const err = await executeNode(ctxFor(llmNode({ provider: 'default' }), deps)).catch((e: FlowExecError) => e);
+    const err = (await executeNode(ctxFor(llmNode({ provider: 'default' }), deps)).catch((e: FlowExecError) => e)) as FlowExecError;
 
     expect(err).toBeInstanceOf(FlowExecError);
     expect(err.code).toBe('node_failed');
@@ -190,7 +190,7 @@ describe('llm_chat "Default (from Settings)" alias order (plan §5.6)', () => {
     });
     const deps = fakeDeps({ runDefaultAiChat });
 
-    const err = await executeNode(ctxFor(llmNode({}), deps)).catch((e: FlowExecError) => e);
+    const err = (await executeNode(ctxFor(llmNode({}), deps)).catch((e: FlowExecError) => e)) as FlowExecError;
 
     expect(err).toBeInstanceOf(FlowExecError);
     expect(err.code).toBe('node_failed');

@@ -107,17 +107,33 @@ class ResponseService
     }
 
     /**
-     * Undo a create whose MySQL mirror gate refused: row + its just-appended
-     * (never acknowledged) operation + head state, atomically.
+     * Undo a create whose MySQL mirror gate refused ON POLICY (not an active
+     * private form / duplicate record id): row + its just-appended (never
+     * acknowledged) operation + head state, atomically.
+     *
+     * Audit FL-04: the op rollback is HEAD-GUARDED — if a concurrent append
+     * landed after this op, rewinding would corrupt the signed chain beneath
+     * op N+1, so BOTH the op and the row are left in place (the policy
+     * refusal is still reported to the caller; the anomaly is logged for the
+     * operator). Transient mirror failures never reach this method any more —
+     * they keep the committed row and defer the mirror to reconciliation.
      */
     private function compensateEncryptedCreate(\PDO $db, string $id, ?array $opContext): void
     {
         $db->beginTransaction();
         try {
-            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
             if ($opContext !== null && $this->dataOperationLog !== null) {
-                $this->dataOperationLog->rollbackAppend($db, $opContext);
+                if (!$this->dataOperationLog->rollbackAppend($db, $opContext)) {
+                    // Head moved: never rewind, never delete the row the chain
+                    // now describes (audit FL-04).
+                    $db->rollBack();
+                    $this->logger->critical('encrypted-create compensation refused: a later append holds the head — row and operation retained for operator review', [
+                        'responseId' => $id,
+                    ]);
+                    return;
+                }
             }
+            $db->prepare('DELETE FROM responses WHERE id = :id')->execute(['id' => $id]);
             $db->commit();
         } catch (\Throwable $e) {
             if ($db->inTransaction()) {
@@ -224,17 +240,32 @@ class ResponseService
                     'This form is not an active private form — the envelope cannot be stored (private_form_encrypted).'
                 );
             }
+        } catch (EncryptionEnablingException | PrivateFormEncryptedException $e) {
+            // POLICY refusals from the mirror-gate branch above — compensation
+            // (head-guarded) already ran there; the refusal propagates.
+            throw $e;
         } catch (\PDOException $e) {
             if ($e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062)) {
-                // The recordId already exists in the mirror (e.g. reused across forms).
+                // POLICY refusal: the recordId already exists in the mirror
+                // (e.g. reused across forms) — compensate (head-guarded).
                 $this->compensateEncryptedCreate($db, $id, $opContext);
                 throw new DuplicateResponseIdException();
             }
-            $this->compensateEncryptedCreate($db, $id, $opContext);
-            throw $e;
+            // TRANSIENT mirror failure (audit FL-04): the response + its signed
+            // operation are already durably committed — deleting them here was
+            // the destructive-compensation defect (a concurrent append after op
+            // N made the rewind corrupt the chain, and a crash between stores
+            // stranded divergence). The authoritative store WINS: keep the row,
+            // report success, and let reconciliation (bin/reconcile.php --fix /
+            // ReconcileService) restore the missing metadata mirror idempotently.
+            $this->logger->error('encrypted-create mirror insert failed — response committed, mirror deferred to reconciliation (audit FL-04)', [
+                'formId' => $formId, 'responseId' => $id, 'error' => $e->getMessage(),
+            ]);
         } catch (\Throwable $e) {
-            $this->compensateEncryptedCreate($db, $id, $opContext);
-            throw $e;
+            // Same posture for non-PDO transport failures.
+            $this->logger->error('encrypted-create mirror insert failed — response committed, mirror deferred to reconciliation (audit FL-04)', [
+                'formId' => $formId, 'responseId' => $id, 'error' => $e->getMessage(),
+            ]);
         }
 
         if ($placement !== null) {

@@ -15,7 +15,7 @@ const CONFIG = {
 } as unknown as GrantSource;
 
 /** Relay api whose enqueue immediately reports a terminal 'done' with a result on first poll. */
-function relayApiDone(captured: { enqueue?: Record<string, unknown> }) {
+function relayApiDone(captured: { enqueue?: Record<string, unknown> }): ScreenBridgeDeps['relayApi'] {
   return {
     enqueueConnectorCommand: vi.fn(async (_slug: string, payload: Record<string, unknown>) => {
       captured.enqueue = payload;
@@ -31,7 +31,7 @@ function relayApiDone(captured: { enqueue?: Record<string, unknown> }) {
         } as never,
       },
     })),
-  };
+  } as unknown as ScreenBridgeDeps['relayApi'];
 }
 
 /** Immediate sleep + a clock that only exceeds the timeout after `ticks` now() calls. */
@@ -206,7 +206,7 @@ describe('connectorInvoke — routing', () => {
           return { data: { commandId: 'cmd-2', status: 'done' as const, idempotent: true } };
         }),
         getConnectorCommand: vi.fn(async () => ({})),
-      },
+      } as unknown as ScreenBridgeDeps['relayApi'],
     });
     const bridge = createScreenBridge(d);
     const out = await bridge.connectorInvoke('aokie', 'settings.set', { greeting: 'hi' });
@@ -224,7 +224,7 @@ describe('connectorInvoke — routing', () => {
       relayApi: {
         enqueueConnectorCommand: vi.fn(async () => ({ data: { commandId: 'cmd-9', status: 'queued' as const } })),
         getConnectorCommand: vi.fn(async () => ({ data: { command: { status: 'claimed' as const } as never } })),
-      },
+      } as unknown as ScreenBridgeDeps['relayApi'],
       relayOptions: { sleep: async () => {}, pollMs: 1, timeoutMs: 65_000, now: () => (t += 100_000) },
     });
     const bridge = createScreenBridge(d);
@@ -311,7 +311,7 @@ describe('updateRecord / presence', () => {
       getConnectorCommand: vi.fn(async () => ({
         data: { command: { status: 'done', result: { ok: true, data: { devices: [{ address: 'AA:BB' }] } }, error: null } as never },
       })),
-    };
+    } as unknown as ScreenBridgeDeps['relayApi'];
     const wideConfig = { app: { customLogic: { permissions: ['connector.aokie.*'] } }, forms: [] } as unknown as GrantSource;
     const d = deps({
       config: wideConfig,

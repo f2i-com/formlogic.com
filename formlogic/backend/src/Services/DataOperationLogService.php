@@ -161,14 +161,35 @@ final class DataOperationLogService
     }
 
     /**
-     * Compensate a just-appended operation whose row mutation was rolled back
-     * by the caller (MySQL mirror-gate refusal). The op was never acknowledged
-     * or served; state rewinds to the captured previous head.
+     * Compensate a just-appended operation whose row mutation must be undone
+     * (MySQL mirror-gate POLICY refusal — not-a-private-form / duplicate id).
+     * The op was never acknowledged or served; state rewinds to the captured
+     * previous head.
+     *
+     * HEAD-GUARDED (audit FL-04): committed signed history must NEVER rewind
+     * beneath a later append. The rollback is only legal while the compensated
+     * operation is provably still the head (state.last_sequence ==
+     * previous.last_sequence + 1); a concurrent append after it makes the
+     * rewind corrupt the chain under op N+1, so this REFUSES (returns false,
+     * logs loudly) and the caller must leave the row in place too.
      *
      * @param array{operationId: string, previous: array{last_sequence: int, last_operation_hash: ?string, head_checkpoint: ?string}} $context
+     * @return bool true when the op was rolled back; false when it is no longer the head
      */
-    public function rollbackAppend(\PDO $db, array $context): void
+    public function rollbackAppend(\PDO $db, array $context): bool
     {
+        $expectedHeadSequence = (int) $context['previous']['last_sequence'] + 1;
+        $state = $db->query('SELECT last_sequence FROM op_log_state WHERE id = 1')
+            ->fetch(\PDO::FETCH_ASSOC);
+        if ($state === false || (int) $state['last_sequence'] !== $expectedHeadSequence) {
+            error_log(sprintf(
+                'DataOperationLogService: REFUSING rollbackAppend of %s — sequence %d is no longer the head (state at %s); the signed chain never rewinds beneath a later append (audit FL-04)',
+                (string) $context['operationId'],
+                $expectedHeadSequence,
+                $state === false ? 'unknown' : (string) $state['last_sequence']
+            ));
+            return false;
+        }
         $db->prepare('DELETE FROM replication_operations WHERE operation_id = ?')
             ->execute([$context['operationId']]);
         $db->prepare('UPDATE op_log_state SET last_sequence = ?, last_operation_hash = ?, head_checkpoint = ? WHERE id = 1')
@@ -177,6 +198,7 @@ final class DataOperationLogService
                 $context['previous']['last_operation_hash'],
                 $context['previous']['head_checkpoint'],
             ]);
+        return true;
     }
 
     /** Push the committed head into the Cloud anchor (best-effort redundancy). */

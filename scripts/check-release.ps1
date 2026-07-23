@@ -7,7 +7,13 @@
 #
 #   powershell -File scripts/check-release.ps1                 # standard gates
 #   powershell -File scripts/check-release.ps1 -Playwright     # + E2E projects
-#   powershell -File scripts/check-release.ps1 -NativeRuntime  # + native-runtime build
+#   powershell -File scripts/check-release.ps1 -Desktop        # + desktop clippy + test
+#   powershell -File scripts/check-release.ps1 -NativeRuntime  # + native-runtime clippy/check/build
+#   powershell -File scripts/check-release.ps1 -DistSmoke      # + package + boot the zip (FL-30)
+#   powershell -File scripts/check-release.ps1 -Fmt            # + cargo fmt --check, both Rust roots (FL-31)
+#   powershell -File scripts/check-release.ps1 -RustAudit      # + cargo audit, both Rust roots (FL-31)
+#   powershell -File scripts/check-release.ps1 -Msrv           # + compile with the pinned 1.88 MSRV (FL-31)
+#   powershell -File scripts/check-release.ps1 -Android        # + native-runtime Android target check (FL-31)
 #
 # Requires: PHP + composer deps installed (backend/vendor), Node deps
 # (ui/node_modules), the Rust toolchain for -Desktop/-NativeRuntime, and a
@@ -18,7 +24,12 @@
 param(
     [switch]$Playwright,
     [switch]$NativeRuntime,
-    [switch]$Desktop
+    [switch]$Desktop,
+    [switch]$DistSmoke,
+    [switch]$Fmt,
+    [switch]$RustAudit,
+    [switch]$Msrv,
+    [switch]$Android
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,6 +67,9 @@ Invoke-Gate 'ui: vitest' (Join-Path $repo 'formlogic/ui') {
 Invoke-Gate 'ui: eslint' (Join-Path $repo 'formlogic/ui') {
     npx eslint .
 }
+Invoke-Gate 'ui: typecheck tests (audit FL-28)' (Join-Path $repo 'formlogic/ui') {
+    npm run typecheck:test
+}
 Invoke-Gate 'ui: pack screens' (Join-Path $repo 'formlogic/ui') {
     node scripts/check-pack-screens.mjs
 }
@@ -66,17 +80,29 @@ Invoke-Gate 'ui: build (tsc -b + vite)' (Join-Path $repo 'formlogic/ui') {
     npm run build
 }
 
+# ── Cross-repo contract digest (audit FL-34) — cheap, always on; fails loudly
+# when the aokie checkout is missing (set AOKIE_REPO to point at it) ──
+Invoke-Gate 'contracts: cross-repo digest (FL-34)' $repo {
+    node scripts/check-contracts.mjs
+}
+
 # ── Desktop (Rust) — opt-in: multi-minute build ──
 if ($Desktop) {
+    Invoke-Gate 'desktop: cargo clippy (gui features, audit FL-31)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
+        cargo clippy --features gui
+    }
     Invoke-Gate 'desktop: cargo test (gui features)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
         cargo test --features gui
     }
 } else {
-    Write-Host "`n(skipped: desktop cargo test — pass -Desktop to include)" -ForegroundColor Yellow
+    Write-Host "`n(skipped: desktop cargo clippy + test — pass -Desktop to include)" -ForegroundColor Yellow
 }
 
 # ── Native runtime — opt-in ──
 if ($NativeRuntime) {
+    Invoke-Gate 'native-runtime: cargo clippy (audit FL-31)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo clippy
+    }
     Invoke-Gate 'native-runtime: cargo check' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
         cargo check
     }
@@ -85,6 +111,61 @@ if ($NativeRuntime) {
     }
 } else {
     Write-Host "(skipped: native-runtime — pass -NativeRuntime to include)" -ForegroundColor Yellow
+}
+
+# ── Rust hygiene gates (audit FL-31) — opt-in, each fails loudly when its
+# tool/toolchain is missing rather than self-skipping ──
+if ($Fmt) {
+    Invoke-Gate 'desktop: cargo fmt --check' (Join-Path $repo 'formlogic/desktop/src-tauri') {
+        cargo fmt --check
+    }
+    Invoke-Gate 'native-runtime: cargo fmt --check' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo fmt --check
+    }
+} else {
+    Write-Host "(skipped: cargo fmt --check — pass -Fmt to include; NOTE both trees carry pre-audit fmt drift)" -ForegroundColor Yellow
+}
+if ($RustAudit) {
+    Invoke-Gate 'desktop: cargo audit (RustSec)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
+        cargo audit
+    }
+    Invoke-Gate 'native-runtime: cargo audit (RustSec)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo audit
+    }
+} else {
+    Write-Host "(skipped: cargo audit — pass -RustAudit to include; requires cargo-audit installed)" -ForegroundColor Yellow
+}
+if ($Msrv) {
+    # rust-version = "1.88" is pinned in both Cargo.tomls; compiling WITH that
+    # toolchain is what actually detects an accidental MSRV increase.
+    Invoke-Gate 'desktop: MSRV check (cargo +1.88.0)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
+        cargo +1.88.0 check --features gui
+    }
+    Invoke-Gate 'native-runtime: MSRV check (cargo +1.88.0)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo +1.88.0 check
+    }
+} else {
+    Write-Host "(skipped: MSRV compile — pass -Msrv to include; requires 'rustup toolchain install 1.88.0')" -ForegroundColor Yellow
+}
+if ($Android) {
+    Invoke-Gate 'native-runtime: Android target check' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo check --target aarch64-linux-android
+    }
+} else {
+    Write-Host "(skipped: Android target compile — pass -Android to include; requires the NDK + 'rustup target add aarch64-linux-android')" -ForegroundColor Yellow
+}
+
+# ── Distributable smoke (audit FL-30) — opt-in: packages the zip, then boots
+# and exercises the EXTRACTED artifact against a clean throwaway database ──
+if ($DistSmoke) {
+    Invoke-Gate 'dist: package zip' $repo {
+        node scripts/package-dist.mjs --skip-ui-build
+    }
+    Invoke-Gate 'dist: smoke the artifact (FL-30)' $repo {
+        node scripts/smoke-dist.mjs
+    }
+} else {
+    Write-Host "(skipped: dist packaging + artifact smoke — pass -DistSmoke to include)" -ForegroundColor Yellow
 }
 
 # ── Playwright — opt-in: needs the served app ──

@@ -151,7 +151,7 @@ describe('Desktop form provider routing', () => {
     await expect(generateFormWithDesktopProvider({
       providerId: 'my-openai',
       prompt: 'Create a feedback form',
-    }, chat)).rejects.toThrow('Selected provider failed.');
+    }, chat as unknown as Parameters<typeof generateFormWithDesktopProvider>[1])).rejects.toThrow('Selected provider failed.');
     expect(chat).toHaveBeenCalledTimes(1);
   });
 

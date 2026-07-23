@@ -274,20 +274,20 @@ function createMemoryIndexedDB(): IDBFactory {
       });
       return req as unknown as IDBOpenDBRequest;
     },
-  } as IDBFactory;
+  } as unknown as IDBFactory;
 }
 
-function requestShell(result: unknown): IDBRequest {
+function requestShell(result: unknown): IDBOpenDBRequest {
   return {
     result,
     error: null,
     onsuccess: null,
     onerror: null,
     onupgradeneeded: null,
-  } as unknown as IDBRequest;
+  } as unknown as IDBOpenDBRequest;
 }
 
-function requestWith(result: unknown): IDBRequest {
+function requestWith(result: unknown): IDBOpenDBRequest {
   const req = requestShell(undefined);
   queueMicrotask(() => {
     (req as { result: unknown }).result = result;

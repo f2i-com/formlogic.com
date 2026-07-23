@@ -87,6 +87,7 @@ export function ConnectorRoutingPanel() {
               className="text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white px-2 py-1.5"
               value={a.desktopConnectionId ?? ''}
               disabled={savingConnector === a.connectorId}
+              aria-label={`Routing desktop for the ${a.connectorId} connector`}
               onChange={(e) => pick(a.connectorId, a.appId, e.target.value === '' ? null : e.target.value)}
             >
               <option value="">Auto (single online desktop)</option>

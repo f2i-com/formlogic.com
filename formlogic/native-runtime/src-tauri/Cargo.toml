@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+# MSRV pin (audit FL-31) — kept in lock-step with formlogic/desktop/src-tauri.
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

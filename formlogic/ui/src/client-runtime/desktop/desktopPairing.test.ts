@@ -70,7 +70,7 @@ describe('requestPairing', () => {
     const res = await requestPairing('https://app.example');
 
     expect(res).toEqual({ requestId: 'req_1', autoApproved: false });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:17872/api/desktop/pairing-requests');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ origin: 'https://app.example', silent: false });
@@ -83,7 +83,7 @@ describe('requestPairing', () => {
     const res = await requestPairing('https://app.example', { silent: true });
 
     expect(res).toEqual({ requestId: 'req_2', autoApproved: true });
-    expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toEqual({
+    expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({
       origin: 'https://app.example',
       silent: true,
     });
@@ -108,7 +108,7 @@ describe('attemptSilentReconnect', () => {
     await expect(attemptSilentReconnect('https://app.example')).resolves.toBe(true);
     expect(getDesktopToken()).toBe('tok_silent');
     // The begin call carried silent:true.
-    expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toEqual({
+    expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({
       origin: 'https://app.example',
       silent: true,
     });
