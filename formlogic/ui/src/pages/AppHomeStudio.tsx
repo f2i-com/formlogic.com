@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wand2, Loader2, Save, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom } from 'lucide-react';
 import { api } from '../lib/api';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
+import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ScreenFilesEditor } from '../components/custom-screen/ScreenFilesEditor';
@@ -237,8 +238,10 @@ export default function AppHomeStudio() {
     toast.success('Custom app saved.');
   };
 
+  const chatDockOffset = useChatDockOffset();
+
   return (
-    <div className="h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex flex-col bg-gray-50 dark:bg-slate-950">
+    <div className={`h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex flex-col bg-gray-50 dark:bg-slate-950 transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>
       {acting && (
         <div className="bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-xs px-4 py-1.5 text-center shrink-0 border-b border-slate-200 dark:border-slate-700">
           Widget previews show no data — record data is not visible to platform admins. Layout, widgets and code remain fully editable.

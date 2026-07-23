@@ -73,6 +73,7 @@ import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useUIStore } from '../stores/uiStore';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
+import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
 
 type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | null;
@@ -982,6 +983,8 @@ export default function FormBuilder() {
     });
   }, [canUseFormFlows]);
 
+  const chatDockOffset = useChatDockOffset();
+
   if (!form) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -1155,7 +1158,7 @@ export default function FormBuilder() {
     // Height subtracts the acting/demo banner (var is 0px outside those contexts)
     // so the builder's internal panels fit the viewport instead of overflowing
     // under the fold by the banner's height.
-    <div className="min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] flex flex-col">
+    <div className={`min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] flex flex-col transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>
       {/* Header */}
       <header ref={observeHeader} className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">

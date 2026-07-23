@@ -56,6 +56,29 @@ export interface ChatTurnError {
   message: string;
 }
 
+/** Prefix marking a stored compaction-summary message (§11B chat compaction). */
+export const SUMMARY_PREFIX = 'Conversation summary (compacted):';
+
+/** Messages since the last compaction marker (the whole list when none). */
+export function sinceLastSummary<T extends { role: string; content: string }>(
+  msgs: T[]
+): { summary: string | null; tail: T[] } {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant' && msgs[i].content.startsWith(SUMMARY_PREFIX)) {
+      return { summary: msgs[i].content, tail: msgs.slice(i + 1) };
+    }
+  }
+  return { summary: null, tail: msgs };
+}
+
+/** The wire history for a turn: [summary as system] + tail, or the full transcript.
+ * The THREAD keeps every message — only what rides the wire is condensed. */
+export function historyFor(msgs: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
+  const { summary, tail } = sinceLastSummary(msgs);
+  const wire = tail.map((m) => ({ role: m.role, content: m.content }));
+  return summary ? [{ role: 'system', content: summary }, ...wire] : wire;
+}
+
 export type ChatTurnOutcome =
   | { ok: true; source: ChatSource; content: string; note?: string }
   | { ok: false; source: ChatSource | null; error: ChatTurnError };
@@ -99,6 +122,8 @@ export interface SendChatTurnOptions {
   pageContext?: { kind: 'form' | 'app' | 'diagram'; id: string } | null;
   /** Demo account: chat works, tool actions are disabled (banner + tools:false). */
   isDemo?: boolean;
+  /** Force a tools-off turn (e.g. the compaction summary — pure text, no actions). */
+  noTools?: boolean;
   signal?: AbortSignal;
   events?: ChatTurnEvents;
   /** Per-thread client sequence for the tunnel request (defaults to 1). */
@@ -366,7 +391,7 @@ async function runSiteSource(
       method: 'POST',
       headers,
       credentials: 'include',
-      body: JSON.stringify({ messages: opts.messages, stream: true, tools: !opts.isDemo }),
+      body: JSON.stringify({ messages: opts.messages, stream: true, tools: !opts.isDemo && !opts.noTools }),
       signal: opts.signal,
     });
   } catch (e) {

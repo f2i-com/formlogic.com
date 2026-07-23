@@ -32,6 +32,7 @@ import {
   X,
   Footprints,
   PanelRight,
+  Shrink,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import { api } from '../../lib/api';
 import { cn, generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
+import { toast } from '../../stores/toastStore';
 import {
   getAiPreferences,
   invalidateAiPreferencesCache,
@@ -51,6 +53,9 @@ import {
   type ChatToolActivity,
   type ChatToolProposal,
   type ChatTurnError,
+  SUMMARY_PREFIX,
+  sinceLastSummary,
+  historyFor,
 } from './chatEngine';
 import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatView';
@@ -63,6 +68,9 @@ const PANEL_HEIGHT = 544;
 // ---------------------------------------------------------------------------
 // Per-turn transient state (tool cards + notes are live-turn only; history is text).
 // ---------------------------------------------------------------------------
+
+/** How many uncompacted messages before the Compact option appears. */
+const COMPACT_THRESHOLD = 25;
 
 interface LiveTurn {
   id: string;
@@ -447,11 +455,43 @@ export function SiteChatWidget() {
     const userMessage = await store.appendMessage(threadId, 'user', text);
     const next = [...prior, userMessage];
     setMessages(next);
-    await runTurn(
-      threadId,
-      next.map((m) => ({ role: m.role, content: m.content }))
-    );
+    await runTurn(threadId, historyFor(next));
   }, [input, sending, userId, activeThreadId, messages, runTurn, setActiveThread]);
+
+  // §11B: compact the conversation — an AI summary becomes the carried history while
+  // the thread keeps every message. Offered once the uncompacted tail reaches the
+  // threshold; compacting again later re-summarises from the previous summary.
+  const uncompactedCount = sinceLastSummary(messages).tail.length;
+  const compactConversation = useCallback(async () => {
+    if (sending || !userId || !activeThreadId) return;
+    setSending(true);
+    try {
+      const outcome = await sendChatTurn({
+        threadId: activeThreadId,
+        messages: [
+          ...historyFor(messages),
+          {
+            role: 'user',
+            content:
+              'Summarise our conversation so far into a compact brief a future assistant can continue from: goals, decisions made, the names and ids of anything created or edited, and open threads. Reply with ONLY the summary text.',
+          },
+        ],
+        isDemo,
+        noTools: true,
+        clientSeq: clientSeqRef.current[activeThreadId],
+      });
+      if (!outcome.ok) {
+        toast.error('Could not compact the chat', outcome.error.message);
+        return;
+      }
+      const store = getChatStore(userId);
+      const marker = await store.appendMessage(activeThreadId, 'assistant', `${SUMMARY_PREFIX}\n${outcome.content.trim()}`);
+      setMessages((current) => [...current, marker]);
+      toast.success('Chat compacted', 'Earlier messages stay in the thread; the summary carries the context forward.');
+    } finally {
+      setSending(false);
+    }
+  }, [sending, userId, activeThreadId, messages, isDemo]);
 
   const retryTurn = useCallback(() => {
     const last = lastSendRef.current;
@@ -633,6 +673,18 @@ export function SiteChatWidget() {
         >
           <History className="h-4 w-4" aria-hidden="true" />
         </button>
+        {uncompactedCount >= COMPACT_THRESHOLD && (
+          <button
+            type="button"
+            aria-label="Compact the conversation"
+            title="Compact: summarise earlier messages so the chat stays sharp"
+            disabled={sending}
+            onClick={() => void compactConversation()}
+            className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+          >
+            <Shrink className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
         {!isMobile && !isDemo && (
           <button
             type="button"

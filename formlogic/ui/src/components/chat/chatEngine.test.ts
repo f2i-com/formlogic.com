@@ -10,9 +10,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   answerToolProposal,
   createSiteChatSseParser,
+  historyFor,
   normalizeToolActivity,
   normalizeToolProposal,
   sendChatTurn,
+  sinceLastSummary,
+  SUMMARY_PREFIX,
   type ChatEngineDeps,
   type ChatToolActivity,
   type ChatToolProposal,
@@ -186,6 +189,14 @@ describe('sendChatTurn — routing', () => {
   it('site source on the demo account sends tools:false', async () => {
     const fetchFn = vi.fn(async () => jsonResponse({ data: { content: 'demo reply' } }));
     const out = await sendChatTurn(turn({ isDemo: true }), prefsDeps(prefs(), { fetchFn }));
+    expect(out.ok).toBe(true);
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).tools).toBe(false);
+  });
+
+  it('noTools forces tools:false on the site wire (the compaction summary turn)', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ data: { content: 'summary text' } }));
+    const out = await sendChatTurn(turn({ noTools: true }), prefsDeps(prefs(), { fetchFn }));
     expect(out.ok).toBe(true);
     const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).tools).toBe(false);
@@ -457,5 +468,52 @@ describe('normalizeToolProposal + answerToolProposal', () => {
     const res = await answerToolProposal(proposal, true, { postInputFn });
     expect(res.ok).toBe(false);
     expect(res.error).toContain('no longer answerable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chat compaction history assembly (SUMMARY_PREFIX marker messages).
+// ---------------------------------------------------------------------------
+
+describe('compaction history helpers', () => {
+  const msg = (role: string, content: string) => ({ role, content });
+
+  it('no marker: the full transcript rides the wire', () => {
+    const msgs = [msg('user', 'hi'), msg('assistant', 'hello')];
+    expect(sinceLastSummary(msgs)).toEqual({ summary: null, tail: msgs });
+    expect(historyFor(msgs)).toEqual(msgs);
+  });
+
+  it('marker present: summary becomes a leading system message + only the tail rides', () => {
+    const summary = `${SUMMARY_PREFIX}
+We built a contact form (id form-1).`;
+    const msgs = [
+      msg('user', 'old question'),
+      msg('assistant', 'old answer'),
+      msg('assistant', summary),
+      msg('user', 'new question'),
+    ];
+    expect(historyFor(msgs)).toEqual([
+      { role: 'system', content: summary },
+      { role: 'user', content: 'new question' },
+    ]);
+  });
+
+  it('re-compaction: only the LAST marker wins', () => {
+    const first = `${SUMMARY_PREFIX}
+first`;
+    const second = `${SUMMARY_PREFIX}
+second`;
+    const msgs = [msg('assistant', first), msg('user', 'a'), msg('assistant', second), msg('user', 'b')];
+    expect(historyFor(msgs)).toEqual([
+      { role: 'system', content: second },
+      { role: 'user', content: 'b' },
+    ]);
+    expect(sinceLastSummary(msgs).tail).toEqual([msg('user', 'b')]);
+  });
+
+  it('a USER message quoting the prefix is not a marker', () => {
+    const msgs = [msg('user', `${SUMMARY_PREFIX} what does this mean?`), msg('assistant', 'it marks a summary')];
+    expect(sinceLastSummary(msgs).summary).toBeNull();
   });
 });
