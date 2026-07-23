@@ -74,6 +74,10 @@ class McpController
         private ?FlowService $flowService = null,
         // Recycle bin: external-AI flow deletes snapshot first, like the web surface.
         private ?\FormLogic\Services\TrashService $trashService = null,
+        // Blueprints (diagrams): sketch/read via the shared handlers; materialize turns a
+        // diagram into a real app. Null only in older tests — production wires both.
+        private ?\FormLogic\Services\BlueprintService $blueprintService = null,
+        private ?\FormLogic\Services\BlueprintMaterializeService $blueprintMaterializer = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -460,6 +464,8 @@ class McpController
             $this->planService,
             $this->flowService,
             $this->trashService,
+            $this->blueprintService,
+            $this->blueprintMaterializer,
         );
     }
 
@@ -649,6 +655,12 @@ Example — auto-acknowledge a new lead:
      { "id": "out", "type": "output", "data": { "value": { "reply": "$nodes.draft.content" } } }
    ], "edges": [ { "source": "in", "target": "draft" }, { "source": "draft", "target": "out" } ] } }
 2. create_flow_binding { "flow": "ack-lead", "event": "form.submitted", "formId": "<leadFormId>", "inputMap": { "name": "$event.data.answers.name", "message": "$event.data.answers.message" }, "outputActions": [ { "type": "formlogic.updateResponse", "form": "<leadFormId>", "responseId": "$event.data.responseId", "answers": { "ack": "$result.reply" } } ] }
+
+## Diagrams (blueprints) — sketch the idea first, then materialise it into a real app
+A diagram is the owner-visible sketch of what's being built (the /diagrams canvas). You can drive the whole idea-to-app loop:
+1. blueprint_propose_elements { createBlueprintName: "Client tracker", commit: true, baseSemanticRevision: 0, operations: [...] } — sketch it. Operations are typed: blueprint.element.create { operationId, targetId (you mint, e.g. "el-clients"), elementType (form|flow|actor|note|edge|...), properties, layout? {x,y} }. Concept FORM elements carry properties { title, fields: [{ name, type }] }; edges carry properties { edgeType: relation|triggers|uses|..., sourceId, targetId }. commit: false instead VALIDATES and parks the batch as a ghost preview the owner approves on their canvas — use it when the human should sign off.
+2. Read it back any time: list_blueprints / get_blueprint { blueprintId } (elements + semanticRevision — semantic batches on an EXISTING diagram need the current semanticRevision).
+3. materialize_blueprint { blueprintId } — the diagram becomes a REAL app: concept forms -> real forms (sketched fields included), relation edges -> linked_record fields (N:M pairs get a junction form), concept flows -> stub flows, triggers edges -> form.submitted bindings, actors -> app roles. The diagram stays LINKED; sketch more later and call it again for DELTA additions to the same app. Then keep refining with update_form / set_app_home / create_flow.
 
 ## Records (responses)
 Reading records needs the responses:read scope; creating/changing them needs the explicitly-granted responses:write scope (both are opt-ins on the Connect an AI link — without them these tools are hidden).

@@ -73,7 +73,8 @@ class ChatToolsCatalogTest extends TestCase
             $this->assertContains($name, $names);
         }
         foreach (['set_app_home', 'update_app', 'create_report', 'create_document', 'add_response',
-                  'update_response', 'delete_response', 'delete_flow', 'desktop_status', 'connector_command'] as $name) {
+                  'update_response', 'delete_response', 'delete_flow', 'materialize_blueprint',
+                  'desktop_status', 'connector_command'] as $name) {
             $this->assertContains($name, $names);
         }
         foreach ($defs as $def) {

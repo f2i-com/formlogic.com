@@ -10,12 +10,19 @@
 // the same command surface a demo visitor drives by hand. Nothing touches the server.
 import { getChatStore } from './chatStore';
 import { useFormStore } from '../../stores/formStore';
-import { addDemoRecord } from '../../lib/demoLocal';
+import {
+  addDemoRecord,
+  commitDemoBlueprintOperations,
+  createDemoBlueprint,
+  demoCreateFlow,
+  demoCreateFormBinding,
+} from '../../lib/demoLocal';
 import { generateId } from '../../lib/utils';
 import { logger } from '../../lib/logger';
 import type { ChatToolActivity } from './chatEngine';
 import {
   DEMO_FALLBACK_REPLY,
+  DEMO_MATCHABLE_SCENARIOS,
   DEMO_ROOT_SCENARIOS,
   matchDemoScenario,
   type DemoMemory,
@@ -50,6 +57,10 @@ interface StageOverrides {
   createForm?: DemoStage['createForm'];
   updateForm?: DemoStage['updateForm'];
   seedRecord?: DemoStage['seedRecord'];
+  createFlow?: DemoStage['createFlow'];
+  createFormBinding?: DemoStage['createFormBinding'];
+  createDiagram?: DemoStage['createDiagram'];
+  commitDiagram?: DemoStage['commitDiagram'];
 }
 
 let stageOverrides: StageOverrides | null = null;
@@ -104,7 +115,10 @@ class DemoChatDirector {
    */
   async respond(text: string, threadId: string): Promise<void> {
     if (this.snapshot.running) return;
-    const scenario = matchDemoScenario(text, this.available);
+    // Offered chips first (follow-ups shadow same-named roots), then EVERY matchable
+    // scenario — the Dashboard CreateBand's suggestion phrasings land here as typed
+    // text and must start their guided build even when their chip isn't showing.
+    const scenario = matchDemoScenario(text, [...this.available, ...DEMO_MATCHABLE_SCENARIOS]);
     if (!scenario) {
       const gen = ++this.generation;
       this.patch({ running: true, typing: true, threadId });
@@ -119,8 +133,8 @@ class DemoChatDirector {
 
   private async runScenario(scenario: DemoScenario, threadId: string): Promise<void> {
     const gen = ++this.generation;
-    // A fresh ROOT build starts a fresh memory; follow-ups extend the existing one.
-    if (DEMO_ROOT_SCENARIOS.includes(scenario)) this.memory = {};
+    // A fresh build starts a fresh memory; follow-ups extend the existing one.
+    if (!scenario.followUp) this.memory = {};
     this.patch({ running: true, typing: false, threadId, activities: [], chips: [] });
     const cancelled = () => gen !== this.generation;
     const bail = new Error('demo-cancelled');
@@ -187,6 +201,35 @@ class DemoChatDirector {
         stageOverrides?.seedRecord ??
         (async (formId, answers) => {
           await addDemoRecord(formId, answers);
+        }),
+      createFlow:
+        stageOverrides?.createFlow ??
+        (async (input) => {
+          const flow = await demoCreateFlow({
+            appId: null, // workspace-scope: the demo's flows overlay list
+            name: input.name,
+            slug: input.slug,
+            description: input.description,
+            flowJson: input.flowJson as never,
+          });
+          return { id: flow.id, slug: flow.slug };
+        }),
+      createFormBinding:
+        stageOverrides?.createFormBinding ??
+        (async (formId, payload) => {
+          await demoCreateFormBinding(formId, payload);
+        }),
+      createDiagram:
+        stageOverrides?.createDiagram ??
+        (async (name) => {
+          const stored = await createDemoBlueprint(name);
+          return { id: stored.row.id };
+        }),
+      commitDiagram:
+        stageOverrides?.commitDiagram ??
+        (async (diagramId, batch) => {
+          const out = await commitDemoBlueprintOperations(diagramId, batch as never);
+          if (!out.ok) throw new Error(`Diagram sketch refused (${out.code})`);
         }),
     };
   }

@@ -605,7 +605,11 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         // create_flow_binding, … — lets an AI automate the apps it builds).
         $c->get(\FormLogic\Services\FlowService::class),
         // Recycle bin: MCP flow deletes snapshot first, like the web surface.
-        $c->get(\FormLogic\Services\TrashService::class)
+        $c->get(\FormLogic\Services\TrashService::class),
+        // Blueprints (diagrams) over MCP: sketch via blueprint_propose_elements, read via
+        // list/get_blueprint, and materialize_blueprint turns the diagram into a real app.
+        $c->get(\FormLogic\Services\BlueprintService::class),
+        $c->get(\FormLogic\Services\BlueprintMaterializeService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -861,7 +865,13 @@ $container->set(\FormLogic\Services\ChatToolsService::class, function (Container
         $c->get(\FormLogic\Services\AppReportService::class),
         $c->get(\FormLogic\Services\PlanService::class),
         $c->get(\FormLogic\Services\FlowService::class),
-        $c->get(\FormLogic\Services\TrashService::class)
+        $c->get(\FormLogic\Services\TrashService::class),
+        // Blueprints (diagrams): list/get/propose ride the shared handlers, and
+        // materialize_blueprint turns a diagram into a real app (canvas-identical).
+        // These were MISSING here — the chat surface's blueprint tools refused with
+        // 'unavailable in this context' despite being in the catalog.
+        $c->get(\FormLogic\Services\BlueprintService::class),
+        $c->get(\FormLogic\Services\BlueprintMaterializeService::class)
     );
 });
 // Chat tool grants (plan Phase 6 section 6): per-turn hashed tokens bound to user + desktop

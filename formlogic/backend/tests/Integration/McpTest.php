@@ -80,7 +80,10 @@ class McpTest extends TestCase
         self::$responses = $responses;
         self::$reportValidator = new AppReportService(self::$apps, $forms);
         self::$desktopCommands = new DesktopCommandService($conn);
-        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands, null, null, null, new FlowService($conn));
+        $flows = new FlowService($conn);
+        $blueprints = new \FormLogic\Services\BlueprintService($conn);
+        $materializer = new \FormLogic\Services\BlueprintMaterializeService($conn, $blueprints, $forms, self::$apps, $flows);
+        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands, null, null, null, $flows, null, $blueprints, $materializer);
     }
 
     protected function setUp(): void
@@ -1204,6 +1207,65 @@ class McpTest extends TestCase
         $this->assertFalse($deleted['isError'], $deleted['text']);
         $gone = $this->tool($tok, 'delete_response', ['formId' => $formId, 'responseId' => $responseId]);
         $this->assertTrue($gone['isError']);
+    }
+
+    /** Diagrams over MCP (§11A): sketch with blueprint_propose_elements, then
+     *  materialize_blueprint turns the sketch into a REAL app with real forms —
+     *  the same materialiser as the canvas's 'Create app' button. */
+    public function testDiagramSketchMaterializesIntoARealApp(): void
+    {
+        $tok = self::$tokens->create($this->userId)['token'];
+
+        // Sketch: two concept forms (with sketched fields) + a relation edge,
+        // committed directly — the MCP token IS the owner's agent; commit=false
+        // would park the batch as canvas ghosts for on-screen approval instead.
+        $sketch = $this->tool($tok, 'blueprint_propose_elements', [
+            'createBlueprintName' => 'Client tracker',
+            'commit' => true,
+            'baseSemanticRevision' => 0,
+            'operations' => [
+                ['operationId' => 'op-1', 'type' => 'blueprint.element.create', 'targetId' => 'el-clients', 'elementType' => 'form',
+                    'properties' => ['title' => 'Clients', 'fields' => [['name' => 'Name', 'type' => 'short_text'], ['name' => 'Email', 'type' => 'email']]]],
+                ['operationId' => 'op-2', 'type' => 'blueprint.element.create', 'targetId' => 'el-jobs', 'elementType' => 'form',
+                    'properties' => ['title' => 'Jobs', 'fields' => [['name' => 'Description', 'type' => 'long_text']]]],
+                ['operationId' => 'op-3', 'type' => 'blueprint.element.create', 'targetId' => 'el-rel', 'elementType' => 'edge',
+                    'properties' => ['edgeType' => 'relation', 'sourceId' => 'el-jobs', 'targetId' => 'el-clients']],
+            ],
+        ]);
+        $this->assertFalse($sketch['isError'], $sketch['text']);
+        $blueprintId = (string) ($sketch['data']['blueprintId'] ?? '');
+        $this->assertNotSame('', $blueprintId);
+
+        // Materialise: a real app + real forms carrying the sketched fields.
+        $out = $this->tool($tok, 'materialize_blueprint', ['blueprintId' => $blueprintId]);
+        $this->assertFalse($out['isError'], $out['text']);
+        $this->assertSame('created', $out['data']['mode'] ?? null);
+        $appId = (string) ($out['data']['appId'] ?? '');
+        $this->assertNotSame('', $appId);
+        $createdFormIds = $out['data']['createdFormIds'] ?? [];
+        $this->assertCount(2, $createdFormIds);
+        $clients = null;
+        foreach ($createdFormIds as $fid) {
+            $form = self::$forms->getForm((string) $fid);
+            if (($form['title'] ?? '') === 'Clients') {
+                $clients = $form;
+            }
+        }
+        $this->assertNotNull($clients, 'the Clients concept form materialised into a real form');
+        $this->assertContains('Name', array_column($clients['fields'] ?? [], 'label'));
+
+        // The blueprint now links to the app (get_blueprint reflects it; delta mode from here).
+        $bp = $this->tool($tok, 'get_blueprint', ['blueprintId' => $blueprintId]);
+        $this->assertFalse($bp['isError'], $bp['text']);
+        $this->assertSame($appId, $bp['data']['appId'] ?? null);
+
+        // Nothing new sketched since → the delta call refuses honestly instead of churning.
+        $again = $this->tool($tok, 'materialize_blueprint', ['blueprintId' => $blueprintId]);
+        $this->assertTrue($again['isError']);
+
+        // App-scoped tokens cannot materialise (it creates/extends apps outside their scope).
+        $scoped = self::$tokens->create($this->userId, $this->appA)['token'];
+        $this->assertTrue($this->tool($scoped, 'materialize_blueprint', ['blueprintId' => $blueprintId])['isError']);
     }
 
     /** tools/list front-loads the core build path (some MCP clients only eager-load the first

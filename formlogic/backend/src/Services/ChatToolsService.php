@@ -41,7 +41,7 @@ class ChatToolsService
         // shape an app can automate it too (no scope migration for existing tokens).
         'list_flows' => 'apps:read', 'get_flow' => 'apps:read',
         'create_flow' => 'apps:write', 'update_flow' => 'apps:write', 'delete_flow' => 'apps:write',
-        'blueprint_propose_elements' => 'apps:write',
+        'blueprint_propose_elements' => 'apps:write', 'materialize_blueprint' => 'apps:write',
         'list_blueprints' => 'apps:read', 'get_blueprint' => 'apps:read',
         'list_flow_bindings' => 'apps:read', 'create_flow_binding' => 'apps:write',
         'update_flow_binding' => 'apps:write', 'delete_flow_binding' => 'apps:write',
@@ -78,6 +78,9 @@ class ChatToolsService
         private ?FlowService $flowService = null,
         private ?TrashService $trashService = null,
         private ?BlueprintService $blueprintService = null,
+        // §11A D3/D5: the SAME create-or-delta materialiser the canvas 'Create app'
+        // button uses — lets an external AI turn its diagram into a real app.
+        private ?BlueprintMaterializeService $materializer = null,
     ) {}
 
     // ── Chat-surface entry (subset-restricted) ──────────────────────────────────────────
@@ -434,6 +437,36 @@ class ChatToolsService
                 }
                 $data = ['blueprintId' => $blueprintId, 'committed' => $commit] + $result;
                 $ctx->audit('blueprint_propose_elements', ['blueprintId' => $blueprintId, 'committed' => $commit]);
+                break;
+            }
+            case 'materialize_blueprint': {
+                // §11A D3/D5: the SAME create-or-delta materialiser as the canvas
+                // 'Create app' button — concept forms → real forms (sketched fields
+                // become real fields), relation edges → linked_record fields (N:M via
+                // junction forms), concept flows → stub flows, 'triggers' edges →
+                // form.submitted bindings, actors → app roles. Delta mode adds NEW
+                // concepts to the already-linked app and never deletes anything.
+                $materializer = $this->materializer
+                    ?? throw new \InvalidArgumentException('Materialisation is unavailable in this context');
+                if ($scopedApp !== null) {
+                    throw new \Exception('This token is scoped to one app and cannot materialise diagrams into apps');
+                }
+                $blueprintId = is_string($args['blueprintId'] ?? null) ? trim((string) $args['blueprintId']) : '';
+                if ($blueprintId === '') {
+                    throw new \InvalidArgumentException('blueprintId is required');
+                }
+                $data = $materializer->materialize($userId, $blueprintId);
+                if ($creatorMode) {
+                    // Creator tokens stay confined to what they made — the materialised
+                    // app + its forms count, so the token can keep building on them.
+                    if (!empty($data['appId'])) {
+                        $ctx->recordCreated('apps', (string) $data['appId']);
+                    }
+                    foreach (($data['createdFormIds'] ?? []) as $createdFormId) {
+                        $ctx->recordCreated('forms', (string) $createdFormId);
+                    }
+                }
+                $ctx->audit('materialize_blueprint', ['blueprintId' => $blueprintId, 'appId' => $data['appId'] ?? null]);
                 break;
             }
             case 'create_flow': {
@@ -948,6 +981,7 @@ class ChatToolsService
             ['name' => 'list_blueprints', 'scope' => 'apps:read', 'description' => "List the owner's blueprints (DIAGRAMS — the visual sketches of apps at /diagrams): blueprintId, name, appId (null until materialised into a real app), semanticRevision, updatedAt. Use get_blueprint before proposing changes.", 'inputSchema' => $obj([])],
             ['name' => 'get_blueprint', 'scope' => 'apps:read', 'description' => 'Get one blueprint (diagram) including its elements (nodes AND relationship edges) and current semanticRevision — you need that revision for blueprint_propose_elements.', 'inputSchema' => $obj(['blueprintId' => ['type' => 'string']], ['blueprintId'])],
             ['name' => 'blueprint_propose_elements', 'scope' => 'apps:write', 'description' => "Propose (and, after user approval, commit) elements on a BLUEPRINT — the high-level diagram of what's being built. Operations are typed entries: blueprint.element.create {operationId, targetId (you mint, e.g. 'el-orders'), elementType (app|form|screen|event|flow|intelligence|service|actor|decision|group|note|edge), properties {title,...}, resourceRef? {kind,id}, layout? {x,y}}, blueprint.element.update, blueprint.element.delete, blueprint.layout.set. Edge elements express relationships via properties {edgeType: contains|triggers|sends-data|success|failure|invokes|uses|relation|exposes, sourceId, targetId} — endpoints must be existing non-edge elements. ALWAYS call with commit=false first: it validates the whole batch and PARKS it as a proposed change set the user sees as a GHOST PREVIEW on their diagram canvas (with its own Apply/Discard buttons) - describe the plan, and the user approves on the canvas, or you re-call with commit=true and the SAME operations after they approve in chat. Pass a short `summary` describing the proposal. Semantic batches require baseSemanticRevision = the blueprint's current semanticRevision.", 'inputSchema' => $obj(['blueprintId' => ['type' => 'string', 'description' => 'An existing blueprint id.'], 'createBlueprintName' => ['type' => 'string', 'description' => 'Create a new blueprint with this name instead of passing blueprintId.'], 'baseSemanticRevision' => ['type' => 'number', 'description' => "The blueprint's current semanticRevision (required for element create/update/delete)."], 'commit' => ['type' => 'boolean', 'description' => 'false (default) = validate + park as a ghost-preview change set; true = apply after the user approved.'], 'summary' => ['type' => 'string', 'description' => 'Short human summary of the proposal (shown on the canvas approval bar).'], 'operations' => ['type' => 'array', 'items' => ['type' => 'object'], 'description' => 'The typed operation batch (see tool description).']], ['operations'])],
+            ['name' => 'materialize_blueprint', 'scope' => 'apps:write', 'description' => "Turn a BLUEPRINT (diagram) into a real APP — the same materialiser as the canvas's 'Create app' button. First call CREATES a new app: concept form elements become real forms (their sketched fields become real fields), relation edges become linked_record fields (N:M pairs get a junction form), concept flows become stub flows, 'triggers' edges become form.submitted bindings, actors become app roles, and the blueprint stays LINKED to the app (get_blueprint then shows appId + live sync state). Later calls run in DELTA mode: NEW concept forms/relations sketched since are added to the SAME app — nothing is ever deleted; nothing new to apply refuses with a clear message. Typical build: blueprint_propose_elements (commit=true) to sketch, then materialize_blueprint, then keep refining with update_form/set_app_home/create_flow. Returns { mode:'created'|'delta', appId, appSlug, createdFormIds, reusedFormIds, relations, createdFlowIds, bindings, roles }.", 'inputSchema' => $obj(['blueprintId' => ['type' => 'string']], ['blueprintId'])],
             ['name' => 'create_flow_binding', 'scope' => 'apps:write', 'description' => "Make a flow RUN automatically by binding it to a trigger EVENT. Common triggers: event 'form.submitted' + formId (a form received a new record), or a connector event + connectorId (e.g. event 'aokie.call.incoming', connectorId 'aokie' — an incoming phone call). flow = the flow's SLUG (not id). mode: async (default) | sync (the triggering caller waits for the result) | background | manual. inputMap maps the flow's trigger inputs from the event, e.g. { callerPhone: '\$event.data.from', name: '\$event.data.answers.name' }. outputActions (optional) run with the flow result, e.g. [{ type:'formlogic.submitResponse', form:'<formId>', answers:{ note:'\$result.summary' } }] — types: formlogic.submitResponse | formlogic.updateResponse | formlogic.toast | connector.request | call.speak | formlogic.store.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'flow' => ['type' => 'string', 'description' => "The flow's slug."], 'event' => ['type' => 'string', 'description' => "e.g. form.submitted, aokie.call.incoming, aokie.call.ended"], 'formId' => ['type' => 'string', 'description' => 'For form events: the form this binding listens to (must belong to the app).'], 'connectorId' => ['type' => 'string', 'description' => "For connector events: e.g. 'aokie'."], 'mode' => ['type' => 'string', 'enum' => ['sync', 'async', 'background', 'manual'], 'description' => 'Default async.'], 'condition' => ['type' => 'object', 'description' => "Optional gate: { type:'expression', expr:'<QuickJS boolean over event>' }."], 'inputMap' => ['type' => 'object', 'description' => 'flow input name → $event selector.'], 'outputActions' => ['type' => 'array', 'items' => ['type' => 'object'], 'description' => 'Actions run with the flow result (see tool description).'], 'timeoutMs' => ['type' => 'number', 'description' => '250–300000 (default 30000).'], 'enabled' => ['type' => 'boolean']], ['flow', 'event'])],
             ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],
             ['name' => 'create_document', 'scope' => 'apps:write', 'description' => "Add a PDF document (a report page combining multiple charts + explanatory text) to the app's Reports section. blocks[] render in order: { kind:'text', title?, body } for a heading/paragraph, or { kind:'report', reportId, caption? } to embed a chart — reportId is the id returned by create_report. Create the chart reports FIRST, then reference them here.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'blocks' => ['type' => 'array', 'items' => ['type' => 'object', 'description' => "{ kind:'text', title?, body } | { kind:'report', reportId, caption? }"]]], ['appId', 'name', 'blocks'])],

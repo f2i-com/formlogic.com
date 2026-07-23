@@ -36,6 +36,14 @@ export interface DemoStage {
   updateForm(id: string, updates: Partial<Form>): Promise<void>;
   /** Seed one record into the demo overlay (what records()/Responses read back). */
   seedRecord(formId: string, answers: Record<string, unknown>): Promise<void>;
+  /** Create a demo-local WORKSPACE flow (the /flows demo overlay). */
+  createFlow(input: { name: string; slug: string; description?: string; flowJson: Record<string, unknown> }): Promise<{ id: string; slug: string }>;
+  /** Bind a demo-local form's event to a workspace flow (demo overlay). */
+  createFormBinding(formId: string, payload: Record<string, unknown>): Promise<void>;
+  /** Create a demo-local DIAGRAM (a demolocal_ blueprint in this browser). */
+  createDiagram(name: string): Promise<{ id: string }>;
+  /** Commit one operation batch through the demo diagrams mini gateway (throws on refusal). */
+  commitDiagram(diagramId: string, batch: { baseSemanticRevision?: number; operations: Array<Record<string, unknown>> }): Promise<void>;
 }
 
 /** Cross-step notes: follow-up scenarios build on what the root scenario created. */
@@ -51,6 +59,10 @@ export interface DemoScenario {
   id: string;
   /** Chip label AND the typed text that triggers it (matched case-insensitively). */
   prompt: string;
+  /** Extra trigger phrases (the Dashboard CreateBand's suggestion chips land here). */
+  aliases?: string[];
+  /** Follow-up scenarios extend the parent build's memory instead of resetting it. */
+  followUp?: true;
   run(stage: DemoStage, memory: DemoMemory): Promise<void>;
   /** Offered as chips once this scenario completes (before the remaining roots). */
   followUps?: DemoScenario[];
@@ -159,6 +171,7 @@ function pollScreenFiles(questionFieldId: string, optionLabels: string[]) {
 const addPhoneField: DemoScenario = {
   id: 'follow-phone-field',
   prompt: 'Add a phone number field',
+  followUp: true,
   async run(stage, memory) {
     const formId = memory.formId;
     if (!formId) {
@@ -185,6 +198,7 @@ const addPhoneField: DemoScenario = {
 const makeItDark: DemoScenario = {
   id: 'follow-dark-theme',
   prompt: 'Give it a dark theme',
+  followUp: true,
   async run(stage, memory) {
     const formId = memory.formId;
     if (!formId) {
@@ -203,6 +217,7 @@ const makeItDark: DemoScenario = {
 const seedMoreVotes: DemoScenario = {
   id: 'follow-seed-votes',
   prompt: 'Add a few more votes',
+  followUp: true,
   async run(stage, memory) {
     const formId = memory.formId;
     const pollFieldId = memory.pollFieldId;
@@ -266,42 +281,90 @@ const feedbackForm: DemoScenario = {
   },
 };
 
+/** The shared lunch-poll build (form → code screen → seeded votes → publish → preview):
+ *  the second act of BOTH 'Build a quick poll…' and 'Turn my idea into an app'. */
+async function buildLunchPollApp(stage: DemoStage, memory: DemoMemory): Promise<void> {
+  let form: Form | null = null;
+  let pollField: FormField | null = null;
+  const choices = ['Pizza', 'Sushi', 'Tacos', 'Salad'];
+  await stage.tool('create_form', 'Team lunch poll', async () => {
+    form = await stage.createForm('Team lunch poll', 'One tap — where are we eating on Friday?');
+    if (!form) throw new Error('Could not create the demo form');
+    memory.formId = form.id;
+    pollField = field(0, 'multiple_choice', 'Where should we eat?', { required: true, properties: { options: options(...choices) } });
+    memory.pollFieldId = pollField.id;
+    await stage.updateForm(form.id, { fields: [pollField] });
+    return { link: { kind: 'form', id: form.id }, goTo: `/builder/${form.id}` };
+  });
+  await stage.say('The poll form is ready. Now the fun part: a custom results screen — real code, running sandboxed over this form\'s records.');
+  await stage.tool('set_form_screen', 'Writing the live results screen', async () => {
+    await stage.updateForm(memory.formId!, {
+      customScreen: { enabled: true, entry: 'index.ts', files: pollScreenFiles(memory.pollFieldId!, choices) },
+    });
+    return { link: { kind: 'formScreen', id: memory.formId! } };
+  });
+  await stage.tool('add_response', 'Seeding 4 example votes', async () => {
+    await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Pizza' });
+    await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Sushi' });
+    await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Pizza' });
+    await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Tacos' });
+  });
+  await stage.tool('update_form', 'Publishing the poll', async () => {
+    await stage.updateForm(memory.formId!, { status: 'published' });
+    return { link: { kind: 'formScreen', id: memory.formId! }, goTo: `/preview/${memory.formId}` };
+  });
+  await stage.say('And here is the results screen, live over the four votes I seeded — cast one yourself and watch the bars move. ' + OUTRO);
+}
+
 const lunchPoll: DemoScenario = {
   id: 'root-lunch-poll',
   prompt: 'Build a quick poll with a live results screen',
   followUps: [seedMoreVotes],
   async run(stage, memory) {
     await stage.say('A poll with its own live results page — my favourite party trick. Building it now.');
-    let form: Form | null = null;
-    let pollField: FormField | null = null;
-    const choices = ['Pizza', 'Sushi', 'Tacos', 'Salad'];
-    await stage.tool('create_form', 'Team lunch poll', async () => {
-      form = await stage.createForm('Team lunch poll', 'One tap — where are we eating on Friday?');
-      if (!form) throw new Error('Could not create the demo form');
-      memory.formId = form.id;
-      pollField = field(0, 'multiple_choice', 'Where should we eat?', { required: true, properties: { options: options(...choices) } });
-      memory.pollFieldId = pollField.id;
-      await stage.updateForm(form.id, { fields: [pollField] });
-      return { link: { kind: 'form', id: form.id }, goTo: `/builder/${form.id}` };
-    });
-    await stage.say('The poll form is ready. Now the fun part: a custom results screen — real code, running sandboxed over this form\'s records.');
-    await stage.tool('set_form_screen', 'Writing the live results screen', async () => {
-      await stage.updateForm(memory.formId!, {
-        customScreen: { enabled: true, entry: 'index.ts', files: pollScreenFiles(memory.pollFieldId!, choices) },
+    await buildLunchPollApp(stage, memory);
+  },
+};
+
+// The CreateBand's "Turn my idea into an app": the idea is SKETCHED as a diagram first
+// (a demolocal_ blueprint on the real canvas), then materialised — locally, since the
+// demo can't create server apps — into the working poll mini-app.
+const ideaToApp: DemoScenario = {
+  id: 'root-idea-to-app',
+  prompt: 'Turn my idea into an app',
+  followUps: [seedMoreVotes],
+  async run(stage, memory) {
+    await stage.say(
+      'Here is how an idea becomes an app in FormLogic: first we SKETCH it as a diagram, then the sketch turns into real forms and flows. Take "team lunch club" as the idea — watch the canvas.'
+    );
+    let diagramId = '';
+    await stage.tool('blueprint_propose_elements', 'Sketching the idea as a diagram', async () => {
+      const diagram = await stage.createDiagram('Team lunch club');
+      diagramId = diagram.id;
+      const op = (body: Record<string, unknown>) => ({ operationId: 'op-' + generateId(), ...body });
+      await stage.commitDiagram(diagramId, {
+        baseSemanticRevision: 0,
+        operations: [
+          op({ type: 'blueprint.element.create', targetId: 'el-poll', elementType: 'form', layout: { x: 80, y: 120 },
+            properties: { title: 'Lunch poll', fields: [{ name: 'Choice', type: 'short_text' }, { name: 'Voter', type: 'short_text' }] } }),
+          op({ type: 'blueprint.element.create', targetId: 'el-flow', elementType: 'flow', layout: { x: 420, y: 60 },
+            properties: { title: 'Close voting at noon', description: 'Counts the votes and announces the winner.' } }),
+          op({ type: 'blueprint.element.create', targetId: 'el-team', elementType: 'actor', layout: { x: 80, y: 340 },
+            properties: { title: 'The team' } }),
+          op({ type: 'blueprint.element.create', targetId: 'el-note', elementType: 'note', layout: { x: 420, y: 300 },
+            properties: { text: 'The idea: one tap to vote for Friday lunch, live results on a screen in the kitchen.' } }),
+          op({ type: 'blueprint.element.create', targetId: 'el-uses', elementType: 'edge',
+            properties: { edgeType: 'uses', sourceId: 'el-team', targetId: 'el-poll' } }),
+          op({ type: 'blueprint.element.create', targetId: 'el-triggers', elementType: 'edge',
+            properties: { edgeType: 'triggers', sourceId: 'el-poll', targetId: 'el-flow' } }),
+        ],
       });
-      return { link: { kind: 'formScreen', id: memory.formId! } };
+      return { link: { kind: 'diagram', id: diagramId }, goTo: `/diagrams/${diagramId}` };
     });
-    await stage.tool('add_response', 'Seeding 4 example votes', async () => {
-      await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Pizza' });
-      await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Sushi' });
-      await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Pizza' });
-      await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Tacos' });
-    });
-    await stage.tool('update_form', 'Publishing the poll', async () => {
-      await stage.updateForm(memory.formId!, { status: 'published' });
-      return { link: { kind: 'formScreen', id: memory.formId! }, goTo: `/preview/${memory.formId}` };
-    });
-    await stage.say('And here is the results screen, live over the four votes I seeded — cast one yourself and watch the bars move. ' + OUTRO);
+    await stage.say(
+      'That is the idea as a living sketch: who uses it, what they touch, what runs automatically. On a full account the "Create app" button materialises a diagram like this into a real app with linked forms and flows. The demo cannot create server apps, so I will build the heart of it right here instead — the poll with its live results screen.'
+    );
+    await buildLunchPollApp(stage, memory);
   },
 };
 
@@ -339,15 +402,130 @@ const bookingForm: DemoScenario = {
   },
 };
 
+// The CreateBand's "Create a customer enquiry form" — name/contact/topic/message.
+const enquiryForm: DemoScenario = {
+  id: 'root-enquiry-form',
+  prompt: 'Create a customer enquiry form',
+  followUps: [makeItDark],
+  async run(stage, memory) {
+    await stage.say('A customer enquiry form, coming up — watch the screen.');
+    let form: Form | null = null;
+    await stage.tool('create_form', 'Customer enquiries', async () => {
+      form = await stage.createForm('Customer enquiries', 'Ask us anything — we usually reply within one business day.');
+      if (!form) throw new Error('Could not create the demo form');
+      memory.formId = form.id;
+      return { link: { kind: 'form', id: form.id }, goTo: `/builder/${form.id}` };
+    });
+    await stage.tool('update_form', 'Adding the enquiry fields', async () => {
+      const fields = [
+        field(0, 'short_text', 'Your name', { required: true }),
+        field(1, 'email', 'Email', { required: true }),
+        field(2, 'phone', 'Phone (optional)', { placeholder: '0491 570 156' }),
+        field(3, 'dropdown', 'Topic', { required: true, properties: { options: options('General', 'Sales', 'Support') } }),
+        field(4, 'long_text', 'How can we help?', { required: true }),
+      ];
+      memory.fieldsRef = () => fields;
+      await stage.updateForm(memory.formId!, { fields });
+      return { link: { kind: 'form', id: memory.formId! } };
+    });
+    await stage.tool('update_form', 'Publishing the form', async () => {
+      await stage.updateForm(memory.formId!, { status: 'published' });
+      return { link: { kind: 'form', id: memory.formId! }, goTo: `/preview/${memory.formId}?form=1` };
+    });
+    await stage.say('Published — name, contact details, a topic picker and a message box, ready for enquiries. ' + OUTRO);
+  },
+};
+
+// The CreateBand's "Build an approval workflow" — a request form, an automation with a
+// real condition branch, and the trigger binding that wires them together.
+const approvalWorkflow: DemoScenario = {
+  id: 'root-approval-workflow',
+  prompt: 'Build an approval workflow',
+  async run(stage, memory) {
+    await stage.say('An approval workflow has three parts: a request form, an automation that routes each request, and the trigger that connects them. Building all three.');
+    let form: Form | null = null;
+    await stage.tool('create_form', 'Purchase requests', async () => {
+      form = await stage.createForm('Purchase requests', 'Request a purchase — anything over $500 goes to a manager.');
+      if (!form) throw new Error('Could not create the demo form');
+      memory.formId = form.id;
+      const fields = [
+        field(0, 'short_text', 'What do you need?', { required: true }),
+        field(1, 'number', 'Amount (AUD)', { required: true }),
+        field(2, 'short_text', 'Requested by', { required: true }),
+        field(3, 'long_text', 'Why?' ),
+      ];
+      memory.fieldsRef = () => fields;
+      await stage.updateForm(form.id, { fields, status: 'published' });
+      return { link: { kind: 'form', id: form.id }, goTo: `/builder/${form.id}` };
+    });
+    await stage.say('The request form is live. Now the automation: a FLOW with a condition that splits big requests from small ones.');
+    let flowId = '';
+    await stage.tool('create_flow', 'Purchase approval routing', async () => {
+      const flow = await stage.createFlow({
+        name: 'Purchase approval',
+        slug: 'purchase-approval',
+        description: 'Requests of $500 or more go to a manager; smaller ones auto-approve.',
+        flowJson: {
+          nodes: [
+            { id: 'in', type: 'input' },
+            { id: 'check', type: 'condition', data: { expr: 'Number(inputs.amount) >= 500' } },
+            { id: 'manager', type: 'template', data: { template: 'Needs sign-off: {{inputs.item}} at ${{inputs.amount}} — sent to the manager queue.' } },
+            { id: 'auto', type: 'template', data: { template: 'Auto-approved: {{inputs.item}} is under the $500 limit.' } },
+            { id: 'out', type: 'output' },
+          ],
+          edges: [
+            { source: 'in', target: 'check' },
+            { source: 'check', target: 'manager', sourceHandle: 'true' },
+            { source: 'check', target: 'auto', sourceHandle: 'false' },
+            { source: 'manager', target: 'out' },
+            { source: 'auto', target: 'out' },
+          ],
+        },
+      });
+      flowId = flow.id;
+      return { link: { kind: 'flow', id: flow.id }, goTo: `/flows?flow=${encodeURIComponent(flow.id)}` };
+    });
+    await stage.say('This is the flow editor — the condition node is the fork: $500 and over goes one way, everything else auto-approves. Last piece: the trigger.');
+    await stage.tool('create_flow_binding', 'On new request, run the approval flow', async () => {
+      await stage.createFormBinding(memory.formId!, { flow: 'purchase-approval', flowDefinitionId: flowId, event: 'form.submitted', mode: 'async', enabled: true });
+    });
+    await stage.say('Wired: every submitted request now triggers the approval flow automatically. ' + OUTRO);
+  },
+};
+
+// The CreateBand's "Show me what FormLogic can do" — a one-line tour, then a real build.
+const showcase: DemoScenario = {
+  id: 'root-showcase',
+  prompt: 'Show me what FormLogic can do',
+  followUps: [addPhoneField, makeItDark],
+  async run(stage, memory) {
+    await stage.say(
+      'The short version: FormLogic builds forms, turns groups of them into apps with dashboards and custom screens, automates them with flows, sketches ideas as diagrams — and an AI (me, or your own) can drive all of it from this chat. Easiest way to show you is to build something. Here is a customer feedback form, live.'
+    );
+    await feedbackForm.run(stage, memory);
+  },
+};
+
 // The typed-anything fallback: honest about being scripted, steers to the chips.
 export const DEMO_FALLBACK_REPLY =
   'In the shared demo I follow a script instead of live AI (so exploring costs nothing and nothing is saved to the server). ' +
   'Pick one of the guided builds below to watch me work — or sign up free to chat with a real AI connected to your own workspace.';
 
-export const DEMO_ROOT_SCENARIOS: DemoScenario[] = [feedbackForm, lunchPoll, bookingForm];
+/** The chat panel's idle chips (kept to three; every matchable scenario still triggers by text). */
+export const DEMO_ROOT_SCENARIOS: DemoScenario[] = [feedbackForm, ideaToApp, approvalWorkflow];
 
-/** Find a scenario whose prompt matches the typed text (chips send their label verbatim). */
+/** Everything a typed message can trigger — includes the Dashboard CreateBand's suggestion
+ *  phrasings, so "What do you want to create?" flows straight into a guided build. */
+export const DEMO_MATCHABLE_SCENARIOS: DemoScenario[] = [
+  feedbackForm, ideaToApp, approvalWorkflow, lunchPoll, bookingForm, enquiryForm, showcase,
+];
+
+/** Find a scenario whose prompt (or alias) matches the typed text, case-insensitively. */
 export function matchDemoScenario(text: string, available: DemoScenario[]): DemoScenario | null {
   const wanted = text.trim().toLowerCase();
-  return available.find((s) => s.prompt.toLowerCase() === wanted) ?? null;
+  return (
+    available.find(
+      (s) => s.prompt.toLowerCase() === wanted || (s.aliases ?? []).some((alias) => alias.toLowerCase() === wanted)
+    ) ?? null
+  );
 }
