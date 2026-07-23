@@ -2562,8 +2562,29 @@ class ResponseService
         }
     }
 
+    /**
+     * Audit FL-05: a PLACED private dataset replicates through the SIGNED op
+     * log — a bare row delete would leave replicas/auditors unaware (the data
+     * survives remotely and can resurrect on replay). Until signed
+     * compare-and-swap tombstone operations ship (data-nodes N3+), permanent
+     * deletion on placed datasets REFUSES loudly instead of returning a
+     * success that is a lie. Legacy (unplaced) forms keep the exact old path.
+     * @throws \RuntimeException 'placement_tombstones_unimplemented'
+     */
+    private function assertDeletableUnderPlacement(string $formId): void
+    {
+        if ($this->dataOperationLog?->placementFor($formId) !== null) {
+            throw new \RuntimeException(
+                'placement_tombstones_unimplemented: this dataset is placed on a data node — '
+                . 'permanent deletion requires signed tombstone operations, which are not implemented yet. '
+                . 'Nothing was deleted.'
+            );
+        }
+    }
+
     public function deleteResponse(string $formId, string $responseId): bool
     {
+        $this->assertDeletableUnderPlacement($formId);
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return false;
         }
@@ -2657,6 +2678,8 @@ class ResponseService
      */
     public function deleteAllResponses(string $formId): int
     {
+        // Audit FL-05: same refusal as deleteResponse — see that method.
+        $this->assertDeletableUnderPlacement($formId);
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }
