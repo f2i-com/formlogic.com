@@ -171,10 +171,12 @@ class ScheduledBackupTest extends TestCase
     {
         $svc = $this->service();
         $summary = $svc->run();
-        $date = gmdate('Y-m-d');
+        // The run's OWN stamped date, not a recomputed gmdate(): a suite running across
+        // UTC midnight would otherwise look in the wrong day folder (flaked 2026-07-23).
+        $date = (string) $summary['date'];
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}$/', $date);
         $dayDir = $this->scheduledDir . '/' . $date;
 
-        $this->assertSame($date, $summary['date']);
         $this->assertSame(0, $summary['failed']);
         $this->assertFileExists("{$dayDir}/accounts/{$this->userId}.zip");
         $this->assertFileExists("{$dayDir}/accounts/{$this->emptyUserId}.zip");
@@ -213,8 +215,9 @@ class ScheduledBackupTest extends TestCase
     public function testNightlyZipRestoresThroughTheNormalImportPipeline(): void
     {
         $svc = $this->service();
-        $svc->run();
-        $date = gmdate('Y-m-d');
+        $summary = $svc->run();
+        // The run's own stamped date — immune to the UTC-midnight race (see above).
+        $date = (string) $summary['date'];
 
         // The admin recovery path: restore the day's zip INTO the account.
         $result = $svc->restoreAccount($date, $this->userId);
