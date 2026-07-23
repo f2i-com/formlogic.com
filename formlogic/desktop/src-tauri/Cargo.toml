@@ -111,7 +111,7 @@ fs2 = "0.4"
 # plaintext) and generated from OS randomness. Both crates are already in
 # the tree transitively, so this adds no new build surface.
 sha2 = "0.10"
-getrandom = "0.2"
+getrandom = "0.4"
 
 # DATA-PRIV-001: at-rest encryption for the operational journals (event
 # receipts + work ledger), which carry transcript/SMS/caller payloads. AEAD
