@@ -1416,3 +1416,70 @@ fn codex_prompts_carry_the_harness_and_thread_feedback() {
     assert!(final_round.starts_with("tool_result create_form:"));
     assert!(final_round.ends_with("do not emit a tool_call block."));
 }
+
+// ── Chat image attachments on the Codex lane ────────────────────────────────
+
+#[test]
+fn message_text_joins_parts_and_marks_images() {
+    assert_eq!(message_text(&json!("plain string")), "plain string");
+    assert_eq!(
+        message_text(&json!([
+            { "type": "text", "text": "look at this" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } },
+        ])),
+        "look at this\n[image attached]"
+    );
+    // Image-only content still renders a non-empty marker (the codex request
+    // refuses empty prompts; the image itself rides the `images` field).
+    assert_eq!(
+        message_text(&json!([
+            { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,BBBB" } },
+        ])),
+        "[image attached]"
+    );
+    assert_eq!(message_text(&json!(null)), "");
+}
+
+#[test]
+fn render_convo_text_is_parts_aware() {
+    let convo = vec![
+        json!({ "role": "user", "content": [
+            { "type": "text", "text": "what is this?" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } },
+        ]}),
+        json!({ "role": "assistant", "content": "a cat" }),
+    ];
+    assert_eq!(
+        render_convo_text(&convo),
+        "user: what is this?\n[image attached]\n\nassistant: a cat"
+    );
+}
+
+#[test]
+fn collect_user_image_urls_orders_filters_and_caps() {
+    let uri = |n: usize| format!("data:image/png;base64,IMG{n}");
+    let msg = |role: &str, urls: &[String]| {
+        let mut parts = vec![json!({ "type": "text", "text": "t" })];
+        parts.extend(urls.iter().map(|u| json!({ "type": "image_url", "image_url": { "url": u } })));
+        json!({ "role": role, "content": parts })
+    };
+    let convo = vec![
+        msg("user", &[uri(1), uri(2)]),
+        // Assistant image parts never ride (backend admits parts on USER only).
+        msg("assistant", &[uri(90)]),
+        msg("user", &[uri(3)]),
+    ];
+    assert_eq!(
+        collect_user_image_urls(&convo, false),
+        vec![uri(1), uri(2), uri(3)]
+    );
+    assert_eq!(collect_user_image_urls(&convo, true), vec![uri(3)]);
+    // String-content messages contribute nothing.
+    assert!(collect_user_image_urls(&[json!({ "role": "user", "content": "hi" })], false).is_empty());
+    // Over the cap: the NEWEST survive.
+    let many: Vec<String> = (0..10).map(uri).collect();
+    let capped = collect_user_image_urls(&[msg("user", &many)], false);
+    assert_eq!(capped.len(), 8);
+    assert_eq!(capped[0], uri(2));
+    assert_eq!(capped[7], uri(9));
+}

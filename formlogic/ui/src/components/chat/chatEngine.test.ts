@@ -11,7 +11,6 @@ import {
   answerToolProposal,
   chatTextOf,
   createSiteChatSseParser,
-  flattenForTextOnly,
   historyFor,
   normalizeToolActivity,
   normalizeToolProposal,
@@ -550,19 +549,26 @@ describe('image attachment plumbing', () => {
     ).toBe('a\nb');
   });
 
-  it('flattenForTextOnly notes dropped images honestly', () => {
-    const flat = flattenForTextOnly([
+  it('the codex desktop lane sends content parts VERBATIM (desktop extracts the images)', async () => {
+    const tunnelChat = okTunnel();
+    const partMessages = [
       { role: 'user', content: 'plain stays' },
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'see image' },
-          { type: 'image_url', image_url: { url: img } },
+          { type: 'text' as const, text: 'see image' },
+          { type: 'image_url' as const, image_url: { url: img } },
         ],
       },
-    ]);
-    expect(flat[0]).toEqual({ role: 'user', content: 'plain stays' });
-    expect(flat[1].content).toContain('see image');
-    expect(flat[1].content).toContain('[image attached');
+    ];
+    const out = await sendChatTurn(
+      turn({ messages: partMessages }),
+      prefsDeps(prefs({ aiSource: 'desktop', desktopProviderId: 'openai-codex-agent' }), {
+        tunnelChat,
+        mintToolGrant: okGrant(),
+      })
+    );
+    expect(out.ok).toBe(true);
+    expect(tunnelChat.mock.calls[0][0].messages).toEqual(partMessages);
   });
 });

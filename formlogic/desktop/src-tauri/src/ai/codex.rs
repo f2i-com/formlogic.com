@@ -32,6 +32,10 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, OwnedSemaphoreP
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_PROMPT_BYTES: usize = 200_000;
+/// Chat image attachment caps — lock-step with the backend's CHAT_MAX_IMAGE*
+/// validation (700k chars per data URI, 8 per request).
+const MAX_CHAT_IMAGES: usize = 8;
+const MAX_IMAGE_DATA_URI_BYTES: usize = 700_000;
 const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 // Aokie's reply pump abandons an endpoint after 10 seconds without progress.
 // The HTTP adapter emits heartbeats immediately and forwards bounded App Server
@@ -532,6 +536,12 @@ pub struct CodexChatRequest {
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub service_tier: Option<String>,
+    /// Chat image attachments as base64 `data:image/...` URIs (the app-server
+    /// `UserInput` `image` variant accepts data URLs). data:-only by policy —
+    /// a remote URL here would make codex fetch it (SSRF), so validation
+    /// refuses anything else. Live-call lanes stay text-only by design.
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1076,7 +1086,7 @@ impl CodexAgent {
         let mut notifications = session.notifications.subscribe();
         let mut params = json!({
             "threadId": thread_id,
-            "input": [{ "type": "text", "text": request.prompt }],
+            "input": chat_input_items(&request.prompt, &request.images),
             "approvalPolicy": "never",
             "permissions": CODEX_PERMISSION_PROFILE_ID,
             "runtimeWorkspaceRoots": [],
@@ -2364,11 +2374,53 @@ fn live_call_prompt(body: &Value) -> Result<String, CodexAgentError> {
     Ok(prompt)
 }
 
+/// A chat image attachment must be an inline base64 data URI of an allowed
+/// raster type. Anything else is refused: an `http(s)` URL here would make the
+/// codex agent FETCH it from this machine (SSRF) — same policy as the backend.
+fn valid_chat_image(uri: &str) -> bool {
+    if uri.len() > MAX_IMAGE_DATA_URI_BYTES {
+        return false;
+    }
+    let Some(rest) = uri.strip_prefix("data:image/") else {
+        return false;
+    };
+    let Some((kind, payload)) = rest.split_once(";base64,") else {
+        return false;
+    };
+    matches!(kind, "png" | "jpeg" | "webp")
+        && !payload.is_empty()
+        && payload
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+}
+
+/// The `turn/start` input array: the prompt text plus one app-server `image`
+/// item per validated data-URI attachment.
+fn chat_input_items(prompt: &str, images: &[String]) -> Value {
+    let mut items = vec![json!({ "type": "text", "text": prompt })];
+    for image in images {
+        items.push(json!({ "type": "image", "url": image }));
+    }
+    Value::Array(items)
+}
+
 fn validate_chat_request(request: &CodexChatRequest) -> Result<(), CodexAgentError> {
     if request.prompt.trim().is_empty() || request.prompt.len() > MAX_PROMPT_BYTES {
         return Err(CodexAgentError::new(
             "invalid_request",
             "prompt must contain 1 to 200,000 UTF-8 bytes",
+        ));
+    }
+    if request.images.len() > MAX_CHAT_IMAGES {
+        return Err(CodexAgentError::new(
+            "invalid_request",
+            "a chat turn may carry at most 8 image attachments",
+        ));
+    }
+    if !request.images.iter().all(|uri| valid_chat_image(uri.as_str())) {
+        return Err(CodexAgentError::new(
+            "invalid_request",
+            "image attachments must be base64 data URIs (png/jpeg/webp, \u{2264}700k chars) — remote URLs are refused",
         ));
     }
     if let Some(thread_id) = request.thread_id.as_deref() {
@@ -3008,7 +3060,55 @@ mod tests {
             model: None,
             reasoning_effort: None,
             service_tier: None,
+            images: Vec::new(),
         }
+    }
+
+    fn request_with_images(images: &[&str]) -> CodexChatRequest {
+        CodexChatRequest {
+            images: images.iter().map(|s| (*s).to_owned()).collect(),
+            ..request("describe the attached image")
+        }
+    }
+
+    #[test]
+    fn image_attachments_validate_data_uris_only() {
+        let png = "data:image/png;base64,iVBORw0KGgo=";
+        assert!(validate_chat_request(&request_with_images(&[png])).is_ok());
+        assert!(validate_chat_request(&request_with_images(&[
+            "data:image/jpeg;base64,/9j/4AAQ",
+            "data:image/webp;base64,UklGRg==",
+        ]))
+        .is_ok());
+        // Remote URLs would make codex FETCH them from this machine — refused.
+        assert!(validate_chat_request(&request_with_images(&["https://example.com/x.png"])).is_err());
+        assert!(validate_chat_request(&request_with_images(&["data:image/gif;base64,R0lGOD"])).is_err());
+        assert!(validate_chat_request(&request_with_images(&["data:image/png;base64,"])).is_err());
+        assert!(validate_chat_request(&request_with_images(&["data:image/png;base64,not valid!"])).is_err());
+        let oversized = format!("data:image/png;base64,{}", "A".repeat(MAX_IMAGE_DATA_URI_BYTES));
+        assert!(validate_chat_request(&request_with_images(&[oversized.as_str()])).is_err());
+        let nine: Vec<String> = (0..9).map(|_| png.to_owned()).collect();
+        let nine_refs: Vec<&str> = nine.iter().map(String::as_str).collect();
+        assert!(validate_chat_request(&request_with_images(&nine_refs)).is_err());
+    }
+
+    #[test]
+    fn chat_input_items_appends_image_items_after_the_text() {
+        let items = chat_input_items(
+            "what is in this picture?",
+            &["data:image/png;base64,iVBORw0KGgo=".to_owned()],
+        );
+        assert_eq!(
+            items,
+            json!([
+                { "type": "text", "text": "what is in this picture?" },
+                { "type": "image", "url": "data:image/png;base64,iVBORw0KGgo=" },
+            ])
+        );
+        assert_eq!(
+            chat_input_items("plain", &[]),
+            json!([{ "type": "text", "text": "plain" }])
+        );
     }
 
     #[test]

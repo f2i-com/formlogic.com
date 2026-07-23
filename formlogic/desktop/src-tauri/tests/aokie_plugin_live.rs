@@ -304,10 +304,26 @@ fn temp_data_dir(tag: &str) -> PathBuf {
 }
 
 /// Copy the real aokie-plugin.exe + its real manifest into `<data>/plugins/aokie/`.
+/// A voice-featured plugin build imports sherpa/onnxruntime DLLs at LOAD time
+/// (the deployed plugin dir ships them beside the exe) — copy any DLL sitting
+/// beside the source exe too, or the loader dies with STATUS_DLL_NOT_FOUND
+/// before the process can even speak (init reads as "connection closed").
 fn install_real_aokie_plugin(data_dir: &std::path::Path, exe: &std::path::Path) {
     let plugin_dir = data_dir.join("plugins").join("aokie");
     std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
     std::fs::copy(exe, plugin_dir.join("aokie-plugin.exe")).expect("copy aokie-plugin.exe");
+    if let Some(src_dir) = exe.parent() {
+        for entry in std::fs::read_dir(src_dir).expect("read exe dir").flatten() {
+            let path = entry.path();
+            let is_dll = path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"));
+            if is_dll {
+                let name = entry.file_name();
+                let _ = std::fs::copy(&path, plugin_dir.join(name));
+            }
+        }
+    }
     std::fs::write(plugin_dir.join("manifest.json"), AOKIE_MANIFEST).expect("write manifest");
 }
 

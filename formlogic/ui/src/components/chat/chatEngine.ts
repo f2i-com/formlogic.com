@@ -63,16 +63,6 @@ export function chatTextOf(content: string | ChatContentPart[]): string {
     .join('\n');
 }
 
-/** Flatten part messages to plain text for text-only providers (the Codex
- * prompt harness renders string content only — parts would silently vanish). */
-export function flattenForTextOnly(messages: ChatEngineMessage[]): ChatEngineMessage[] {
-  return messages.map((m) => {
-    if (typeof m.content === 'string') return m;
-    const hasImage = m.content.some((p) => p.type === 'image_url');
-    const text = chatTextOf(m.content);
-    return { role: m.role, content: hasImage ? `${text}\n[image attached — this provider is text-only]`.trim() : text };
-  });
-}
 
 export interface ChatTurnError {
   code: string;
@@ -556,15 +546,16 @@ async function runDesktopSource(
   }
 
   const tunnel = deps.tunnelChat ?? chatViaTunnel;
-  // The managed Codex lane renders string content into a text prompt — content
-  // parts would vanish silently, so flatten them (with an honest image note).
+  // Content parts (image attachments included) ride the wire VERBATIM on
+  // every desktop lane. The managed Codex lane extracts image parts desktop-
+  // side into app-server `image` input items and renders the text with
+  // honest markers — the browser no longer pre-flattens for it.
   const isCodex = providerId === CODEX_PROVIDER_ID;
-  const wireMessages = isCodex ? flattenForTextOnly(opts.messages) : opts.messages;
   const tunnelOptions: ChatViaTunnelOptions & TunnelToolOptions = {
     providerId,
     model: prefs.desktopModel?.trim() || undefined,
     threadId: opts.threadId,
-    messages: wireMessages,
+    messages: opts.messages,
     ...(isCodex && opts.reasoning ? { reasoning: opts.reasoning } : {}),
     clientSeq: opts.clientSeq ?? 1,
     signal: opts.signal,

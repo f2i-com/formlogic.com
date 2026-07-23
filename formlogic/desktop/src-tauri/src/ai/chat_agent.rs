@@ -395,10 +395,22 @@ impl AiTunnel {
                     PromptedRound { text, completion }
                 }
                 ResolvedProvider::CodexAsync => {
-                    let (prompt, thread) = if codex_started {
-                        (codex_followup_prompt(&codex_pending, attach), codex_thread.clone())
+                    // Image attachments ride the round that renders the
+                    // conversation (first, or a dead-rollout re-render) as
+                    // app-server `image` input items; tool-feedback followup
+                    // rounds continue a thread that already saw them.
+                    let (prompt, thread, images) = if codex_started {
+                        (
+                            codex_followup_prompt(&codex_pending, attach),
+                            codex_thread.clone(),
+                            Vec::new(),
+                        )
                     } else {
-                        (codex_first_prompt(attach, &tools, &convo), None)
+                        (
+                            codex_first_prompt(attach, &tools, &convo),
+                            None,
+                            collect_user_image_urls(&convo, false),
+                        )
                     };
                     codex_started = true;
                     codex_pending.clear();
@@ -408,6 +420,7 @@ impl AiTunnel {
                         model: model.map(str::to_string),
                         reasoning_effort: reasoning.clone(),
                         service_tier: None,
+                        images,
                     };
                     let response = match self.codex_chat_with_busy_backoff(request).await {
                         Ok(response) => response,
@@ -428,6 +441,7 @@ impl AiTunnel {
                                 model: model.map(str::to_string),
                                 reasoning_effort: reasoning.clone(),
                                 service_tier: None,
+                                images: collect_user_image_urls(&convo, false),
                             })
                             .await?
                         }
@@ -846,6 +860,69 @@ fn prompted_preamble(tools: &[Value]) -> String {
     s
 }
 
+/// The text of a message content: a plain string as-is; OpenAI content PARTS
+/// collapse to their text parts joined, with an `[image attached]` marker per
+/// image part (the images themselves ride the request's `images` field as
+/// app-server input items — the marker keeps the transcript honest about
+/// where they sat in the conversation).
+pub(super) fn message_text(content: &Value) -> String {
+    if let Some(text) = content.as_str() {
+        return text.to_string();
+    }
+    let Some(parts) = content.as_array() else {
+        return String::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for part in parts {
+        match part.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    out.push(text.to_string());
+                }
+            }
+            Some("image_url") => out.push("[image attached]".to_string()),
+            _ => {}
+        }
+    }
+    out.join("\n")
+}
+
+/// Chat image data URIs from USER messages' content parts, in conversation
+/// order. `last_only` restricts to the newest user message (thread-resume
+/// turns — earlier images already reached the thread). Capped at the request
+/// limit KEEPING THE NEWEST — the tail of the conversation is what the user
+/// is asking about.
+pub(super) fn collect_user_image_urls(messages: &[Value], last_only: bool) -> Vec<String> {
+    const CAP: usize = 8;
+    let last_user = messages
+        .iter()
+        .rposition(|m| m.get("role").and_then(Value::as_str) == Some("user"));
+    let mut urls: Vec<String> = Vec::new();
+    for (i, m) in messages.iter().enumerate() {
+        if m.get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        if last_only && Some(i) != last_user {
+            continue;
+        }
+        let Some(parts) = m.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for part in parts {
+            if part.get("type").and_then(Value::as_str) != Some("image_url") {
+                continue;
+            }
+            if let Some(url) = part.pointer("/image_url/url").and_then(Value::as_str) {
+                urls.push(url.to_string());
+            }
+        }
+    }
+    if urls.len() > CAP {
+        urls.drain(..urls.len() - CAP);
+    }
+    urls
+}
+
 /// Render an OpenAI-style message list as plain conversation text (the shape
 /// the prompt-only Codex lane receives on its first harness round, and the
 /// fresh-thread prompt of the plain chat path — `pub(super)` for the latter).
@@ -854,7 +931,10 @@ pub(super) fn render_convo_text(messages: &[Value]) -> String {
         .iter()
         .map(|m| {
             let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
-            let content = m.get("content").and_then(Value::as_str).unwrap_or("");
+            let content = m
+                .get("content")
+                .map(message_text)
+                .unwrap_or_default();
             format!("{role}: {content}")
         })
         .collect::<Vec<_>>()

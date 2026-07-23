@@ -1121,6 +1121,8 @@ fn codex_background_request(
             model: Some(model.clone()),
             reasoning_effort: Some(reasoning_effort),
             service_tier,
+            // Background/live-call adapter stays text-only by design.
+            images: Vec::new(),
         },
         model,
     ))

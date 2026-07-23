@@ -805,6 +805,9 @@ impl AiTunnel {
                     model: model.map(str::to_string),
                     reasoning_effort: reasoning.clone(),
                     service_tier: None,
+                    // A fresh thread re-renders the whole conversation, so it
+                    // re-attaches the conversation's images (newest-capped).
+                    images: crate::ai::chat_agent::collect_user_image_urls(&messages, false),
                 };
                 let mapped = browser_thread
                     .as_deref()
@@ -817,6 +820,9 @@ impl AiTunnel {
                             model: model.map(str::to_string),
                             reasoning_effort: reasoning.clone(),
                             service_tier: None,
+                            // The resumed thread already saw earlier images —
+                            // only the NEW user turn's ride this request.
+                            images: crate::ai::chat_agent::collect_user_image_urls(&messages, true),
                         };
                         match self.codex_chat_with_busy_backoff(resume).await {
                             Ok(response) => response,
@@ -1258,9 +1264,12 @@ fn last_user_text(messages: &[Value]) -> String {
         .iter()
         .rev()
         .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
-        .and_then(|m| m.get("content").and_then(Value::as_str))
-        .unwrap_or("")
-        .to_string()
+        .and_then(|m| m.get("content"))
+        // Parts-aware: text parts join; image parts render an honest marker,
+        // which also keeps an image-only turn's prompt non-empty (the codex
+        // request refuses empty prompts — the image itself rides `images`).
+        .map(crate::ai::chat_agent::message_text)
+        .unwrap_or_default()
 }
 
 /// End of a complete SSE event (a blank line), if one is buffered.
