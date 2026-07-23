@@ -94,6 +94,9 @@ export interface SendChatTurnOptions {
   threadId: string;
   /** Conversation for the model (oldest-first, INCLUDING the new user message). */
   messages: ChatEngineMessage[];
+  /** §11B O5a: the page the user is on — appended as a system hint so "this form"
+   *  resolves without asking. The TOOLS stay the authority on ownership. */
+  pageContext?: { kind: 'form' | 'app' | 'diagram'; id: string } | null;
   /** Demo account: chat works, tool actions are disabled (banner + tools:false). */
   isDemo?: boolean;
   signal?: AbortSignal;
@@ -612,6 +615,21 @@ async function runCustomSource(
 // ---------------------------------------------------------------------------
 
 export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps = {}): Promise<ChatTurnOutcome> {
+  // Page context rides the message list as a trailing system hint — identical for all
+  // three sources, so "this form" means the same thing everywhere.
+  if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
+    const { kind, id } = opts.pageContext;
+    opts = {
+      ...opts,
+      messages: [
+        ...opts.messages,
+        {
+          role: 'system',
+          content: `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`,
+        },
+      ],
+    };
+  }
   const fetchPreferences = deps.fetchPreferences ?? (() => getAiPreferences());
   let prefsRes: AiDefaultResult<AiPreferences>;
   try {

@@ -15,7 +15,7 @@
 // - Z-order: z-40, under the z-50 offline/maintenance banners and mobile nav (plan
 //   Phase 6 step 5), matching the DesktopConnectionPopover trigger.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { motion, useDragControls, useMotionValue } from 'framer-motion';
 import {
   ArrowUpRight,
@@ -184,6 +184,22 @@ export function SiteChatWidget() {
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const setChatPosition = useUIStore((s) => s.setChatPosition);
   const navigate = useNavigate();
+  // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
+  // works — the builder's chat button counts on this.
+  const location = useLocation();
+  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram'; id: string } | null>(null);
+  useEffect(() => {
+    const form = matchPath('/builder/:formId', location.pathname);
+    const app = matchPath('/apps/:appId/*', location.pathname);
+    const diagram = matchPath('/diagrams/:diagramId', location.pathname);
+    pageContextRef.current = form?.params.formId
+      ? { kind: 'form', id: form.params.formId }
+      : diagram?.params.diagramId
+        ? { kind: 'diagram', id: diagram.params.diagramId }
+        : app?.params.appId
+          ? { kind: 'app', id: app.params.appId }
+          : null;
+  }, [location.pathname]);
 
   const [view, setView] = useState<'chat' | 'threads'>('chat');
   const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -376,6 +392,7 @@ export function SiteChatWidget() {
       const outcome = await sendChatTurn({
         threadId,
         messages: history,
+        pageContext: pageContextRef.current,
         isDemo,
         clientSeq: clientSeqRef.current[threadId],
         events: {
