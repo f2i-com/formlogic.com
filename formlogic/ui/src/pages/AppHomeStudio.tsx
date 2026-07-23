@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wand2, Loader2, Save, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom } from 'lucide-react';
 import { api } from '../lib/api';
+import { SiteChatWidget } from '../components/chat/SiteChatWidget';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ScreenFilesEditor } from '../components/custom-screen/ScreenFilesEditor';
@@ -420,6 +421,7 @@ export default function AppHomeStudio() {
         cancelLabel="Keep editing"
         variant="danger"
       />
+      <SiteChatWidget />
     </div>
   );
 }
