@@ -32,7 +32,7 @@ ed25519-dalek = { version = "2", features = ["signature"] }
 base64 = "0.22"
 # Blocking HTTP to fetch the app's signed manifest + the server's public key. native-tls uses
 # Windows SChannel on the desktop target (no aws-lc-rs/nasm build step that rustls-tls needs).
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
 # NATIVE-SEC-001: offline queue sealed at rest + signing-key fingerprints for the TOFU prompt.
 chacha20poly1305 = "0.10"
 getrandom = "0.2"
