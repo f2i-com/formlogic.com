@@ -19,7 +19,9 @@ import {
 import { ACCENT_CHIP } from './accents';
 import { FlowDesktopPresenceContext } from './flowNodeContext';
 
-const HOVER_DELAY_MS = 450;
+// Tiles carry only icon + name now — the description lives in this hover popover, so it
+// should appear promptly (but still late enough that drag-pickups don't flash it).
+const HOVER_DELAY_MS = 300;
 const DESKTOP_OFFLINE_NODE_TOOLTIP = 'FormLogic Desktop is offline — this node will fail at run time';
 
 /** Compact "In / Out" handle summary for the hover popover. */
@@ -103,6 +105,8 @@ function PaletteItem({ spec, onAddNode, draggable = true }: { spec: NodeSpec; on
     setDocRect(null);
   };
 
+  // Icon-first tile: big icon + name only; the description (and the desktop-service /
+  // capability notes) live in the delayed hover/focus popover.
   return (
     <>
     <button
@@ -121,38 +125,34 @@ function PaletteItem({ spec, onAddNode, draggable = true }: { spec: NodeSpec; on
       onFocus={openDoc}
       onBlur={closeDoc}
       disabled={disabled}
-      title={degraded && !disabled ? DESKTOP_OFFLINE_NODE_TOOLTIP : undefined}
       aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} node`}
       className={cn(
-        'group flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
-        'border-transparent',
+        'group relative flex w-full flex-col items-center gap-1.5 rounded-xl border border-transparent px-1.5 py-2.5 text-center transition-colors',
         disabled
           ? 'cursor-not-allowed opacity-55'
           : cn(
-              draggable ? 'cursor-grab' : 'cursor-pointer',
+              draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
               'bg-white hover:border-primary-300 hover:bg-primary-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:bg-slate-800/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10',
             ),
         degraded && !disabled && 'opacity-60',
       )}
     >
-      <span className={cn('mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-md', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="truncate block text-xs font-medium text-gray-800 dark:text-slate-200">{spec.label}</span>
-        <span className="mt-0.5 line-clamp-2 block text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-          {spec.description}
+      {desktop && (
+        <span
+          className={cn(
+            'absolute right-1.5 top-1.5',
+            degraded ? 'text-amber-500 dark:text-amber-400' : 'text-primary-400 dark:text-primary-300',
+          )}
+          aria-hidden="true"
+        >
+          <MonitorDown className="h-3 w-3" />
         </span>
-        {desktop && (
-          <span className={cn(
-            'mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
-            degraded
-              ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-              : 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300',
-          )}>
-            <MonitorDown className="h-2.5 w-2.5" /> Runs on FormLogic Desktop
-          </span>
-        )}
+      )}
+      <span className={cn('flex h-10 w-10 flex-none items-center justify-center rounded-xl', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <span className="line-clamp-2 block w-full text-[11px] font-medium leading-tight text-gray-800 dark:text-slate-200">
+        {spec.label}
       </span>
     </button>
     {docRect && <PaletteDoc spec={spec} anchor={docRect} degraded={degraded && !disabled} />}
@@ -230,7 +230,12 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
       <div
         ref={resultsRef}
         onScroll={(e) => { resultsScrollTop.current = e.currentTarget.scrollTop; }}
-        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
+        className={cn(
+          'scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto p-2.5',
+          // The docked rail sits behind the floating Desktop-connection chip (fixed
+          // bottom-left) — leave clearance so the last tiles stay reachable.
+          draggable && 'pb-16',
+        )}
       >
         {grouped.length === 0 && (
           <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>
@@ -241,7 +246,9 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
               <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">{cat.label}</p>
               {cat.hint && <p className="text-[10px] text-gray-400 dark:text-slate-600">{cat.hint}</p>}
             </div>
-            <div className="space-y-1.5">
+            {/* Icon tiles — auto-fill so the same palette works in the w-64 rail (2-up)
+                and the full-width mobile sheet (3+-up). */}
+            <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr))]">
               {specs.map((spec) => (
                 <PaletteItem key={spec.type} spec={spec} onAddNode={onAddNode} draggable={draggable} />
               ))}

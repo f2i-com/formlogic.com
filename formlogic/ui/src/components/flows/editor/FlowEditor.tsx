@@ -17,7 +17,7 @@ import {
   type EdgeChange,
   type NodeChange,
 } from '@xyflow/react';
-import { Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, Zap } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
@@ -64,6 +64,8 @@ function mediaMatches(query: string, fallback: boolean): boolean {
 
 interface FlowEditorProps {
   flow: FlowDefinition;
+  /** Full-page editor: leave the flow and return to the flows start page. */
+  onBack?: () => void;
   /** Persist the graph; resolves true on success. Called by autosave + explicit Save. */
   onSave: (patch: { flowJson: WorkflowGraph; nodeCapabilities: string[] }) => Promise<boolean>;
   onOpenTestRun: () => void;
@@ -92,7 +94,7 @@ interface FlowEditorProps {
   cloudUnsupportedNodes?: string[] | null;
 }
 
-function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel, onExecutionLocationChange, cloudDisabledReason = null, cloudUnsupportedNodes = null }: FlowEditorProps) {
+function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel, onExecutionLocationChange, cloudDisabledReason = null, cloudUnsupportedNodes = null }: FlowEditorProps) {
   // Seed React Flow state once (the parent renders this keyed by flow.id, so a flow switch
   // remounts with a fresh initial graph). A lazy useState initializer runs exactly on mount.
   const [initialGraph] = useState(() => graphToReactFlow(flow.flowJson ?? { nodes: [], edges: [] }));
@@ -460,6 +462,18 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
       {/* Toolbar */}
       <div className="flex items-center gap-2 overflow-hidden border-b border-gray-200/80 bg-white/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/50">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to flows"
+              title="Back to flows"
+              className="-ml-1 flex h-8 flex-none items-center gap-1 rounded-lg px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              <ArrowLeft className="h-4 w-4 flex-none" />
+              {editorLayout.toolbar === 'full' && <span>Flows</span>}
+            </button>
+          )}
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
             <p className="hidden truncate font-mono text-[11px] text-gray-400 dark:text-slate-500 sm:block">

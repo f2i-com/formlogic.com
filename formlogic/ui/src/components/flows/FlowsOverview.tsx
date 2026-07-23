@@ -1,10 +1,16 @@
-// FormLogic Flows workspace - overview panel shown before a flow is selected.
+// FormLogic Flows workspace — the start page at /flows (no flow open).
 //
-// The empty editor state is productive: it explains what flows do, surfaces Desktop readiness,
-// shows recent owner-wide runs, and lets authors start from the same templates as NewFlowDialog.
+// One responsive surface owns everything that used to be split between the library rail
+// and the old overview panel: a compact hero, the flow list (search + scope filter +
+// per-flow actions) as the main column, readiness + recent runs in a side rail on large
+// screens, and starter templates. Opening a flow leaves this page for the full-page editor.
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, FileText, Laptop, Loader2, MessageSquare, PhoneIncoming, Plus, RefreshCw, Sparkles, Workflow, Zap, type LucideIcon } from 'lucide-react';
+import {
+  ClipboardList, Copy, FileText, Laptop, Loader2, MessageSquare, MoreVertical, Pencil, PhoneIncoming,
+  Play, Plus, Power, RefreshCw, Search, Sparkles, Trash2, Workflow, Zap, type LucideIcon,
+} from 'lucide-react';
 import { listProviders } from '../../client-runtime/flows/aiProviders';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -17,7 +23,14 @@ import {
   describeFlowsLastSeen,
   type FlowsDesktopPresence,
 } from './useFlowsDesktopPresence';
+import type { AppListItem } from '../../types/app';
 import type { FlowDefinition, FlowRunLog } from '../../types/flows';
+
+/** A library group: the workspace (app null) or a specific app, plus its flows. */
+export interface FlowGroup {
+  app: AppListItem | null;
+  flows: FlowDefinition[];
+}
 
 const TEMPLATE_ICON: Record<string, LucideIcon> = {
   blank: FileText,
@@ -27,12 +40,20 @@ const TEMPLATE_ICON: Record<string, LucideIcon> = {
 };
 
 interface FlowsOverviewProps {
-  flows: FlowDefinition[];
+  groups: FlowGroup[];
   desktopPresence: FlowsDesktopPresence;
+  availableConnectorIds?: readonly string[];
   onNewFlow: (template?: FlowStarterTemplate) => void;
+  /** Open a flow in the full-page editor. */
+  onOpenFlow: (flowId: string) => void;
+  /** Open a flow with its run history panel showing (recent-runs rows). */
   onOpenRunFlow: (flowId: string) => void;
   onOpenAiServices: () => void;
-  availableConnectorIds?: readonly string[];
+  onDuplicate: (flow: FlowDefinition) => void;
+  onRename: (flow: FlowDefinition, name: string) => void;
+  /** Opens the enable/disable confirm for this flow (the actual toggle happens on confirm). */
+  onRequestToggleEnabled: (flow: FlowDefinition) => void;
+  onDelete: (flow: FlowDefinition) => void;
 }
 
 function RunStatusChip({ run }: { run: FlowRunLog }) {
@@ -40,7 +61,11 @@ function RunStatusChip({ run }: { run: FlowRunLog }) {
   return <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>;
 }
 
-export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow, onOpenAiServices, availableConnectorIds = [] }: FlowsOverviewProps) {
+export function FlowsOverview({
+  groups, desktopPresence, availableConnectorIds = [], onNewFlow, onOpenFlow, onOpenRunFlow, onOpenAiServices,
+  onDuplicate, onRename, onRequestToggleEnabled, onDelete,
+}: FlowsOverviewProps) {
+  const flows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
   const [runs, setRuns] = useState<FlowRunLog[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -57,7 +82,7 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
   const loadRuns = useCallback(async () => {
     setLoadingRuns(true);
     setRunsError(null);
-    const res = await api.listMyFlowRuns({ limit: 10 });
+    const res = await api.listMyFlowRuns({ limit: 8 });
     setLoadingRuns(false);
     if (res.error || !res.data) {
       setRunsError(typeof res.error === 'string' ? res.error : 'Could not load recent runs');
@@ -110,139 +135,421 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
   const enabledCount = flows.filter((flow) => flow.enabled).length;
 
   return (
-    <div className="scrollbar-thin h-full min-h-0 overflow-auto p-4 sm:p-8">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5">
-        {/* Hero — one glance: what flows are, how many are live, and the way in. */}
+    <div className="scrollbar-thin h-full min-h-0 w-full overflow-y-auto">
+      {/* pb-28 keeps the last rows clear of the floating Desktop-connection chip (fixed
+          bottom-left) and the chat launcher (bottom-right). */}
+      <div className="mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+        {/* Hero — one glance: what flows do plus how many are live. */}
         <section className="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 h-32 opacity-[0.07] blur-2xl dark:opacity-[0.12]"
             style={{ background: 'radial-gradient(70% 100% at 20% 0%, rgb(var(--primary-500)) 0%, transparent 70%)' }}
           />
-          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3.5">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3.5">
               <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-600 text-primary-foreground shadow-sm">
                 <Workflow className="h-6 w-6" />
               </span>
-              <div>
-                <h2 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">Flows</h2>
-                <p className="mt-1 max-w-xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">
-                  Flows run your busywork: when a call comes in, a form is submitted, or on demand — they look up records, draft replies, and speak on the line.
+              <div className="min-w-0">
+                <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">Automate the busywork</h2>
+                <p className="mt-1 max-w-2xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">
+                  Flows run when a call comes in, a form is submitted, or on demand — they look up records, draft replies, and speak on the line.
                 </p>
               </div>
             </div>
-            <Button size="sm" onClick={() => onNewFlow()} leftIcon={<Plus className="h-4 w-4" />} className="flex-none self-start">
-              New flow
-            </Button>
-          </div>
-          {flows.length > 0 && (
-            <div className="relative mt-4 flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
-                <Workflow className="h-3.5 w-3.5" /> {flows.length} flow{flows.length === 1 ? '' : 's'}
-              </span>
-              <span
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
-                  enabledCount > 0
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
-                    : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400',
-                )}
-              >
-                <Zap className="h-3.5 w-3.5" /> {enabledCount} enabled
-              </span>
-            </div>
-          )}
-        </section>
-
-        {/* Readiness — side by side once there's room; they answer the same question. */}
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-4">
-          <DesktopStatusCard presence={desktopPresence} />
-          <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
-        </div>
-
-        <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Recent runs</h3>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Latest owner-wide flow activity.</p>
-            </div>
-            <Button variant="ghost" size="sm" onClick={loadRuns} isLoading={loadingRuns} disabled={loadingRuns} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
-              Refresh
-            </Button>
-          </div>
-          {runs === null || loadingRuns ? (
-            <p className="flex items-center gap-2 py-4 text-xs text-gray-400 dark:text-slate-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading recent runs...
-            </p>
-          ) : runsError ? (
-            <p className="py-4 text-xs text-red-600 dark:text-red-400">{runsError}</p>
-          ) : runs.length === 0 ? (
-            <p className="py-4 text-xs text-gray-400 dark:text-slate-500">No flow runs yet. Test runs and event-triggered runs will appear here.</p>
-          ) : (
-            <div className="divide-y divide-gray-100 dark:divide-slate-800">
-              {runs.map((run) => {
-                const flow = resolveFlow(run);
-                const when = run.startedAt ?? run.createdAt;
-                return (
-                  <button
-                    key={run.runId}
-                    type="button"
-                    disabled={!flow}
-                    onClick={() => { if (flow) onOpenRunFlow(flow.id); }}
-                    className={cn(
-                      'grid w-full grid-cols-[1fr,auto] gap-2 rounded-lg px-1.5 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 sm:grid-cols-[minmax(0,1fr),auto,auto]',
-                      flow ? 'cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/50' : 'cursor-default',
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-gray-800 dark:text-slate-200">
-                        {flow?.name ?? run.flow ?? run.flowDefinitionId ?? 'Unknown flow'}
-                      </span>
-                      <span className="block truncate font-mono text-[11px] text-gray-500 dark:text-slate-400">{run.triggerEvent}</span>
-                    </span>
-                    <span className="self-center"><RunStatusChip run={run} /></span>
-                    <span className="col-span-2 text-xs text-gray-400 dark:text-slate-500 sm:col-span-1 sm:self-center" title={formatAbsoluteTimeTitle(when)}>
-                      {formatRelativeTime(when)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
-          <div className="mb-3">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Start from a template</h3>
-            <p className="text-xs text-gray-500 dark:text-slate-400">Open the New flow dialog with a starter preselected.</p>
-          </div>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {visibleTemplates.map((template) => {
-              const Icon = TEMPLATE_ICON[template.id] ?? FileText;
-              return (
-                <button
-                  key={template.id}
-                  type="button"
-                  onClick={() => onNewFlow(template)}
-                  className="group flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10"
+            {flows.length > 0 && (
+              <div className="flex flex-none flex-wrap items-center gap-2 sm:flex-col sm:items-end">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+                  <Workflow className="h-3.5 w-3.5" /> {flows.length} flow{flows.length === 1 ? '' : 's'}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
+                    enabledCount > 0
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+                      : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400',
+                  )}
                 >
-                  <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:group-hover:bg-primary-500/20">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white">{template.name}</span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-gray-500 dark:text-slate-400">{template.summary}</span>
-                  </span>
-                </button>
-              );
-            })}
+                  <Zap className="h-3.5 w-3.5" /> {enabledCount} enabled
+                </span>
+              </div>
+            )}
           </div>
         </section>
+
+        {/* Main grid: flow list + templates | readiness + recent runs. Single column below lg. */}
+        <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr),21rem] xl:grid-cols-[minmax(0,1fr),24rem]">
+          <div className="min-w-0 space-y-5">
+            {flows.length === 0 ? (
+              <section className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                <Workflow className="mx-auto mb-3 h-8 w-8 text-gray-300 dark:text-slate-600" />
+                <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">No flows yet</p>
+                <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+                  Create your first flow from scratch, or start from a template below.
+                </p>
+                <Button size="sm" className="mt-4" onClick={() => onNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
+                  New flow
+                </Button>
+              </section>
+            ) : (
+              <FlowListCard
+                groups={groups}
+                total={flows.length}
+                onNewFlow={() => onNewFlow()}
+                onOpenFlow={onOpenFlow}
+                onDuplicate={onDuplicate}
+                onRename={onRename}
+                onRequestToggleEnabled={onRequestToggleEnabled}
+                onDelete={onDelete}
+              />
+            )}
+
+            <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+              <div className="mb-3">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Start from a template</h3>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Open the New flow dialog with a starter preselected.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                {visibleTemplates.map((template) => {
+                  const Icon = TEMPLATE_ICON[template.id] ?? FileText;
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => onNewFlow(template)}
+                      className="group flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10"
+                    >
+                      <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:group-hover:bg-primary-500/20">
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white">{template.name}</span>
+                        <span className="mt-0.5 block text-[11px] leading-snug text-gray-500 dark:text-slate-400">{template.summary}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+
+          <aside className="min-w-0 space-y-5">
+            <DesktopStatusCard presence={desktopPresence} />
+            <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
+
+            <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Recent runs</h3>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">Latest flow activity.</p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={loadRuns} isLoading={loadingRuns} disabled={loadingRuns} aria-label="Refresh recent runs">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              {runs === null || loadingRuns ? (
+                <p className="flex items-center gap-2 py-4 text-xs text-gray-400 dark:text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading recent runs...
+                </p>
+              ) : runsError ? (
+                <p className="py-4 text-xs text-red-600 dark:text-red-400">{runsError}</p>
+              ) : runs.length === 0 ? (
+                <p className="py-4 text-xs text-gray-400 dark:text-slate-500">No flow runs yet. Test runs and event-triggered runs will appear here.</p>
+              ) : (
+                <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                  {runs.map((run) => {
+                    const flow = resolveFlow(run);
+                    const when = run.startedAt ?? run.createdAt;
+                    return (
+                      <button
+                        key={run.runId}
+                        type="button"
+                        disabled={!flow}
+                        onClick={() => { if (flow) onOpenRunFlow(flow.id); }}
+                        className={cn(
+                          'flex w-full flex-col gap-1 rounded-lg px-1.5 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                          flow ? 'cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/50' : 'cursor-default',
+                        )}
+                      >
+                        <span className="flex min-w-0 items-center justify-between gap-2">
+                          <span className="min-w-0 truncate text-sm font-medium text-gray-800 dark:text-slate-200">
+                            {flow?.name ?? run.flow ?? run.flowDefinitionId ?? 'Unknown flow'}
+                          </span>
+                          <span className="flex-none"><RunStatusChip run={run} /></span>
+                        </span>
+                        <span className="flex min-w-0 items-center justify-between gap-2">
+                          <span className="min-w-0 truncate font-mono text-[11px] text-gray-500 dark:text-slate-400">{run.triggerEvent}</span>
+                          <span className="flex-none text-[11px] text-gray-400 dark:text-slate-500" title={formatAbsoluteTimeTitle(when)}>
+                            {formatRelativeTime(when)}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </aside>
+        </div>
       </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Flow list (search + scope filter + per-flow actions)
+// ---------------------------------------------------------------------------
+
+function FlowListCard({
+  groups, total, onNewFlow, onOpenFlow, onDuplicate, onRename, onRequestToggleEnabled, onDelete,
+}: {
+  groups: FlowGroup[];
+  total: number;
+  onNewFlow: () => void;
+  onOpenFlow: (flowId: string) => void;
+  onDuplicate: (flow: FlowDefinition) => void;
+  onRename: (flow: FlowDefinition, name: string) => void;
+  onRequestToggleEnabled: (flow: FlowDefinition) => void;
+  onDelete: (flow: FlowDefinition) => void;
+}) {
+  const [query, setQuery] = useState('');
+  // Scope filter: 'all' | 'workspace' | an app id — refines the list when flows pile up.
+  const [scope, setScope] = useState('all');
+
+  const q = query.trim().toLowerCase();
+  const scoped = scope === 'all'
+    ? groups
+    : groups.filter((g) => (scope === 'workspace' ? g.app === null : g.app?.id === scope));
+  const filtered = scoped
+    .map((g) => ({ ...g, flows: g.flows.filter((f) => q === '' || f.name.toLowerCase().includes(q) || f.slug.toLowerCase().includes(q)) }))
+    .filter((g) => g.flows.length > 0);
+  const scopedTotal = scoped.reduce((n, g) => n + g.flows.length, 0);
+
+  return (
+    <section className="rounded-xl border border-gray-200/80 bg-white dark:border-slate-700/60 dark:bg-slate-900">
+      <div className="flex flex-col gap-2.5 border-b border-gray-100 p-4 dark:border-slate-800 sm:flex-row sm:items-center">
+        <h3 className="flex flex-none items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+          Your flows
+          <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+            {total}
+          </span>
+        </h3>
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:justify-end">
+          <div className="relative min-w-0 flex-1 sm:max-w-56">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search flows"
+              aria-label="Search flows"
+              className="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          {groups.length > 1 && (
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              aria-label="Filter flows by scope"
+              className="max-w-40 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+            >
+              <option value="all">All scopes</option>
+              {groups.map((g) => (
+                <option key={g.app?.id ?? 'workspace'} value={g.app?.id ?? 'workspace'}>
+                  {g.app ? g.app.name : 'Workspace'} · {g.flows.length}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-4 p-3 sm:p-4">
+        {filtered.length === 0 ? (
+          <p className="px-1 py-2 text-xs text-gray-400 dark:text-slate-500">
+            {scopedTotal === 0 ? 'No flows in this scope yet.' : `No flows match "${query}".`}
+          </p>
+        ) : (
+          filtered.map((g) => (
+            <div key={g.app?.id ?? 'workspace'}>
+              <div className="mb-1.5 flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
+                <p className="min-w-0 flex-1 truncate">{g.app ? g.app.name : 'Workspace'}</p>
+                <span className="flex-none text-gray-400 dark:text-slate-500">· {g.flows.length}</span>
+              </div>
+              <div className="space-y-1">
+                {g.flows.map((flow) => (
+                  <FlowRow
+                    key={flow.id}
+                    flow={flow}
+                    onSelect={() => onOpenFlow(flow.id)}
+                    onDuplicate={() => onDuplicate(flow)}
+                    onRename={(name) => onRename(flow, name)}
+                    onRequestToggleEnabled={() => onRequestToggleEnabled(flow)}
+                    onDelete={() => onDelete(flow)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+        <div className="px-1 pt-1">
+          <button
+            type="button"
+            onClick={onNewFlow}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-300 dark:hover:bg-primary-500/10"
+          >
+            <Plus className="h-3.5 w-3.5" /> New flow
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Approximate height of the tallest row menu — used to flip the portal menu above the
+// trigger when it would clip past the bottom of the viewport (mirrors FormCard's menu).
+const FLOW_MENU_HEIGHT = 210;
+const FLOW_MENU_WIDTH = 176; // w-44
+
+function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled, onDelete }: {
+  flow: FlowDefinition;
+  onSelect: () => void;
+  onDuplicate: () => void;
+  onRename: (name: string) => void;
+  /** Opens the enable/disable confirm (the flow's current state decides the direction). */
+  onRequestToggleEnabled: () => void;
+  onDelete: () => void;
+}) {
+  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(flow.name);
+  const menuOpen = menuRect !== null;
+  const closeMenu = () => setMenuRect(null);
+
+  const commitRename = () => {
+    setRenaming(false);
+    onRename(name);
+  };
+
+  return (
+    <div className="group relative rounded-lg border border-transparent px-2.5 py-2 transition-colors hover:border-gray-200 hover:bg-gray-50 dark:hover:border-slate-700 dark:hover:bg-slate-800/40">
+      <div className="flex items-center gap-2">
+        {renaming ? (
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setRenaming(false); setName(flow.name); } }}
+            aria-label="Flow name"
+            className="min-w-0 flex-1 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-1.5 py-1 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+          />
+        ) : (
+          <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={cn(
+                  'truncate text-sm font-medium text-gray-800 dark:text-slate-200',
+                  !flow.enabled && 'opacity-60',
+                )}
+              >
+                {flow.name}
+              </span>
+              {!flow.enabled && (
+                <span className="flex-none rounded-full border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                  off
+                </span>
+              )}
+            </span>
+            <p className={cn('truncate font-mono text-[10px] text-gray-400 dark:text-slate-500', !flow.enabled && 'opacity-60')}>
+              {flow.slug} · v{flow.version}
+            </p>
+          </button>
+        )}
+        {/* Enabled indicator — one glance says whether the flow runs; click to toggle (confirmed). */}
+        <button
+          type="button"
+          onClick={onRequestToggleEnabled}
+          aria-label={flow.enabled ? `Disable ${flow.name}` : `Enable ${flow.name}`}
+          title={flow.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+          className={cn(
+            'flex-none cursor-pointer rounded p-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            flow.enabled
+              ? 'text-emerald-500 hover:bg-emerald-50 hover:text-emerald-600 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
+              : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500 dark:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-400',
+          )}
+        >
+          <Power className="h-4 w-4" />
+        </button>
+        <div className="relative flex-none">
+          <button
+            type="button"
+            onClick={(e) => setMenuRect(menuOpen ? null : e.currentTarget.getBoundingClientRect())}
+            aria-label={`Flow actions for ${flow.name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="cursor-pointer rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          >
+            <MoreVertical className="h-4 w-4" />
+          </button>
+          {/* Portal + fixed positioning: escapes the page scroll and flips above the
+              trigger when the viewport bottom is near. */}
+          {menuRect && createPortal(
+            <div className="fixed inset-0 z-[70]" onClick={closeMenu}>
+              <div
+                role="menu"
+                aria-label={`Flow actions for ${flow.name}`}
+                onClick={(e) => e.stopPropagation()}
+                className="absolute w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900 dark:ring-white/[0.06]"
+                style={{
+                  ...(menuRect.bottom + FLOW_MENU_HEIGHT > window.innerHeight
+                    ? { bottom: window.innerHeight - menuRect.top + 4 }
+                    : { top: menuRect.bottom + 4 }),
+                  left: Math.min(Math.max(8, menuRect.right - FLOW_MENU_WIDTH), window.innerWidth - FLOW_MENU_WIDTH - 8),
+                }}
+              >
+                <MenuItem
+                  icon={flow.enabled ? Power : Play}
+                  label={flow.enabled ? 'Disable…' : 'Enable…'}
+                  onClick={() => { closeMenu(); onRequestToggleEnabled(); }}
+                />
+                <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                <MenuItem icon={Pencil} label="Rename" onClick={() => { closeMenu(); setName(flow.name); setRenaming(true); }} />
+                <MenuItem icon={Copy} label="Duplicate" onClick={() => { closeMenu(); onDuplicate(); }} />
+                <MenuItem icon={Trash2} label="Delete" danger onClick={() => { closeMenu(); onDelete(); }} />
+              </div>
+            </div>,
+            document.body,
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MenuItem({ icon: Icon, label, onClick, danger }: { icon: typeof Pencil; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
+        danger
+          ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10'
+          : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800',
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Readiness cards
+// ---------------------------------------------------------------------------
 
 function AiServicesStatusCard({
   providerCount,

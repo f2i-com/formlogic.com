@@ -48,6 +48,8 @@ export interface ResolveEditorLayoutInput {
   rightPanelOpen?: boolean;
   paletteCollapsedPreference?: boolean;
   libraryCollapsedPreference?: boolean;
+  /** The full-page editor renders no flow library at all — its width never subtracts. */
+  libraryHidden?: boolean;
   belowMd?: boolean;
   /** First-paint fallback before ResizeObserver has reported a measured container width. */
   legacyInline?: boolean;
@@ -104,9 +106,9 @@ export function resolveEditorLayout(input: ResolveEditorLayoutInput): ResolvedEd
     const expandedLibraryFits =
       !selectedFlow ||
       workspaceWidth - FLOW_LAYOUT.LIBRARY_W - FLOW_LAYOUT.CANVAS_FLOOR - FLOW_LAYOUT.PALETTE_RAIL_W >= 0;
-    library = libraryPrefersRail || !expandedLibraryFits ? 'rail' : 'expanded';
+    library = input.libraryHidden === true || libraryPrefersRail || !expandedLibraryFits ? 'rail' : 'expanded';
 
-    const libraryWidth = library === 'rail' ? FLOW_LAYOUT.LIBRARY_RAIL_W : FLOW_LAYOUT.LIBRARY_W;
+    const libraryWidth = input.libraryHidden === true ? 0 : library === 'rail' ? FLOW_LAYOUT.LIBRARY_RAIL_W : FLOW_LAYOUT.LIBRARY_W;
     rightPanel =
       input.rightPanelOpen === true &&
       workspaceWidth - libraryWidth - FLOW_LAYOUT.CANVAS_FLOOR - FLOW_LAYOUT.PALETTE_RAIL_W >= FLOW_LAYOUT.RIGHT_PANEL_W

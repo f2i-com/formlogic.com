@@ -79,6 +79,22 @@ describe('resolveEditorLayout', () => {
     }).rightPanel).toBe('drawer');
   });
 
+  it('sizes the right panel with zero library width when the workspace renders none', () => {
+    expect(resolveEditorLayout({
+      workspaceWidth: FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RIGHT_PANEL_W,
+      selectedFlow: true,
+      rightPanelOpen: true,
+      libraryHidden: true,
+    }).rightPanel).toBe('rail');
+
+    expect(resolveEditorLayout({
+      workspaceWidth: FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RIGHT_PANEL_W - 1,
+      selectedFlow: true,
+      rightPanelOpen: true,
+      libraryHidden: true,
+    }).rightPanel).toBe('drawer');
+  });
+
   it('preserves the sub-md mobile behavior and first-paint legacy fallback', () => {
     expect(resolveEditorLayout({
       belowMd: true,
