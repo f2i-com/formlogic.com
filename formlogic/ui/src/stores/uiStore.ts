@@ -63,6 +63,10 @@ interface UIState {
   chatOpen: boolean;
   chatMinimized: boolean;
   chatPosition: ChatPanelPosition | null;
+  /** §11B O1: a prompt typed into "What do you want to create?" — the chat widget
+   *  consumes it as its composer text on open (never persisted). */
+  chatSeed: string | null;
+  setChatSeed: (chatSeed: string | null) => void;
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
   setChatPosition: (position: ChatPanelPosition | null) => void;
@@ -113,6 +117,8 @@ export const useUIStore = create<UIState>()(
       chatOpen: false,
       chatMinimized: false,
       chatPosition: null,
+      chatSeed: null,
+      setChatSeed: (chatSeed) => set({ chatSeed }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
       setChatPosition: (position) => set({ chatPosition: position }),

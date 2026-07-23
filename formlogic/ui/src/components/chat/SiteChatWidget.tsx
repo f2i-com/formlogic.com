@@ -174,6 +174,8 @@ export function SiteChatWidget() {
   const user = useAuthStore((s) => s.user);
   const isMobile = useUIStore((s) => s.isMobile);
   const chatOpen = useUIStore((s) => s.chatOpen);
+  const chatSeed = useUIStore((s) => s.chatSeed);
+  const setChatSeed = useUIStore((s) => s.setChatSeed);
   const chatMinimized = useUIStore((s) => s.chatMinimized);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
@@ -187,6 +189,13 @@ export function SiteChatWidget() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [input, setInput] = useState('');
+  // §11B O1: the Dashboard's "What do you want to create?" composer seeds the chat.
+  useEffect(() => {
+    if (chatOpen && chatSeed) {
+      setInput(chatSeed);
+      setChatSeed(null);
+    }
+  }, [chatOpen, chatSeed, setChatSeed]);
   const [sending, setSending] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
   const [prefs, setPrefs] = useState<AiPreferences | null>(null);

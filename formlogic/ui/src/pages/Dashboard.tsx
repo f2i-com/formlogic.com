@@ -53,6 +53,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import { GenerateAppModal } from '../components/ai-app-builder/GenerateAppModal';
+import { CreateBand } from '../components/chat/CreateBand';
 import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 import type { FormTemplate } from '../data/formTemplates';
 import type { App } from '../types/app';
@@ -1125,6 +1126,10 @@ export function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* §11B O1: the availability-routed creation band — chat-first when an AI can
+            answer, "Build your way" when none is connected. */}
+        {storageMode === 'api' && <CreateBand />}
 
         {/* Headline band — the intake ledger reads as one live sentence, not four stat cards. */}
         <div className="mb-8">
