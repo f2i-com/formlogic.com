@@ -74,6 +74,7 @@ import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAiAvailable } from '../hooks/useAiAvailable';
 import { useUIStore } from '../stores/uiStore';
+import { SiteChatWidget } from '../components/chat/SiteChatWidget';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
 
 type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | null;
@@ -263,19 +264,18 @@ function BuilderHeaderButton({
   );
 }
 
-function BuilderAiButton({ showLabel, chatMode, onClick }: { showLabel: boolean; chatMode: boolean; onClick: () => void }) {
-  const title = chatMode ? 'Chat with AI about this form' : 'Generate with AI';
+function BuilderAiButton({ showLabel, onClick }: { showLabel: boolean; onClick: () => void }) {
   return (
     <Button
       variant="outline"
       size="sm"
       onClick={onClick}
-      title={title}
-      aria-label={title}
+      title="Generate with AI"
+      aria-label="Generate with AI"
       className="whitespace-nowrap border-primary-200 bg-primary-50 text-primary-700 hover:border-primary-300 hover:bg-primary-100 hover:text-primary-800 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200 dark:hover:border-primary-400/50 dark:hover:bg-primary-500/15"
     >
       <Sparkles className="h-4 w-4 text-primary-500 dark:text-primary-300" />
-      {showLabel && <span>{chatMode ? 'Chat' : 'AI'}</span>}
+      {showLabel && <span>AI</span>}
     </Button>
   );
 }
@@ -320,32 +320,6 @@ export default function FormBuilder() {
   // Whether the built-in AI is available (AI_ENABLED + configured). Hides the "Generate with AI"
   // entry points when off — users can still bring their own AI via the MCP "Connect an AI" flow.
   const aiAvailable = useAiAvailable();
-  // §11B O5a: when the user's default chat AI resolves, the builder's AI button opens
-  // the SITE CHAT (which sees this form via page context and edits it with the same
-  // tools) instead of the popup generator — creating and editing a form is just talking.
-  const [chatAiAvailable, setChatAiAvailable] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    void import('../client-runtime/flows/aiDefault').then(({ getAiPreferences }) =>
-      getAiPreferences().then(
-        (res) => {
-          if (!cancelled) setChatAiAvailable(res.ok);
-        },
-        () => undefined,
-      ),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  const openBuilderAi = useCallback(() => {
-    if (chatAiAvailable) {
-      useUIStore.getState().setChatOpen(true);
-      useUIStore.getState().setChatMinimized(false);
-      return;
-    }
-    setActiveModal('ai');
-  }, [chatAiAvailable]);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   // Snapshot of the form serialized to a pack, captured when "Publish as pack" opens (so
   // it stays stable while the publish dialog is open rather than rebuilding on each edit).
@@ -1284,9 +1258,7 @@ export default function FormBuilder() {
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-          {(aiAvailable || chatAiAvailable) && (
-            <BuilderAiButton showLabel={showHeaderLabels} chatMode={chatAiAvailable} onClick={openBuilderAi} />
-          )}
+          {aiAvailable && <BuilderAiButton showLabel={showHeaderLabels} onClick={() => setActiveModal('ai')} />}
           {aiAvailable && <BuilderToolbarDivider />}
 
           {!foldMiddleClusters && (
@@ -1682,6 +1654,11 @@ export default function FormBuilder() {
         theme={form.theme}
         onSave={(theme) => updateForm(form.id, { theme })}
       />
+
+      {/* §11B O5a (owner direction): the SAME floating chat lives here too — the builder
+          is a full-screen route outside AppShell, so it mounts its own widget. The chat
+          sees this form via page context and edits it with the ordinary tools. */}
+      <SiteChatWidget />
 
       {/* Publish-as-pack: serialize this form into a pack and publish it to the marketplace */}
       <PublishPackDialog

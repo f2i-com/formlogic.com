@@ -70,6 +70,10 @@ interface UIState {
    *  default (never a haunted browser); persists once chosen. */
   chatFollowAi: boolean;
   setChatFollowAi: (follow: boolean) => void;
+  /** §11B O5: docked = the chat is a right rail BESIDE the live workspace (the
+   *  co-creation shell) instead of a floating panel. */
+  chatDocked: boolean;
+  setChatDocked: (docked: boolean) => void;
   setChatSeed: (chatSeed: string | null) => void;
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
@@ -124,6 +128,8 @@ export const useUIStore = create<UIState>()(
       chatSeed: null,
       chatFollowAi: false,
       setChatFollowAi: (chatFollowAi) => set({ chatFollowAi }),
+      chatDocked: false,
+      setChatDocked: (chatDocked) => set({ chatDocked }),
       setChatSeed: (chatSeed) => set({ chatSeed }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
@@ -148,6 +154,7 @@ export const useUIStore = create<UIState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         chatOpen: state.chatOpen,
         chatFollowAi: state.chatFollowAi,
+        chatDocked: state.chatDocked,
         chatMinimized: state.chatMinimized,
         chatPosition: state.chatPosition
       }),

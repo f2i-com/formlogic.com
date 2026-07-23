@@ -31,6 +31,7 @@ import {
   Trash2,
   X,
   Footprints,
+  PanelRight,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -179,6 +180,8 @@ export function SiteChatWidget() {
   const setChatSeed = useUIStore((s) => s.setChatSeed);
   const chatFollowAi = useUIStore((s) => s.chatFollowAi);
   const setChatFollowAi = useUIStore((s) => s.setChatFollowAi);
+  const chatDocked = useUIStore((s) => s.chatDocked);
+  const setChatDocked = useUIStore((s) => s.setChatDocked);
   const chatMinimized = useUIStore((s) => s.chatMinimized);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
@@ -630,6 +633,22 @@ export function SiteChatWidget() {
         >
           <History className="h-4 w-4" aria-hidden="true" />
         </button>
+        {!isMobile && !isDemo && (
+          <button
+            type="button"
+            aria-label={chatDocked ? 'Float the chat' : 'Dock the chat beside the workspace'}
+            aria-pressed={chatDocked}
+            title={chatDocked ? 'Float the chat' : 'Dock beside the workspace'}
+            onClick={() => setChatDocked(!chatDocked)}
+            className={
+              chatDocked
+                ? 'flex-shrink-0 rounded-md bg-primary-100 p-1.5 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300'
+                : 'flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
+            }
+          >
+            <PanelRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           aria-label="Minimize chat"
@@ -861,7 +880,19 @@ export function SiteChatWidget() {
         </section>
       )}
 
-      {panelVisible && !isMobile && (
+      {/* §11B O5 co-creation shell: docked = a full-height right rail beside the live
+          workspace (AppShell clears space for it) — chat and canvas as coordinated
+          surfaces instead of an overlay. */}
+      {panelVisible && !isMobile && chatDocked && (
+        <div
+          role="dialog"
+          aria-label="Site chat"
+          className="fixed bottom-0 right-0 top-16 z-40 flex w-96 flex-col overflow-hidden border-l border-gray-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
+        >
+          {panelBody}
+        </div>
+      )}
+      {panelVisible && !isMobile && !chatDocked && (
         // The fixed inset layer is the drag-constraints boundary: framer-motion clamps
         // the panel to it, so the chat can never be dragged off screen.
         <div ref={constraintsRef} className="pointer-events-none fixed inset-3 z-40">

@@ -14,6 +14,8 @@ import { cn } from '../../lib/utils';
 
 export function AppShell() {
   const { sidebarCollapsed, isMobile, setIsMobile } = useUIStore();
+  // §11B O5: the docked chat narrows the workspace (see the main className below).
+  const chatDockedVisible = useUIStore((s) => s.chatDocked && s.chatOpen && !s.chatMinimized);
   const isOnline = useOnlineStatus();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
@@ -113,6 +115,9 @@ export function AppShell() {
           // and dropdowns keep working.
           'min-h-screen transition-all duration-300 focus:outline-none overflow-x-clip',
           !isMobile && (sidebarCollapsed ? 'ml-16' : 'ml-64'),
+          // §11B O5: a DOCKED chat is a sibling surface, not an overlay — the
+          // workspace narrows so both stay fully visible (the co-creation shell).
+          !isMobile && chatDockedVisible && 'mr-96',
           // Clear the fixed bottom nav PLUS the home-indicator safe-area inset on
           // notched phones, so trailing content isn't hidden behind the nav.
           isMobile && 'pb-[calc(5rem+env(safe-area-inset-bottom))]',
