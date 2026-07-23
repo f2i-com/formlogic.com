@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Wand2, ArrowRight, ArrowLeft, RefreshCw, Check, GitBranch, Users, Loader2, AlertCircle, Boxes, FileText, MonitorPlay, Image as ImageIcon } from 'lucide-react';
+import { Sparkles, Wand2, ArrowRight, ArrowLeft, RefreshCw, Check, GitBranch, Users, Loader2, AlertCircle, Boxes, FileText, Map as MapIcon, MonitorPlay, Image as ImageIcon } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
+import { generateId } from '../../lib/utils';
 import { validatePlan, buildAppFromPlan, type AppPlan, type BuildProgress, type BuildResult } from '../../lib/ai-app-builder';
+import type { BlueprintOperation } from '../../types/blueprints';
 
 type Stage = 'prompt' | 'planning' | 'review' | 'building' | 'done' | 'error';
 
@@ -47,6 +49,70 @@ export function GenerateAppModal({ isOpen, onClose }: { isOpen: boolean; onClose
     const errs = validatePlan(p);
     if (errs.length) { setError(errs[0]); setStage('error'); return; }
     setPlan(p); setStage('review');
+  };
+
+  // §11A D6: emit the plan as a DIAGRAM first — concept form entities, labelled
+  // relations, and the app description as a sticky. Review and refine the sketch (add
+  // fields right on the cards), then 'Create app' materialises it; or come back here
+  // and 'Build app' for full AI generation.
+  const sketchAsDiagram = async () => {
+    if (!plan) return;
+    setError('');
+    const created = await api.createBlueprint({ name: plan.app.name });
+    if (created.error || !created.data) {
+      setError('Could not create the diagram.'); setStage('error'); return;
+    }
+    const ops: BlueprintOperation[] = [];
+    plan.forms.forEach((form, index) => {
+      ops.push({
+        operationId: `op-${generateId()}`,
+        type: 'blueprint.element.create',
+        targetId: `el-${form.key}`,
+        elementType: 'form',
+        properties: { title: form.title, fields: [] },
+        layout: { x: 120 + (index % 3) * 300, y: 140 + Math.floor(index / 3) * 220 },
+      });
+    });
+    plan.relations.forEach((relation) => {
+      if (!plan.forms.some((f) => f.key === relation.from) || !plan.forms.some((f) => f.key === relation.to)) return;
+      const fkField = relation.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'link';
+      ops.push({
+        operationId: `op-${generateId()}`,
+        type: 'blueprint.element.create',
+        targetId: `el-${generateId()}`,
+        elementType: 'edge',
+        properties: {
+          edgeType: 'relation',
+          sourceId: `el-${relation.from}`,
+          targetId: `el-${relation.to}`,
+          cardinality: '1:N',
+          fkField,
+          label: relation.label,
+          state: 'concept',
+        },
+      });
+    });
+    if (plan.app.description.trim() !== '') {
+      ops.push({
+        operationId: `op-${generateId()}`,
+        type: 'blueprint.element.create',
+        targetId: `el-${generateId()}`,
+        elementType: 'note',
+        properties: { text: plan.app.description },
+        layout: { x: 120, y: 20 },
+      });
+    }
+    const committed = await api.commitBlueprintOperations(created.data.blueprint.id, {
+      baseSemanticRevision: 0,
+      origin: 'launcher',
+      operations: ops,
+    });
+    if (committed.error) {
+      setError('Could not sketch the diagram.'); setStage('error'); return;
+    }
+    const id = created.data.blueprint.id;
+    reset(); onClose();
+    navigate(`/diagrams/${id}`);
   };
 
   const build = async () => {
@@ -157,6 +223,7 @@ export function GenerateAppModal({ isOpen, onClose }: { isOpen: boolean; onClose
             <Button variant="ghost" size="sm" onClick={() => setStage('prompt')} leftIcon={<ArrowLeft className="h-4 w-4" />}>Edit prompt</Button>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={generatePlan} leftIcon={<RefreshCw className="h-4 w-4" />}>Regenerate</Button>
+              <Button variant="outline" size="sm" onClick={() => void sketchAsDiagram()} leftIcon={<MapIcon className="h-4 w-4" />}>Sketch as diagram</Button>
               <Button size="sm" onClick={build} leftIcon={<Wand2 className="h-4 w-4" />}>Build app</Button>
             </div>
           </div>
