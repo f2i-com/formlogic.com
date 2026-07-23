@@ -125,6 +125,7 @@ class BlueprintService
             ],
             $elements->fetchAll()
         );
+        $this->attachResourceSync($blueprintId, $out['elements']);
         return $out;
     }
 
@@ -230,6 +231,63 @@ class BlueprintService
     }
 
     // ─── internals ─────────────────────────────────────────────────────────────
+
+    /**
+     * §11A D4 pull sync: annotate form-linked elements with the LIVE resource state —
+     * 'missing' (form gone), 'stale' (changed since the link last observed it), or
+     * 'synced' — plus the live title/field count for the card's projection. Read-only:
+     * refreshing a projection never mutates the diagram.
+     *
+     * @param array[] $elements modified in place
+     */
+    private function attachResourceSync(string $blueprintId, array &$elements): void
+    {
+        $formIds = [];
+        foreach ($elements as $element) {
+            $ref = $element['resourceRef'] ?? null;
+            if (is_array($ref) && ($ref['kind'] ?? null) === 'form' && is_string($ref['id'] ?? null)) {
+                $formIds[] = $ref['id'];
+            }
+        }
+        if ($formIds === []) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($formIds), '?'));
+        $stmt = $this->mysql->prepare(
+            "SELECT id, title, field_count, updated_at FROM forms WHERE id IN ({$placeholders})"
+        );
+        $stmt->execute(array_values(array_unique($formIds)));
+        $live = [];
+        foreach ($stmt->fetchAll() as $form) {
+            $live[(string) $form['id']] = $form;
+        }
+        $links = $this->mysql->prepare(
+            'SELECT element_id, last_observed_version FROM blueprint_resource_links WHERE blueprint_id = :b'
+        );
+        $links->execute(['b' => $blueprintId]);
+        $observed = [];
+        foreach ($links->fetchAll() as $link) {
+            $observed[(string) $link['element_id']] = $link['last_observed_version'];
+        }
+        foreach ($elements as &$element) {
+            $ref = $element['resourceRef'] ?? null;
+            if (!is_array($ref) || ($ref['kind'] ?? null) !== 'form' || !is_string($ref['id'] ?? null)) {
+                continue;
+            }
+            $form = $live[$ref['id']] ?? null;
+            if ($form === null) {
+                $element['sync'] = ['state' => 'missing'];
+                continue;
+            }
+            $seen = $observed[(string) $element['id']] ?? null;
+            $element['sync'] = [
+                'state' => ($seen !== null && (string) $form['updated_at'] !== (string) $seen) ? 'stale' : 'synced',
+                'title' => (string) $form['title'],
+                'fieldCount' => (int) $form['field_count'],
+            ];
+        }
+        unset($element);
+    }
 
     /**
      * The shared validate-everything-before-any-write path commit and dry-run both use:

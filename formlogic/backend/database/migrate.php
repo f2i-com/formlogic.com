@@ -471,6 +471,22 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `blueprint_operations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'blueprint tables ensured';
 
+// 11. Blueprint↔resource association (§11A D4): pull-sync + reverse lookup.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `blueprint_resource_links` (
+  `blueprint_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `element_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resource_type` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resource_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `last_observed_version` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `materialisation_status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'materialised',
+  `change_set_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`blueprint_id`,`element_id`),
+  KEY `idx_bprl_resource` (`resource_type`,`resource_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'blueprint_resource_links table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

@@ -167,6 +167,29 @@ class BlueprintMaterializeService
             $this->mysql->prepare('UPDATE blueprints SET app_id = :app, status = :status WHERE id = :id')
                 ->execute(['app' => $appId, 'status' => 'materialised', 'id' => $blueprintId]);
 
+            // §11A D4: record the element↔resource association with the version we
+            // observed — pull sync compares live updated_at against it (differ = stale,
+            // gone = missing) and it doubles as the reverse index for future pushes.
+            $link = $this->mysql->prepare('
+                INSERT INTO blueprint_resource_links
+                    (blueprint_id, element_id, resource_type, resource_id, last_observed_version, materialisation_status)
+                VALUES (:b, :el, :t, :r, :v, :s)
+                ON DUPLICATE KEY UPDATE resource_id = VALUES(resource_id),
+                    last_observed_version = VALUES(last_observed_version),
+                    materialisation_status = VALUES(materialisation_status)
+            ');
+            foreach ($formIdByElement as $elementId => $formId) {
+                $observed = $this->forms->getForm((string) $formId);
+                $link->execute([
+                    'b' => $blueprintId,
+                    'el' => (string) $elementId,
+                    't' => 'form',
+                    'r' => (string) $formId,
+                    'v' => is_array($observed) && is_string($observed['updatedAt'] ?? null) ? $observed['updatedAt'] : null,
+                    's' => 'materialised',
+                ]);
+            }
+
             return [
                 'appId' => $appId,
                 'appSlug' => isset($app['slug']) && is_string($app['slug']) ? $app['slug'] : null,

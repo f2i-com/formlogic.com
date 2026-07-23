@@ -967,6 +967,22 @@ CREATE TABLE `blueprint_layouts` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `blueprint_resource_links` (
+  `blueprint_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `element_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resource_type` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resource_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `last_observed_version` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `materialisation_status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'materialised',
+  `change_set_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`blueprint_id`,`element_id`),
+  KEY `idx_bprl_resource` (`resource_type`,`resource_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `blueprint_operations` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `operation_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,

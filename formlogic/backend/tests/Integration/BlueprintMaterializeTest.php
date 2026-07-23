@@ -140,6 +140,23 @@ class BlueprintMaterializeTest extends TestCase
         $this->assertSame(['full_name', 'email'], array_column($customers['fields'], 'id'));
         $this->assertSame('Full name', $customers['fields'][0]['label']);
 
+        // §11A D4 pull sync: link rows recorded the observed version → fresh reads are
+        // 'synced' with the LIVE projection; a changed form reads 'stale'; a deleted
+        // one reads 'missing'. Read-only — the diagram itself never mutates.
+        $links = self::$pdo->prepare('SELECT COUNT(*) FROM blueprint_resource_links WHERE blueprint_id = ?');
+        $links->execute([$blueprint['id']]);
+        $this->assertSame(2, (int) $links->fetchColumn());
+        $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
+        $this->assertSame('synced', $byId['el-orders']['sync']['state'] ?? null);
+        $this->assertSame('Orders', $byId['el-orders']['sync']['title'] ?? null);
+        self::$pdo->prepare("UPDATE forms SET updated_at = '2030-01-01 00:00:00' WHERE id = ?")
+            ->execute([$ordersFormId]);
+        $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
+        $this->assertSame('stale', $byId['el-orders']['sync']['state'] ?? null);
+        self::$forms->deleteForm((string) $customersFormId);
+        $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
+        $this->assertSame('missing', $byId['el-customers']['sync']['state'] ?? null);
+
         // Once linked, materialising again refuses (deltas are D5).
         $this->expectException(\InvalidArgumentException::class);
         self::$materializer->materialize($this->userId, $blueprint['id']);

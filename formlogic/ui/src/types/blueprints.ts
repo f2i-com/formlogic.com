@@ -41,6 +41,8 @@ export interface BlueprintElement {
   properties: Record<string, unknown>;
   /** Canvas-only state ({x, y, ...}); null when never placed. */
   layout: Record<string, unknown> | null;
+  /** §11A D4 pull sync (form-linked elements on GET): live resource state + projection. */
+  sync?: { state: 'synced' | 'stale' | 'missing'; title?: string; fieldCount?: number };
 }
 
 export interface Blueprint {

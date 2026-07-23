@@ -80,6 +80,8 @@ type BlueprintNodeData = {
   onSetText?: (text: string) => void;
   /** Injected per-node (images/shapes): persist a resize (properties w/h). */
   onResize?: (w: number, h: number) => void;
+  /** §11A D4: live resource state for materialised elements. */
+  sync?: { state: 'synced' | 'stale' | 'missing'; title?: string; fieldCount?: number };
 };
 
 /** §11.4 node vocabulary → icon (also the canvas tool palette's source of truth). */
@@ -275,11 +277,20 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
         <span className="flex h-6 w-6 flex-none items-center justify-center rounded-md bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
           <Icon className="h-3.5 w-3.5" />
         </span>
-        <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{d.title}</span>
+        <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{d.sync?.title ?? d.title}</span>
       </div>
-      <p className="mt-1 text-[10px] uppercase tracking-wide text-gray-400 dark:text-slate-500">
+      <p className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-gray-400 dark:text-slate-500">
         {d.elementType}
         {d.concept ? ' · concept' : ''}
+        {d.sync?.state === 'missing' && (
+          <span className="rounded bg-red-100 px-1 py-px font-semibold text-red-700 dark:bg-red-500/15 dark:text-red-300">missing</span>
+        )}
+        {d.sync?.state === 'stale' && (
+          <span className="rounded bg-amber-100 px-1 py-px font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">changed</span>
+        )}
+        {d.sync?.state === 'synced' && (
+          <span className="rounded bg-emerald-100 px-1 py-px font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">linked</span>
+        )}
       </p>
       {/* §11A D2: the ER look — a form entity shows its sketched fields as rows. */}
       {d.elementType === 'form' && d.fields.length > 0 && (
@@ -668,6 +679,7 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
         description: typeof (element.properties as { description?: unknown }).description === 'string'
           ? (element.properties as { description: string }).description
           : undefined,
+        sync: element.sync,
       } satisfies BlueprintNodeData,
     });
   }
@@ -1397,6 +1409,13 @@ export function DiagramCanvas({
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
           onDoubleClick={onPaneDoubleClick}
+          onNodeDoubleClick={(_event, node) => {
+            const element = elements.find((candidate) => candidate.id === node.id);
+            const ref = element?.resourceRef as { kind?: unknown; id?: unknown } | null | undefined;
+            if (element?.elementType === 'form' && ref?.kind === 'form' && typeof ref.id === 'string') {
+              navigate(`/builder/${ref.id}`);
+            }
+          }}
           zoomOnDoubleClick={false}
           deleteKeyCode={null}
           connectionMode={ConnectionMode.Loose}
