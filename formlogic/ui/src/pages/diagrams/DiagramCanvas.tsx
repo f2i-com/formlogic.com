@@ -10,6 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import {
   Background,
   Controls,
+  Handle,
+  Position,
   ReactFlow,
   applyNodeChanges,
   useReactFlow,
@@ -22,16 +24,21 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   Boxes,
+  Circle as CircleIcon,
   Diamond,
   FileText,
+  ImagePlus,
   Loader2,
   Monitor,
+  Pencil,
   Plus,
   Plug,
   Sparkles,
   Square,
   StickyNote,
   Trash2,
+  Triangle,
+  Type,
   User,
   Workflow,
   Zap,
@@ -57,6 +64,14 @@ type BlueprintNodeData = {
   fields: SketchField[];
   /** Note post-its: the note's body text (properties.text). */
   text?: string;
+  /** Concept cards (flows especially): the "how it works" write-up (properties.description). */
+  description?: string;
+  /** Ink strokes (§11A.1b): an SVG path in node-local coordinates + its drawn size. */
+  ink?: { path: string; w: number; h: number };
+  /** Pasted images (§11A.1b): a client-downscaled data URI + natural size. */
+  image?: { src: string; w: number; h: number };
+  /** Outlined shapes (§11A.1b): rect | circle | triangle. */
+  shape?: { kind: string; w: number; h: number };
   /** Injected per-node: quick-add a field typed DIRECTLY on the card (short_text default). */
   onAddField?: (name: string) => void;
   /** Injected per-node (notes): save the post-it's text on blur. */
@@ -76,6 +91,10 @@ const ELEMENT_ICONS: Record<string, LucideIcon> = {
   decision: Diamond,
   group: Square,
   note: StickyNote,
+  ink: Pencil,
+  image: ImagePlus,
+  shape: Square,
+  text: Type,
 };
 
 /**
@@ -88,16 +107,112 @@ const ELEMENT_ICONS: Record<string, LucideIcon> = {
  * (branching belongs to flows), Group (needs REAL containment semantics first — a frame
  * that doesn't contain is a lie). Existing elements of those kinds still render.
  */
-const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string }> = [
+const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string; icon?: LucideIcon; extra?: Record<string, unknown> }> = [
   { elementType: 'form', label: 'Form', title: 'New form' },
   { elementType: 'flow', label: 'Flow', title: 'New flow (concept)' },
   { elementType: 'actor', label: 'Actor', title: 'New actor / role' },
   { elementType: 'note', label: 'Note', title: 'New note' },
+  { elementType: 'text', label: 'Text', title: 'New text label' },
+  { elementType: 'shape', label: 'Box', title: 'New box', icon: Square, extra: { shape: 'rect' } },
+  { elementType: 'shape', label: 'Circle', title: 'New circle', icon: CircleIcon, extra: { shape: 'circle' } },
+  { elementType: 'shape', label: 'Triangle', title: 'New triangle', icon: Triangle, extra: { shape: 'triangle' } },
 ];
+
+/** Left target + right source connection dots — EVERYTHING connectable gets them
+ *  (owner direction: notes, images, shapes and text link up too; ink stays a stroke). */
+function Connectors() {
+  return (
+    <>
+      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-gray-400 dark:!border-slate-900 dark:!bg-slate-500" />
+      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-primary-500 dark:!border-slate-900" />
+    </>
+  );
+}
 
 function BlueprintNodeCard({ data, selected }: NodeProps) {
   const d = data as BlueprintNodeData;
   const Icon = ELEMENT_ICONS[d.elementType] ?? Workflow;
+  // Drawing layer (§11A.1b): ink strokes and pasted images render raw — no card chrome.
+  if (d.elementType === 'ink' && d.ink) {
+    return (
+      <svg
+        width={d.ink.w}
+        height={d.ink.h}
+        viewBox={`0 0 ${d.ink.w} ${d.ink.h}`}
+        className="overflow-visible"
+        aria-label="Ink stroke"
+      >
+        <path
+          d={d.ink.path}
+          fill="none"
+          stroke={selected ? '#6366f1' : '#64748b'}
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  if (d.elementType === 'image' && d.image) {
+    return (
+      <div className="relative">
+        <img
+          src={d.image.src}
+          width={d.image.w}
+          height={d.image.h}
+          alt="Pasted concept sketch"
+          draggable={false}
+          className={cn('rounded-lg shadow-sm', selected && 'ring-2 ring-primary-500/50')}
+        />
+        <Connectors />
+      </div>
+    );
+  }
+  // Outlined shapes: an empty box/circle/triangle to nut out concepts in — draw inside
+  // it with the pen, connect it like anything else.
+  if (d.elementType === 'shape' && d.shape) {
+    const { kind, w, h } = d.shape;
+    const stroke = selected ? '#6366f1' : '#94a3b8';
+    return (
+      <div className="relative">
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-label={`${kind} shape`}>
+          {kind === 'circle' ? (
+            <ellipse cx={w / 2} cy={h / 2} rx={w / 2 - 2} ry={h / 2 - 2} fill="none" stroke={stroke} strokeWidth={2} />
+          ) : kind === 'triangle' ? (
+            <polygon points={`${w / 2},2 ${w - 2},${h - 2} 2,${h - 2}`} fill="none" stroke={stroke} strokeWidth={2} strokeLinejoin="round" />
+          ) : (
+            <rect x={2} y={2} width={w - 4} height={h - 4} rx={8} fill="none" stroke={stroke} strokeWidth={2} />
+          )}
+        </svg>
+        <Connectors />
+      </div>
+    );
+  }
+  // Freestanding text: write directly (no card chrome) — select and type, saves on blur.
+  if (d.elementType === 'text') {
+    return (
+      <div className={cn('relative min-w-[6rem] max-w-[18rem] px-1 py-0.5', selected && 'rounded ring-1 ring-primary-400/50')}>
+        {selected && d.onSetText ? (
+          <textarea
+            key={d.text ?? ''}
+            defaultValue={d.text ?? ''}
+            rows={2}
+            placeholder="Write…"
+            aria-label="Text label"
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onBlur={(e) => d.onSetText?.(e.currentTarget.value)}
+            className="nodrag w-full resize-none bg-transparent text-sm font-medium leading-snug text-gray-800 placeholder:text-gray-400 focus:outline-none dark:text-slate-100 dark:placeholder:text-slate-500"
+          />
+        ) : (
+          <p className="whitespace-pre-wrap text-sm font-medium leading-snug text-gray-800 dark:text-slate-100">
+            {d.text?.trim() ? d.text : 'Select to write…'}
+          </p>
+        )}
+        <Connectors />
+      </div>
+    );
+  }
   // Notes are sticky post-its you WRITE IN: select one and type; the text saves on blur.
   if (d.elementType === 'note') {
     return (
@@ -109,6 +224,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
       >
         {selected && d.onSetText ? (
           <textarea
+            key={d.text ?? ''}
             defaultValue={d.text ?? ''}
             rows={4}
             placeholder="Write a note…"
@@ -143,6 +259,11 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
         {d.elementType}
         {d.concept ? ' · concept' : ''}
       </p>
+      {d.elementType !== 'form' && d.description?.trim() ? (
+        <p className="mt-1 line-clamp-3 max-w-[13rem] text-[11px] leading-snug text-gray-500 dark:text-slate-400">
+          {d.description}
+        </p>
+      ) : null}
       {/* §11A D2: the ER look — a form entity shows its sketched fields as rows. */}
       {d.elementType === 'form' && d.fields.length > 0 && (
         <ul className="mt-1.5 space-y-0.5 border-t border-gray-100 pt-1.5 dark:border-slate-800">
@@ -201,14 +322,19 @@ function SelectionPanel({
   const isEdge = element.elementType === 'edge';
   const isRelation = isEdge && (element.properties as { edgeType?: string }).edgeType === 'relation';
   const isForm = element.elementType === 'form';
+  const isTexty = element.elementType === 'note' || element.elementType === 'text';
   const [title, setTitle] = useState(String((element.properties as { title?: unknown }).title ?? ''));
+  const [description, setDescription] = useState(String((element.properties as { description?: unknown }).description ?? ''));
+  const [bodyText, setBodyText] = useState(String((element.properties as { text?: unknown }).text ?? ''));
   const [fields, setFields] = useState<SketchField[]>(() => sketchFields(element.properties));
   const [cardinality, setCardinality] = useState(String((element.properties as { cardinality?: unknown }).cardinality ?? '1:N'));
   const [fkField, setFkField] = useState(String((element.properties as { fkField?: unknown }).fkField ?? ''));
 
   // Every non-edge element edits its title; forms add the field sketch; relation
-  // edges edit cardinality + FK. Other edges (triggers, …) have nothing to edit yet.
+  // edges edit cardinality + FK. Other edges (triggers, …) and the drawing layer
+  // (ink strokes, pasted images) have nothing to edit.
   if (isEdge && !isRelation) return null;
+  if (element.elementType === 'ink' || element.elementType === 'image') return null;
 
   const save = () => {
     if (isRelation) {
@@ -221,6 +347,14 @@ function SelectionPanel({
     };
     if (isForm) {
       next.fields = fields.filter((field) => field.name.trim() !== '').map((field) => ({ name: field.name.trim(), type: field.type }));
+    } else if (isTexty) {
+      // Notes/text edit their BODY here too — same property the on-card editor saves,
+      // so the two stay in step (the card re-renders from the committed snapshot).
+      next.text = bodyText;
+      delete next.title;
+    } else {
+      // Concept cards (flows especially) carry a "how it works" write-up (§11A.1b).
+      next.description = description.trim();
     }
     onSave(next);
   };
@@ -229,10 +363,49 @@ function SelectionPanel({
     <div className="scrollbar-thin w-64 flex-none overflow-y-auto border-l border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
       {!isRelation ? (
         <>
-          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
-            {isForm ? 'Form title' : 'Title'}
-          </label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+          {!isTexty && (
+            <>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+                {isForm ? 'Form title' : 'Title'}
+              </label>
+              <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+            </>
+          )}
+          {isTexty && (
+            <>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+                {element.elementType === 'note' ? 'Note text' : 'Text'}
+              </label>
+              <textarea
+                value={bodyText}
+                onChange={(e) => setBodyText(e.target.value)}
+                rows={6}
+                placeholder="Write…"
+                aria-label="Body text"
+                className={INPUT_CLS + ' w-full resize-y text-xs leading-snug'}
+              />
+            </>
+          )}
+          {!isForm && !isTexty && (
+            <>
+              <label className="mt-3 mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+                How it works
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={5}
+                placeholder={element.elementType === 'flow'
+                  ? 'When a booking arrives, check availability, then confirm by SMS…'
+                  : 'Describe this concept…'}
+                aria-label="Concept description"
+                className={INPUT_CLS + ' w-full resize-y text-xs leading-snug'}
+              />
+              <p className="mt-1 text-[10px] leading-snug text-gray-400 dark:text-slate-500">
+                Sketch the shape too: draw with the pen or paste an image right next to it.
+              </p>
+            </>
+          )}
           {isForm && (
           <>
           <div className="mt-3 mb-1 flex items-center justify-between">
@@ -300,6 +473,46 @@ function SelectionPanel({
   );
 }
 
+function inkProps(properties: Record<string, unknown>): { path: string; w: number; h: number } | undefined {
+  const p = properties as { path?: unknown; w?: unknown; h?: unknown };
+  if (typeof p.path !== 'string' || p.path === '') return undefined;
+  return { path: p.path, w: Math.max(4, Number(p.w) || 4), h: Math.max(4, Number(p.h) || 4) };
+}
+
+function imageProps(properties: Record<string, unknown>): { src: string; w: number; h: number } | undefined {
+  const p = properties as { src?: unknown; w?: unknown; h?: unknown };
+  if (typeof p.src !== 'string' || !p.src.startsWith('data:image/')) return undefined;
+  return { src: p.src, w: Math.max(8, Number(p.w) || 8), h: Math.max(8, Number(p.h) || 8) };
+}
+
+/** Downscale a pasted image to ≤800px and re-encode — it stores INLINE in the element. */
+async function pastedImageProps(file: File): Promise<{ src: string; w: number; h: number } | null> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('unreadable image'));
+      image.src = url;
+    });
+    const scale = Math.min(1, 800 / Math.max(img.width, img.height, 1));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d')?.drawImage(img, 0, 0, w, h);
+    const src = canvas.toDataURL('image/jpeg', 0.85);
+    // The element cap is 512 KiB server-side; refuse client-side with headroom.
+    if (src.length > 480_000) return null;
+    return { src, w, h };
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /** The sketched field list on a form element (properties.fields), shape-tolerant. */
 function sketchFields(properties: Record<string, unknown>): SketchField[] {
   const raw = properties.fields;
@@ -332,8 +545,10 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
         source: String(props.sourceId ?? ''),
         target: String(props.targetId ?? ''),
         // ER reading for relations: cardinality + the FK field that will hold the link.
+        // Form→form relations read as ER (cardinality + FK); generic associations
+        // (notes/images/shapes/text linked up) read as a plain line.
         label: isRelation
-          ? `${props.cardinality ?? '1:N'}${props.fkField ? ` · ${props.fkField}` : ''}`
+          ? (props.cardinality ? `${props.cardinality}${props.fkField ? ` · ${props.fkField}` : ''}` : undefined)
           : String(props.edgeType ?? 'relation'),
         animated: props.edgeType === 'triggers',
       });
@@ -356,6 +571,18 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
         fields: sketchFields(element.properties),
         text: typeof (element.properties as { text?: unknown }).text === 'string'
           ? (element.properties as { text: string }).text
+          : undefined,
+        ink: element.elementType === 'ink' ? inkProps(element.properties) : undefined,
+        image: element.elementType === 'image' ? imageProps(element.properties) : undefined,
+        shape: element.elementType === 'shape'
+          ? {
+              kind: String((element.properties as { shape?: unknown }).shape ?? 'rect'),
+              w: Math.max(24, Number((element.properties as { w?: unknown }).w) || 160),
+              h: Math.max(24, Number((element.properties as { h?: unknown }).h) || 110),
+            }
+          : undefined,
+        description: typeof (element.properties as { description?: unknown }).description === 'string'
+          ? (element.properties as { description: string }).description
           : undefined,
       } satisfies BlueprintNodeData,
     });
@@ -493,7 +720,14 @@ export function DiagramCanvas({
   // §11A: quick-sketch — drop a fresh CONCEPT element of any §11.4 kind at a spawn
   // point. This is the design-tool half of the canvas; "place existing" is the other.
   const sketchElement = useCallback(
-    (elementType: string, title: string) => {
+    (elementType: string, title: string, extra?: Record<string, unknown>) => {
+      const base: Record<string, unknown> = elementType === 'form'
+        ? { title, fields: [] }
+        : elementType === 'shape'
+          ? { w: 160, h: 110 }
+          : elementType === 'text'
+            ? {}
+            : { title };
       void commit(
         [
           {
@@ -501,7 +735,7 @@ export function DiagramCanvas({
             type: 'blueprint.element.create',
             targetId: `el-${generateId()}`,
             elementType: elementType as BlueprintOperation['elementType'],
-            properties: elementType === 'form' ? { title, fields: [] } : { title },
+            properties: { ...base, ...extra },
             layout: { x: 120 + Math.round(Math.random() * 260), y: 120 + Math.round(Math.random() * 180) },
           },
         ],
@@ -531,12 +765,19 @@ export function DiagramCanvas({
         properties = { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, cardinality: '1:N', fkField, state: 'concept' };
       } else if (targetType === 'flow') {
         properties = { edgeType: 'triggers', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+      } else if (sourceType === 'flow' && targetType === 'form') {
+        // The flow PRODUCES records into that form (§11.5 sends-data).
+        properties = { edgeType: 'sends-data', sourceId: connection.source, targetId: connection.target, state: 'concept' };
       } else if (sourceType === 'actor') {
         properties = { edgeType: 'uses', sourceId: connection.source, targetId: connection.target, state: 'concept' };
       }
+      if (properties === null && sourceType === 'ink') {
+        return; // strokes are drawings, not connectors
+      }
       if (properties === null) {
-        toast.info('No connection there yet', `A ${sourceType ?? 'node'} → ${targetType ?? 'node'} wire has no meaning — relations join forms, triggers point at flows, actors use things.`);
-        return;
+        // Anything else links generically (owner direction: notes, images, shapes and
+        // text connect too) — a plain association with no cardinality or FK.
+        properties = { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, state: 'concept' };
       }
       void commit(
         [
@@ -595,6 +836,106 @@ export function DiagramCanvas({
     },
     [commit],
   );
+
+  // ── Drawing layer (§11A.1b): freehand pen + pasted images ─────────────────────────
+  const [penMode, setPenMode] = useState(false);
+  const strokeRef = useRef<Array<{ x: number; y: number }> | null>(null);
+  const [strokePreview, setStrokePreview] = useState<string>('');
+
+  const finishStroke = useCallback(() => {
+    const screenPoints = strokeRef.current;
+    strokeRef.current = null;
+    setStrokePreview('');
+    if (!screenPoints || screenPoints.length < 2) return;
+    const flowPoints = screenPoints.map((point) => reactFlow.screenToFlowPosition(point));
+    const xs = flowPoints.map((point) => point.x);
+    const ys = flowPoints.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const path = flowPoints
+      .map((point, index) => `${index === 0 ? 'M' : 'L'}${Math.round(point.x - minX)} ${Math.round(point.y - minY)}`)
+      .join(' ');
+    if (path.length > 60_000) {
+      toast.error('Stroke too long', 'Break big drawings into a few strokes.');
+      return;
+    }
+    void commit(
+      [
+        {
+          operationId: `op-${generateId()}`,
+          type: 'blueprint.element.create',
+          targetId: `el-${generateId()}`,
+          elementType: 'ink' as BlueprintOperation['elementType'],
+          properties: {
+            path,
+            w: Math.max(4, Math.round(Math.max(...xs) - minX)),
+            h: Math.max(4, Math.round(Math.max(...ys) - minY)),
+          },
+          layout: { x: Math.round(minX), y: Math.round(minY) },
+        },
+      ],
+      true,
+    );
+  }, [commit, reactFlow]);
+
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const attachImage = useCallback(
+    async (file: File) => {
+      const props = await pastedImageProps(file);
+      if (!props) {
+        toast.error('Image too large', 'It stores inline on the diagram — attach something smaller.');
+        return;
+      }
+      const center = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.create',
+            targetId: `el-${generateId()}`,
+            elementType: 'image' as BlueprintOperation['elementType'],
+            properties: props,
+            layout: { x: Math.round(center.x - props.w / 2), y: Math.round(center.y - props.h / 2) },
+          },
+        ],
+        true,
+      );
+    },
+    [commit, reactFlow],
+  );
+
+  // Paste an image anywhere on the page while the canvas is open → an image element at
+  // the viewport centre (downscaled client-side; the server caps the element at 512 KiB).
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const item = Array.from(event.clipboardData?.items ?? []).find((candidate) => candidate.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (!file) return;
+      event.preventDefault();
+      void pastedImageProps(file).then((props) => {
+        if (!props) {
+          toast.error('Image too large', 'It stores inline on the diagram — paste something smaller.');
+          return;
+        }
+        const center = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        void commit(
+          [
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.element.create',
+              targetId: `el-${generateId()}`,
+              elementType: 'image' as BlueprintOperation['elementType'],
+              properties: props,
+              layout: { x: Math.round(center.x - props.w / 2), y: Math.round(center.y - props.h / 2) },
+            },
+          ],
+          true,
+        );
+      });
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [commit, reactFlow]);
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
@@ -667,21 +1008,61 @@ export function DiagramCanvas({
         {/* Sketch tools (§11A): draw the app's shape before anything exists. */}
         <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 dark:border-slate-700">
           {SKETCH_TOOLS.map((tool) => {
-            const Icon = ELEMENT_ICONS[tool.elementType] ?? Workflow;
+            const Icon = tool.icon ?? ELEMENT_ICONS[tool.elementType] ?? Workflow;
             return (
               <button
-                key={tool.elementType}
+                key={tool.title}
                 type="button"
                 title={tool.title}
                 aria-label={tool.title}
                 disabled={busy}
-                onClick={() => sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`)}
+                onClick={() => sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`, tool.extra)}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
               >
                 <Icon className="h-4 w-4" />
               </button>
             );
           })}
+          {/* Pen: freehand ink over the top of everything. Toggle off to pan/select. */}
+          <button
+            type="button"
+            title="Draw (freehand ink)"
+            aria-label="Draw freehand ink"
+            aria-pressed={penMode}
+            disabled={busy}
+            onClick={() => setPenMode((mode) => !mode)}
+            className={cn(
+              'flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-50',
+              penMode
+                ? 'bg-primary-600 text-primary-foreground'
+                : 'text-gray-500 hover:bg-primary-50 hover:text-primary-700 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300',
+            )}
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+          {/* Attach an image from disk (paste works anywhere too). */}
+          <button
+            type="button"
+            title="Attach image"
+            aria-label="Attach image"
+            disabled={busy}
+            onClick={() => imageInputRef.current?.click()}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
+          >
+            <ImagePlus className="h-4 w-4" />
+          </button>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            aria-hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void attachImage(file);
+            }}
+          />
         </div>
         <span className="h-6 w-px bg-gray-200 dark:bg-slate-700" />
         <span className="mx-1 hidden text-xs text-gray-400 dark:text-slate-500 sm:inline">
@@ -725,7 +1106,7 @@ export function DiagramCanvas({
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 min-w-0 flex-1">
+        <div className="relative min-h-0 min-w-0 flex-1">
           <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -745,6 +1126,42 @@ export function DiagramCanvas({
           <Background gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
+        {/* Pen overlay: captures the stroke in screen coords (live preview), converts to
+            flow coords on release and commits ONE ink element. Covers the canvas, so
+            pan/select pause while drawing — toggle the pen off to interact again. */}
+        {penMode && (
+          <div
+            className="absolute inset-0 z-10 cursor-crosshair touch-none"
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              strokeRef.current = [{ x: event.clientX, y: event.clientY }];
+            }}
+            onPointerMove={(event) => {
+              const stroke = strokeRef.current;
+              if (!stroke) return;
+              const last = stroke[stroke.length - 1];
+              if (Math.abs(event.clientX - last.x) + Math.abs(event.clientY - last.y) < 3) return;
+              stroke.push({ x: event.clientX, y: event.clientY });
+              const host = event.currentTarget.getBoundingClientRect();
+              setStrokePreview(
+                stroke
+                  .map((point, index) => `${index === 0 ? 'M' : 'L'}${Math.round(point.x - host.left)} ${Math.round(point.y - host.top)}`)
+                  .join(' '),
+              );
+            }}
+            onPointerUp={finishStroke}
+            onPointerCancel={() => {
+              strokeRef.current = null;
+              setStrokePreview('');
+            }}
+          >
+            {strokePreview !== '' && (
+              <svg className="h-full w-full">
+                <path d={strokePreview} fill="none" stroke="#6366f1" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </div>
+        )}
         </div>
         {selectedElement && (
           <SelectionPanel

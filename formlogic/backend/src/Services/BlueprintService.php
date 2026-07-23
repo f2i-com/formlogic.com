@@ -34,6 +34,9 @@ class BlueprintService
     public const ELEMENT_TYPES = [
         'app', 'form', 'screen', 'event', 'flow', 'intelligence',
         'service', 'actor', 'decision', 'group', 'note', 'edge',
+        // §11A.1b drawing layer: freehand strokes, pasted/attached images, outlined
+        // shapes (rect/circle/triangle) and freestanding text labels.
+        'ink', 'image', 'shape', 'text',
     ];
     public const EDGE_TYPES = [
         'contains', 'triggers', 'sends-data', 'success', 'failure',
@@ -321,7 +324,7 @@ class BlueprintService
                     $this->assertEdgeProperties($properties, $live);
                 }
                 $resourceRef = is_array($op['resourceRef'] ?? null) ? $op['resourceRef'] : null;
-                $this->assertJsonSize($properties, 'properties');
+                $this->assertJsonSize($properties, 'properties', $this->propertiesCap($elementType));
                 $live[$targetId] = $elementType;
                 return [
                     'type' => $type,
@@ -349,7 +352,7 @@ class BlueprintService
                     if ($live[$targetId] === 'edge') {
                         $this->assertEdgeProperties($properties, $live);
                     }
-                    $this->assertJsonSize($properties, 'properties');
+                    $this->assertJsonSize($properties, 'properties', $this->propertiesCap($live[$targetId]));
                 }
                 return [
                     'type' => $type,
@@ -530,10 +533,24 @@ class BlueprintService
         }
     }
 
-    private function assertJsonSize(array $value, string $label): void
+    /**
+     * Per-element-type properties budget (§11A.1b): ink strokes carry SVG path data
+     * (64 KiB) and pasted images carry a client-downscaled data URI (512 KiB); every
+     * structured element stays at the tight 16 KiB default.
+     */
+    private function propertiesCap(string $elementType): int
     {
-        if (strlen((string) json_encode($value)) > 16384) {
-            throw new \InvalidArgumentException("{$label} exceeds the 16 KiB cap");
+        return match ($elementType) {
+            'image' => 524288,
+            'ink' => 65536,
+            default => 16384,
+        };
+    }
+
+    private function assertJsonSize(array $value, string $label, int $cap = 16384): void
+    {
+        if (strlen((string) json_encode($value)) > $cap) {
+            throw new \InvalidArgumentException("{$label} exceeds the " . intdiv($cap, 1024) . ' KiB cap');
         }
     }
 

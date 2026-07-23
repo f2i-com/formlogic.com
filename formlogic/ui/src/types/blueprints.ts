@@ -14,6 +14,11 @@ export type BlueprintElementType =
   | 'decision'
   | 'group'
   | 'note'
+  /** §11A.1b drawing layer: freehand strokes, images, outlined shapes, text labels. */
+  | 'ink'
+  | 'image'
+  | 'shape'
+  | 'text'
   | 'edge';
 
 export type BlueprintEdgeType =
