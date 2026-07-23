@@ -199,10 +199,29 @@ async function main() {
     if (hashMismatches.length > 0) {
       fail(`manifest checksum mismatches:\n  ${hashMismatches.slice(0, 20).join('\n  ')}`);
     }
-    // manifest.json hashes itself out of scope; everything else must be listed.
-    const unlisted = files.filter((f) => f !== 'manifest.json' && !(f in manifest.files));
+    // manifest.json hashes itself out of scope (its signature envelope,
+    // manifest.sig.json, signs the manifest bytes instead — review FL-006);
+    // everything else must be listed.
+    const unlisted = files.filter((f) => f !== 'manifest.json' && f !== 'manifest.sig.json' && !(f in manifest.files));
     if (unlisted.length > 0) {
       fail(`extracted files missing from manifest.json:\n  ${unlisted.slice(0, 20).join('\n  ')}`);
+    }
+    // When the package is signed, independently verify the envelope.
+    const sigPath = path.join(docroot, 'manifest.sig.json');
+    if (existsSync(sigPath)) {
+      const { createPublicKey, verify } = await import('node:crypto');
+      const sig = JSON.parse(readFileSync(sigPath, 'utf8'));
+      const rawPub = Buffer.from(String(sig.publicKey || ''), 'base64');
+      if (sig.algorithm !== 'ed25519' || rawPub.length !== 32) fail('manifest.sig.json is malformed');
+      const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), rawPub]);
+      const pub = createPublicKey({ key: spki, format: 'der', type: 'spki' });
+      const ok = verify(null, readFileSync(path.join(docroot, 'manifest.json')), pub, Buffer.from(String(sig.signature || ''), 'base64'));
+      if (!ok) fail('manifest.sig.json signature does not verify over manifest.json');
+      const keyId = createHash('sha256').update(rawPub).digest('hex').slice(0, 16);
+      if (keyId !== sig.keyId) fail('manifest.sig.json keyId does not match its public key');
+      console.log(`smoke-dist: release signature OK (keyId ${keyId})`);
+    } else {
+      console.log('smoke-dist: package is UNSIGNED (production installs will refuse it)');
     }
     console.log(`smoke-dist: integrity OK (version ${versionFile}, ${hashChecked} checksums verified)`);
 

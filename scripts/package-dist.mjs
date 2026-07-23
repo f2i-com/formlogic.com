@@ -502,6 +502,37 @@ step('Writing manifest.json (admin-panel upgrade import)');
   info(`manifest.json covers ${manifest.fileCount} files`);
 }
 
+// [7.6] Release signature (review FL-006) -----------------------------------------
+// manifest.sig.json = Ed25519 over the EXACT manifest.json bytes. Servers pin the
+// release public key (UPGRADE_RELEASE_PUBKEY) and refuse unsigned/foreign-signed
+// packages in production. Key: FORMLOGIC_RELEASE_SIGNING_KEY = path to a PKCS8 PEM
+// Ed25519 private key (generate one with scripts/generate-release-key.mjs).
+step('Signing manifest.json (release envelope)');
+{
+  const keyPath = process.env.FORMLOGIC_RELEASE_SIGNING_KEY || '';
+  if (keyPath === '') {
+    info('WARNING: FORMLOGIC_RELEASE_SIGNING_KEY not set — this package is UNSIGNED and');
+    info('WARNING: will be refused by production installs (dev installs need UPGRADE_ALLOW_UNSIGNED=true).');
+  } else {
+    const { createHash, createPrivateKey, createPublicKey, sign } = await import('node:crypto');
+    const priv = createPrivateKey(readFileSync(keyPath, 'utf8'));
+    if (priv.asymmetricKeyType !== 'ed25519') fail('FORMLOGIC_RELEASE_SIGNING_KEY must be an Ed25519 PKCS8 PEM key');
+    const manifestBytes = readFileSync(path.join(staging, 'manifest.json'));
+    const spki = createPublicKey(priv).export({ type: 'spki', format: 'der' });
+    const rawPub = spki.subarray(spki.length - 32); // raw 32-byte Ed25519 public key
+    const keyId = createHash('sha256').update(rawPub).digest('hex').slice(0, 16);
+    writeFileSync(path.join(staging, 'manifest.sig.json'), JSON.stringify({
+      algorithm: 'ed25519',
+      keyId,
+      // Informational only — verifiers trust their PINNED key, never this field.
+      publicKey: rawPub.toString('base64'),
+      signedFile: 'manifest.json',
+      signature: sign(null, manifestBytes, priv).toString('base64'),
+    }, null, 2));
+    info(`manifest signed (keyId ${keyId}); servers pin UPGRADE_RELEASE_PUBKEY=${rawPub.toString('base64')}`);
+  }
+}
+
 // [8] Zip ------------------------------------------------------------------------
 step('Creating the zip');
 rmSync(zipPath, { force: true });

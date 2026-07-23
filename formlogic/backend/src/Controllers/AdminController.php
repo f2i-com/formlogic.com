@@ -691,6 +691,8 @@ class AdminController
         try {
             $file->moveTo($zipPath);
             $info = $this->upgrade->stageUploadedPackage($zipPath);
+        } catch (\FormLogic\Services\UpgradeInProgressException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'upgrade_in_progress'], 409);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } finally {
@@ -706,11 +708,24 @@ class AdminController
         if (($body['confirm'] ?? null) !== true) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Send confirm: true to apply the staged upgrade'], 400);
         }
+        // Review FL-008: the admin applies the EXACT package they reviewed —
+        // apply is bound to its id (+ digest when provided).
+        $packageId = (string) ($body['packageId'] ?? '');
+        if ($packageId === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Send the packageId of the reviewed staged package'], 400);
+        }
+        $digest = is_string($body['digest'] ?? null) && $body['digest'] !== '' ? (string) $body['digest'] : null;
         try {
             $result = $this->upgrade->apply(
                 (string) $request->getAttribute('userId'),
-                ($body['keepMaintenanceOn'] ?? null) === true
+                ($body['keepMaintenanceOn'] ?? null) === true,
+                $packageId,
+                $digest
             );
+        } catch (\FormLogic\Services\UpgradeInProgressException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'upgrade_in_progress'], 409);
+        } catch (\FormLogic\Services\StagedPackageMismatchException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'staged_package_mismatch'], 409);
         } catch (\RuntimeException $e) {
             $this->audit($request, 'admin.upgrade_failed', null, ['error' => mb_substr($e->getMessage(), 0, 300)]);
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 500);
@@ -730,6 +745,8 @@ class AdminController
         }
         try {
             $result = $this->upgrade->rollback($backupId, (string) $request->getAttribute('userId'));
+        } catch (\FormLogic\Services\UpgradeInProgressException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'upgrade_in_progress'], 409);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
@@ -766,7 +783,11 @@ class AdminController
 
     public function upgradeDiscard(Request $request, Response $response): Response
     {
-        $this->upgrade->discardStagedPackage();
+        try {
+            $this->upgrade->discardStagedPackage();
+        } catch (\FormLogic\Services\UpgradeInProgressException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'upgrade_in_progress'], 409);
+        }
         return $this->jsonResponse($response, ['success' => true]);
     }
 

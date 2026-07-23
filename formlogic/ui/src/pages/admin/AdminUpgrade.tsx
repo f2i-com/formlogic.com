@@ -39,15 +39,19 @@ export function AdminUpgrade() {
     const r = await api.adminUpgradeUpload(file);
     setUploading(false);
     if (r.error) toast.error('Package rejected', r.error);
-    else toast.success(`Package v${r.data!.staged.version} staged`, r.data!.staged.integrity === 'verified' ? 'All file checksums verified.' : 'No integrity manifest — an older package. Proceed only if you trust the source.');
+    else toast.success(`Package v${r.data!.staged.version} staged`, r.data!.staged.integrity === 'signed' ? 'Release signature and every file checksum verified.' : 'Unsigned development package — allowed only by the local override.');
     load();
   };
 
   const apply = async () => {
     setConfirmApply(false);
+    const staged = status?.staged;
+    if (!staged) return;
     setApplying(true);
     setJournal(null);
-    const r = await api.adminUpgradeApply();
+    // Bind the apply to the exact reviewed package (id + digest) so a
+    // concurrent re-stage 409s instead of silently applying other bytes.
+    const r = await api.adminUpgradeApply(staged.packageId, staged.digest);
     setApplying(false);
     if (r.error) {
       toast.error('Upgrade failed', r.error);
@@ -131,7 +135,7 @@ export function AdminUpgrade() {
                 Ready to install: v{status.staged.version}
                 <span className="ml-2 text-xs font-normal text-gray-500 dark:text-slate-400">
                   (currently v{status.staged.currentVersion} · integrity {status.staged.integrity}
-                  {status.staged.integrity === 'verified' && ` · ${status.staged.verifiedFiles} files checked`})
+                  {status.staged.integrity === 'signed' && ` · ${status.staged.verifiedFiles} files checked`})
                 </span>
               </p>
               {status.staged.isDowngrade && (

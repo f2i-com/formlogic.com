@@ -11,12 +11,24 @@ A platform administrator (an account with the durable `users.is_admin=1` flag) c
 entirely from the browser: **Admin → Upgrade → upload the release zip**
 (the same `formlogic-vX.Y.Z.zip` the CI attaches to each GitHub release). The wizard then:
 
-1. verifies the package's `manifest.json` checksums (every file sha256-checked after extraction),
+1. verifies the package's **signed release envelope**: `manifest.sig.json` is an Ed25519
+   signature over the exact `manifest.json` bytes by the release key your install pins via
+   `UPGRADE_RELEASE_PUBKEY` in `api/.env`. Every listed file is sha256-checked after
+   extraction, the inventory must cover **every** file in the package (an unlisted file is a
+   refusal), and unsigned/foreign-signed packages are refused. Production installs never
+   accept unsigned packages; a development install may set `UPGRADE_ALLOW_UNSIGNED=true`
+   (the override is ignored when `APP_ENV=production`). Release engineers: generate the
+   keypair with `node scripts/generate-release-key.mjs` and give the packager the PEM via
+   `FORMLOGIC_RELEASE_SIGNING_KEY`;
 2. closes the site for maintenance (a file flag, so it holds even mid-migration),
 3. **exports the MySQL database and snapshots the current code automatically** into
    `api/storage/backups/<id>/`,
 4. applies the new backend + UI files — `api/.env`, `api/storage/**` (per-form SQLite databases,
-   uploads, packs) and `api/logs/` are **never written**, by construction,
+   uploads, packs), `api/logs/` and `.well-known/` are **never written**, by construction —
+   and removes managed files the new release no longer ships (obsolete endpoints don't stay
+   deployed; rollback likewise reconstructs the prior file inventory exactly). Applying is
+   bound to the exact reviewed package (id + content digest) under a cross-process lock, and
+   the immutable staged tree is fully re-verified immediately before any file is copied,
 5. stamps the version and reopens; schema migrations run automatically on the next request.
 
 If anything looks wrong afterwards, the same tab offers **one-click code rollback** from the

@@ -3879,8 +3879,9 @@ class ApiClient {
     }
   }
 
-  async adminUpgradeApply(keepMaintenanceOn = false): Promise<ApiResponse<{ ok: boolean; fromVersion: string; toVersion: string; backupId: string; journal: string[] }>> {
-    return this.request('/admin/upgrade/apply', { method: 'POST', body: JSON.stringify({ confirm: true, keepMaintenanceOn }) });
+  /** Apply is bound to the EXACT reviewed package (review FL-008): id + digest ride along. */
+  async adminUpgradeApply(packageId: string, digest: string, keepMaintenanceOn = false): Promise<ApiResponse<{ ok: boolean; fromVersion: string; toVersion: string; backupId: string; journal: string[] }>> {
+    return this.request('/admin/upgrade/apply', { method: 'POST', body: JSON.stringify({ confirm: true, keepMaintenanceOn, packageId, digest }) });
   }
 
   async adminUpgradeRollback(backupId: string): Promise<ApiResponse<{ ok: boolean; restoredVersion: string; journal: string[] }>> {
@@ -3980,12 +3981,16 @@ export interface AdminUserDetail extends AdminUser {
 }
 
 export interface AdminStagedPackage {
+  packageId: string;
+  digest: string;
   version: string;
-  integrity: 'verified' | 'unverified';
+  integrity: 'signed' | 'unsigned-dev-override' | 'verified' | 'unverified';
   verifiedFiles: number;
   currentVersion: string;
   isDowngrade: boolean;
   stagedAt: string;
+  state?: 'verified' | 'applying' | 'failed';
+  error?: string;
 }
 
 export interface AdminUpgradeStatus {

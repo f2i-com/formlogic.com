@@ -20,6 +20,8 @@ use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\MaintenanceService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\StagedPackageMismatchException;
+use FormLogic\Services\UpgradeInProgressException;
 use FormLogic\Services\UpgradeService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -497,9 +499,43 @@ class AdminPanelTest extends TestCase
 
     // ── upgrade machinery ───────────────────────────────────────────────────
 
-    /** Build a minimal valid single-domain release zip (with a correct manifest). */
-    private function buildFakePackage(string $version, bool $tamper = false): string
+    /** The pinned test release keypair (review FL-006: packages are SIGNED). */
+    private static ?array $releaseKeyPair = null;
+
+    /** @return array{pk: string, sk: string} raw key bytes */
+    private static function releaseKey(): array
     {
+        if (self::$releaseKeyPair === null) {
+            $pair = sodium_crypto_sign_keypair();
+            self::$releaseKeyPair = [
+                'pk' => sodium_crypto_sign_publickey($pair),
+                'sk' => sodium_crypto_sign_secretkey($pair),
+            ];
+        }
+        return self::$releaseKeyPair;
+    }
+
+    /** An UpgradeService pinned to the test release key (non-production). */
+    private function upgradeService(string $apiRoot, MaintenanceService $maintenance): UpgradeService
+    {
+        return new UpgradeService($apiRoot, self::$mysql, $maintenance, base64_encode(self::releaseKey()['pk']));
+    }
+
+    /**
+     * Build a minimal valid single-domain release zip: complete manifest +
+     * Ed25519 signature envelope over the exact manifest bytes.
+     *
+     * @param array<string,string> $extraFiles   additional files INSIDE the zip
+     * @param bool $listExtras                    whether extras are manifest-listed
+     */
+    private function buildFakePackage(
+        string $version,
+        bool $tamper = false,
+        array $extraFiles = [],
+        bool $listExtras = true,
+        bool $sign = true,
+        ?string $signSk = null,
+    ): string {
         $files = [
             'index.html' => "<html>NEW-UI-{$version}</html>",
             '.htaccess' => "# routing\n",
@@ -511,20 +547,41 @@ class AdminPanelTest extends TestCase
             'api/VERSION' => "{$version}\n",
             'api/storage/forms/.gitkeep' => '',
         ];
+        foreach ($extraFiles as $path => $content) {
+            $files[$path] = $content;
+        }
         $manifest = ['name' => 'formlogic', 'version' => $version, 'files' => []];
         foreach ($files as $path => $content) {
+            if (!$listExtras && isset($extraFiles[$path])) {
+                continue;
+            }
             $manifest['files'][$path] = hash('sha256', $content);
         }
         if ($tamper) {
             $manifest['files']['index.html'] = str_repeat('0', 64);
         }
+        $manifestJson = (string) json_encode($manifest);
+
         $zipPath = self::$tmpRoot . '/pkg-' . bin2hex(random_bytes(3)) . '.zip';
         $zip = new \ZipArchive();
         $zip->open($zipPath, \ZipArchive::CREATE);
         foreach ($files as $path => $content) {
             $zip->addFromString($path, $content);
         }
-        $zip->addFromString('manifest.json', (string) json_encode($manifest));
+        $zip->addFromString('manifest.json', $manifestJson);
+        if ($sign) {
+            $sk = $signSk ?? self::releaseKey()['sk'];
+            $pk = $signSk !== null
+                ? sodium_crypto_sign_publickey_from_secretkey($signSk)
+                : self::releaseKey()['pk'];
+            $zip->addFromString('manifest.sig.json', (string) json_encode([
+                'algorithm' => 'ed25519',
+                'keyId' => substr(hash('sha256', $pk), 0, 16),
+                'publicKey' => base64_encode($pk),
+                'signedFile' => 'manifest.json',
+                'signature' => base64_encode(sodium_crypto_sign_detached($manifestJson, $sk)),
+            ]));
+        }
         $zip->close();
         return $zipPath;
     }
@@ -548,7 +605,7 @@ class AdminPanelTest extends TestCase
     {
         [, $apiRoot] = $this->buildFakeInstall();
         $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
-        $svc = new UpgradeService($apiRoot, self::$mysql, $maintenance);
+        $svc = $this->upgradeService($apiRoot, $maintenance);
 
         // A zip that isn't a FormLogic package is refused.
         $bad = self::$tmpRoot . '/bad-' . bin2hex(random_bytes(3)) . '.zip';
@@ -572,24 +629,180 @@ class AdminPanelTest extends TestCase
         }
         $this->assertNull($svc->stagedInfo(), 'a failed validation must clear the staging area');
 
-        // A good package stages with verified integrity.
+        // A good SIGNED package stages with signed integrity + digest binding.
         $info = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
         $this->assertSame('2.0.0', $info['version']);
-        $this->assertSame('verified', $info['integrity']);
+        $this->assertSame('signed', $info['integrity']);
         $this->assertFalse($info['isDowngrade']);
+        $this->assertMatchesRegularExpression('/^pkg-[0-9a-f]{32}$/', $info['packageId']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $info['digest']);
+    }
+
+    public function testUnsignedForeignAndIncompletePackagesAreRefused(): void
+    {
+        // Review FL-006: the self-updater must never accept what it cannot verify.
+        [, $apiRoot] = $this->buildFakeInstall();
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $svc = $this->upgradeService($apiRoot, $maintenance);
+
+        // Missing signature envelope.
+        try {
+            $svc->stageUploadedPackage($this->buildFakePackage('2.0.0', sign: false));
+            $this->fail('unsigned package must be refused');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('unsigned', $e->getMessage());
+        }
+
+        // Signed by an UNKNOWN key — a self-consistent attacker package whose
+        // checksums all "verify" against its own manifest.
+        $mallory = sodium_crypto_sign_keypair();
+        try {
+            $svc->stageUploadedPackage($this->buildFakePackage(
+                '2.0.0',
+                extraFiles: ['api/public/backdoor.php' => "<?php system(\$_GET['c']);\n"],
+                signSk: sodium_crypto_sign_secretkey($mallory),
+            ));
+            $this->fail('foreign-signed package must be refused');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('unknown release key', $e->getMessage());
+        }
+
+        // Correct key, but an UNLISTED file rides in the zip: refused even
+        // though every listed checksum verifies.
+        try {
+            $svc->stageUploadedPackage($this->buildFakePackage(
+                '2.0.0',
+                extraFiles: ['api/public/backdoor.php' => "<?php system(\$_GET['c']);\n"],
+                listExtras: false,
+            ));
+            $this->fail('unlisted file must be refused');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('not listed in the manifest', $e->getMessage());
+        }
+
+        // A manifest entry that escapes the package root is refused even when
+        // correctly signed (a compromised signer must still not traverse).
+        $dupZip = $this->buildFakePackage('2.0.0');
+        $zip = new \ZipArchive();
+        $zip->open($dupZip);
+        $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+        $manifest['files']['../escape.php'] = hash('sha256', 'x');
+        $manifestJson = (string) json_encode($manifest);
+        $zip->addFromString('manifest.json', $manifestJson);
+        $zip->addFromString('manifest.sig.json', (string) json_encode([
+            'algorithm' => 'ed25519',
+            'keyId' => substr(hash('sha256', self::releaseKey()['pk']), 0, 16),
+            'publicKey' => base64_encode(self::releaseKey()['pk']),
+            'signedFile' => 'manifest.json',
+            'signature' => base64_encode(sodium_crypto_sign_detached($manifestJson, self::releaseKey()['sk'])),
+        ]));
+        $zip->close();
+        try {
+            $svc->stageUploadedPackage($dupZip);
+            $this->fail('traversal manifest path must be refused');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Unsafe path in manifest', $e->getMessage());
+        }
+
+        // No pinned key + no override: refused outright (never 'unverified').
+        $unpinned = new UpgradeService($apiRoot, self::$mysql, $maintenance, null, false, false);
+        try {
+            $unpinned->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+            $this->fail('unpinned install must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('No release signing key is pinned', $e->getMessage());
+        }
+        // Production NEVER honors the unsigned override.
+        $prod = new UpgradeService($apiRoot, self::$mysql, $maintenance, null, true, true);
+        try {
+            $prod->stageUploadedPackage($this->buildFakePackage('2.0.0', sign: false));
+            $this->fail('production must refuse unsigned packages even with the override set');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('refuses unverifiable', $e->getMessage());
+        }
+    }
+
+    public function testApplyIsBoundToTheReviewedImmutablePackage(): void
+    {
+        // Review FL-008: apply(packageId, digest) + tamper re-verification.
+        [, $apiRoot] = $this->buildFakeInstall();
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $svc = $this->upgradeService($apiRoot, $maintenance);
+
+        $a = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        $b = $svc->stageUploadedPackage($this->buildFakePackage('3.0.0'));
+        $this->assertNotSame($a['packageId'], $b['packageId']);
+
+        // Applying the package the admin reviewed (A) after a concurrent
+        // re-stage (B) is a typed 409-mapped mismatch, not a silent apply of B.
+        try {
+            $svc->apply($this->adminId, false, $a['packageId'], $a['digest']);
+            $this->fail('stale packageId must be refused');
+        } catch (StagedPackageMismatchException $e) {
+            $this->assertStringContainsString('changed since it was reviewed', $e->getMessage());
+        }
+
+        // Tampering the staged tree after review fails the pre-apply
+        // re-verification (immutability is enforced, not assumed).
+        $stagedFile = $apiRoot . '/storage/upgrades/packages/' . $b['packageId'] . '/index.html';
+        file_put_contents($stagedFile, '<html>EVIL</html>');
+        try {
+            $svc->apply($this->adminId, false, $b['packageId'], $b['digest']);
+            $this->fail('tampered staged tree must be refused');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('integrity failure', $e->getMessage());
+        }
+
+        // While another session holds the upgrade lock, every entry point is a
+        // typed refusal.
+        $otherPdo = new PDO(
+            sprintf(
+                'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
+                $_ENV['DB_HOST'] ?? '127.0.0.1',
+                $_ENV['DB_PORT'] ?? '3306',
+                $_ENV['DB_TEST_DATABASE'] ?? 'formlogic_test',
+            ),
+            $_ENV['DB_USERNAME'] ?? 'root',
+            $_ENV['DB_PASSWORD'] ?? '',
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
+        );
+        $db = (string) $otherPdo->query('SELECT DATABASE()')->fetchColumn();
+        $stmt = $otherPdo->prepare('SELECT GET_LOCK(?, 0)');
+        $stmt->execute(['formlogic.upgrade.' . $db]);
+        $this->assertSame(1, (int) $stmt->fetchColumn());
+        try {
+            try {
+                $svc->stageUploadedPackage($this->buildFakePackage('4.0.0'));
+                $this->fail('stage under a held lock must be refused');
+            } catch (UpgradeInProgressException) {
+                $this->addToAssertionCount(1);
+            }
+            try {
+                $svc->discardStagedPackage();
+                $this->fail('discard under a held lock must be refused');
+            } catch (UpgradeInProgressException) {
+                $this->addToAssertionCount(1);
+            }
+        } finally {
+            $release = $otherPdo->prepare('SELECT RELEASE_LOCK(?)');
+            $release->execute(['formlogic.upgrade.' . $db]);
+            $release->fetchColumn();
+        }
+        $svc->discardStagedPackage();
+        $this->assertNull($svc->stagedInfo());
     }
 
     public function testUpgradeApplyProtectsUserDataAndBacksUpFirst(): void
     {
         [$webRoot, $apiRoot] = $this->buildFakeInstall();
         $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
-        $svc = new UpgradeService($apiRoot, self::$mysql, $maintenance);
+        $svc = $this->upgradeService($apiRoot, $maintenance);
 
         $this->assertSame('deployed', $svc->layout()['mode']);
         $this->assertSame('1.0.0', $svc->currentVersion());
 
-        $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
-        $result = $svc->apply($this->adminId);
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        $result = $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest']);
 
         $this->assertTrue($result['ok']);
         $this->assertSame('1.0.0', $result['fromVersion']);
@@ -599,6 +812,10 @@ class AdminPanelTest extends TestCase
         $this->assertFileExists($apiRoot . '/src/NewFeature.php');
         $this->assertStringContainsString('NEW-UI-2.0.0', (string) file_get_contents($webRoot . '/index.html'));
         $this->assertSame("2.0.0\n", (string) file_get_contents($apiRoot . '/VERSION'));
+
+        // Review FL-007: files the new release no longer ships are REMOVED
+        // (an obsolete public endpoint must not stay deployed).
+        $this->assertFileDoesNotExist($apiRoot . '/src/OldFeature.php', 'stale managed files are removed on upgrade');
 
         // THE data-safety invariants: secrets + per-form SQLite are untouched.
         $this->assertSame('JWT_SECRET=super-secret-must-survive', (string) file_get_contents($apiRoot . '/.env'));
@@ -625,6 +842,9 @@ class AdminPanelTest extends TestCase
         $this->assertTrue($rb['ok']);
         $this->assertFileExists($apiRoot . '/src/OldFeature.php');
         $this->assertStringContainsString('OLD-UI', (string) file_get_contents($webRoot . '/index.html'));
+        // Review FL-007: rollback reconstructs the prior inventory EXACTLY —
+        // files introduced by the newer release are gone again.
+        $this->assertFileDoesNotExist($apiRoot . '/src/NewFeature.php', 'rollback removes newer-release files');
         $this->assertSame('JWT_SECRET=rotated-after-upgrade', (string) file_get_contents($apiRoot . '/.env'), 'rollback must not clobber .env');
         $this->assertSame('PRECIOUS-USER-RECORDS', (string) file_get_contents($apiRoot . '/storage/forms/user-data.sqlite'));
     }

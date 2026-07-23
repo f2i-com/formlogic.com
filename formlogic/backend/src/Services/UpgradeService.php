@@ -29,17 +29,45 @@ class UpgradeService
     private const PROTECTED_API_PATHS = ['.env', 'storage', 'logs'];
 
     /** Web-root entries never touched when applying the zip-root files (the api
-     *  dir is handled by the api-side copy; on dev machines webRoot/api is a junction). */
-    private const PROTECTED_WEB_PATHS = ['api'];
+     *  dir is handled by the api-side copy; on dev machines webRoot/api is a junction).
+     *  `.well-known` is operator data (ACME challenges etc.) — never managed. */
+    private const PROTECTED_WEB_PATHS = ['api', '.well-known'];
+
+    /** Package files that live OUTSIDE the manifest inventory (the manifest
+     *  cannot list itself; the signature envelope signs the manifest bytes). */
+    private const MANIFEST_EXEMPT_FILES = ['manifest.json', 'manifest.sig.json', '.staged-info.json'];
 
     private PDO $pdo;
+    /** Raw pinned Ed25519 release public key, or null when none is configured. */
+    private ?string $releasePublicKeyRaw;
+    /** Conspicuous development-only override — force-disabled in production. */
+    private bool $allowUnsignedDev;
+    private bool $production;
 
     public function __construct(
         private string $apiRoot,
         private MySQLConnection $mysql,
         private MaintenanceService $maintenance,
+        ?string $releasePublicKeyB64 = null,
+        ?bool $allowUnsigned = null,
+        ?bool $isProduction = null,
     ) {
         $this->pdo = $mysql->getConnection();
+        $keyB64 = $releasePublicKeyB64 ?? (string) ($_ENV['UPGRADE_RELEASE_PUBKEY'] ?? '');
+        if ($keyB64 === '') {
+            $this->releasePublicKeyRaw = null;
+        } else {
+            $raw = base64_decode($keyB64, true);
+            if (!is_string($raw) || strlen($raw) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+                throw new \RuntimeException('UPGRADE_RELEASE_PUBKEY must be a base64 32-byte Ed25519 public key');
+            }
+            $this->releasePublicKeyRaw = $raw;
+        }
+        $this->production = $isProduction ?? ((string) ($_ENV['APP_ENV'] ?? '') === 'production');
+        $override = $allowUnsigned
+            ?? filter_var((string) ($_ENV['UPGRADE_ALLOW_UNSIGNED'] ?? ''), FILTER_VALIDATE_BOOLEAN);
+        // The override can never be enabled in production, accidentally or not.
+        $this->allowUnsignedDev = $override && !$this->production;
     }
 
     public static function defaultApiRoot(): string
@@ -109,209 +137,372 @@ class UpgradeService
     // ── upload + validate + stage ───────────────────────────────────────────
 
     /**
-     * Accept an uploaded package zip, extract it to the staging area and verify
-     * it: manifest.json version + per-file sha256 (packages without a manifest —
-     * pre-manifest releases — are allowed but flagged integrity 'unverified'),
-     * plus structural checks. Returns the staged-package report.
+     * Accept an uploaded package zip, extract it into an IMMUTABLE per-digest
+     * package directory, and fully verify it (review FL-006/FL-008): a signed
+     * manifest whose inventory covers every file exactly once, verified against
+     * the pinned release key. Unsigned/incomplete packages are refused — the
+     * only exception is the conspicuous development override, which cannot be
+     * enabled in production. Returns the staged-package report (packageId +
+     * digest bind the later apply to these exact bytes).
+     *
      * @throws \RuntimeException on any validation failure (staging is cleared)
+     * @throws UpgradeInProgressException when another upgrade operation runs
      */
     public function stageUploadedPackage(string $zipPath): array
     {
         if (!class_exists(\ZipArchive::class)) {
             throw new \RuntimeException('The PHP zip extension is required for upgrades');
         }
-        $staging = $this->stagingDir();
-        $this->rrmdir($staging);
-        if (!@mkdir($staging, 0750, true)) {
-            throw new \RuntimeException('Cannot create the staging directory');
+        return $this->withUpgradeLock(function () use ($zipPath): array {
+            $digest = (string) hash_file('sha256', $zipPath);
+            $packageId = 'pkg-' . substr($digest, 0, 32);
+            $dir = $this->packagesDir() . '/' . $packageId;
+            $this->rrmdir($dir);
+            if (!@mkdir($dir, 0750, true)) {
+                throw new \RuntimeException('Cannot create the package staging directory');
+            }
+
+            try {
+                $zip = new \ZipArchive();
+                if ($zip->open($zipPath) !== true) {
+                    throw new \RuntimeException('The uploaded file is not a readable zip archive');
+                }
+                // Zip-slip guard: refuse entries that escape the staging dir.
+                for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $name = (string) $zip->getNameIndex($i);
+                    $norm = str_replace('\\', '/', $name);
+                    if (str_contains($norm, '../') || str_starts_with($norm, '/') || preg_match('/^[a-zA-Z]:/', $norm)) {
+                        throw new \RuntimeException("Unsafe path in archive: {$name}");
+                    }
+                }
+                if (!$zip->extractTo($dir)) {
+                    throw new \RuntimeException('Could not extract the archive (disk full or permissions?)');
+                }
+                $zip->close();
+
+                $report = $this->verifyPackageTree($dir);
+
+                $info = [
+                    'packageId' => $packageId,
+                    'digest' => $digest,
+                    'version' => $report['version'],
+                    'integrity' => $report['integrity'],
+                    'verifiedFiles' => $report['verifiedFiles'],
+                    'currentVersion' => $this->currentVersion(),
+                    'isDowngrade' => version_compare($this->normalizeVersion($report['version']), $this->normalizeVersion($this->currentVersion()), '<'),
+                    'stagedAt' => gmdate('c'),
+                    'state' => 'verified',
+                ];
+                $encoded = (string) json_encode($info);
+                if (file_put_contents("{$dir}/.staged-info.json", $encoded) === false
+                    || file_put_contents($this->pointerFile(), $encoded) === false
+                ) {
+                    throw new \RuntimeException('Could not record the staged package');
+                }
+                // Exactly one staged package at a time: retire the others.
+                foreach (scandir($this->packagesDir()) ?: [] as $entry) {
+                    if ($entry !== '.' && $entry !== '..' && $entry !== $packageId) {
+                        $this->rrmdir($this->packagesDir() . '/' . $entry);
+                    }
+                }
+                $this->rrmdir($this->legacyStagingDir());
+                return $info;
+            } catch (\Throwable $e) {
+                $this->rrmdir($dir);
+                throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
+            }
+        });
+    }
+
+    /**
+     * Full package-tree verification (review FL-006). Runs at staging AND
+     * again immediately before apply:
+     *  - structural sanity (single-domain FormLogic package);
+     *  - manifest.json present, well-formed, every listed file existing with
+     *    the exact sha256, safe paths, no case-variant duplicates;
+     *  - NO unlisted regular file anywhere in the tree;
+     *  - an Ed25519 signature over the exact manifest bytes by the PINNED
+     *    release key (unknown key IDs and bad signatures are refused).
+     * Without a pinned key, production refuses outright; development refuses
+     * unless the explicit UPGRADE_ALLOW_UNSIGNED override is set.
+     *
+     * @return array{integrity: string, verifiedFiles: int, version: string}
+     */
+    private function verifyPackageTree(string $dir): array
+    {
+        foreach (['index.html', 'api/public/index.php', 'api/vendor/autoload.php', 'api/database/schema.sql'] as $required) {
+            if (!is_file("{$dir}/{$required}")) {
+                throw new \RuntimeException("Not a FormLogic release package — missing {$required}");
+            }
         }
 
-        try {
-            $zip = new \ZipArchive();
-            if ($zip->open($zipPath) !== true) {
-                throw new \RuntimeException('The uploaded file is not a readable zip archive');
-            }
-            // Zip-slip guard: refuse entries that escape the staging dir.
-            for ($i = 0; $i < $zip->numFiles; $i++) {
-                $name = (string) $zip->getNameIndex($i);
-                $norm = str_replace('\\', '/', $name);
-                if (str_contains($norm, '../') || str_starts_with($norm, '/') || preg_match('/^[a-zA-Z]:/', $norm)) {
-                    throw new \RuntimeException("Unsafe path in archive: {$name}");
+        $manifestPath = "{$dir}/manifest.json";
+        if (!is_file($manifestPath)) {
+            if ($this->allowUnsignedDev) {
+                $version = trim((string) @file_get_contents("{$dir}/VERSION"));
+                if ($version === '') {
+                    throw new \RuntimeException('The package carries no version (no manifest.json and no VERSION file)');
                 }
+                return ['integrity' => 'unsigned-dev-override', 'verifiedFiles' => 0, 'version' => $version];
             }
-            if (!$zip->extractTo($staging)) {
-                throw new \RuntimeException('Could not extract the archive (disk full or permissions?)');
-            }
-            $zip->close();
-
-            // Structural checks: this must be the single-domain FormLogic package.
-            foreach (['index.html', 'api/public/index.php', 'api/vendor/autoload.php', 'api/database/schema.sql'] as $required) {
-                if (!is_file("{$staging}/{$required}")) {
-                    throw new \RuntimeException("Not a FormLogic release package — missing {$required}");
-                }
-            }
-
-            $manifest = null;
-            $integrity = 'unverified';
-            $verified = 0;
-            if (is_file("{$staging}/manifest.json")) {
-                $manifest = json_decode((string) file_get_contents("{$staging}/manifest.json"), true);
-                if (!is_array($manifest) || !is_string($manifest['version'] ?? null) || !is_array($manifest['files'] ?? null)) {
-                    throw new \RuntimeException('manifest.json is present but malformed');
-                }
-                foreach ($manifest['files'] as $rel => $sha) {
-                    $abs = "{$staging}/{$rel}";
-                    if (!is_file($abs)) {
-                        throw new \RuntimeException("Package integrity failure: {$rel} listed in the manifest is missing");
-                    }
-                    if (!hash_equals((string) $sha, hash_file('sha256', $abs) ?: '')) {
-                        throw new \RuntimeException("Package integrity failure: {$rel} does not match its manifest checksum");
-                    }
-                    $verified++;
-                }
-                $integrity = 'verified';
-            }
-
-            $version = is_array($manifest) ? (string) $manifest['version']
-                : trim((string) @file_get_contents("{$staging}/VERSION"));
-            if ($version === '') {
-                throw new \RuntimeException('The package carries no version (no manifest.json and no VERSION file)');
-            }
-
-            $info = [
-                'version' => $version,
-                'integrity' => $integrity,
-                'verifiedFiles' => $verified,
-                'currentVersion' => $this->currentVersion(),
-                'isDowngrade' => version_compare($this->normalizeVersion($version), $this->normalizeVersion($this->currentVersion()), '<'),
-                'stagedAt' => gmdate('c'),
-            ];
-            file_put_contents("{$staging}/.staged-info.json", json_encode($info));
-            return $info;
-        } catch (\Throwable $e) {
-            $this->rrmdir($staging);
-            throw $e instanceof \RuntimeException ? $e : new \RuntimeException($e->getMessage(), 0, $e);
+            throw new \RuntimeException('This package has no manifest.json — unverifiable releases are refused (development installs may set UPGRADE_ALLOW_UNSIGNED=true)');
         }
+        $manifestBytes = (string) file_get_contents($manifestPath);
+        $manifest = json_decode($manifestBytes, true);
+        if (!is_array($manifest) || !is_string($manifest['version'] ?? null) || !is_array($manifest['files'] ?? null)) {
+            throw new \RuntimeException('manifest.json is present but malformed');
+        }
+
+        if ($this->releasePublicKeyRaw !== null) {
+            $sigPath = "{$dir}/manifest.sig.json";
+            if (!is_file($sigPath)) {
+                throw new \RuntimeException('This package is unsigned (manifest.sig.json is missing) — refused');
+            }
+            $sig = json_decode((string) file_get_contents($sigPath), true);
+            if (!is_array($sig) || ($sig['algorithm'] ?? null) !== 'ed25519' || !is_string($sig['signature'] ?? null)) {
+                throw new \RuntimeException('manifest.sig.json is malformed');
+            }
+            $pinnedKeyId = substr(hash('sha256', $this->releasePublicKeyRaw), 0, 16);
+            if (($sig['keyId'] ?? null) !== $pinnedKeyId) {
+                throw new \RuntimeException('This package is signed by an unknown release key — refused');
+            }
+            $sigRaw = base64_decode((string) $sig['signature'], true);
+            if (
+                !is_string($sigRaw) || strlen($sigRaw) !== SODIUM_CRYPTO_SIGN_BYTES
+                || !sodium_crypto_sign_verify_detached($sigRaw, $manifestBytes, $this->releasePublicKeyRaw)
+            ) {
+                throw new \RuntimeException('Package signature verification FAILED — refused');
+            }
+            $integrity = 'signed';
+        } elseif ($this->allowUnsignedDev) {
+            $integrity = 'unsigned-dev-override';
+        } else {
+            throw new \RuntimeException(
+                $this->production
+                    ? 'No release signing key is pinned (UPGRADE_RELEASE_PUBKEY) — production refuses unverifiable self-updates'
+                    : 'No release signing key is pinned — set UPGRADE_RELEASE_PUBKEY, or UPGRADE_ALLOW_UNSIGNED=true on a development install'
+            );
+        }
+
+        // Inventory: complete, exact, and exclusive.
+        $verified = 0;
+        $listed = [];
+        foreach ($manifest['files'] as $rel => $sha) {
+            $rel = (string) $rel;
+            $norm = str_replace('\\', '/', $rel);
+            if (
+                $norm === '' || str_contains($norm, '../') || str_starts_with($norm, '/')
+                || preg_match('/^[a-zA-Z]:/', $norm) || str_contains($norm, "\0")
+            ) {
+                throw new \RuntimeException("Unsafe path in manifest: {$rel}");
+            }
+            $key = strtolower($norm);
+            if (isset($listed[$key])) {
+                throw new \RuntimeException("Duplicate manifest entry: {$rel}");
+            }
+            $listed[$key] = true;
+            $abs = "{$dir}/{$norm}";
+            if (!is_file($abs)) {
+                throw new \RuntimeException("Package integrity failure: {$rel} listed in the manifest is missing");
+            }
+            if (!hash_equals((string) $sha, hash_file('sha256', $abs) ?: '')) {
+                throw new \RuntimeException("Package integrity failure: {$rel} does not match its manifest checksum");
+            }
+            $verified++;
+        }
+        foreach ($this->walkRelativeFiles($dir) as $rel) {
+            if (in_array($rel, self::MANIFEST_EXEMPT_FILES, true)) {
+                continue;
+            }
+            if (!isset($listed[strtolower($rel)])) {
+                throw new \RuntimeException("Package integrity failure: {$rel} is not listed in the manifest — refused");
+            }
+        }
+
+        return ['integrity' => $integrity, 'verifiedFiles' => $verified, 'version' => (string) $manifest['version']];
     }
 
     public function stagedInfo(): ?array
     {
-        $file = $this->stagingDir() . '/.staged-info.json';
+        $file = $this->pointerFile();
         if (!is_file($file)) {
             return null;
         }
         $info = json_decode((string) file_get_contents($file), true);
-        return is_array($info) ? $info : null;
+        if (!is_array($info) || !is_string($info['packageId'] ?? null)) {
+            return null;
+        }
+        if (!is_dir($this->packagesDir() . '/' . $info['packageId'])) {
+            return null;
+        }
+        return $info;
     }
 
     public function discardStagedPackage(): void
     {
-        $this->rrmdir($this->stagingDir());
+        $this->withUpgradeLock(function (): bool {
+            $info = $this->stagedInfo();
+            if ($info !== null) {
+                $this->rrmdir($this->packagesDir() . '/' . $info['packageId']);
+            }
+            @unlink($this->pointerFile());
+            $this->rrmdir($this->legacyStagingDir());
+            return true;
+        });
     }
 
     // ── apply ────────────────────────────────────────────────────────────────
 
     /**
      * Apply the staged package. Steps (each recorded in the returned journal):
-     * maintenance on → DB export → code snapshot → copy api/ (protected paths
-     * excluded) → copy web-root files → stamp version → history. Migrations run
-     * automatically on the next request served by the new code.
+     * verify identity + signature again → maintenance on → DB export → code
+     * snapshot → copy api/ (protected paths excluded) → remove stale managed
+     * files → copy web-root files (+ stale removal) → stamp version → history.
+     * Migrations run automatically on the next request served by the new code.
+     *
+     * Review FL-008: the caller names the exact package (`packageId`, and
+     * optionally the upload digest) it reviewed; a concurrent re-stage yields
+     * a typed mismatch instead of silently applying different bytes, and the
+     * whole operation holds the cross-process upgrade lock. The immutable
+     * staged tree is fully re-verified (signature + inventory) immediately
+     * before any file is copied (review FL-006).
+     *
      * @throws \RuntimeException with the journal context on failure
      */
-    public function apply(string $actingUserId, bool $keepMaintenanceOn = false): array
+    public function apply(string $actingUserId, bool $keepMaintenanceOn = false, ?string $packageId = null, ?string $expectedDigest = null): array
     {
         @set_time_limit(600);
-        $staged = $this->stagedInfo();
-        if ($staged === null) {
-            throw new \RuntimeException('No validated package is staged — upload one first');
-        }
-        $layout = $this->layout();
-        if (!$layout['supported']) {
-            throw new \RuntimeException('This installation layout is not recognized — set FORMLOGIC_WEB_ROOT in .env to the folder holding index.html');
-        }
-
-        $journal = [];
-        $fromVersion = $this->currentVersion();
-        $maintenanceWasOn = $this->maintenance->enabled();
-
-        // 1. Close the site so nothing writes mid-swap (kept on if it already was).
-        if (!$maintenanceWasOn) {
-            $this->maintenance->enable('We are upgrading FormLogic — back in a few minutes.', $actingUserId);
-        }
-        $journal[] = 'Maintenance mode enabled';
-
-        try {
-            // 2. Automatic database export + code snapshot = the revert point.
-            $backupId = gmdate('Ymd-His') . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
-            $backupDir = $this->backupsDir() . '/' . $backupId;
-            @mkdir($backupDir, 0750, true);
-            $this->dumpDatabase("{$backupDir}/database.sql.gz");
-            $journal[] = 'Database exported to backup';
-
-            $counts = $this->copyTree($this->apiRoot, "{$backupDir}/api", self::PROTECTED_API_PATHS);
-            $journal[] = "Backend snapshot taken ({$counts} files)";
-            $counts = $this->copyTree($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS);
-            $journal[] = "Frontend snapshot taken ({$counts} files)";
-            file_put_contents("{$backupDir}/backup-info.json", json_encode([
-                'id' => $backupId, 'at' => gmdate('c'), 'version' => $fromVersion, 'by' => $actingUserId,
-            ], JSON_PRETTY_PRINT));
-
-            // 3. Apply: backend first, then the web root. Protected paths are
-            //    excluded on the DESTINATION side, and the package's own (empty)
-            //    api/storage skeleton is excluded on the SOURCE side — the
-            //    per-form SQLite databases are never written under any input.
-            $staging = $this->stagingDir();
-            $counts = $this->copyTree("{$staging}/api", $this->apiRoot, self::PROTECTED_API_PATHS);
-            $journal[] = "Backend files applied ({$counts} files)";
-            $counts = $this->copyTree($staging, $layout['webRoot'], array_merge(self::PROTECTED_WEB_PATHS, ['.staged-info.json']));
-            $journal[] = "Frontend files applied ({$counts} files)";
-
-            // 4. Version stamps: api/VERSION already copied; mirror into schema_meta
-            //    (the same stamp bin/upgrade.php writes) so --check agrees.
-            $this->stampSchemaMeta($staged['version']);
-            $journal[] = "Version stamped ({$fromVersion} → {$staged['version']})";
-
-            $this->appendHistory([
-                'action' => 'upgrade', 'at' => gmdate('c'), 'by' => $actingUserId,
-                'fromVersion' => $fromVersion, 'toVersion' => $staged['version'],
-                'backupId' => $backupId, 'integrity' => $staged['integrity'],
-            ]);
-            $this->discardStagedPackage();
-
-            // 5. Reopen unless the admin asked to stay closed (or it was already closed).
-            if (!$maintenanceWasOn && !$keepMaintenanceOn) {
-                $this->maintenance->disable($actingUserId);
-                $journal[] = 'Maintenance mode disabled';
-            } else {
-                $journal[] = 'Maintenance mode left ON (turn it off from the Maintenance tab)';
+        return $this->withUpgradeLock(function () use ($actingUserId, $keepMaintenanceOn, $packageId, $expectedDigest): array {
+            $staged = $this->stagedInfo();
+            if ($staged === null) {
+                throw new \RuntimeException('No validated package is staged — upload one first');
             }
-            $journal[] = 'Schema migrations will run automatically on the next request';
+            if ($packageId !== null && $packageId !== $staged['packageId']) {
+                throw new StagedPackageMismatchException("expected {$packageId}, staged is {$staged['packageId']}");
+            }
+            if ($expectedDigest !== null && !hash_equals((string) ($staged['digest'] ?? ''), $expectedDigest)) {
+                throw new StagedPackageMismatchException('the content digest differs');
+            }
+            if (($staged['state'] ?? 'verified') !== 'verified') {
+                throw new \RuntimeException("The staged package is in state '{$staged['state']}' — re-stage it");
+            }
+            $layout = $this->layout();
+            if (!$layout['supported']) {
+                throw new \RuntimeException('This installation layout is not recognized — set FORMLOGIC_WEB_ROOT in .env to the folder holding index.html');
+            }
+            $staging = $this->packagesDir() . '/' . $staged['packageId'];
 
-            return [
-                'ok' => true,
-                'fromVersion' => $fromVersion,
-                'toVersion' => $staged['version'],
-                'backupId' => $backupId,
-                'journal' => $journal,
-            ];
-        } catch (\Throwable $e) {
-            // Leave maintenance ON — a half-applied tree must not serve users.
-            $journal[] = 'FAILED: ' . $e->getMessage();
-            throw new \RuntimeException(
-                'Upgrade failed (site left in maintenance mode; use Rollback if files were already applied): '
-                . $e->getMessage() . ' | journal: ' . implode(' → ', $journal),
-                0,
-                $e
-            );
-        }
+            // Re-verify the immutable tree RIGHT before touching the live code:
+            // signature, complete inventory, no unlisted file (FL-006/FL-008).
+            $report = $this->verifyPackageTree($staging);
+            if ($report['version'] !== ($staged['version'] ?? null)) {
+                throw new StagedPackageMismatchException('the package version changed on disk');
+            }
+
+            $journal = [];
+            $fromVersion = $this->currentVersion();
+            $maintenanceWasOn = $this->maintenance->enabled();
+
+            // 1. Close the site so nothing writes mid-swap (kept on if it already was).
+            if (!$maintenanceWasOn) {
+                $this->maintenance->enable('We are upgrading FormLogic — back in a few minutes.', $actingUserId);
+            }
+            $journal[] = 'Maintenance mode enabled';
+            $this->markPointerState('applying');
+
+            try {
+                // 2. Automatic database export + code snapshot = the revert point.
+                $backupId = gmdate('Ymd-His') . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
+                $backupDir = $this->backupsDir() . '/' . $backupId;
+                @mkdir($backupDir, 0750, true);
+                $this->dumpDatabase("{$backupDir}/database.sql.gz");
+                $journal[] = 'Database exported to backup';
+
+                $counts = $this->copyTree($this->apiRoot, "{$backupDir}/api", self::PROTECTED_API_PATHS);
+                $journal[] = "Backend snapshot taken ({$counts} files)";
+                $counts = $this->copyTree($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS);
+                $journal[] = "Frontend snapshot taken ({$counts} files)";
+                file_put_contents("{$backupDir}/backup-info.json", json_encode([
+                    'id' => $backupId, 'at' => gmdate('c'), 'version' => $fromVersion, 'by' => $actingUserId,
+                ], JSON_PRETTY_PRINT));
+
+                // 3. Apply: backend first, then the web root. Protected paths are
+                //    excluded on the DESTINATION side, and the package's own (empty)
+                //    api/storage skeleton is excluded on the SOURCE side — the
+                //    per-form SQLite databases are never written under any input.
+                //    After each copy, managed files ABSENT from the package are
+                //    removed (review FL-007: obsolete public endpoints must not
+                //    stay deployed) — protected paths are equally exempt here.
+                $counts = $this->copyTree("{$staging}/api", $this->apiRoot, self::PROTECTED_API_PATHS);
+                $journal[] = "Backend files applied ({$counts} files)";
+                $removed = $this->deleteStale($this->apiRoot, "{$staging}/api", self::PROTECTED_API_PATHS);
+                $journal[] = "Stale backend files removed ({$removed})";
+                $webExclude = array_merge(self::PROTECTED_WEB_PATHS, ['.staged-info.json']);
+                $counts = $this->copyTree($staging, $layout['webRoot'], $webExclude);
+                $journal[] = "Frontend files applied ({$counts} files)";
+                $removed = $this->deleteStale($layout['webRoot'], $staging, $webExclude);
+                $journal[] = "Stale frontend files removed ({$removed})";
+
+                // 4. Version stamps: api/VERSION already copied; mirror into schema_meta
+                //    (the same stamp bin/upgrade.php writes) so --check agrees.
+                $this->stampSchemaMeta($staged['version']);
+                $journal[] = "Version stamped ({$fromVersion} → {$staged['version']})";
+
+                $this->appendHistory([
+                    'action' => 'upgrade', 'at' => gmdate('c'), 'by' => $actingUserId,
+                    'fromVersion' => $fromVersion, 'toVersion' => $staged['version'],
+                    'backupId' => $backupId, 'integrity' => $staged['integrity'],
+                ]);
+                $this->rrmdir($staging);
+                @unlink($this->pointerFile());
+
+                // 5. Reopen unless the admin asked to stay closed (or it was already closed).
+                if (!$maintenanceWasOn && !$keepMaintenanceOn) {
+                    $this->maintenance->disable($actingUserId);
+                    $journal[] = 'Maintenance mode disabled';
+                } else {
+                    $journal[] = 'Maintenance mode left ON (turn it off from the Maintenance tab)';
+                }
+                $journal[] = 'Schema migrations will run automatically on the next request';
+
+                return [
+                    'ok' => true,
+                    'fromVersion' => $fromVersion,
+                    'toVersion' => $staged['version'],
+                    'backupId' => $backupId,
+                    'journal' => $journal,
+                ];
+            } catch (\Throwable $e) {
+                // Leave maintenance ON — a half-applied tree must not serve users.
+                $this->markPointerState('failed', $e->getMessage());
+                $journal[] = 'FAILED: ' . $e->getMessage();
+                throw new \RuntimeException(
+                    'Upgrade failed (site left in maintenance mode; use Rollback if files were already applied): '
+                    . $e->getMessage() . ' | journal: ' . implode(' → ', $journal),
+                    0,
+                    $e
+                );
+            }
+        });
     }
 
     // ── rollback / restore ──────────────────────────────────────────────────
 
-    /** Restore the code snapshot from a backup (the DB is NOT auto-restored — see restoreDatabase). */
+    /**
+     * Restore the code snapshot from a backup (the DB is NOT auto-restored —
+     * see restoreDatabase). Review FL-007: the snapshot is authoritative —
+     * managed files that exist now but were not in the snapshot (files the
+     * newer release introduced) are REMOVED, so the prior inventory is
+     * reconstructed exactly; protected data/config paths stay untouched.
+     */
     public function rollback(string $backupId, string $actingUserId): array
     {
         @set_time_limit(600);
+        return $this->withUpgradeLock(fn (): array => $this->rollbackLocked($backupId, $actingUserId));
+    }
+
+    private function rollbackLocked(string $backupId, string $actingUserId): array
+    {
         $backupDir = $this->backupDirFor($backupId);
         $layout = $this->layout();
         if (!$layout['supported']) {
@@ -330,8 +521,12 @@ class UpgradeService
 
         $counts = $this->copyTree("{$backupDir}/api", $this->apiRoot, self::PROTECTED_API_PATHS);
         $journal[] = "Backend restored ({$counts} files)";
+        $removed = $this->deleteStale($this->apiRoot, "{$backupDir}/api", self::PROTECTED_API_PATHS);
+        $journal[] = "Backend files not in the snapshot removed ({$removed})";
         $counts = $this->copyTree("{$backupDir}/web", $layout['webRoot'], self::PROTECTED_WEB_PATHS);
         $journal[] = "Frontend restored ({$counts} files)";
+        $removed = $this->deleteStale($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS);
+        $journal[] = "Frontend files not in the snapshot removed ({$removed})";
 
         $info = json_decode((string) @file_get_contents("{$backupDir}/backup-info.json"), true);
         $restoredVersion = is_array($info) ? (string) ($info['version'] ?? 'unknown') : 'unknown';
@@ -469,9 +664,148 @@ class UpgradeService
         return $this->apiRoot . '/storage/upgrades';
     }
 
-    private function stagingDir(): string
+    /** Immutable per-digest package directories (review FL-008). */
+    private function packagesDir(): string
+    {
+        $dir = $this->uploadsDir() . '/packages';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0750, true);
+        }
+        return $dir;
+    }
+
+    /** Pointer to the currently staged package (id + digest + state). */
+    private function pointerFile(): string
+    {
+        return $this->uploadsDir() . '/staged.json';
+    }
+
+    /** The pre-FL-008 mutable staging dir — only ever cleaned up now. */
+    private function legacyStagingDir(): string
     {
         return $this->uploadsDir() . '/staging';
+    }
+
+    private function markPointerState(string $state, ?string $error = null): void
+    {
+        $info = $this->stagedInfo();
+        if ($info === null) {
+            return;
+        }
+        $info['state'] = $state;
+        if ($error !== null) {
+            $info['error'] = substr($error, 0, 300);
+        }
+        @file_put_contents($this->pointerFile(), json_encode($info));
+    }
+
+    /**
+     * Cross-process upgrade mutual exclusion (review FL-008): stage, apply,
+     * discard, and rollback all hold one DB advisory lock.
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T
+     */
+    private function withUpgradeLock(callable $fn)
+    {
+        try {
+            $db = (string) $this->pdo->query('SELECT DATABASE()')->fetchColumn();
+            $lockName = 'formlogic.upgrade.' . $db;
+            $stmt = $this->pdo->prepare('SELECT GET_LOCK(?, 0)');
+            $stmt->execute([$lockName]);
+            $got = (int) $stmt->fetchColumn() === 1;
+        } catch (\Throwable) {
+            throw new UpgradeInProgressException();
+        }
+        if (!$got) {
+            throw new UpgradeInProgressException();
+        }
+        try {
+            return $fn();
+        } finally {
+            try {
+                $release = $this->pdo->prepare('SELECT RELEASE_LOCK(?)');
+                $release->execute([$lockName]);
+                $release->fetchColumn();
+            } catch (\Throwable) {
+            }
+        }
+    }
+
+    /**
+     * Every regular file under $dir as a forward-slash relative path
+     * (symlinks skipped — they are never package content).
+     *
+     * @return list<string>
+     */
+    private function walkRelativeFiles(string $dir): array
+    {
+        $out = [];
+        $it = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::LEAVES_ONLY,
+        );
+        $prefix = rtrim($dir, '/\\');
+        foreach ($it as $item) {
+            /** @var \SplFileInfo $item */
+            if (!$item->isFile() || $item->isLink()) {
+                continue;
+            }
+            $rel = substr($item->getPathname(), strlen($prefix) + 1);
+            $out[] = str_replace('\\', '/', $rel);
+        }
+        return $out;
+    }
+
+    /**
+     * Remove files under $dst that have no counterpart file in $src
+     * (review FL-007). Exclusions apply to top-level names on the $dst side
+     * exactly as copyTree applies them, so protected data/config paths can
+     * never be deleted. Empty directories left behind are pruned. Returns the
+     * number of files removed.
+     */
+    private function deleteStale(string $dst, string $src, array $excludeTopLevel): int
+    {
+        if (!is_dir($dst) || !is_dir($src)) {
+            return 0;
+        }
+        $exclude = array_map('strtolower', $excludeTopLevel);
+        $removed = 0;
+        foreach (scandir($dst) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            if (in_array(strtolower(rtrim($entry, '/\\')), $exclude, true)) {
+                continue;
+            }
+            $removed += $this->deleteStaleEntry("{$dst}/{$entry}", "{$src}/{$entry}");
+        }
+        return $removed;
+    }
+
+    private function deleteStaleEntry(string $dst, string $src): int
+    {
+        if (is_link($dst)) {
+            return 0; // never follow or judge links
+        }
+        if (is_dir($dst)) {
+            $removed = 0;
+            foreach (scandir($dst) ?: [] as $entry) {
+                if ($entry === '.' || $entry === '..') {
+                    continue;
+                }
+                $removed += $this->deleteStaleEntry("{$dst}/{$entry}", "{$src}/{$entry}");
+            }
+            if (!is_dir($src)) {
+                @rmdir($dst); // prune only if now empty
+            }
+            return $removed;
+        }
+        if (!is_file($src)) {
+            return @unlink($dst) ? 1 : 0;
+        }
+        return 0;
     }
 
     private function backupsDir(): string
