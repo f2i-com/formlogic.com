@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { frozenWhileActing } from '../lib/adminFrozenStorage';
+import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { useFormStore } from './formStore';
 import { toast } from './toastStore';
 import type { App, AppForm, AppListItem, AppRole } from '../types/app';
@@ -58,15 +59,21 @@ export const useAppStore = create<AppState>()(
       error: null,
 
       fetchApps: async () => {
+        // Session-generation guard (audit FL-11): a response authorized for the user
+        // who STARTED this request must never repopulate state (and, via persist,
+        // localStorage) after a logout/account switch resolved it stale.
+        const gen = currentSessionGeneration();
         startLoading(); set({ error: null });
         try {
           const result = await api.getApps();
+          if (!isSessionGenerationCurrent(gen)) return;
           if (result.error) {
             set({ error: result.error });
           } else {
             set({ apps: result.data?.apps ?? [] });
           }
         } catch (e) {
+          if (!isSessionGenerationCurrent(gen)) return;
           set({ error: e instanceof Error ? e.message : 'Failed to fetch apps' });
         } finally {
           stopLoading();

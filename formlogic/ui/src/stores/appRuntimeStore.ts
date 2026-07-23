@@ -260,7 +260,20 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         // rotated on success or when the answers change.
         const idempotencyKey = stableSubmitKey(formId, answers);
         const result = await api.createAppResponse(slug, formId, { answers, idempotencyKey });
-        if (result.error) throw new Error(result.error); // key retained for the retry
+        if (result.error) {
+          // Network-layer failure with NO server answer (status undefined) while the
+          // browser claims to be online — e.g. a captive portal (audit FL-12).
+          // navigator.onLine was never evidence: park the submission DURABLY in the
+          // offline queue under the SAME key and report an honest queued outcome.
+          // The server's payload-hash ledger dedupes whichever of the queue flush /
+          // Workbox replay / manual retry lands first.
+          if (!api.isDemoMode() && result.status === undefined) {
+            const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey });
+            clearSubmitKey(formId);
+            return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
+          }
+          throw new Error(result.error); // definitive server answer — key retained for the retry
+        }
         if (!result.data?.response) throw new Error('Submission failed: no response was returned.');
         clearSubmitKey(formId);
         return result.data.response;

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { browserTimezone } from '../lib/timezone';
+import { bumpSessionGeneration, setSessionOwner } from '../lib/sessionGeneration';
 import { useFormStore, clearAllDebounceTimers } from './formStore';
 import { useAppStore } from './appStore';
 import { useAppUserStore } from './appUserStore';
@@ -45,10 +46,66 @@ interface AuthState {
 
 let _authSessionCallback: (() => void) | null = null;
 
+/** Why a session is being torn down — 'account-deleted' additionally erases per-user databases. */
+export type SessionTeardownReason = 'logout' | 'session-expired' | 'account-deleted' | 'remote-teardown';
+
+const SESSION_CHANNEL = 'formlogic-session';
+
+/**
+ * Centralized, awaited whole-client teardown (audit FL-10/FL-11). Purges all
+ * user-specific in-memory state + persisted localStorage + cached app data; for
+ * account deletion it also erases the user's chat database and queued offline
+ * submissions. Shared by logout(), the session-expired (401) path, account
+ * deletion, and cross-tab propagation, so an ended session can't leave a previous
+ * user's data to flash to (or be sent by) the next user on a shared device.
+ */
+export async function teardownUserSession(
+  userId: string | null,
+  reason: SessionTeardownReason,
+  broadcast = true
+): Promise<void> {
+  // The generation bump comes FIRST (audit FL-11): an authenticated request still in
+  // flight compares its captured generation on resolve and DISCARDS its result rather
+  // than repopulating the stores this teardown is about to clear.
+  bumpSessionGeneration();
+
+  await clearUserSessionData();
+
+  if (userId && reason === 'account-deleted') {
+    // A deleted account leaves NOTHING behind (audit FL-10): the per-user chat DB
+    // (plaintext transcripts + image data URIs) and the user's queued offline
+    // submissions are erased, not merely detached.
+    try {
+      const chat = await import('../components/chat/chatStore');
+      await chat.deleteChatDataForUser(userId);
+    } catch {
+      // best-effort — teardown must never block account deletion
+    }
+    try {
+      const queue = await import('../client-runtime/offlineQueue');
+      await queue.purgeQueueForOwner(userId);
+    } catch {
+      // best-effort
+    }
+  }
+
+  // Propagate to sibling tabs (audit FL-10): a teardown in one tab must not leave
+  // another tab's stores hydrated with the dead session's data.
+  if (broadcast && typeof BroadcastChannel !== 'undefined') {
+    try {
+      const channel = new BroadcastChannel(SESSION_CHANNEL);
+      channel.postMessage({ type: 'fl-teardown', reason });
+      channel.close();
+    } catch {
+      // BroadcastChannel unavailable — single-tab cleanup still holds
+    }
+  }
+}
+
 /**
  * Purge all user-specific in-memory state + persisted localStorage + cached app data.
- * Shared by logout() AND the session-expired (401) path, so an expired session can't
- * leave a previous user's forms/apps/responses to flash to the next user on a shared device.
+ * Prefer teardownUserSession() — it adds the FL-11 generation bump, per-user database
+ * erasure, and cross-tab propagation.
  */
 async function clearUserSessionData(): Promise<void> {
   // Cancel pending debounced saves so stale callbacks can't fire after the purge.
@@ -112,10 +169,11 @@ export const useAuthStore = create<AuthState>()(
         _authSessionCallback = () => {
           const current = get();
           if (current.user) {
+            const expiredUserId = current.user.id;
             set({ user: null, error: null });
             // Purge the same data logout() does, so an expired session doesn't leave the
             // previous user's forms/apps/responses to flash to the next person.
-            void clearUserSessionData();
+            void teardownUserSession(expiredUserId, 'session-expired');
             // Tell the user why they were bounced to the landing page.
             toast.warning('Session expired', 'Please sign in again to continue.');
           }
@@ -131,7 +189,15 @@ export const useAuthStore = create<AuthState>()(
           if (result.error || !result.data) {
             // No valid session
             api.setAuthenticated(false);
+            const hydratedUser = get().user;
             set({ user: null, isLoading: false, isInitialized: true });
+            // A DEFINITIVE 401 on a previously hydrated session is a session end
+            // (audit FL-10): the hydrated forms/apps/responses must be purged, not
+            // merely orphaned by user:null. A network failure (no status) keeps the
+            // local data — this app is offline-first.
+            if (hydratedUser && result.status === 401) {
+              void teardownUserSession(hydratedUser.id, 'session-expired');
+            }
           } else {
             // Mark the API client as authenticated so session-expired
             // callbacks will fire correctly on subsequent 401 responses
@@ -172,6 +238,7 @@ export const useAuthStore = create<AuthState>()(
             return { success: false, error: 'Login failed' };
           }
 
+          bumpSessionGeneration(); // a NEW identity begins (audit FL-11)
           set({
             user: result.data.user,
             isLoading: false,
@@ -195,6 +262,7 @@ export const useAuthStore = create<AuthState>()(
             set({ isLoading: false, error: message });
             return { success: false, error: message };
           }
+          bumpSessionGeneration(); // a NEW identity begins (audit FL-11)
           set({ user: result.data.user, isLoading: false, error: null });
           return { success: true };
         } catch (error) {
@@ -213,6 +281,7 @@ export const useAuthStore = create<AuthState>()(
             return { success: false, error: result.error || 'Could not start the demo' };
           }
           api.setDemoMode(!!result.data.user.isDemo);
+          bumpSessionGeneration(); // a NEW identity begins (audit FL-11)
           set({ user: result.data.user, isLoading: false, error: null });
           return { success: true };
         } catch (error) {
@@ -235,6 +304,7 @@ export const useAuthStore = create<AuthState>()(
             return { success: false, error: result.error || 'Registration failed' };
           }
 
+          bumpSessionGeneration(); // a NEW identity begins (audit FL-11)
           set({
             user: result.data.user,
             isLoading: false,
@@ -250,6 +320,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
+        const leavingUserId = get().user?.id ?? null;
         try {
           // Call the logout endpoint to clear the HttpOnly cookie
           await api.logout();
@@ -261,7 +332,7 @@ export const useAuthStore = create<AuthState>()(
 
         // Purge all user-specific in-memory + persisted + cached data (shared with the
         // session-expired path) so nothing leaks between sessions on a shared device.
-        await clearUserSessionData();
+        await teardownUserSession(leavingUserId, 'logout');
       },
 
       updateProfile: async (data: Partial<User>) => {
@@ -300,3 +371,26 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// Mirror the signed-in owner into the session module (audit FL-09): the offline
+// queue stamps every row with its owner and flushes only the current owner's rows.
+setSessionOwner(useAuthStore.getState().user?.id ?? null);
+useAuthStore.subscribe((state) => setSessionOwner(state.user?.id ?? null));
+
+// Cross-tab teardown (audit FL-10): when another tab ends the session (logout,
+// expiry, account deletion), clear THIS tab's stores too — without re-broadcasting.
+// Browser-only: vitest runs in node, and the module-level channel would leak there.
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+  try {
+    const sessionChannel = new BroadcastChannel(SESSION_CHANNEL);
+    sessionChannel.onmessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string } | null;
+      if (!data || data.type !== 'fl-teardown') return;
+      if (useAuthStore.getState().user === null) return;
+      useAuthStore.setState({ user: null, error: null });
+      void teardownUserSession(null, 'remote-teardown', false);
+    };
+  } catch {
+    // BroadcastChannel construction failed — single-tab behavior remains correct.
+  }
+}

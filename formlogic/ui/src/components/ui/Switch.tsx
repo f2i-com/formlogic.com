@@ -1,19 +1,25 @@
 import { useId } from 'react';
 import { cn } from '../../lib/utils';
 
-interface SwitchProps {
+// Every switch MUST have an accessible name (audit FL-27): either the visible
+// `label` or an explicit `ariaLabel` — the union makes a nameless toggle a type
+// error instead of a silent screen-reader gap.
+type SwitchProps = {
   checked: boolean;
   onChange: (checked: boolean) => void;
-  label?: string;
   description?: string;
   disabled?: boolean;
   size?: 'sm' | 'md';
-}
+} & (
+  | { label: string; ariaLabel?: string }
+  | { label?: undefined; ariaLabel: string }
+);
 
 export function Switch({
   checked,
   onChange,
   label,
+  ariaLabel,
   description,
   disabled,
   size = 'md',
@@ -50,6 +56,7 @@ export function Switch({
         role="switch"
         aria-checked={checked}
         aria-labelledby={label ? labelId : undefined}
+        aria-label={!label ? ariaLabel : undefined}
         aria-describedby={description ? descId : undefined}
         disabled={disabled}
         onClick={toggle}

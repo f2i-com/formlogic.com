@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
 import { api } from '../lib/api';
 import { frozenWhileActing } from '../lib/adminFrozenStorage';
+import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { logger } from '../lib/logger';
 import { toast } from './toastStore';
 
@@ -456,6 +457,10 @@ export const useFormStore = create<FormState>()(
         const state = get();
         if (state.isInitialized || state.isLoading) return;
 
+        // Session-generation guard (audit FL-11): forms fetched under the user who
+        // STARTED this initialize must never land in (persisted) state after a
+        // logout/account switch happened mid-flight.
+        const gen = currentSessionGeneration();
         set({ isLoading: true, error: null });
 
         try {
@@ -466,6 +471,11 @@ export const useFormStore = create<FormState>()(
           if (apiAvailable && state.storageMode === 'api') {
             // Load ALL forms from API (paged) so My Forms' per-app grouping sees every form.
             const forms = await fetchAllForms();
+            if (!isSessionGenerationCurrent(gen)) {
+              // Never write the stale result; just unwind the loading flag.
+              set({ isLoading: false });
+              return;
+            }
             if (forms !== null) {
               // Keep any demo-created (browser-only) forms alongside the server's seeded forms.
               const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));

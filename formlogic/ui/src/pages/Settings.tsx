@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
@@ -136,6 +136,13 @@ function SectionHeader({
 export function Settings() {
   useDocumentTitle('Settings');
   const navigate = useNavigate();
+  // Deep links like /settings#ai (Connect-AI wizard): SPA navigation doesn't fire
+  // the browser's native fragment scroll, so address the card ourselves.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [hash]);
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
 
@@ -340,13 +347,18 @@ export function Settings() {
   const handleDeleteAccount = async () => {
     if (!deletePassword) { toast.error('Password Required', 'Enter your password to confirm.'); return; }
     setIsDeletingAccount(true);
+    const deletedUserId = user?.id ?? null;
     const result = await api.deleteAccount(deletePassword);
     if (result.error) {
       setIsDeletingAccount(false);
       toast.error('Failed to Delete Account', result.error);
       return;
     }
-    // Account gone — hard-redirect home to clear all client state.
+    // Account gone — AWAIT the full client teardown (audit FL-10: chats, attachments,
+    // queued offline submissions, caches, persisted stores) BEFORE navigating;
+    // navigation alone never cleared IndexedDB or Cache Storage.
+    const { teardownUserSession } = await import('../stores/authStore');
+    await teardownUserSession(deletedUserId, 'account-deleted');
     window.location.href = '/';
   };
 
@@ -706,6 +718,7 @@ export function Settings() {
                 <Switch
                   checked={preferences.showProgressBar}
                   onChange={(checked) => handlePreferenceChange('showProgressBar', checked)}
+                  ariaLabel="Show progress bar on forms by default"
                 />
               </div>
               <div className="flex items-center justify-between py-3">
@@ -721,6 +734,7 @@ export function Settings() {
                 <Switch
                   checked={preferences.allowBackNavigation}
                   onChange={(checked) => handlePreferenceChange('allowBackNavigation', checked)}
+                  ariaLabel="Allow respondents to go back to previous questions"
                 />
               </div>
             </div>

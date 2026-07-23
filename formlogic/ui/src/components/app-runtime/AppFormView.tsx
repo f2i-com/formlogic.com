@@ -712,6 +712,9 @@ export function AppFormView() {
   const [currentStep, setCurrentStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // Distinct sync-pending outcome (audit FL-12): the submission is durably queued
+  // on this device, not yet accepted by the server.
+  const [submittedQueued, setSubmittedQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // In classic mode, the id of the field the current error belongs to — drives the
   // per-control aria-invalid/aria-describedby wiring so AT users land on the right field.
@@ -976,6 +979,7 @@ export function AppFormView() {
       }
       for (const w of before.warnings) toast.warning(w);
       const created = await createResponse(formId, submissionData);
+      setSubmittedQueued((created as { queued?: unknown } | null | undefined)?.queued === true);
       setSubmitted(true);
       // onAfterSubmit: advisory (success toast / follow-up). Fire-and-forget.
       void runAfterSubmit(submissionData);
@@ -995,16 +999,14 @@ export function AppFormView() {
         navigate(`/app/${appSlug}/form/${formId}/responses/${createdId}`, { replace: true });
       }
     } catch (err) {
-      // Mirror the public-form path: a failure only means "not submitted" when we
-      // are ONLINE (a real server rejection). When offline, the service worker's
-      // backgroundSync queue has captured the POST and will replay it on reconnect,
-      // so show the success screen — a hard error here would be wrong and would
-      // prompt a retry that double-submits once connectivity returns.
-      if (navigator.onLine) {
-        setError(err instanceof Error ? err.message : 'Failed to submit');
-      } else {
-        setSubmitted(true);
-      }
+      // Evidence-based outcome (audit FL-12): success is only ever shown when
+      // something DURABLE exists. createResponse resolves with {queued:true} for
+      // every durable-queue case (offline pre-check AND online network-layer
+      // failures) — reaching this catch means neither the server nor a durable
+      // queue took the submission (e.g. the IndexedDB enqueue itself failed), so
+      // keep the user's editable answers and surface the failure honestly.
+      // navigator.onLine was never evidence of either outcome.
+      setError(err instanceof Error ? err.message : 'Failed to submit');
     }
     setSubmitting(false);
     submittingRef.current = false;
@@ -1247,6 +1249,11 @@ export function AppFormView() {
           })()}
           <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">{thankYouField?.label?.trim() || 'Thank you!'}</h1>
           <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
+          {submittedQueued && (
+            <p className="mb-8 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              Saved on this device — it will sync automatically once you're back online.
+            </p>
+          )}
           <div className="flex flex-wrap gap-3 justify-center">
             {showFormView && (
               <button

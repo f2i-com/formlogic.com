@@ -4,7 +4,7 @@
 // and the old overview panel: a compact hero, the flow list (search + scope filter +
 // per-flow actions) as the main column, readiness + recent runs in a side rail on large
 // screens, and starter templates. Opening a flow leaves this page for the full-page editor.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -425,11 +425,76 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(flow.name);
   const menuOpen = menuRect !== null;
-  const closeMenu = () => setMenuRect(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Focus returns to the trigger on close — the ARIA menu-button pattern (audit FL-27).
+  const closeMenu = () => {
+    setMenuRect(null);
+    triggerRef.current?.focus();
+  };
 
+  // Commit exactly ONCE per rename (audit FL-27): Enter commits and unmounts the
+  // input, whose trailing blur used to fire commitRename a second time.
+  const renameCommittedRef = useRef(false);
   const commitRename = () => {
+    if (renameCommittedRef.current) return;
+    renameCommittedRef.current = true;
     setRenaming(false);
     onRename(name);
+  };
+  const cancelRename = () => {
+    renameCommittedRef.current = true; // suppress the trailing blur commit too
+    setRenaming(false);
+    setName(flow.name);
+  };
+
+  // Menu focus entry: the first item receives focus when the menu opens (FL-27).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [menuOpen]);
+
+  // Keep the portal menu anchored while the page resizes or scrolls (FL-27).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setMenuRect(rect);
+    };
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [menuOpen]);
+
+  // Arrow/Home/End/Escape keyboard navigation per the ARIA menu pattern (FL-27).
+  const onMenuKeyDown = (e: React.KeyboardEvent) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    if (items.length === 0) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      items[(index + 1) % items.length].focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(index - 1 + items.length) % items.length].focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      items[0].focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      items[items.length - 1].focus();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu();
+    } else if (e.key === 'Tab') {
+      closeMenu();
+    }
   };
 
   return (
@@ -441,7 +506,7 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
             value={name}
             onChange={(e) => setName(e.target.value)}
             onBlur={commitRename}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setRenaming(false); setName(flow.name); } }}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') cancelRename(); }}
             aria-label="Flow name"
             className="min-w-0 flex-1 rounded border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-1.5 py-1 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
@@ -485,6 +550,7 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
         <div className="relative flex-none">
           <button
             type="button"
+            ref={triggerRef}
             onClick={(e) => setMenuRect(menuOpen ? null : e.currentTarget.getBoundingClientRect())}
             aria-label={`Flow actions for ${flow.name}`}
             aria-haspopup="menu"
@@ -498,9 +564,11 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
           {menuRect && createPortal(
             <div className="fixed inset-0 z-[70]" onClick={closeMenu}>
               <div
+                ref={menuRef}
                 role="menu"
                 aria-label={`Flow actions for ${flow.name}`}
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={onMenuKeyDown}
                 className="absolute w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900 dark:ring-white/[0.06]"
                 style={{
                   ...(menuRect.bottom + FLOW_MENU_HEIGHT > window.innerHeight
@@ -515,7 +583,7 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
                   onClick={() => { closeMenu(); onRequestToggleEnabled(); }}
                 />
                 <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
-                <MenuItem icon={Pencil} label="Rename" onClick={() => { closeMenu(); setName(flow.name); setRenaming(true); }} />
+                <MenuItem icon={Pencil} label="Rename" onClick={() => { closeMenu(); setName(flow.name); renameCommittedRef.current = false; setRenaming(true); }} />
                 <MenuItem icon={Copy} label="Duplicate" onClick={() => { closeMenu(); onDuplicate(); }} />
                 <MenuItem icon={Trash2} label="Delete" danger onClick={() => { closeMenu(); onDelete(); }} />
               </div>

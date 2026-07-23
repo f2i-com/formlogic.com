@@ -449,6 +449,7 @@ export function FormFlowsPanel({
                         onChange={(enabled) => { void toggleBinding(section, binding, enabled); }}
                         size="sm"
                         disabled={readOnly}
+                        ariaLabel={`Enable the ${name} flow binding`}
                       />
                     </div>
 

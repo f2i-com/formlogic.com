@@ -5,18 +5,21 @@ import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { lockBodyScroll, unlockBodyScroll } from '../../lib/scrollLock';
 
-interface ModalProps {
+// Every dialog MUST have an accessible name (audit FL-27): either the visible
+// `title` or an explicit `ariaLabel` (for dialogs that render their own heading,
+// e.g. ConfirmDialog — ignored when `title` is set). The union makes a nameless
+// dialog a type error instead of a silent screen-reader gap.
+type ModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  title?: React.ReactNode;
   description?: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
   showCloseButton?: boolean;
-  // Accessible name for dialogs that render their own heading (so no visible
-  // header is shown) — e.g. ConfirmDialog. Ignored when `title` is set.
-  ariaLabel?: string;
-}
+} & (
+  | { title: React.ReactNode; ariaLabel?: string }
+  | { title?: undefined; ariaLabel: string }
+);
 
 const FOCUSABLE_SELECTORS = [
   'button:not([disabled])',
@@ -94,13 +97,16 @@ export function Modal({
     document.addEventListener('keydown', handleKeyDown);
     lockBodyScroll();
 
-    // Focus the first focusable element in the modal (only on initial open)
+    // Focus the first focusable element in the modal (only on initial open).
+    // With no focusable child, focus the PANEL itself (audit FL-27) so keyboard
+    // and screen-reader users still land inside the dialog.
     if (!hasInitialFocusRef.current) {
       hasInitialFocusRef.current = true;
       requestAnimationFrame(() => {
         if (modalRef.current) {
           const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
-          focusableElements[0]?.focus();
+          if (focusableElements[0]) focusableElements[0].focus();
+          else modalRef.current.focus();
         }
       });
     }
@@ -143,6 +149,7 @@ export function Modal({
             ref={modalRef}
             role="dialog"
             aria-modal="true"
+            tabIndex={-1}
             onMouseDown={(e) => e.stopPropagation()}
             aria-labelledby={title ? titleId : undefined}
             aria-label={!title ? ariaLabel : undefined}

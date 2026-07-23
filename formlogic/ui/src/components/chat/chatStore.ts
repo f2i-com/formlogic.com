@@ -334,6 +334,33 @@ export function getChatStore(userId: string): ChatStore {
   return store;
 }
 
+/**
+ * Whole-user teardown (audit FL-10): delete the user's chat database entirely —
+ * account deletion must leave no plaintext chat transcripts or data-URI image
+ * attachments behind on a shared device. Safe when the DB never existed; the
+ * cached ChatStore is dropped so a later sign-in reopens fresh. Best-effort by
+ * design: teardown must never block the caller.
+ */
+export async function deleteChatDataForUser(userId: string): Promise<void> {
+  stores.delete(userId);
+  const factory = activeIdbFactory();
+  if (!factory) return;
+  await new Promise<void>((resolve) => {
+    let req: IDBOpenDBRequest;
+    try {
+      req = factory.deleteDatabase(`${DB_PREFIX}${userId}`);
+    } catch {
+      resolve();
+      return;
+    }
+    req.onsuccess = () => resolve();
+    req.onerror = () => resolve();
+    // Another open tab still holds the DB — the browser completes the deletion
+    // once it closes; don't hold the teardown hostage.
+    req.onblocked = () => resolve();
+  });
+}
+
 /** Test-only: drop the per-user cache AND the injected factory. */
 export function __resetChatStoresForTests(): void {
   stores.clear();

@@ -149,6 +149,7 @@ export function AdminAllowancesCard() {
                       checked={row.enabled}
                       disabled={row.saving}
                       onChange={(enabled) => patchRow(key, { enabled, dirty: true })}
+                      ariaLabel={`Enable the ${row.plan} ${metricLabel(row.metric)} allowance`}
                     />
                     {row.dirty ? <Badge variant="warning">unsaved</Badge> : null}
                     <Button

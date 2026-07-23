@@ -1399,19 +1399,46 @@ export default function FormResponse() {
     // for retry), keep the best-effort behavior and don't block the user.
     const serverBacked = form.status === 'published';
     let serverFailed = false;
+    let queuedForSync = false;
     try {
-      const result = await api.submitResponse(form.id, { answers: currentAnswers, completionTime });
+      // One idempotency key per FILL, not per attempt (audit FL-13): if the server
+      // committed but the ack was lost, a manual retry — or a Workbox replay racing
+      // it — must hit the server's dedupe under the SAME key instead of creating a
+      // second record. Cleared only after the fill completes (mirrors the encrypted
+      // path's submitIdemKeyRef handling above).
+      if (!submitIdemKeyRef.current) submitIdemKeyRef.current = generateId();
+      const result = await api.submitResponse(form.id, {
+        answers: currentAnswers,
+        completionTime,
+        idempotencyKey: submitIdemKeyRef.current,
+      });
       if (result.error) {
-        if (serverBacked && navigator.onLine) {
-          serverFailed = true;
-          setSubmitError(typeof result.error === 'string' ? result.error : 'Your response could not be submitted. Please try again.');
+        if (serverBacked) {
+          // Evidence-based outcome (audit FL-12), same classifier as the encrypted
+          // path: a definitive server answer rejects; a network-layer failure is
+          // "queued" ONLY when the SW background-sync queue provably captured the
+          // request; navigator.onLine proves neither.
+          const { classifySubmitOutcome } = await import('../lib/swQueue');
+          const outcome = await classifySubmitOutcome({
+            ok: false,
+            status: result.status ?? 0,
+            networkError: result.status === undefined
+              ? (typeof result.error === 'string' ? result.error : 'network failure')
+              : undefined,
+          });
+          if (outcome === 'queued') {
+            queuedForSync = true;
+          } else {
+            serverFailed = true;
+            setSubmitError(typeof result.error === 'string' ? result.error : 'Your response could not be submitted. Please try again.');
+          }
         } else {
           logger.warn('Response not persisted to server (kept locally):', result.error);
         }
       }
     } catch (err) {
       logger.error('Failed to submit response to server', err);
-      if (serverBacked && navigator.onLine) {
+      if (serverBacked) {
         serverFailed = true;
         setSubmitError('Your response could not be submitted. Please try again.');
       }
@@ -1419,13 +1446,18 @@ export default function FormResponse() {
       setIsSubmitting(false);
     }
 
-    // Abort the success flow on a real server failure for a published form.
+    // Abort the success flow on a real server failure for a published form —
+    // the user's answers stay editable on the form.
     if (serverFailed) return;
 
     // Record locally (clears in-progress answers) and reflect in the local view.
     const response = submitResponse();
     if (!response) return;
-    updateForm(form.id, { responseCount: form.responseCount + 1 });
+    // The fill is complete — the NEXT fill gets a fresh idempotency key (FL-13).
+    submitIdemKeyRef.current = null;
+    setSubmitQueued(queuedForSync);
+    // Only an ACCEPTED submission bumps the count — a queued one hasn't landed yet.
+    if (!queuedForSync) updateForm(form.id, { responseCount: form.responseCount + 1 });
     setIsSubmitted(true);
 
     // Handle redirectUrl (strict URL validation to prevent XSS)

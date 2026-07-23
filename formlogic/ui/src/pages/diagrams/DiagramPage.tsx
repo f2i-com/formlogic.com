@@ -35,6 +35,7 @@ export default function DiagramPage() {
   // flips to the real id on the next reload.
   const isNew = diagramId === 'new';
   const createdRef = useRef<string | null>(null);
+  const createPromiseRef = useRef<Promise<string | null> | null>(null);
   const [diagram, setDiagram] = useState<Blueprint | null>(() => (isNew ? draftBlueprint() : null));
   const [missing, setMissing] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -46,13 +47,26 @@ export default function DiagramPage() {
 
   const ensureId = useCallback(async (): Promise<string | null> => {
     if (createdRef.current) return createdRef.current;
-    const res = await api.createBlueprint({ name: nameRef.current });
-    if (!res.data?.blueprint) {
-      toast.error('Could not create the diagram', typeof res.error === 'string' ? res.error : undefined);
-      return null;
+    // Single-flight creation (audit FL-14): two same-tick first actions must share ONE
+    // POST — otherwise each creates its own row and their operations land on different
+    // diagram ids. A failed create clears the promise so a later action can retry.
+    if (!createPromiseRef.current) {
+      createPromiseRef.current = api
+        .createBlueprint({ name: nameRef.current })
+        .then((res) => {
+          if (!res.data?.blueprint) {
+            toast.error('Could not create the diagram', typeof res.error === 'string' ? res.error : undefined);
+            return null;
+          }
+          createdRef.current = res.data.blueprint.id;
+          return createdRef.current;
+        })
+        .finally(() => {
+          // createdRef is the success fast path; clearing here only re-arms retries.
+          createPromiseRef.current = null;
+        });
     }
-    createdRef.current = res.data.blueprint.id;
-    return createdRef.current;
+    return createPromiseRef.current;
   }, []);
 
   const load = useCallback(async () => {
@@ -83,7 +97,10 @@ export default function DiagramPage() {
 
   // A fresh /diagrams/new visit starts un-persisted again (ref writes belong in effects).
   useEffect(() => {
-    if (isNew) createdRef.current = null;
+    if (isNew) {
+      createdRef.current = null;
+      createPromiseRef.current = null;
+    }
   }, [diagramId, isNew]);
 
   useEffect(() => {
@@ -99,8 +116,10 @@ export default function DiagramPage() {
     };
   }, [diagramId, isNew]);
 
+  // dvh, not vh (audit FL-26): mobile browser chrome shrinks the visual viewport —
+  // 100vh clipped the bottom of the workspace behind the URL bar.
   return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col">
+    <div className="flex h-[calc(100dvh-4rem)] min-h-0 flex-col">
       <div className="flex flex-none items-center gap-3 border-b border-gray-200 bg-white px-4 py-2.5 dark:border-slate-700/60 dark:bg-slate-900">
         <Link
           to="/diagrams/all"
@@ -158,7 +177,7 @@ export default function DiagramPage() {
           )}
         </span>
       </div>
-      <div className="flex min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
+      <div className="relative flex min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
         {diagram && diagram.id !== '' && showHistory && (
           <BuildTimeline blueprintId={diagram.id} semanticRevision={diagram.semanticRevision} />
         )}
@@ -232,8 +251,9 @@ function BuildTimeline({ blueprintId, semanticRevision }: { blueprintId: string;
     };
   }, [blueprintId, semanticRevision]);
 
+  // Phones (audit FL-26): the timeline overlays the canvas instead of squeezing it.
   return (
-    <aside className="scrollbar-thin w-64 flex-none overflow-y-auto border-r border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
+    <aside className="scrollbar-thin w-64 flex-none overflow-y-auto border-r border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:shadow-xl">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Build timeline</p>
       {history.length === 0 ? (
         <p className="text-xs text-gray-400 dark:text-slate-500">No changes yet — every edit (yours and the AI's) lands here.</p>

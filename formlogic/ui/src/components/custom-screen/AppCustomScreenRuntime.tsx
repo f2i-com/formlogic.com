@@ -24,7 +24,7 @@ const APP_SDK_SHIM = `
   function call(action, payload){
     return new Promise(function(resolve, reject){
       var id = ++seq; pending[id] = { resolve: resolve, reject: reject };
-      parent.postMessage({ __fl: true, id: id, action: action, payload: payload || {} }, '*');
+      parent.postMessage({ __fl: true, gen: window.__flGen, id: id, action: action, payload: payload || {} }, '*');
     });
   }
   window.addEventListener('message', function(e){
@@ -75,6 +75,12 @@ export function AppCustomScreenRuntime({
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
+  // Document generation (audit FL-15, parity with CustomScreenRuntime): bumped
+  // whenever the srcDoc rebuilds and stamped into the shim (window.__flGen). The
+  // dying predecessor document can still drain queued tasks after React commits
+  // the new one — its RPCs must be refused, or a stale action could execute
+  // against the NEW screen's forms/trust/user/navigation.
+  const genRef = useRef(0);
   const user = useAuthStore((s) => s.user);
   // Drive the screen's light/dark from the viewer's app-mode toggle.
   const colorScheme = useUIStore((s) => s.theme);
@@ -99,14 +105,26 @@ export function AppCustomScreenRuntime({
     // postMessage instead of rebuilding the iframe (which would reload + refetch the dashboard).
     const dark = schemeRef.current === 'dark';
     const palette = screenPaletteCss(accentColor, readableForegroundColor(accentColor));
+    // Each rebuilt document gets a fresh generation stamp (audit FL-15).
+    genRef.current += 1;
     return `<!doctype html><html class="${dark ? 'fl-dark' : ''}"><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<meta name="color-scheme" content="light dark">`
-      + `<script>${APP_SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
+      + `<script>var __flGen=${genRef.current};${APP_SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${palette}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
-  }, [assets, accentColor]);
+    // Depend on the CONTENT strings, not the `assets` object identity (same reasoning
+    // as CustomScreenRuntime): the async asset-resolve replaces `assets` with an
+    // equal-valued object on mount, and recomputing here would bump the generation
+    // and remount the iframe for nothing.
+  }, [assets.html, assets.css, assets.js, accentColor]);
+
+  // A rebuilt document is a brand-new client: give it a fresh SDK rate budget so
+  // the old document's spend can't throttle (or subsidize) the new one (FL-15).
+  useEffect(() => {
+    rateRef.current = createSdkRateLimiter();
+  }, [srcDoc]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -120,6 +138,17 @@ export function AppCustomScreenRuntime({
     const handler = async (e: MessageEvent) => {
       const m = e.data;
       if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      // Only the CURRENT document generation may act (audit FL-15): the WindowProxy
+      // survives a srcdoc swap, so the dying predecessor can still post — executing
+      // its requests against the new screen's forms/trust would be a stale-document
+      // confused-deputy. Refuse with an honest error instead.
+      if (typeof m.gen === 'number' && m.gen !== genRef.current) {
+        iframeRef.current.contentWindow?.postMessage(
+          { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
+          '*'
+        );
+        return;
+      }
       let result: unknown;
       let error: string | undefined;
       if (!rateRef.current(String(m.action))) {
@@ -188,6 +217,10 @@ export function AppCustomScreenRuntime({
 
   return (
     <iframe
+      // A changed document remounts the iframe (audit FL-15): keying on the
+      // generation gives the new document a FRESH WindowProxy, so pending RPCs
+      // from the predecessor can never be confused with the current screen's.
+      key={genRef.current}
       ref={iframeRef}
       title="App home"
       sandbox="allow-scripts"

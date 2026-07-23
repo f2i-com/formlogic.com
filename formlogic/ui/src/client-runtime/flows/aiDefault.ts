@@ -277,6 +277,90 @@ export async function getAiPreferences(options: { fresh?: boolean } = {}): Promi
   return res;
 }
 
+// ---------------------------------------------------------------------------
+// getAiReadiness — the ONE source-specific readiness resolver (audit FL-23).
+// ---------------------------------------------------------------------------
+
+export interface AiReadiness {
+  ready: boolean;
+  /** Why not ready — mirrors the execution-time refusal, so invites never over-promise. */
+  reason?: string;
+  prefs?: AiPreferences;
+}
+
+/** A desktop connection heartbeated inside this window counts as online (mirrors ROUTE-001's 90s + margin). */
+const DESKTOP_FRESH_MS = 120_000;
+
+/**
+ * Source-specific readiness (audit FL-23): "preferences loaded" is NOT "AI can run".
+ * This validates exactly what execution validates later — a chosen Desktop provider
+ * for 'desktop' (plus a recently-seen desktop when the connections API answers), a
+ * locally-configured provider for 'custom' — so surfaces that INVITE a prompt
+ * (Dashboard CreateBand) agree with what execution will accept. Lives in this module
+ * so the checks can never drift from runCustomSource / the desktop lane.
+ */
+export async function getAiReadiness(options: { fresh?: boolean } = {}): Promise<AiReadiness> {
+  const res = await getAiPreferences(options);
+  if (!res.ok) return { ready: false, reason: res.error.message };
+  const prefs = res.data;
+  switch (prefs.aiSource) {
+    case 'site':
+      return { ready: true, prefs };
+    case 'desktop': {
+      if (!prefs.desktopProviderId?.trim()) {
+        return {
+          ready: false,
+          prefs,
+          reason: 'FormLogic Desktop is the default AI but no Desktop provider is chosen — pick one in Settings → AI.',
+        };
+      }
+      // Liveness is best-effort: a definitive "no desktop has been seen recently"
+      // is a real not-ready; a failed connections lookup stays configuration-only
+      // (never hide the surface on a transient API blip).
+      try {
+        const connections = await api.getDesktopConnections();
+        if (!connections.error && connections.data) {
+          const fresh = connections.data.connections.some((c) => {
+            if (!c.lastSeenAt) return false;
+            // Zone-less API timestamps are UTC — anchor them before comparing.
+            const seen = Date.parse(c.lastSeenAt.endsWith('Z') || c.lastSeenAt.includes('+') ? c.lastSeenAt : c.lastSeenAt.replace(' ', 'T') + 'Z');
+            return Number.isFinite(seen) && Date.now() - seen < DESKTOP_FRESH_MS;
+          });
+          if (!fresh) {
+            return {
+              ready: false,
+              prefs,
+              reason: 'FormLogic Desktop is the default AI but no linked desktop is online right now.',
+            };
+          }
+        }
+      } catch {
+        // connections lookup unavailable — fall through to configuration readiness
+      }
+      return { ready: true, prefs };
+    }
+    case 'custom': {
+      const providerId = prefs.customProviderId?.trim() ?? '';
+      if (!providerId) {
+        return {
+          ready: false,
+          prefs,
+          reason: 'A custom AI service is the default but none is chosen — pick one in Settings → AI.',
+        };
+      }
+      const provider = await resolveProviderRequest(useAuthStore.getState().user?.id, 'chat', providerId);
+      if (!provider) {
+        return {
+          ready: false,
+          prefs,
+          reason: `The default AI service '${providerId}' is not configured in this browser — custom AI services are stored per browser.`,
+        };
+      }
+      return { ready: true, prefs };
+    }
+  }
+}
+
 /** Short human label for the resolved default source, shown beside the picker's "Default" option. */
 export function defaultSourceLabel(prefs: AiPreferences, customProviderName?: string | null): string {
   switch (prefs.aiSource) {

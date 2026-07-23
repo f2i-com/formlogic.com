@@ -5,6 +5,7 @@
 // queued item carries a stable idempotencyKey, so the server's payload-hash-aware ledger dedupes a
 // replay (see AppPublicController::processSubmission). This backs the SDK's useOfflineQueue status.
 import { api, newIdempotencyKey } from '../lib/api';
+import { currentSessionOwner } from '../lib/sessionGeneration';
 
 /**
  * Queue-item lifecycle:
@@ -25,6 +26,14 @@ export interface QueuedSubmission {
   attempts: number;
   lastError: string | null;
   createdAt: number;
+  /**
+   * The user the submission belongs to (audit FL-09) — stamped at enqueue time and
+   * immutable. Flushing sends ONLY the current owner's rows, so user A's queued
+   * answers can never ride user B's cookies after an account switch on a shared
+   * device. `undefined` = a legacy pre-upgrade row (kept flushable by anyone so
+   * existing queues drain); `null` would mean an anonymous enqueue.
+   */
+  ownerUserId?: string | null;
 }
 
 /** The classified outcome of a single delivery attempt (see classifyDeliveryResult). */
@@ -142,6 +151,7 @@ export async function enqueueSubmission(item: {
     attempts: 0,
     lastError: null,
     createdAt: Date.now(),
+    ownerUserId: currentSessionOwner(),
   };
   await run('readwrite', (s) => s.put(row));
   notify();
@@ -153,12 +163,32 @@ export async function listQueue(): Promise<QueuedSubmission[]> {
   return (all ?? []).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/** True when the CURRENT session may deliver/see this row (audit FL-09). */
+function ownedByCurrentSession(item: QueuedSubmission): boolean {
+  if (item.ownerUserId === undefined) return true; // legacy pre-upgrade row
+  return item.ownerUserId === currentSessionOwner();
+}
+
 export async function queueCounts(): Promise<{ pending: number; failed: number }> {
-  const items = await listQueue();
+  // Counts are scoped to the current owner (audit FL-09): user B's status badge
+  // must not surface (or invite retries of) user A's parked submissions.
+  const items = (await listQueue()).filter(ownedByCurrentSession);
   return {
     pending: items.filter((i) => i.status !== 'failed').length,
     failed: items.filter((i) => i.status === 'failed').length,
   };
+}
+
+/**
+ * Erase every queued submission belonging to `userId` (audit FL-09/FL-10) — the
+ * account-deletion teardown path. Plaintext answers must not outlive the account.
+ */
+export async function purgeQueueForOwner(userId: string): Promise<void> {
+  const doomed = (await listQueue()).filter((i) => i.ownerUserId === userId);
+  for (const item of doomed) {
+    await run('readwrite', (s) => s.delete(item.id));
+  }
+  if (doomed.length > 0) notify();
 }
 
 /** POST one queued item through the same idempotent create endpoint; returns the classified outcome. */
@@ -179,6 +209,9 @@ const MAX_ATTEMPTS = 8;
  * Outcomes: delivered → removed; processing → kept pending (no attempt bump); conflict → marked
  * terminal 'failed' + surfaced; any other error → kept pending with an incremented attempt count +
  * lastError so a later flush retries it.
+ *
+ * The returned `failed` counts items that turned NEWLY TERMINAL during this flush (audit FL-25) —
+ * an item kept 'pending' for a later retry is not reported as failed.
  */
 export async function flushQueue(): Promise<{ flushed: number; failed: number }> {
   if (flushing) return { flushed: 0, failed: 0 };
@@ -191,6 +224,10 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
     for (const item of await listQueue()) {
       // Terminal conflicts are non-retryable — leave them for the user to see, don't re-send.
       if (item.status === 'failed') continue;
+      // Ownership partition (audit FL-09): another user's rows stay PARKED — they are
+      // never delivered through this session's cookies. They resume when their owner
+      // signs back in.
+      if (!ownedByCurrentSession(item)) continue;
       await run('readwrite', (s) => s.put({ ...item, status: 'syncing' } as QueuedSubmission));
       notify();
       let classification: DeliveryClassification;
@@ -221,11 +258,14 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
       } else {
         // Generic retryable error — bump attempts and go terminal at the cap so a deterministically
         // non-deliverable item (e.g. a server-only validation reject) drains instead of retrying forever.
+        // `failed` counts only NEWLY-TERMINAL items (audit FL-25): a retryable item stored back as
+        // 'pending' is not a failure yet, and reporting it as one made sync toasts claim losses
+        // that hadn't happened.
         const attempts = item.attempts + 1;
         const terminal = attempts >= MAX_ATTEMPTS;
         await run('readwrite', (s) =>
           s.put({ ...item, status: terminal ? 'failed' : 'pending', attempts, lastError: error } as QueuedSubmission));
-        failed++;
+        if (terminal) failed++;
       }
       notify();
     }

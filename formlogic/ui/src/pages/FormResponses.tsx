@@ -1311,12 +1311,14 @@ function FormResponses() {
         )}
       </Modal>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal — named for assistive tech (audit FL-27): the
+          dialog renders its own heading, so the accessible name rides ariaLabel. */}
       <Modal
         isOpen={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
         size="sm"
         showCloseButton={false}
+        ariaLabel="Delete response"
       >
         <div className="p-6">
           <div className="flex items-center gap-4 mb-4">

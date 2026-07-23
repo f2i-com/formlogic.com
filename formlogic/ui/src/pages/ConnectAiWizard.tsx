@@ -10,18 +10,19 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Cloud, Monitor, Plug, Sparkles } from 'lucide-react';
 import { Header } from '../components/layout/Header';
-import { Sidebar } from '../components/layout/Sidebar';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 
+// Rendered INSIDE AppShell (audit FL-24): the shell already provides the sidebar
+// and content offset — rendering a second <Sidebar /> + md:pl-72 here produced
+// duplicate navigation landmarks and a double offset on desktop AND mobile.
 export default function ConnectAiWizard() {
   const navigate = useNavigate();
   const [showMcp, setShowMcp] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
-      <Header />
-      <Sidebar />
-      <main className="mx-auto max-w-3xl px-4 pb-16 pt-24 md:pl-72">
+    <div className="min-h-screen">
+      <Header title="Connect your AI" />
+      <main className="mx-auto max-w-3xl px-4 pb-16 pt-6 sm:pt-8">
         <Link
           to="/"
           className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
@@ -53,7 +54,7 @@ export default function ConnectAiWizard() {
             </p>
             <button
               type="button"
-              onClick={() => navigate('/settings')}
+              onClick={() => navigate('/settings#ai')}
               className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700"
             >
               Set up in Settings <ArrowRight className="h-3.5 w-3.5" />

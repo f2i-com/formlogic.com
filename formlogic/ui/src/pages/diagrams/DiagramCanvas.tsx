@@ -405,8 +405,10 @@ function SelectionPanel({
     onSave(next, notes);
   };
 
+  // Desktop: a fixed right rail. Phones (audit FL-26): a bottom sheet — a 256px
+  // side panel on a 390px viewport left ~134px of canvas, unusable.
   return (
-    <div className="scrollbar-thin w-64 flex-none overflow-y-auto border-l border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
+    <div className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-16 max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:border-t max-md:shadow-2xl md:w-64 md:flex-none md:overflow-y-auto md:border-l">
       {isEdge ? (
         <>
           <p className="mb-2 text-xs font-medium text-gray-500 dark:text-slate-400">
@@ -754,40 +756,62 @@ export function DiagramCanvas({
     semanticRef.current = blueprint.semanticRevision;
   }, [blueprint.semanticRevision]);
 
-  const commit = useCallback(
+  // FIFO mutation queue (audit FL-14): callers fire `void commit(...)` from many
+  // handlers, so without serialization two same-tick semantic commits both read
+  // semanticRef BEFORE either response lands — the loser 409s, reloads, and the
+  // user's intended operation is dropped. Each queued commit therefore waits for
+  // its predecessor and picks up the revision that predecessor returned.
+  const commitQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const commitPendingRef = useRef(0);
+
+  const performCommit = useCallback(
     async (operations: BlueprintOperation[], semantic: boolean): Promise<boolean> => {
-      setBusy(true);
-      try {
-        // Deferred drafts (/diagrams/new): the row is created on the FIRST real
-        // change — an untouched canvas never persists (owner direction).
-        let blueprintId = blueprint.id;
-        if (blueprintId === '') {
-          blueprintId = (await onEnsureId?.()) ?? '';
-          if (blueprintId === '') return false;
-        }
-        const res = await api.commitBlueprintOperations(blueprintId, {
-          ...(semantic ? { baseSemanticRevision: semanticRef.current } : {}),
-          operations,
-        });
-        if (res.error || !res.data) {
-          const conflicted = typeof res.error === 'object' && res.error !== null
-            && (res.error as { code?: string }).code === 'revision_conflict';
-          toast.error(
-            conflicted ? 'Blueprint changed elsewhere' : 'Blueprint change failed',
-            conflicted ? 'Reloaded the latest version — please retry.' : (typeof res.error === 'string' ? res.error : undefined),
-          );
-          await onReload();
-          return false;
-        }
-        semanticRef.current = res.data.semanticRevision;
-        onRevisions(res.data.semanticRevision, res.data.layoutRevision);
-        if (semantic) await onReload();
-        return true;
-      } finally {
-        setBusy(false);
+      // Deferred drafts (/diagrams/new): the row is created on the FIRST real
+      // change — an untouched canvas never persists (owner direction).
+      let blueprintId = blueprint.id;
+      if (blueprintId === '') {
+        blueprintId = (await onEnsureId?.()) ?? '';
+        if (blueprintId === '') return false;
       }
+      const res = await api.commitBlueprintOperations(blueprintId, {
+        ...(semantic ? { baseSemanticRevision: semanticRef.current } : {}),
+        operations,
+      });
+      if (res.error || !res.data) {
+        const conflicted = typeof res.error === 'object' && res.error !== null
+          && (res.error as { code?: string }).code === 'revision_conflict';
+        toast.error(
+          conflicted ? 'Blueprint changed elsewhere' : 'Blueprint change failed',
+          conflicted ? 'Reloaded the latest version — please retry.' : (typeof res.error === 'string' ? res.error : undefined),
+        );
+        await onReload();
+        return false;
+      }
+      semanticRef.current = res.data.semanticRevision;
+      onRevisions(res.data.semanticRevision, res.data.layoutRevision);
+      if (semantic) await onReload();
+      return true;
     },
     [blueprint.id, onEnsureId, onReload, onRevisions],
+  );
+
+  const commit = useCallback(
+    (operations: BlueprintOperation[], semantic: boolean): Promise<boolean> => {
+      commitPendingRef.current += 1;
+      setBusy(true);
+      const task = commitQueueRef.current.then(() => performCommit(operations, semantic));
+      commitQueueRef.current = task
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .then(() => {
+          commitPendingRef.current -= 1;
+          if (commitPendingRef.current === 0) setBusy(false);
+        });
+      return task;
+    },
+    [performCommit],
   );
 
   const onNodesChange = useCallback(
@@ -1240,25 +1264,40 @@ export function DiagramCanvas({
   useEffect(() => {
     let cancelled = false;
     if (blueprint.id === '') return;
-    const fetchProposals = () => {
-      void api.listBlueprintChangeSets(blueprint.id).then((res) => {
-        if (cancelled) return;
-        const next = res.data?.changeSets ?? [];
-        setProposals((previous) => {
-          // A proposal that vanished was resolved elsewhere (approved in chat →
-          // committed): reload so the canvas shows the applied elements.
-          if (previous.some((p) => !next.some((n) => n.id === p.id))) void onReload();
-          return next;
-        });
-      });
-    };
-    fetchProposals();
+    let timer: number | undefined;
     // The AI can park a proposal from the chat at any moment — poll so the user
     // SEES the ghosts appear without reloading (owner direction: visible AI work).
-    const timer = window.setInterval(fetchProposals, 8000);
+    // Single-flight recursive timeout (audit FL-20): the next poll is scheduled only
+    // after the current one settles, so slow responses can never complete out of
+    // order and restore stale proposals or trigger a wrong reload.
+    const fetchProposals = () => {
+      api.listBlueprintChangeSets(blueprint.id).then(
+        (res) => {
+          if (cancelled) return;
+          timer = window.setTimeout(fetchProposals, 8000);
+          if (res.error || !res.data) {
+            // A transient API error is NOT "every proposal vanished" (audit FL-20):
+            // keep the last successful ghost state and try again next tick.
+            return;
+          }
+          const next = res.data.changeSets ?? [];
+          setProposals((previous) => {
+            // A proposal that vanished (on a SUCCESSFUL response) was resolved
+            // elsewhere (approved in chat → committed): reload so the canvas shows
+            // the applied elements.
+            if (previous.some((p) => !next.some((n) => n.id === p.id))) void onReload();
+            return next;
+          });
+        },
+        () => {
+          if (!cancelled) timer = window.setTimeout(fetchProposals, 8000);
+        },
+      );
+    };
+    fetchProposals();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [blueprint.id, blueprint.semanticRevision, onReload]);
 

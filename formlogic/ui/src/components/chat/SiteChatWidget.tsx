@@ -587,13 +587,16 @@ export function SiteChatWidget() {
     const next = prefs.chatToolMode === 'confirm' ? 'auto' : 'confirm';
     setSavingToolMode(true);
     try {
-      // Round-trip the COMPLETE preferences: PUT /api/ai/preferences replaces the row.
+      // Round-trip the COMPLETE preferences: PUT /api/ai/preferences replaces the row —
+      // omitting desktopReasoning here silently cleared the user's chosen Codex
+      // reasoning effort on every Ask-first/Auto toggle (audit FL-21).
       const res = await api.putAiPreferences({
         aiSource: prefs.aiSource,
         desktopProviderId: prefs.desktopProviderId,
         desktopModel: prefs.desktopModel,
         customProviderId: prefs.customProviderId,
         chatToolMode: next,
+        desktopReasoning: prefs.desktopReasoning ?? null,
       });
       if (res.data) {
         invalidateAiPreferencesCache(); // the engine reads the aiDefault cache — keep it honest

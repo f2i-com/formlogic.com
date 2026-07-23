@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Hammer, Map as MapIcon, Plug, Sparkles, X } from 'lucide-react';
-import { getAiPreferences } from '../../client-runtime/flows/aiDefault';
+import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { useUIStore } from '../../stores/uiStore';
 import { cn } from '../../lib/utils';
 
@@ -38,9 +38,13 @@ export function CreateBand() {
 
   useEffect(() => {
     let cancelled = false;
-    void getAiPreferences().then(
+    // Source-specific readiness (audit FL-23): the composer is only offered when the
+    // configured default source can actually EXECUTE — merely loading preferences
+    // invited prompts that failed on the user's very first action (Desktop default
+    // with no provider, custom source not configured in this browser, …).
+    void getAiReadiness().then(
       (res) => {
-        if (!cancelled) setMode(res.ok ? 'ai' : 'no-ai');
+        if (!cancelled) setMode(res.ready ? 'ai' : 'no-ai');
       },
       () => {
         if (!cancelled) setMode('no-ai');
