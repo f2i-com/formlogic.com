@@ -9,6 +9,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
 use FormLogic\Services\BlueprintMaterializeService;
 use FormLogic\Services\BlueprintService;
+use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -61,7 +62,13 @@ class BlueprintMaterializeTest extends TestCase
         self::$forms = new FormService($conn, $sqlite);
         self::$apps = new AppService($conn, self::$forms);
         self::$blueprints = new BlueprintService($conn);
-        self::$materializer = new BlueprintMaterializeService($conn, self::$blueprints, self::$forms, self::$apps);
+        self::$materializer = new BlueprintMaterializeService(
+            $conn,
+            self::$blueprints,
+            self::$forms,
+            self::$apps,
+            new FlowService($conn)
+        );
     }
 
     protected function setUp(): void
@@ -231,6 +238,47 @@ class BlueprintMaterializeTest extends TestCase
         try {
             self::$materializer->materialize($this->userId, $blueprint['id']);
             $this->fail('expected a nothing-new refusal on re-apply');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('Nothing new to apply', $e->getMessage());
+        }
+
+        // Concept FLOW + a 'triggers' edge from the form: the delta creates a real stub
+        // flow in the app and a form.submitted binding wiring them (idempotent too).
+        $snapshot = self::$blueprints->getBlueprint($this->userId, $blueprint['id']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => $snapshot['semanticRevision'],
+            'operations' => [
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-flow',
+                    'elementType' => 'flow',
+                    'properties' => ['title' => 'Project intake'],
+                ]),
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-trig',
+                    'elementType' => 'edge',
+                    'properties' => ['edgeType' => 'triggers', 'sourceId' => 'el-a', 'targetId' => 'el-flow'],
+                ]),
+            ],
+        ]);
+        $flowDelta = self::$materializer->materialize($this->userId, $blueprint['id']);
+        $this->assertCount(1, $flowDelta['createdFlowIds']);
+        $this->assertSame(1, $flowDelta['bindings']);
+        $flowRow = self::$pdo->prepare('SELECT app_id, enabled FROM flow_definitions WHERE id = ?');
+        $flowRow->execute([$flowDelta['createdFlowIds'][0]]);
+        $flow = $flowRow->fetch();
+        $this->assertSame($first['appId'], $flow['app_id'], 'the stub flow lives in the SAME app');
+        $binding = self::$pdo->prepare(
+            "SELECT COUNT(*) FROM app_flow_bindings WHERE app_id = ? AND flow_definition_id = ? AND event_name = 'form.submitted'"
+        );
+        $binding->execute([$first['appId'], $flowDelta['createdFlowIds'][0]]);
+        $this->assertSame(1, (int) $binding->fetchColumn());
+        // The flow element's resourceRef stamped through the gateway.
+        $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
+        $this->assertSame($flowDelta['createdFlowIds'][0], $byId['el-flow']['resourceRef']['id'] ?? null);
+        // Re-apply: flow exists, binding exists → nothing new again.
+        try {
+            self::$materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected a nothing-new refusal after the flow delta');
         } catch (\InvalidArgumentException $e) {
             $this->assertStringContainsString('Nothing new to apply', $e->getMessage());
         }

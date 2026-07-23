@@ -1368,7 +1368,7 @@ export function DiagramCanvas({
                       void onReload();
                       return;
                     }
-                    toast.success('Changes applied to your app', `${res.data.createdFormIds.length} new form(s), ${res.data.relations} new relation(s)`);
+                    toast.success('Changes applied to your app', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s)`);
                     void onReload();
                   });
                 }}
@@ -1393,7 +1393,7 @@ export function DiagramCanvas({
                     void onReload();
                     return;
                   }
-                  toast.success('App created from your diagram', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s)`);
+                  toast.success('App created from your diagram', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s)`);
                   navigate(`/apps/${res.data.appId}/records`);
                 });
               }}

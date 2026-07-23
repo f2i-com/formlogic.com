@@ -32,6 +32,7 @@ class BlueprintMaterializeService
         private BlueprintService $blueprints,
         private FormService $forms,
         private AppService $apps,
+        private ?FlowService $flowService = null,
     ) {
         $this->mysql = $mysql->getConnection();
     }
@@ -79,6 +80,7 @@ class BlueprintMaterializeService
         }
 
         $createdFormIds = [];
+        $createdFlowIds = [];
         $appId = null;
         try {
             // 1. Concept entities → real forms (standalone drafts; attached below).
@@ -150,9 +152,6 @@ class BlueprintMaterializeService
             // 3. The app: first materialisation creates it with every form attached
             //    ATOMICALLY; a delta attaches only the newly created forms.
             if ($delta) {
-                if ($createdFormIds === [] && $relations === 0) {
-                    throw new \InvalidArgumentException('Nothing new to apply — sketch a new form or relation first');
-                }
                 $appId = $existingAppId;
                 $app = ['id' => $existingAppId];
                 foreach ($createdFormIds as $newFormId) {
@@ -166,7 +165,87 @@ class BlueprintMaterializeService
                 $appId = (string) $app['id'];
             }
 
-            // 4. Link + stamp: app id on the blueprint row, resourceRefs + materialised
+            // 4. Concept FLOW elements -> real stub flows in the app (input->output graph;
+            //    the flow editor fills them in), and 'triggers' edges between a
+            //    materialised form and flow -> real form.submitted bindings. Both
+            //    idempotent: existing refs skip, existing bindings skip.
+            $flowIdByElement = [];
+            $flowSlugById = [];
+            $bindingsCreated = 0;
+            if ($this->flowService !== null) {
+                foreach ($elements as $element) {
+                    if ($element['elementType'] !== 'flow') {
+                        continue;
+                    }
+                    $ref = $element['resourceRef'];
+                    $refId = is_array($ref) && ($ref['kind'] ?? null) === 'flow' && is_string($ref['id'] ?? null) ? $ref['id'] : null;
+                    if ($refId !== null) {
+                        $flowIdByElement[$element['id']] = $refId;
+                        continue;
+                    }
+                    $properties = is_array($element['properties']) ? $element['properties'] : [];
+                    $flowTitle = trim((string) ($properties['title'] ?? '')) !== '' ? trim((string) $properties['title']) : 'Untitled flow';
+                    $flow = $this->flowService->createFlow($appId, $ownerUserId, [
+                        'name' => $flowTitle,
+                        'flowJson' => [
+                            'nodes' => [
+                                ['id' => 'trigger', 'type' => 'input', 'position' => ['x' => 80, 'y' => 120], 'data' => ['inputs' => []]],
+                                ['id' => 'out', 'type' => 'output', 'position' => ['x' => 360, 'y' => 120], 'data' => []],
+                            ],
+                            'edges' => [['source' => 'trigger', 'target' => 'out']],
+                        ],
+                        'enabled' => true,
+                    ]);
+                    $createdFlowIds[] = (string) $flow['id'];
+                    $flowIdByElement[$element['id']] = (string) $flow['id'];
+                    $flowSlugById[(string) $flow['id']] = (string) ($flow['slug'] ?? '');
+                }
+                foreach ($elements as $element) {
+                    if ($element['elementType'] !== 'edge') {
+                        continue;
+                    }
+                    $props = is_array($element['properties']) ? $element['properties'] : [];
+                    if (($props['edgeType'] ?? null) !== 'triggers') {
+                        continue;
+                    }
+                    $formId = $formIdByElement[(string) ($props['sourceId'] ?? '')] ?? null;
+                    $flowId = $flowIdByElement[(string) ($props['targetId'] ?? '')] ?? null;
+                    if ($formId === null || $flowId === null) {
+                        continue;
+                    }
+                    $exists = $this->mysql->prepare('
+                        SELECT 1 FROM app_flow_bindings
+                        WHERE app_id = :app AND flow_definition_id = :flow AND event_name = :event AND form_id = :form
+                        LIMIT 1
+                    ');
+                    $exists->execute(['app' => $appId, 'flow' => $flowId, 'event' => 'form.submitted', 'form' => $formId]);
+                    if ($exists->fetchColumn()) {
+                        continue;
+                    }
+                    $slug = $flowSlugById[$flowId] ?? null;
+                    if ($slug === null || $slug === '') {
+                        $lookup = $this->mysql->prepare('SELECT slug FROM flow_definitions WHERE id = :id LIMIT 1');
+                        $lookup->execute(['id' => $flowId]);
+                        $slug = (string) $lookup->fetchColumn();
+                    }
+                    if ($slug === '') {
+                        continue;
+                    }
+                    $this->flowService->createBinding($appId, [
+                        'flow' => $slug,
+                        'event' => 'form.submitted',
+                        'formId' => $formId,
+                        'mode' => 'async',
+                    ]);
+                    $bindingsCreated++;
+                }
+            }
+
+            if ($delta && $createdFormIds === [] && $relations === 0 && $createdFlowIds === [] && $bindingsCreated === 0) {
+                throw new \InvalidArgumentException('Nothing new to apply — sketch a new form, flow, relation or trigger first');
+            }
+
+            // 5. Link + stamp: app id on the blueprint row, resourceRefs + materialised
             //    states through the gateway (audited, origin 'launcher'). A gateway
             //    refusal here (concurrent edit) still compensates the whole pass —
             //    materialisation is all-or-nothing.
@@ -180,6 +259,17 @@ class BlueprintMaterializeService
                     'type' => 'blueprint.element.update',
                     'targetId' => $plan['elementId'],
                     'resourceRef' => ['kind' => 'form', 'id' => $formIdByElement[$plan['elementId']]],
+                ];
+            }
+            foreach ($flowIdByElement as $flowElementId => $materialisedFlowId) {
+                if (!in_array($materialisedFlowId, $createdFlowIds, true)) {
+                    continue;
+                }
+                $operations[] = [
+                    'operationId' => 'op-mz-' . bin2hex(random_bytes(8)),
+                    'type' => 'blueprint.element.update',
+                    'targetId' => (string) $flowElementId,
+                    'resourceRef' => ['kind' => 'flow', 'id' => $materialisedFlowId],
                 ];
             }
             if ($operations !== []) {
@@ -216,10 +306,22 @@ class BlueprintMaterializeService
                     's' => 'materialised',
                 ]);
             }
+            foreach ($flowIdByElement as $flowElementId => $materialisedFlowId) {
+                $link->execute([
+                    'b' => $blueprintId,
+                    'el' => (string) $flowElementId,
+                    't' => 'flow',
+                    'r' => (string) $materialisedFlowId,
+                    'v' => null,
+                    's' => 'materialised',
+                ]);
+            }
 
             return [
                 'mode' => $delta ? 'delta' : 'created',
                 'appId' => $appId,
+                'createdFlowIds' => $createdFlowIds,
+                'bindings' => $bindingsCreated,
                 'appSlug' => isset($app['slug']) && is_string($app['slug']) ? $app['slug'] : null,
                 'createdFormIds' => $createdFormIds,
                 'reusedFormIds' => array_values(array_diff(array_values($formIdByElement), $createdFormIds)),
@@ -233,6 +335,15 @@ class BlueprintMaterializeService
                     $this->apps->deleteApp($appId);
                 } catch (\Throwable $cleanup) {
                     error_log("BlueprintMaterializeService: app cleanup failed ({$appId}): " . $cleanup->getMessage());
+                }
+            }
+            foreach ($createdFlowIds as $cleanupFlowId) {
+                try {
+                    if ($this->flowService !== null && $appId !== null) {
+                        $this->flowService->deleteFlow($appId, (string) $cleanupFlowId);
+                    }
+                } catch (\Throwable $cleanup) {
+                    error_log("BlueprintMaterializeService: flow cleanup failed ({$cleanupFlowId}): " . $cleanup->getMessage());
                 }
             }
             foreach ($createdFormIds as $formId) {

@@ -2773,7 +2773,9 @@ class ApiClient {
   /** §11A D3: create the app from the diagram (concept forms → real forms, relations →
    *  linked_record fields, all attached to a NEW app; the blueprint links to it). */
   async materializeBlueprint(blueprintId: string): Promise<ApiResponse<{
-    appId: string; appSlug: string | null; createdFormIds: string[]; reusedFormIds: string[]; relations: number;
+    mode: 'created' | 'delta'; appId: string; appSlug: string | null;
+    createdFormIds: string[]; reusedFormIds: string[]; relations: number;
+    createdFlowIds: string[]; bindings: number;
   }>> {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/materialize`, { method: 'POST' });
   }
