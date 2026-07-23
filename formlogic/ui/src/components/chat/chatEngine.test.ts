@@ -9,7 +9,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   answerToolProposal,
+  chatTextOf,
   createSiteChatSseParser,
+  flattenForTextOnly,
   historyFor,
   normalizeToolActivity,
   normalizeToolProposal,
@@ -515,5 +517,52 @@ second`;
   it('a USER message quoting the prefix is not a marker', () => {
     const msgs = [msg('user', `${SUMMARY_PREFIX} what does this mean?`), msg('assistant', 'it marks a summary')];
     expect(sinceLastSummary(msgs).summary).toBeNull();
+  });
+});
+
+describe('image attachment plumbing', () => {
+  const img = 'data:image/jpeg;base64,QUJD';
+
+  it('historyFor turns stored images into OpenAI content parts', () => {
+    expect(historyFor([{ role: 'user', content: 'look at this', images: [img] }])).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'image_url', image_url: { url: img } },
+        ],
+      },
+    ]);
+    // Image-only message: no empty text part.
+    expect(historyFor([{ role: 'user', content: '', images: [img] }])).toEqual([
+      { role: 'user', content: [{ type: 'image_url', image_url: { url: img } }] },
+    ]);
+  });
+
+  it('chatTextOf collapses parts to their text', () => {
+    expect(chatTextOf('plain')).toBe('plain');
+    expect(
+      chatTextOf([
+        { type: 'text', text: 'a' },
+        { type: 'image_url', image_url: { url: img } },
+        { type: 'text', text: 'b' },
+      ])
+    ).toBe('a\nb');
+  });
+
+  it('flattenForTextOnly notes dropped images honestly', () => {
+    const flat = flattenForTextOnly([
+      { role: 'user', content: 'plain stays' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'see image' },
+          { type: 'image_url', image_url: { url: img } },
+        ],
+      },
+    ]);
+    expect(flat[0]).toEqual({ role: 'user', content: 'plain stays' });
+    expect(flat[1].content).toContain('see image');
+    expect(flat[1].content).toContain('[image attached');
   });
 });

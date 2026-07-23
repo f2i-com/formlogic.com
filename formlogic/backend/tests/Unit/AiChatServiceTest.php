@@ -96,6 +96,109 @@ class AiChatServiceTest extends TestCase
         ], $clean);
     }
 
+    /** Chat image attachments: OpenAI-style content parts on USER messages only. */
+    public function testValidateChatMessagesContentParts(): void
+    {
+        $img = 'data:image/jpeg;base64,' . base64_encode('fake-jpeg-bytes');
+
+        // Happy path: text + image parts survive cleaning (unknown keys dropped).
+        $clean = AIService::validateChatMessages([
+            ['role' => 'user', 'content' => [
+                ['type' => 'text', 'text' => 'What is in this picture?', 'extra' => 'dropped'],
+                ['type' => 'image_url', 'image_url' => ['url' => $img, 'detail' => 'dropped']],
+            ]],
+        ]);
+        $this->assertSame([
+            ['role' => 'user', 'content' => [
+                ['type' => 'text', 'text' => 'What is in this picture?'],
+                ['type' => 'image_url', 'image_url' => ['url' => $img]],
+            ]],
+        ], $clean);
+
+        // Parts are user-only — the system prompt surface stays text.
+        try {
+            AIService::validateChatMessages([['role' => 'system', 'content' => [['type' => 'text', 'text' => 'x']]]]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('only allowed on user messages', $e->getMessage());
+        }
+
+        // Only base64 raster data URIs are admitted — never remote URLs (SSRF surface).
+        foreach (['https://example.com/x.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/jpeg;base64,not!!valid'] as $bad) {
+            try {
+                AIService::validateChatMessages([
+                    ['role' => 'user', 'content' => [['type' => 'image_url', 'image_url' => ['url' => $bad]]]],
+                ]);
+                $this->fail('expected rejection of ' . $bad);
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('base64 data URI', $e->getMessage());
+            }
+        }
+
+        // Per-image size cap.
+        try {
+            AIService::validateChatMessages([
+                ['role' => 'user', 'content' => [['type' => 'image_url', 'image_url' => [
+                    'url' => 'data:image/png;base64,' . str_repeat('A', AIService::CHAT_MAX_IMAGE_DATA_CHARS),
+                ]]]],
+            ]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('data characters', $e->getMessage());
+        }
+
+        // Per-message image count cap.
+        $five = array_fill(0, 5, ['type' => 'image_url', 'image_url' => ['url' => $img]]);
+        try {
+            AIService::validateChatMessages([['role' => 'user', 'content' => $five]]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('at most ' . AIService::CHAT_MAX_IMAGES_PER_MESSAGE . ' images', $e->getMessage());
+        }
+
+        // Per-request image total (spread across messages so no message trips its own cap).
+        $three = array_fill(0, 3, ['type' => 'image_url', 'image_url' => ['url' => $img]]);
+        try {
+            AIService::validateChatMessages([
+                ['role' => 'user', 'content' => $three],
+                ['role' => 'user', 'content' => $three],
+                ['role' => 'user', 'content' => $three],
+            ]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('at most ' . AIService::CHAT_MAX_IMAGES_TOTAL . ' images', $e->getMessage());
+        }
+
+        // Empty part lists and unknown part types are refused.
+        try {
+            AIService::validateChatMessages([['role' => 'user', 'content' => []]]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('must not be empty', $e->getMessage());
+        }
+        try {
+            AIService::validateChatMessages([['role' => 'user', 'content' => [['type' => 'audio', 'data' => 'x']]]]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('text or image_url', $e->getMessage());
+        }
+
+        // Text parts count toward the ordinary total-characters budget.
+        $big = ['type' => 'text', 'text' => str_repeat('x', 32000)];
+        try {
+            AIService::validateChatMessages([
+                ['role' => 'user', 'content' => [$big]],
+                ['role' => 'user', 'content' => [$big]],
+                ['role' => 'user', 'content' => [$big]],
+                ['role' => 'user', 'content' => [$big]],
+                ['role' => 'user', 'content' => [$big]],
+            ]);
+            $this->fail('expected rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('in total', $e->getMessage());
+        }
+    }
+
     // ── chat() over the fake transport ──
 
     public function testChatBuildsThePayloadAndReturnsUsage(): void

@@ -117,7 +117,10 @@ export type DesktopTunnelState =
 
 export interface DesktopTunnelChatMessage {
   role: string;
-  content: string;
+  /** Plain text, or OpenAI-style content parts (chat image attachments). */
+  content:
+    | string
+    | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 }
 
 function failure<T>(error: DesktopTunnelError): DesktopTunnelResult<T> {

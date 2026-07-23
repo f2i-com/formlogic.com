@@ -767,6 +767,10 @@ PROMPT;
     public const CHAT_MAX_MESSAGES = 50;
     public const CHAT_MAX_MESSAGE_CHARS = 32000;
     public const CHAT_MAX_TOTAL_CHARS = 128000;
+    /** Image attachments (content-part messages): data-URI chars, not bytes. */
+    public const CHAT_MAX_IMAGE_DATA_CHARS = 700000;
+    public const CHAT_MAX_IMAGES_PER_MESSAGE = 4;
+    public const CHAT_MAX_IMAGES_TOTAL = 8;
     public const CHAT_MAX_TOKENS = 2048;
     private const CHAT_STREAM_TIMEOUT = 180;
     private const CHAT_HEARTBEAT_SECONDS = 15;
@@ -815,6 +819,7 @@ PROMPT;
             throw new \InvalidArgumentException('messages must contain 1..' . self::CHAT_MAX_MESSAGES . ' items');
         }
         $total = 0;
+        $imagesTotal = 0;
         $clean = [];
         foreach ($messages as $m) {
             if (!is_array($m)) {
@@ -825,6 +830,16 @@ PROMPT;
                 throw new \InvalidArgumentException('message role must be system, user or assistant');
             }
             $content = $m['content'] ?? null;
+            if (is_array($content)) {
+                // OpenAI-style content parts (chat image attachments). Only USER
+                // messages may carry them — system prompts and assistant history
+                // stay plain strings, keeping the injected surfaces text-only.
+                if ($role !== 'user') {
+                    throw new \InvalidArgumentException('content parts are only allowed on user messages');
+                }
+                $clean[] = ['role' => $role, 'content' => self::validateContentParts($content, $total, $imagesTotal)];
+                continue;
+            }
             if (!is_string($content) || $content === '') {
                 throw new \InvalidArgumentException('message content must be a non-empty string');
             }
@@ -838,6 +853,63 @@ PROMPT;
             $clean[] = ['role' => $role, 'content' => $content];
         }
         return $clean;
+    }
+
+    /**
+     * Validate one user message's content-part list: text parts count toward the
+     * ordinary character budgets; image parts must be base64 data URIs of a raster
+     * web type within per-image/per-message/per-request caps. $textTotal and
+     * $imagesTotal accumulate ACROSS the request (by reference).
+     *
+     * @param array<int, mixed> $parts
+     * @return array<int, array<string, mixed>> the cleaned part list
+     * @throws \InvalidArgumentException on malformed input.
+     */
+    private static function validateContentParts(array $parts, int &$textTotal, int &$imagesTotal): array
+    {
+        if ($parts === []) {
+            throw new \InvalidArgumentException('message content parts must not be empty');
+        }
+        $cleanParts = [];
+        $imageCount = 0;
+        foreach ($parts as $part) {
+            if (!is_array($part)) {
+                throw new \InvalidArgumentException('each content part must be an object');
+            }
+            $type = $part['type'] ?? null;
+            if ($type === 'text') {
+                $text = $part['text'] ?? null;
+                if (!is_string($text)) {
+                    throw new \InvalidArgumentException('text part must carry a string text');
+                }
+                if (strlen($text) > self::CHAT_MAX_MESSAGE_CHARS) {
+                    throw new \InvalidArgumentException('message content exceeds ' . self::CHAT_MAX_MESSAGE_CHARS . ' characters');
+                }
+                $textTotal += strlen($text);
+                if ($textTotal > self::CHAT_MAX_TOTAL_CHARS) {
+                    throw new \InvalidArgumentException('messages exceed ' . self::CHAT_MAX_TOTAL_CHARS . ' characters in total');
+                }
+                $cleanParts[] = ['type' => 'text', 'text' => $text];
+            } elseif ($type === 'image_url') {
+                $url = is_array($part['image_url'] ?? null) ? ($part['image_url']['url'] ?? null) : null;
+                if (!is_string($url) || preg_match('#^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$#', $url) !== 1) {
+                    throw new \InvalidArgumentException('image part must be a base64 data URI (png, jpeg or webp)');
+                }
+                if (strlen($url) > self::CHAT_MAX_IMAGE_DATA_CHARS) {
+                    throw new \InvalidArgumentException('image exceeds ' . self::CHAT_MAX_IMAGE_DATA_CHARS . ' data characters');
+                }
+                if (++$imageCount > self::CHAT_MAX_IMAGES_PER_MESSAGE) {
+                    throw new \InvalidArgumentException('a message may carry at most ' . self::CHAT_MAX_IMAGES_PER_MESSAGE . ' images');
+                }
+                if (++$imagesTotal > self::CHAT_MAX_IMAGES_TOTAL) {
+                    throw new \InvalidArgumentException('the request may carry at most ' . self::CHAT_MAX_IMAGES_TOTAL . ' images');
+                }
+                $cleanParts[] = ['type' => 'image_url', 'image_url' => ['url' => $url]];
+            } else {
+                throw new \InvalidArgumentException('content part type must be text or image_url');
+            }
+        }
+        return $cleanParts;
     }
 
     /**

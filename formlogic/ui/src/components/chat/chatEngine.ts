@@ -46,9 +46,34 @@ import {
 
 export type ChatSource = 'site' | 'desktop' | 'custom';
 
+/** One OpenAI-style content part (chat image attachments ride user messages). */
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatEngineMessage {
   role: string;
-  content: string;
+  content: string | ChatContentPart[];
+}
+
+/** The text of a message content — parts collapse to their text parts joined. */
+export function chatTextOf(content: string | ChatContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((p): p is Extract<ChatContentPart, { type: 'text' }> => p.type === 'text')
+    .map((p) => p.text)
+    .join('\n');
+}
+
+/** Flatten part messages to plain text for text-only providers (the Codex
+ * prompt harness renders string content only — parts would silently vanish). */
+export function flattenForTextOnly(messages: ChatEngineMessage[]): ChatEngineMessage[] {
+  return messages.map((m) => {
+    if (typeof m.content === 'string') return m;
+    const hasImage = m.content.some((p) => p.type === 'image_url');
+    const text = chatTextOf(m.content);
+    return { role: m.role, content: hasImage ? `${text}\n[image attached — this provider is text-only]`.trim() : text };
+  });
 }
 
 export interface ChatTurnError {
@@ -72,10 +97,22 @@ export function sinceLastSummary<T extends { role: string; content: string }>(
 }
 
 /** The wire history for a turn: [summary as system] + tail, or the full transcript.
- * The THREAD keeps every message — only what rides the wire is condensed. */
-export function historyFor(msgs: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
+ * The THREAD keeps every message — only what rides the wire is condensed. Stored
+ * image attachments become OpenAI-style content parts on their user message. */
+export function historyFor(
+  msgs: Array<{ role: string; content: string; images?: string[] }>
+): ChatEngineMessage[] {
   const { summary, tail } = sinceLastSummary(msgs);
-  const wire = tail.map((m) => ({ role: m.role, content: m.content }));
+  const wire = tail.map((m): ChatEngineMessage => {
+    if (!m.images?.length) return { role: m.role, content: m.content };
+    return {
+      role: m.role,
+      content: [
+        ...(m.content !== '' ? [{ type: 'text' as const, text: m.content }] : []),
+        ...m.images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+      ],
+    };
+  });
   return summary ? [{ role: 'system', content: summary }, ...wire] : wire;
 }
 
@@ -516,11 +553,14 @@ async function runDesktopSource(
   }
 
   const tunnel = deps.tunnelChat ?? chatViaTunnel;
+  // The managed Codex lane renders string content into a text prompt — content
+  // parts would vanish silently, so flatten them (with an honest image note).
+  const wireMessages = providerId === 'openai-codex-agent' ? flattenForTextOnly(opts.messages) : opts.messages;
   const tunnelOptions: ChatViaTunnelOptions & TunnelToolOptions = {
     providerId,
     model: prefs.desktopModel?.trim() || undefined,
     threadId: opts.threadId,
-    messages: opts.messages,
+    messages: wireMessages,
     clientSeq: opts.clientSeq ?? 1,
     signal: opts.signal,
     onDelta: opts.events?.onDelta,
@@ -580,8 +620,10 @@ async function runCustomSource(
   }
 
   const { messages } = opts;
-  const system = messages.find((m) => m.role === 'system')?.content;
-  const prompt = [...messages].reverse().find((m) => m.role === 'user')?.content;
+  const systemRaw = messages.find((m) => m.role === 'system')?.content;
+  const system = systemRaw === undefined ? undefined : chatTextOf(systemRaw);
+  const promptRaw = [...messages].reverse().find((m) => m.role === 'user')?.content;
+  const prompt = promptRaw === undefined ? undefined : chatTextOf(promptRaw);
   const requestBody = provider.requestTemplate
     ? renderRequestTemplate(provider.requestTemplate, {
         model: provider.model,

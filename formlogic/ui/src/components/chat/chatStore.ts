@@ -28,6 +28,8 @@ export interface ChatMessage {
   threadId: string;
   role: ChatMessageRole;
   content: string;
+  /** Image attachments (data URIs, client-downscaled) — user messages only. */
+  images?: string[];
   createdAt: number;
   /** Monotonic per store — stable ordering when two messages share a millisecond. */
   seq: number;
@@ -273,7 +275,8 @@ export class ChatStore {
     threadId: string,
     role: ChatMessageRole,
     content: string,
-    now = Date.now()
+    now = Date.now(),
+    images?: string[]
   ): Promise<ChatMessage> {
     const backend = await this.ready();
     await this.primeSeq(backend);
@@ -282,6 +285,7 @@ export class ChatStore {
       threadId,
       role,
       content,
+      ...(images?.length ? { images } : {}),
       createdAt: now,
       seq: this.nextSeq(),
     };

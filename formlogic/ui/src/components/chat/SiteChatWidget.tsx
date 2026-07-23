@@ -31,6 +31,7 @@ import {
   Trash2,
   X,
   Footprints,
+  ImagePlus,
   PanelRight,
   Shrink,
   XCircle,
@@ -58,6 +59,7 @@ import {
   historyFor,
 } from './chatEngine';
 import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
+import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatView';
 
 const PAGE_SIZE = 30;
@@ -83,10 +85,7 @@ interface LiveTurn {
   status: 'running' | 'done' | 'failed';
 }
 
-interface ChatWireMessage {
-  role: string;
-  content: string;
-}
+type ChatWireMessage = import('./chatEngine').ChatEngineMessage;
 
 // ---------------------------------------------------------------------------
 // Small render pieces.
@@ -436,15 +435,36 @@ export function SiteChatWidget() {
     [userId, isDemo, followActivity]
   );
 
+  // Image attachments: downscaled client-side, sent as content parts, stored on
+  // the user message so history re-sends them (owner direction: "send the image
+  // to the AI attached").
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const addAttachment = useCallback(async (files: Iterable<File>) => {
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      const url = await downscaleChatImage(file);
+      if (!url) {
+        toast.error('Could not attach that image', 'It is unreadable or too large even after downscaling.');
+        continue;
+      }
+      setPendingImages((current) =>
+        current.length >= CHAT_IMAGES_PER_MESSAGE ? current : [...current, url]
+      );
+    }
+  }, []);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (text === '' || sending || !userId) return;
+    const images = pendingImages;
+    if ((text === '' && images.length === 0) || sending || !userId) return;
     setInput('');
+    setPendingImages([]);
     const store = getChatStore(userId);
     let threadId = activeThreadId;
     let prior = messages;
     if (!threadId) {
-      const thread = await store.createThread(chatThreadTitle(text));
+      const thread = await store.createThread(chatThreadTitle(text !== '' ? text : 'Image attachment'));
       threadId = thread.id;
       prior = [];
       setThreads((existing) => [thread, ...existing]);
@@ -452,11 +472,11 @@ export function SiteChatWidget() {
       setHasMore(false);
       setStorePersistent(store.persistent);
     }
-    const userMessage = await store.appendMessage(threadId, 'user', text);
+    const userMessage = await store.appendMessage(threadId, 'user', text, undefined, images);
     const next = [...prior, userMessage];
     setMessages(next);
     await runTurn(threadId, historyFor(next));
-  }, [input, sending, userId, activeThreadId, messages, runTurn, setActiveThread]);
+  }, [input, pendingImages, sending, userId, activeThreadId, messages, runTurn, setActiveThread]);
 
   // §11B: compact the conversation — an AI summary becomes the carried history while
   // the thread keeps every message. Offered once the uncompacted tail reaches the
@@ -821,6 +841,18 @@ export function SiteChatWidget() {
                   : 'mr-auto rounded-bl-sm bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-100'
               )}
             >
+              {message.images && message.images.length > 0 && (
+                <span className="mb-1 flex flex-wrap gap-1.5">
+                  {message.images.map((src, i) => (
+                    <img
+                      key={i}
+                      src={src}
+                      alt="Attached image"
+                      className="max-h-28 max-w-full rounded-lg object-contain"
+                    />
+                  ))}
+                </span>
+              )}
               {message.content}
             </div>
           ))}
@@ -870,17 +902,65 @@ export function SiteChatWidget() {
         </div>
       )}
 
+      {pendingImages.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-t border-gray-200/80 px-2.5 pt-2 dark:border-slate-700/60">
+          {pendingImages.map((src, i) => (
+            <span key={i} className="relative inline-block">
+              <img src={src} alt="Pending attachment" className="h-12 w-12 rounded-lg border border-gray-200 object-cover dark:border-slate-700" />
+              <button
+                type="button"
+                aria-label="Remove attachment"
+                onClick={() => setPendingImages((current) => current.filter((_, j) => j !== i))}
+                className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-700 text-white hover:bg-gray-900 dark:bg-slate-600 dark:hover:bg-slate-500"
+              >
+                <X className="h-2.5 w-2.5" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault();
           void handleSend();
         }}
-        className="flex items-end gap-2 border-t border-gray-200/80 p-2.5 dark:border-slate-700/60"
+        className={cn(
+          'flex items-end gap-2 p-2.5',
+          pendingImages.length === 0 && 'border-t border-gray-200/80 dark:border-slate-700/60'
+        )}
       >
+        <input
+          ref={attachInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            if (event.target.files) void addAttachment(event.target.files);
+            event.target.value = '';
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Attach an image"
+          title="Attach an image (or paste one into the message box)"
+          disabled={sending || pendingImages.length >= CHAT_IMAGES_PER_MESSAGE}
+          onClick={() => attachInputRef.current?.click()}
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <ImagePlus className="h-4 w-4" aria-hidden="true" />
+        </button>
         <textarea
           rows={2}
           value={input}
           onChange={(event) => setInput(event.target.value)}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+            if (files.length > 0) {
+              event.preventDefault();
+              void addAttachment(files);
+            }
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
@@ -894,7 +974,7 @@ export function SiteChatWidget() {
         <button
           type="submit"
           aria-label="Send message"
-          disabled={sending || input.trim() === ''}
+          disabled={sending || (input.trim() === '' && pendingImages.length === 0)}
           className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-600 text-primary-foreground hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
