@@ -550,7 +550,7 @@ const FormListRow = memo(function FormListRow({
 });
 
 export function FormsList() {
-  useDocumentTitle('My Forms');
+  useDocumentTitle('Forms');
   const navigate = useNavigate();
   const { forms, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
   const addFormToApp = useAppStore((s) => s.addFormToApp);
@@ -999,7 +999,7 @@ export function FormsList() {
   return (
     <div className="min-h-screen">
       <Header
-        title="My Forms"
+        title="Forms"
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} aria-label="Manage Packs" title="Manage Packs">
@@ -1018,7 +1018,7 @@ export function FormsList() {
         {selectedAppId && (
           <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             <nav className="flex items-center gap-1.5 text-sm min-w-0" aria-label="Breadcrumb">
-              <button onClick={() => setSelectedAppId(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">My Forms</button>
+              <button onClick={() => setSelectedAppId(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">Forms</button>
               <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 shrink-0" />
               <span className="font-medium text-gray-900 dark:text-slate-100 inline-flex items-center gap-1.5 min-w-0">
                 <AppIdentityTile

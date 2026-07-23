@@ -33,13 +33,14 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
   const homePath = isDemo ? '/dashboard' : '/';
   const navItems = [
     { path: homePath, icon: LayoutDashboard, label: 'Dashboard' },
-    { path: '/forms', icon: FileText, label: 'My Forms' },
-    // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
+    // Diagrams (§11A) sit above Forms (owner direction) — also reachable via the
+    // Dashboard's start buttons; mobile nav deliberately omits them (Dashboard covers it).
+    ...(!isDemo ? [{ path: '/diagrams', icon: Map, label: 'Diagrams' }] : []),
+    { path: '/forms', icon: FileText, label: 'Forms' },
+    // Boxes matches the Apps iconography on Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },
     // Settings moved into the profile menu (Header); Flows is now a first-class section.
     { path: '/flows', icon: Workflow, label: 'Flows' },
-    // Diagrams (§11A) — the list is reachable here AND via the Dashboard's start buttons.
-    ...(!isDemo ? [{ path: '/diagrams', icon: Map, label: 'Diagrams' }] : []),
     // Platform administrators only — instance maintenance, users, upgrades.
     ...(isAdmin ? [{ path: '/admin', icon: ShieldCheck, label: 'Admin' }] : []),
   ];
