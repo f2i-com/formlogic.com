@@ -887,7 +887,7 @@ export function SiteChatWidget() {
         <div
           role="dialog"
           aria-label="Site chat"
-          className="fixed bottom-0 right-0 top-16 z-40 flex w-96 flex-col overflow-hidden border-l border-gray-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
+          className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col overflow-hidden border-l border-gray-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
         >
           {panelBody}
         </div>

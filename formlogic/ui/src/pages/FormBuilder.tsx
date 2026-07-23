@@ -53,7 +53,6 @@ import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, Form
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { useAdminActing, useResourcePaths } from '../components/admin/AdminActingContext';
 import { ScreenModal } from '../components/custom-screen/ScreenModal';
-import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
 import { api, type PackData } from '../lib/api';
@@ -72,7 +71,6 @@ import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboar
 import { usePersistentBoolean } from '../hooks/usePersistentBoolean';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
-import { useAiAvailable } from '../hooks/useAiAvailable';
 import { useUIStore } from '../stores/uiStore';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
@@ -264,22 +262,6 @@ function BuilderHeaderButton({
   );
 }
 
-function BuilderAiButton({ showLabel, onClick }: { showLabel: boolean; onClick: () => void }) {
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={onClick}
-      title="Generate with AI"
-      aria-label="Generate with AI"
-      className="whitespace-nowrap border-primary-200 bg-primary-50 text-primary-700 hover:border-primary-300 hover:bg-primary-100 hover:text-primary-800 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200 dark:hover:border-primary-400/50 dark:hover:bg-primary-500/15"
-    >
-      <Sparkles className="h-4 w-4 text-primary-500 dark:text-primary-300" />
-      {showLabel && <span>AI</span>}
-    </Button>
-  );
-}
-
 const BUILDER_BELOW_MD_QUERY = '(max-width: 767.98px)';
 
 function mediaMatches(query: string, fallback: boolean): boolean {
@@ -317,9 +299,6 @@ export default function FormBuilder() {
   const acting = useAdminActing();
   const paths = useResourcePaths();
   const [searchParams, setSearchParams] = useSearchParams();
-  // Whether the built-in AI is available (AI_ENABLED + configured). Hides the "Generate with AI"
-  // entry points when off — users can still bring their own AI via the MCP "Connect an AI" flow.
-  const aiAvailable = useAiAvailable();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   // Snapshot of the form serialized to a pack, captured when "Publish as pack" opens (so
   // it stays stable while the publish dialog is open rather than rebuilding on each edit).
@@ -366,8 +345,6 @@ export default function FormBuilder() {
     loadFullForm,
     updateForm,
     addField,
-    addFields,
-    setFields,
     updateField,
     deleteField,
     reorderFields,
@@ -473,18 +450,18 @@ export default function FormBuilder() {
   }, [formId, loadFullForm]);
   const loadFinished = loadedFor === formId;
 
-  // First-run onboarding routes "Generate with AI" here as ?ai=1 — open the AI generator once the
-  // form has loaded, then strip the param so it doesn't re-open on refresh/navigation.
+  // First-run onboarding routes "AI" here as ?ai=1 — the chat is the AI surface now
+  // (owner direction: the generator popup is retired), so open the chat once loaded
+  // and strip the param so it doesn't re-open on refresh/navigation.
   const aiAutoOpened = useRef(false);
   useEffect(() => {
     if (loadFinished && !aiAutoOpened.current && searchParams.get('ai') !== null) {
       aiAutoOpened.current = true;
-      // Only auto-open the generator if the in-app AI is actually available; otherwise just
-      // strip the param (a stale/hand-typed ?ai=1 shouldn't surface a dead modal).
-      if (aiAvailable) setActiveModal('ai');
+      useUIStore.getState().setChatOpen(true);
+      useUIStore.getState().setChatMinimized(false);
       setSearchParams((p) => { p.delete('ai'); return p; }, { replace: true });
     }
-  }, [loadFinished, searchParams, setSearchParams, aiAvailable]);
+  }, [loadFinished, searchParams, setSearchParams]);
 
   // On a wide screen, open the builder with both docks: select the first editable
   // field once the form loads so the settings dock appears alongside the (default-open)
@@ -1033,36 +1010,6 @@ export default function FormBuilder() {
     }
   };
 
-  const handleAIGenerate = (r: AIGenerateResult) => {
-    // Edit mode (replaceFields): the AI saw the existing form, so its script is a MODIFICATION →
-    // apply it. Create mode: don't clobber a script the user already wrote.
-    const applyScript = !!r.logicScript && (r.replaceFields || !form.logicScript);
-    updateForm(form.id, {
-      title: r.title || form.title,
-      description: r.description || form.description,
-      ...(applyScript ? { logicScript: r.logicScript } : {}),
-      logicPrompt: (applyScript ? r.logicPrompt : undefined) ?? r.prompt,
-    });
-
-    if (r.replaceFields) {
-      // Edit: replace the whole field set as one undo step (the AI returned the full modified list,
-      // preserving ids for fields it kept so responses/logic stay valid).
-      setFields(form.id, r.fields);
-      if (r.fields.length > 0) setSelectedField(r.fields[0].id);
-    } else {
-      // Create/append: add generated fields as ONE undo step (not one per field).
-      const created = addFields(form.id, r.fields.map((field) => ({
-        type: field.type,
-        label: field.label,
-        description: field.description,
-        placeholder: field.placeholder,
-        required: field.required,
-        properties: field.properties || {},
-      })));
-      if (created.length > 0) setSelectedField(created[0].id);
-    }
-  };
-
   const closeModal = () => setActiveModal(null);
 
   // Publish — make it a real activation moment: confirm + surface the live link so
@@ -1258,8 +1205,6 @@ export default function FormBuilder() {
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-          {aiAvailable && <BuilderAiButton showLabel={showHeaderLabels} onClick={() => setActiveModal('ai')} />}
-          {aiAvailable && <BuilderToolbarDivider />}
 
           {!foldMiddleClusters && (
             <>
@@ -1456,15 +1401,11 @@ export default function FormBuilder() {
                       <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />}>
                         Add Field
                       </Button>
-                      {aiAvailable && (
-                        <>
-                          <span className="text-gray-400 dark:text-slate-500">or</span>
-                          <Button onClick={() => setActiveModal('ai')}>
-                            <Sparkles className="mr-2 h-4 w-4 text-primary-foreground/90" />
-                            Generate with AI
-                          </Button>
-                        </>
-                      )}
+                      <span className="text-gray-400 dark:text-slate-500">or</span>
+                      <Button onClick={() => { useUIStore.getState().setChatOpen(true); useUIStore.getState().setChatMinimized(false); }}>
+                        <Sparkles className="mr-2 h-4 w-4 text-primary-foreground/90" />
+                        Chat with AI
+                      </Button>
                     </div>
                   </div>
                 ) : (
@@ -1637,15 +1578,6 @@ export default function FormBuilder() {
           accent={form.theme?.primaryColor}
         />
       )}
-
-      {/* AI Form Generator Modal */}
-      <AIFormGenerator
-        isOpen={activeModal === 'ai'}
-        onClose={closeModal}
-        onGenerate={handleAIGenerate}
-        existingFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type, required: f.required }))}
-        existingScript={form.logicScript || ''}
-      />
 
       {/* Theme Editor Modal */}
       <ThemeEditor
