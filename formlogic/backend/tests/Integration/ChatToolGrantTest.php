@@ -333,9 +333,11 @@ class ChatToolGrantTest extends TestCase
         $body = self::decode($resp);
         $this->assertArrayNotHasKey('data', $body, 'catalog is TOP-LEVEL {"tools":…} (the pinned wire shape)');
         $names = array_column($body['tools'] ?? [], 'name');
+        // Pin extended 2026-07-23 (extensible-flows §25 step 8): + blueprint_propose_elements.
         $this->assertSame([
             'list_apps', 'list_forms', 'get_form', 'create_app', 'create_app_form',
             'create_form', 'update_form', 'add_form_to_app', 'create_flow', 'list_responses',
+            'blueprint_propose_elements',
         ], $names);
         foreach ($body['tools'] as $tool) {
             $this->assertNotSame('', $tool['description'] ?? '');

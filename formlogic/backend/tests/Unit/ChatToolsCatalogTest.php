@@ -18,10 +18,14 @@ class ChatToolsCatalogTest extends TestCase
 {
     public function testChatCatalogIsExactlyTheTenPlanTools(): void
     {
+        // Original pin: the Site-AI plan's ten v1 tools. DELIBERATELY extended
+        // 2026-07-23 (extensible-flows §25 step 8): blueprint_propose_elements routes
+        // Copilot Blueprint edits through the typed operation gateway (preview-first).
         $catalog = ChatToolsService::chatCatalog();
         $this->assertSame([
             'list_apps', 'list_forms', 'get_form', 'create_app', 'create_app_form',
             'create_form', 'update_form', 'add_form_to_app', 'create_flow', 'list_responses',
+            'blueprint_propose_elements',
         ], array_column($catalog, 'name'));
         foreach ($catalog as $tool) {
             $this->assertSame(['name', 'description', 'inputSchema'], array_keys($tool));
