@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { ArrowLeft, History, Loader2, Map as MapIcon, Sparkles, User as UserIcon, Wand2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { formatDateTimeInZone, useAccountTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import type { Blueprint } from '../../types/blueprints';
 import { DiagramCanvas } from './DiagramCanvas';
@@ -237,6 +238,8 @@ function summarizeOps(operations: Array<{ type: string; targetId: string | null 
  * batches wear a sparkle, the launcher a wand, your own edits a person.
  */
 function BuildTimeline({ blueprintId, semanticRevision }: { blueprintId: string; semanticRevision: number }) {
+  // Server timestamps are UTC — show each entry on the viewer's clock.
+  const tz = useAccountTimezone();
   const [history, setHistory] = useState<Array<{
     changeSetId: string; origin: string; createdAt: string;
     semanticRevision: number | null; operations: Array<{ type: string; targetId: string | null }>;
@@ -272,7 +275,7 @@ function BuildTimeline({ blueprintId, semanticRevision }: { blueprintId: string;
                 {summarizeOps(entry.operations)}
               </p>
               <p className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500">
-                {entry.createdAt}
+                {formatDateTimeInZone(entry.createdAt, tz)}
                 {entry.semanticRevision !== null ? ` · rev ${entry.semanticRevision}` : ''}
               </p>
             </li>

@@ -5,12 +5,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { formatDateTimeInZone, useAccountTimezone } from '../../lib/timezone';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import type { Blueprint } from '../../types/blueprints';
 
 export default function DiagramsIndex() {
   const navigate = useNavigate();
+  // Server timestamps are UTC — render them on the viewer's clock (account tz →
+  // browser tz → UTC), the platform-chrome convention.
+  const tz = useAccountTimezone();
   const [diagrams, setDiagrams] = useState<Blueprint[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingDelete, setPendingDelete] = useState<Blueprint | null>(null);
@@ -82,7 +86,7 @@ export default function DiagramsIndex() {
               <button type="button" onClick={() => navigate(`/diagrams/${diagram.id}`)} className="min-w-0 flex-1 text-left">
                 <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{diagram.name}</p>
                 <p className="text-xs text-gray-400 dark:text-slate-500">
-                  {diagram.status} · rev {diagram.semanticRevision} · updated {diagram.updatedAt}
+                  {diagram.status} · rev {diagram.semanticRevision} · updated {formatDateTimeInZone(diagram.updatedAt, tz)}
                 </p>
               </button>
               <Button
