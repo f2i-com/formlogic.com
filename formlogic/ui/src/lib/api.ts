@@ -1181,7 +1181,31 @@ class ApiClient {
     return this.request(`/forms${query ? `?${query}` : ''}`);
   }
 
+  // Demo-local FORM access, registered by formStore at module init (a direct import
+  // here would be circular: formStore imports api). Demo-created forms live ONLY in
+  // the store's per-browser state — this bridge lets every page that reads through
+  // the api (custom-screen Studio /forms/:id/screen/edit, Play /forms/:id/screen, …)
+  // view AND edit them in the demo instead of 404ing against a server that has
+  // never heard of the form.
+  private _demoLocalForms: {
+    get: (id: string) => Form | undefined;
+    update: (id: string, updates: Partial<Form>) => Promise<Form | undefined>;
+  } | null = null;
+
+  registerDemoLocalForms(resolver: {
+    get: (id: string) => Form | undefined;
+    update: (id: string, updates: Partial<Form>) => Promise<Form | undefined>;
+  }): void {
+    this._demoLocalForms = resolver;
+  }
+
   async getForm(id: string): Promise<ApiResponse<{ form: Form }>> {
+    if (this._demoMode && isDemoLocalId(id) && this._demoLocalForms) {
+      const form = this._demoLocalForms.get(id);
+      return form
+        ? { data: { form } }
+        : { error: 'This demo form was not found in this browser (demo forms are never saved to the server).', status: 404 };
+    }
     return this.request(`/forms/${id}`);
   }
 
@@ -1193,6 +1217,14 @@ class ApiClient {
   }
 
   async updateForm(id: string, data: Partial<Form>): Promise<ApiResponse<{ form: Form }>> {
+    // Demo-local form: the write lands in the store (persisted per browser), so the
+    // Studio's save works in the demo — the server stays untouched and read-only.
+    if (this._demoMode && isDemoLocalId(id) && this._demoLocalForms) {
+      const form = await this._demoLocalForms.update(id, data);
+      return form
+        ? { data: { form } }
+        : { error: 'This demo form was not found in this browser (demo forms are never saved to the server).', status: 404 };
+    }
     return this.request(`/forms/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),

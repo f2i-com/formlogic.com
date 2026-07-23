@@ -146,8 +146,8 @@ describe('demo scenarios', () => {
     expect(events).toContain('link:formScreen');
   });
 
-  it('idea-to-app: sketches the idea as a DIAGRAM first, then builds the poll app', async () => {
-    const { stage, events, forms, diagrams } = makeStage();
+  it('idea-to-app: sketches the idea as a DIAGRAM first, then builds the poll app + its flow', async () => {
+    const { stage, events, forms, flows, bindings, diagrams } = makeStage();
     const memory: DemoMemory = {};
     await ideaToApp.run(stage, memory);
 
@@ -164,6 +164,14 @@ describe('demo scenarios', () => {
     expect(events.some((e) => e.startsWith('go:/diagrams/'))).toBe(true);
     expect(forms.get(memory.formId!)?.status).toBe('published');
     expect(forms.get(memory.formId!)?.customScreen?.enabled).toBe(true);
+    // The flow the sketch promised is REALLY created (browser-local) and wired to the
+    // poll's submits — the diagram's triggers edge made real.
+    expect(flows).toHaveLength(1);
+    expect(flows[0].slug).toBe('close-lunch-voting');
+    expect(bindings).toEqual([
+      { formId: memory.formId, payload: expect.objectContaining({ event: 'form.submitted', flow: 'close-lunch-voting' }) },
+    ]);
+    expect(events).toContain(`go:/flows?flow=${encodeURIComponent(flows[0].id)}`);
   });
 
   it('approval workflow: form + condition-branching flow + form.submitted binding', async () => {

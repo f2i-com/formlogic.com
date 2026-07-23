@@ -282,8 +282,10 @@ const feedbackForm: DemoScenario = {
 };
 
 /** The shared lunch-poll build (form → code screen → seeded votes → publish → preview):
- *  the second act of BOTH 'Build a quick poll…' and 'Turn my idea into an app'. */
-async function buildLunchPollApp(stage: DemoStage, memory: DemoMemory): Promise<void> {
+ *  the second act of BOTH 'Build a quick poll…' and 'Turn my idea into an app'. With
+ *  withFlow, the flow the idea-to-app DIAGRAM sketched ('Close voting at noon') is
+ *  really created too — a browser-local workspace flow, wired to the poll's submits. */
+async function buildLunchPollApp(stage: DemoStage, memory: DemoMemory, opts: { withFlow?: boolean } = {}): Promise<void> {
   let form: Form | null = null;
   let pollField: FormField | null = null;
   const choices = ['Pizza', 'Sushi', 'Tacos', 'Salad'];
@@ -309,6 +311,34 @@ async function buildLunchPollApp(stage: DemoStage, memory: DemoMemory): Promise<
     await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Pizza' });
     await stage.seedRecord(memory.formId!, { [memory.pollFieldId!]: 'Tacos' });
   });
+  if (opts.withFlow) {
+    await stage.say('The sketch also promised an automation — the "Close voting at noon" flow. Creating it for real.');
+    let flowId = '';
+    await stage.tool('create_flow', 'Close voting at noon', async () => {
+      const flow = await stage.createFlow({
+        name: 'Close voting at noon',
+        slug: 'close-lunch-voting',
+        description: 'Counts the votes and announces the winner (from the Team lunch club sketch).',
+        flowJson: {
+          nodes: [
+            { id: 'in', type: 'input' },
+            { id: 'announce', type: 'template', data: { template: 'Voting is closed - {{inputs.winner}} wins with {{inputs.votes}} votes. Lunch is booked.' } },
+            { id: 'out', type: 'output' },
+          ],
+          edges: [
+            { source: 'in', target: 'announce' },
+            { source: 'announce', target: 'out' },
+          ],
+        },
+      });
+      flowId = flow.id;
+      return { link: { kind: 'flow', id: flow.id }, goTo: `/flows?flow=${encodeURIComponent(flow.id)}` };
+    });
+    await stage.tool('create_flow_binding', 'Each vote triggers the flow', async () => {
+      await stage.createFormBinding(memory.formId!, { flow: 'close-lunch-voting', flowDefinitionId: flowId, event: 'form.submitted', mode: 'async', enabled: true });
+    });
+    await stage.say('That is the diagram\'s triggers edge made real: every submitted vote can run the flow. Now the finale — publishing.');
+  }
   await stage.tool('update_form', 'Publishing the poll', async () => {
     await stage.updateForm(memory.formId!, { status: 'published' });
     return { link: { kind: 'formScreen', id: memory.formId! }, goTo: `/preview/${memory.formId}` };
@@ -362,9 +392,9 @@ const ideaToApp: DemoScenario = {
       return { link: { kind: 'diagram', id: diagramId }, goTo: `/diagrams/${diagramId}` };
     });
     await stage.say(
-      'That is the idea as a living sketch: who uses it, what they touch, what runs automatically. On a full account the "Create app" button materialises a diagram like this into a real app with linked forms and flows. The demo cannot create server apps, so I will build the heart of it right here instead — the poll with its live results screen.'
+      'That is the idea as a living sketch: who uses it, what they touch, what runs automatically. On a full account the "Create app" button materialises a diagram like this into a real app with linked forms and flows. The demo cannot create server apps, so I will build the pieces right here instead — the poll, its live results screen, and the flow.'
     );
-    await buildLunchPollApp(stage, memory);
+    await buildLunchPollApp(stage, memory, { withFlow: true });
   },
 };
 

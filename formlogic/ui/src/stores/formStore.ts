@@ -1418,3 +1418,22 @@ export const useFormStore = create<FormState>()(
     }
   )
 );
+
+// Demo overlay bridge: demo-created (demolocal_) forms live ONLY in this store, but the
+// custom-screen Studio/Play pages read + save through api.getForm/updateForm — this
+// resolver lets those api calls serve the store's copy in demo mode. Registered here
+// (not imported by api.ts) because formStore already imports api — the reverse import
+// would be circular. updateForm's demo branch persists locally and never hits the server.
+// The typeof guard keeps test suites that vi.mock('../lib/api') with a partial fake
+// importable — the bridge is production wiring, not something every mock must model.
+if (typeof api.registerDemoLocalForms === 'function') {
+  api.registerDemoLocalForms({
+    get: (id) => useFormStore.getState().forms.find((f) => f.id === id),
+    update: async (id, updates) => {
+      const store = useFormStore.getState();
+      if (!store.forms.some((f) => f.id === id)) return undefined;
+      await store.updateForm(id, updates);
+      return useFormStore.getState().forms.find((f) => f.id === id);
+    },
+  });
+}
