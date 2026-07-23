@@ -209,6 +209,16 @@ fn is_loadable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Any path component starting with `%` — an env-var-shaped path (mirrors the
+/// aokie package-signer rule exactly, AK-002). These only appear when a
+/// runtime failed to expand `%SystemDrive%`-style strings and wrote them as
+/// literal relative paths; whatever hides inside is invisible to search-order
+/// intuition, so an UNLISTED env-shaped file is a tamper regardless of its
+/// extension (the inert-extras allowance never applies to them).
+fn is_env_shaped(rel: &str) -> bool {
+    rel.split('/').any(|component| component.starts_with('%'))
+}
+
 /// Assess a plugin directory. Never panics; any IO/parse problem on a
 /// PRESENT manifest is `Tampered` (fail closed), a MISSING manifest is
 /// `Unsigned` (the sideload case).
@@ -266,6 +276,9 @@ fn verify(dir: &Path, manifest_path: &Path) -> Result<PackageTrust, String> {
         if f.path.contains("..") || f.path.starts_with('/') || f.path.contains(':') {
             return Err(format!("manifest lists an unsafe path {:?}", f.path));
         }
+        if is_env_shaped(&f.path) {
+            return Err(format!("manifest lists an env-var-shaped path {:?}", f.path));
+        }
         let disk = dir.join(&f.path);
         let (sha, size) =
             sha256_file(&disk).map_err(|_| format!("listed file missing/unreadable: {}", f.path))?;
@@ -302,6 +315,9 @@ fn verify(dir: &Path, manifest_path: &Path) -> Result<PackageTrust, String> {
             }
             if is_loadable(&path) && !listed(&rel) {
                 return Err(format!("unlisted executable/loadable file present: {rel}"));
+            }
+            if is_env_shaped(&rel) && !listed(&rel) {
+                return Err(format!("unlisted env-var-shaped path present: {rel}"));
             }
         }
     }
@@ -478,6 +494,47 @@ mod tests {
             PackageTrust::Tampered(r) => assert!(r.contains("unlisted"), "{r}"),
             other => panic!("expected Tampered, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn env_shaped_paths_always_quarantine() {
+        // AK-002 mirror: `%…` paths never get the inert-extras allowance —
+        // top-level, nested, and case-variant forms all quarantine, whatever
+        // their extension.
+        let _g = env_lock();
+        let d = tmp("envshape");
+        write_files(&d, FILES);
+        sign_dir(&d, "test-2026", FILES);
+        std::env::set_var(EXTRA_KEYS_ENV, format!("test-2026={}", test_pubkey()));
+        for rel in [
+            "%SystemDrive%/ProgramData/cache.bin",
+            "sub/%systemdrive%/cache.bin",
+            "%APPDATA%.txt",
+        ] {
+            let full = d.join(rel);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(&full, b"parked").unwrap();
+            match assess(&d) {
+                PackageTrust::Tampered(r) => assert!(r.contains("env-var-shaped"), "{rel}: {r}"),
+                other => panic!("{rel}: expected Tampered, got {other:?}"),
+            }
+            std::fs::remove_file(&full).unwrap();
+        }
+        // A signed manifest LISTING an env-shaped path is refused too.
+        let with_env: &[(&str, &[u8])] = &[
+            ("manifest.json", b"{\"id\":\"test\"}"),
+            ("plugin.exe", b"binary bytes"),
+            ("runtime.dll", b"dll bytes"),
+            ("%SystemDrive%/cache.bin", b"parked"),
+        ];
+        write_files(&d, &[("%SystemDrive%/cache.bin", b"parked")]);
+        sign_dir(&d, "test-2026", with_env);
+        match assess(&d) {
+            PackageTrust::Tampered(r) => assert!(r.contains("env-var-shaped"), "{r}"),
+            other => panic!("expected Tampered, got {other:?}"),
+        }
+        std::env::remove_var(EXTRA_KEYS_ENV);
         let _ = std::fs::remove_dir_all(&d);
     }
 

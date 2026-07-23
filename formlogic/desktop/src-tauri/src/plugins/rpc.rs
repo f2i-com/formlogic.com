@@ -292,7 +292,22 @@ pub fn spawn_plugin(spec: &SpawnSpec<'_>, logs: LogRing) -> std::io::Result<Plug
         // the managed-beta WinUSB self-signing path (aokie-dongle
         // dev_self_sign_allowed). env_clear would otherwise strip it and the
         // elevated driver install always degrades to a refused production job.
-        allow.extend(["SystemRoot", "TEMP", "TMP", "AOKIE_ALLOW_SELF_SIGNED_DRIVER"]);
+        //
+        // SystemDrive/ProgramData/ALLUSERSPROFILE are machine paths (not
+        // secrets) Windows components expand at runtime; with them stripped,
+        // the certificate cache's `%SystemDrive%\ProgramData\…\Caches` path
+        // failed to expand and was created LITERALLY inside the signed plugin
+        // directory (CWD), breaking package verification on cache rotation
+        // (AK-002 root cause). Runtime caches now land in real app-data.
+        allow.extend([
+            "SystemRoot",
+            "SystemDrive",
+            "ProgramData",
+            "ALLUSERSPROFILE",
+            "TEMP",
+            "TMP",
+            "AOKIE_ALLOW_SELF_SIGNED_DRIVER",
+        ]);
     }
     for key in allow {
         if let Some(v) = std::env::var_os(key) {
