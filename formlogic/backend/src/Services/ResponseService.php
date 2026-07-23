@@ -3434,34 +3434,27 @@ class ResponseService
                 $rowErrors = [];
                 $answers = [];
 
-                // Map CSV columns to field IDs using columnMapping
+                // Map CSV columns to field IDs using columnMapping. This step only
+                // COERCES (CSV cells are strings); validation happens through the
+                // canonical validator below (audit FL-16) — a non-numeric number is
+                // kept as-is so the validator names the failure.
                 foreach ($columnMapping as $csvColumn => $fieldId) {
                     if ($fieldId === '' || $fieldId === 'skip') {
                         continue;
                     }
 
                     $value = $row[$csvColumn] ?? '';
-
-                    // Coerce types based on field type
                     $fieldType = $fieldTypeMap[$fieldId] ?? 'short_text';
                     switch ($fieldType) {
                         case 'number':
-                            if ($value !== '' && !is_numeric($value)) {
-                                $rowErrors[] = "Field '" . ($fieldLabelMap[$fieldId] ?? $fieldId) . "': non-numeric value '{$value}'";
-                                continue 2; // skip this field, process remaining fields
-                            }
-                            $value = $value !== '' ? floatval($value) : null;
+                            $value = $value === '' ? null : (is_numeric($value) ? floatval($value) : $value);
                             break;
                         case 'checkboxes':
                             $value = $value !== '' ? array_map('trim', explode(',', $value)) : [];
                             break;
                         case 'rating':
                         case 'scale':
-                            if ($value !== '' && !is_numeric($value)) {
-                                $rowErrors[] = "Field '" . ($fieldLabelMap[$fieldId] ?? $fieldId) . "': non-numeric value '{$value}'";
-                                continue 2;
-                            }
-                            $value = $value !== '' ? intval($value) : null;
+                            $value = $value === '' ? null : (is_numeric($value) ? intval($value) : $value);
                             break;
                         default:
                             // Keep as string
@@ -3485,9 +3478,32 @@ class ResponseService
                     continue;
                 }
 
-                // Report partial validation errors even if some fields were valid
-                if (!empty($rowErrors)) {
+                // Audit FL-16: CSV import rides the SAME sanitize → validate → normalize
+                // pipeline as API/MCP creation — an import must never mint records the
+                // other write paths would reject. sanitize strips calculated/hidden/
+                // unknown columns (they are computed or non-input, never stored raw);
+                // validate applies required/choice/range/email/date/file/builder rules
+                // with conditional visibility; INVALID ROWS ARE NEVER INSERTED and are
+                // reported with structured per-field errors.
+                $answers = $this->sanitizeSubmittedAnswers($fields, $answers);
+                $validationErrors = $this->validateSubmittedAnswers($fields, $answers);
+                if ($validationErrors !== []) {
+                    foreach ($validationErrors as $errFieldId => $message) {
+                        $rowErrors[] = "Field '" . ($fieldLabelMap[$errFieldId] ?? $errFieldId) . "': {$message}";
+                    }
+                    $skipped++;
                     $errors[] = ['row' => $rowIndex + 1, 'errors' => $rowErrors];
+                    continue;
+                }
+                $answers = $this->normalizeAnswers($fields, $answers, $formId);
+
+                // Explicit JSON-encoding failure handling (audit FL-16): a cell with
+                // invalid character data must fail ITS row, not corrupt the store.
+                $answersJson = json_encode($answers);
+                if ($answersJson === false) {
+                    $skipped++;
+                    $errors[] = ['row' => $rowIndex + 1, 'errors' => ['Row contains values that cannot be encoded (invalid character data)']];
+                    continue;
                 }
 
                 try {
@@ -3506,7 +3522,7 @@ class ResponseService
 
                     $sqliteStmt->execute([
                         'id' => $id,
-                        'answers' => json_encode($answers),
+                        'answers' => $answersJson,
                         'metadata' => json_encode($metadata),
                         'status' => 'submitted',
                         'submitted_at' => $now,
