@@ -96,6 +96,30 @@ class BlueprintController
         return $this->jsonResponse($response, ['deleted' => true]);
     }
 
+    /** §14 undo: apply the newest change set's stored inverses as a new audited batch. */
+    public function undo(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        try {
+            return $this->jsonResponse(
+                $response,
+                $this->blueprints->undoLastChangeSet((string) $userId, (string) ($args['blueprintId'] ?? ''))
+            );
+        } catch (BlueprintRevisionConflictException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'revision_conflict',
+                'message' => 'The blueprint changed — reload and retry',
+                'currentSemanticRevision' => $e->currentRevision,
+            ], 409);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
     /** §12: park a validated batch for approval (the canvas ghost layer reads it). */
     public function proposeChangeSet(Request $request, Response $response, array $args): Response
     {

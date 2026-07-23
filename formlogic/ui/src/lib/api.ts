@@ -2770,6 +2770,11 @@ class ApiClient {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
   }
 
+  /** §14 undo: apply the newest change set's stored inverses as a new audited batch. */
+  async undoBlueprint(blueprintId: string): Promise<ApiResponse<import('../types/blueprints').BlueprintCommitResult & { undid: string }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/undo`, { method: 'POST' });
+  }
+
   // §12 Copilot change sets: proposals parked for approval (the canvas ghost layer).
   async listBlueprintChangeSets(blueprintId: string): Promise<ApiResponse<{
     changeSets: Array<{ id: string; origin: string; summary: string | null; baseSemanticRevision: number; operations: import('../types/blueprints').BlueprintOperation[]; createdAt: string }>;

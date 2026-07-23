@@ -313,6 +313,82 @@ class BlueprintService
         ")->execute(['id' => $changeSetId]);
     }
 
+    /**
+     * §14 undo: apply the stored INVERSES of the newest undoable change set as a NEW
+     * audited change set (never a rewind — history only moves forward). Inverses run in
+     * REVERSE order; change sets whose operations have no inverses (layout-only) are
+     * skipped when finding the target. Applying against the CURRENT revision means an
+     * inverse that no longer fits (e.g. the element was since deleted) refuses cleanly.
+     *
+     * @return array{changeSetId: string, semanticRevision: int, layoutRevision: int, undid: string}
+     */
+    public function undoLastChangeSet(string $ownerUserId, string $blueprintId): array
+    {
+        $row = $this->ownedRow($ownerUserId, $blueprintId);
+        if ($row === null) {
+            throw new \InvalidArgumentException('Unknown blueprint');
+        }
+        // Newest semantic change set with inverses that hasn't itself been undone yet.
+        $stmt = $this->mysql->prepare("
+            SELECT change_set_id FROM blueprint_operations
+            WHERE blueprint_id = :b AND inverse_json IS NOT NULL
+              AND change_set_id NOT IN (
+                  SELECT DISTINCT target FROM (
+                      SELECT SUBSTRING_INDEX(op_type, ':', -1) AS target
+                      FROM blueprint_operations
+                      WHERE blueprint_id = :b2 AND op_type LIKE 'undo-of:%'
+                  ) undone
+              )
+            ORDER BY id DESC LIMIT 1
+        ");
+        $stmt->execute(['b' => $blueprintId, 'b2' => $blueprintId]);
+        $changeSetId = $stmt->fetchColumn();
+        if (!$changeSetId) {
+            throw new \InvalidArgumentException('Nothing to undo');
+        }
+
+        $ops = $this->mysql->prepare('
+            SELECT inverse_json FROM blueprint_operations
+            WHERE blueprint_id = :b AND change_set_id = :cs AND inverse_json IS NOT NULL
+            ORDER BY id DESC
+        ');
+        $ops->execute(['b' => $blueprintId, 'cs' => $changeSetId]);
+        $inverses = [];
+        foreach ($ops->fetchAll() as $op) {
+            $inverse = json_decode((string) $op['inverse_json'], true);
+            if (is_array($inverse)) {
+                $inverse['operationId'] = 'undo-' . bin2hex(random_bytes(8));
+                $inverses[] = $inverse;
+            }
+        }
+        if ($inverses === []) {
+            throw new \InvalidArgumentException('Nothing to undo');
+        }
+        $result = $this->commitOperations($ownerUserId, $blueprintId, [
+            'baseSemanticRevision' => (int) $row['semantic_revision'],
+            'origin' => 'manual',
+            'operations' => $inverses,
+        ]);
+        // Marker row so the SAME change set is never offered for undo twice (redo =
+        // undoing the undo, which this naturally supports).
+        $this->mysql->prepare('
+            INSERT INTO blueprint_operations
+                (operation_id, blueprint_id, change_set_id, seq, op_type, target_id,
+                 payload_json, inverse_json, semantic_revision, layout_revision, actor_user_id, origin)
+            VALUES (:op, :b, :cs, 0, :t, NULL, NULL, NULL, :srev, :lrev, :actor, :origin)
+        ')->execute([
+            'op' => 'undomark-' . bin2hex(random_bytes(8)),
+            'b' => $blueprintId,
+            'cs' => $result['changeSetId'],
+            't' => 'undo-of:' . $changeSetId,
+            'srev' => $result['semanticRevision'],
+            'lrev' => $result['layoutRevision'],
+            'actor' => $ownerUserId,
+            'origin' => 'manual',
+        ]);
+        return $result + ['undid' => (string) $changeSetId];
+    }
+
     /** @return array<string, mixed> */
     private function loadProposed(string $ownerUserId, string $blueprintId, string $changeSetId): array
     {
@@ -573,10 +649,17 @@ class BlueprintService
     {
         switch ($plan['type']) {
             case 'blueprint.element.create':
+                // ON DUPLICATE = reviving a TOMBSTONE (validation already guaranteed no
+                // LIVE element holds this id) — undo-of-a-delete / redo-of-a-create.
                 $this->mysql->prepare('
                     INSERT INTO blueprint_elements
                         (id, blueprint_id, element_type, resource_ref_json, properties_json, semantic_revision)
                     VALUES (:id, :b, :t, :ref, :props, :rev)
+                    ON DUPLICATE KEY UPDATE element_type = VALUES(element_type),
+                        resource_ref_json = VALUES(resource_ref_json),
+                        properties_json = VALUES(properties_json),
+                        semantic_revision = VALUES(semantic_revision),
+                        deleted_at = NULL
                 ')->execute([
                     'id' => $plan['targetId'],
                     'b' => $blueprintId,

@@ -306,6 +306,32 @@ class BlueprintTest extends TestCase
         $this->assertCount(0, self::$blueprints->listProposedChangeSets($this->userId, $blueprint['id']));
     }
 
+    public function testUndoAppliesStoredInversesAsNewChangeSets(): void
+    {
+        $blueprint = $this->createBlueprint();
+        try {
+            self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+            $this->fail('expected nothing-to-undo');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('Nothing to undo', $e->getMessage());
+        }
+
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'n1', 'elementType' => 'note', 'properties' => ['text' => 'hello']])],
+        ]);
+        // Undo the create → the element tombstones (the stored inverse is a delete)…
+        $undo = self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $this->assertSame(2, $undo['semanticRevision'], 'undo is a NEW forward change set, never a rewind');
+        $this->assertCount(0, self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements']);
+        // …and undoing again REDOES it (the undo batch has inverses of its own).
+        $redo = self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $this->assertSame(3, $redo['semanticRevision']);
+        $elements = self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'];
+        $this->assertCount(1, $elements);
+        $this->assertSame('hello', $elements[0]['properties']['text'] ?? null);
+    }
+
     public function testOperationLogRecordsInversesAndRefusesReplays(): void
     {
         $blueprint = $this->createBlueprint();

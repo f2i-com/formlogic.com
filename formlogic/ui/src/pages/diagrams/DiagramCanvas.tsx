@@ -15,6 +15,7 @@ import {
   NodeResizer,
   Position,
   ReactFlow,
+  applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
   type Connection,
@@ -38,6 +39,7 @@ import {
   Sparkles,
   Square,
   StickyNote,
+  RotateCcw,
   Trash2,
   Triangle,
   Type,
@@ -710,6 +712,14 @@ export function DiagramCanvas({
   const elements = useMemo(() => blueprint.elements ?? [], [blueprint.elements]);
   const initial = useMemo(() => toCanvas(elements), [elements]);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
+  const [rfEdges, setRfEdges] = useState<Edge[]>(initial.edges);
+  useEffect(() => {
+    setRfEdges(initial.edges);
+  }, [initial]);
+  const onEdgesChange = useCallback(
+    (changes: Parameters<typeof applyEdgeChanges>[0]) => setRfEdges((current) => applyEdgeChanges(changes, current)),
+    [],
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [materializing, setMaterializing] = useState(false);
@@ -1199,7 +1209,6 @@ export function DiagramCanvas({
     return () => document.removeEventListener('keydown', handler);
   }, [deleteSelected, selectedId]);
 
-  const edges = initial.edges;
   const selectedElement = selectedId !== null
     ? elements.find((element) => element.id === selectedId) ?? null
     : null;
@@ -1407,6 +1416,24 @@ export function DiagramCanvas({
           <span className="font-mono text-[10px] text-gray-400 dark:text-slate-500">
             rev {blueprint.semanticRevision}·{blueprint.layoutRevision}
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            aria-label="Undo last change"
+            title="Undo the last change"
+            onClick={() => {
+              void api.undoBlueprint(blueprint.id).then((res) => {
+                if (res.error) {
+                  toast.info('Nothing to undo', typeof res.error === 'string' ? res.error : undefined);
+                  return;
+                }
+                void onReload();
+              });
+            }}
+          >
+            <RotateCcw className="h-4 w-4 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200" />
+          </Button>
           <Button variant="ghost" size="sm" disabled={busy || selectedId === null} onClick={deleteSelected} aria-label="Delete selected element">
             <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
           </Button>
@@ -1487,9 +1514,10 @@ export function DiagramCanvas({
         >
           <ReactFlow
           nodes={[...nodes, ...ghost.nodes]}
-          edges={[...edges, ...ghost.edges]}
+          edges={[...rfEdges, ...ghost.edges]}
           nodeTypes={NODE_TYPES}
           onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
           onDoubleClick={onPaneDoubleClick}

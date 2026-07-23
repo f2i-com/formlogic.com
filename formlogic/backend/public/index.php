@@ -3070,6 +3070,9 @@ $app->group('/api/blueprints', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->delete($request, $response, $getArgs($request));
     });
+    $group->post('/{blueprintId}/undo', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->undo($request, $response, $getArgs($request));
+    });
     $group->post('/{blueprintId}/change-sets', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->proposeChangeSet($request, $response, $getArgs($request));
     });
