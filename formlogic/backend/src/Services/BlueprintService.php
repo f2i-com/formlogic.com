@@ -128,6 +128,21 @@ class BlueprintService
         return $out;
     }
 
+    /** Rename (identity metadata — not a diagram mutation, so no operation batch). */
+    public function renameBlueprint(string $ownerUserId, string $blueprintId, string $name): ?array
+    {
+        $name = trim($name);
+        if ($name === '' || mb_strlen($name) > 120) {
+            throw new \InvalidArgumentException('Blueprint name must be 1-120 characters');
+        }
+        if ($this->ownedRow($ownerUserId, $blueprintId) === null) {
+            return null;
+        }
+        $this->mysql->prepare('UPDATE blueprints SET name = :name, updated_by = :actor WHERE id = :id')
+            ->execute(['name' => $name, 'actor' => $ownerUserId, 'id' => $blueprintId]);
+        return $this->getBlueprint($ownerUserId, $blueprintId);
+    }
+
     public function deleteBlueprint(string $ownerUserId, string $blueprintId): bool
     {
         if ($this->ownedRow($ownerUserId, $blueprintId) === null) {

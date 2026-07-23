@@ -3064,6 +3064,9 @@ $app->group('/api/blueprints', function (RouteCollectorProxy $group) use ($conta
     $group->get('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->get($request, $response, $getArgs($request));
     });
+    $group->patch('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BlueprintController::class)->rename($request, $response, $getArgs($request));
+    });
     $group->delete('/{blueprintId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BlueprintController::class)->delete($request, $response, $getArgs($request));
     });

@@ -2762,6 +2762,10 @@ class ApiClient {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`);
   }
 
+  async renameBlueprint(blueprintId: string, name: string): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
+    return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+  }
+
   async deleteBlueprint(blueprintId: string): Promise<ApiResponse<{ deleted: boolean }>> {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
   }

@@ -14,6 +14,7 @@ export default function DiagramPage() {
   const { diagramId } = useParams<{ diagramId: string }>();
   const [diagram, setDiagram] = useState<Blueprint | null>(null);
   const [missing, setMissing] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
   const load = useCallback(async () => {
     if (!diagramId) return;
@@ -50,8 +51,37 @@ export default function DiagramPage() {
           Diagrams
         </Link>
         <span className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-          <MapIcon className="h-4 w-4 text-primary-600 dark:text-primary-300" />
-          {diagram?.name ?? (missing ? 'Not found' : 'Loading…')}
+          <MapIcon className="h-4 w-4 flex-none text-primary-600 dark:text-primary-300" />
+          {diagram && renaming ? (
+            <input
+              autoFocus
+              defaultValue={diagram.name}
+              aria-label="Diagram name"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setRenaming(false);
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+              onBlur={(e) => {
+                setRenaming(false);
+                const name = e.currentTarget.value.trim();
+                if (name === '' || name === diagram.name) return;
+                void api.renameBlueprint(diagram.id, name).then((res) => {
+                  if (res.data?.blueprint) setDiagram((current) => (current ? { ...current, name } : current));
+                  else toast.error('Rename failed', typeof res.error === 'string' ? res.error : undefined);
+                });
+              }}
+              className="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            />
+          ) : (
+            <button
+              type="button"
+              title={diagram ? 'Rename diagram' : undefined}
+              onClick={() => { if (diagram) setRenaming(true); }}
+              className="rounded px-1 py-0.5 hover:bg-gray-100 dark:hover:bg-slate-800"
+            >
+              {diagram?.name ?? (missing ? 'Not found' : 'Loading…')}
+            </button>
+          )}
         </span>
       </div>
       <div className="min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">

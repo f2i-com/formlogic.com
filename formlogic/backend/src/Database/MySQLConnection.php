@@ -767,6 +767,25 @@ class MySQLConnection
                 PRIMARY KEY (blueprint_id, element_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // §11A D4: the bidirectional association between a diagram element and the real
+        // resource it materialised into/references. last_observed_version snapshots the
+        // resource's updated_at at link time → pull sync reads compare live vs observed
+        // (newer = 'stale' projection, gone = 'missing').
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS blueprint_resource_links (
+                blueprint_id VARCHAR(36) NOT NULL,
+                element_id VARCHAR(64) NOT NULL,
+                resource_type VARCHAR(24) NOT NULL,
+                resource_id VARCHAR(64) NOT NULL,
+                last_observed_version VARCHAR(32) NULL,
+                materialisation_status VARCHAR(16) NOT NULL DEFAULT 'materialised',
+                change_set_id VARCHAR(64) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (blueprint_id, element_id),
+                INDEX idx_bprl_resource (resource_type, resource_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS blueprint_operations (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,

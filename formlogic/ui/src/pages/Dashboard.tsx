@@ -1155,6 +1155,9 @@ export function Dashboard() {
                 <Button variant="outline" onClick={() => setShowAiBuilder(true)} leftIcon={<Sparkles className="h-4 w-4" />}>
                   Describe it with AI
                 </Button>
+                <Button variant="outline" onClick={() => navigate('/diagrams')} leftIcon={<MapIcon className="h-4 w-4" />}>
+                  My diagrams
+                </Button>
                 <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Boxes className="h-4 w-4" />}>
                   Create app
                 </Button>

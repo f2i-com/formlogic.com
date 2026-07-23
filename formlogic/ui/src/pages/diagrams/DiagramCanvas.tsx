@@ -9,8 +9,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Background,
+  ConnectionMode,
   Controls,
   Handle,
+  NodeResizer,
   Position,
   ReactFlow,
   applyNodeChanges,
@@ -76,6 +78,8 @@ type BlueprintNodeData = {
   onAddField?: (name: string) => void;
   /** Injected per-node (notes): save the post-it's text on blur. */
   onSetText?: (text: string) => void;
+  /** Injected per-node (images/shapes): persist a resize (properties w/h). */
+  onResize?: (w: number, h: number) => void;
 };
 
 /** §11.4 node vocabulary → icon (also the canvas tool palette's source of truth). */
@@ -120,11 +124,17 @@ const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string; i
 
 /** Left target + right source connection dots — EVERYTHING connectable gets them
  *  (owner direction: notes, images, shapes and text link up too; ink stays a stroke). */
+const CONNECTOR_DOT =
+  '!h-2.5 !w-2.5 !border-2 !border-white !bg-primary-500 dark:!border-slate-900';
+
+/** A dot on every side — start OR end a wire from any of them (ConnectionMode.Loose). */
 function Connectors() {
   return (
     <>
-      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-gray-400 dark:!border-slate-900 dark:!bg-slate-500" />
-      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-primary-500 dark:!border-slate-900" />
+      <Handle id="t" type="source" position={Position.Top} className={CONNECTOR_DOT} />
+      <Handle id="r" type="source" position={Position.Right} className={CONNECTOR_DOT} />
+      <Handle id="b" type="source" position={Position.Bottom} className={CONNECTOR_DOT} />
+      <Handle id="l" type="source" position={Position.Left} className={CONNECTOR_DOT} />
     </>
   );
 }
@@ -155,14 +165,19 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
   }
   if (d.elementType === 'image' && d.image) {
     return (
-      <div className="relative">
+      <div className="relative h-full w-full">
+        <NodeResizer
+          isVisible={selected}
+          keepAspectRatio
+          minWidth={40}
+          minHeight={40}
+          onResizeEnd={(_event, params) => d.onResize?.(Math.round(params.width), Math.round(params.height))}
+        />
         <img
           src={d.image.src}
-          width={d.image.w}
-          height={d.image.h}
           alt="Pasted concept sketch"
           draggable={false}
-          className={cn('rounded-lg shadow-sm', selected && 'ring-2 ring-primary-500/50')}
+          className={cn('h-full w-full rounded-lg object-fill shadow-sm', selected && 'ring-2 ring-primary-500/50')}
         />
         <Connectors />
       </div>
@@ -174,8 +189,14 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
     const { kind, w, h } = d.shape;
     const stroke = selected ? '#6366f1' : '#94a3b8';
     return (
-      <div className="relative">
-        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-label={`${kind} shape`}>
+      <div className="relative h-full w-full">
+        <NodeResizer
+          isVisible={selected}
+          minWidth={24}
+          minHeight={24}
+          onResizeEnd={(_event, params) => d.onResize?.(Math.round(params.width), Math.round(params.height))}
+        />
+        <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-label={`${kind} shape`}>
           {kind === 'circle' ? (
             <ellipse cx={w / 2} cy={h / 2} rx={w / 2 - 2} ry={h / 2 - 2} fill="none" stroke={stroke} strokeWidth={2} />
           ) : kind === 'triangle' ? (
@@ -218,7 +239,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
     return (
       <div
         className={cn(
-          'min-h-[6.5rem] w-44 rounded-lg border border-amber-200 bg-amber-100 px-2.5 py-2 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/15',
+          'relative min-h-[6.5rem] w-44 rounded-lg border border-amber-200 bg-amber-100 px-2.5 py-2 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/15',
           selected && 'ring-2 ring-amber-400/60',
         )}
       >
@@ -239,13 +260,14 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
             {d.text?.trim() ? d.text : 'Select to write…'}
           </p>
         )}
+        <Connectors />
       </div>
     );
   }
   return (
     <div
       className={cn(
-        'min-w-[10rem] rounded-xl border bg-white px-3 py-2.5 shadow-sm dark:bg-slate-900',
+        'relative min-w-[10rem] rounded-xl border bg-white px-3 py-2.5 shadow-sm dark:bg-slate-900',
         selected ? 'border-primary-500 ring-2 ring-primary-500/30' : 'border-gray-200 dark:border-slate-700',
       )}
     >
@@ -259,11 +281,6 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
         {d.elementType}
         {d.concept ? ' · concept' : ''}
       </p>
-      {d.elementType !== 'form' && d.description?.trim() ? (
-        <p className="mt-1 line-clamp-3 max-w-[13rem] text-[11px] leading-snug text-gray-500 dark:text-slate-400">
-          {d.description}
-        </p>
-      ) : null}
       {/* §11A D2: the ER look — a form entity shows its sketched fields as rows. */}
       {d.elementType === 'form' && d.fields.length > 0 && (
         <ul className="mt-1.5 space-y-0.5 border-t border-gray-100 pt-1.5 dark:border-slate-800">
@@ -298,6 +315,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
           className="nodrag mt-1.5 w-full rounded-md border border-dashed border-gray-300 bg-transparent px-1.5 py-1 font-mono text-[11px] text-gray-700 placeholder:text-gray-400 focus:border-primary-400 focus:outline-none dark:border-slate-700 dark:text-slate-200 dark:placeholder:text-slate-500"
         />
       )}
+      <Connectors />
     </div>
   );
 }
@@ -305,104 +323,142 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
 const SKETCH_FIELD_TYPES = ['short_text', 'long_text', 'number', 'date', 'email', 'phone', 'checkbox', 'dropdown'] as const;
 
 /**
- * §11A D2: the selection editor — a right rail that edits the selected element through
- * ONE element.update operation on Save. Form entities edit title + sketched fields;
- * relation edges edit cardinality + the FK field the materialiser (D3) will create.
- * Draft state is local until Save, so typing never floods the gateway.
+ * §11A D2: the selection editor — a right rail editing the selected element through the
+ * gateway. Forms edit title + sketched fields; other concepts edit title + NOTES (saved
+ * as a linked sticky post-it BESIDE the node, visible on the diagram); notes/text edit
+ * their body; edges edit a relationship NAME (and, for form-form ER relations,
+ * cardinality + FK). Everything can be deleted from here too.
  */
 function SelectionPanel({
   element,
   busy,
+  linkedNoteText,
   onSave,
+  onSaveNote,
+  onDelete,
 }: {
   element: BlueprintElement;
   busy: boolean;
+  /** The text of the sticky note attached to this concept (null = none yet). */
+  linkedNoteText: string | null;
   onSave: (properties: Record<string, unknown>) => void;
+  onSaveNote: (text: string) => void;
+  onDelete: () => void;
 }) {
   const isEdge = element.elementType === 'edge';
-  const isRelation = isEdge && (element.properties as { edgeType?: string }).edgeType === 'relation';
+  const edgeProps = element.properties as { edgeType?: string; cardinality?: string; fkField?: string; label?: string };
+  const isErRelation = isEdge && edgeProps.edgeType === 'relation' && typeof edgeProps.cardinality === 'string';
   const isForm = element.elementType === 'form';
   const isTexty = element.elementType === 'note' || element.elementType === 'text';
+  const isDrawing = element.elementType === 'ink' || element.elementType === 'image' || element.elementType === 'shape';
   const [title, setTitle] = useState(String((element.properties as { title?: unknown }).title ?? ''));
-  const [description, setDescription] = useState(String((element.properties as { description?: unknown }).description ?? ''));
+  const [notes, setNotes] = useState(linkedNoteText ?? '');
   const [bodyText, setBodyText] = useState(String((element.properties as { text?: unknown }).text ?? ''));
   const [fields, setFields] = useState<SketchField[]>(() => sketchFields(element.properties));
-  const [cardinality, setCardinality] = useState(String((element.properties as { cardinality?: unknown }).cardinality ?? '1:N'));
-  const [fkField, setFkField] = useState(String((element.properties as { fkField?: unknown }).fkField ?? ''));
-
-  // Every non-edge element edits its title; forms add the field sketch; relation
-  // edges edit cardinality + FK. Other edges (triggers, …) and the drawing layer
-  // (ink strokes, pasted images) have nothing to edit.
-  if (isEdge && !isRelation) return null;
-  if (element.elementType === 'ink' || element.elementType === 'image') return null;
+  const [cardinality, setCardinality] = useState(String(edgeProps.cardinality ?? '1:N'));
+  const [fkField, setFkField] = useState(String(edgeProps.fkField ?? ''));
+  const [edgeLabel, setEdgeLabel] = useState(String(edgeProps.label ?? ''));
 
   const save = () => {
-    if (isRelation) {
-      onSave({ ...element.properties, cardinality, fkField: fkField.trim() });
+    if (isEdge) {
+      const next: Record<string, unknown> = { ...element.properties };
+      if (edgeLabel.trim() === '') delete next.label;
+      else next.label = edgeLabel.trim();
+      if (isErRelation) {
+        next.cardinality = cardinality;
+        next.fkField = fkField.trim();
+      }
+      onSave(next);
+      return;
+    }
+    if (isTexty) {
+      const next: Record<string, unknown> = { ...element.properties, text: bodyText };
+      delete next.title;
+      onSave(next);
       return;
     }
     const next: Record<string, unknown> = {
       ...element.properties,
       title: title.trim() === '' ? 'Untitled' : title.trim(),
     };
+    delete next.description; // superseded by the attached sticky note
     if (isForm) {
       next.fields = fields.filter((field) => field.name.trim() !== '').map((field) => ({ name: field.name.trim(), type: field.type }));
-    } else if (isTexty) {
-      // Notes/text edit their BODY here too — same property the on-card editor saves,
-      // so the two stay in step (the card re-renders from the committed snapshot).
-      next.text = bodyText;
-      delete next.title;
-    } else {
-      // Concept cards (flows especially) carry a "how it works" write-up (§11A.1b).
-      next.description = description.trim();
     }
     onSave(next);
+    if (!isForm && notes !== (linkedNoteText ?? '')) {
+      onSaveNote(notes);
+    }
   };
 
   return (
     <div className="scrollbar-thin w-64 flex-none overflow-y-auto border-l border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
-      {!isRelation ? (
+      {isEdge ? (
         <>
-          {!isTexty && (
+          <p className="mb-2 text-xs font-medium text-gray-500 dark:text-slate-400">
+            {isErRelation ? 'Relation' : 'Connector'}
+          </p>
+          <label className="mb-1 block text-[11px] text-gray-400 dark:text-slate-500">
+            Relationship name (shown on the wire)
+          </label>
+          <input
+            value={edgeLabel}
+            onChange={(e) => setEdgeLabel(e.target.value)}
+            placeholder={isErRelation ? 'places / belongs to…' : 'relates to…'}
+            aria-label="Relationship name"
+            className={INPUT_CLS + ' w-full'}
+          />
+          {isErRelation && (
             <>
-              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
-                {isForm ? 'Form title' : 'Title'}
-              </label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+              <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">Cardinality</label>
+              <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="Relation cardinality" className={INPUT_CLS + ' w-full cursor-pointer'}>
+                <option value="1:N">1:N — one source, many targets</option>
+                <option value="1:1">1:1 — one to one</option>
+              </select>
+              <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">FK field (created on the target form)</label>
+              <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
             </>
           )}
-          {isTexty && (
+        </>
+      ) : isDrawing ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500">
+          {element.elementType === 'ink' ? 'An ink stroke.' : element.elementType === 'image' ? 'An attached image.' : 'A shape.'} Delete it below, or press Delete.
+        </p>
+      ) : isTexty ? (
+        <>
+          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+            {element.elementType === 'note' ? 'Note text' : 'Text'}
+          </label>
+          <textarea
+            value={bodyText}
+            onChange={(e) => setBodyText(e.target.value)}
+            rows={6}
+            placeholder="Write…"
+            aria-label="Body text"
+            className={INPUT_CLS + ' w-full resize-y text-xs leading-snug'}
+          />
+        </>
+      ) : (
+        <>
+          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+            {isForm ? 'Form title' : 'Title'}
+          </label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+          {!isForm && (
             <>
-              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
-                {element.elementType === 'note' ? 'Note text' : 'Text'}
-              </label>
+              <label className="mt-3 mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">Notes</label>
               <textarea
-                value={bodyText}
-                onChange={(e) => setBodyText(e.target.value)}
-                rows={6}
-                placeholder="Write…"
-                aria-label="Body text"
-                className={INPUT_CLS + ' w-full resize-y text-xs leading-snug'}
-              />
-            </>
-          )}
-          {!isForm && !isTexty && (
-            <>
-              <label className="mt-3 mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
-                How it works
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
                 rows={5}
                 placeholder={element.elementType === 'flow'
                   ? 'When a booking arrives, check availability, then confirm by SMS…'
                   : 'Describe this concept…'}
-                aria-label="Concept description"
+                aria-label="Concept notes"
                 className={INPUT_CLS + ' w-full resize-y text-xs leading-snug'}
               />
               <p className="mt-1 text-[10px] leading-snug text-gray-400 dark:text-slate-500">
-                Sketch the shape too: draw with the pen or paste an image right next to it.
+                Saves as a sticky note linked beside this node — visible right on the diagram.
               </p>
             </>
           )}
@@ -454,20 +510,15 @@ function SelectionPanel({
           </>
           )}
         </>
-      ) : (
-        <>
-          <p className="mb-2 text-xs font-medium text-gray-500 dark:text-slate-400">Relation</p>
-          <label className="mb-1 block text-[11px] text-gray-400 dark:text-slate-500">Cardinality</label>
-          <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="Relation cardinality" className={INPUT_CLS + ' w-full cursor-pointer'}>
-            <option value="1:N">1:N — one source, many targets</option>
-            <option value="1:1">1:1 — one to one</option>
-          </select>
-          <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">FK field (created on the target form)</label>
-          <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
-        </>
       )}
-      <Button size="sm" className="mt-3 w-full" isLoading={busy} disabled={busy} onClick={save}>
-        Save
+      {!isDrawing && (
+        <Button size="sm" className="mt-3 w-full" isLoading={busy} disabled={busy} onClick={save}>
+          Save
+        </Button>
+      )}
+      <Button variant="outline" size="sm" className="mt-2 w-full" disabled={busy} onClick={onDelete}>
+        <Trash2 className="mr-1.5 h-3.5 w-3.5 text-red-500" />
+        Delete {isEdge ? 'connector' : 'element'}
       </Button>
     </div>
   );
@@ -534,22 +585,42 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   let autoIndex = 0;
-  for (const element of elements) {
+  // Containment (§11.3 parentId): React Flow needs parents BEFORE children, so order
+  // by nesting depth (cycle-tolerant: a broken chain caps out and renders flat).
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const depthOf = (element: BlueprintElement): number => {
+    let depth = 0;
+    let cursor: BlueprintElement | undefined = element;
+    while (depth < 8) {
+      const parentId = (cursor?.properties as { parentId?: unknown } | undefined)?.parentId;
+      if (typeof parentId !== 'string' || !byId.has(parentId)) break;
+      cursor = byId.get(parentId);
+      depth++;
+    }
+    return depth;
+  };
+  const ordered = [...elements].sort((a, b) => depthOf(a) - depthOf(b));
+  for (const element of ordered) {
     if (element.elementType === 'edge') {
       const props = element.properties as {
         edgeType?: string; sourceId?: string; targetId?: string; cardinality?: string; fkField?: string;
       };
       const isRelation = props.edgeType === 'relation';
+      const anchors = element.properties as { sourceHandle?: unknown; targetHandle?: unknown };
       edges.push({
         id: element.id,
         source: String(props.sourceId ?? ''),
         target: String(props.targetId ?? ''),
+        ...(typeof anchors.sourceHandle === 'string' ? { sourceHandle: anchors.sourceHandle } : {}),
+        ...(typeof anchors.targetHandle === 'string' ? { targetHandle: anchors.targetHandle } : {}),
         // ER reading for relations: cardinality + the FK field that will hold the link.
         // Form→form relations read as ER (cardinality + FK); generic associations
         // (notes/images/shapes/text linked up) read as a plain line.
-        label: isRelation
-          ? (props.cardinality ? `${props.cardinality}${props.fkField ? ` · ${props.fkField}` : ''}` : undefined)
-          : String(props.edgeType ?? 'relation'),
+        label: typeof (element.properties as { label?: unknown }).label === 'string'
+          ? (element.properties as { label: string }).label
+          : isRelation
+            ? (props.cardinality ? `${props.cardinality}${props.fkField ? ` · ${props.fkField}` : ''}` : undefined)
+            : String(props.edgeType ?? 'relation'),
         animated: props.edgeType === 'triggers',
       });
       continue;
@@ -560,10 +631,23 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
         ? { x: layout.x, y: layout.y }
         : { x: 80 + (autoIndex % 4) * 260, y: 80 + Math.floor(autoIndex / 4) * 180 };
     autoIndex++;
+    const nodeSize = element.elementType === 'image'
+      ? imageProps(element.properties)
+      : element.elementType === 'shape'
+        ? {
+            w: Math.max(24, Number((element.properties as { w?: unknown }).w) || 160),
+            h: Math.max(24, Number((element.properties as { h?: unknown }).h) || 110),
+          }
+        : undefined;
+    const parentId = (element.properties as { parentId?: unknown }).parentId;
     nodes.push({
       id: element.id,
       type: 'blueprint',
       position,
+      ...(typeof parentId === 'string' && byId.has(parentId)
+        ? { parentId, extent: 'parent' as const }
+        : {}),
+      ...(nodeSize ? { width: nodeSize.w, height: nodeSize.h } : {}),
       data: {
         title: String((element.properties as { title?: unknown }).title ?? element.id),
         elementType: element.elementType,
@@ -614,6 +698,7 @@ export function DiagramCanvas({
   // `commit` is declared further down.
   const addFieldRef = useRef<(elementId: string, name: string) => void>(() => undefined);
   const setTextRef = useRef<(elementId: string, text: string) => void>(() => undefined);
+  const resizeRef = useRef<(elementId: string, w: number, h: number) => void>(() => undefined);
 
   useEffect(() => {
     setNodes(
@@ -623,6 +708,7 @@ export function DiagramCanvas({
           ...node.data,
           onAddField: (name: string) => addFieldRef.current(node.id, name),
           onSetText: (text: string) => setTextRef.current(node.id, text),
+          onResize: (w: number, h: number) => resizeRef.current(node.id, w, h),
         },
       })),
     );
@@ -717,10 +803,33 @@ export function DiagramCanvas({
     setTextRef.current = setNoteText;
   }, [setNoteText]);
 
+  // Persist an image/shape resize (properties w/h — the node box follows on reload).
+  const resizeElement = useCallback(
+    (elementId: string, w: number, h: number) => {
+      const element = elements.find((candidate) => candidate.id === elementId);
+      if (!element) return;
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.update',
+            targetId: elementId,
+            properties: { ...element.properties, w, h },
+          },
+        ],
+        true,
+      );
+    },
+    [commit, elements],
+  );
+  useEffect(() => {
+    resizeRef.current = resizeElement;
+  }, [resizeElement]);
+
   // §11A: quick-sketch — drop a fresh CONCEPT element of any §11.4 kind at a spawn
   // point. This is the design-tool half of the canvas; "place existing" is the other.
   const sketchElement = useCallback(
-    (elementType: string, title: string, extra?: Record<string, unknown>) => {
+    (elementType: string, title: string, extra?: Record<string, unknown>, position?: { x: number; y: number }) => {
       const base: Record<string, unknown> = elementType === 'form'
         ? { title, fields: [] }
         : elementType === 'shape'
@@ -736,7 +845,9 @@ export function DiagramCanvas({
             targetId: `el-${generateId()}`,
             elementType: elementType as BlueprintOperation['elementType'],
             properties: { ...base, ...extra },
-            layout: { x: 120 + Math.round(Math.random() * 260), y: 120 + Math.round(Math.random() * 180) },
+            layout: position
+              ? { x: Math.round(position.x), y: Math.round(position.y) }
+              : { x: 120 + Math.round(Math.random() * 260), y: 120 + Math.round(Math.random() * 180) },
           },
         ],
         true,
@@ -779,6 +890,8 @@ export function DiagramCanvas({
         // text connect too) — a plain association with no cardinality or FK.
         properties = { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, state: 'concept' };
       }
+      if (connection.sourceHandle) properties.sourceHandle = connection.sourceHandle;
+      if (connection.targetHandle) properties.targetHandle = connection.targetHandle;
       void commit(
         [
           {
@@ -820,8 +933,91 @@ export function DiagramCanvas({
     [commit, reactFlow],
   );
 
+  // Types that can live INSIDE a box (owner direction: shapes nest, text/images/notes
+  // drop in; forms and flows stay top-level).
+  const CONTAINABLE = useMemo(() => new Set(['shape', 'text', 'image', 'note']), []);
+
   const onNodeDragStop = useCallback(
     (_event: unknown, node: Node) => {
+      const element = elements.find((candidate) => candidate.id === node.id);
+      const abs = reactFlow.getInternalNode(node.id)?.internals.positionAbsolute ?? node.position;
+      const currentParent = (element?.properties as { parentId?: unknown } | undefined)?.parentId;
+      const isDescendantOf = (candidateId: string, ancestorId: string): boolean => {
+        let cursor = candidateId;
+        for (let hop = 0; hop < 8; hop++) {
+          const parent = (elements.find((e) => e.id === cursor)?.properties as { parentId?: unknown } | undefined)?.parentId;
+          if (typeof parent !== 'string') return false;
+          if (parent === ancestorId) return true;
+          cursor = parent;
+        }
+        return false;
+      };
+
+      // Innermost rect box under the dragged node's centre becomes its container.
+      let container: { id: string; x: number; y: number; area: number } | null = null;
+      if (element && CONTAINABLE.has(element.elementType)) {
+        const centerX = abs.x + (node.measured?.width ?? 0) / 2;
+        const centerY = abs.y + (node.measured?.height ?? 0) / 2;
+        for (const candidate of elements) {
+          if (candidate.id === node.id || candidate.elementType !== 'shape') continue;
+          if (String((candidate.properties as { shape?: unknown }).shape ?? 'rect') !== 'rect') continue;
+          if (isDescendantOf(candidate.id, node.id)) continue; // never nest into your own child
+          const candidateAbs = reactFlow.getInternalNode(candidate.id)?.internals.positionAbsolute;
+          if (!candidateAbs) continue;
+          const w = Math.max(24, Number((candidate.properties as { w?: unknown }).w) || 160);
+          const h = Math.max(24, Number((candidate.properties as { h?: unknown }).h) || 110);
+          const inside = centerX > candidateAbs.x && centerX < candidateAbs.x + w
+            && centerY > candidateAbs.y && centerY < candidateAbs.y + h;
+          if (inside && (container === null || w * h < container.area)) {
+            container = { id: candidate.id, x: candidateAbs.x, y: candidateAbs.y, area: w * h };
+          }
+        }
+      }
+
+      if (element && container && container.id !== currentParent) {
+        // Entered a box: parentage is semantic; position becomes parent-relative.
+        void commit(
+          [
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.element.update',
+              targetId: node.id,
+              properties: { ...element.properties, parentId: container.id },
+            },
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.layout.set',
+              targetId: node.id,
+              layout: { x: Math.round(abs.x - container.x), y: Math.round(abs.y - container.y) },
+            },
+          ],
+          true,
+        );
+        return;
+      }
+      if (element && !container && typeof currentParent === 'string') {
+        // Left its box: back to top level at the absolute spot it was dropped.
+        const released: Record<string, unknown> = { ...element.properties };
+        delete released.parentId;
+        void commit(
+          [
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.element.update',
+              targetId: node.id,
+              properties: released,
+            },
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.layout.set',
+              targetId: node.id,
+              layout: { x: Math.round(abs.x), y: Math.round(abs.y) },
+            },
+          ],
+          true,
+        );
+        return;
+      }
       void commit(
         [
           {
@@ -834,7 +1030,7 @@ export function DiagramCanvas({
         false,
       );
     },
-    [commit],
+    [CONTAINABLE, commit, elements, reactFlow],
   );
 
   // ── Drawing layer (§11A.1b): freehand pen + pasted images ─────────────────────────
@@ -984,6 +1180,64 @@ export function DiagramCanvas({
     ? elements.find((element) => element.id === selectedId) ?? null
     : null;
 
+  // The sticky note attached to the selected concept (note.properties.attachedTo).
+  const linkedNote = selectedElement
+    ? elements.find(
+        (candidate) => candidate.elementType === 'note'
+          && (candidate.properties as { attachedTo?: unknown }).attachedTo === selectedElement.id,
+      ) ?? null
+    : null;
+  const linkedNoteText = linkedNote
+    ? String((linkedNote.properties as { text?: unknown }).text ?? '')
+    : null;
+
+  // "Notes" on a concept save as a LINKED STICKY beside the node (§11A direction) —
+  // created once with its association wire, updated in place afterwards.
+  const saveSelectedNote = useCallback(
+    (text: string) => {
+      if (!selectedId) return;
+      if (linkedNote) {
+        void commit(
+          [
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.element.update',
+              targetId: linkedNote.id,
+              properties: { ...linkedNote.properties, text },
+            },
+          ],
+          true,
+        );
+        return;
+      }
+      if (text.trim() === '') return;
+      const anchor = elements.find((candidate) => candidate.id === selectedId);
+      const at = (anchor?.layout ?? {}) as { x?: number; y?: number };
+      const noteId = `el-${generateId()}`;
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.create',
+            targetId: noteId,
+            elementType: 'note',
+            properties: { text, attachedTo: selectedId },
+            layout: { x: Math.round((at.x ?? 200) + 240), y: Math.round((at.y ?? 200) - 30) },
+          },
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.create',
+            targetId: `el-${generateId()}`,
+            elementType: 'edge',
+            properties: { edgeType: 'relation', sourceId: selectedId, targetId: noteId, state: 'concept' },
+          },
+        ],
+        true,
+      );
+    },
+    [commit, elements, linkedNote, selectedId],
+  );
+
   const saveSelectedProperties = useCallback(
     (properties: Record<string, unknown>) => {
       if (!selectedId) return;
@@ -1013,9 +1267,17 @@ export function DiagramCanvas({
               <button
                 key={tool.title}
                 type="button"
-                title={tool.title}
+                title={`${tool.title} — click, or drag onto the canvas`}
                 aria-label={tool.title}
                 disabled={busy}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(
+                    'application/formlogic-diagram-tool',
+                    JSON.stringify({ elementType: tool.elementType, label: tool.label, extra: tool.extra ?? null }),
+                  );
+                  event.dataTransfer.effectAllowed = 'copy';
+                }}
                 onClick={() => sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`, tool.extra)}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
               >
@@ -1106,7 +1368,27 @@ export function DiagramCanvas({
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-        <div className="relative min-h-0 min-w-0 flex-1">
+        <div
+          className="relative min-h-0 min-w-0 flex-1"
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes('application/formlogic-diagram-tool')) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+            }
+          }}
+          onDrop={(event) => {
+            const raw = event.dataTransfer.getData('application/formlogic-diagram-tool');
+            if (raw === '') return;
+            event.preventDefault();
+            try {
+              const tool = JSON.parse(raw) as { elementType: string; label: string; extra: Record<string, unknown> | null };
+              const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+              sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`, tool.extra ?? undefined, position);
+            } catch {
+              /* not our payload */
+            }
+          }}
+        >
           <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -1117,6 +1399,7 @@ export function DiagramCanvas({
           onDoubleClick={onPaneDoubleClick}
           zoomOnDoubleClick={false}
           deleteKeyCode={null}
+          connectionMode={ConnectionMode.Loose}
           onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) =>
             setSelectedId(selectedNodes[0]?.id ?? selectedEdges[0]?.id ?? null)
           }
@@ -1168,7 +1451,10 @@ export function DiagramCanvas({
             key={selectedElement.id}
             element={selectedElement}
             busy={busy}
+            linkedNoteText={linkedNoteText}
             onSave={saveSelectedProperties}
+            onSaveNote={saveSelectedNote}
+            onDelete={deleteSelected}
           />
         )}
       </div>

@@ -9,6 +9,7 @@ import {
   Boxes,
   Cloud,
   HardDrive,
+  Map,
   ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -36,9 +37,9 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },
     // Settings moved into the profile menu (Header); Flows is now a first-class section.
-    // Diagrams are deliberately NOT a sidebar section (§11A): they enter through the
-    // Dashboard's "Start with a diagram" and live at /diagrams.
     { path: '/flows', icon: Workflow, label: 'Flows' },
+    // Diagrams (§11A) — the list is reachable here AND via the Dashboard's start buttons.
+    ...(!isDemo ? [{ path: '/diagrams', icon: Map, label: 'Diagrams' }] : []),
     // Platform administrators only — instance maintenance, users, upgrades.
     ...(isAdmin ? [{ path: '/admin', icon: ShieldCheck, label: 'Admin' }] : []),
   ];

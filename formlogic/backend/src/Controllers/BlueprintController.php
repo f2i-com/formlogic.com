@@ -62,6 +62,28 @@ class BlueprintController
         return $this->jsonResponse($response, ['blueprint' => $blueprint]);
     }
 
+    public function rename(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $body = (array) ($request->getParsedBody() ?? []);
+        try {
+            $blueprint = $this->blueprints->renameBlueprint(
+                (string) $userId,
+                (string) ($args['blueprintId'] ?? ''),
+                is_string($body['name'] ?? null) ? $body['name'] : ''
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        if ($blueprint === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Blueprint not found'], 404);
+        }
+        return $this->jsonResponse($response, ['blueprint' => $blueprint]);
+    }
+
     public function delete(Request $request, Response $response, array $args): Response
     {
         $userId = $request->getAttribute('userId');
