@@ -9,6 +9,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AccountBackupService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
+use FormLogic\Services\BackupAlreadyRunningException;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\MaintenanceService;
@@ -277,6 +278,164 @@ class ScheduledBackupTest extends TestCase
         $second = json_decode((string) file_get_contents($this->scheduledDir . '/' . gmdate('Y-m-d') . '/site-manifest.json'), true);
         $this->assertGreaterThanOrEqual($first['startedAt'], $second['startedAt'], 'the same-day folder is refreshed');
         $this->assertCount(1, $svc->listRuns(), 'no duplicate day folders');
+    }
+
+    /**
+     * A genuinely SEPARATE MySQL session (MySQLConnection holds a static PDO
+     * singleton, so it can never provide one) — the stand-in for "another
+     * process" in the lock/barrier tests.
+     */
+    private static function rawPdo(): PDO
+    {
+        $pdo = new PDO(
+            sprintf(
+                'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
+                $_ENV['DB_HOST'] ?? '127.0.0.1',
+                $_ENV['DB_PORT'] ?? '3306',
+                $_ENV['DB_TEST_DATABASE'] ?? 'formlogic_test',
+            ),
+            $_ENV['DB_USERNAME'] ?? 'root',
+            $_ENV['DB_PASSWORD'] ?? '',
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
+        );
+        $pdo->exec("SET time_zone = '+00:00'");
+        return $pdo;
+    }
+
+    public function testFailedRunPreservesPriorBackupAndHeartbeat(): void
+    {
+        // Review FL-003: a good run exists…
+        $svc = $this->service();
+        $first = $svc->run();
+        $date = (string) $first['date'];
+        $dayDir = $this->scheduledDir . '/' . $date;
+        $manifestBefore = hash_file('sha256', "{$dayDir}/site-manifest.json");
+        $zipBefore = hash_file('sha256', "{$dayDir}/accounts/{$this->userId}.zip");
+        $heartbeatBefore = $svc->lastRun();
+
+        // …then a rerun fails FATALLY mid-build (injected dump failure).
+        $maintenance = new MaintenanceService(self::$tmpRoot . '/m-' . bin2hex(random_bytes(3)) . '.json');
+        $brokenUpgrade = new class(self::$tmpRoot . '/nowhere', self::$mysql, $maintenance) extends UpgradeService {
+            public function dumpDatabase(string $outGzPath, ?callable $afterTable = null): void
+            {
+                throw new \RuntimeException('boom: injected dump failure');
+            }
+        };
+        $broken = new ScheduledBackupService(
+            self::$mysql,
+            self::$accountBackup,
+            $brokenUpgrade,
+            ['scheduledDir' => $this->scheduledDir, 'retentionDays' => 7],
+        );
+        try {
+            $broken->run();
+            $this->fail('the injected failure must propagate');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('boom', $e->getMessage());
+        }
+
+        // The prior backup is byte-identical, the heartbeat did not advance,
+        // a content-free diagnostic exists, and no staging residue remains.
+        $this->assertSame($manifestBefore, hash_file('sha256', "{$dayDir}/site-manifest.json"));
+        $this->assertSame($zipBefore, hash_file('sha256', "{$dayDir}/accounts/{$this->userId}.zip"));
+        $this->assertEquals($heartbeatBefore, $svc->lastRun(), 'heartbeat advances only after atomic publication');
+        $this->assertFileExists($this->scheduledDir . '/.failed-' . $date . '.json');
+        $diagnostic = (string) file_get_contents($this->scheduledDir . '/.failed-' . $date . '.json');
+        $this->assertStringNotContainsString($this->userId, $diagnostic, 'diagnostics carry no backup content');
+        $staging = array_filter(scandir($this->scheduledDir) ?: [], fn ($e) => str_starts_with((string) $e, '.staging-'));
+        $this->assertSame([], array_values($staging), 'failed staging is removed');
+
+        // A later successful rerun atomically replaces the backup and clears
+        // the failure diagnostic.
+        $svc->run();
+        $this->assertFileDoesNotExist($this->scheduledDir . '/.failed-' . $date . '.json');
+        $this->assertFileExists("{$dayDir}/accounts/{$this->userId}.zip");
+    }
+
+    public function testConcurrentRunIsRefusedWithTypedError(): void
+    {
+        // Review FL-005: a second CONNECTION (≙ another process) holds the lock.
+        $otherPdo = self::rawPdo();
+        $db = (string) $otherPdo->query('SELECT DATABASE()')->fetchColumn();
+        $lockName = 'formlogic.scheduled_backup.' . $db;
+        $stmt = $otherPdo->prepare('SELECT GET_LOCK(?, 0)');
+        $stmt->execute([$lockName]);
+        $this->assertSame(1, (int) $stmt->fetchColumn(), 'fixture lock acquired');
+
+        try {
+            try {
+                $this->service()->run();
+                $this->fail('a concurrent run must be refused');
+            } catch (BackupAlreadyRunningException $e) {
+                $this->assertStringContainsString('already in progress', $e->getMessage());
+            }
+            // The loser wrote nothing.
+            $this->assertDirectoryDoesNotExist($this->scheduledDir . '/' . gmdate('Y-m-d'));
+        } finally {
+            $release = $otherPdo->prepare('SELECT RELEASE_LOCK(?)');
+            $release->execute([$lockName]);
+            $release->fetchColumn();
+        }
+
+        // After release (≙ exception paths released the lock) the run succeeds.
+        $summary = $this->service()->run();
+        $this->assertSame(0, $summary['failed']);
+        $this->assertFileExists($this->scheduledDir . '/' . $summary['date'] . '/site-manifest.json');
+    }
+
+    public function testDatabaseDumpUsesOneConsistentSnapshotAndFailsAtomically(): void
+    {
+        // Review FL-004: rows written AFTER the snapshot begins are invisible
+        // in EVERY table of the dump — no mixed-instant restores.
+        $maintenance = new MaintenanceService(self::$tmpRoot . '/m-' . bin2hex(random_bytes(3)) . '.json');
+        $upgrade = new UpgradeService(self::$tmpRoot . '/nowhere', self::$mysql, $maintenance);
+        $out = self::$tmpRoot . '/dump-' . bin2hex(random_bytes(3)) . '.sql.gz';
+
+        $beforeMarker = 'barrier-before-' . bin2hex(random_bytes(6));
+        $beforeId = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'B')")
+            ->execute([$beforeId, "{$beforeMarker}@test.local"]);
+
+        $afterMarker = 'barrier-after-' . bin2hex(random_bytes(6));
+        $afterId = 'u-' . bin2hex(random_bytes(12));
+        $writerPdo = self::rawPdo();
+        $injected = false;
+        try {
+            $upgrade->dumpDatabase($out, function () use (&$injected, $writerPdo, $afterId, $afterMarker): void {
+                if ($injected) {
+                    return;
+                }
+                $injected = true;
+                // A CONCURRENT writer commits while the dump is mid-flight
+                // ('users' is dumped later in SHOW TABLES order).
+                $writerPdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'A')")
+                    ->execute([$afterId, "{$afterMarker}@test.local"]);
+            });
+            $this->assertTrue($injected, 'the barrier writer ran');
+            // Sanity: the concurrent write really committed…
+            $check = self::$pdo->prepare('SELECT COUNT(*) FROM users WHERE id = ?');
+            $check->execute([$afterId]);
+            $this->assertSame(1, (int) $check->fetchColumn());
+            // …but the snapshot dump shows the pre-change state only.
+            $dump = (string) gzdecode((string) file_get_contents($out));
+            $this->assertStringContainsString($beforeMarker, $dump);
+            $this->assertStringNotContainsString($afterMarker, $dump, 'post-snapshot writes must not leak into the dump');
+
+            // A mid-dump failure publishes nothing and leaves no temp files.
+            $failOut = self::$tmpRoot . '/dump-fail-' . bin2hex(random_bytes(3)) . '.sql.gz';
+            try {
+                $upgrade->dumpDatabase($failOut, function (): void {
+                    throw new \RuntimeException('boom: injected mid-dump failure');
+                });
+                $this->fail('the injected failure must propagate');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('boom', $e->getMessage());
+            }
+            $this->assertFileDoesNotExist($failOut);
+            $this->assertSame([], glob($failOut . '.tmp-*') ?: [], 'no temp residue after a failed dump');
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id IN (?, ?)')->execute([$beforeId, $afterId]);
+        }
     }
 
     public function testIncludeFilesFalseSkipsUploads(): void

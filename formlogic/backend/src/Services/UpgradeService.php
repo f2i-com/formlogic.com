@@ -551,54 +551,127 @@ class UpgradeService
      * \-escaped so restoreDatabase can split on newlines safely), gzip-written.
      * PUBLIC: shared with ScheduledBackupService (the nightly site dump), which
      * must not create a Backups-panel entry the way exportDatabaseBackup does.
+     *
+     * Review FL-004: every table is read inside ONE repeatable-read consistent
+     * snapshot (a restore can never mix instants), every gzip write is
+     * length-checked, the dump is written to a temporary sibling, gzip-verified
+     * end-to-end, and only then renamed into place — a short write or disk-full
+     * publishes nothing. Non-InnoDB tables (outside the snapshot guarantee) are
+     * flagged in the dump header.
+     *
+     * @param callable(string):void|null $afterTable test hook fired after each
+     *   table finishes (used by the concurrent-writer barrier test).
      */
-    public function dumpDatabase(string $outGzPath): void
+    public function dumpDatabase(string $outGzPath, ?callable $afterTable = null): void
     {
-        $gz = gzopen($outGzPath, 'wb6');
+        if ($this->pdo->inTransaction()) {
+            // START TRANSACTION would implicitly commit the caller's work and
+            // our ROLLBACK would then eat theirs — refuse instead.
+            throw new \RuntimeException('dumpDatabase must not run inside an open transaction');
+        }
+        $tmpPath = $outGzPath . '.tmp-' . bin2hex(random_bytes(4));
+        $gz = gzopen($tmpPath, 'wb6');
         if ($gz === false) {
             throw new \RuntimeException('Cannot create the database export file');
         }
         try {
-            gzwrite($gz, "-- FormLogic database export " . gmdate('c') . "\n");
-            gzwrite($gz, "SET NAMES utf8mb4;\n");
-            gzwrite($gz, "SET FOREIGN_KEY_CHECKS=0;\n");
-            $tables = $this->pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
-            foreach ($tables as $table) {
-                $quoted = '`' . str_replace('`', '``', (string) $table) . '`';
-                $create = $this->pdo->query("SHOW CREATE TABLE {$quoted}")->fetch(PDO::FETCH_ASSOC);
-                $createSql = $create['Create Table'] ?? ($create['Create View'] ?? null);
-                if ($createSql === null) {
-                    continue;
+            $write = static function (string $line) use ($gz): void {
+                if (gzwrite($gz, $line) !== strlen($line)) {
+                    throw new \RuntimeException('Short write while exporting the database');
                 }
-                gzwrite($gz, "DROP TABLE IF EXISTS {$quoted};\n");
-                // One line per statement: collapse the pretty-printed CREATE.
-                gzwrite($gz, preg_replace('/\r?\n/', ' ', $createSql) . ";\n");
+            };
 
-                $stmt = $this->pdo->query("SELECT * FROM {$quoted}");
-                $batch = [];
-                while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
-                    $values = [];
-                    foreach ($row as $value) {
-                        if ($value === null) {
-                            $values[] = 'NULL';
-                        } else {
-                            // Escape real newlines so every statement stays on one line.
-                            $values[] = str_replace(["\r", "\n"], ['\\r', '\\n'], $this->pdo->quote((string) $value));
+            $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            $this->pdo->exec('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+            try {
+                $write("-- FormLogic database export " . gmdate('c') . "\n");
+                $write("SET NAMES utf8mb4;\n");
+                $write("SET FOREIGN_KEY_CHECKS=0;\n");
+                $engines = $this->pdo
+                    ->query('SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()')
+                    ->fetchAll(PDO::FETCH_KEY_PAIR);
+                $tables = $this->pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
+                foreach ($tables as $table) {
+                    $engine = $engines[(string) $table] ?? null;
+                    if ($engine !== null && strtolower((string) $engine) !== 'innodb') {
+                        $write("-- WARNING: table `{$table}` uses ENGINE={$engine}; its rows are read outside the consistent snapshot\n");
+                    }
+                    $quoted = '`' . str_replace('`', '``', (string) $table) . '`';
+                    $create = $this->pdo->query("SHOW CREATE TABLE {$quoted}")->fetch(PDO::FETCH_ASSOC);
+                    $createSql = $create['Create Table'] ?? ($create['Create View'] ?? null);
+                    if ($createSql === null) {
+                        continue;
+                    }
+                    $write("DROP TABLE IF EXISTS {$quoted};\n");
+                    // One line per statement: collapse the pretty-printed CREATE.
+                    $write(preg_replace('/\r?\n/', ' ', $createSql) . ";\n");
+
+                    $stmt = $this->pdo->query("SELECT * FROM {$quoted}");
+                    $batch = [];
+                    while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+                        $values = [];
+                        foreach ($row as $value) {
+                            if ($value === null) {
+                                $values[] = 'NULL';
+                            } else {
+                                // Escape real newlines so every statement stays on one line.
+                                $values[] = str_replace(["\r", "\n"], ['\\r', '\\n'], $this->pdo->quote((string) $value));
+                            }
+                        }
+                        $batch[] = '(' . implode(',', $values) . ')';
+                        if (count($batch) >= 200) {
+                            $write("INSERT INTO {$quoted} VALUES " . implode(',', $batch) . ";\n");
+                            $batch = [];
                         }
                     }
-                    $batch[] = '(' . implode(',', $values) . ')';
-                    if (count($batch) >= 200) {
-                        gzwrite($gz, "INSERT INTO {$quoted} VALUES " . implode(',', $batch) . ";\n");
-                        $batch = [];
+                    if ($batch !== []) {
+                        $write("INSERT INTO {$quoted} VALUES " . implode(',', $batch) . ";\n");
+                    }
+                    if ($afterTable !== null) {
+                        $afterTable((string) $table);
                     }
                 }
-                if ($batch !== []) {
-                    gzwrite($gz, "INSERT INTO {$quoted} VALUES " . implode(',', $batch) . ";\n");
+                $write("SET FOREIGN_KEY_CHECKS=1;\n");
+            } finally {
+                // Read-only snapshot: rolling back simply releases it.
+                try {
+                    $this->pdo->exec('ROLLBACK');
+                } catch (\Throwable) {
                 }
             }
-            gzwrite($gz, "SET FOREIGN_KEY_CHECKS=1;\n");
-        } finally {
-            gzclose($gz);
+
+            if (!gzclose($gz)) {
+                $gz = null;
+                throw new \RuntimeException('Could not finalize the database export');
+            }
+            $gz = null;
+
+            // Verify the gzip stream end-to-end before publishing.
+            $check = gzopen($tmpPath, 'rb');
+            if ($check === false) {
+                throw new \RuntimeException('Database export failed gzip verification');
+            }
+            while (!gzeof($check)) {
+                if (gzread($check, 1 << 20) === false) {
+                    gzclose($check);
+                    throw new \RuntimeException('Database export failed gzip verification');
+                }
+            }
+            gzclose($check);
+
+            if (!rename($tmpPath, $outGzPath)) {
+                // Windows refuses rename-onto-existing; replace explicitly.
+                @unlink($outGzPath);
+                if (!rename($tmpPath, $outGzPath)) {
+                    throw new \RuntimeException('Could not publish the database export');
+                }
+            }
+        } catch (\Throwable $e) {
+            if ($gz !== null) {
+                @gzclose($gz);
+            }
+            @unlink($tmpPath);
+            throw $e;
         }
     }
 

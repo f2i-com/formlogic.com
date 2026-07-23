@@ -59,23 +59,81 @@ final class ScheduledBackupService
     }
 
     /**
-     * One full backup pass. @return array{date:string, users:int, ok:int, failed:int,
+     * One full backup pass — staged, verified, atomically published
+     * (review FL-003), under a cross-process lock owned by THIS service
+     * (review FL-005: CLI, cron, and admin all funnel through here).
+     *
+     * @return array{date:string, users:int, ok:int, failed:int,
      *   totalBytes:int, prunedDays:string[], errors: array<int,array{userId:string,email:string,error:string}>}
+     * @throws BackupAlreadyRunningException when another run holds the lock
      */
     public function run(): array
     {
+        if (!$this->acquireLock()) {
+            throw new BackupAlreadyRunningException();
+        }
+        try {
+            return $this->runLocked();
+        } finally {
+            $this->releaseLock();
+        }
+    }
+
+    private function runLocked(): array
+    {
         $startedAt = gmdate('c');
         $date = gmdate('Y-m-d');
-        $dayDir = $this->scheduledDir() . '/' . $date;
-        $accountsDir = $dayDir . '/accounts';
+        $base = $this->scheduledDir();
+        $dayDir = $base . '/' . $date;
+        $this->recoverInterruptedPublish($base);
 
-        // Refresh semantics: a same-day re-run replaces the folder wholesale so a
-        // partial earlier run can never leave stale zips behind.
-        $this->removeDir($dayDir);
+        // Build the ENTIRE run in a unique sibling staging directory; the
+        // published day folder is only ever replaced by a verified complete
+        // run (review FL-003 — the old code deleted the good backup first).
+        $stagingDir = $base . '/.staging-' . $date . '-' . bin2hex(random_bytes(4));
+        $accountsDir = $stagingDir . '/accounts';
         if (!mkdir($accountsDir, 0750, true) && !is_dir($accountsDir)) {
-            throw new \RuntimeException('Could not create the scheduled backup directory');
+            throw new \RuntimeException('Could not create the scheduled backup staging directory');
         }
 
+        try {
+            $summary = $this->buildInto($stagingDir, $accountsDir, $date, $startedAt);
+        } catch (\Throwable $e) {
+            $this->removeDir($stagingDir);
+            $this->recordFailureDiagnostic($base, $date, $e);
+            throw $e;
+        }
+
+        // ── atomic publish ───────────────────────────────────────────────────
+        $previous = null;
+        if (is_dir($dayDir)) {
+            $previous = $base . '/.previous-' . $date . '-' . bin2hex(random_bytes(4));
+            if (!rename($dayDir, $previous)) {
+                $this->removeDir($stagingDir);
+                throw new \RuntimeException('Could not move the existing day folder aside for publication');
+            }
+        }
+        if (!rename($stagingDir, $dayDir)) {
+            if ($previous !== null) {
+                @rename($previous, $dayDir); // the prior good backup must survive
+            }
+            $this->removeDir($stagingDir);
+            throw new \RuntimeException('Could not publish the scheduled backup day folder');
+        }
+        if ($previous !== null) {
+            $this->removeDir($previous);
+        }
+        @unlink($base . '/.failed-' . $date . '.json');
+
+        $summary['prunedDays'] = $this->prune();
+        // Heartbeat ONLY after atomic publication (review FL-003).
+        $this->stampHeartbeat((string) $summary['finishedAt'], $summary);
+        return $summary;
+    }
+
+    /** @return array<string,mixed> the summary (without prunedDays) */
+    private function buildInto(string $stagingDir, string $accountsDir, string $date, string $startedAt): array
+    {
         $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
         $stmt = $this->pdo->query('SELECT id, email FROM users ORDER BY created_at ASC, id ASC');
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -95,9 +153,11 @@ final class ScheduledBackupService
                 $dest = $accountsDir . '/' . $userId . '.zip';
                 if (!rename($tmpZip, $dest) && !copy($tmpZip, $dest)) {
                     @unlink($tmpZip);
-                    throw new \RuntimeException('Could not move the account zip into the day folder');
+                    throw new \RuntimeException('Could not move the account zip into the staging folder');
                 }
                 @unlink($tmpZip); // no-op after a successful rename
+                $this->verifyAccountZip($dest);
+                $this->syncFile($dest);
                 $size = (int) filesize($dest);
                 $totalBytes += $size;
                 $manifestUsers[] = [
@@ -119,8 +179,10 @@ final class ScheduledBackupService
 
         // Whole-site MySQL dump (users/passwords/apps metadata — the accounts zips
         // carry the record databases; together they are a complete site backup).
-        $this->upgrade->dumpDatabase($dayDir . '/database.sql.gz');
-        $totalBytes += (int) filesize($dayDir . '/database.sql.gz');
+        // dumpDatabase itself is snapshot-consistent, checked, verified, and
+        // atomically renamed into place (review FL-004).
+        $this->upgrade->dumpDatabase($stagingDir . '/database.sql.gz');
+        $totalBytes += (int) filesize($stagingDir . '/database.sql.gz');
 
         $finishedAt = gmdate('c');
         $summary = [
@@ -133,18 +195,123 @@ final class ScheduledBackupService
             'startedAt' => $startedAt,
             'finishedAt' => $finishedAt,
         ];
-        file_put_contents($dayDir . '/site-manifest.json', json_encode([
+        $manifestJson = json_encode([
             'kind' => 'formlogic.scheduledBackup',
             'formatVersion' => 1,
             'retentionDays' => $this->retentionDays,
-        ] + $summary + ['usersDetail' => $manifestUsers, 'errors' => $errors], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        file_put_contents($dayDir . '/RESTORE.txt', $this->restoreReadme());
+        ] + $summary + ['usersDetail' => $manifestUsers, 'errors' => $errors], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if (!is_string($manifestJson)) {
+            throw new \RuntimeException('Could not serialize the site manifest');
+        }
+        $this->writeChecked($stagingDir . '/site-manifest.json', $manifestJson);
+        $this->writeChecked($stagingDir . '/RESTORE.txt', $this->restoreReadme());
 
-        $summary['prunedDays'] = $this->prune();
+        // Manifest completeness: every ok entry's file must exist with the
+        // recorded hash before the run may publish.
+        foreach ($manifestUsers as $entry) {
+            if (($entry['file'] ?? null) === null) {
+                continue;
+            }
+            $path = $stagingDir . '/' . $entry['file'];
+            if (!is_file($path) || hash_file('sha256', $path) !== $entry['sha256']) {
+                throw new \RuntimeException('Staged backup failed verification: ' . $entry['file']);
+            }
+        }
+
         $summary['errors'] = $errors;
-        $this->stampHeartbeat($finishedAt, $summary);
-
         return $summary;
+    }
+
+    // ── FL-003/FL-005 internals ──────────────────────────────────────────────
+
+    /** Cross-process mutual exclusion via a DB advisory lock (review FL-005). */
+    private function acquireLock(): bool
+    {
+        try {
+            $db = (string) $this->pdo->query('SELECT DATABASE()')->fetchColumn();
+            $stmt = $this->pdo->prepare('SELECT GET_LOCK(?, 0)');
+            $stmt->execute(['formlogic.scheduled_backup.' . $db]);
+            return (int) $stmt->fetchColumn() === 1;
+        } catch (\Throwable $e) {
+            // Cannot prove exclusivity → refuse to run (fail closed).
+            $this->logger->error('Scheduled backup: could not acquire the run lock', ['error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    private function releaseLock(): void
+    {
+        try {
+            $db = (string) $this->pdo->query('SELECT DATABASE()')->fetchColumn();
+            $stmt = $this->pdo->prepare('SELECT RELEASE_LOCK(?)');
+            $stmt->execute(['formlogic.scheduled_backup.' . $db]);
+            $stmt->fetchColumn();
+        } catch (\Throwable) {
+            // A dropped connection releases the lock server-side anyway.
+        }
+    }
+
+    /**
+     * Heal a crash inside the two-step publish swap: a `.previous-<date>-*`
+     * folder with NO published day folder is the last good backup — restore it.
+     */
+    private function recoverInterruptedPublish(string $base): void
+    {
+        foreach (scandir($base) ?: [] as $entry) {
+            if (preg_match('/^\.previous-(\d{4}-\d{2}-\d{2})-[0-9a-f]+$/', $entry, $m) !== 1) {
+                continue;
+            }
+            $dayDir = $base . '/' . $m[1];
+            if (!is_dir($dayDir)) {
+                @rename($base . '/' . $entry, $dayDir);
+            }
+        }
+    }
+
+    /** Zip readability + backup-manifest presence before a zip may publish. */
+    private function verifyAccountZip(string $path): void
+    {
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            throw new \RuntimeException('Account zip failed readability verification');
+        }
+        $hasManifest = $zip->locateName('backup.json') !== false;
+        $zip->close();
+        if (!$hasManifest) {
+            throw new \RuntimeException('Account zip is missing its backup manifest');
+        }
+    }
+
+    private function writeChecked(string $path, string $content): void
+    {
+        if (file_put_contents($path, $content) !== strlen($content)) {
+            throw new \RuntimeException('Short write while staging ' . basename($path));
+        }
+        $this->syncFile($path);
+    }
+
+    /** Best-effort fsync so a power loss cannot publish unsynced bytes. */
+    private function syncFile(string $path): void
+    {
+        $h = @fopen($path, 'ab');
+        if ($h === false) {
+            return;
+        }
+        @fflush($h);
+        if (function_exists('fsync')) {
+            @fsync($h);
+        }
+        fclose($h);
+    }
+
+    /** A content-free diagnostic of the failed run (review FL-003). */
+    private function recordFailureDiagnostic(string $base, string $date, \Throwable $e): void
+    {
+        @file_put_contents($base . '/.failed-' . $date . '.json', json_encode([
+            'date' => $date,
+            'failedAt' => gmdate('c'),
+            'error' => substr($e->getMessage(), 0, 500),
+        ], JSON_PRETTY_PRINT));
     }
 
     /** Day folders newest-first with their manifest summaries. */
@@ -236,6 +403,20 @@ final class ScheduledBackupService
         foreach (array_slice($days, $this->retentionDays) as $old) {
             $this->removeDir("{$dir}/{$old}");
             $pruned[] = $old;
+        }
+        // Crash leftovers: day-old staging/previous folders and out-of-retention
+        // failure diagnostics.
+        foreach (scandir($dir) ?: [] as $entry) {
+            $path = "{$dir}/{$entry}";
+            if (preg_match('/^\.(staging|previous)-/', $entry) === 1 && is_dir($path) && (int) filemtime($path) < time() - 86400) {
+                $this->removeDir($path);
+            }
+            if (
+                preg_match('/^\.failed-(\d{4}-\d{2}-\d{2})\.json$/', $entry, $m) === 1
+                && (int) strtotime($m[1] . ' UTC') < time() - $this->retentionDays * 86400
+            ) {
+                @unlink($path);
+            }
         }
         return $pruned;
     }

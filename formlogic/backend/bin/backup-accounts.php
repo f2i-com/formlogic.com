@@ -55,12 +55,9 @@ try {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }
 
-// Single-instance guard so overlapping runs (cron tick + admin "Run now") don't collide.
-$lockHandle = fopen(sys_get_temp_dir() . '/formlogic-account-backup.lock', 'c');
-if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
-    fwrite(STDERR, sprintf("[%s] another backup run is already in progress; exiting\n", date('c')));
-    exit(0);
-}
+// Mutual exclusion lives INSIDE ScheduledBackupService::run() (review FL-005:
+// one cross-process DB advisory lock shared by cron, CLI, and the admin panel
+// — a local file lock could not exclude the web process).
 
 @set_time_limit(0);
 
@@ -93,6 +90,9 @@ $scheduled = new ScheduledBackupService(
 
 try {
     $summary = $scheduled->run();
+} catch (\FormLogic\Services\BackupAlreadyRunningException) {
+    fwrite(STDERR, sprintf("[%s] another backup run is already in progress; exiting\n", date('c')));
+    exit(0);
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] backup run FAILED: %s\n", date('c'), $e->getMessage()));
     exit(1);

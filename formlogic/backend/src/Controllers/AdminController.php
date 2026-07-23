@@ -384,6 +384,10 @@ class AdminController
         @set_time_limit(600);
         try {
             $summary = $this->scheduledBackup->run();
+        } catch (\FormLogic\Services\BackupAlreadyRunningException $e) {
+            // Review FL-005: the service owns the cross-process lock; the loser
+            // gets a typed 409 and cannot touch the output.
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'backup_already_running'], 409);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 500);
         }
