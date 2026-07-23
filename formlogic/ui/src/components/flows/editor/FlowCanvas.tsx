@@ -78,8 +78,11 @@ const EDGE_TYPES: EdgeTypes = { flow: FlowEdge };
 const PRO_OPTIONS = { hideAttribution: true } as const;
 const DEFAULT_MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: '#94a3b8' } as const;
 const DEFAULT_EDGE_OPTIONS = { type: 'flow', deletable: true, focusable: true, reconnectable: true, markerEnd: DEFAULT_MARKER } as const;
-// Left-drag draws a selection box; middle/right-drag pans (right-click without a drag opens the menu).
-const PAN_ON_DRAG: number[] = [1, 2];
+// Left-drag PANS — consistent with the diagrams canvas (owner direction: one muscle
+// memory across both canvases). Middle/right-drag pan too (a right-click without a
+// drag still opens the context menu); the selection BOX moved to Shift+drag.
+const PAN_ON_DRAG: number[] = [0, 1, 2];
+const SELECTION_KEY = 'Shift';
 const MULTI_SELECT_KEYS = ['Meta', 'Control'];
 const DELETE_KEYS = ['Backspace', 'Delete'];
 
@@ -286,8 +289,7 @@ export function FlowCanvas({
         maxZoom={2}
         deleteKeyCode={DELETE_KEYS}
         multiSelectionKeyCode={MULTI_SELECT_KEYS}
-        selectionKeyCode={null}
-        selectionOnDrag
+        selectionKeyCode={SELECTION_KEY}
         selectionMode={SelectionMode.Partial}
         panOnDrag={PAN_ON_DRAG}
         className="bg-gray-50 dark:bg-slate-950"
