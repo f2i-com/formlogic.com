@@ -66,6 +66,10 @@ interface UIState {
   /** §11B O1: a prompt typed into "What do you want to create?" — the chat widget
    *  consumes it as its composer text on open (never persisted). */
   chatSeed: string | null;
+  /** §11B O4: Follow AI — the chat may navigate you to what it just built. Off by
+   *  default (never a haunted browser); persists once chosen. */
+  chatFollowAi: boolean;
+  setChatFollowAi: (follow: boolean) => void;
   setChatSeed: (chatSeed: string | null) => void;
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
@@ -118,6 +122,8 @@ export const useUIStore = create<UIState>()(
       chatMinimized: false,
       chatPosition: null,
       chatSeed: null,
+      chatFollowAi: false,
+      setChatFollowAi: (chatFollowAi) => set({ chatFollowAi }),
       setChatSeed: (chatSeed) => set({ chatSeed }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
@@ -141,6 +147,7 @@ export const useUIStore = create<UIState>()(
         themeColor: state.themeColor,
         sidebarCollapsed: state.sidebarCollapsed,
         chatOpen: state.chatOpen,
+        chatFollowAi: state.chatFollowAi,
         chatMinimized: state.chatMinimized,
         chatPosition: state.chatPosition
       }),

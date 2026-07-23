@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   Trash2,
   X,
+  Footprints,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -176,6 +177,8 @@ export function SiteChatWidget() {
   const chatOpen = useUIStore((s) => s.chatOpen);
   const chatSeed = useUIStore((s) => s.chatSeed);
   const setChatSeed = useUIStore((s) => s.setChatSeed);
+  const chatFollowAi = useUIStore((s) => s.chatFollowAi);
+  const setChatFollowAi = useUIStore((s) => s.setChatFollowAi);
   const chatMinimized = useUIStore((s) => s.chatMinimized);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
@@ -335,6 +338,27 @@ export function SiteChatWidget() {
     if (el.scrollTop < 48 && hasMore && !loadingOlder) void loadOlder();
   }, [hasMore, loadingOlder, loadOlder]);
 
+  // §11B O4 Follow AI: while a turn streams, a COMPLETED tool activity that links to a
+  // created/updated resource navigates there — so the user watches the project
+  // assemble, room by room. Ref-mirrored (the SSE callbacks close over one send), and
+  // each distinct path is followed at most once per turn.
+  const followAiRef = useRef(chatFollowAi);
+  useEffect(() => {
+    followAiRef.current = chatFollowAi;
+  }, [chatFollowAi]);
+  const lastFollowedRef = useRef<string | null>(null);
+  const followActivity = useCallback(
+    (activity: ChatToolActivity) => {
+      if (!followAiRef.current || activity.status !== 'done' || !activity.link) return;
+      const path = chatToolLinkPath(activity.link);
+      if (!path || path === lastFollowedRef.current) return;
+      lastFollowedRef.current = path;
+      if (!isMobile) navigate(path);
+    },
+    [isMobile, navigate]
+  );
+
+
   const runTurn = useCallback(
     async (threadId: string, history: ChatWireMessage[]) => {
       if (!userId) return;
@@ -343,6 +367,7 @@ export function SiteChatWidget() {
       clientSeqRef.current[threadId] = (clientSeqRef.current[threadId] ?? 0) + 1;
       setSending(true);
       stickToBottomRef.current = true;
+      lastFollowedRef.current = null;
       setLiveTurn({ id: turnId, threadId, streamText: '', activities: [], proposals: [], note: null, error: null, status: 'running' });
 
       const patchTurn = (patch: (turn: LiveTurn) => LiveTurn) =>
@@ -355,13 +380,15 @@ export function SiteChatWidget() {
         clientSeq: clientSeqRef.current[threadId],
         events: {
           onDelta: (_delta, accumulated) => patchTurn((turn) => ({ ...turn, streamText: accumulated })),
-          onToolActivity: (activity) =>
+          onToolActivity: (activity) => {
+            followActivity(activity);
             patchTurn((turn) => {
               const index = turn.activities.findIndex((a) => a.id === activity.id);
               const activities =
                 index === -1 ? [...turn.activities, activity] : turn.activities.map((a, i) => (i === index ? activity : a));
               return { ...turn, activities };
-            }),
+            });
+          },
           onToolProposal: (proposal) => patchTurn((turn) => ({ ...turn, proposals: [...turn.proposals, proposal] })),
         },
       });
@@ -378,7 +405,7 @@ export function SiteChatWidget() {
       }
       setSending(false);
     },
-    [userId, isDemo]
+    [userId, isDemo, followActivity]
   );
 
   const handleSend = useCallback(async () => {
@@ -561,6 +588,22 @@ export function SiteChatWidget() {
               <Trash2 className="h-4 w-4" aria-hidden="true" />
             )}
           </button>
+        )}
+        {!isDemo && (
+        <button
+          type="button"
+          aria-label={chatFollowAi ? 'Stop following the AI between pages' : 'Follow the AI to what it builds'}
+          aria-pressed={chatFollowAi}
+          title={chatFollowAi ? 'Following AI — click to stay on this page' : 'Follow AI to what it builds'}
+          onClick={() => setChatFollowAi(!chatFollowAi)}
+          className={
+            chatFollowAi
+              ? 'flex-shrink-0 rounded-md bg-primary-100 p-1.5 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300'
+              : 'flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
+          }
+        >
+          <Footprints className="h-4 w-4" aria-hidden="true" />
+        </button>
         )}
         <button
           type="button"
