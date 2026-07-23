@@ -18,7 +18,23 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { FileText, Loader2, Plus, Trash2, Workflow } from 'lucide-react';
+import {
+  Boxes,
+  Diamond,
+  FileText,
+  Loader2,
+  Monitor,
+  Plus,
+  Plug,
+  Sparkles,
+  Square,
+  StickyNote,
+  Trash2,
+  User,
+  Workflow,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { cn, generateId } from '../../lib/utils';
@@ -35,9 +51,34 @@ const INPUT_CLS = DIAGRAM_INPUT_CLS;
 type SketchField = { name: string; type: string };
 type BlueprintNodeData = { title: string; elementType: string; concept: boolean; fields: SketchField[] };
 
+/** §11.4 node vocabulary → icon (also the canvas tool palette's source of truth). */
+const ELEMENT_ICONS: Record<string, LucideIcon> = {
+  app: Boxes,
+  form: FileText,
+  screen: Monitor,
+  event: Zap,
+  flow: Workflow,
+  intelligence: Sparkles,
+  service: Plug,
+  actor: User,
+  decision: Diamond,
+  group: Square,
+  note: StickyNote,
+};
+
+/** The quick-sketch tools on the toolbar — draw the app's shape before anything exists. */
+const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string }> = [
+  { elementType: 'form', label: 'Form', title: 'New form' },
+  { elementType: 'screen', label: 'Screen', title: 'New screen' },
+  { elementType: 'decision', label: 'Decision', title: 'New decision' },
+  { elementType: 'actor', label: 'Actor', title: 'New actor / role' },
+  { elementType: 'note', label: 'Note', title: 'New note' },
+  { elementType: 'group', label: 'Group', title: 'New group / frame' },
+];
+
 function BlueprintNodeCard({ data, selected }: NodeProps) {
   const d = data as BlueprintNodeData;
-  const Icon = d.elementType === 'form' ? FileText : Workflow;
+  const Icon = ELEMENT_ICONS[d.elementType] ?? Workflow;
   return (
     <div
       className={cn(
@@ -90,34 +131,43 @@ function SelectionPanel({
   busy: boolean;
   onSave: (properties: Record<string, unknown>) => void;
 }) {
-  const isRelation = element.elementType === 'edge'
-    && (element.properties as { edgeType?: string }).edgeType === 'relation';
+  const isEdge = element.elementType === 'edge';
+  const isRelation = isEdge && (element.properties as { edgeType?: string }).edgeType === 'relation';
   const isForm = element.elementType === 'form';
   const [title, setTitle] = useState(String((element.properties as { title?: unknown }).title ?? ''));
   const [fields, setFields] = useState<SketchField[]>(() => sketchFields(element.properties));
   const [cardinality, setCardinality] = useState(String((element.properties as { cardinality?: unknown }).cardinality ?? '1:N'));
   const [fkField, setFkField] = useState(String((element.properties as { fkField?: unknown }).fkField ?? ''));
 
-  if (!isForm && !isRelation) return null;
+  // Every non-edge element edits its title; forms add the field sketch; relation
+  // edges edit cardinality + FK. Other edges (triggers, …) have nothing to edit yet.
+  if (isEdge && !isRelation) return null;
 
   const save = () => {
     if (isRelation) {
       onSave({ ...element.properties, cardinality, fkField: fkField.trim() });
       return;
     }
-    onSave({
+    const next: Record<string, unknown> = {
       ...element.properties,
-      title: title.trim() === '' ? 'Untitled form' : title.trim(),
-      fields: fields.filter((field) => field.name.trim() !== '').map((field) => ({ name: field.name.trim(), type: field.type })),
-    });
+      title: title.trim() === '' ? 'Untitled' : title.trim(),
+    };
+    if (isForm) {
+      next.fields = fields.filter((field) => field.name.trim() !== '').map((field) => ({ name: field.name.trim(), type: field.type }));
+    }
+    onSave(next);
   };
 
   return (
     <div className="scrollbar-thin w-64 flex-none overflow-y-auto border-l border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900">
-      {isForm ? (
+      {!isRelation ? (
         <>
-          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">Form title</label>
+          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+            {isForm ? 'Form title' : 'Title'}
+          </label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+          {isForm && (
+          <>
           <div className="mt-3 mb-1 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-500 dark:text-slate-400">Fields</span>
             <Button
@@ -161,6 +211,8 @@ function SelectionPanel({
               </div>
             ))}
           </div>
+          </>
+          )}
         </>
       ) : (
         <>
@@ -306,6 +358,27 @@ export function DiagramCanvas({
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((current) => applyNodeChanges(changes, current)),
     [],
+  );
+
+  // §11A: quick-sketch — drop a fresh CONCEPT element of any §11.4 kind at a spawn
+  // point. This is the design-tool half of the canvas; "place existing" is the other.
+  const sketchElement = useCallback(
+    (elementType: string, title: string) => {
+      void commit(
+        [
+          {
+            operationId: `op-${generateId()}`,
+            type: 'blueprint.element.create',
+            targetId: `el-${generateId()}`,
+            elementType: elementType as BlueprintOperation['elementType'],
+            properties: elementType === 'form' ? { title, fields: [] } : { title },
+            layout: { x: 120 + Math.round(Math.random() * 260), y: 120 + Math.round(Math.random() * 180) },
+          },
+        ],
+        true,
+      );
+    },
+    [commit],
   );
 
   const placeElement = useCallback(
@@ -454,6 +527,26 @@ export function DiagramCanvas({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-white px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900">
+        {/* Sketch tools (§11A): draw the app's shape before anything exists. */}
+        <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 dark:border-slate-700">
+          {SKETCH_TOOLS.map((tool) => {
+            const Icon = ELEMENT_ICONS[tool.elementType] ?? Workflow;
+            return (
+              <button
+                key={tool.elementType}
+                type="button"
+                title={tool.title}
+                aria-label={tool.title}
+                disabled={busy}
+                onClick={() => sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`)}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            );
+          })}
+        </div>
+        <span className="h-6 w-px bg-gray-200 dark:bg-slate-700" />
         <select value={placeFormId} onChange={(e) => setPlaceFormId(e.target.value)} aria-label="Form to place" className={INPUT_CLS + ' max-w-[14rem] cursor-pointer'}>
           <option value="">Pick a form…</option>
           {forms.map((form) => <option key={form.id} value={form.id}>{form.title}</option>)}
