@@ -149,6 +149,14 @@ class BlueprintMaterializeTest extends TestCase
         $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
         $this->assertSame('synced', $byId['el-orders']['sync']['state'] ?? null);
         $this->assertSame('Orders', $byId['el-orders']['sync']['title'] ?? null);
+
+        // §11A D5: with nothing new sketched, applying refuses (and mutates nothing).
+        try {
+            self::$materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected a nothing-new refusal');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('Nothing new to apply', $e->getMessage());
+        }
         self::$pdo->prepare("UPDATE forms SET updated_at = '2030-01-01 00:00:00' WHERE id = ?")
             ->execute([$ordersFormId]);
         $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
@@ -157,9 +165,75 @@ class BlueprintMaterializeTest extends TestCase
         $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
         $this->assertSame('missing', $byId['el-customers']['sync']['state'] ?? null);
 
-        // Once linked, materialising again refuses (deltas are D5).
-        $this->expectException(\InvalidArgumentException::class);
-        self::$materializer->materialize($this->userId, $blueprint['id']);
+        // A delta over a MISSING linked resource refuses loudly (fix the sketch first).
+        try {
+            self::$materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected a missing-resource refusal');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('no longer exists', $e->getMessage());
+        }
+    }
+
+    public function testLinkedDiagramAppliesDeltasOntoTheSameApp(): void
+    {
+        $blueprint = self::$blueprints->createBlueprint($this->userId, ['name' => 'Delta app']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-a',
+                    'elementType' => 'form',
+                    'properties' => ['title' => 'Projects', 'fields' => [['name' => 'name', 'type' => 'short_text']]],
+                ]),
+            ],
+        ]);
+        $first = self::$materializer->materialize($this->userId, $blueprint['id']);
+        $this->assertSame('created', $first['mode']);
+
+        // Keep sketching on the LINKED diagram: a new entity + a relation to it.
+        $snapshot = self::$blueprints->getBlueprint($this->userId, $blueprint['id']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => $snapshot['semanticRevision'],
+            'operations' => [
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-b',
+                    'elementType' => 'form',
+                    'properties' => ['title' => 'Tasks', 'fields' => [['name' => 'title', 'type' => 'short_text']]],
+                ]),
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-rel',
+                    'elementType' => 'edge',
+                    'properties' => ['edgeType' => 'relation', 'sourceId' => 'el-a', 'targetId' => 'el-b', 'cardinality' => '1:N', 'fkField' => 'project'],
+                ]),
+            ],
+        ]);
+
+        $delta = self::$materializer->materialize($this->userId, $blueprint['id']);
+        $this->assertSame('delta', $delta['mode']);
+        $this->assertSame($first['appId'], $delta['appId'], 'deltas land on the SAME app');
+        $this->assertCount(1, $delta['createdFormIds']);
+        $this->assertSame(1, $delta['relations']);
+
+        // The new form attached to the existing app and carries the relation FK.
+        $attached = self::$pdo->prepare('SELECT COUNT(*) FROM app_forms WHERE app_id = ?');
+        $attached->execute([$first['appId']]);
+        $this->assertSame(2, (int) $attached->fetchColumn());
+        $tasks = self::$forms->getForm($delta['createdFormIds'][0]);
+        $fk = null;
+        foreach ($tasks['fields'] as $field) {
+            if (($field['type'] ?? null) === 'linked_record') {
+                $fk = $field;
+            }
+        }
+        $this->assertNotNull($fk);
+
+        // Re-applying is idempotent: the relation already exists → nothing new.
+        try {
+            self::$materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected a nothing-new refusal on re-apply');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('Nothing new to apply', $e->getMessage());
+        }
     }
 
     public function testEmptyDiagramAndForeignFormRefsRefuseCleanly(): void

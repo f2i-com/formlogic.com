@@ -46,12 +46,13 @@ class BlueprintMaterializeService
         if ($blueprint === null) {
             throw new \InvalidArgumentException('Unknown blueprint');
         }
-        if ($blueprint['appId'] !== null) {
-            throw new \InvalidArgumentException('This diagram is already linked to an app — changes apply as deltas');
-        }
+        // §11A D5: a LINKED diagram applies DELTAS — new concept forms and new relations
+        // land on the existing app; nothing already materialised is touched again.
+        $existingAppId = is_string($blueprint['appId'] ?? null) ? $blueprint['appId'] : null;
+        $delta = $existingAppId !== null;
         $elements = $blueprint['elements'] ?? [];
         $formElements = array_values(array_filter($elements, fn (array $e) => $e['elementType'] === 'form'));
-        if ($formElements === []) {
+        if (!$delta && $formElements === []) {
             throw new \InvalidArgumentException('Sketch at least one form entity before creating the app');
         }
 
@@ -122,6 +123,18 @@ class BlueprintMaterializeService
                     continue;
                 }
                 $fields = is_array($target['fields'] ?? null) ? $target['fields'] : [];
+                // Idempotent on re-apply: this exact relation already materialised.
+                $already = false;
+                foreach ($fields as $field) {
+                    $props = is_array($field['properties'] ?? null) ? $field['properties'] : [];
+                    if (($field['type'] ?? null) === 'linked_record' && ($props['targetFormId'] ?? null) === $sourceFormId) {
+                        $already = true;
+                        break;
+                    }
+                }
+                if ($already) {
+                    continue;
+                }
                 $fieldId = $this->uniqueFieldId($fkName, array_column($fields, 'id'));
                 $fields[] = [
                     'id' => $fieldId,
@@ -134,12 +147,24 @@ class BlueprintMaterializeService
                 $relations++;
             }
 
-            // 3. The app — with every form attached ATOMICALLY in the same creation txn.
-            $app = $this->apps->createApp(
-                ['name' => (string) $blueprint['name'], 'formIds' => array_values(array_unique(array_values($formIdByElement)))],
-                $ownerUserId
-            );
-            $appId = (string) $app['id'];
+            // 3. The app: first materialisation creates it with every form attached
+            //    ATOMICALLY; a delta attaches only the newly created forms.
+            if ($delta) {
+                if ($createdFormIds === [] && $relations === 0) {
+                    throw new \InvalidArgumentException('Nothing new to apply — sketch a new form or relation first');
+                }
+                $appId = $existingAppId;
+                $app = ['id' => $existingAppId];
+                foreach ($createdFormIds as $newFormId) {
+                    $this->apps->addFormToApp($existingAppId, $newFormId);
+                }
+            } else {
+                $app = $this->apps->createApp(
+                    ['name' => (string) $blueprint['name'], 'formIds' => array_values(array_unique(array_values($formIdByElement)))],
+                    $ownerUserId
+                );
+                $appId = (string) $app['id'];
+            }
 
             // 4. Link + stamp: app id on the blueprint row, resourceRefs + materialised
             //    states through the gateway (audited, origin 'launcher'). A gateway
@@ -164,8 +189,10 @@ class BlueprintMaterializeService
                     'operations' => $operations,
                 ]);
             }
-            $this->mysql->prepare('UPDATE blueprints SET app_id = :app, status = :status WHERE id = :id')
-                ->execute(['app' => $appId, 'status' => 'materialised', 'id' => $blueprintId]);
+            if (!$delta) {
+                $this->mysql->prepare('UPDATE blueprints SET app_id = :app, status = :status WHERE id = :id')
+                    ->execute(['app' => $appId, 'status' => 'materialised', 'id' => $blueprintId]);
+            }
 
             // §11A D4: record the element↔resource association with the version we
             // observed — pull sync compares live updated_at against it (differ = stale,
@@ -191,6 +218,7 @@ class BlueprintMaterializeService
             }
 
             return [
+                'mode' => $delta ? 'delta' : 'created',
                 'appId' => $appId,
                 'appSlug' => isset($app['slug']) && is_string($app['slug']) ? $app['slug'] : null,
                 'createdFormIds' => $createdFormIds,
@@ -200,7 +228,7 @@ class BlueprintMaterializeService
         } catch (\Throwable $e) {
             // Compensation: remove ONLY what this call created; pre-existing forms are
             // never touched. Best-effort — a failed cleanup logs and moves on.
-            if ($appId !== null) {
+            if ($appId !== null && !$delta) {
                 try {
                     $this->apps->deleteApp($appId);
                 } catch (\Throwable $cleanup) {

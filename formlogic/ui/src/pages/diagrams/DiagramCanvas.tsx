@@ -1350,11 +1350,35 @@ export function DiagramCanvas({
           <Button variant="ghost" size="sm" disabled={busy || selectedId === null} onClick={deleteSelected} aria-label="Delete selected element">
             <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
           </Button>
-          {/* §11A D3: the sketch becomes real — or, once linked, jumps to its app. */}
+          {/* §11A D3/D5: the sketch becomes real — and once linked, later sketching
+              applies as DELTAS onto the same app. */}
           {blueprint.appId !== null ? (
-            <Button variant="outline" size="sm" onClick={() => navigate(`/apps/${blueprint.appId}/records`)}>
-              Open app
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                isLoading={materializing}
+                disabled={busy || materializing}
+                onClick={() => {
+                  setMaterializing(true);
+                  void api.materializeBlueprint(blueprint.id).then((res) => {
+                    setMaterializing(false);
+                    if (res.error || !res.data) {
+                      toast.info('Nothing applied', typeof res.error === 'string' ? res.error : undefined);
+                      void onReload();
+                      return;
+                    }
+                    toast.success('Changes applied to your app', `${res.data.createdFormIds.length} new form(s), ${res.data.relations} new relation(s)`);
+                    void onReload();
+                  });
+                }}
+              >
+                Apply changes
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(`/apps/${blueprint.appId}/records`)}>
+                Open app
+              </Button>
+            </>
           ) : (
             <Button
               size="sm"
