@@ -117,7 +117,7 @@ export interface ChatToolActivity {
   detail?: string;
   error?: string;
   /** Deep-link target when the tool result names a created/updated record. */
-  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram'; id: string };
+  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen'; id: string };
 }
 
 /** A confirm-mode tool proposal awaiting the user's decision (desktop source). */
@@ -144,7 +144,7 @@ export interface SendChatTurnOptions {
   messages: ChatEngineMessage[];
   /** §11B O5a: the page the user is on — appended as a system hint so "this form"
    *  resolves without asking. The TOOLS stay the authority on ownership. */
-  pageContext?: { kind: 'form' | 'app' | 'diagram'; id: string } | null;
+  pageContext?: { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen'; id: string } | null;
   /** Demo account: chat works, tool actions are disabled (banner + tools:false). */
   isDemo?: boolean;
   /** Force a tools-off turn (e.g. the compaction summary — pure text, no actions). */
@@ -205,6 +205,13 @@ const TOOL_ACTIVITY_TYPES = new Set(['tool_call', 'tool_result', 'tool_executed'
 
 /** Recursively (bounded) hunt a tool result for a deep-linkable record id. */
 function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity['link'] | null {
+  // Screen tools deep-link to their STUDIO (live preview + take-over), not the builder /
+  // app forms list — the result is the updated form/app, whose id is the studio route param.
+  if (toolName === 'set_form_screen' || toolName === 'set_app_home') {
+    const rec = asRecord(result);
+    const id = rec ? firstString(rec.id, rec.formId, rec.appId) : undefined;
+    return id ? { kind: toolName === 'set_form_screen' ? 'formScreen' : 'appScreen', id } : null;
+  }
   const seen: unknown[] = [result];
   for (let depth = 0; depth < 4; depth += 1) {
     const current = seen.shift();
@@ -682,15 +689,17 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
   // three sources, so "this form" means the same thing everywhere.
   if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
     const { kind, id } = opts.pageContext;
+    // The screen Studios get a richer hint: name the owning form/app AND the right
+    // read/write tools, so "this screen" turns into a correct tool call first try.
+    const content =
+      kind === 'formScreen'
+        ? `Page context: the user is in the custom-screen Studio for form ${id} (a sandboxed frontend rendered instead of the form's default field UI). When they say "this screen" or ask for pages/changes without naming a target, they mean this form's customScreen: read the current one with get_form (formId ${id}), write it with set_form_screen — send the COMPLETE screen (all files) each time.`
+        : kind === 'appScreen'
+          ? `Page context: the user is in the custom-screen Studio for the HOME screen of app ${id}. When they say "this screen" or ask for pages/changes without naming a target, they mean this app's customScreen: read the app's forms with list_forms/get_form, write the screen with set_app_home (appId ${id}) — send the COMPLETE screen (all files) each time.`
+          : `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`;
     opts = {
       ...opts,
-      messages: [
-        ...opts.messages,
-        {
-          role: 'system',
-          content: `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`,
-        },
-      ],
+      messages: [...opts.messages, { role: 'system', content }],
     };
   }
   const fetchPreferences = deps.fetchPreferences ?? (() => getAiPreferences());

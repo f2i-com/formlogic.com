@@ -57,6 +57,12 @@ export default function DiagramsIndex() {
         <Button onClick={() => navigate('/diagrams/new')} leftIcon={<Plus className="h-4 w-4" />}>
           New diagram
         </Button>
+        {api.isDemoMode() && (
+          <p className="mt-2 text-xs text-gray-400 dark:text-slate-500">
+            Demo diagrams stay in this browser — nothing is saved to the server. Sign up free to keep
+            them and turn a diagram into a real app.
+          </p>
+        )}
       </div>
       {loading ? (
         <p className="flex items-center gap-2 text-sm text-gray-400 dark:text-slate-500">

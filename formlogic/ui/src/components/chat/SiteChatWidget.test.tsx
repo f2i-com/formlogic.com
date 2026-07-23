@@ -21,12 +21,37 @@ const h = vi.hoisted(() => ({
   answerToolProposal: vi.fn(),
   getAiPreferences: vi.fn(),
   invalidateAiPreferencesCache: vi.fn(),
+  demoAttach: vi.fn(),
+  demoRespond: vi.fn(),
   lastLocation: '',
 }));
 
 vi.mock('./chatEngine', async () => {
   const actual = await vi.importActual<typeof import('./chatEngine')>('./chatEngine');
   return { ...actual, sendChatTurn: h.sendChatTurn, answerToolProposal: h.answerToolProposal };
+});
+
+// The scripted demo director is its own unit (demoChatDirector.test.ts) — here it is a
+// deterministic fake so the widget tests pin only the WIRING (chips render, sends route
+// to the director instead of the live engine).
+vi.mock('./demoChatDirector', () => {
+  const snapshot = {
+    running: false,
+    typing: false,
+    threadId: null,
+    activities: [],
+    chips: ['Chip one', 'Chip two'],
+    version: 0,
+  };
+  return {
+    demoChatDirector: {
+      subscribe: () => () => undefined,
+      getSnapshot: () => snapshot,
+      attach: h.demoAttach,
+      respond: h.demoRespond,
+      stop: () => undefined,
+    },
+  };
 });
 
 vi.mock('../../client-runtime/flows/aiDefault', () => ({
@@ -89,13 +114,13 @@ function LocationProbe() {
   return null;
 }
 
-async function renderWidget() {
+async function renderWidget(initialPath = '/') {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
     root.render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <LocationProbe />
         <SiteChatWidget />
       </MemoryRouter>
@@ -175,6 +200,8 @@ describe('pure helpers', () => {
     expect(chatToolLinkPath({ kind: 'form', id: 'f1' })).toBe('/builder/f1');
     expect(chatToolLinkPath({ kind: 'app', id: 'a1' })).toBe('/apps/a1/forms');
     expect(chatToolLinkPath({ kind: 'flow', id: 'fl1' })).toBe('/flows?flow=fl1');
+    expect(chatToolLinkPath({ kind: 'formScreen', id: 'f1' })).toBe('/forms/f1/screen/edit');
+    expect(chatToolLinkPath({ kind: 'appScreen', id: 'a1' })).toBe('/apps/a1/home/edit');
     expect(chatToolLinkPath({ kind: 'response', id: 'r1' })).toBeNull();
   });
 
@@ -255,6 +282,26 @@ describe('send path', () => {
     // And the transcript shows them.
     expect(panel()!.textContent).toContain('make me a contact form');
     expect(panel()!.textContent).toContain('Hi there');
+  });
+
+  it('derives screen-Studio page context from the route (formScreen / appScreen)', async () => {
+    // The custom-screen Studios are their own page-context kind so "this screen"
+    // steers the AI to set_form_screen / set_app_home instead of the generic form/app.
+    await renderWidget('/forms/f-9/screen/edit');
+    await openPanel();
+    await send('make it nicer');
+    expect((h.sendChatTurn.mock.calls[0][0] as SendChatTurnOptions).pageContext).toEqual({ kind: 'formScreen', id: 'f-9' });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    useUIStore.setState({ chatOpen: false, chatMinimized: false });
+    await renderWidget('/apps/a-4/home/edit');
+    await openPanel();
+    await send('add a stats card');
+    const last = h.sendChatTurn.mock.calls.at(-1)![0] as SendChatTurnOptions;
+    expect(last.pageContext).toEqual({ kind: 'appScreen', id: 'a-4' });
   });
 
   it('clears the conversation from the header with a two-tap confirm', async () => {
@@ -362,21 +409,60 @@ describe('tool cards', () => {
 });
 
 describe('demo account', () => {
-  it('shows the demo banner and sends turns with isDemo (tools disabled by the engine)', async () => {
+  function signInDemo() {
     useAuthStore.setState({
       user: { id: 'demo', email: 'demo@formlogic.local', isDemo: true },
       isLoading: false,
       isInitialized: true,
       error: null,
     });
+  }
+
+  it('shows the guided-demo banner, chips, and never any tool-mode toggle', async () => {
+    signInDemo();
     await renderWidget();
     await openPanel();
 
-    expect(panel()!.textContent).toContain('tool actions are disabled');
+    expect(panel()!.textContent).toContain('Guided demo');
+    expect(panel()!.textContent).toContain('no AI credits');
     // The Auto/Confirm toggle is pointless in the demo — hidden.
     expect(panel()!.querySelector('button[aria-pressed]')).toBeNull();
+    // The scripted suggestion chips render from the director's snapshot.
+    expect(panel()!.textContent).toContain('Chip one');
+    expect(panel()!.textContent).toContain('Chip two');
+    // The demo widget registered itself with the director (userId + navigator).
+    expect(h.demoAttach).toHaveBeenCalled();
+    expect(h.demoAttach.mock.calls[0][0].userId).toBe('demo');
+  });
 
+  it('routes typed messages to the scripted director, never the live engine', async () => {
+    signInDemo();
+    await renderWidget();
+    await openPanel();
     await send('demo hello');
-    expect((h.sendChatTurn.mock.calls[0][0] as SendChatTurnOptions).isDemo).toBe(true);
+
+    expect(h.sendChatTurn).not.toHaveBeenCalled();
+    expect(h.demoRespond).toHaveBeenCalledTimes(1);
+    const [text, threadId] = h.demoRespond.mock.calls[0] as [string, string];
+    expect(text).toBe('demo hello');
+    expect(typeof threadId).toBe('string');
+    // The user message was appended to the store before the director took over.
+    const store = getChatStore('demo');
+    const threads = await store.listThreads();
+    const { messages } = await store.listMessages(threads[0].id);
+    expect(messages.map((m) => [m.role, m.content])).toEqual([['user', 'demo hello']]);
+  });
+
+  it('clicking a chip sends its label through the same demo path', async () => {
+    signInDemo();
+    await renderWidget();
+    await openPanel();
+    const chip = Array.from(panel()!.querySelectorAll('button')).find((b) => b.textContent === 'Chip one')!;
+    await act(async () => {
+      chip.click();
+    });
+    await flush();
+    expect(h.demoRespond).toHaveBeenCalledWith('Chip one', expect.any(String));
+    expect(h.sendChatTurn).not.toHaveBeenCalled();
   });
 });

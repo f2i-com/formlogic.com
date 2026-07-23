@@ -21,7 +21,10 @@ import type {
   WorkflowGraph,
 } from '../types/flows';
 import { logger } from './logger';
-import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
+import {
+  addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords,
+  listDemoBlueprints, getDemoBlueprint, createDemoBlueprint, renameDemoBlueprint, deleteDemoBlueprint, commitDemoBlueprintOperations,
+} from './demoLocal';
 import { API_BASE_URL } from './apiBase';
 import type { ResponseEnvelope } from './crypto/envelope';
 import type {
@@ -1259,6 +1262,15 @@ class ApiClient {
       params.set(`answersLte.${field}`, value);
     }
 
+    // Demo-local form (created in-browser by the demo account, id prefixed demolocal_):
+    // the server has never heard of it, so its records live in the demo overlay only.
+    // This is what lets a demo visitor's custom screen call records() and see real data.
+    if (this._demoMode && isDemoLocalId(formId)) {
+      const local = await getDemoRecords(formId);
+      const rows = local.slice(0, Math.max(1, options?.limit ?? local.length)) as unknown as FormResponse[];
+      return { data: { responses: rows, count: local.length } };
+    }
+
     const query = params.toString();
     return this.request(`/forms/${formId}/responses${query ? `?${query}` : ''}`);
   }
@@ -1268,6 +1280,12 @@ class ApiClient {
   }
 
   async submitResponse(formId: string, data: { answers: Record<string, unknown>; completionTime?: number; idempotencyKey?: string }): Promise<ApiResponse<{ response: FormResponse }>> {
+    // Demo-local form: store the submission in the demo overlay (never the server) —
+    // the mirror of the getResponses branch above, so demo custom screens can submit.
+    if (this._demoMode && isDemoLocalId(formId)) {
+      const rec = await addDemoRecord(formId, data.answers);
+      return { data: { response: rec as unknown as FormResponse } };
+    }
     // Stamp a stable idempotency key so a replayed submission (Workbox background-sync replaying a
     // request up to 24h later, or a manual retry after a dropped ack) returns the SAME response
     // instead of creating a duplicate row — same one-line pattern as createAppResponse/
@@ -1693,6 +1711,10 @@ class ApiClient {
    * drives context-aware Preview routing: 1 published context opens /app/{slug}/form/{formId}.
    */
   async getFormAppContexts(formId: string): Promise<ApiResponse<{ contexts: FormAppContext[] }>> {
+    // Demo-local forms never exist server-side — asking would just 404 in the console.
+    if (this._demoMode && isDemoLocalId(formId)) {
+      return { data: { contexts: [] } };
+    }
     return this.request(`/forms/${formId}/app-contexts`);
   }
 
@@ -2750,23 +2772,52 @@ class ApiClient {
 
   // ── Blueprints (extensible-flows plan §11/§14) ──────────────────────────────────────
 
+  // Demo overlay: the demo account SKETCHES locally — demolocal_ blueprints live in the
+  // browser (lib/demoLocal.ts mini gateway) because the server is read-only for demo.
+  // Undo/proposals/materialise stay server-only and refuse honestly below.
+
   async listBlueprints(): Promise<ApiResponse<{ blueprints: import('../types/blueprints').Blueprint[] }>> {
+    if (this._demoMode) {
+      const [server, local] = await Promise.all([
+        this.request<{ blueprints: import('../types/blueprints').Blueprint[] }>('/blueprints'),
+        listDemoBlueprints(),
+      ]);
+      return { data: { blueprints: [...local.map((s) => s.row), ...(server.data?.blueprints ?? [])] } };
+    }
     return this.request('/blueprints');
   }
 
   async createBlueprint(payload: { name: string; appId?: string }): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
+    if (this._demoMode) {
+      const stored = await createDemoBlueprint(payload.name);
+      return { data: { blueprint: stored.row } };
+    }
     return this.request('/blueprints', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   async getBlueprint(blueprintId: string): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      const stored = await getDemoBlueprint(blueprintId);
+      if (!stored) return { error: 'Diagram not found in this browser', status: 404 };
+      return { data: { blueprint: { ...stored.row, elements: stored.elements } } };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`);
   }
 
   async renameBlueprint(blueprintId: string, name: string): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      const stored = await renameDemoBlueprint(blueprintId, name);
+      if (!stored) return { error: 'Diagram not found in this browser', status: 404 };
+      return { data: { blueprint: stored.row } };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
   }
 
   async deleteBlueprint(blueprintId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      await deleteDemoBlueprint(blueprintId);
+      return { data: { deleted: true } };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}`, { method: 'DELETE' });
   }
 
@@ -2777,11 +2828,18 @@ class ApiClient {
       semanticRevision: number | null; operations: Array<{ type: string; targetId: string | null }>;
     }>;
   }>> {
+    // Demo-local diagrams keep no operation log (no undo either) — an empty timeline.
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      return { data: { history: [] } };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/history?limit=${limit}`);
   }
 
   /** §14 undo: apply the newest change set's stored inverses as a new audited batch. */
   async undoBlueprint(blueprintId: string): Promise<ApiResponse<import('../types/blueprints').BlueprintCommitResult & { undid: string }>> {
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      return { error: 'Undo is not available for demo diagrams — they live only in this browser.' };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/undo`, { method: 'POST' });
   }
 
@@ -2789,6 +2847,10 @@ class ApiClient {
   async listBlueprintChangeSets(blueprintId: string): Promise<ApiResponse<{
     changeSets: Array<{ id: string; origin: string; summary: string | null; baseSemanticRevision: number; operations: import('../types/blueprints').BlueprintOperation[]; createdAt: string }>;
   }>> {
+    // Demo-local diagrams never carry parked proposals (no AI writes them in the demo).
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      return { data: { changeSets: [] } };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/change-sets`);
   }
 
@@ -2807,6 +2869,9 @@ class ApiClient {
     createdFormIds: string[]; reusedFormIds: string[]; relations: number;
     createdFlowIds: string[]; bindings: number; roles: number;
   }>> {
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      return { error: 'Demo diagrams stay in this browser — creating a real app from a diagram needs a free account.' };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/materialize`, { method: 'POST' });
   }
 
@@ -2823,6 +2888,20 @@ class ApiClient {
       operations: import('../types/blueprints').BlueprintOperation[];
     }
   ): Promise<ApiResponse<import('../types/blueprints').BlueprintCommitResult>> {
+    // Demo-local diagram: the batch runs through the browser mini gateway. The 409
+    // conflict shape mirrors the server ({code:'revision_conflict'}) so the canvas's
+    // conflict handling behaves identically.
+    if (this._demoMode && isDemoLocalId(blueprintId)) {
+      const out = await commitDemoBlueprintOperations(blueprintId, batch);
+      if (out.ok) return { data: out.result };
+      if (out.code === 'revision_conflict') {
+        return {
+          error: { code: 'revision_conflict', currentSemanticRevision: out.currentSemanticRevision } as unknown as string,
+          status: 409,
+        };
+      }
+      return { error: out.code === 'not_found' ? 'Diagram not found in this browser' : (out.message ?? 'Invalid operation batch') };
+    }
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/operations/commit`, {
       method: 'POST',
       body: JSON.stringify(batch),
@@ -2930,6 +3009,11 @@ class ApiClient {
   // enqueues a 'queued' run per enabled binding after each successful submission (max 5).
 
   async listFormFlowBindings(formId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
+    // Demo-local forms never exist server-side — return empty rows (the demo overlay's
+    // own locally-created bindings still merge in at the call sites) instead of a 404.
+    if (this._demoMode && isDemoLocalId(formId)) {
+      return { data: { bindings: [] } };
+    }
     return this.request(`/forms/${encodeURIComponent(formId)}/flow-bindings`);
   }
 

@@ -335,6 +335,12 @@ function AppRoutes() {
           <Route path="/forms" element={<FormsList />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/flows" element={<FlowsWorkspace />} />
+          {/* Diagrams work in the demo too: sketches are demolocal_ blueprints stored in
+              THIS browser (api.ts demo overlay → lib/demoLocal.ts mini gateway) — the
+              server stays read-only. Undo/proposals/materialise refuse honestly. */}
+          <Route path="/diagrams" element={<DiagramsIndex />} />
+          <Route path="/diagrams/all" element={<DiagramsIndex />} />
+          <Route path="/diagrams/:diagramId" element={<DiagramPage />} />
           {/* No /doctor for the demo — diagnostics are platform-admin-only now */}
           <Route path="/billing" element={<Billing />} />
           <Route path="/analytics/:formId" element={<FormAnalytics />} />

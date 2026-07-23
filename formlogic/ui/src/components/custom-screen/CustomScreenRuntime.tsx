@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
+import { isDemoLocalId } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -351,8 +352,13 @@ export function CustomScreenRuntime({
         iframeRef.current.contentWindow?.postMessage({ __flReply: true, id: m.id, error: 'Too many requests — slow down.' }, '*');
         return;
       }
+      // Demo-local forms exist ONLY in this browser (formStore demolocal_ ids): their
+      // screens were necessarily authored on this device by this visitor (Studio save or
+      // the guided demo script), so they run with owner trust — there is no server save
+      // to stamp provenance, and without this the demo poll screen refuses records().
+      const trust = screen._trust ?? (api.isDemoMode() && isDemoLocalId(formId) ? 'owner' : undefined);
       try {
-        if (!isScreenSdkActionAllowed(screen._trust, String(m.action))) {
+        if (!isScreenSdkActionAllowed(trust, String(m.action))) {
           throw new Error('This SDK action is disabled for an unverified custom screen.');
         }
         switch (m.action) {

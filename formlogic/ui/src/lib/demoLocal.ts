@@ -2,6 +2,7 @@
 // exploring the demo is kept HERE (IndexedDB), never sent to the server — so the shared demo can't be
 // polluted with abusive/junk data and every visitor gets a clean, seeded starting point plus their own
 // private additions. Reads merge the server-seeded records with these local ones.
+import type { Blueprint, BlueprintCommitResult, BlueprintElement, BlueprintOperation } from '../types/blueprints';
 
 export type DemoRecord = {
   id: string;
@@ -15,7 +16,8 @@ const DB_NAME = 'formlogic-demo';
 const STORE = 'records'; // key: formId → DemoRecord[]
 const FLOWS_STORE = 'flows'; // fixed keys: 'created' | 'edits' | 'deleted' (see the flows overlay below)
 const FORM_BINDINGS_STORE = 'formFlowBindings'; // per-form keys below; demo overlay for /forms/{id}/flow-bindings
-const DB_VERSION = 3;
+const BLUEPRINTS_STORE = 'blueprints'; // key: blueprint id → DemoBlueprintStored (see the diagrams overlay below)
+const DB_VERSION = 4;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -29,6 +31,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!req.result.objectStoreNames.contains(FORM_BINDINGS_STORE)) {
         req.result.createObjectStore(FORM_BINDINGS_STORE);
+      }
+      if (!req.result.objectStoreNames.contains(BLUEPRINTS_STORE)) {
+        req.result.createObjectStore(BLUEPRINTS_STORE);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -140,10 +145,11 @@ export async function clearDemoRecords(): Promise<void> {
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE, FLOWS_STORE, FORM_BINDINGS_STORE], 'readwrite');
+      const tx = db.transaction([STORE, FLOWS_STORE, FORM_BINDINGS_STORE, BLUEPRINTS_STORE], 'readwrite');
       tx.objectStore(STORE).clear();
       tx.objectStore(FLOWS_STORE).clear();
       tx.objectStore(FORM_BINDINGS_STORE).clear();
+      tx.objectStore(BLUEPRINTS_STORE).clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -190,6 +196,208 @@ export async function updateDemoRecord(formId: string, id: string, answers: Reco
 export async function deleteDemoRecord(formId: string, id: string): Promise<void> {
   const arr = await read(formId);
   await write(formId, arr.filter((r) => r.id !== id));
+}
+
+// ── Demo-local DIAGRAMS (blueprints) ─────────────────────────────────────────────────
+// The demo account can SKETCH: a demolocal_ blueprint row + its elements live here, and
+// api.ts routes the whole diagram client at them for demolocal_ ids. Mutations run
+// through applyDemoBlueprintOperations — a mini local gateway that mirrors the server's
+// §14.3 batch semantics (semantic batches carry baseSemanticRevision and conflict-check
+// against it; layout-only batches never conflict). Deliberately NOT covered locally:
+// proposals/undo/materialise — those need the real server, and the api layer refuses
+// them honestly for demo diagrams.
+
+export interface DemoBlueprintStored {
+  /** The blueprint row (never carries `elements` — GET composes them in). */
+  row: Blueprint;
+  elements: BlueprintElement[];
+}
+
+const BLUEPRINT_SEMANTIC_OPS = new Set(['blueprint.element.create', 'blueprint.element.update', 'blueprint.element.delete']);
+
+/**
+ * Apply one operation batch to a stored demo blueprint. Pure — IndexedDB persistence is
+ * the thin wrappers below. Returns the new stored state + the commit result the canvas
+ * expects, or a typed refusal (`revision_conflict` mirrors the server's 409 contract).
+ */
+export function applyDemoBlueprintOperations(
+  stored: DemoBlueprintStored,
+  batch: { baseSemanticRevision?: number; operations: BlueprintOperation[] },
+  now: string = new Date().toISOString(),
+):
+  | { ok: true; stored: DemoBlueprintStored; result: BlueprintCommitResult }
+  | { ok: false; code: 'revision_conflict'; currentSemanticRevision: number }
+  | { ok: false; code: 'invalid'; message: string } {
+  const semantic = batch.operations.some((op) => BLUEPRINT_SEMANTIC_OPS.has(op.type));
+  if (semantic && batch.baseSemanticRevision !== stored.row.semanticRevision) {
+    return { ok: false, code: 'revision_conflict', currentSemanticRevision: stored.row.semanticRevision };
+  }
+  const elements = new Map(stored.elements.map((el) => [el.id, el]));
+  let viewport = stored.row.viewport;
+  for (const op of batch.operations) {
+    const targetId = op.targetId ?? '';
+    switch (op.type) {
+      case 'blueprint.element.create': {
+        if (targetId === '' || !op.elementType) {
+          return { ok: false, code: 'invalid', message: 'element.create needs targetId and elementType' };
+        }
+        elements.set(targetId, {
+          id: targetId,
+          elementType: op.elementType,
+          resourceRef: op.resourceRef ?? null,
+          properties: op.properties ?? {},
+          layout: op.layout ?? null,
+        });
+        break;
+      }
+      case 'blueprint.element.update': {
+        const el = elements.get(targetId);
+        if (!el) return { ok: false, code: 'invalid', message: `Unknown element ${targetId}` };
+        elements.set(targetId, {
+          ...el,
+          ...(op.properties !== undefined ? { properties: op.properties } : {}),
+          ...(op.resourceRef !== undefined ? { resourceRef: op.resourceRef } : {}),
+          ...(op.layout !== undefined ? { layout: op.layout } : {}),
+        });
+        break;
+      }
+      case 'blueprint.element.delete':
+        elements.delete(targetId);
+        break;
+      case 'blueprint.layout.set': {
+        const el = elements.get(targetId);
+        if (el && op.layout !== undefined) elements.set(targetId, { ...el, layout: op.layout });
+        break;
+      }
+      case 'blueprint.viewport.set':
+        if (op.viewport !== undefined) viewport = op.viewport;
+        break;
+      default:
+        return { ok: false, code: 'invalid', message: `Unsupported operation type ${String((op as { type?: unknown }).type)}` };
+    }
+  }
+  const row: Blueprint = {
+    ...stored.row,
+    viewport,
+    semanticRevision: stored.row.semanticRevision + (semantic ? 1 : 0),
+    layoutRevision: stored.row.layoutRevision + 1,
+    updatedAt: now,
+  };
+  return {
+    ok: true,
+    stored: { row, elements: [...elements.values()] },
+    result: { changeSetId: 'demolocal_cs_' + uuid(), semanticRevision: row.semanticRevision, layoutRevision: row.layoutRevision },
+  };
+}
+
+async function readBlueprintKey(id: string): Promise<DemoBlueprintStored | null> {
+  try {
+    const db = await openDb();
+    return await new Promise<DemoBlueprintStored | null>((resolve, reject) => {
+      const tx = db.transaction(BLUEPRINTS_STORE, 'readonly');
+      const rq = tx.objectStore(BLUEPRINTS_STORE).get(id);
+      rq.onsuccess = () => resolve((rq.result as DemoBlueprintStored | undefined) ?? null);
+      rq.onerror = () => reject(rq.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function writeBlueprintKey(id: string, stored: DemoBlueprintStored): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(BLUEPRINTS_STORE, 'readwrite');
+      tx.objectStore(BLUEPRINTS_STORE).put(stored, id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** All demo-local blueprints, newest-updated first. */
+export async function listDemoBlueprints(): Promise<DemoBlueprintStored[]> {
+  try {
+    const db = await openDb();
+    const rows = await new Promise<DemoBlueprintStored[]>((resolve, reject) => {
+      const tx = db.transaction(BLUEPRINTS_STORE, 'readonly');
+      const rq = tx.objectStore(BLUEPRINTS_STORE).getAll();
+      rq.onsuccess = () => resolve(Array.isArray(rq.result) ? (rq.result as DemoBlueprintStored[]) : []);
+      rq.onerror = () => reject(rq.error);
+    });
+    return rows.sort((a, b) => (a.row.updatedAt < b.row.updatedAt ? 1 : -1));
+  } catch {
+    return [];
+  }
+}
+
+export async function getDemoBlueprint(id: string): Promise<DemoBlueprintStored | null> {
+  return readBlueprintKey(id);
+}
+
+export async function createDemoBlueprint(name: string): Promise<DemoBlueprintStored> {
+  const now = new Date().toISOString();
+  const stored: DemoBlueprintStored = {
+    row: {
+      id: 'demolocal_' + uuid(),
+      appId: null,
+      name: name.trim() === '' ? 'Untitled diagram' : name.trim(),
+      status: 'draft',
+      semanticRevision: 0,
+      layoutRevision: 0,
+      viewport: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    elements: [],
+  };
+  await writeBlueprintKey(stored.row.id, stored);
+  return stored;
+}
+
+export async function renameDemoBlueprint(id: string, name: string): Promise<DemoBlueprintStored | null> {
+  const stored = await readBlueprintKey(id);
+  if (!stored) return null;
+  const next: DemoBlueprintStored = { ...stored, row: { ...stored.row, name, updatedAt: new Date().toISOString() } };
+  await writeBlueprintKey(id, next);
+  return next;
+}
+
+export async function deleteDemoBlueprint(id: string): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(BLUEPRINTS_STORE, 'readwrite');
+      tx.objectStore(BLUEPRINTS_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Commit one batch against a stored demo blueprint (load → apply → persist). */
+export async function commitDemoBlueprintOperations(
+  id: string,
+  batch: { baseSemanticRevision?: number; operations: BlueprintOperation[] },
+): Promise<
+  | { ok: true; result: BlueprintCommitResult }
+  | { ok: false; code: 'not_found' | 'revision_conflict' | 'invalid'; message?: string; currentSemanticRevision?: number }
+> {
+  const stored = await readBlueprintKey(id);
+  if (!stored) return { ok: false, code: 'not_found' };
+  const applied = applyDemoBlueprintOperations(stored, batch);
+  if (!applied.ok) {
+    return applied.code === 'revision_conflict'
+      ? { ok: false, code: 'revision_conflict', currentSemanticRevision: applied.currentSemanticRevision }
+      : { ok: false, code: 'invalid', message: applied.message };
+  }
+  await writeBlueprintKey(id, applied.stored);
+  return { ok: true, result: applied.result };
 }
 
 // ── Flows overlay ──────────────────────────────────────────────────────────────

@@ -635,6 +635,7 @@ class McpTest extends TestCase
         $this->assertTrue($this->tool($tok, 'create_app_form', ['appId' => $this->appB, 'title' => 'Sneak'])['isError']);
         $this->assertTrue($this->tool($tok, 'add_form_to_app', ['appId' => $this->appB, 'formId' => $this->formB])['isError']);
         $this->assertTrue($this->tool($tok, 'set_app_home', ['appId' => $this->appB, 'customScreen' => ['enabled' => true, 'html' => '<b>x</b>']])['isError']);
+        $this->assertTrue($this->tool($tok, 'set_form_screen', ['formId' => $this->formB, 'customScreen' => ['enabled' => true, 'html' => '<b>x</b>']])['isError']);
         $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError']);
     }
 

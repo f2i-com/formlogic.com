@@ -5,6 +5,8 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { FieldResponse } from './FormResponse';
+import { SiteChatWidget } from '../components/chat/SiteChatWidget';
+import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { useFormStore } from '../stores/formStore';
@@ -12,6 +14,8 @@ import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
 import { useAdminActing, useResourcePaths } from '../components/admin/AdminActingContext';
+import { api } from '../lib/api';
+import { isDemoLocalId } from '../lib/demoLocal';
 import { cn } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
@@ -32,6 +36,10 @@ export default function FormPreview() {
   const forceForm = searchParams.get('form') === '1';
   const { getForm, loadFullForm } = useFormStore();
   const { previewDevice, setPreviewDevice, previewMode, setPreviewMode } = useUIStore();
+  // The site chat rides the preview too (full-screen route outside AppShell → own
+  // mount): page context makes "this form" resolve here, and the demo's guided-build
+  // follow-up chips stay usable while admiring the published result.
+  const chatDockOffset = useChatDockOffset();
 
   const reduceMotion = useReducedMotion();
   const [currentStep, setCurrentStep] = useState(0);
@@ -125,19 +133,36 @@ export default function FormPreview() {
     );
   }
 
+  // Slim bar for the full-bleed screen/dashboard previews: without it there is no way
+  // OUT of the preview (user report), and the chat vanished mid-guided-demo. The chat
+  // widget mounts here too so the conversation follows the viewer onto the result.
+  const previewBar = (
+    <div className="flex h-11 flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 dark:border-slate-800 dark:bg-slate-900">
+      <Button variant="ghost" size="sm" onClick={() => navigate(paths.builder(form.id))}>
+        <ArrowLeft className="h-4 w-4 sm:mr-2" />
+        <span className="hidden sm:inline">Exit Preview</span>
+      </Button>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-700 dark:text-slate-300">{form.title}</span>
+    </div>
+  );
+
   // A section-screen widget dashboard replaces the default form in preview (owner → live data).
   if (!forceForm && !acting && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
     return (
-      <div className="min-h-dvh w-full bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
-        <div className="max-w-6xl mx-auto">
-          <FormWidgetDashboard
-            dashboard={form.customScreen.dashboard}
-            formId={form.id}
-            fields={form.fields}
-            formTitle={form.title}
-            publicMode={false}
-            accent={form.theme.primaryColor}
-          />
+      <div className={cn('min-h-dvh w-full bg-gray-50 dark:bg-slate-950 flex flex-col', chatDockOffset && 'mr-96')}>
+        <SiteChatWidget />
+        {previewBar}
+        <div className="w-full p-4 md:p-6">
+          <div className="max-w-6xl mx-auto">
+            <FormWidgetDashboard
+              dashboard={form.customScreen.dashboard}
+              formId={form.id}
+              fields={form.fields}
+              formTitle={form.title}
+              publicMode={false}
+              accent={form.theme.primaryColor}
+            />
+          </div>
         </div>
       </div>
     );
@@ -146,14 +171,18 @@ export default function FormPreview() {
   // A custom screen replaces the default form in preview too (owner context → live data).
   if (!forceForm && !acting && form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
     return (
-      <div className="h-dvh w-full bg-white dark:bg-slate-950">
-        <CustomScreenRuntime
-          screen={form.customScreen}
-          formId={form.id}
-          formTitle={form.title}
-          fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
-          className="w-full h-full border-0"
-        />
+      <div className={cn('h-dvh w-full bg-white dark:bg-slate-950 flex flex-col', chatDockOffset && 'mr-96')}>
+        <SiteChatWidget />
+        {previewBar}
+        <div className="min-h-0 flex-1">
+          <CustomScreenRuntime
+            screen={form.customScreen}
+            formId={form.id}
+            formTitle={form.title}
+            fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+            className="w-full h-full border-0"
+          />
+        </div>
       </div>
     );
   }
@@ -188,7 +217,8 @@ export default function FormPreview() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
+    <div className={cn('min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300', chatDockOffset && 'mr-96')}>
+      <SiteChatWidget />
       {acting && form.customScreen?.enabled && (
         <div className="bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 text-xs px-4 py-2 text-center">
           Dashboard &amp; custom-screen previews are disabled for platform admins — they display record data. Showing the form structure instead.
@@ -278,6 +308,9 @@ export default function FormPreview() {
             <Share2 className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Share</span>
           </Button>
+          {/* Demo-local forms have no public /form/ page (they exist only in this
+              browser) — hide the external Open instead of opening a dead link. */}
+          {!(api.isDemoMode() && isDemoLocalId(form.id)) && (
           <Button
             variant="outline"
             size="sm"
@@ -286,6 +319,7 @@ export default function FormPreview() {
             <ExternalLink className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Open</span>
           </Button>
+          )}
         </div>
       </header>
 

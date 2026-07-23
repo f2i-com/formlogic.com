@@ -251,6 +251,7 @@ FormLogic in advance:
 | `update_app` | apps:write | Rename, set description, change the **slug**, publish (`status: "published"`) / unpublish (`"draft"`) |
 | `add_form_to_app` | apps:write | Attach a form to an app |
 | `set_app_home` | screens:write | Set the app's **home** screen — a widget **dashboard** (preferred) or a custom code screen |
+| `set_form_screen` | screens:write | Set a form's **custom screen** (replaces the whole `customScreen`) — the form-side twin of `set_app_home` |
 | `create_report` | apps:write | Add a chart, KPI, or table to the app's Reports section |
 | `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
 | `list_flows` | apps:read | List an app's flows (automations) — summaries only |

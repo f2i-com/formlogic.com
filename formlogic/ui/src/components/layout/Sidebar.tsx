@@ -35,7 +35,8 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     { path: homePath, icon: LayoutDashboard, label: 'Dashboard' },
     // Diagrams (§11A) sit above Forms (owner direction) — also reachable via the
     // Dashboard's start buttons; mobile nav deliberately omits them (Dashboard covers it).
-    ...(!isDemo ? [{ path: '/diagrams', icon: Map, label: 'Diagrams' }] : []),
+    // The demo sees them too — its sketches are demolocal_ blueprints kept in this browser.
+    { path: '/diagrams', icon: Map, label: 'Diagrams' },
     { path: '/forms', icon: FileText, label: 'Forms' },
     // Boxes matches the Apps iconography on Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },

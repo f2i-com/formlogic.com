@@ -35,7 +35,8 @@ class ChatToolsService
         'list_apps' => 'apps:read', 'create_app' => 'apps:write',
         'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
         'create_report' => 'apps:write', 'create_document' => 'apps:write',
-        'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
+        'set_app_home' => 'screens:write', 'set_form_screen' => 'screens:write',
+        'list_responses' => 'responses:read',
         // Flows are app configuration, so they ride the apps scopes: any builder token that can
         // shape an app can automate it too (no scope migration for existing tokens).
         'list_flows' => 'apps:read', 'get_flow' => 'apps:read',
@@ -61,6 +62,11 @@ class ChatToolsService
         // Diagram read access: the AI must SEE a diagram (elements + semanticRevision)
         // before proposing changes to it, and find the right one by name.
         'list_blueprints', 'get_blueprint',
+        // Custom screens (2026-07-23): the chat is THE AI surface for screen authoring —
+        // set_form_screen / set_app_home write sandboxed screen projects for forms/apps,
+        // and update_app lets the chat publish/rename/hideNav the app it just built
+        // (archiving refused by callChatTool, mirroring the update_form guard).
+        'set_form_screen', 'set_app_home', 'update_app',
     ];
 
     public function __construct(
@@ -92,6 +98,12 @@ class ChatToolsService
         if ($name === 'update_form' && (($args['status'] ?? null) === 'archived')) {
             throw new ChatToolDeniedException(
                 "Archiving a form is not available from chat — unpublish with status:'draft' instead, or archive it in the form builder.",
+                'archive_refused'
+            );
+        }
+        if ($name === 'update_app' && (($args['status'] ?? null) === 'archived')) {
+            throw new ChatToolDeniedException(
+                "Archiving an app is not available from chat — unpublish with status:'draft' instead, or archive it from the app's settings.",
                 'archive_refused'
             );
         }
@@ -263,6 +275,19 @@ class ChatToolsService
                 }
                 $data = $this->appService->updateApp((string) $args['appId'], ['customScreen' => $cs]);
                 $ctx->audit('set_app_home', ['appId' => $args['appId'] ?? null]);
+                break;
+            case 'set_form_screen':
+                // The form-side twin of set_app_home: replace the form's whole customScreen.
+                // Same save boundary as update_form's customScreen path — a widget dashboard
+                // is sanitized against the form's own fields before it persists.
+                $this->assertFormInScope($ctx, (string) ($args['formId'] ?? ''));
+                $this->ownForm((string) ($args['formId'] ?? ''), $userId);
+                $cs = is_array($args['customScreen'] ?? null) ? $args['customScreen'] : [];
+                $this->validateCustomScreen($cs);
+                $data = $this->formService->updateForm((string) $args['formId'], [
+                    'customScreen' => $this->sanitizeSectionScreen($cs, (string) $args['formId']),
+                ]);
+                $ctx->audit('set_form_screen', ['formId' => $args['formId'] ?? null]);
                 break;
             case 'create_report': {
                 // Add a chart report to the app's Reports section. Spec uses REAL form ids.
@@ -917,6 +942,7 @@ class ChatToolsService
             ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms). Optional appKind tags the audience the app serves.', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'appKind' => ['type' => 'string', 'enum' => AppService::APP_KINDS, 'description' => 'Optional audience tag: admin console, client portal, staff field app, public intake, internal, or custom.']], ['name'])],
             ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
+            ['name' => 'set_form_screen', 'scope' => 'screens:write', 'description' => "Set a FORM's custom screen — a sandboxed frontend rendered INSTEAD of the default field UI on the form's public link, embeds and previews when enabled:true (enabled:false keeps it a draft the owner can preview in the Studio). Same two kinds as set_app_home: a no-code widget DASHBOARD, or a CODE screen (TSX files talking to window.FormLogic: submit(answers)/records()/context()/currentUser()/toast). publicRecords + publicRecordFields opt anonymous visitors into reading the whitelisted answer fields (leaderboards). REPLACES the form's whole customScreen — send the complete screen every time (read the current one with get_form first when editing).", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'customScreen' => $screen], ['formId', 'customScreen'])],
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed QuickJS event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'customLogic' => $customLogic], ['appId'])],
             ['name' => 'create_flow', 'scope' => 'apps:write', 'description' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, QuickJS logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. After creating it, wire it to its trigger with create_flow_binding. Set nodeCapabilities to the union of the capabilities your nodes need (see get_started § Flows), e.g. ['formlogic.responses.read','formlogic.responses.write'].", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'lowercase letters/digits/hyphens; defaults from name.'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => "Capabilities the flow's nodes need: formlogic.responses.read / formlogic.responses.write / formlogic.kv.write / model.llm.local / connector.<id>.<command>."], 'enabled' => ['type' => 'boolean']], ['name'])],
             ['name' => 'list_blueprints', 'scope' => 'apps:read', 'description' => "List the owner's blueprints (DIAGRAMS — the visual sketches of apps at /diagrams): blueprintId, name, appId (null until materialised into a real app), semanticRevision, updatedAt. Use get_blueprint before proposing changes.", 'inputSchema' => $obj([])],
@@ -966,6 +992,7 @@ class ChatToolsService
             'list_forms' => "List the account's forms.",
             'create_app_form' => 'PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). Same fields as create_form + displayName; appId is required.',
             'update_form' => "Update a form (any of fields, logicScript, customScreen, title, status). Non-destructive from chat: archiving (status:'archived') is refused — unpublish with status:'draft' instead.",
+            'update_app' => "Update an app: rename, set description, change the URL slug, publish (status: draft|published), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic). Non-destructive from chat: archiving (status:'archived') is refused — unpublish with status:'draft' instead.",
             'create_flow' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, QuickJS logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. Set nodeCapabilities to the union of the capabilities your nodes need, e.g. ['formlogic.responses.read','formlogic.responses.write'].",
         ];
         $out = [];
@@ -973,6 +1000,9 @@ class ChatToolsService
             $def = $byName[$name];
             $schema = $def['inputSchema'];
             if ($name === 'update_form' && isset($schema['properties']['status']['enum'])) {
+                $schema['properties']['status']['enum'] = ['draft', 'published'];
+            }
+            if ($name === 'update_app' && isset($schema['properties']['status']['enum'])) {
                 $schema['properties']['status']['enum'] = ['draft', 'published'];
             }
             if ($name === 'create_flow' && isset($schema['properties']['appId']['description'])) {

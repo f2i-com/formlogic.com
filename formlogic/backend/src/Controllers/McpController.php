@@ -581,7 +581,7 @@ Every widget has { kind, layout:{x,y,w,h}, title? } (grid units; w up to cols, h
 - actions — new-record buttons for the app's forms (no extra config; app home only).
 - activity — a latest-records feed across the app's forms (no extra config; app home only).
 Widget specs are validated on save against the app's forms: a widget whose formId / joins / field refs point outside the app is DROPPED, so use the REAL form ids you created.
-FORM SECTION dashboards: a form can carry its own dashboard, shown on its section screen inside the app — update_form { formId, customScreen: { kind:"dashboard", dashboard } } AFTER creating the form (its widget specs may reference that form and the forms its linked_record fields target).
+FORM SECTION dashboards: a form can carry its own dashboard, shown on its section screen inside the app — update_form { formId, customScreen: { kind:"dashboard", dashboard } } AFTER creating the form (its widget specs may reference that form and the forms its linked_record fields target). set_form_screen { formId, customScreen } does the same replace in one dedicated call (the form-side twin of set_app_home).
 
 ## Custom CODE screen (advanced alternative to a dashboard)
 A sandboxed frontend over the app's forms. PREFERRED shape: a multi-file React-style TSX project —

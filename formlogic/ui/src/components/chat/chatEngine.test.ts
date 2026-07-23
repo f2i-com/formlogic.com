@@ -430,6 +430,19 @@ describe('normalizeToolActivity', () => {
       link: { kind: 'flow', id: 'fl-9' },
     });
   });
+
+  it('links the screen tools to their Studios, not the builder/app list', () => {
+    // set_form_screen returns the updated FORM — the link must be the screen studio kind,
+    // never the generic form/builder link the name-based fallback would produce.
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'set_form_screen', status: 'done', result: { id: 'f-7', title: 'T' } })
+    ).toMatchObject({ link: { kind: 'formScreen', id: 'f-7' } });
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'set_app_home', status: 'done', result: { id: 'a-3', name: 'App' } })
+    ).toMatchObject({ link: { kind: 'appScreen', id: 'a-3' } });
+    // No id in the result → no link (never a dead link).
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'set_app_home', status: 'done', result: 'ok' })?.link).toBeUndefined();
+  });
 });
 
 describe('normalizeToolProposal + answerToolProposal', () => {

@@ -19,6 +19,12 @@ export function chatToolLinkPath(link: NonNullable<ChatToolActivity['link']>): s
       return `/flows?flow=${encodeURIComponent(link.id)}`;
     case 'diagram':
       return `/diagrams/${encodeURIComponent(link.id)}`;
+    // Screen tools land in their STUDIO: live preview on the right, code on the left,
+    // so the user watches the AI's screen appear and can take over immediately.
+    case 'formScreen':
+      return `/forms/${encodeURIComponent(link.id)}/screen/edit`;
+    case 'appScreen':
+      return `/apps/${encodeURIComponent(link.id)}/home/edit`;
     case 'response':
       return null;
   }

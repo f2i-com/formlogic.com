@@ -5,6 +5,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
+import { isDemoLocalId } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
 import type { Form } from '../../types/form';
 
@@ -284,6 +285,20 @@ function closeFormPopup() {
             </button>
           ))}
         </div>
+
+        {/* Demo-local form: it exists ONLY in this browser (never saved to the server),
+            so no share link, embed, or QR code can reach it from anywhere else. Say so
+            plainly instead of handing out dead links. */}
+        {api.isDemoMode() && isDemoLocalId(formId) && (
+          <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
+            <span>
+              This is a demo form — it lives only in this browser and was never saved to the server, so the
+              link, embed code, and QR code below will not work for anyone else. Create a free account to
+              publish forms with real share links.
+            </span>
+          </div>
+        )}
 
         {/* Draft warning — the link/embed/QR below all resolve to the public form endpoint,
             which only serves published forms to anonymous visitors (the owner's own session

@@ -11,6 +11,7 @@ import { readUploadedScreenFiles } from '../components/custom-screen/screenFileU
 import { AppCustomScreenRuntime } from '../components/custom-screen/AppCustomScreenRuntime';
 import { bundleScreenFiles, type ScreenFile } from '../lib/screenCompile';
 import { toast } from '../stores/toastStore';
+import { useUIStore } from '../stores/uiStore';
 import { useAdminActing } from '../components/admin/AdminActingContext';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAiAvailable } from '../hooks/useAiAvailable';
@@ -123,6 +124,31 @@ export default function AppHomeStudio() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const aiAvailable = useAiAvailable();
+  // Owner direction (screen-authoring centralisation): when the user's default chat AI
+  // resolves, the site chat IS the AI surface for this screen — it sees this Studio
+  // through page context (kind 'appScreen') and writes via set_app_home — so the legacy
+  // inline generator yields to a "Chat with AI" entry point (the ScriptEditor pattern).
+  const [chatAiAvailable, setChatAiAvailable] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void import('../client-runtime/flows/aiDefault').then(({ getAiPreferences }) =>
+      getAiPreferences().then(
+        (res) => {
+          if (!cancelled) setChatAiAvailable(res.ok);
+        },
+        () => undefined,
+      ),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const showLegacyAi = aiAvailable && !chatAiAvailable;
+  const openChat = () => {
+    const ui = useUIStore.getState();
+    ui.setChatMinimized(false);
+    ui.setChatOpen(true);
+  };
   useDocumentTitle(`Custom app — ${name || 'App'}`);
 
   useEffect(() => {
@@ -273,9 +299,9 @@ export default function AppHomeStudio() {
 
       <div className={`flex-1 min-h-0 grid grid-cols-1 ${previewOpen ? 'lg:grid-cols-2' : ''}`}>
         <div className="min-h-0 flex flex-col border-r border-gray-200 dark:border-slate-800">
-          {(files.length > 0 || (aiAvailable && showAi)) && (
+          {(files.length > 0 || (showLegacyAi && showAi)) && (
           <div className="p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
-            {aiAvailable && showAi ? (
+            {showLegacyAi && showAi ? (
               <>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-gray-500 dark:text-slate-400">Describe the app</label>
@@ -294,7 +320,11 @@ export default function AppHomeStudio() {
                   </Button>
                 </div>
               </>
-            ) : aiAvailable && files.length > 0 ? (
+            ) : chatAiAvailable && files.length > 0 ? (
+              <button type="button" onClick={openChat} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
+                <Sparkles className="h-3.5 w-3.5" /> Chat with AI about this screen
+              </button>
+            ) : showLegacyAi && files.length > 0 ? (
               <button type="button" onClick={() => setShowAi(true)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
                 <Sparkles className="h-3.5 w-3.5" /> Generate with AI
               </button>
@@ -352,11 +382,15 @@ export default function AppHomeStudio() {
                   <button type="button" onClick={() => folderInputRef.current?.click()} className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 cursor-pointer">
                     <FolderUp className="h-3.5 w-3.5" aria-hidden="true" /> Upload a whole folder
                   </button>
-                  {aiAvailable && !showAi && (
+                  {chatAiAvailable ? (
+                    <button type="button" onClick={openChat} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
+                      <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Chat with AI — describe the screen you want
+                    </button>
+                  ) : showLegacyAi && !showAi ? (
                     <button type="button" onClick={() => setShowAi(true)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
                       <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Generate with AI
                     </button>
-                  )}
+                  ) : null}
                 </div>
                 <input
                   ref={fileInputRef}

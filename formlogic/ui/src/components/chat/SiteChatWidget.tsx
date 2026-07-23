@@ -14,7 +14,7 @@
 //   api.putAiPreferences and invalidates the aiDefault cache the engine reads.
 // - Z-order: z-40, under the z-50 offline/maintenance banners and mobile nav (plan
 //   Phase 6 step 5), matching the DesktopConnectionPopover trigger.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { motion, useDragControls, useMotionValue } from 'framer-motion';
 import {
@@ -59,6 +59,7 @@ import {
   historyFor,
 } from './chatEngine';
 import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
+import { demoChatDirector } from './demoChatDirector';
 import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatView';
@@ -198,18 +199,28 @@ export function SiteChatWidget() {
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
   const location = useLocation();
-  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram'; id: string } | null>(null);
+  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen'; id: string } | null>(null);
   useEffect(() => {
-    const form = matchPath('/builder/:formId', location.pathname);
+    const form =
+      matchPath('/builder/:formId', location.pathname) ?? matchPath('/preview/:formId', location.pathname);
+    // The screen Studios are their own context kind: "this screen" must resolve to the
+    // owning form/app AND steer the AI to the screen tools (set_form_screen/set_app_home).
+    const formScreen =
+      matchPath('/forms/:formId/screen/edit', location.pathname) ?? matchPath('/forms/:formId/screen', location.pathname);
+    const appScreen = matchPath('/apps/:appId/home/edit', location.pathname);
     const app = matchPath('/apps/:appId/*', location.pathname);
     const diagram = matchPath('/diagrams/:diagramId', location.pathname);
     pageContextRef.current = form?.params.formId
       ? { kind: 'form', id: form.params.formId }
-      : diagram?.params.diagramId
-        ? { kind: 'diagram', id: diagram.params.diagramId }
-        : app?.params.appId
-          ? { kind: 'app', id: app.params.appId }
-          : null;
+      : formScreen?.params.formId
+        ? { kind: 'formScreen', id: formScreen.params.formId }
+        : appScreen?.params.appId
+          ? { kind: 'appScreen', id: appScreen.params.appId }
+          : diagram?.params.diagramId
+            ? { kind: 'diagram', id: diagram.params.diagramId }
+            : app?.params.appId
+              ? { kind: 'app', id: app.params.appId }
+              : null;
   }, [location.pathname]);
 
   const [view, setView] = useState<'chat' | 'threads'>('chat');
@@ -266,6 +277,35 @@ export function SiteChatWidget() {
     activeThreadIdRef.current = threadId;
     setActiveThreadId(threadId);
   }, []);
+
+  // Demo guided builds: a scripted DIRECTOR replaces live AI for the shared demo account
+  // (the backend is read-only for demo — /api/ai/chat would 403 anyway). It is module-
+  // level so the script survives its own navigations (each full-screen route remounts
+  // this widget); the widget mirrors its snapshot, re-registers the navigator on every
+  // mount, and re-reads the thread whenever the director appends a message.
+  const demoSnap = useSyncExternalStore(demoChatDirector.subscribe, demoChatDirector.getSnapshot);
+  const demoRunning = isDemo && demoSnap.running;
+  useEffect(() => {
+    if (isDemo && userId) demoChatDirector.attach({ userId, navigate });
+  }, [isDemo, userId, navigate]);
+  useEffect(() => {
+    if (!isDemo || !userId) return;
+    const threadId = demoSnap.threadId;
+    if (!threadId || activeThreadIdRef.current !== threadId) return;
+    let cancelled = false;
+    void getChatStore(userId)
+      .listMessages(threadId, { limit: PAGE_SIZE })
+      .then((page) => {
+        if (!cancelled && activeThreadIdRef.current === threadId) {
+          setMessages(page.messages);
+          setHasMore(page.hasMore);
+          stickToBottomRef.current = true;
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDemo, userId, demoSnap.version, demoSnap.threadId]);
 
   // A pending "Clear?" confirmation is scoped to the thread and view it was asked in.
   useEffect(() => {
@@ -467,12 +507,14 @@ export function SiteChatWidget() {
     }
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-    const images = pendingImages;
-    if ((text === '' && images.length === 0) || sending || !userId) return;
-    setInput('');
-    setPendingImages([]);
+  const handleSend = useCallback(async (textOverride?: string) => {
+    const text = (textOverride ?? input).trim();
+    const images = textOverride === undefined ? pendingImages : [];
+    if ((text === '' && images.length === 0) || sending || demoRunning || !userId) return;
+    if (textOverride === undefined) {
+      setInput('');
+      setPendingImages([]);
+    }
     const store = getChatStore(userId);
     let threadId = activeThreadId;
     let prior = messages;
@@ -488,8 +530,14 @@ export function SiteChatWidget() {
     const userMessage = await store.appendMessage(threadId, 'user', text, undefined, images);
     const next = [...prior, userMessage];
     setMessages(next);
+    // Demo account: the scripted director answers (guided builds / honest steering) —
+    // the live engine is never called, so no credits burn and no server write is tried.
+    if (isDemo) {
+      void demoChatDirector.respond(text, threadId);
+      return;
+    }
     await runTurn(threadId, historyFor(next));
-  }, [input, pendingImages, sending, userId, activeThreadId, messages, runTurn, setActiveThread]);
+  }, [input, pendingImages, sending, demoRunning, isDemo, userId, activeThreadId, messages, runTurn, setActiveThread]);
 
   // §11B: compact the conversation — an AI summary becomes the carried history while
   // the thread keeps every message. Offered once the uncompacted tail reaches the
@@ -622,6 +670,7 @@ export function SiteChatWidget() {
     prefs?.aiSource === 'desktop' && prefs.desktopProviderId === CODEX_PROVIDER_ID && !isDemo;
   const confirmMode = prefs?.chatToolMode === 'confirm';
   const turnForThread = liveTurn && liveTurn.threadId === activeThreadId ? liveTurn : null;
+  const demoChipsVisible = isDemo && view === 'chat' && !demoRunning && demoSnap.chips.length > 0;
 
   const onHeaderPointerDown = (event: React.PointerEvent) => {
     if (isMobile) return;
@@ -667,7 +716,7 @@ export function SiteChatWidget() {
           <button
             type="button"
             aria-label={confirmingClear ? 'Confirm clear conversation' : 'Clear conversation'}
-            disabled={sending}
+            disabled={sending || demoRunning}
             title="Clear this conversation"
             onClick={() => {
               if (confirmingClear) void clearConversation();
@@ -711,7 +760,7 @@ export function SiteChatWidget() {
         >
           <History className="h-4 w-4" aria-hidden="true" />
         </button>
-        {uncompactedCount >= COMPACT_THRESHOLD && (
+        {uncompactedCount >= COMPACT_THRESHOLD && !isDemo && (
           <button
             type="button"
             aria-label="Compact the conversation"
@@ -796,7 +845,7 @@ export function SiteChatWidget() {
 
       {isDemo && (
         <div className="border-b border-amber-200/80 bg-amber-50 px-3 py-1 text-[11px] text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-          Demo account — chat replies work, tool actions are disabled.
+          Guided demo — scripted builds, no AI credits used. Changes stay on this device and reset automatically.
         </div>
       )}
 
@@ -862,12 +911,22 @@ export function SiteChatWidget() {
             </p>
           )}
           {messages.length === 0 && !turnForThread && (
-            <div className="px-2 py-6 text-center">
-              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">What can I help with?</p>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
-                I can answer questions and create forms, apps and flows in your workspace.
-              </p>
-            </div>
+            isDemo ? (
+              <div className="px-2 py-6 text-center">
+                <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Watch FormLogic build it</p>
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                  Pick a guided build below — it happens live in this workspace, on this device only,
+                  and you can take over at any point.
+                </p>
+              </div>
+            ) : (
+              <div className="px-2 py-6 text-center">
+                <p className="text-sm font-medium text-gray-700 dark:text-slate-300">What can I help with?</p>
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                  I can answer questions and create forms, apps and flows in your workspace.
+                </p>
+              </div>
+            )
           )}
           {messages.map((message) => (
             <div
@@ -937,6 +996,34 @@ export function SiteChatWidget() {
               )}
             </>
           )}
+          {isDemo && demoSnap.threadId === activeThreadId && (
+            <>
+              {demoSnap.activities.map((activity) => (
+                <ToolActivityCard key={activity.id} activity={activity} onOpenLink={openLink} />
+              ))}
+              {demoSnap.typing && (
+                <p className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-slate-500" role="status">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Thinking…
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {demoChipsVisible && (
+        <div className="flex flex-wrap gap-1.5 border-t border-gray-200/80 px-2.5 pt-2 dark:border-slate-700/60">
+          {demoSnap.chips.map((label) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => void handleSend(label)}
+              className="rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[11px] font-medium text-primary-700 hover:bg-primary-100 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 dark:hover:bg-primary-500/20"
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
 
@@ -964,7 +1051,7 @@ export function SiteChatWidget() {
         }}
         className={cn(
           'flex items-end gap-2 p-2.5',
-          pendingImages.length === 0 && 'border-t border-gray-200/80 dark:border-slate-700/60'
+          pendingImages.length === 0 && !demoChipsVisible && 'border-t border-gray-200/80 dark:border-slate-700/60'
         )}
       >
         <input
@@ -978,6 +1065,7 @@ export function SiteChatWidget() {
             event.target.value = '';
           }}
         />
+        {!isDemo && (
         <button
           type="button"
           aria-label="Attach an image"
@@ -988,6 +1076,7 @@ export function SiteChatWidget() {
         >
           <ImagePlus className="h-4 w-4" aria-hidden="true" />
         </button>
+        )}
         <textarea
           rows={2}
           value={input}
@@ -1006,16 +1095,16 @@ export function SiteChatWidget() {
             }
           }}
           aria-label="Chat message"
-          placeholder="Ask anything — I can create forms, apps and flows."
+          placeholder={isDemo ? 'Pick a guided build below — or ask what this demo can do.' : 'Ask anything — I can create forms, apps and flows.'}
           className="max-h-28 min-h-[3.5rem] min-w-0 flex-1 resize-none rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
         <button
           type="submit"
           aria-label="Send message"
-          disabled={sending || (input.trim() === '' && pendingImages.length === 0)}
+          disabled={sending || demoRunning || (input.trim() === '' && pendingImages.length === 0)}
           className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-600 text-primary-foreground hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+          {sending || demoRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
         </button>
       </form>
     </>

@@ -321,6 +321,65 @@ class ChatToolGrantTest extends TestCase
         $this->assertSame(401, $this->execute(null, [], ['grantToken' => $fresh2, 'tool' => 'list_forms', 'input' => []])['status']);
     }
 
+    public function testScreenToolsRunFromChatAndUpdateAppNeverArchives(): void
+    {
+        $this->addConnection($this->userId, 'inst-screens');
+        $mint = fn () => $this->mint($this->userId)['body']['data']['grantToken'];
+
+        // set_form_screen replaces the form's customScreen (screen-authoring centralisation).
+        $form = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'create_form', 'input' => ['title' => 'Screened form'],
+        ]);
+        $formId = (string) ($form['body']['data']['id'] ?? '');
+        $this->assertNotSame('', $formId);
+        $out = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'set_form_screen',
+            'input' => ['formId' => $formId, 'customScreen' => [
+                'enabled' => true, 'entry' => 'index.tsx',
+                'files' => [['path' => 'index.tsx', 'content' => 'export {}']],
+            ]],
+        ]);
+        $this->assertSame(200, $out['status']);
+        $stored = self::$forms->getForm($formId);
+        $this->assertTrue((bool) ($stored['customScreen']['enabled'] ?? false));
+        $this->assertSame('index.tsx', $stored['customScreen']['files'][0]['path'] ?? null);
+
+        // The MCP customScreen key whitelist holds on the chat surface too.
+        $badKeys = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'set_form_screen',
+            'input' => ['formId' => $formId, 'customScreen' => ['enabled' => true, 'evil' => 1]],
+        ]);
+        $this->assertSame(400, $badKeys['status']);
+        $this->assertSame('tool_failed', $badKeys['body']['code']);
+
+        // set_app_home + update_app publish work from chat; archiving an app is refused typed.
+        $app = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'create_app', 'input' => ['name' => 'Screened app'],
+        ]);
+        $appId = (string) ($app['body']['data']['id'] ?? '');
+        $this->assertNotSame('', $appId);
+        $home = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'set_app_home',
+            'input' => ['appId' => $appId, 'customScreen' => [
+                'enabled' => true, 'entry' => 'index.tsx',
+                'files' => [['path' => 'index.tsx', 'content' => 'export {}']],
+            ]],
+        ]);
+        $this->assertSame(200, $home['status']);
+        $publish = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'update_app',
+            'input' => ['appId' => $appId, 'status' => 'published'],
+        ]);
+        $this->assertSame(200, $publish['status']);
+        $archive = $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $mint(), 'tool' => 'update_app',
+            'input' => ['appId' => $appId, 'status' => 'archived'],
+        ]);
+        $this->assertSame(403, $archive['status']);
+        $this->assertSame('tool_denied', $archive['body']['code']);
+        $this->assertStringContainsStringIgnoringCase('archiv', (string) $archive['body']['message']);
+    }
+
     // ── catalog ──
 
     public function testCatalogIsExactlyTheTenChatToolsTopLevel(): void
@@ -334,11 +393,14 @@ class ChatToolGrantTest extends TestCase
         $this->assertArrayNotHasKey('data', $body, 'catalog is TOP-LEVEL {"tools":…} (the pinned wire shape)');
         $names = array_column($body['tools'] ?? [], 'name');
         // Pin extended 2026-07-23 (extensible-flows §25 step 8): + blueprint_propose_elements,
-        // then + list_blueprints/get_blueprint (chat READ access to diagrams).
+        // then + list_blueprints/get_blueprint (chat READ access to diagrams), then
+        // + set_form_screen/set_app_home/update_app (screen-authoring centralisation —
+        // chat is the AI surface for custom screens; update_app publishes, never archives).
         $this->assertSame([
             'list_apps', 'list_forms', 'get_form', 'create_app', 'create_app_form',
             'create_form', 'update_form', 'add_form_to_app', 'create_flow', 'list_responses',
             'blueprint_propose_elements', 'list_blueprints', 'get_blueprint',
+            'set_form_screen', 'set_app_home', 'update_app',
         ], $names);
         foreach ($body['tools'] as $tool) {
             $this->assertNotSame('', $tool['description'] ?? '');
