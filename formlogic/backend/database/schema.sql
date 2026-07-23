@@ -1569,6 +1569,7 @@ CREATE TABLE `user_ai_settings` (
   `desktop_model` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `custom_provider_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `chat_tool_mode` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'auto',
+  `desktop_reasoning` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`user_id`),

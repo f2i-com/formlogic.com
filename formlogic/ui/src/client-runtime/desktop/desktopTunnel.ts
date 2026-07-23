@@ -115,6 +115,11 @@ export type DesktopTunnelState =
   | { state: 'failed'; code: DesktopTunnelErrorCode; message?: string }
   | { state: 'uncertain'; message?: string };
 
+/** The managed Codex/ChatGPT desktop connector's queued-chat provider id. */
+export const CODEX_PROVIDER_ID = 'openai-codex-agent';
+/** Reasoning efforts the desktop Codex lane accepts (codex.rs validation). */
+export const CODEX_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+
 export interface DesktopTunnelChatMessage {
   role: string;
   /** Plain text, or OpenAI-style content parts (chat image attachments). */
@@ -569,6 +574,8 @@ interface TunnelRunParams {
   model?: string;
   threadId: string;
   messages?: DesktopTunnelChatMessage[];
+  /** Codex/ChatGPT reasoning effort for this request (sealed; codex lane only). */
+  reasoning?: string;
   /** Chat tool use (§5.1 sealed-body fields, Phase 6): per-user Auto/Confirm mode. */
   toolMode?: 'auto' | 'confirm';
   /** Per-turn chat-tool grant token — sealed into the request body, never plaintext. */
@@ -733,6 +740,7 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
   };
   if (params.model) sealedBody.model = params.model;
   if (params.messages) sealedBody.messages = params.messages;
+  if (params.reasoning) sealedBody.reasoning = params.reasoning;
   // Chat tool use (§5.1/§5.4): the tool mode + per-turn grant ride INSIDE the sealed
   // body — the backend must never see the grant token in plaintext.
   if (params.toolMode) sealedBody.toolMode = params.toolMode;
@@ -1074,6 +1082,8 @@ export interface ChatViaTunnelOptions {
   /** Caller-chosen thread id (a new one is minted when omitted). */
   threadId?: string;
   messages: DesktopTunnelChatMessage[];
+  /** Codex/ChatGPT reasoning effort for this turn (codex lane only; sealed). */
+  reasoning?: string;
   /**
    * Chat tool use (plan §5.1 sealed-body fields + §5.4, Phase 6): the per-user
    * Auto/Confirm tool mode. Sealed into the request body alongside model/messages.
@@ -1116,6 +1126,7 @@ export async function chatViaTunnel(opts: ChatViaTunnelOptions): Promise<Desktop
     model: opts.model,
     threadId,
     messages: opts.messages,
+    reasoning: opts.reasoning,
     toolMode: opts.toolMode,
     toolGrant: opts.toolGrant,
     clientSeq: opts.clientSeq ?? 1,

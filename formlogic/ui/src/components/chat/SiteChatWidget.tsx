@@ -60,6 +60,7 @@ import {
 } from './chatEngine';
 import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
 import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
+import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatView';
 
 const PAGE_SIZE = 30;
@@ -228,6 +229,14 @@ export function SiteChatWidget() {
   const [sending, setSending] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
   const [prefs, setPrefs] = useState<AiPreferences | null>(null);
+  // Codex/ChatGPT reasoning effort for THIS chat (owner direction: per-task levels).
+  // Seeded from the Settings default; only offered when the resolved source is the
+  // Codex/ChatGPT desktop connector. Ref-mirrored for the runTurn closure.
+  const [reasoning, setReasoning] = useState('');
+  const reasoningRef = useRef('');
+  useEffect(() => {
+    reasoningRef.current = reasoning;
+  }, [reasoning]);
   const [savingToolMode, setSavingToolMode] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [lastSource, setLastSource] = useState<ChatSource | null>(null);
@@ -311,7 +320,10 @@ export function SiteChatWidget() {
     })();
     void (async () => {
       const res = await getAiPreferences();
-      if (!cancelled && res.ok) setPrefs(res.data);
+      if (!cancelled && res.ok) {
+        setPrefs(res.data);
+        setReasoning(res.data.desktopReasoning ?? '');
+      }
     })();
     return () => {
       cancelled = true;
@@ -404,6 +416,7 @@ export function SiteChatWidget() {
         messages: history,
         pageContext: pageContextRef.current,
         isDemo,
+        reasoning: reasoningRef.current || undefined,
         clientSeq: clientSeqRef.current[threadId],
         events: {
           onDelta: (_delta, accumulated) => patchTurn((turn) => ({ ...turn, streamText: accumulated })),
@@ -602,6 +615,8 @@ export function SiteChatWidget() {
   if (!user) return null;
 
   const badge = chatPrivacyBadge(lastSource, prefs);
+  const showReasoningSelect =
+    prefs?.aiSource === 'desktop' && prefs.desktopProviderId === CODEX_PROVIDER_ID && !isDemo;
   const confirmMode = prefs?.chatToolMode === 'confirm';
   const turnForThread = liveTurn && liveTurn.threadId === activeThreadId ? liveTurn : null;
 
@@ -753,6 +768,26 @@ export function SiteChatWidget() {
           )}
         >
           {badge.label}
+        </div>
+      )}
+
+      {showReasoningSelect && (
+        <div className="flex items-center gap-1.5 border-b border-gray-200/80 bg-gray-50 px-3 py-1 text-[11px] text-gray-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-400">
+          <span>Reasoning</span>
+          <select
+            aria-label="Reasoning effort for this chat"
+            value={reasoning}
+            onChange={(event) => setReasoning(event.target.value)}
+            className="rounded border border-gray-300 bg-white px-1 py-0.5 text-[11px] text-gray-700 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          >
+            <option value="">Default</option>
+            {CODEX_REASONING_EFFORTS.map((effort) => (
+              <option key={effort} value={effort}>
+                {effort}
+              </option>
+            ))}
+          </select>
+          <span className="ml-auto text-gray-400 dark:text-slate-500">applies to new messages</span>
         </div>
       )}
 

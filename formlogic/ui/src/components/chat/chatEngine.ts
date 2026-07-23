@@ -26,12 +26,10 @@ import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { logger } from '../../lib/logger';
 import { generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
-import {
-  chatViaTunnel,
+import { CODEX_PROVIDER_ID, chatViaTunnel,
   postInput,
   type ChatViaTunnelOptions,
-  type DesktopTunnelState,
-} from '../../client-runtime/desktop/desktopTunnel';
+  type DesktopTunnelState, } from '../../client-runtime/desktop/desktopTunnel';
 import {
   getAiPreferences,
   type AiDefaultResult,
@@ -161,6 +159,8 @@ export interface SendChatTurnOptions {
   isDemo?: boolean;
   /** Force a tools-off turn (e.g. the compaction summary — pure text, no actions). */
   noTools?: boolean;
+  /** Codex/ChatGPT reasoning effort for this turn (desktop codex lane only). */
+  reasoning?: string;
   signal?: AbortSignal;
   events?: ChatTurnEvents;
   /** Per-thread client sequence for the tunnel request (defaults to 1). */
@@ -555,12 +555,14 @@ async function runDesktopSource(
   const tunnel = deps.tunnelChat ?? chatViaTunnel;
   // The managed Codex lane renders string content into a text prompt — content
   // parts would vanish silently, so flatten them (with an honest image note).
-  const wireMessages = providerId === 'openai-codex-agent' ? flattenForTextOnly(opts.messages) : opts.messages;
+  const isCodex = providerId === CODEX_PROVIDER_ID;
+  const wireMessages = isCodex ? flattenForTextOnly(opts.messages) : opts.messages;
   const tunnelOptions: ChatViaTunnelOptions & TunnelToolOptions = {
     providerId,
     model: prefs.desktopModel?.trim() || undefined,
     threadId: opts.threadId,
     messages: wireMessages,
+    ...(isCodex && opts.reasoning ? { reasoning: opts.reasoning } : {}),
     clientSeq: opts.clientSeq ?? 1,
     signal: opts.signal,
     onDelta: opts.events?.onDelta,

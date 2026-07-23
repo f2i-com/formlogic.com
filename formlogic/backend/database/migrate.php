@@ -505,6 +505,14 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `builder_change_sets` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'builder_change_sets table ensured';
 
+// 13. Per-user default reasoning effort for the Codex/ChatGPT desktop connector.
+if (!$columnExists($pdo, $db, 'user_ai_settings', 'desktop_reasoning')) {
+    $pdo->exec('ALTER TABLE `user_ai_settings` ADD COLUMN `desktop_reasoning` varchar(16) NULL AFTER `chat_tool_mode`');
+    $applied[] = 'user_ai_settings.desktop_reasoning added';
+} else {
+    $applied[] = 'user_ai_settings.desktop_reasoning already present';
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

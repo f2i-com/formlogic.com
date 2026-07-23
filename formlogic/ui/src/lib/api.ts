@@ -4406,6 +4406,8 @@ export interface AiPreferencesState {
   desktopModel: string | null;
   customProviderId: string | null;
   chatToolMode: AiChatToolMode;
+  /** Default reasoning effort for the Codex/ChatGPT desktop connector (null = provider default). */
+  desktopReasoning: string | null;
   /** Present only when the backend meters Site AI; absent = "not tracked". */
   usage?: AiUsageInfo | null;
 }
@@ -4417,6 +4419,7 @@ export interface AiPreferencesInput {
   desktopModel: string | null;
   customProviderId: string | null;
   chatToolMode: AiChatToolMode;
+  desktopReasoning?: string | null;
 }
 
 export type AiAllowanceMetric = 'ai_messages' | 'cloud_flow_runs';
@@ -4445,6 +4448,7 @@ function normalizeAiPreferences(raw: unknown): AiPreferencesState {
     desktopModel: nullableTrimmedString(inner.desktopModel),
     customProviderId: nullableTrimmedString(inner.customProviderId),
     chatToolMode: inner.chatToolMode === 'confirm' ? 'confirm' : 'auto',
+    desktopReasoning: nullableTrimmedString(inner.desktopReasoning),
     ...(usage
       ? {
           usage: {

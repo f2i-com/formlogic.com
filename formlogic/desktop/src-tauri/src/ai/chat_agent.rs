@@ -354,6 +354,12 @@ impl AiTunnel {
             .get("threadId")
             .and_then(Value::as_str)
             .map(str::to_string);
+        // Per-turn Codex reasoning effort from the sealed body (browser chat
+        // selector / Settings default); codex validates the value itself.
+        let reasoning: Option<String> = body
+            .get("reasoning")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let mut codex_thread: Option<String> = None;
         let mut codex_started = false;
         let mut codex_pending: Vec<String> = Vec::new();
@@ -400,7 +406,7 @@ impl AiTunnel {
                         prompt,
                         thread_id: thread.clone(),
                         model: model.map(str::to_string),
-                        reasoning_effort: None,
+                        reasoning_effort: reasoning.clone(),
                         service_tier: None,
                     };
                     let response = match self.codex_chat_with_busy_backoff(request).await {
@@ -420,7 +426,7 @@ impl AiTunnel {
                                 prompt: codex_first_prompt(attach, &tools, &convo),
                                 thread_id: None,
                                 model: model.map(str::to_string),
-                                reasoning_effort: None,
+                                reasoning_effort: reasoning.clone(),
                                 service_tier: None,
                             })
                             .await?

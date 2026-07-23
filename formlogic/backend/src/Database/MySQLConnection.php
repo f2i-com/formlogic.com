@@ -1080,6 +1080,7 @@ class MySQLConnection
                 desktop_model VARCHAR(128) NULL,
                 custom_provider_id VARCHAR(128) NULL,
                 chat_tool_mode VARCHAR(8) NOT NULL DEFAULT 'auto',
+                desktop_reasoning VARCHAR(16) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -2300,6 +2301,11 @@ class MySQLConnection
                 )
             ");
             $pdo->exec("INSERT INTO system_meta (meta_key, meta_value) VALUES ('execute_flows_backfilled', '1')");
+        }
+
+        // Per-user default reasoning effort for the Codex/ChatGPT desktop connector.
+        if ($pdo->query("SHOW COLUMNS FROM user_ai_settings LIKE 'desktop_reasoning'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE user_ai_settings ADD COLUMN desktop_reasoning VARCHAR(16) NULL AFTER chat_tool_mode');
         }
 
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.

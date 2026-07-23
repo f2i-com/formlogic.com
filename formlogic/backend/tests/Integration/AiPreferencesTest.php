@@ -122,6 +122,7 @@ class AiPreferencesTest extends TestCase
         $this->assertNull($prefs['desktopModel']);
         $this->assertNull($prefs['customProviderId']);
         $this->assertSame('auto', $prefs['chatToolMode']);
+        $this->assertNull($prefs['desktopReasoning']);
         $this->assertNull($prefs['updatedAt']);
     }
 
@@ -132,11 +133,13 @@ class AiPreferencesTest extends TestCase
             'desktopProviderId' => 'openai-codex-agent',
             'desktopModel' => 'gpt-5-codex',
             'chatToolMode' => 'confirm',
+            'desktopReasoning' => 'high',
         ]);
         $this->assertSame('desktop', $stored['aiSource']);
         $this->assertSame('openai-codex-agent', $stored['desktopProviderId']);
         $this->assertSame('gpt-5-codex', $stored['desktopModel']);
         $this->assertSame('confirm', $stored['chatToolMode']);
+        $this->assertSame('high', $stored['desktopReasoning']);
         $this->assertNotNull($stored['updatedAt']);
 
         // A later PUT is a full replace: absent keys fall back to defaults.
@@ -145,6 +148,7 @@ class AiPreferencesTest extends TestCase
         $this->assertSame('local-llm', $stored2['customProviderId']);
         $this->assertNull($stored2['desktopProviderId']);
         $this->assertSame('auto', $stored2['chatToolMode']);
+        $this->assertNull($stored2['desktopReasoning']);
     }
 
     public function testPutRejectsBadEnumsAndOverlongIds(): void
@@ -154,6 +158,12 @@ class AiPreferencesTest extends TestCase
             $this->fail('expected aiSource enum rejection');
         } catch (\InvalidArgumentException $e) {
             $this->assertStringContainsString('aiSource', $e->getMessage());
+        }
+        try {
+            self::$settings->put($this->userId, ['desktopReasoning' => 'warp-speed']);
+            $this->fail('expected desktopReasoning enum rejection');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('desktopReasoning', $e->getMessage());
         }
         try {
             self::$settings->put($this->userId, ['chatToolMode' => 'yolo']);

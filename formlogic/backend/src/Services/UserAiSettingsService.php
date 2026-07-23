@@ -19,6 +19,8 @@ class UserAiSettingsService
 {
     public const AI_SOURCES = ['site', 'desktop', 'custom'];
     public const CHAT_TOOL_MODES = ['auto', 'confirm'];
+    /** Mirrors the desktop Codex lane's accepted reasoning efforts (codex.rs). */
+    public const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
     private const MAX_ID = 128;
 
     public const DEFAULTS = [
@@ -27,6 +29,7 @@ class UserAiSettingsService
         'desktopModel' => null,
         'customProviderId' => null,
         'chatToolMode' => 'auto',
+        'desktopReasoning' => null,
     ];
 
     public function __construct(private MySQLConnection $mysql)
@@ -37,12 +40,12 @@ class UserAiSettingsService
      * The user's settings (camelCase), defaults when no row exists yet.
      *
      * @return array{aiSource: string, desktopProviderId: ?string, desktopModel: ?string,
-     *               customProviderId: ?string, chatToolMode: string, updatedAt: ?string}
+     *               customProviderId: ?string, chatToolMode: string, desktopReasoning: ?string, updatedAt: ?string}
      */
     public function get(string $userId): array
     {
         $stmt = $this->mysql->getConnection()->prepare(
-            'SELECT ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode, updated_at
+            'SELECT ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode, desktop_reasoning, updated_at
              FROM user_ai_settings WHERE user_id = ?'
         );
         $stmt->execute([$userId]);
@@ -56,6 +59,7 @@ class UserAiSettingsService
             'desktopModel' => $row['desktop_model'] !== null ? (string) $row['desktop_model'] : null,
             'customProviderId' => $row['custom_provider_id'] !== null ? (string) $row['custom_provider_id'] : null,
             'chatToolMode' => (string) $row['chat_tool_mode'],
+            'desktopReasoning' => $row['desktop_reasoning'] !== null ? (string) $row['desktop_reasoning'] : null,
             'updatedAt' => $row['updated_at'] !== null ? (string) $row['updated_at'] : null,
         ];
     }
@@ -74,22 +78,27 @@ class UserAiSettingsService
         $chatToolMode = array_key_exists('chatToolMode', $data)
             ? $this->enumValue($data['chatToolMode'], self::CHAT_TOOL_MODES, 'chatToolMode')
             : self::DEFAULTS['chatToolMode'];
+        $desktopReasoning = null;
+        if (($data['desktopReasoning'] ?? null) !== null && $data['desktopReasoning'] !== '') {
+            $desktopReasoning = $this->enumValue($data['desktopReasoning'], self::REASONING_EFFORTS, 'desktopReasoning');
+        }
         $desktopProviderId = $this->idValue($data['desktopProviderId'] ?? null, 'desktopProviderId');
         $desktopModel = $this->idValue($data['desktopModel'] ?? null, 'desktopModel');
         $customProviderId = $this->idValue($data['customProviderId'] ?? null, 'customProviderId');
 
         $stmt = $this->mysql->getConnection()->prepare(
             'INSERT INTO user_ai_settings
-                (user_id, ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode)
-             VALUES (?, ?, ?, ?, ?, ?)
+                (user_id, ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode, desktop_reasoning)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 ai_source = VALUES(ai_source),
                 desktop_provider_id = VALUES(desktop_provider_id),
                 desktop_model = VALUES(desktop_model),
                 custom_provider_id = VALUES(custom_provider_id),
-                chat_tool_mode = VALUES(chat_tool_mode)'
+                chat_tool_mode = VALUES(chat_tool_mode),
+                desktop_reasoning = VALUES(desktop_reasoning)'
         );
-        $stmt->execute([$userId, $aiSource, $desktopProviderId, $desktopModel, $customProviderId, $chatToolMode]);
+        $stmt->execute([$userId, $aiSource, $desktopProviderId, $desktopModel, $customProviderId, $chatToolMode, $desktopReasoning]);
         return $this->get($userId);
     }
 

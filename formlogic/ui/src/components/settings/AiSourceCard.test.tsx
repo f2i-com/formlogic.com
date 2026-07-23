@@ -30,6 +30,8 @@ vi.mock('../../lib/api', () => ({
 vi.mock('../../client-runtime/desktop/desktopTunnel', () => ({
   fetchModelCatalog: (...args: unknown[]) => fetchModelCatalogMock(...args),
   fetchProviderCatalog: (...args: unknown[]) => fetchProviderCatalogMock(...args),
+  CODEX_PROVIDER_ID: 'openai-codex-agent',
+  CODEX_REASONING_EFFORTS: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
 }));
 
 vi.mock('../../client-runtime/flows/desktopService', () => ({
@@ -74,6 +76,7 @@ function prefs(patch: Partial<AiPreferencesState> = {}): AiPreferencesState {
     desktopModel: null,
     customProviderId: null,
     chatToolMode: 'auto',
+    desktopReasoning: null,
     ...patch,
   };
 }
@@ -357,11 +360,39 @@ describe('AiSourceCard', () => {
       desktopModel: 'gpt-5',
       customProviderId: null,
       chatToolMode: 'confirm',
+      desktopReasoning: null,
     });
 
     // Everything is already saved — the explicit Save button has nothing left to do.
     const saveButton = Array.from(container!.querySelectorAll('button')).find((b) => b.textContent === 'Save AI settings')!;
     expect(saveButton.disabled).toBe(true);
+  });
+
+  it('offers the Default reasoning select ONLY for the Codex/ChatGPT connector and auto-saves picks', async () => {
+    getAiPreferencesMock.mockResolvedValue({
+      data: prefs({ aiSource: 'desktop', desktopProviderId: 'openai-codex-agent' }),
+    });
+    listAiSourcesMock.mockResolvedValue([{ id: 'openai-codex-agent', name: 'Codex / ChatGPT' }]);
+    fetchModelCatalogMock.mockResolvedValue({ ok: true, data: { models: [], threadId: 't1' } });
+    putAiPreferencesMock.mockImplementation(async (input: Partial<AiPreferencesState>) => ({ data: prefs(input) }));
+    await mount();
+
+    const reasoningSelect = container!.querySelector<HTMLSelectElement>('select[aria-label="Default reasoning effort"]')!;
+    expect(reasoningSelect).toBeTruthy();
+    await act(async () => {
+      setSelectValue(reasoningSelect, 'high');
+    });
+    await flush();
+    expect(putAiPreferencesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ desktopProviderId: 'openai-codex-agent', desktopReasoning: 'high' })
+    );
+
+    // A non-codex provider shows no reasoning select.
+    putAiPreferencesMock.mockClear();
+    getAiPreferencesMock.mockResolvedValue({ data: prefs({ aiSource: 'desktop', desktopProviderId: 'prov-x' }) });
+    listAiSourcesMock.mockResolvedValue([{ id: 'prov-x', name: 'Provider X' }]);
+    await mount();
+    expect(container!.querySelector('select[aria-label="Default reasoning effort"]')).toBeNull();
   });
 
   it('explicit Save still covers free-text edits (no catalog: typed model id) and toasts', async () => {

@@ -10,6 +10,7 @@
 // Saved via GET/PUT /api/ai/preferences; the saved state also primes
 // websiteAiRouting.resolveDefaultAiSource() for default-source consumers.
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { Laptop, RefreshCw, Settings2 } from 'lucide-react';
 import {
   api,
@@ -104,6 +105,7 @@ export function AiSourceCard() {
   const [desktopModel, setDesktopModel] = useState('');
   const [customProviderId, setCustomProviderId] = useState('');
   const [chatToolMode, setChatToolMode] = useState<AiChatToolMode>('auto');
+  const [desktopReasoning, setDesktopReasoning] = useState('');
 
   const [desktopProviders, setDesktopProviders] = useState<AiSourceListing[]>([]);
   const [customProviders, setCustomProviders] = useState<AiProviderConfig[]>(() => chatCapableCustomProviders(user?.id));
@@ -131,6 +133,7 @@ export function AiSourceCard() {
       setDesktopModel(prefs.desktopModel ?? '');
       setCustomProviderId(prefs.customProviderId ?? '');
       setChatToolMode(prefs.chatToolMode);
+      setDesktopReasoning(prefs.desktopReasoning ?? '');
       cacheAiPreferences(prefs);
       setLoadState('ready');
     });
@@ -230,7 +233,8 @@ export function AiSourceCard() {
       (desktopProviderId.trim() || null) !== loaded.desktopProviderId ||
       (desktopModel.trim() || null) !== loaded.desktopModel ||
       (customProviderId || null) !== loaded.customProviderId ||
-      chatToolMode !== loaded.chatToolMode);
+      chatToolMode !== loaded.chatToolMode ||
+      (desktopReasoning || null) !== (loaded.desktopReasoning ?? null));
 
   /**
    * Auto-persist a discrete control change (radio, dropdown, toggle) — the user asked for
@@ -245,6 +249,7 @@ export function AiSourceCard() {
     desktopModel?: string;
     customProviderId?: string;
     chatToolMode?: AiChatToolMode;
+    desktopReasoning?: string;
   }) => {
     if (readOnly || loaded === null) return;
     const next = {
@@ -253,6 +258,7 @@ export function AiSourceCard() {
       desktopModel: (patch.desktopModel ?? desktopModel).trim() || null,
       customProviderId: (patch.customProviderId ?? customProviderId) || null,
       chatToolMode: patch.chatToolMode ?? chatToolMode,
+      desktopReasoning: (patch.desktopReasoning ?? desktopReasoning) || null,
     };
     if (next.aiSource === 'desktop' && !next.desktopProviderId) return;
     if (next.aiSource === 'custom' && !next.customProviderId) return;
@@ -288,6 +294,7 @@ export function AiSourceCard() {
       desktopModel: desktopModel.trim() || null,
       customProviderId: customProviderId || null,
       chatToolMode,
+      desktopReasoning: desktopReasoning || null,
     });
     setSaving(false);
     if (res.error || !res.data) {
@@ -305,6 +312,7 @@ export function AiSourceCard() {
     setDesktopModel(saved.desktopModel ?? '');
     setCustomProviderId(saved.customProviderId ?? '');
     setChatToolMode(saved.chatToolMode);
+    setDesktopReasoning(saved.desktopReasoning ?? '');
     cacheAiPreferences(saved);
     toast.success('AI settings saved');
   };
@@ -518,6 +526,35 @@ export function AiSourceCard() {
                   )}
                 </div>
               ))}
+
+            {desktopProviderId.trim() === CODEX_PROVIDER_ID && (
+              <div>
+                <label htmlFor="fl-ai-desktop-reasoning" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
+                  Default reasoning
+                </label>
+                <select
+                  id="fl-ai-desktop-reasoning"
+                  aria-label="Default reasoning effort"
+                  value={desktopReasoning}
+                  onChange={(e) => {
+                    setDesktopReasoning(e.target.value);
+                    void autoSave({ desktopReasoning: e.target.value });
+                  }}
+                  disabled={readOnly}
+                  className="block w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-3.5 py-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:opacity-60"
+                >
+                  <option value="">Provider default</option>
+                  {CODEX_REASONING_EFFORTS.map((effort) => (
+                    <option key={effort} value={effort}>
+                      {effort}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                  How hard Codex/ChatGPT thinks by default — you can change it per task inside the chat.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

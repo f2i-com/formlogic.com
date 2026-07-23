@@ -46,6 +46,8 @@ export interface AiPreferences {
   desktopModel: string | null;
   customProviderId: string | null;
   chatToolMode: 'auto' | 'confirm' | null;
+  /** Default reasoning effort for the Codex/ChatGPT desktop connector (null = provider default). */
+  desktopReasoning?: string | null;
 }
 
 /**
@@ -193,6 +195,7 @@ function parsePreferences(raw: unknown): AiPreferences | null {
     desktopModel: stringOrNull(rec.desktopModel),
     customProviderId: stringOrNull(rec.customProviderId),
     chatToolMode: rec.chatToolMode === 'auto' || rec.chatToolMode === 'confirm' ? rec.chatToolMode : null,
+    desktopReasoning: stringOrNull(rec.desktopReasoning),
   };
 }
 

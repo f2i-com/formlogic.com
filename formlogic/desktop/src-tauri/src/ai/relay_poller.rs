@@ -792,11 +792,18 @@ impl AiTunnel {
                     .get("threadId")
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                // Per-turn reasoning effort from the sealed body (browser chat
+                // selector / Settings default). Codex validates the value —
+                // an invalid effort comes back as a typed invalid_request.
+                let reasoning = body
+                    .get("reasoning")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 let fresh = CodexChatRequest {
                     prompt: codex_plain_prompt(&messages),
                     thread_id: None,
                     model: model.map(str::to_string),
-                    reasoning_effort: None,
+                    reasoning_effort: reasoning.clone(),
                     service_tier: None,
                 };
                 let mapped = browser_thread
@@ -808,7 +815,7 @@ impl AiTunnel {
                             prompt: last_user_text(&messages),
                             thread_id: Some(codex_thread),
                             model: model.map(str::to_string),
-                            reasoning_effort: None,
+                            reasoning_effort: reasoning.clone(),
                             service_tier: None,
                         };
                         match self.codex_chat_with_busy_backoff(resume).await {
