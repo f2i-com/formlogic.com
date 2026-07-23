@@ -102,64 +102,122 @@ const OUTRO =
   'The builder is fully live, so take over whenever you like — and when you are ready, create a free ' +
   'account to keep your work and connect an AI of your own.';
 
+// Inline SVG art for the poll screen (ASCII-only; everything strokes currentColor so it
+// themes with the --fl-* palette in light AND dark). Embedded into the generated code
+// via JSON.stringify — no escaping games.
+const POLL_ICONS: Record<string, string> = {
+  Pizza:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.5C9 4.2 15 4.2 19.5 6.5L12 21z"/><circle cx="10.2" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="14" cy="10.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="11.8" cy="13.6" r="1.1" fill="currentColor" stroke="none"/></svg>',
+  Sushi:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>',
+  Tacos:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5a8.5 8.5 0 0 1 17 0z"/><path d="M6.5 13.8c.9-1.1 2.2-1.1 3.1 0 .9-1.1 2.2-1.1 3.1 0 .9-1.1 2.2-1.1 3.1 0"/></svg>',
+  Salad:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5h16a8 8 0 0 1-16 0z"/><path d="M12 12.5c0-3.6 2.6-6.2 6.2-6.2-.4 3.6-2.6 6.2-6.2 6.2z"/></svg>',
+};
+const POLL_CROWN = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 17.5h15l1.3-8.2-4.7 3.1-4.1-5.9-4.1 5.9-4.7-3.1z"/></svg>';
+const POLL_LOGO =
+  '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="20" cy="20" r="16.5"/><circle cx="20" cy="20" r="8" stroke-width="1.6"/><path d="M20 3.5a16.5 16.5 0 0 1 14.3 8.2" opacity="0.35"/></svg>';
+
+// App-grade styling on the sandbox theme tokens — cards, stat chips, animated bars,
+// a leader highlight — so the demo's "published app" moment looks the part.
+const POLL_CSS = `* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 18px 40px; font-family: system-ui, -apple-system, sans-serif; background: var(--fl-bg); color: var(--fl-text); }
+.shell { max-width: 600px; margin: 0 auto; animation: rise .45s ease both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.hdr { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.logo { width: 46px; height: 46px; padding: 9px; border-radius: 14px; color: var(--fl-accent); background: var(--fl-surface); border: 1px solid var(--fl-border); box-shadow: 0 1px 2px var(--fl-shadow); flex: none; }
+.logo svg { width: 100%; height: 100%; display: block; }
+h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
+.sub { margin: 2px 0 0; color: var(--fl-muted); font-size: 13px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.stat { background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 14px; padding: 12px 16px; box-shadow: 0 1px 2px var(--fl-shadow); min-width: 0; }
+.stat-n { display: block; font-size: 20px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-l { display: block; margin-top: 1px; color: var(--fl-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.row { display: flex; align-items: center; gap: 12px; background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; box-shadow: 0 1px 2px var(--fl-shadow); transition: transform .15s ease, border-color .15s ease; }
+.row:hover { transform: translateY(-1px); border-color: var(--fl-accent); }
+.row.lead { border-color: var(--fl-accent); }
+.icon { width: 38px; height: 38px; flex: none; padding: 8px; border-radius: 11px; color: var(--fl-accent); background: var(--fl-track); }
+.icon svg { width: 100%; height: 100%; display: block; }
+.mid { flex: 1; min-width: 0; }
+.name-line { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+.name { font-size: 14px; font-weight: 600; }
+.crown { width: 14px; height: 14px; color: var(--fl-accent); }
+.crown svg { width: 100%; height: 100%; display: block; }
+.n { margin-left: auto; color: var(--fl-muted); font-size: 12px; white-space: nowrap; }
+.track { height: 9px; border-radius: 999px; background: var(--fl-track); overflow: hidden; }
+.bar { height: 100%; border-radius: 999px; background: var(--fl-accent); position: relative; transition: width .5s cubic-bezier(.22,.8,.36,1); }
+.bar::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,0)); }
+.pct { width: 44px; text-align: right; font-size: 13px; font-weight: 700; flex: none; }
+.vote { flex: none; border: 1px solid var(--fl-border); background: var(--fl-surface); color: var(--fl-text); border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 12px; font-weight: 600; transition: border-color .15s ease, color .15s ease; }
+.vote:hover { border-color: var(--fl-accent); color: var(--fl-accent); }
+.vote:disabled { opacity: .55; cursor: default; }
+.foot { margin-top: 18px; text-align: center; color: var(--fl-muted); font-size: 11.5px; }
+`;
+
 /**
  * The poll results screen, composed with the REAL field id the scenario just created.
- * Plain HTML + TypeScript on the sandbox SDK (records/submit) and the --fl-* theme vars;
- * ASCII-only and backtick-free so it survives being carried as a string.
+ * Plain HTML + TypeScript on the sandbox SDK (records/submit); the static art + CSS
+ * ride in via JSON.stringify so the GENERATED code needs no backticks or escapes.
+ * Exported for the compile test (demoPollScreen.compile.test.ts runs esbuild over it).
  */
-function pollScreenFiles(questionFieldId: string, optionLabels: string[]) {
-  const ts = [
-    '// Live poll results over this form\'s records, via the sandboxed FormLogic SDK.',
-    'const QID = ' + JSON.stringify(questionFieldId) + ';',
-    'const OPTIONS: string[] = ' + JSON.stringify(optionLabels) + ';',
-    'const app = document.getElementById("app")!;',
-    '',
-    'async function render() {',
-    '  const records = await FormLogic.records({ limit: 200 });',
-    '  const counts = new Map<string, number>(OPTIONS.map((o) => [o, 0]));',
-    '  for (const r of records) {',
-    '    const v = String((r.answers || {})[QID] || "");',
-    '    if (counts.has(v)) counts.set(v, (counts.get(v) || 0) + 1);',
-    '  }',
-    '  const total = records.length || 1;',
-    '  const rows = OPTIONS.map((o) => {',
-    '    const n = counts.get(o) || 0;',
-    '    const pct = Math.round((n / total) * 100);',
-    '    return \'<div class="row"><div class="label">\' + o + \' <span class="n">\' + n + \'</span></div>\' +',
-    '      \'<div class="track"><div class="bar" style="width:\' + pct + \'%"></div></div>\' +',
-    '      \'<button class="vote" data-opt="\' + o + \'">Vote</button></div>\';',
-    '  }).join("");',
-    '  app.innerHTML = \'<h1>Team lunch poll</h1><p class="hint">\' + records.length +',
-    '    \' vote(s) so far - tap Vote to add yours.</p>\' + rows;',
-    '  app.querySelectorAll<HTMLButtonElement>(".vote").forEach((btn) => {',
-    '    btn.addEventListener("click", async () => {',
-    '      btn.disabled = true;',
-    '      const answers: Record<string, unknown> = {};',
-    '      answers[QID] = btn.dataset.opt;',
-    '      await FormLogic.submit(answers);',
-    '      FormLogic.toast.success("Vote counted");',
-    '      render();',
-    '    });',
-    '  });',
-    '}',
-    '',
-    'render();',
-  ].join('\n');
-  const css = [
-    'body { margin: 0; padding: 24px; font-family: system-ui, sans-serif; background: var(--fl-bg); color: var(--fl-text); }',
-    'h1 { font-size: 20px; margin: 0 0 4px; }',
-    '.hint { color: var(--fl-muted); font-size: 13px; margin: 0 0 16px; }',
-    '.row { display: grid; grid-template-columns: 160px 1fr auto; gap: 10px; align-items: center; margin-bottom: 10px; }',
-    '.label { font-size: 14px; }',
-    '.n { color: var(--fl-muted); font-size: 12px; }',
-    '.track { height: 10px; border-radius: 999px; background: var(--fl-track); overflow: hidden; }',
-    '.bar { height: 100%; border-radius: 999px; background: var(--fl-accent); transition: width .4s ease; }',
-    '.vote { border: 1px solid var(--fl-border); background: var(--fl-surface); color: var(--fl-text); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px; }',
-    '.vote:hover { border-color: var(--fl-accent); }',
-  ].join('\n');
+export function pollScreenFiles(questionFieldId: string, optionLabels: string[]) {
+  const ts = `// Live poll results over this form's records, via the sandboxed FormLogic SDK.
+const QID = ${JSON.stringify(questionFieldId)};
+const OPTIONS: string[] = ${JSON.stringify(optionLabels)};
+const ICONS: Record<string, string> = ${JSON.stringify(POLL_ICONS)};
+const CROWN = ${JSON.stringify(POLL_CROWN)};
+const LOGO = ${JSON.stringify(POLL_LOGO)};
+const app = document.getElementById("app")!;
+
+async function render() {
+  const records = await FormLogic.records({ limit: 200 });
+  const counts = new Map<string, number>(OPTIONS.map((o) => [o, 0]));
+  for (const r of records) {
+    const v = String((r.answers || {})[QID] || "");
+    if (counts.has(v)) counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  const total = records.length;
+  const max = Math.max.apply(null, OPTIONS.map((o) => counts.get(o) || 0));
+  const leader = OPTIONS.find((o) => (counts.get(o) || 0) === max && max > 0) || "-";
+  const rows = OPTIONS.map((o) => {
+    const n = counts.get(o) || 0;
+    const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+    const lead = n === max && max > 0;
+    return '<div class="row' + (lead ? ' lead' : '') + '">' +
+      '<span class="icon">' + (ICONS[o] || '') + '</span>' +
+      '<div class="mid"><div class="name-line"><span class="name">' + o + '</span>' +
+      (lead ? '<span class="crown">' + CROWN + '</span>' : '') +
+      '<span class="n">' + n + ' vote' + (n === 1 ? '' : 's') + '</span></div>' +
+      '<div class="track"><div class="bar" style="width:' + pct + '%"></div></div></div>' +
+      '<span class="pct">' + pct + '%</span>' +
+      '<button class="vote" data-opt="' + o + '">Vote</button></div>';
+  }).join("");
+  app.innerHTML = '<div class="shell">' +
+    '<header class="hdr"><span class="logo">' + LOGO + '</span>' +
+    '<div><h1>Team lunch poll</h1><p class="sub">Where are we eating on Friday? Tap Vote to have your say.</p></div></header>' +
+    '<div class="stats"><div class="stat"><span class="stat-n">' + total + '</span><span class="stat-l">Votes so far</span></div>' +
+    '<div class="stat"><span class="stat-n">' + leader + '</span><span class="stat-l">Leading</span></div></div>' +
+    rows +
+    '<p class="foot">Live results - every vote is a real record in this form.</p></div>';
+  app.querySelectorAll<HTMLButtonElement>(".vote").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Voting...";
+      const answers: Record<string, unknown> = {};
+      answers[QID] = btn.dataset.opt;
+      await FormLogic.submit(answers);
+      FormLogic.toast.success("Vote counted");
+      render();
+    });
+  });
+}
+
+render();
+`;
   return [
     { path: 'index.html', content: '<div id="app"></div>' },
-    { path: 'styles.css', content: css },
+    { path: 'styles.css', content: POLL_CSS },
     { path: 'index.ts', content: ts },
   ];
 }
