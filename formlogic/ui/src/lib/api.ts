@@ -2775,7 +2775,7 @@ class ApiClient {
   async materializeBlueprint(blueprintId: string): Promise<ApiResponse<{
     mode: 'created' | 'delta'; appId: string; appSlug: string | null;
     createdFormIds: string[]; reusedFormIds: string[]; relations: number;
-    createdFlowIds: string[]; bindings: number;
+    createdFlowIds: string[]; bindings: number; roles: number;
   }>> {
     return this.request(`/blueprints/${encodeURIComponent(blueprintId)}/materialize`, { method: 'POST' });
   }

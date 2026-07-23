@@ -7,6 +7,7 @@ namespace FormLogic\Tests\Integration;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 use FormLogic\Services\BlueprintMaterializeService;
 use FormLogic\Services\BlueprintService;
 use FormLogic\Services\FlowService;
@@ -67,7 +68,8 @@ class BlueprintMaterializeTest extends TestCase
             self::$blueprints,
             self::$forms,
             self::$apps,
-            new FlowService($conn)
+            new FlowService($conn),
+            new AppUserService($conn)
         );
     }
 
@@ -279,6 +281,50 @@ class BlueprintMaterializeTest extends TestCase
         try {
             self::$materializer->materialize($this->userId, $blueprint['id']);
             $this->fail('expected a nothing-new refusal after the flow delta');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('Nothing new to apply', $e->getMessage());
+        }
+
+        // Actor → app ROLE, and an N:M relation → a JUNCTION form linking both sides.
+        $snapshot = self::$blueprints->getBlueprint($this->userId, $blueprint['id']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => $snapshot['semanticRevision'],
+            'operations' => [
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-actor',
+                    'elementType' => 'actor',
+                    'properties' => ['title' => 'Project manager'],
+                ]),
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-nm',
+                    'elementType' => 'edge',
+                    'properties' => ['edgeType' => 'relation', 'sourceId' => 'el-a', 'targetId' => 'el-b', 'cardinality' => 'N:M'],
+                ]),
+            ],
+        ]);
+        $nmDelta = self::$materializer->materialize($this->userId, $blueprint['id']);
+        $this->assertSame(1, $nmDelta['roles']);
+        $this->assertSame(1, $nmDelta['relations']);
+        $this->assertCount(1, $nmDelta['createdFormIds'], 'the junction form');
+        $junction = self::$forms->getForm($nmDelta['createdFormIds'][0]);
+        $this->assertStringContainsString('links', $junction['title']);
+        $linkTargets = [];
+        foreach ($junction['fields'] as $field) {
+            if (($field['type'] ?? null) === 'linked_record') {
+                $linkTargets[] = $field['properties']['targetFormId'] ?? null;
+            }
+        }
+        $this->assertCount(2, $linkTargets, 'a junction links BOTH sides');
+        $role = self::$pdo->prepare("SELECT COUNT(*) FROM app_roles WHERE app_id = ? AND name = 'Project manager'");
+        $role->execute([$first['appId']]);
+        $this->assertSame(1, (int) $role->fetchColumn());
+        // Stamped + idempotent: re-apply refuses.
+        $byId = array_column(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements'], null, 'id');
+        $this->assertSame('role', $byId['el-actor']['resourceRef']['kind'] ?? null);
+        $this->assertSame($nmDelta['createdFormIds'][0], $byId['el-nm']['resourceRef']['id'] ?? null);
+        try {
+            self::$materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected a nothing-new refusal after the actor/junction delta');
         } catch (\InvalidArgumentException $e) {
             $this->assertStringContainsString('Nothing new to apply', $e->getMessage());
         }

@@ -33,6 +33,7 @@ class BlueprintMaterializeService
         private FormService $forms,
         private AppService $apps,
         private ?FlowService $flowService = null,
+        private ?AppUserService $appUsers = null,
     ) {
         $this->mysql = $mysql->getConnection();
     }
@@ -100,9 +101,12 @@ class BlueprintMaterializeService
                 $formIdByElement[$plan['elementId']] = (string) $form['id'];
             }
 
-            // 2. ER relations → linked_record fields on the TARGET form pointing at the
-            //    SOURCE form. Only edges between materialised form elements apply.
+            // 2. ER relations. 1:N/1:1 → a linked_record field on the TARGET form pointing
+            //    at the SOURCE form. N:M → a JUNCTION form with linked_record fields to
+            //    BOTH sides (idempotent via the edge element's recorded resource link).
             $relations = 0;
+            $junctionFormIds = [];
+            $junctionByEdge = [];
             foreach ($elements as $element) {
                 if ($element['elementType'] !== 'edge') {
                     continue;
@@ -114,6 +118,42 @@ class BlueprintMaterializeService
                 $sourceFormId = $formIdByElement[(string) ($props['sourceId'] ?? '')] ?? null;
                 $targetFormId = $formIdByElement[(string) ($props['targetId'] ?? '')] ?? null;
                 if ($sourceFormId === null || $targetFormId === null) {
+                    continue;
+                }
+                if (($props['cardinality'] ?? null) === 'N:M') {
+                    // Already materialised into a junction on a previous pass?
+                    $seenJunction = $this->mysql->prepare(
+                        'SELECT resource_id FROM blueprint_resource_links WHERE blueprint_id = :b AND element_id = :el'
+                    );
+                    $seenJunction->execute(['b' => $blueprintId, 'el' => (string) $element['id']]);
+                    if ($seenJunction->fetchColumn()) {
+                        continue;
+                    }
+                    $sourceTitle = (string) (($this->forms->getForm($sourceFormId)['title'] ?? null) ?? 'Source');
+                    $targetTitle = (string) (($this->forms->getForm($targetFormId)['title'] ?? null) ?? 'Target');
+                    $junction = $this->forms->createForm([
+                        'userId' => $ownerUserId,
+                        'title' => "{$sourceTitle} - {$targetTitle} links",
+                        'fields' => [
+                            [
+                                'id' => $this->uniqueFieldId($sourceTitle, []),
+                                'type' => 'linked_record',
+                                'label' => $sourceTitle,
+                                'properties' => ['targetFormId' => $sourceFormId],
+                            ],
+                            [
+                                'id' => $this->uniqueFieldId($targetTitle, [$this->uniqueFieldId($sourceTitle, [])]),
+                                'type' => 'linked_record',
+                                'label' => $targetTitle,
+                                'properties' => ['targetFormId' => $targetFormId],
+                            ],
+                        ],
+                        'status' => 'draft',
+                    ]);
+                    $createdFormIds[] = (string) $junction['id'];
+                    $junctionFormIds[] = (string) $junction['id'];
+                    $junctionByEdge[(string) $element['id']] = (string) $junction['id'];
+                    $relations++;
                     continue;
                 }
                 $fkName = trim((string) ($props['fkField'] ?? ''));
@@ -157,9 +197,13 @@ class BlueprintMaterializeService
                 foreach ($createdFormIds as $newFormId) {
                     $this->apps->addFormToApp($existingAppId, $newFormId);
                 }
+                // (junction forms are in createdFormIds, so they attach here too)
             } else {
                 $app = $this->apps->createApp(
-                    ['name' => (string) $blueprint['name'], 'formIds' => array_values(array_unique(array_values($formIdByElement)))],
+                    [
+                        'name' => (string) $blueprint['name'],
+                        'formIds' => array_values(array_unique(array_merge(array_values($formIdByElement), $junctionFormIds))),
+                    ],
                     $ownerUserId
                 );
                 $appId = (string) $app['id'];
@@ -241,7 +285,43 @@ class BlueprintMaterializeService
                 }
             }
 
-            if ($delta && $createdFormIds === [] && $relations === 0 && $createdFlowIds === [] && $bindingsCreated === 0) {
+            // Actor elements → app ROLES (name from the title; idempotent by existing
+            // resourceRef or a same-named role already on the app).
+            $rolesCreated = 0;
+            $roleByElement = [];
+            if ($this->appUsers !== null) {
+                $existingRoles = [];
+                $roleRows = $this->mysql->prepare('SELECT id, name FROM app_roles WHERE app_id = :app');
+                $roleRows->execute(['app' => $appId]);
+                foreach ($roleRows->fetchAll() as $roleRow) {
+                    $existingRoles[mb_strtolower((string) $roleRow['name'])] = (string) $roleRow['id'];
+                }
+                foreach ($elements as $element) {
+                    if ($element['elementType'] !== 'actor') {
+                        continue;
+                    }
+                    $ref = $element['resourceRef'];
+                    if (is_array($ref) && ($ref['kind'] ?? null) === 'role') {
+                        continue;
+                    }
+                    $properties = is_array($element['properties']) ? $element['properties'] : [];
+                    $roleName = trim((string) ($properties['title'] ?? ''));
+                    if ($roleName === '') {
+                        continue;
+                    }
+                    $existingId = $existingRoles[mb_strtolower($roleName)] ?? null;
+                    if ($existingId !== null) {
+                        $roleByElement[(string) $element['id']] = $existingId;
+                        continue;
+                    }
+                    $role = $this->appUsers->createRole($appId, ['name' => $roleName]);
+                    $roleByElement[(string) $element['id']] = (string) $role['id'];
+                    $existingRoles[mb_strtolower($roleName)] = (string) $role['id'];
+                    $rolesCreated++;
+                }
+            }
+
+            if ($delta && $createdFormIds === [] && $relations === 0 && $createdFlowIds === [] && $bindingsCreated === 0 && $rolesCreated === 0 && $roleByElement === []) {
                 throw new \InvalidArgumentException('Nothing new to apply — sketch a new form, flow, relation or trigger first');
             }
 
@@ -270,6 +350,22 @@ class BlueprintMaterializeService
                     'type' => 'blueprint.element.update',
                     'targetId' => (string) $flowElementId,
                     'resourceRef' => ['kind' => 'flow', 'id' => $materialisedFlowId],
+                ];
+            }
+            foreach ($junctionByEdge as $edgeElementId => $junctionId) {
+                $operations[] = [
+                    'operationId' => 'op-mz-' . bin2hex(random_bytes(8)),
+                    'type' => 'blueprint.element.update',
+                    'targetId' => (string) $edgeElementId,
+                    'resourceRef' => ['kind' => 'form', 'id' => $junctionId],
+                ];
+            }
+            foreach ($roleByElement as $actorElementId => $roleId) {
+                $operations[] = [
+                    'operationId' => 'op-mz-' . bin2hex(random_bytes(8)),
+                    'type' => 'blueprint.element.update',
+                    'targetId' => (string) $actorElementId,
+                    'resourceRef' => ['kind' => 'role', 'id' => $roleId],
                 ];
             }
             if ($operations !== []) {
@@ -316,12 +412,33 @@ class BlueprintMaterializeService
                     's' => 'materialised',
                 ]);
             }
+            foreach ($junctionByEdge as $edgeElementId => $junctionId) {
+                $link->execute([
+                    'b' => $blueprintId,
+                    'el' => (string) $edgeElementId,
+                    't' => 'form',
+                    'r' => (string) $junctionId,
+                    'v' => null,
+                    's' => 'materialised',
+                ]);
+            }
+            foreach ($roleByElement as $actorElementId => $roleId) {
+                $link->execute([
+                    'b' => $blueprintId,
+                    'el' => (string) $actorElementId,
+                    't' => 'role',
+                    'r' => (string) $roleId,
+                    'v' => null,
+                    's' => 'materialised',
+                ]);
+            }
 
             return [
                 'mode' => $delta ? 'delta' : 'created',
                 'appId' => $appId,
                 'createdFlowIds' => $createdFlowIds,
                 'bindings' => $bindingsCreated,
+                'roles' => $rolesCreated,
                 'appSlug' => isset($app['slug']) && is_string($app['slug']) ? $app['slug'] : null,
                 'createdFormIds' => $createdFormIds,
                 'reusedFormIds' => array_values(array_diff(array_values($formIdByElement), $createdFormIds)),

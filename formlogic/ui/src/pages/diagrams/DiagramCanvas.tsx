@@ -345,15 +345,13 @@ function SelectionPanel({
   busy,
   linkedNoteText,
   onSave,
-  onSaveNote,
   onDelete,
 }: {
   element: BlueprintElement;
   busy: boolean;
   /** The text of the sticky note attached to this concept (null = none yet). */
   linkedNoteText: string | null;
-  onSave: (properties: Record<string, unknown>) => void;
-  onSaveNote: (text: string) => void;
+  onSave: (properties: Record<string, unknown>, noteText?: string) => void;
   onDelete: () => void;
 }) {
   const isEdge = element.elementType === 'edge';
@@ -395,11 +393,10 @@ function SelectionPanel({
     delete next.description; // superseded by the attached sticky note
     if (isForm) {
       next.fields = fields.filter((field) => field.name.trim() !== '').map((field) => ({ name: field.name.trim(), type: field.type }));
+      onSave(next);
+      return;
     }
-    onSave(next);
-    if (!isForm && notes !== (linkedNoteText ?? '')) {
-      onSaveNote(notes);
-    }
+    onSave(next, notes);
   };
 
   return (
@@ -425,9 +422,19 @@ function SelectionPanel({
               <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="Relation cardinality" className={INPUT_CLS + ' w-full cursor-pointer'}>
                 <option value="1:N">1:N — one source, many targets</option>
                 <option value="1:1">1:1 — one to one</option>
+                <option value="N:M">N:M — many to many (junction form)</option>
               </select>
-              <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">FK field (created on the target form)</label>
-              <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
+              {cardinality !== 'N:M' && (
+                <>
+                  <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">FK field (created on the target form)</label>
+                  <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
+                </>
+              )}
+              {cardinality === 'N:M' && (
+                <p className="mt-2 text-[10px] leading-snug text-gray-400 dark:text-slate-500">
+                  Materialises as a junction form linking both sides.
+                </p>
+              )}
             </>
           )}
         </>
@@ -633,6 +640,7 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
             ? (props.cardinality ? `${props.cardinality}${props.fkField ? ` · ${props.fkField}` : ''}` : undefined)
             : String(props.edgeType ?? 'relation'),
         animated: props.edgeType === 'triggers',
+        interactionWidth: 24,
       });
       continue;
     }
@@ -1203,69 +1211,53 @@ export function DiagramCanvas({
     ? String((linkedNote.properties as { text?: unknown }).text ?? '')
     : null;
 
-  // "Notes" on a concept save as a LINKED STICKY beside the node (§11A direction) —
-  // created once with its association wire, updated in place afterwards.
-  const saveSelectedNote = useCallback(
-    (text: string) => {
-      if (!selectedId) return;
-      if (linkedNote) {
-        void commit(
-          [
-            {
-              operationId: `op-${generateId()}`,
-              type: 'blueprint.element.update',
-              targetId: linkedNote.id,
-              properties: { ...linkedNote.properties, text },
-            },
-          ],
-          true,
-        );
-        return;
-      }
-      if (text.trim() === '') return;
-      const anchor = elements.find((candidate) => candidate.id === selectedId);
-      const at = (anchor?.layout ?? {}) as { x?: number; y?: number };
-      const noteId = `el-${generateId()}`;
-      void commit(
-        [
-          {
-            operationId: `op-${generateId()}`,
-            type: 'blueprint.element.create',
-            targetId: noteId,
-            elementType: 'note',
-            properties: { text, attachedTo: selectedId },
-            layout: { x: Math.round((at.x ?? 200) + 240), y: Math.round((at.y ?? 200) - 30) },
-          },
-          {
-            operationId: `op-${generateId()}`,
-            type: 'blueprint.element.create',
-            targetId: `el-${generateId()}`,
-            elementType: 'edge',
-            properties: { edgeType: 'relation', sourceId: selectedId, targetId: noteId, state: 'concept' },
-          },
-        ],
-        true,
-      );
-    },
-    [commit, elements, linkedNote, selectedId],
-  );
-
   const saveSelectedProperties = useCallback(
-    (properties: Record<string, unknown>) => {
+    (properties: Record<string, unknown>, noteText?: string) => {
       if (!selectedId) return;
-      void commit(
-        [
-          {
+      const operations: BlueprintOperation[] = [
+        {
+          operationId: `op-${generateId()}`,
+          type: 'blueprint.element.update',
+          targetId: selectedId,
+          properties,
+        },
+      ];
+      // The concept's sticky note rides the SAME batch (two sequential commits raced:
+      // the second carried a stale baseSemanticRevision and 409'd).
+      if (noteText !== undefined) {
+        if (linkedNote && noteText !== (linkedNoteText ?? '')) {
+          operations.push({
             operationId: `op-${generateId()}`,
             type: 'blueprint.element.update',
-            targetId: selectedId,
-            properties,
-          },
-        ],
-        true,
-      );
+            targetId: linkedNote.id,
+            properties: { ...linkedNote.properties, text: noteText },
+          });
+        } else if (!linkedNote && noteText.trim() !== '') {
+          const anchor = elements.find((candidate) => candidate.id === selectedId);
+          const at = (anchor?.layout ?? {}) as { x?: number; y?: number };
+          const noteId = `el-${generateId()}`;
+          operations.push(
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.element.create',
+              targetId: noteId,
+              elementType: 'note',
+              properties: { text: noteText, attachedTo: selectedId },
+              layout: { x: Math.round((at.x ?? 200) + 240), y: Math.round((at.y ?? 200) - 30) },
+            },
+            {
+              operationId: `op-${generateId()}`,
+              type: 'blueprint.element.create',
+              targetId: `el-${generateId()}`,
+              elementType: 'edge',
+              properties: { edgeType: 'relation', sourceId: selectedId, targetId: noteId, state: 'concept' },
+            },
+          );
+        }
+      }
+      void commit(operations, true);
     },
-    [commit, selectedId],
+    [commit, elements, linkedNote, linkedNoteText, selectedId],
   );
 
   return (
@@ -1368,7 +1360,7 @@ export function DiagramCanvas({
                       void onReload();
                       return;
                     }
-                    toast.success('Changes applied to your app', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s)`);
+                    toast.success('Changes applied to your app', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s), ${res.data.roles} role(s)`);
                     void onReload();
                   });
                 }}
@@ -1393,7 +1385,7 @@ export function DiagramCanvas({
                     void onReload();
                     return;
                   }
-                  toast.success('App created from your diagram', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s)`);
+                  toast.success('App created from your diagram', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s), ${res.data.roles} role(s)`);
                   navigate(`/apps/${res.data.appId}/records`);
                 });
               }}
@@ -1496,7 +1488,6 @@ export function DiagramCanvas({
             busy={busy}
             linkedNoteText={linkedNoteText}
             onSave={saveSelectedProperties}
-            onSaveNote={saveSelectedNote}
             onDelete={deleteSelected}
           />
         )}
