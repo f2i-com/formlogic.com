@@ -11,6 +11,15 @@ portable, self-contained unit. It powers three things:
 accepts. Import is the single trust boundary: it regenerates all ids, sets the importer as owner, forces
 `status: draft`, strips notification recipients, and remaps cross-references.
 
+> **Application Package v2** (`formatVersion: 2`) is the newer AGGREGATE unit — it carries flow-node
+> contributions, package dependencies, and (eventually) Pack content and Desktop service distributions.
+> Node-only extensions ship as v2 with no Pack payload. See [EXTENSIONS.md](EXTENSIONS.md); Pack v1 as
+> documented here is unchanged and remains fully supported.
+>
+> Naming note (PKG-102): the `apps[].services` App Feature toggles may equivalently be declared as
+> `apps[].features` (the v2 name — they are feature switches, NOT Desktop services). Declare one key,
+> never both; exports continue emitting `services` for compatibility.
+
 ---
 
 ## Top level

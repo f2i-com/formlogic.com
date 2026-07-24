@@ -30,6 +30,12 @@ Added via the standard `MySQLConnection` idempotent migration pattern. Key types
 
 Selection order (from the plan): Desktop runner for flows needing local models/hardware → **browser for pure/browser-safe flows** → server/headless later. The MVP implements the **browser runner** inside the app runtime; Desktop `/api/flows/run` stays reserved (501) until the Desktop-side runner lands.
 
+> **Contributed nodes (ADR-010):** installed Application Package v2 extensions contribute additional
+> flow nodes (namespaced dotted types like `com.acme.media.watermark`). They never execute directly —
+> the server compiler (`POST /api/flows/{id}/compile`) lowers them to the core node set below, pinning
+> definition locks to each immutable flow revision; cloud runs and every browser path execute that
+> compiled IR. Authoring guide + run matrix: [EXTENSIONS.md](EXTENSIONS.md).
+
 **v0 executor** (`formlogic/ui/src/client-runtime/flows/`): a small, well-tested interpreter over the WorkflowGraph JSON supporting a restricted node set:
 
 ```
