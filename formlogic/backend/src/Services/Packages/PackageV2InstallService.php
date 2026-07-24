@@ -52,9 +52,6 @@ class PackageV2InstallService
         if (isset($aggregate['content']['pack'])) {
             throw new \RuntimeException('unsupported_content: v2 packages carrying Pack content are not installable yet — this lane installs node-only extensions (deliver app content as a Pack v1 for now)');
         }
-        if (!empty($aggregate['dependencies']['packages'])) {
-            throw new \RuntimeException('unsupported_dependencies: package dependencies need the dependency resolver, which is not enabled yet');
-        }
         if (!empty($aggregate['serviceDistributions'])) {
             throw new \RuntimeException('unsupported_distributions: signed service distributions need the desktop distribution pipeline, which is not enabled yet');
         }
@@ -78,6 +75,32 @@ class PackageV2InstallService
         $stmt->execute([$userId, $packageId]);
         if ($stmt->fetchColumn() !== false) {
             throw new \RuntimeException('This package is already installed');
+        }
+
+        // PKG-105: resolve declared dependencies against the owner's INSTALLED graph. There is no
+        // catalog fetch in this slice, so a missing/incompatible REQUIRED dependency is a typed
+        // refusal naming exactly what to install first — never a silent skip. Satisfied edges are
+        // recorded so the depended-upon package cannot be uninstalled out from under this one.
+        $resolvedDeps = [];
+        $missingOptional = [];
+        $declaredDeps = $aggregate['dependencies']['packages'] ?? [];
+        if (!empty($declaredDeps)) {
+            $stmt = $this->mysql->prepare('SELECT id, package_id, version FROM package_installations WHERE user_id = ?');
+            $stmt->execute([$userId]);
+            $installedMap = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $installedMap[(string) $row['package_id']] = [
+                    'version' => (string) $row['version'],
+                    'installationId' => (string) $row['id'],
+                ];
+            }
+            $resolution = DependencyResolver::resolve($declaredDeps, $installedMap, $packageId);
+            if (!$resolution['ok']) {
+                $lines = array_map(static fn (array $p): string => $p['message'], $resolution['problems']);
+                throw new \RuntimeException('unresolved_dependencies: ' . implode('; ', $lines));
+            }
+            $resolvedDeps = $resolution['resolved'];
+            $missingOptional = $resolution['missingOptional'];
         }
 
         // A contributed type is owned by exactly one installed package (plan §8.2: a duplicate
@@ -113,6 +136,14 @@ class PackageV2InstallService
                 'digest' => $r['digest'],
             ], $definitionRows),
             'requirements' => $aggregate['requirements'] ?? new \stdClass(),
+            // Exact dependency locks (PKG-105): what each declared range resolved to at install.
+            'dependencies' => array_map(static fn (array $d): array => [
+                'id' => $d['id'],
+                'range' => $d['range'],
+                'resolvedVersion' => $d['resolvedVersion'],
+                'required' => $d['required'],
+            ], $resolvedDeps),
+            'missingOptionalDependencies' => $missingOptional,
             'approvedConnectorGrants' => array_values($approvedConnectorGrants),
             'source' => $source,
             'trust' => $trust,
@@ -143,6 +174,13 @@ class PackageV2InstallService
             ');
             foreach ($definitionRows as $row) {
                 $ins->execute([$row['id'], $userId, $installationId, $row['type'], $row['version'], $row['digest'], $row['json']]);
+            }
+            $edge = $this->mysql->prepare('
+                INSERT INTO package_dependency_edges (id, parent_installation_id, child_installation_id, child_package_id, requested_range, resolved_version, required)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ');
+            foreach ($resolvedDeps as $dep) {
+                $edge->execute([$this->uuid(), $installationId, $dep['installationId'], $dep['id'], $dep['range'], $dep['resolvedVersion'], $dep['required'] ? 1 : 0]);
             }
             $this->mysql->commit();
         } catch (\Exception $e) {
@@ -175,6 +213,23 @@ class PackageV2InstallService
         if (!$row) {
             return null;
         }
+
+        // PKG-105 reference counting: a package another installed package REQUIRES cannot be
+        // removed out from under it — refuse and NAME the dependents (uninstall those first).
+        $deps = $this->mysql->prepare('
+            SELECT pi.display_name
+            FROM package_dependency_edges e
+            JOIN package_installations pi ON pi.id = e.parent_installation_id
+            WHERE e.child_installation_id = ? AND e.required = 1
+        ');
+        $deps->execute([$installationId]);
+        $dependents = $deps->fetchAll(PDO::FETCH_COLUMN);
+        if (!empty($dependents)) {
+            throw new \RuntimeException(
+                'uninstall_blocked: "' . $row['display_name'] . '" is required by ' . implode(', ', array_map(static fn ($d) => '"' . $d . '"', $dependents)) . ' — uninstall those first'
+            );
+        }
+
         $count = $this->mysql->prepare('SELECT COUNT(*) FROM flow_node_definitions WHERE installation_id = ?');
         $count->execute([$installationId]);
         $nodes = (int) $count->fetchColumn();

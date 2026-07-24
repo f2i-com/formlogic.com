@@ -530,6 +530,26 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Resolved package-dependency edges (ADR-010 / PKG-105): one row per resolved declared
+        // dependency, recorded at install. Uninstalling a package with a REQUIRED inbound edge is
+        // refused in the service layer (both FKs cascade so account erasure never deadlocks).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS package_dependency_edges (
+                id VARCHAR(36) PRIMARY KEY,
+                parent_installation_id VARCHAR(36) NOT NULL,
+                child_installation_id VARCHAR(36) NOT NULL,
+                child_package_id VARCHAR(128) NOT NULL,
+                requested_range VARCHAR(64) NOT NULL,
+                resolved_version VARCHAR(64) NOT NULL,
+                required TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_pde_edge (parent_installation_id, child_package_id),
+                INDEX idx_pde_child (child_installation_id),
+                FOREIGN KEY (parent_installation_id) REFERENCES package_installations(id) ON DELETE CASCADE,
+                FOREIGN KEY (child_installation_id) REFERENCES package_installations(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pack catalog — marketplace registry
         // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
         // an 'application_package' with server-derived trust; the other item types are reserved (no runtime

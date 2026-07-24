@@ -192,15 +192,6 @@ class PackageV2InstallTest extends TestCase
             $this->assertStringContainsString('unsupported_content', $e->getMessage());
         }
 
-        $withDeps = $this->nodeOnlyAggregate();
-        $withDeps['dependencies'] = ['packages' => [['id' => 'com.dep.x', 'version' => '^1.0.0']]];
-        try {
-            self::$pkgV2->install($withDeps, $this->userId, []);
-            $this->fail('dependencies must refuse');
-        } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('unsupported_dependencies', $e->getMessage());
-        }
-
         $withEntryPath = $this->nodeOnlyAggregate();
         $withEntryPath['contributions']['flowNodes'] = ['flow-nodes/x.json'];
         try {
@@ -271,6 +262,70 @@ class PackageV2InstallTest extends TestCase
         $del = json_decode((string) $delOut->getBody(), true);
         $this->assertSame(200, $delOut->getStatusCode());
         $this->assertSame(1, $del['nodesRemoved']);
+    }
+
+    public function testDependenciesResolveRecordEdgesAndProtectTheChild(): void
+    {
+        // Install the dependency first, then a package that requires it.
+        $dep = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []); // com.acme.media-tools v1.4.0
+        $root = $this->nodeOnlyAggregate('media-suite');
+        $root['dependencies'] = ['packages' => [
+            ['id' => 'com.acme.media-tools', 'version' => '^1.2.0', 'reason' => 'Shares the image pipeline'],
+            ['id' => 'com.acme.extras', 'version' => '^1.0.0', 'optional' => true],
+        ]];
+        $rootResult = self::$pkgV2->install($root, $this->userId, []);
+
+        // The edge row records the exact lock; the receipt carries it too.
+        $stmt = self::$pdo->prepare('SELECT * FROM package_dependency_edges WHERE parent_installation_id = ?');
+        $stmt->execute([$rootResult['installationId']]);
+        $edges = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(1, $edges, 'a missing OPTIONAL dependency records no edge');
+        $this->assertSame($dep['installationId'], $edges[0]['child_installation_id']);
+        $this->assertSame('^1.2.0', $edges[0]['requested_range']);
+        $this->assertSame('1.4.0', $edges[0]['resolved_version']);
+        $receipt = json_decode((string) self::$pdo->query(
+            "SELECT receipt_json FROM package_installations WHERE id = '{$rootResult['installationId']}'"
+        )->fetchColumn(), true);
+        $this->assertSame('1.4.0', $receipt['dependencies'][0]['resolvedVersion']);
+        $this->assertSame([['id' => 'com.acme.extras', 'range' => '^1.0.0']], $receipt['missingOptionalDependencies']);
+
+        // The depended-upon package refuses to uninstall while the required edge exists…
+        try {
+            self::$pkgV2->uninstall($dep['installationId'], $this->userId);
+            $this->fail('uninstalling a required dependency must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('uninstall_blocked', $e->getMessage());
+            $this->assertStringContainsString('Acme Media Tools', $e->getMessage());
+        }
+        // …and frees once the dependent is removed first.
+        self::$pkgV2->uninstall($rootResult['installationId'], $this->userId);
+        $gone = self::$pkgV2->uninstall($dep['installationId'], $this->userId);
+        $this->assertSame(1, $gone['nodesRemoved']);
+    }
+
+    public function testMissingOrIncompatibleRequiredDependencyRefusesTyped(): void
+    {
+        $root = $this->nodeOnlyAggregate('needs-dep');
+        $root['dependencies'] = ['packages' => [['id' => 'com.acme.media-tools', 'version' => '^1.2.0']]];
+        try {
+            self::$pkgV2->install($root, $this->userId, []);
+            $this->fail('a missing required dependency must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('unresolved_dependencies', $e->getMessage());
+            $this->assertStringContainsString('not installed', $e->getMessage());
+        }
+
+        // Install v1.4.0, then require ^2.0.0 → incompatible, names the installed version.
+        self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $root2 = $this->nodeOnlyAggregate('needs-newer');
+        $root2['dependencies'] = ['packages' => [['id' => 'com.acme.media-tools', 'version' => '^2.0.0']]];
+        try {
+            self::$pkgV2->install($root2, $this->userId, []);
+            $this->fail('an incompatible required dependency must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('unresolved_dependencies', $e->getMessage());
+            $this->assertStringContainsString('v1.4.0 is installed', $e->getMessage());
+        }
     }
 
     public function testListDefinitionsServesTheEditorProviderSource(): void

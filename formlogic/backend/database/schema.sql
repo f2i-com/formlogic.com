@@ -1417,6 +1417,24 @@ CREATE TABLE `package_installations` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `package_dependency_edges` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `parent_installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `child_installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `child_package_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requested_range` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resolved_version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `required` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_pde_edge` (`parent_installation_id`,`child_package_id`),
+  KEY `idx_pde_child` (`child_installation_id`),
+  CONSTRAINT `package_dependency_edges_ibfk_1` FOREIGN KEY (`parent_installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `package_dependency_edges_ibfk_2` FOREIGN KEY (`child_installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `flow_node_definitions` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,

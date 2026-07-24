@@ -623,6 +623,26 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `flow_node_definitions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'flow_node_definitions table ensured';
 
+// 18. Resolved package-dependency edges (ADR-010 / PKG-105): one row per resolved declared
+//     dependency, recorded at install; a required inbound edge blocks uninstalling the child
+//     (service-level; both FKs cascade so account erasure never deadlocks).
+$pdo->exec("CREATE TABLE IF NOT EXISTS `package_dependency_edges` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `parent_installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `child_installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `child_package_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requested_range` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resolved_version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `required` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_pde_edge` (`parent_installation_id`,`child_package_id`),
+  KEY `idx_pde_child` (`child_installation_id`),
+  CONSTRAINT `package_dependency_edges_ibfk_1` FOREIGN KEY (`parent_installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `package_dependency_edges_ibfk_2` FOREIGN KEY (`child_installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'package_dependency_edges table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

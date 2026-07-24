@@ -903,6 +903,10 @@ class PackController
         if ($this->packageV2 !== null) {
             try {
                 $v2 = $this->packageV2->uninstall($installationId, $userId);
+            } catch (\RuntimeException $e) {
+                // PKG-105 reference counting: required by another installed package — the message
+                // names the dependents so the user knows what to remove first.
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'uninstall_blocked', 'message' => $e->getMessage()], 409);
             } catch (\Exception $e) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to uninstall the package'], 500);
             }
