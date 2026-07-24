@@ -64,7 +64,7 @@ import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHe
 import { resolveBuilderChrome, type BuilderChromeTier } from '../components/builder/builderChrome';
 import { BUILDER_FLOWS_W, BUILDER_SETTINGS_W, resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
 import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
-import { demoApplyFormBindingOverlay } from '../lib/demoLocal';
+import { demoApplyFormBindingOverlay, isDemoLocalId } from '../lib/demoLocal';
 import { flushFormSaves, discardPendingFormSaves, useFormStore } from '../stores/formStore';
 import { useVaultStore } from '../stores/vaultStore';
 import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
@@ -157,25 +157,29 @@ function BuilderSaveIndicator({
   hasSaveError,
   onRetry,
   storageMode,
+  browserLocal,
   compact = false,
 }: {
   isSaving: boolean;
   hasSaveError: boolean;
   onRetry: () => void;
   storageMode: string;
+  browserLocal?: boolean;
   compact?: boolean;
 }) {
-  const savedToCloud = storageMode === 'api';
+  const savedToCloud = storageMode === 'api' && !browserLocal;
   // Failure outranks everything (FL-SAVE-001): after a failed sync the indicator must NOT
   // drift back to 'Saved to cloud' — it stays 'Not saved' (clickable retry) until a save of
   // the failed slice actually succeeds.
   const label = hasSaveError && !isSaving
     ? 'Not saved — click to retry'
     : isSaving
-      ? 'Saving'
-      : savedToCloud
-        ? 'Saved to cloud'
-        : 'Saved locally';
+      ? browserLocal ? 'Saving in browser' : 'Saving'
+      : browserLocal
+        ? 'Saved in browser'
+        : savedToCloud
+          ? 'Saved to cloud'
+          : 'Saved locally';
   // The floppy disk IS the save glyph (user request) — the title still says where it went.
   const icon = hasSaveError && !isSaving
     ? <AlertTriangle className="h-3 w-3" />
@@ -295,6 +299,7 @@ async function countFlowBindingsForForm(formId: string): Promise<number> {
 // Main Form Builder Component
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
+  const browserLocalForm = isDemoLocalId(formId);
   const navigate = useNavigate();
   // Platform-admin acting mode (editing another user's form): links stay under
   // /admin/..., and owner-identity surfaces (publish-as-pack) are hidden.
@@ -365,12 +370,12 @@ export default function FormBuilder() {
     if (!formId) return;
     void flushFormSaves(formId).then(({ ok }) => {
       if (ok) {
-        toast.success('Saved', 'All changes are on the server now.');
+        toast.success('Saved', browserLocalForm ? 'All changes are saved in this browser.' : 'All changes are on the server now.');
       } else {
         toast.error('Still not saved', 'Check your connection and try again.');
       }
     });
-  }, [formId]);
+  }, [browserLocalForm, formId]);
   // FL-SAVE-001: edits sync on a debounce, so closing/reloading the tab inside that window
   // (or with a failed save outstanding) silently discards them - warn before unload.
   useEffect(() => {
@@ -1098,7 +1103,12 @@ export default function FormBuilder() {
     }
     // Only cloud-stored forms have a public link / embed; a local form
     // isn't on the server, so don't claim a shareable link for it.
-    if (storageMode === 'api') {
+    if (browserLocalForm) {
+      toast.success(
+        alreadyLive ? 'Changes published in this browser' : 'Form published in this browser',
+        'This version stays private to this browser. Open the app from App Studio to test it.'
+      );
+    } else if (storageMode === 'api') {
       toast.success(
         alreadyLive ? 'Changes published' : 'Your form is live',
         'Share the link or embed it anywhere.'
@@ -1194,10 +1204,10 @@ export default function FormBuilder() {
                 is announced to screen readers. Full at lg+, compact below, and clipped
                 with the title so it can never overlap the right group. */}
             <div className="hidden flex-none lg:flex">
-              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} />
+              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} />
             </div>
             <div className="flex flex-none lg:hidden">
-              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} compact />
+              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} compact />
             </div>
             {isPrivateForm && (
               <span

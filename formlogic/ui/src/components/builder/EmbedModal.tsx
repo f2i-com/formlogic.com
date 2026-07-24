@@ -30,6 +30,7 @@ export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus }: E
   const [copied, setCopied] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
+  const browserLocalDemo = api.isDemoMode() && isDemoLocalId(formId);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -266,15 +267,16 @@ function closeFormPopup() {
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 dark:border-slate-800 px-6">
+        <div className="flex border-b border-gray-200 px-3 dark:border-slate-800 sm:px-6">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
+              aria-label={tab.label}
               aria-current={activeTab === tab.id ? 'true' : undefined}
               className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 motion-safe:transition-colors -mb-px cursor-pointer rounded-t-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50',
+                'flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-3 text-sm font-medium motion-safe:transition-colors -mb-px cursor-pointer rounded-t-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50 sm:flex-none sm:px-4',
                 activeTab === tab.id
                   ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
@@ -289,7 +291,7 @@ function closeFormPopup() {
         {/* Demo-local form: it exists ONLY in this browser (never saved to the server),
             so no share link, embed, or QR code can reach it from anywhere else. Say so
             plainly instead of handing out dead links. */}
-        {api.isDemoMode() && isDemoLocalId(formId) && (
+        {browserLocalDemo && (
           <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
             <span>
@@ -303,7 +305,7 @@ function closeFormPopup() {
         {/* Draft warning — the link/embed/QR below all resolve to the public form endpoint,
             which only serves published forms to anonymous visitors (the owner's own session
             can still open it, which is what makes this easy to miss while testing). */}
-        {formStatus && formStatus !== 'published' && (
+        {!browserLocalDemo && formStatus && formStatus !== 'published' && (
           <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
             <span>
@@ -323,7 +325,9 @@ function closeFormPopup() {
                   Direct link
                 </label>
                 <p className="text-sm text-gray-500 dark:text-slate-400 mb-3">
-                  Share this link with anyone to let them fill out your form
+                  {browserLocalDemo
+                    ? 'Open this link in the current browser to test your form.'
+                    : 'Share this link with anyone to let them fill out your form'}
                 </p>
                 <div className="flex gap-2">
                   <input

@@ -65,11 +65,11 @@ export function AccessStep({
   return (
     <div className="space-y-4">
       <div className="flex flex-col justify-between gap-3 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-3 shadow-sm sm:flex-row sm:items-center">
-        <div className="flex rounded-xl bg-gray-100 dark:bg-white/[0.05] p-1">
+        <div className="grid w-full grid-cols-3 rounded-xl bg-gray-100 dark:bg-white/[0.05] p-1 sm:flex sm:w-auto">
           {([
-            { id: 'roles', label: 'Roles', icon: Shield },
-            { id: 'people', label: 'People & invites', icon: Users },
-            { id: 'signup', label: 'Sign-up', icon: UserPlus },
+            { id: 'roles', label: 'Roles', mobileLabel: 'Roles', icon: Shield },
+            { id: 'people', label: 'People & invites', mobileLabel: 'People', icon: Users },
+            { id: 'signup', label: 'Sign-up', mobileLabel: 'Sign-up', icon: UserPlus },
           ] as const).map((item) => (
             <button
               key={item.id}
@@ -78,13 +78,14 @@ export function AccessStep({
               aria-label={item.label}
               aria-pressed={tab === item.id}
               className={cn(
-                'flex h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-xs font-bold transition',
+                'flex h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-bold transition sm:gap-2 sm:px-3',
                 tab === item.id
                   ? 'bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200'
               )}
             >
-              <item.icon className="h-3.5 w-3.5" />
+              <item.icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate sm:hidden">{item.mobileLabel}</span>
               <span className="hidden sm:inline">{item.label}</span>
             </button>
           ))}
@@ -566,14 +567,14 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
 
   return (
     <div className="mx-auto grid w-full max-w-5xl gap-4 lg:grid-cols-2">
-      <section className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm">
+      <section className="min-w-0 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400">
             <UserPlus className="h-4.5 w-4.5" />
           </span>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Member sign-up</h3>
-            <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">How people join {app.name}</p>
+            <p className="mt-0.5 truncate text-xs text-gray-400 dark:text-slate-500">How people join {app.name}</p>
           </div>
         </div>
         <div className="mt-5 space-y-4">
@@ -611,12 +612,12 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
         </div>
       </section>
 
-      <section className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm">
+      <section className="min-w-0 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 dark:bg-sky-400/10 text-sky-600 dark:text-sky-300">
             <Link2 className="h-4.5 w-4.5" />
           </span>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App link</h3>
             <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">Share with staff or customers</p>
           </div>

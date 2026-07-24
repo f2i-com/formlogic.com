@@ -83,7 +83,7 @@ export function Switch({
       </button>
       {(label || description) && (
         <div
-          className={cn('flex flex-col pt-0.5', !disabled && 'cursor-pointer')}
+          className={cn('min-w-0 flex-1 flex flex-col pt-0.5', !disabled && 'cursor-pointer')}
           onClick={toggle}
         >
           {label && (
