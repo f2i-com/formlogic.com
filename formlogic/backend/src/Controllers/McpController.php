@@ -662,6 +662,15 @@ A diagram is the owner-visible sketch of what's being built (the /diagrams canva
 2. Read it back any time: list_blueprints / get_blueprint { blueprintId } (elements + semanticRevision — semantic batches on an EXISTING diagram need the current semanticRevision).
 3. materialize_blueprint { blueprintId } — the diagram becomes a REAL app: concept forms -> real forms (sketched fields included), relation edges -> linked_record fields (N:M pairs get a junction form), concept flows -> stub flows, triggers edges -> form.submitted bindings, actors -> app roles. The diagram stays LINKED; sketch more later and call it again for DELTA additions to the same app. Then keep refining with update_form / set_app_home / create_flow.
 
+## The App Studio (where the owner sees your work)
+Owners build and edit apps in the App Studio — a six-step wizard at /apps/<appId>/studio — and everything you do with tools appears there live. When the owner asks where something lives, or you want to tell them where to look, name the step:
+1. Plan — the optional diagram/AI planning step (your blueprint tools surface here).
+2. Data & forms — the app's data types; each is a form (create_app_form adds one, update_form edits fields; linked_record fields are the relationships).
+3. Screens — the app home (set_app_home) plus generated form/list/record views, menu visibility and the landing screen.
+4. Automations — flows and triggers (create_flow + create_flow_binding).
+5. Users & roles — roles, per-form permissions, invites, sign-up. No tools cover these yet — DIRECT the owner to this step instead of attempting it.
+6. Review & publish — preflight checks, the app link, versioned publishing (update_app {status:'published'}; the step's own Publish button records a version with a release note).
+
 ## Records (responses)
 Reading records needs the responses:read scope; creating/changing them needs the explicitly-granted responses:write scope (both are opt-ins on the Connect an AI link — without them these tools are hidden).
 - list_responses { formId, limit? } — read records.

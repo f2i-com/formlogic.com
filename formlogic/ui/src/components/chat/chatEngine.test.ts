@@ -431,6 +431,25 @@ describe('normalizeToolActivity', () => {
     });
   });
 
+  it('walks app-building tools through the App Studio (Follow-AI narrative)', () => {
+    // create_app returns the app itself — its bare id is the app id, no step
+    // (the studio entry redirect picks the natural first step).
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'create_app', status: 'done', result: { id: 'a-1', name: 'Ops' } })
+    ).toMatchObject({ link: { kind: 'app', id: 'a-1' } });
+    // create_app_form names BOTH the form and the app — the APP link (Data step)
+    // wins so Follow-AI stays in the studio instead of bouncing to the builder.
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'create_app_form', status: 'done', result: { form: { id: 'f-1' }, appId: 'a-1' } })
+    ).toMatchObject({ link: { kind: 'app', id: 'a-1', step: 'data' } });
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'create_flow', status: 'done', result: { id: 'fl-1', appId: 'a-1' } })
+    ).toMatchObject({ link: { kind: 'app', id: 'a-1', step: 'automations' } });
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'update_app', status: 'done', result: { id: 'a-1', status: 'published' } })
+    ).toMatchObject({ link: { kind: 'app', id: 'a-1', step: 'publish' } });
+  });
+
   it('links the screen tools to their Studios, not the builder/app list', () => {
     // set_form_screen returns the updated FORM — the link must be the screen studio kind,
     // never the generic form/builder link the name-based fallback would produce.

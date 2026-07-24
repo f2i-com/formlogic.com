@@ -116,8 +116,10 @@ export interface ChatToolActivity {
   status: string;
   detail?: string;
   error?: string;
-  /** Deep-link target when the tool result names a created/updated record. */
-  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen'; id: string };
+  /** Deep-link target when the tool result names a created/updated record.
+   *  App links may carry the App Studio step the action belongs to, so
+   *  Follow-AI walks the user through the studio as the app takes shape. */
+  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen'; id: string; step?: string };
 }
 
 /** A confirm-mode tool proposal awaiting the user's decision (desktop source). */
@@ -143,8 +145,10 @@ export interface SendChatTurnOptions {
   /** Conversation for the model (oldest-first, INCLUDING the new user message). */
   messages: ChatEngineMessage[];
   /** §11B O5a: the page the user is on — appended as a system hint so "this form"
-   *  resolves without asking. The TOOLS stay the authority on ownership. */
-  pageContext?: { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen'; id: string } | null;
+   *  resolves without asking. The TOOLS stay the authority on ownership.
+   *  'appStudio' carries the six-step wizard's active step so the AI can guide
+   *  the user through the studio and knows where its tool effects appear. */
+  pageContext?: { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio'; id: string; step?: string } | null;
   /** Demo account: chat works, tool actions are disabled (banner + tools:false). */
   isDemo?: boolean;
   /** Force a tools-off turn (e.g. the compaction summary — pure text, no actions). */
@@ -203,6 +207,43 @@ function readCsrfToken(): string | null {
 
 const TOOL_ACTIVITY_TYPES = new Set(['tool_call', 'tool_result', 'tool_executed']);
 
+/**
+ * App-building tools land Follow-AI on the App Studio step where their effect
+ * is visible — the AI walks the user through the same wizard a human uses.
+ * create_app maps to the studio ENTRY (its redirect picks Plan for a brand-new
+ * app), mirroring where manual creation starts.
+ */
+const APP_STUDIO_STEP_BY_TOOL: Record<string, string | null> = {
+  create_app: null,
+  materialize_blueprint: 'data',
+  create_app_form: 'data',
+  add_form_to_app: 'data',
+  create_flow: 'automations',
+  update_flow: 'automations',
+  create_flow_binding: 'automations',
+  update_flow_binding: 'automations',
+  update_app: 'publish',
+};
+
+/** Bounded scan of a tool result for the first appId-shaped value. */
+function appIdFromResult(result: unknown): string | undefined {
+  const seen: unknown[] = [result];
+  for (let depth = 0; depth < 4; depth += 1) {
+    const current = seen.shift();
+    if (current === undefined || current === null) return undefined;
+    if (Array.isArray(current)) {
+      seen.push(...current.slice(0, 8));
+      continue;
+    }
+    const rec = asRecord(current);
+    if (!rec) continue;
+    const appId = firstString(rec.appId, rec.app_id);
+    if (appId) return appId;
+    seen.push(...Object.values(rec).slice(0, 12));
+  }
+  return undefined;
+}
+
 /** Recursively (bounded) hunt a tool result for a deep-linkable record id. */
 function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity['link'] | null {
   // Screen tools deep-link to their STUDIO (live preview + take-over), not the builder /
@@ -211,6 +252,22 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
     const rec = asRecord(result);
     const id = rec ? firstString(rec.id, rec.formId, rec.appId) : undefined;
     return id ? { kind: toolName === 'set_form_screen' ? 'formScreen' : 'appScreen', id } : null;
+  }
+  // App-building tools prefer the APP link (→ the matching studio step) even when
+  // the result also names the form/flow they touched — Follow-AI stays in the
+  // studio narrative instead of bouncing into deep editors.
+  if (toolName in APP_STUDIO_STEP_BY_TOOL) {
+    const rec = asRecord(result);
+    const appId =
+      appIdFromResult(result) ??
+      // create_app / update_app return the app itself — its bare id IS the app id.
+      (toolName === 'create_app' || toolName === 'update_app'
+        ? firstString(asRecord(rec?.app)?.id, rec?.id)
+        : undefined);
+    if (appId) {
+      const step = APP_STUDIO_STEP_BY_TOOL[toolName];
+      return { kind: 'app', id: appId, ...(step ? { step } : {}) };
+    }
   }
   const seen: unknown[] = [result];
   for (let depth = 0; depth < 4; depth += 1) {
@@ -689,6 +746,10 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
   // three sources, so "this form" means the same thing everywhere.
   if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
     const { kind, id } = opts.pageContext;
+    const studioStep =
+      opts.pageContext.step && ['plan', 'data', 'screens', 'automations', 'access', 'publish'].includes(opts.pageContext.step)
+        ? opts.pageContext.step
+        : null;
     // The screen Studios get a richer hint: name the owning form/app AND the right
     // read/write tools, so "this screen" turns into a correct tool call first try.
     const content =
@@ -696,7 +757,9 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
         ? `Page context: the user is in the custom-screen Studio for form ${id} (a sandboxed frontend rendered instead of the form's default field UI). When they say "this screen" or ask for pages/changes without naming a target, they mean this form's customScreen: read the current one with get_form (formId ${id}), write it with set_form_screen — send the COMPLETE screen (all files) each time.`
         : kind === 'appScreen'
           ? `Page context: the user is in the custom-screen Studio for the HOME screen of app ${id}. When they say "this screen" or ask for pages/changes without naming a target, they mean this app's customScreen: read the app's forms with list_forms/get_form, write the screen with set_app_home (appId ${id}) — send the COMPLETE screen (all files) each time.`
-          : `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`;
+          : kind === 'appStudio'
+            ? `Page context: the user is in the APP STUDIO for app ${id}${studioStep ? ` on the "${studioStep}" step` : ''} — FormLogic's six-step app wizard (every step is prefilled from real state and skippable; changes save immediately). When they ask where to do something, point them at the right step; when they ask you to build or change something, use your tools with appId ${id} — the result appears in the matching step. The steps: 1) Plan — optionally sketch the app as a diagram (blueprint tools) or plan it in this chat. 2) Data & forms — the app's data types; each is a form (create_app_form to add one, update_form for fields; linked_record fields are the relationships). 3) Screens — the app home (set_app_home: a no-code widget dashboard or a custom code screen) plus the generated form/list/record views, menu visibility and the landing screen. 4) Automations — flows and their triggers (create_flow, then create_flow_binding e.g. on form.submitted). 5) Users & roles — roles, the per-form permission matrix, invites and member sign-up; there are no chat tools for these yet, so GUIDE the user through that step instead of attempting it. 6) Review & publish — preflight checks, the app link, and versioned publishing (update_app {status:'published'} publishes it; the step's Publish button also records a version with a release note).`
+            : `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`;
     opts = {
       ...opts,
       messages: [...opts.messages, { role: 'system', content }],

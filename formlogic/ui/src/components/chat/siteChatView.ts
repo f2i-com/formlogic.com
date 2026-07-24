@@ -9,12 +9,20 @@ import type { ChatSource, ChatToolActivity } from './chatEngine';
  * every response route needs the parent formId (/responses/:formId/:responseId) and a
  * bare response id cannot address one — no link beats a dead link.
  */
+/** Studio steps an app link may target (anything else falls back to the studio entry). */
+const APP_STUDIO_STEPS = new Set(['plan', 'data', 'screens', 'automations', 'access', 'publish']);
+
 export function chatToolLinkPath(link: NonNullable<ChatToolActivity['link']>): string | null {
   switch (link.kind) {
     case 'form':
       return `/builder/${encodeURIComponent(link.id)}`;
+    // App links land in the APP STUDIO — the same guided wizard a human uses —
+    // optionally on the step the tool's effect shows up in (Follow-AI walks the
+    // user through the build section by section).
     case 'app':
-      return `/apps/${encodeURIComponent(link.id)}/forms`;
+      return link.step && APP_STUDIO_STEPS.has(link.step)
+        ? `/apps/${encodeURIComponent(link.id)}/studio/${link.step}`
+        : `/apps/${encodeURIComponent(link.id)}/studio`;
     case 'flow':
       return `/flows?flow=${encodeURIComponent(link.id)}`;
     case 'diagram':

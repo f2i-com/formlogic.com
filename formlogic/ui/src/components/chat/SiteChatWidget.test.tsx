@@ -198,7 +198,11 @@ afterEach(async () => {
 describe('pure helpers', () => {
   it('maps tool links onto real router paths (response honestly unresolvable)', () => {
     expect(chatToolLinkPath({ kind: 'form', id: 'f1' })).toBe('/builder/f1');
-    expect(chatToolLinkPath({ kind: 'app', id: 'a1' })).toBe('/apps/a1/forms');
+    // App links land in the App Studio; a step rides along when the tool's
+    // effect belongs to one (Follow-AI walks the wizard), invalid steps drop.
+    expect(chatToolLinkPath({ kind: 'app', id: 'a1' })).toBe('/apps/a1/studio');
+    expect(chatToolLinkPath({ kind: 'app', id: 'a1', step: 'data' })).toBe('/apps/a1/studio/data');
+    expect(chatToolLinkPath({ kind: 'app', id: 'a1', step: 'bogus' })).toBe('/apps/a1/studio');
     expect(chatToolLinkPath({ kind: 'flow', id: 'fl1' })).toBe('/flows?flow=fl1');
     expect(chatToolLinkPath({ kind: 'formScreen', id: 'f1' })).toBe('/forms/f1/screen/edit');
     expect(chatToolLinkPath({ kind: 'appScreen', id: 'a1' })).toBe('/apps/a1/home/edit');

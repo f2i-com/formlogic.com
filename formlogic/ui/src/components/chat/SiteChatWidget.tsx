@@ -200,7 +200,7 @@ export function SiteChatWidget() {
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
   const location = useLocation();
-  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen'; id: string } | null>(null);
+  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio'; id: string; step?: string } | null>(null);
   useEffect(() => {
     const form =
       matchPath('/builder/:formId', location.pathname) ?? matchPath('/preview/:formId', location.pathname);
@@ -209,6 +209,10 @@ export function SiteChatWidget() {
     const formScreen =
       matchPath('/forms/:formId/screen/edit', location.pathname) ?? matchPath('/forms/:formId/screen', location.pathname);
     const appScreen = matchPath('/apps/:appId/home/edit', location.pathname);
+    // The App Studio is its own kind (before the generic app match): the AI learns
+    // which wizard step the user is on and can guide them through the sections.
+    const appStudioStep = matchPath('/apps/:appId/studio/:step', location.pathname);
+    const appStudioRoot = matchPath('/apps/:appId/studio', location.pathname);
     const app = matchPath('/apps/:appId/*', location.pathname);
     const diagram = matchPath('/diagrams/:diagramId', location.pathname);
     pageContextRef.current = form?.params.formId
@@ -217,11 +221,15 @@ export function SiteChatWidget() {
         ? { kind: 'formScreen', id: formScreen.params.formId }
         : appScreen?.params.appId
           ? { kind: 'appScreen', id: appScreen.params.appId }
-          : diagram?.params.diagramId
-            ? { kind: 'diagram', id: diagram.params.diagramId }
-            : app?.params.appId
-              ? { kind: 'app', id: app.params.appId }
-              : null;
+          : appStudioStep?.params.appId
+            ? { kind: 'appStudio', id: appStudioStep.params.appId, ...(appStudioStep.params.step ? { step: appStudioStep.params.step } : {}) }
+            : appStudioRoot?.params.appId
+              ? { kind: 'appStudio', id: appStudioRoot.params.appId }
+              : diagram?.params.diagramId
+              ? { kind: 'diagram', id: diagram.params.diagramId }
+              : app?.params.appId
+                ? { kind: 'app', id: app.params.appId }
+                : null;
   }, [location.pathname]);
 
   const [view, setView] = useState<'chat' | 'threads'>('chat');
