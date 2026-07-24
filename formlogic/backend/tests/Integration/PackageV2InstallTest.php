@@ -386,6 +386,55 @@ class PackageV2InstallTest extends TestCase
         $this->assertNotEmpty($body2['issues']);
     }
 
+    public function testCompileEndpointLowersInstalledCorePresetNodes(): void
+    {
+        // Install an extension whose node is a core-preset, author a flow using it, compile.
+        $aggregate = $this->nodeOnlyAggregate('presets');
+        $aggregate['contributions']['flowNodes'] = [[
+            'schemaVersion' => 1,
+            'type' => 'com.acme.presets.notify',
+            'version' => '1.0.0',
+            'display' => ['label' => 'Notify'],
+            'handler' => ['kind' => 'core-preset', 'coreType' => 'condition', 'defaults' => ['expr' => 'true']],
+            'sideEffects' => 'none',
+        ]];
+        unset($aggregate['requirements']);
+        self::$pkgV2->install($aggregate, $this->userId, []);
+
+        $flowService = new \FormLogic\Services\FlowService(self::$mysql);
+        $flow = $flowService->createWorkspaceFlow($this->userId, [
+            'name' => 'Compile me',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'n1', 'type' => 'input', 'data' => ['event' => 'manual'], 'position' => ['x' => 0, 'y' => 0]],
+                    ['id' => 'n2', 'type' => 'com.acme.presets.notify', 'data' => [], 'position' => ['x' => 200, 'y' => 0]],
+                ],
+                'edges' => [['id' => 'e1', 'source' => 'n1', 'target' => 'n2']],
+            ],
+        ]);
+
+        $controller = new \FormLogic\Controllers\FlowCompileController($flowService, self::$pkgV2);
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $out = $controller->compile($req, new SlimResponse(), ['flowId' => (string) $flow['id']]);
+        $body = json_decode((string) $out->getBody(), true);
+
+        $this->assertSame(200, $out->getStatusCode());
+        $this->assertTrue($body['ok'], json_encode($body['diagnostics'] ?? []));
+        $this->assertSame('condition', $body['ir']['nodes'][1]['type'], 'the contributed node lowered to its core preset');
+        $this->assertSame(['expr' => 'true'], $body['ir']['nodes'][1]['data']);
+        $this->assertSame('com.acme.presets.notify', $body['locks'][0]['type']);
+        $this->assertNotEmpty($body['irDigest']);
+
+        // A foreign flow id (or another user) is an identical 404 — no flow-id oracle.
+        $req2 = $this->createMock(ServerRequestInterface::class);
+        $req2->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $out2 = $controller->compile($req2, new SlimResponse(), ['flowId' => 'nope']);
+        $this->assertSame(404, $out2->getStatusCode());
+
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([(string) $flow['id']]);
+    }
+
     public function testFlatImportLaneRedirectsV2Aggregates(): void
     {
         $req = $this->createMock(ServerRequestInterface::class);

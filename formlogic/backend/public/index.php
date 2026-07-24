@@ -858,6 +858,14 @@ $container->set(\FormLogic\Controllers\FlowRunController::class, function (Conta
         $c->get(\FormLogic\Controllers\DesktopFlowRelayController::class)
     );
 });
+// Flow compilation (RUN-301 first slice, ADR-010): server-authoritative lowering of
+// contributed nodes to canonical IR — read-only diagnostics/locks preview.
+$container->set(\FormLogic\Controllers\FlowCompileController::class, function (Container $c) {
+    return new \FormLogic\Controllers\FlowCompileController(
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class)
+    );
+});
 // Per-user AI preferences (plan Phase 2): AI source + desktop provider/model + tool mode.
 $container->set(\FormLogic\Services\UserAiSettingsService::class, function (Container $c) {
     return new \FormLogic\Services\UserAiSettingsService($c->get(MySQLConnection::class));
@@ -3040,6 +3048,12 @@ $cloudFlowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'cloud_
 $app->post('/api/flows/{flowId}/run', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FlowRunController::class)->run($request, $response, $getArgs($request));
 })->add($cloudFlowRunRateLimiter)->add($authRequired);
+
+// Server-authoritative flow compilation (RUN-301 first slice, ADR-010): diagnostics +
+// canonical IR preview + definition locks for an OWNED flow. Read-only — nothing persists.
+$app->post('/api/flows/{flowId}/compile', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FlowCompileController::class)->compile($request, $response, $getArgs($request));
+})->add($authRequired);
 
 // Desktop ops relay (plan Phase 3 section 5.3): account-scoped service/plugin lifecycle
 // commands for the linked desktop, enqueued under the reserved connector id 'desktop'.
