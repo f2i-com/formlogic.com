@@ -398,6 +398,27 @@ class FlowController
             isset($q['appId']) ? (string) $q['appId'] : null,
             !empty($q['workspace'])
         );
+        // RUN-301 desktop leg: flows whose graphs store CONTRIBUTED (dotted) node types carry
+        // their revision's server-compiled canonical IR so the desktop runner can execute the
+        // lowering (the compiler stays the only authority — the desktop never lowers). Plain
+        // flows carry nothing: the common case costs no extra queries, and a flow that cannot
+        // compile ships no IR (the desktop's unknown-node refusal then applies, fail-safe).
+        foreach ($flows as &$flow) {
+            $nodes = $flow['flowJson']['nodes'] ?? null;
+            if (!is_array($nodes)) {
+                continue;
+            }
+            foreach ($nodes as $node) {
+                if (is_array($node) && is_string($node['type'] ?? null) && str_contains($node['type'], '.')) {
+                    $ir = $this->flows->compiledIrForCurrentVersion((string) $flow['id']);
+                    if ($ir !== null) {
+                        $flow['compiledIr'] = $ir;
+                    }
+                    break;
+                }
+            }
+        }
+        unset($flow);
         return $this->jsonResponse($response, ['flows' => $flows]);
     }
 

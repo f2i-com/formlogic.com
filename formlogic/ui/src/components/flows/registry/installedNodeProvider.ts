@@ -105,7 +105,7 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   // contributions stay display-only until service bindings (SRV-405) exist.
   const runnable = def.handler?.kind === 'core-preset';
   const runNote = runnable
-    ? 'Runs in browser and cloud flows — lowered to a built-in node by the server compiler. FormLogic Desktop support arrives in a later update.'
+    ? 'Runs wherever flows run — lowered to a built-in node by the server compiler (FormLogic Desktop needs an up-to-date build).'
     : 'Not yet runnable — service bindings for extension nodes arrive in a later update.';
   return {
     type: def.type,

@@ -138,6 +138,21 @@ struct CachedSnapshot {
     fetched_at: Instant,
 }
 
+/// RUN-301 (ADR-010): the graph this runner actually executes. Flows whose stored graphs
+/// carry CONTRIBUTED extension node types ship a server-compiled canonical IR in the
+/// snapshot (`compiledIr` — the server compiler is the ONLY lowering authority; the desktop
+/// never lowers). Prefer it when well-formed; otherwise the stored graph, where an unknown
+/// dotted type fails typed at parse (fail-safe when no IR was deliverable).
+fn effective_flow_graph(flow: &Value) -> Value {
+    flow.get("compiledIr")
+        .filter(|ir| {
+            ir.get("nodes").map(Value::is_array).unwrap_or(false)
+                && ir.get("edges").map(Value::is_array).unwrap_or(false)
+        })
+        .cloned()
+        .unwrap_or_else(|| flow.get("flowJson").cloned().unwrap_or_else(|| json!({})))
+}
+
 /// Which app may handle a connector's event (audit INT-004/C-13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectorRouting {
@@ -2164,7 +2179,7 @@ impl FlowRuntime {
             .and_then(Value::as_u64)
             .unwrap_or(1)
             .clamp(1, MAX_RETRY_ATTEMPTS as u64);
-        let flow_json = flow.get("flowJson").cloned().unwrap_or(json!({}));
+        let flow_json = effective_flow_graph(&flow);
         let capabilities = flow
             .get("nodeCapabilities")
             .and_then(Value::as_array)
@@ -2303,7 +2318,7 @@ impl FlowRuntime {
             .map_err(|e| format!("transport_failed: child run reservation failed: {e}"))?;
         let run_id = run.get("runId").and_then(Value::as_str).map(str::to_string);
 
-        let flow_json = flow.get("flowJson").cloned().unwrap_or(json!({}));
+        let flow_json = effective_flow_graph(&flow);
         let capabilities = flow
             .get("nodeCapabilities")
             .and_then(Value::as_array)
@@ -2388,7 +2403,7 @@ impl FlowRuntime {
         if flow.get("enabled").and_then(Value::as_bool) == Some(false) {
             return unknown(format!("Flow '{}' is disabled", job.flow_id));
         }
-        let flow_json = flow.get("flowJson").cloned().unwrap_or(json!({}));
+        let flow_json = effective_flow_graph(&flow);
         let capabilities = flow
             .get("nodeCapabilities")
             .and_then(Value::as_array)
@@ -4361,6 +4376,49 @@ mod tests {
                 "nodes": [ { "id": "a", "type": "input" }, { "id": "b", "type": "quantum_flux" } ],
                 "edges": [ { "source": "a", "target": "b" } ]
             })
+        }
+
+        /// RUN-301: only a WELL-FORMED compiledIr (array nodes + edges) substitutes; anything
+        /// else falls back to the stored graph, where an unknown contributed type fails typed.
+        #[test]
+        fn effective_flow_graph_prefers_only_wellformed_ir() {
+            let with_ir = json!({ "flowJson": { "nodes": [], "edges": [] }, "compiledIr": passthrough_flow() });
+            assert_eq!(effective_flow_graph(&with_ir), passthrough_flow());
+
+            let malformed = json!({ "flowJson": { "nodes": [1], "edges": [] }, "compiledIr": { "nodes": [] } });
+            assert_eq!(effective_flow_graph(&malformed), json!({ "nodes": [1], "edges": [] }));
+
+            let absent = json!({ "flowJson": { "nodes": [], "edges": [] } });
+            assert_eq!(effective_flow_graph(&absent), json!({ "nodes": [], "edges": [] }));
+        }
+
+        /// RUN-301: a snapshot flow carrying a server-compiled canonical IR EXECUTES the IR.
+        /// The stored graph keeps its contributed (dotted) node type — which alone would fail
+        /// as an unknown node — proving the IR is what makes it runnable on this desktop.
+        #[tokio::test]
+        async fn compiled_ir_executes_a_contributed_flow() {
+            let (rt, client, stub) = harness(passthrough_flow()).await;
+            *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+                assignments: HashMap::new(),
+                flows: vec![json!({
+                    "slug": "echo",
+                    "enabled": true,
+                    "flowJson": {
+                        "nodes": [ { "id": "in", "type": "input" }, { "id": "out", "type": "com.acme.livetest.echo" } ],
+                        "edges": [ { "source": "in", "target": "out" } ]
+                    },
+                    "compiledIr": passthrough_flow(),
+                })],
+                bindings: vec![],
+                applogic: vec![],
+                fetched_at: Instant::now(),
+            });
+            let binding = json!({ "id": "b-ir", "flow": "echo", "mode": "sync" });
+            rt.run_binding(&binding, &call_event(), &client, &ConnectorRouting::Unrestricted).await;
+
+            let completed = stub.completed.lock().unwrap();
+            assert_eq!(completed.len(), 1);
+            assert_eq!(completed[0]["status"], "done", "the compiled IR ran: {:?}", completed[0]);
         }
 
         /// The triggering event a real incoming Aokie call would carry (the desktop event bus

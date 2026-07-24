@@ -979,6 +979,33 @@ class FlowService
         ];
     }
 
+    /**
+     * RUN-301: the CURRENT revision's compiled canonical IR ({nodes, edges}) or null when the
+     * graph is not compiled (legacy rows, uncompilable graphs, disabled plane). Mints the
+     * version lazily — idempotent per (flow, version) — so every runner surface (cloud runner,
+     * desktop snapshot delivery) resolves through this one implementation.
+     *
+     * @return array{nodes: list<mixed>, edges: list<mixed>}|null
+     */
+    public function compiledIrForCurrentVersion(string $flowDefinitionId): ?array
+    {
+        $versionId = $this->ensureFlowVersion($flowDefinitionId);
+        if (!is_string($versionId) || $versionId === '') {
+            return null;
+        }
+        $stmt = $this->mysql->prepare('SELECT compiled_ir_json FROM flow_definition_versions WHERE id = :id');
+        $stmt->execute(['id' => $versionId]);
+        $raw = $stmt->fetchColumn();
+        if (!is_string($raw) || $raw === '') {
+            return null;
+        }
+        $ir = json_decode($raw, true);
+        if (!is_array($ir) || !is_array($ir['nodes'] ?? null) || !is_array($ir['edges'] ?? null)) {
+            return null;
+        }
+        return ['nodes' => $ir['nodes'], 'edges' => $ir['edges']];
+    }
+
     public function ensureFlowVersion(string $flowDefinitionId): ?string
     {
         $stmt = $this->mysql->prepare("

@@ -552,6 +552,145 @@ class PackageV2InstallTest extends TestCase
         $this->assertSame([], $confirmed['forms']);
     }
 
+    public function testDesktopFlowListCarriesCompiledIrForContributedFlows(): void
+    {
+        // RUN-301 desktop leg: GET /api/v1/flows (the desktop's snapshot source) ships the
+        // revision's compiled IR for flows whose graphs store contributed node types — and
+        // nothing extra for plain flows.
+        $aggregate = $this->nodeOnlyAggregate('desktop-ir');
+        $aggregate['contributions']['flowNodes'][0]['type'] = 'com.acme.desktopir.greet';
+        $aggregate['contributions']['flowNodes'][0]['handler'] = ['kind' => 'core-preset', 'coreType' => 'template', 'defaults' => ['template' => 'hi']];
+        unset($aggregate['requirements']);
+        self::$pkgV2->install($aggregate, $this->userId, []);
+
+        $flowService = new \FormLogic\Services\FlowService(self::$mysql);
+        $withNode = $flowService->createWorkspaceFlow($this->userId, [
+            'name' => 'Desktop IR flow',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input', 'data' => [], 'position' => ['x' => 0, 'y' => 0]],
+                    ['id' => 'g', 'type' => 'com.acme.desktopir.greet', 'data' => [], 'position' => ['x' => 200, 'y' => 0]],
+                ],
+                'edges' => [['source' => 'in', 'target' => 'g']],
+            ],
+        ]);
+        $plain = $flowService->createWorkspaceFlow($this->userId, [
+            'name' => 'Plain flow',
+            'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input', 'data' => [], 'position' => ['x' => 0, 'y' => 0]]], 'edges' => []],
+        ]);
+
+        $controller = new \FormLogic\Controllers\FlowController(
+            $flowService,
+            new \FormLogic\Services\AppService(self::$mysql, new \FormLogic\Services\FormService(self::$mysql, new \FormLogic\Database\SQLiteConnection(sys_get_temp_dir() . '/fl-pkgv2-ir-' . bin2hex(random_bytes(4))))),
+            new \FormLogic\Services\AppUserService(self::$mysql)
+        );
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $req->method('getQueryParams')->willReturn([]);
+        $out = $controller->listOwnerFlows($req, new SlimResponse());
+        $body = json_decode((string) $out->getBody(), true);
+        $this->assertSame(200, $out->getStatusCode());
+
+        $byId = [];
+        foreach ($body['flows'] as $f) {
+            $byId[$f['id']] = $f;
+        }
+        $ir = $byId[$withNode['id']]['compiledIr'] ?? null;
+        $this->assertIsArray($ir, 'the contributed flow ships its compiled IR');
+        $this->assertSame('template', $ir['nodes'][1]['type'], 'the IR carries the lowered node');
+        $this->assertArrayNotHasKey('compiledIr', $byId[$plain['id']], 'plain flows carry nothing extra');
+        $this->assertSame('com.acme.desktopir.greet', $byId[$withNode['id']]['flowJson']['nodes'][1]['type'], 'the stored graph keeps the contributed identity');
+
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE owner_user_id = ?')->execute([$this->userId]);
+    }
+
+    public function testReceiptEndpointReturnsInstallationDetail(): void
+    {
+        // Install with a dependency so the receipt carries edges too.
+        $dep = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $root = $this->nodeOnlyAggregate('with-dep');
+        $root['dependencies'] = ['packages' => [['id' => 'com.acme.media-tools', 'version' => '^1.0.0']]];
+        $rootResult = self::$pkgV2->install($root, $this->userId, []);
+
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $out = $this->controller()->getPackageInstallation($req, new SlimResponse(), ['id' => $rootResult['installationId']]);
+        $body = json_decode((string) $out->getBody(), true);
+        $this->assertSame(200, $out->getStatusCode());
+        $inst = $body['installation'];
+        $this->assertSame('com.acme.with-dep', $inst['packageId']);
+        $this->assertSame('ready', $inst['state']);
+        $this->assertSame('com.acme.withdep.generate-image', $inst['nodes'][0]['type']);
+        $this->assertSame(64, strlen($inst['nodes'][0]['digest']));
+        $this->assertSame('com.acme.media-tools', $inst['dependencies'][0]['packageId']);
+        $this->assertSame('1.4.0', $inst['dependencies'][0]['resolvedVersion']);
+        $this->assertSame('1.4.0', $inst['receipt']['dependencies'][0]['resolvedVersion'] ?? null, 'the immutable receipt rides along');
+
+        // Foreign/missing ids are identical 404s.
+        $req2 = $this->createMock(ServerRequestInterface::class);
+        $req2->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $out2 = $this->controller()->getPackageInstallation($req2, new SlimResponse(), ['id' => 'nope']);
+        $this->assertSame(404, $out2->getStatusCode());
+        $this->assertSame($dep['installationId'], $dep['installationId']); // silence unused warning
+    }
+
+    public function testKillSwitchDisablesInstallLanesButNotManagement(): void
+    {
+        // REL-705: with APPLICATION_PACKAGES_V2=false, install lanes refuse and definitions go
+        // dark — but installed content stays visible and removable.
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $prev = $_ENV['APPLICATION_PACKAGES_V2'] ?? null;
+        $_ENV['APPLICATION_PACKAGES_V2'] = 'false';
+        try {
+            // Definitions serving goes dark (editor degrades to placeholders; mints pin no IR).
+            $this->assertSame([], self::$pkgV2->listDefinitions($this->userId));
+
+            // New installs refuse typed at the service…
+            try {
+                self::$pkgV2->install($this->nodeOnlyAggregate('another'), $this->userId, []);
+                $this->fail('install must refuse while disabled');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('feature_disabled', $e->getMessage());
+            }
+
+            // …and 503 at the HTTP lanes (import branch + install-plan propose + describe).
+            $r = $this->callImportSigned(['package' => $this->nodeOnlyAggregate('another'), 'approvedConnectorGrants' => []]);
+            $this->assertSame(503, $r['status']);
+            $this->assertSame('feature_disabled', $r['body']['code'] ?? null);
+
+            $planController = new \FormLogic\Controllers\PackageInstallPlanController($this->planService(), self::$signing);
+            $req = $this->createMock(ServerRequestInterface::class);
+            $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+            $req->method('getParsedBody')->willReturn(['package' => $this->nodeOnlyAggregate('another')]);
+            $out = $planController->propose($req, new SlimResponse());
+            $this->assertSame(503, $out->getStatusCode());
+
+            $dreq = $this->createMock(ServerRequestInterface::class);
+            $dreq->method('getUploadedFiles')->willReturn([]);
+            $dreq->method('getParsedBody')->willReturn(['pack' => $this->nodeOnlyAggregate('another')]);
+            $dout = $this->controller()->describe($dreq, new SlimResponse());
+            $this->assertSame(503, $dout->getStatusCode());
+
+            // Management stays: the merged installed list still shows the row, receipts read,
+            // and uninstall works — operators can always remove content while the plane is off.
+            $lreq = $this->createMock(ServerRequestInterface::class);
+            $lreq->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+            $lout = $this->controller()->listInstalled($lreq, new SlimResponse());
+            $list = json_decode((string) $lout->getBody(), true);
+            $v2Rows = array_filter($list['installations'], static fn (array $i) => ($i['formatVersion'] ?? null) === 2);
+            $this->assertCount(1, $v2Rows);
+            $this->assertNotNull(self::$pkgV2->getInstallation($installed['installationId'], $this->userId));
+            $gone = self::$pkgV2->uninstall($installed['installationId'], $this->userId);
+            $this->assertSame(1, $gone['nodesRemoved']);
+        } finally {
+            if ($prev === null) {
+                unset($_ENV['APPLICATION_PACKAGES_V2']);
+            } else {
+                $_ENV['APPLICATION_PACKAGES_V2'] = $prev;
+            }
+        }
+    }
+
     public function testFlatImportLaneRedirectsV2Aggregates(): void
     {
         $req = $this->createMock(ServerRequestInterface::class);

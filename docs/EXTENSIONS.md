@@ -157,7 +157,12 @@ digest, lowering target) to each immutable flow revision:
 | Flow editor | Full: palette (Installed extensions), insert, configure, lint | Visible, disabled ("not yet runnable") |
 | FormLogic Cloud runs | ✅ execute the revision's compiled IR | Typed refusal (`binding_unresolved` at compile; `cloud_unsupported_node` at preflight) |
 | Browser runs (live, test, flow_call children) | ✅ fetch + execute the compiled IR (`POST /api/flows/{id}/compile`) | Typed refusal |
-| FormLogic Desktop runs | Not yet — arrives with snapshot-delivered IR | Not yet |
+| FormLogic Desktop runs | ✅ the flow snapshot delivers the compiled IR (requires an up-to-date Desktop build; older builds fail the node typed as unknown) | Not yet |
+
+Operational note: the whole v2 plane sits behind the `APPLICATION_PACKAGES_V2` kill switch
+(default on). Setting it to `false` disables installs and definition serving — installed
+content stays listed and removable, stored graphs degrade to placeholders, and already-pinned
+compiled IR keeps executing.
 
 Notes for authors:
 

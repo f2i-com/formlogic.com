@@ -42,6 +42,10 @@ class PackageV2InstallService
      */
     public function install(array $aggregate, string $userId, array $approvedConnectorGrants, string $source = 'json', string $trust = 'community'): array
     {
+        // REL-705: the kill switch refuses NEW installs; existing content stays managed.
+        if (!PackagesFeature::v2Enabled()) {
+            throw new \RuntimeException('feature_disabled: Application Package v2 installs are disabled on this deployment');
+        }
         // Shared preflight (PKG-106: the install-plan propose step runs the SAME checks, so a
         // reviewable plan and a committable install can never diverge on what is acceptable).
         $contributions = $this->assertNodeOnlyInstallable($aggregate);
@@ -323,6 +327,11 @@ class PackageV2InstallService
      */
     public function listDefinitions(string $userId): array
     {
+        // REL-705: with the plane disabled, definitions go dark — the editor degrades to
+        // missing-node placeholders and new version mints compile no IR. Rows stay intact.
+        if (!PackagesFeature::v2Enabled()) {
+            return [];
+        }
         $stmt = $this->mysql->prepare('
             SELECT fnd.node_type, fnd.version, fnd.digest, fnd.definition_json, fnd.enabled,
                    fnd.installation_id, pi.package_id, pi.display_name
@@ -350,6 +359,52 @@ class PackageV2InstallService
             ];
         }
         return $out;
+    }
+
+    /**
+     * One installation with its immutable receipt, contributed definitions, and dependency
+     * edges (plan §13.1 / §14.4 "View receipt/dependencies"). MANAGEMENT surface — available
+     * even while the REL-705 kill switch is off. null = missing/foreign (identical 404s).
+     *
+     * @return array<string,mixed>|null
+     */
+    public function getInstallation(string $installationId, string $userId): ?array
+    {
+        $stmt = $this->mysql->prepare('SELECT * FROM package_installations WHERE id = ? AND user_id = ?');
+        $stmt->execute([$installationId, $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return null;
+        }
+        $defs = $this->mysql->prepare('SELECT node_type, version, digest, enabled FROM flow_node_definitions WHERE installation_id = ? ORDER BY node_type ASC');
+        $defs->execute([$installationId]);
+        $edges = $this->mysql->prepare('SELECT child_package_id, requested_range, resolved_version, required FROM package_dependency_edges WHERE parent_installation_id = ? ORDER BY child_package_id ASC');
+        $edges->execute([$installationId]);
+        $receipt = json_decode((string) $row['receipt_json'], true);
+        return [
+            'id' => (string) $row['id'],
+            'packageId' => (string) $row['package_id'],
+            'publisherId' => (string) $row['publisher_id'],
+            'kind' => (string) $row['kind'],
+            'version' => (string) $row['version'],
+            'displayName' => (string) $row['display_name'],
+            'state' => (string) $row['state'],
+            'source' => (string) $row['source'],
+            'installedAt' => (string) $row['created_at'],
+            'receipt' => is_array($receipt) ? $receipt : null,
+            'nodes' => array_map(static fn (array $d): array => [
+                'type' => (string) $d['node_type'],
+                'version' => (string) $d['version'],
+                'digest' => (string) $d['digest'],
+                'enabled' => (bool) $d['enabled'],
+            ], $defs->fetchAll(PDO::FETCH_ASSOC)),
+            'dependencies' => array_map(static fn (array $e): array => [
+                'packageId' => (string) $e['child_package_id'],
+                'range' => (string) $e['requested_range'],
+                'resolvedVersion' => (string) $e['resolved_version'],
+                'required' => (bool) $e['required'],
+            ], $edges->fetchAll(PDO::FETCH_ASSOC)),
+        ];
     }
 
     private function uuid(): string

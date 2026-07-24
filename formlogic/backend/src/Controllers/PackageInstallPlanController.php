@@ -64,11 +64,24 @@ class PackageInstallPlanController
         return array_values($out);
     }
 
+    /** REL-705: 503 for install lanes while the v2 plane is switched off. */
+    private function featureDisabled(Response $response): Response
+    {
+        return $this->jsonResponse($response, [
+            'error' => true,
+            'code' => 'feature_disabled',
+            'message' => 'Application Package v2 installs are disabled on this deployment.',
+        ], 503);
+    }
+
     public function propose(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (!\FormLogic\Services\Packages\PackagesFeature::v2Enabled()) {
+            return $this->featureDisabled($response);
         }
         $body = $request->getParsedBody() ?? [];
         $package = is_array($body['package'] ?? null) ? $body['package'] : null;
@@ -140,6 +153,9 @@ class PackageInstallPlanController
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (!\FormLogic\Services\Packages\PackagesFeature::v2Enabled()) {
+            return $this->featureDisabled($response);
         }
         $planId = (string) ($args['id'] ?? '');
         $body = $request->getParsedBody() ?? [];

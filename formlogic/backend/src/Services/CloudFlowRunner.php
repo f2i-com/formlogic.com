@@ -228,19 +228,8 @@ class CloudFlowRunner
      */
     public function effectiveGraph(array $flow): mixed
     {
-        $versionId = $this->flowService->ensureFlowVersion((string) ($flow['id'] ?? ''));
-        if (is_string($versionId) && $versionId !== '') {
-            $stmt = $this->mysql->prepare('SELECT compiled_ir_json FROM flow_definition_versions WHERE id = :id');
-            $stmt->execute(['id' => $versionId]);
-            $raw = $stmt->fetchColumn();
-            if (is_string($raw) && $raw !== '') {
-                $ir = json_decode($raw, true);
-                if (is_array($ir) && is_array($ir['nodes'] ?? null) && is_array($ir['edges'] ?? null)) {
-                    return ['nodes' => $ir['nodes'], 'edges' => $ir['edges']];
-                }
-            }
-        }
-        return $flow['flowJson'] ?? null;
+        return $this->flowService->compiledIrForCurrentVersion((string) ($flow['id'] ?? ''))
+            ?? ($flow['flowJson'] ?? null);
     }
 
     // ── Graph execution (mirrors execute_flow in the desktop Rust runner) ─────────────────

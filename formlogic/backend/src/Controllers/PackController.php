@@ -281,8 +281,8 @@ class PackController
         // same signature/trust/policy/grant gates above; installs contributed flow-node definitions
         // WITHOUT creating forms/apps. Not-yet-supported aggregate features refuse typed inside.
         if (($package['formatVersion'] ?? null) === 2) {
-            if ($this->packageV2 === null) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Application Package v2 support is not available'], 503);
+            if ($this->packageV2 === null || !\FormLogic\Services\Packages\PackagesFeature::v2Enabled()) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'feature_disabled', 'message' => 'Application Package v2 installs are disabled on this deployment.'], 503);
             }
             try {
                 $result = $this->packageV2->install(
@@ -447,6 +447,9 @@ class PackController
         // nodes, requirement slots — with the same trust stamp. An invalid aggregate BLOCKS with
         // its validation issues (no capability summary → no install, SAFE-001 discipline).
         if (($outer['formatVersion'] ?? null) === 2) {
+            if (!\FormLogic\Services\Packages\PackagesFeature::v2Enabled()) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'feature_disabled', 'message' => 'Application Package v2 installs are disabled on this deployment.'], 503);
+            }
             $issues = \FormLogic\Helpers\ApplicationPackageV2Validator::validatePackage($outer);
             if ($issues !== []) {
                 return $this->jsonResponse($response, [
@@ -819,6 +822,28 @@ class PackController
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to fetch flow-node definitions'], 500);
         }
+    }
+
+    /**
+     * GET /api/package-installations/{id}
+     * One v2 installation with its immutable receipt, contributed definitions, and dependency
+     * edges (plan §13.1 / §14.4 "View receipt/dependencies"). Management surface — available
+     * even while the REL-705 kill switch is off.
+     */
+    public function getPackageInstallation(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if ($this->packageV2 === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation not found'], 404);
+        }
+        $installation = $this->packageV2->getInstallation((string) ($args['id'] ?? ''), (string) $userId);
+        if ($installation === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation not found'], 404);
+        }
+        return $this->jsonResponse($response, ['installation' => $installation]);
     }
 
     /**

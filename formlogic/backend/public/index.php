@@ -1185,6 +1185,8 @@ $app->get('/api/health', function ($request, $response) use ($container) {
         'privateForms' => (bool) ($settings['cloud']['privateForms'] ?? false),
         // Encrypted data nodes flag (docs/FORMLOGIC_DATA_NODES.md §7).
         'dataNodes' => (bool) ($settings['cloud']['dataNodes'] ?? false),
+        // Application Package v2 extensions (ADR-010 / REL-705 kill switch; default on).
+        'applicationPackagesV2' => \FormLogic\Services\Packages\PackagesFeature::v2Enabled(),
         'emailConfigured' => $emailConfigured,
         'supportEmail' => (string) ($settings['supportEmail'] ?? 'hello@formlogic.com'),
         'maintenanceMode' => $maintenance['enabled'],
@@ -2050,6 +2052,12 @@ $app->post('/api/packages/install-plans/{id}/confirm', function ($request, $resp
 })->add($cloudWriteGate)->add($authRequired);
 $app->post('/api/packages/install-plans/{id}/cancel', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\PackageInstallPlanController::class)->cancel($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// One v2 installation's immutable receipt + definitions + dependency edges (plan §13.1).
+// Management surface — stays available while the REL-705 kill switch is off.
+$app->get('/api/package-installations/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackController::class)->getPackageInstallation($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Bundled sample apps ("Try a sample app")
