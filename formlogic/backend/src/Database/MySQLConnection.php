@@ -769,6 +769,9 @@ class MySQLConnection
                 graph_version INT NOT NULL DEFAULT 1,
                 definition_json MEDIUMTEXT NOT NULL,
                 definition_digest VARCHAR(64) NOT NULL,
+                compiled_ir_json MEDIUMTEXT NULL,
+                definition_locks_json MEDIUMTEXT NULL,
+                ir_digest CHAR(64) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (flow_definition_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
                 UNIQUE KEY uniq_flow_def_version (flow_definition_id, version),
@@ -2617,6 +2620,19 @@ class MySQLConnection
         if ($pdo->query("SHOW COLUMNS FROM aokie_companion_relay_frames LIKE 'admission_grants'")->rowCount() === 0) {
             // Legacy rows remain NULL and therefore fail closed to grants:[].
             $pdo->exec('ALTER TABLE aokie_companion_relay_frames ADD COLUMN admission_grants JSON NULL AFTER from_party');
+        }
+
+        // RUN-301 (ADR-010): compiled canonical IR + definition locks pinned to the immutable
+        // flow revision. NULL = not compiled (legacy rows, or a graph that cannot compile yet)
+        // — runners fall back to the stored graph, where contributed types fail as unknown.
+        if ($pdo->query("SHOW COLUMNS FROM flow_definition_versions LIKE 'compiled_ir_json'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE flow_definition_versions ADD COLUMN compiled_ir_json MEDIUMTEXT NULL AFTER definition_digest');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM flow_definition_versions LIKE 'definition_locks_json'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE flow_definition_versions ADD COLUMN definition_locks_json MEDIUMTEXT NULL AFTER compiled_ir_json');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM flow_definition_versions LIKE 'ir_digest'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE flow_definition_versions ADD COLUMN ir_digest CHAR(64) NULL AFTER definition_locks_json');
         }
     }
 

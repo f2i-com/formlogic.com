@@ -643,6 +643,22 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `package_dependency_edges` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'package_dependency_edges table ensured';
 
+// 19. RUN-301 (ADR-010): compiled canonical IR + definition locks pinned to the immutable
+//     flow revision. NULL = not compiled — runners fall back to the stored graph, where
+//     contributed node types fail as unknown (fail-safe by construction).
+foreach ([
+    'compiled_ir_json' => 'ALTER TABLE `flow_definition_versions` ADD COLUMN `compiled_ir_json` mediumtext COLLATE utf8mb4_unicode_ci AFTER `definition_digest`',
+    'definition_locks_json' => 'ALTER TABLE `flow_definition_versions` ADD COLUMN `definition_locks_json` mediumtext COLLATE utf8mb4_unicode_ci AFTER `compiled_ir_json`',
+    'ir_digest' => 'ALTER TABLE `flow_definition_versions` ADD COLUMN `ir_digest` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `definition_locks_json`',
+] as $column => $ddl) {
+    if (!$columnExists($pdo, $db, 'flow_definition_versions', $column)) {
+        $pdo->exec($ddl);
+        $applied[] = "flow_definition_versions.{$column} added";
+    } else {
+        $applied[] = "flow_definition_versions.{$column} already present";
+    }
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

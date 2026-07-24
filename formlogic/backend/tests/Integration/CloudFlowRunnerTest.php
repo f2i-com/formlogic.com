@@ -814,4 +814,88 @@ class CloudFlowRunnerTest extends TestCase
         $this->assertSame('error', $outcome['status']);
         $this->assertStringContainsString('recursion_detected', $outcome['error']['message']);
     }
+
+    // ── RUN-301: compiled canonical IR — contributed core-preset nodes run on cloud ─────────
+
+    public function testContributedCorePresetNodeCompilesAndRunsOnCloud(): void
+    {
+        $userId = $this->makeUser();
+
+        // Install a node-only extension whose contributed node is a preset over 'template'.
+        $pkgV2 = new \FormLogic\Services\Packages\PackageV2InstallService(self::$mysql);
+        $pkgV2->install([
+            'formatVersion' => 2,
+            'package' => ['id' => 'com.acme.cloud-presets', 'kind' => 'extension', 'version' => '1.0.0', 'publisherId' => 'com.acme', 'displayName' => 'Cloud Presets'],
+            'contributions' => ['flowNodes' => [[
+                'schemaVersion' => 1,
+                'type' => 'com.acme.cloudpresets.greet',
+                'version' => '1.0.0',
+                'display' => ['label' => 'Greet'],
+                'handler' => ['kind' => 'core-preset', 'coreType' => 'template', 'defaults' => ['template' => 'Hello {{inputs.name}}!']],
+                'sideEffects' => 'none',
+            ]]],
+        ], $userId, []);
+
+        // Author a flow USING the contributed type (storable — no type allowlist at save).
+        $flow = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 'greet', 'type' => 'com.acme.cloudpresets.greet', 'data' => []],
+            ['id' => 'out', 'type' => 'output', 'data' => ['value' => '$nodes.greet']],
+        ], [
+            ['source' => 'in', 'target' => 'greet'],
+            ['source' => 'greet', 'target' => 'out'],
+        ]);
+
+        // The run executes the revision's COMPILED IR: the contributed node was lowered to
+        // 'template' at version mint, so the flow is cloud-eligible AND produces the preset.
+        $outcome = $this->runner()->run($flow, $userId, ['name' => 'Ada']);
+        $this->assertSame('done', $outcome['status'], json_encode($outcome['error'] ?? null));
+        $this->assertSame('Hello Ada!', $outcome['result']);
+
+        // The version row pinned the lowering: compiled IR + the definition lock.
+        $row = self::$pdo->query("SELECT compiled_ir_json, definition_locks_json, ir_digest FROM flow_definition_versions WHERE flow_definition_id = '{$flow['id']}'")->fetch(PDO::FETCH_ASSOC);
+        $this->assertNotNull($row['ir_digest']);
+        $ir = json_decode((string) $row['compiled_ir_json'], true);
+        $this->assertSame('template', $ir['nodes'][1]['type'], 'the stored IR carries the lowered node');
+        $locks = json_decode((string) $row['definition_locks_json'], true);
+        $this->assertSame('com.acme.cloudpresets.greet', $locks[0]['type']);
+        $this->assertSame('template', $locks[0]['loweredTo']);
+
+        // The STORED graph keeps the contributed identity — lowering never rewrites authoring state.
+        $stored = self::$flows->getWorkspaceFlow($userId, $flow['id']);
+        $this->assertSame('com.acme.cloudpresets.greet', $stored['flowJson']['nodes'][1]['type']);
+    }
+
+    public function testServiceActionContributedNodeStaysCloudRefused(): void
+    {
+        $userId = $this->makeUser();
+        $pkgV2 = new \FormLogic\Services\Packages\PackageV2InstallService(self::$mysql);
+        $pkgV2->install([
+            'formatVersion' => 2,
+            'package' => ['id' => 'com.acme.cloud-media', 'kind' => 'extension', 'version' => '1.0.0', 'publisherId' => 'com.acme', 'displayName' => 'Cloud Media'],
+            'contributions' => ['flowNodes' => [[
+                'schemaVersion' => 1,
+                'type' => 'com.acme.cloudmedia.generate',
+                'version' => '1.0.0',
+                'display' => ['label' => 'Generate'],
+                'handler' => ['kind' => 'service-action', 'bindingSlot' => 'gen', 'requiredAction' => 'generate'],
+                'sideEffects' => 'external-write',
+            ]]],
+            'requirements' => ['services' => [['slot' => 'gen']]],
+        ], $userId, []);
+
+        // service-action cannot compile (no bindings yet) → NO IR → the stored graph reaches
+        // preflight, where the dotted type is unsupported → typed refusal, no credit consumed.
+        $flow = $this->flowRow($userId, [
+            ['id' => 'in', 'type' => 'input'],
+            ['id' => 'gen', 'type' => 'com.acme.cloudmedia.generate', 'data' => []],
+        ], [['source' => 'in', 'target' => 'gen']]);
+        $outcome = $this->runner()->run($flow, $userId, []);
+        $this->assertFalse($outcome['ok']);
+        $this->assertSame('cloud_unsupported_node', $outcome['code']);
+        $this->assertSame(0, $this->meterCount($userId, 'cloud_flow_runs'), 'preflight refusals never consume a credit');
+
+        $row = self::$pdo->query("SELECT ir_digest FROM flow_definition_versions WHERE flow_definition_id = '{$flow['id']}'")->fetch(PDO::FETCH_ASSOC);
+        $this->assertNull($row['ir_digest'], 'an uncompilable graph pins no IR');
+    }
 }

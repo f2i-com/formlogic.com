@@ -139,9 +139,16 @@ class CloudFlowRunner
      */
     public function run(array $flow, string $userId, array $inputs): array
     {
+        // RUN-301: execute the revision's COMPILED canonical IR when it exists — contributed
+        // nodes were lowered server-side at version mint, so a flow using an installed
+        // core-preset extension node is now cloud-runnable. No compiled IR (legacy version,
+        // or a graph that cannot compile) → the stored graph, exactly as before.
+        $flow['flowJson'] = $this->effectiveGraph($flow);
+
         // Run-time preflight, BEFORE any credit is touched (plan §5.7 — the save-time check
         // alone is not enough: a flow saved as 'auto' can be flipped to 'cloud' later, and
-        // its graph can gain an unsupported node after the location was chosen).
+        // its graph can gain an unsupported node after the location was chosen). Checked over
+        // the EFFECTIVE graph: a lowered node must itself be cloud-supported.
         $offenders = self::validateCloudEligible($flow['flowJson'] ?? null);
         if ($offenders !== []) {
             return ['ok' => false, 'code' => 'cloud_unsupported_node', 'nodes' => $offenders];
@@ -208,6 +215,32 @@ class CloudFlowRunner
             'result' => $outcome['result'],
             'nodesExecuted' => $outcome['nodesExecuted'],
         ];
+    }
+
+    /**
+     * RUN-301: the graph the cloud runner actually executes — the current revision's compiled
+     * canonical IR when present (contributed nodes lowered server-side at version mint), else
+     * the stored graph verbatim. ensureFlowVersion is idempotent per (flow, version), so
+     * resolving here never races run bookkeeping; the same call also backfills legacy rows.
+     *
+     * @param array<string,mixed> $flow Formatted flow row.
+     * @return mixed The effective { nodes, edges } graph (shape-validated downstream).
+     */
+    public function effectiveGraph(array $flow): mixed
+    {
+        $versionId = $this->flowService->ensureFlowVersion((string) ($flow['id'] ?? ''));
+        if (is_string($versionId) && $versionId !== '') {
+            $stmt = $this->mysql->prepare('SELECT compiled_ir_json FROM flow_definition_versions WHERE id = :id');
+            $stmt->execute(['id' => $versionId]);
+            $raw = $stmt->fetchColumn();
+            if (is_string($raw) && $raw !== '') {
+                $ir = json_decode($raw, true);
+                if (is_array($ir) && is_array($ir['nodes'] ?? null) && is_array($ir['edges'] ?? null)) {
+                    return ['nodes' => $ir['nodes'], 'edges' => $ir['edges']];
+                }
+            }
+        }
+        return $flow['flowJson'] ?? null;
     }
 
     // ── Graph execution (mirrors execute_flow in the desktop Rust runner) ─────────────────
@@ -1166,6 +1199,8 @@ class CloudFlowRunner
                 $node['id']
             );
         }
+        // RUN-301: children execute their revision's compiled IR too — same rule as the root.
+        $child['flowJson'] = $this->effectiveGraph($child);
         if (in_array($targetId, $runCtx['callStack'], true)) {
             throw new CloudFlowNodeError(
                 'node_failed',

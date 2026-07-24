@@ -56,11 +56,15 @@ class FlowService
     private const TIMEOUT_DEFAULT_MS = 30000;
 
     private PDO $mysql;
+    private MySQLConnection $mysqlConnection;
     private ?FormEncryptionService $formEncryption = null;
+    /** Lazily built for compile-at-mint (RUN-301); same connection, stateless. */
+    private ?\FormLogic\Services\Packages\PackageV2InstallService $packageV2 = null;
 
     public function __construct(MySQLConnection $mysql)
     {
         $this->mysql = $mysql->getConnection();
+        $this->mysqlConnection = $mysql;
     }
 
     /**
@@ -923,10 +927,62 @@ class FlowService
      * Returns null when the flow row vanished mid-flight — run reservation must not fail
      * because of revision bookkeeping.
      */
+    /**
+     * RUN-301 compile-at-mint: lower the stored graph to canonical IR for a revision.
+     * Returns [compiledIrJson, locksJson, irDigest] — all null when the graph cannot compile
+     * (missing definitions, service-action nodes without bindings, no owner). Compilation is
+     * best-effort bookkeeping: it must NEVER block a run reserve, so lookup failures degrade
+     * to null rather than throwing. Deterministic given the owner's installed definitions.
+     *
+     * @return array{0:?string,1:?string,2:?string}
+     */
+    private function compileVersionIr(mixed $decodedGraph, ?string $ownerUserId): array
+    {
+        if (!is_array($decodedGraph) || $ownerUserId === null || $ownerUserId === '') {
+            return [null, null, null];
+        }
+        // Only graphs with contributed (dotted) types need the installed-definition lookup;
+        // a core-only graph compiles against the empty set (pure pass-through).
+        $installedByType = [];
+        $hasContributed = false;
+        foreach ((is_array($decodedGraph['nodes'] ?? null) ? $decodedGraph['nodes'] : []) as $node) {
+            if (is_array($node) && is_string($node['type'] ?? null) && str_contains($node['type'], '.')) {
+                $hasContributed = true;
+                break;
+            }
+        }
+        if ($hasContributed) {
+            try {
+                $this->packageV2 ??= new \FormLogic\Services\Packages\PackageV2InstallService($this->mysqlConnection);
+                foreach ($this->packageV2->listDefinitions($ownerUserId) as $entry) {
+                    if ($entry['enabled'] === true) {
+                        $installedByType[$entry['type']] = [
+                            'definition' => $entry['definition'],
+                            'digest' => $entry['digest'],
+                            'version' => $entry['version'],
+                            'packageId' => $entry['packageId'],
+                        ];
+                    }
+                }
+            } catch (\Throwable $e) {
+                return [null, null, null];
+            }
+        }
+        $result = \FormLogic\Services\Flows\FlowCompiler::compile($decodedGraph, $installedByType);
+        if (!$result['ok']) {
+            return [null, null, null];
+        }
+        return [
+            (string) json_encode($result['ir'], JSON_UNESCAPED_SLASHES),
+            (string) json_encode($result['locks'], JSON_UNESCAPED_SLASHES),
+            $result['irDigest'],
+        ];
+    }
+
     public function ensureFlowVersion(string $flowDefinitionId): ?string
     {
         $stmt = $this->mysql->prepare("
-            SELECT engine, version, flow_json, input_schema, output_schema, node_capabilities, execution_location
+            SELECT engine, version, flow_json, input_schema, output_schema, node_capabilities, execution_location, owner_user_id
             FROM flow_definitions WHERE id = :id
         ");
         $stmt->execute(['id' => $flowDefinitionId]);
@@ -937,12 +993,29 @@ class FlowService
         $version = (int) $row['version'];
 
         $find = $this->mysql->prepare(
-            'SELECT id FROM flow_definition_versions WHERE flow_definition_id = :f AND version = :v'
+            'SELECT id, ir_digest FROM flow_definition_versions WHERE flow_definition_id = :f AND version = :v'
         );
         $find->execute(['f' => $flowDefinitionId, 'v' => $version]);
-        $existingId = $find->fetchColumn();
-        if (is_string($existingId) && $existingId !== '') {
-            return $existingId;
+        $existing = $find->fetch();
+        if (is_array($existing) && is_string($existing['id'] ?? null) && $existing['id'] !== '') {
+            // RUN-301 backfill: rows minted before compile-at-mint existed (or before their
+            // definitions were installed) get their compiled IR on the next reserve. The guarded
+            // UPDATE never overwrites — the FIRST successful compile is this revision's pinned
+            // lowering, and the locks record which definition versions/digests it used.
+            if (($existing['ir_digest'] ?? null) === null) {
+                [$irJson, $locksJson, $irDigest] = $this->compileVersionIr(
+                    json_decode((string) $row['flow_json'], true),
+                    is_string($row['owner_user_id'] ?? null) ? $row['owner_user_id'] : null
+                );
+                if ($irDigest !== null) {
+                    $this->mysql->prepare('
+                        UPDATE flow_definition_versions
+                        SET compiled_ir_json = :ir, definition_locks_json = :locks, ir_digest = :d
+                        WHERE id = :id AND ir_digest IS NULL
+                    ')->execute(['ir' => $irJson, 'locks' => $locksJson, 'd' => $irDigest, 'id' => $existing['id']]);
+                }
+            }
+            return (string) $existing['id'];
         }
 
         $definitionJson = '{"engine":' . json_encode((string) $row['engine'])
@@ -959,12 +1032,22 @@ class FlowService
             $graphVersion = (int) $decodedGraph['graphVersion'];
         }
 
+        // RUN-301 compile-at-mint: the canonical IR + definition locks pin what this revision
+        // LOWERS TO (contributed nodes resolved against the owner's installed definitions as
+        // they exist right now). NULLs when the graph cannot compile — runners fall back to
+        // the stored graph, where contributed types fail as unknown (fail-safe).
+        [$irJson, $locksJson, $irDigest] = $this->compileVersionIr(
+            $decodedGraph,
+            is_string($row['owner_user_id'] ?? null) ? $row['owner_user_id'] : null
+        );
+
         $id = $this->uuidV4();
         try {
             $ins = $this->mysql->prepare("
                 INSERT INTO flow_definition_versions
-                    (id, flow_definition_id, version, graph_version, definition_json, definition_digest)
-                VALUES (:id, :f, :v, :gv, :def, :digest)
+                    (id, flow_definition_id, version, graph_version, definition_json, definition_digest,
+                     compiled_ir_json, definition_locks_json, ir_digest)
+                VALUES (:id, :f, :v, :gv, :def, :digest, :ir, :locks, :irdigest)
             ");
             $ins->execute([
                 'id' => $id,
@@ -973,6 +1056,9 @@ class FlowService
                 'gv' => $graphVersion,
                 'def' => $definitionJson,
                 'digest' => hash('sha256', $definitionJson),
+                'ir' => $irJson,
+                'locks' => $locksJson,
+                'irdigest' => $irDigest,
             ]);
         } catch (\PDOException $e) {
             if (!$this->isDuplicateKey($e)) {

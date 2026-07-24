@@ -89,8 +89,10 @@ class FlowRunController
         }
 
         // Save-time preflights can go stale (the graph may have gained an unsupported node
-        // after the location was chosen) — re-check before any credit is touched.
-        $offenders = CloudFlowRunner::validateCloudEligible($flow['flowJson'] ?? null);
+        // after the location was chosen) — re-check before any credit is touched. RUN-301:
+        // checked over the EFFECTIVE graph (the revision's compiled IR when present), so a
+        // contributed node that lowers to a cloud-supported core type passes here.
+        $offenders = CloudFlowRunner::validateCloudEligible($this->cloudRunner->effectiveGraph($flow));
         if ($offenders !== []) {
             return $this->jsonError(
                 $response,
