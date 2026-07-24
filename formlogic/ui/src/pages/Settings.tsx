@@ -50,6 +50,7 @@ import { MfaPanel } from '../components/settings/MfaPanel';
 import { VaultPanel } from '../components/vault/VaultPanel';
 import { AiSourceCard } from '../components/settings/AiSourceCard';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
+import { resolveActiveScrollSection } from '../lib/settingsScrollSpy';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -139,10 +140,58 @@ export function Settings() {
   // Deep links like /settings#ai (Connect-AI wizard): SPA navigation doesn't fire
   // the browser's native fragment scroll, so address the card ourselves.
   const { hash } = useLocation();
+  const [activeSection, setActiveSection] = useState<(typeof SECTIONS)[number]['id']>(() => {
+    const requested = hash.slice(1);
+    return SECTIONS.some((section) => section.id === requested)
+      ? requested as (typeof SECTIONS)[number]['id']
+      : SECTIONS[0].id;
+  });
   useEffect(() => {
     if (!hash) return;
     document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [hash]);
+  useEffect(() => {
+    let animationFrame = 0;
+    const sectionElements = SECTIONS.map((section) => document.getElementById(section.id))
+      .filter((element): element is HTMLElement => element !== null);
+
+    const updateActiveSection = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const documentHeight = Math.max(
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight
+        );
+        const next = resolveActiveScrollSection(
+          sectionElements.map((element) => ({
+            id: element.id,
+            top: element.getBoundingClientRect().top,
+          })),
+          {
+            scrollY: window.scrollY,
+            viewportHeight: window.innerHeight,
+            documentHeight,
+          }
+        ) as (typeof SECTIONS)[number]['id'] | null;
+        if (next) setActiveSection((current) => current === next ? current : next);
+      });
+    };
+
+    updateActiveSection();
+    window.addEventListener('scroll', updateActiveSection, { passive: true });
+    window.addEventListener('resize', updateActiveSection);
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(updateActiveSection);
+    sectionElements.forEach((element) => resizeObserver?.observe(element));
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener('scroll', updateActiveSection);
+      window.removeEventListener('resize', updateActiveSection);
+      resizeObserver?.disconnect();
+    };
+  }, []);
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
 
@@ -1308,8 +1357,19 @@ export function Settings() {
               <li key={section.id}>
                 <a
                   href={`#${section.id}`}
-                  className="block px-3 py-1.5 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
+                  aria-current={activeSection === section.id ? 'location' : undefined}
+                  className={`relative block rounded-lg px-3 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
+                    activeSection === section.id
+                      ? 'bg-primary-50 font-medium text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-white'
+                  }`}
                 >
+                  {activeSection === section.id && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary-500"
+                    />
+                  )}
                   {section.label}
                 </a>
               </li>
