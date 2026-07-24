@@ -22,6 +22,13 @@ export interface ChatPanelPosition {
   y: number;
 }
 
+/** One-shot handoff into the site chat. Unlike `chatSeed`, launches are submitted
+ * immediately after the panel opens and may carry client-downscaled images. */
+export interface ChatLaunch {
+  text: string;
+  images?: string[];
+}
+
 interface UIState {
   // Sidebar
   sidebarCollapsed: boolean;
@@ -66,6 +73,9 @@ interface UIState {
   /** §11B O1: a prompt typed into "What do you want to create?" — the chat widget
    *  consumes it as its composer text on open (never persisted). */
   chatSeed: string | null;
+  /** Dashboard composer handoff: consumed once, then submitted through the normal
+   * chat send path so one Dashboard click means one message. Never persisted. */
+  chatLaunch: ChatLaunch | null;
   /** §11B O4: Follow AI — the chat may navigate you to what it just built. Off by
    *  default (never a haunted browser); persists once chosen. */
   chatFollowAi: boolean;
@@ -75,6 +85,7 @@ interface UIState {
   chatDocked: boolean;
   setChatDocked: (docked: boolean) => void;
   setChatSeed: (chatSeed: string | null) => void;
+  setChatLaunch: (chatLaunch: ChatLaunch | null) => void;
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
   setChatPosition: (position: ChatPanelPosition | null) => void;
@@ -133,11 +144,13 @@ export const useUIStore = create<UIState>()(
       chatMinimized: false,
       chatPosition: null,
       chatSeed: null,
+      chatLaunch: null,
       chatFollowAi: false,
       setChatFollowAi: (chatFollowAi) => set({ chatFollowAi }),
       chatDocked: false,
       setChatDocked: (chatDocked) => set({ chatDocked }),
       setChatSeed: (chatSeed) => set({ chatSeed }),
+      setChatLaunch: (chatLaunch) => set({ chatLaunch }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
       setChatPosition: (position) => set({ chatPosition: position }),

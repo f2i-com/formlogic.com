@@ -172,7 +172,15 @@ beforeEach(() => {
   __setChatStoreIndexedDbForTests(null); // memory-backed history for every test
   vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
   useAuthStore.setState({ user: { id: 'u1', email: 'u1@example.com' }, isLoading: false, isInitialized: true, error: null });
-  useUIStore.setState({ isMobile: false, chatOpen: false, chatMinimized: false, chatPosition: null, fixedBottomBar: false });
+  useUIStore.setState({
+    isMobile: false,
+    chatOpen: false,
+    chatMinimized: false,
+    chatPosition: null,
+    chatSeed: null,
+    chatLaunch: null,
+    fixedBottomBar: false,
+  });
   h.getAiPreferences.mockResolvedValue({ ok: true, data: { ...PREFS } });
   h.answerToolProposal.mockResolvedValue({ ok: true });
   h.sendChatTurn.mockImplementation(async (opts: SendChatTurnOptions): Promise<ChatTurnOutcome> => {
@@ -267,6 +275,66 @@ describe('mounting', () => {
 });
 
 describe('send path', () => {
+  it('keeps a Dashboard launch queued until the chat user is ready', async () => {
+    useAuthStore.setState({ user: null, isLoading: true, isInitialized: false, error: null });
+    useUIStore.setState({
+      chatOpen: true,
+      chatLaunch: { text: 'Build after sign-in' },
+    });
+
+    await renderWidget();
+    await flush();
+
+    expect(h.sendChatTurn).not.toHaveBeenCalled();
+    expect(useUIStore.getState().chatLaunch).toEqual({ text: 'Build after sign-in' });
+
+    await act(async () => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'u1@example.com' },
+        isLoading: false,
+        isInitialized: true,
+        error: null,
+      });
+    });
+    await flush();
+
+    expect(h.sendChatTurn).toHaveBeenCalledTimes(1);
+    expect(useUIStore.getState().chatLaunch).toBeNull();
+  });
+
+  it('consumes a Dashboard launch once and immediately submits its text and image', async () => {
+    const image = 'data:image/jpeg;base64,REF';
+    useUIStore.setState({
+      chatOpen: true,
+      chatLaunch: { text: 'Build this layout', images: [image] },
+    });
+
+    await renderWidget();
+    await flush();
+
+    expect(panel()).not.toBeNull();
+    expect(h.sendChatTurn).toHaveBeenCalledTimes(1);
+    expect((h.sendChatTurn.mock.calls[0][0] as SendChatTurnOptions).messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Build this layout' },
+          { type: 'image_url', image_url: { url: image } },
+        ],
+      },
+    ]);
+    expect(useUIStore.getState().chatLaunch).toBeNull();
+
+    const store = getChatStore('u1');
+    const threads = await store.listThreads();
+    const { messages } = await store.listMessages(threads[0].id);
+    expect(messages[0]).toMatchObject({
+      role: 'user',
+      content: 'Build this layout',
+      images: [image],
+    });
+  });
+
   it('appends the user message + streamed assistant reply to the store and transcript', async () => {
     await renderWidget();
     await openPanel();

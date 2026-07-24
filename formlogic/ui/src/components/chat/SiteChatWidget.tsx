@@ -187,6 +187,8 @@ export function SiteChatWidget() {
   const chatOpen = useUIStore((s) => s.chatOpen);
   const chatSeed = useUIStore((s) => s.chatSeed);
   const setChatSeed = useUIStore((s) => s.setChatSeed);
+  const chatLaunch = useUIStore((s) => s.chatLaunch);
+  const setChatLaunch = useUIStore((s) => s.setChatLaunch);
   const chatFollowAi = useUIStore((s) => s.chatFollowAi);
   const setChatFollowAi = useUIStore((s) => s.setChatFollowAi);
   const chatDocked = useUIStore((s) => s.chatDocked);
@@ -502,6 +504,7 @@ export function SiteChatWidget() {
   // to the AI attached").
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const launchInFlightRef = useRef(false);
   const addAttachment = useCallback(async (files: Iterable<File>) => {
     for (const file of files) {
       if (!file.type.startsWith('image/')) continue;
@@ -516,10 +519,10 @@ export function SiteChatWidget() {
     }
   }, []);
 
-  const handleSend = useCallback(async (textOverride?: string) => {
+  const handleSend = useCallback(async (textOverride?: string, imageOverride?: string[]) => {
     const text = (textOverride ?? input).trim();
-    const images = textOverride === undefined ? pendingImages : [];
-    if ((text === '' && images.length === 0) || sending || demoRunning || !userId) return;
+    const images = textOverride === undefined ? pendingImages : (imageOverride ?? []);
+    if ((text === '' && images.length === 0) || sending || demoRunning || !userId) return false;
     if (textOverride === undefined) {
       setInput('');
       setPendingImages([]);
@@ -543,10 +546,31 @@ export function SiteChatWidget() {
     // the live engine is never called, so no credits burn and no server write is tried.
     if (isDemo) {
       void demoChatDirector.respond(text, threadId);
-      return;
+      return true;
     }
     await runTurn(threadId, historyFor(next));
+    return true;
   }, [input, pendingImages, sending, demoRunning, isDemo, userId, activeThreadId, messages, runTurn, setActiveThread]);
+
+  // Dashboard launches are a one-shot submit, not just a composer seed.
+  useEffect(() => {
+    // Keep the launch queued while the signed-in/demo user or chat runner is still
+    // initialising. The in-flight ref also prevents a render between the IndexedDB
+    // append and the send completion from submitting the same launch twice.
+    if (!chatOpen || !chatLaunch || sending || demoRunning || !userId || launchInFlightRef.current) return;
+    const launch = chatLaunch;
+    launchInFlightRef.current = true;
+    void handleSend(launch.text, launch.images ?? [])
+      .then((sent) => {
+        if (!sent || useUIStore.getState().chatLaunch !== launch) return;
+        setChatLaunch(null);
+        setInput('');
+        setPendingImages([]);
+      })
+      .finally(() => {
+        launchInFlightRef.current = false;
+      });
+  }, [chatLaunch, chatOpen, demoRunning, handleSend, sending, setChatLaunch, userId]);
 
   // §11B: compact the conversation — an AI summary becomes the carried history while
   // the thread keeps every message. Offered once the uncompacted tail reaches the
