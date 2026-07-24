@@ -91,7 +91,11 @@ class PackCapabilities
         foreach ($apps as $a) {
             if (is_array($a)) {
                 $collect($a['customLogic'] ?? null);
-                foreach ((is_array($a['services'] ?? null) ? $a['services'] : []) as $svc) {
+                // PKG-102: `features` (v2 name) preferred, `services` accepted as the v1 alias.
+                $declaredFeatures = is_array($a['features'] ?? null)
+                    ? $a['features']
+                    : (is_array($a['services'] ?? null) ? $a['services'] : []);
+                foreach ($declaredFeatures as $svc) {
                     if (!is_array($svc) || !is_string($svc['id'] ?? null) || $svc['id'] === '') {
                         continue;
                     }

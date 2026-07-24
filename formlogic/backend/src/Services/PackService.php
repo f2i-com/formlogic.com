@@ -172,7 +172,11 @@ class PackService
                 // riding in the pack's app settings is dropped first (an absent entry means
                 // ENABLED at runtime, so dropping strays is behavior-neutral and un-spoofable).
                 unset($appSettings['services']);
-                $declaredServices = is_array($packApp['services'] ?? null) ? $packApp['services'] : [];
+                // PKG-102: `features` is the v2 name for App Feature declarations; `services` is
+                // the accepted v1 alias. Runtime storage stays settings.services (unchanged key).
+                $declaredServices = is_array($packApp['features'] ?? null)
+                    ? $packApp['features']
+                    : (is_array($packApp['services'] ?? null) ? $packApp['services'] : []);
                 if ($declaredServices !== []) {
                     $servicesMap = [];
                     foreach ($declaredServices as $svc) {
@@ -1847,18 +1851,24 @@ class PackService
             if (empty($app['name'])) {
                 throw new \RuntimeException("App '{$app['packAppId']}' is missing name");
             }
-            // Pack services (wave 1): an optional list of included-service declarations the
-            // importer composes into settings.services. Strict shape — unknown keys rejected
-            // so a pack can never smuggle extra semantics through a service entry.
-            if (array_key_exists('services', $app)) {
-                if (!is_array($app['services']) || !array_is_list($app['services'])) {
-                    throw new \RuntimeException("App '{$app['packAppId']}' services must be a list");
+            // App Features (PKG-102 / ADR-010): an optional list of included feature toggles the
+            // importer composes into settings.services. `features` is the v2 name; `services`
+            // remains the accepted v1 alias (these are NOT Desktop services). Declaring both is
+            // ambiguous and refused. Strict shape — unknown keys rejected so a pack can never
+            // smuggle extra semantics through an entry.
+            if (array_key_exists('features', $app) && array_key_exists('services', $app)) {
+                throw new \RuntimeException("App '{$app['packAppId']}' declares both 'features' and its v1 alias 'services' — use one");
+            }
+            $featureKey = array_key_exists('features', $app) ? 'features' : (array_key_exists('services', $app) ? 'services' : null);
+            if ($featureKey !== null) {
+                if (!is_array($app[$featureKey]) || !array_is_list($app[$featureKey])) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' {$featureKey} must be a list");
                 }
-                if (count($app['services']) > 8) {
-                    throw new \RuntimeException("App '{$app['packAppId']}' cannot declare more than 8 services");
+                if (count($app[$featureKey]) > 8) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' cannot declare more than 8 {$featureKey}");
                 }
                 $seenServiceIds = [];
-                foreach ($app['services'] as $si => $svc) {
+                foreach ($app[$featureKey] as $si => $svc) {
                     if (!is_array($svc)) {
                         throw new \RuntimeException("App '{$app['packAppId']}' service at index {$si} must be an object");
                     }

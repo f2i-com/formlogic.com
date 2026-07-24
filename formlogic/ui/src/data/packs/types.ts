@@ -174,7 +174,13 @@ export interface PackApp {
   reports?: PackReportItem[];
   /** Optional sandboxed QuickJS app-logic bundle (spec §31; imported to apps.custom_logic). */
   customLogic?: CustomAppLogicBundle;
-  /** Services included with this app (owner-toggleable after install; max 8). */
+  /**
+   * App Features included with this app (owner-toggleable after install; max 8).
+   * PKG-102 / ADR-010: `features` is the v2 name — these are feature toggles, NOT Desktop
+   * services. `services` remains the accepted v1 alias; declare one key, never both.
+   */
+  features?: PackAppService[];
+  /** v1 alias of `features` (still emitted by exports for compatibility). */
   services?: PackAppService[];
 }
 

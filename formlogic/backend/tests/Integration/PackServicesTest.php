@@ -170,6 +170,47 @@ class PackServicesTest extends TestCase
         $this->assertArrayNotHasKey('services', $app['settings']);
     }
 
+    public function testFeaturesIsTheV2NameAndImportsIdentically(): void
+    {
+        // PKG-102 (ADR-010): `features` is the v2 name for the same declarations; runtime
+        // storage stays settings.services, so behavior is identical either way.
+        $pack = $this->servicesPack();
+        $pack['apps'][0]['features'] = $pack['apps'][0]['services'];
+        unset($pack['apps'][0]['services']);
+
+        $result = self::$packs->importPack($pack, $this->userId);
+        $app = self::$apps->getApp((string) $result['apps'][0]['id']);
+        $this->assertEquals(
+            ['enabled' => true, 'title' => 'Companion app relay', 'description' => 'Relay for the Companion app.'],
+            $app['settings']['services']['companion-relay'] ?? null,
+            'a features declaration composes the same settings.services map'
+        );
+
+        // The capability review surfaces them from either key.
+        $caps = \FormLogic\Helpers\PackCapabilities::describe($pack);
+        $this->assertSame('companion-relay', $caps['services'][0]['id'] ?? null);
+
+        // Malformed `features` validate exactly like malformed `services`.
+        $bad = $this->servicesPack();
+        $bad['apps'][0]['features'] = ['not-a-list' => ['id' => 'x']];
+        unset($bad['apps'][0]['services']);
+        try {
+            self::$packs->importPack($bad, $this->userId);
+            $this->fail('a non-list features declaration must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('features must be a list', $e->getMessage());
+        }
+    }
+
+    public function testDeclaringBothFeaturesAndServicesIsRefused(): void
+    {
+        $pack = $this->servicesPack();
+        $pack['apps'][0]['features'] = $pack['apps'][0]['services'];
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage("declares both 'features' and its v1 alias 'services'");
+        self::$packs->importPack($pack, $this->userId);
+    }
+
     public function testValidateRejectsMalformedServiceDeclarations(): void
     {
         $cases = [
