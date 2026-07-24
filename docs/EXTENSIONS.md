@@ -159,13 +159,33 @@ UI labels the commit "Update extension". Confirm applies it atomically:
 Downgrades ride the same lane (any different version), gated by the same dependent-range
 checks.
 
+## Inspecting an installed extension
+
+```
+GET /api/package-installations/{installationId}
+  →  200 { installation: { packageId, publisherId, version, state, source, installedAt,
+                           receipt, nodes[], dependencies[], dependents[] } }
+```
+
+`receipt` is the **immutable install receipt** (package meta, contribution digests, the
+dependency versions each range locked to, and the reviewed connector grants —
+plus `updatedFrom` after an update). `nodes[]` carries each contributed type with the
+digest the compiler locks against. The two dependency directions are both reported:
+`dependencies[]` is what this package requires, `dependents[]` is what requires it —
+the latter is what blocks an uninstall and constrains which versions an update may
+move to. This is a **management** surface: it stays readable even when the
+`APPLICATION_PACKAGES_V2` kill switch is off.
+
+The Packs UI renders this under **Details** on each installed extension.
+
 ## Uninstalling
 
 - Removes the package's contributed node definitions. Flows already using them keep
   their nodes as **read-only placeholders** (graph data always survives) and runs
   refuse with `invalid_flow` until the extension is reinstalled.
 - A package **required by another installed package refuses to uninstall**
-  (409 `uninstall_blocked`, dependents named) — remove the dependents first.
+  (409 `uninstall_blocked`, dependents named) — remove the dependents first. The
+  Details panel shows those dependents before you commit.
 
 ---
 

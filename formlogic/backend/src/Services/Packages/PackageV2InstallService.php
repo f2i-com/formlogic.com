@@ -539,6 +539,17 @@ class PackageV2InstallService
         $defs->execute([$installationId]);
         $edges = $this->mysql->prepare('SELECT child_package_id, requested_range, resolved_version, required FROM package_dependency_edges WHERE parent_installation_id = ? ORDER BY child_package_id ASC');
         $edges->execute([$installationId]);
+        // Inbound edges: what DEPENDS ON this installation. These are what block an uninstall
+        // (required only) and what constrain an update's version range — the management UI
+        // shows them up front instead of only after a 409/update_blocked.
+        $dependents = $this->mysql->prepare('
+            SELECT pi.package_id, pi.display_name, pi.version, e.requested_range, e.required
+            FROM package_dependency_edges e
+            JOIN package_installations pi ON pi.id = e.parent_installation_id
+            WHERE e.child_installation_id = ?
+            ORDER BY pi.display_name ASC
+        ');
+        $dependents->execute([$installationId]);
         $receipt = json_decode((string) $row['receipt_json'], true);
         return [
             'id' => (string) $row['id'],
@@ -563,6 +574,13 @@ class PackageV2InstallService
                 'resolvedVersion' => (string) $e['resolved_version'],
                 'required' => (bool) $e['required'],
             ], $edges->fetchAll(PDO::FETCH_ASSOC)),
+            'dependents' => array_map(static fn (array $e): array => [
+                'packageId' => (string) $e['package_id'],
+                'displayName' => (string) $e['display_name'],
+                'version' => (string) $e['version'],
+                'range' => (string) $e['requested_range'],
+                'required' => (bool) $e['required'],
+            ], $dependents->fetchAll(PDO::FETCH_ASSOC)),
         ];
     }
 

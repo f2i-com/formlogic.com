@@ -21,6 +21,7 @@ import {
   Pencil,
   Archive,
   RefreshCw,
+  Puzzle,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -34,6 +35,7 @@ import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
 import { useInstalledNodeStore } from '../../stores/installedNodeStore';
+import { InstalledExtensionDetail } from './InstalledExtensionDetail';
 import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
 
@@ -100,6 +102,8 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [uninstallingId, setUninstallingId] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
+  // MKT-605: which installed v2 extension has its receipt/dependency detail open (fetch-on-expand).
+  const [expandedInstallation, setExpandedInstallation] = useState<string | null>(null);
 
   // My packs state
   const [myPacks, setMyPacks] = useState<CatalogPack[]>([]);
@@ -928,20 +932,47 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                               {inst.packDescription}
                             </p>
                           )}
+                          {/* An extension contributes flow nodes, not forms/apps — showing it
+                              "0/0 forms · 0/0 apps" was noise. Each kind states its own content. */}
                           <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 dark:text-slate-400">
-                            <span className="inline-flex items-center gap-1">
-                              <FileJson className="h-3 w-3" />
-                              {inst.existingFormCount}/{inst.formCount} forms
-                            </span>
-                            <span className="inline-flex items-center gap-1">
-                              <Globe className="h-3 w-3" />
-                              {inst.existingAppCount}/{inst.appCount} apps
-                            </span>
+                            {inst.formatVersion === 2 ? (
+                              <>
+                                <span className="inline-flex items-center gap-1">
+                                  <Puzzle className="h-3 w-3" />
+                                  {inst.nodesInstalled ?? 0} flow node{(inst.nodesInstalled ?? 0) === 1 ? '' : 's'}
+                                </span>
+                                {inst.publisherId && (
+                                  <span className="truncate">by {inst.publisherId}</span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <span className="inline-flex items-center gap-1">
+                                  <FileJson className="h-3 w-3" />
+                                  {inst.existingFormCount}/{inst.formCount} forms
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <Globe className="h-3 w-3" />
+                                  {inst.existingAppCount}/{inst.appCount} apps
+                                </span>
+                              </>
+                            )}
                             <span className="inline-flex items-center gap-1">
                               <Calendar className="h-3 w-3" />
                               {new Date(inst.installedAt).toLocaleDateString()}
                             </span>
                           </div>
+                          {inst.formatVersion === 2 && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedInstallation((cur) => (cur === inst.id ? null : inst.id))}
+                              aria-expanded={expandedInstallation === inst.id}
+                              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                            >
+                              {expandedInstallation === inst.id ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                              {expandedInstallation === inst.id ? 'Hide details' : 'Details'}
+                            </button>
+                          )}
                         </div>
 
                         <div className="flex-shrink-0">
@@ -988,6 +1019,10 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                               : `Removes ${inst.existingFormCount} form${inst.existingFormCount === 1 ? '' : 's'}${inst.existingAppCount > 0 ? ` and ${inst.existingAppCount} app${inst.existingAppCount === 1 ? '' : 's'}` : ''} created by this pack. Forms with collected responses go to the Recycle bin (restorable for 30 days); apps and empty forms are removed outright and can be reinstalled from the pack.`}
                           </span>
                         </div>
+                      )}
+
+                      {expandedInstallation === inst.id && inst.formatVersion === 2 && (
+                        <InstalledExtensionDetail installationId={inst.id} />
                       )}
 
                       {(inst.existingFormCount < inst.formCount || inst.existingAppCount < inst.appCount) && (

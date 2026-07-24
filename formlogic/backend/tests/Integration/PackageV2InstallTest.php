@@ -625,13 +625,26 @@ class PackageV2InstallTest extends TestCase
         $this->assertSame('com.acme.media-tools', $inst['dependencies'][0]['packageId']);
         $this->assertSame('1.4.0', $inst['dependencies'][0]['resolvedVersion']);
         $this->assertSame('1.4.0', $inst['receipt']['dependencies'][0]['resolvedVersion'] ?? null, 'the immutable receipt rides along');
+        $this->assertSame([], $inst['dependents'], 'nothing depends on the dependent itself');
+
+        // MKT-605: the DEPENDED-UPON package reports its inbound edge — what blocks its
+        // uninstall and constrains its updates, surfaced before the user commits either.
+        $reqDep = $this->createMock(ServerRequestInterface::class);
+        $reqDep->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $outDep = $this->controller()->getPackageInstallation($reqDep, new SlimResponse(), ['id' => $dep['installationId']]);
+        $depBody = json_decode((string) $outDep->getBody(), true)['installation'];
+        $this->assertSame([], $depBody['dependencies']);
+        $this->assertCount(1, $depBody['dependents']);
+        $this->assertSame('com.acme.with-dep', $depBody['dependents'][0]['packageId']);
+        $this->assertSame('Acme Media Tools', $depBody['dependents'][0]['displayName']);
+        $this->assertSame('^1.0.0', $depBody['dependents'][0]['range']);
+        $this->assertTrue($depBody['dependents'][0]['required']);
 
         // Foreign/missing ids are identical 404s.
         $req2 = $this->createMock(ServerRequestInterface::class);
         $req2->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
         $out2 = $this->controller()->getPackageInstallation($req2, new SlimResponse(), ['id' => 'nope']);
         $this->assertSame(404, $out2->getStatusCode());
-        $this->assertSame($dep['installationId'], $dep['installationId']); // silence unused warning
     }
 
     public function testKillSwitchDisablesInstallLanesButNotManagement(): void

@@ -3766,6 +3766,14 @@ class ApiClient {
     return this.request(`/packages/install-plans/${planId}/cancel`, { method: 'POST' });
   }
 
+  /**
+   * ADR-010 §13.1: one v2 installation's immutable receipt, contributed nodes, and both
+   * dependency directions. Management surface — readable even while the v2 kill switch is off.
+   */
+  async getPackageInstallation(installationId: string): Promise<ApiResponse<{ installation: PackageInstallationDetail }>> {
+    return this.request(`/package-installations/${installationId}`);
+  }
+
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
     return this.request(`/apps/${appId}/export`);
@@ -4743,6 +4751,26 @@ export interface PackageInstallPlan {
     missingOptional: Array<Record<string, unknown>>;
     problems: Array<{ code: string; id: string; message: string }>;
   };
+}
+
+/** ADR-010 §13.1: the full detail view of one installed Application Package v2. */
+export interface PackageInstallationDetail {
+  id: string;
+  packageId: string;
+  publisherId: string;
+  kind: string;
+  version: string;
+  displayName: string;
+  state: string;
+  source: string;
+  installedAt: string;
+  /** The immutable install receipt (package meta, contribution digests, reviewed grants…). */
+  receipt: Record<string, unknown> | null;
+  nodes: Array<{ type: string; version: string; digest: string; enabled: boolean }>;
+  /** What this package requires (outbound edges, with the version each range locked to). */
+  dependencies: Array<{ packageId: string; range: string; resolvedVersion: string; required: boolean }>;
+  /** What requires this package (inbound edges) — required ones block uninstall. */
+  dependents: Array<{ packageId: string; displayName: string; version: string; range: string; required: boolean }>;
 }
 
 /** ADR-010: one installed contributed flow-node definition, with its provenance. */
