@@ -932,7 +932,15 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       {confirmUninstall === inst.id && (
                         <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 px-3 py-2 text-xs text-red-700 dark:text-red-300">
                           <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-                          <span>Permanently deletes {inst.existingFormCount} form{inst.existingFormCount === 1 ? '' : 's'}{inst.existingAppCount > 0 ? ` and ${inst.existingAppCount} app${inst.existingAppCount === 1 ? '' : 's'}` : ''} created by this pack — including all their collected responses. This can't be undone.</span>
+                          {/* §14.4: recoverability is itemized honestly — record-bearing forms are
+                              pre-captured into the Recycle bin (not irreversibly destroyed), while
+                              apps and empty forms are removed outright (reinstallable from the pack).
+                              A v2 extension removes only its contributed node definitions. */}
+                          <span>
+                            {inst.formatVersion === 2
+                              ? `Removes this extension${(inst.nodesInstalled ?? 0) > 0 ? ` and its ${inst.nodesInstalled} contributed flow node${inst.nodesInstalled === 1 ? '' : 's'}` : ''}. Flows already using its nodes keep them as read-only placeholders.`
+                              : `Removes ${inst.existingFormCount} form${inst.existingFormCount === 1 ? '' : 's'}${inst.existingAppCount > 0 ? ` and ${inst.existingAppCount} app${inst.existingAppCount === 1 ? '' : 's'}` : ''} created by this pack. Forms with collected responses go to the Recycle bin (restorable for 30 days); apps and empty forms are removed outright and can be reinstalled from the pack.`}
+                          </span>
                         </div>
                       )}
 
