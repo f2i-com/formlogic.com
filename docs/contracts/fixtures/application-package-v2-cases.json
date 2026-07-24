@@ -1,0 +1,534 @@
+{
+  "description": "Shared validation cases for Application Package v2 + Flow Node Definition v1 (ADR-010). Asserted IDENTICALLY by the TypeScript validator (ui/src/application-package/packageV2.test.ts) and the PHP validator (backend/tests/Unit/ApplicationPackageV2ContractTest.php): a valid case must produce ZERO issues; an invalid case must produce the expected code. Fixture rule: empty {} vs [] containers are avoided where the languages cannot distinguish them after JSON decode.",
+  "cases": [
+    {
+      "name": "valid: node-only extension (no content.pack, no fake launcher app)",
+      "kind": "package",
+      "valid": true,
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.media-tools", "kind": "extension", "version": "1.4.0", "publisherId": "com.acme", "displayName": "Acme Media Tools" },
+        "contributions": {
+          "flowNodes": [
+            {
+              "schemaVersion": 1,
+              "type": "com.acme.media.generate-image",
+              "version": "1.2.0",
+              "display": { "label": "Generate image", "description": "Generate an image using the configured media service", "category": "AI & Media", "iconId": "image-sparkles" },
+              "ports": [
+                { "id": "prompt", "direction": "input", "kind": "data", "required": true, "schema": { "type": "string", "minLength": 1 } },
+                { "id": "image", "direction": "output", "kind": "data", "schema": { "$ref": "formlogic://schemas/artifact-ref.json", "x-artifactKinds": ["image"] } }
+              ],
+              "configurationSchema": { "type": "object", "properties": { "width": { "type": "integer", "minimum": 64, "maximum": 4096 }, "height": { "type": "integer", "minimum": 64, "maximum": 4096 } }, "additionalProperties": false },
+              "uiHints": { "width": { "control": "number", "group": "Output" }, "height": { "control": "number", "group": "Output" } },
+              "handler": { "kind": "service-action", "bindingSlot": "imageGenerator", "requiredAction": "generate-image" },
+              "availability": ["desktop", "paired-browser"],
+              "requiredGrants": [],
+              "sideEffects": "external-write",
+              "idempotency": "caller-key",
+              "deprecation": null
+            }
+          ]
+        },
+        "requirements": {
+          "services": [
+            { "slot": "imageGenerator", "required": true, "requiredActions": ["generate-image"], "constraints": { "artifactKinds": ["image"], "availability": ["desktop", "paired-browser"] } }
+          ]
+        }
+      }
+    },
+    {
+      "name": "valid: full bundle with dependencies, entry-path content, and a signed distribution candidate",
+      "kind": "package",
+      "valid": true,
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.media-suite", "kind": "bundle", "version": "2.0.0", "publisherId": "com.acme", "displayName": "Acme Media Suite", "description": "Everything media." },
+        "dependencies": {
+          "packages": [
+            { "id": "com.formlogic.artifacts", "version": "^2.1.0", "optional": false, "reason": "Stores generated image and video outputs" }
+          ],
+          "desktop": { "minimumVersion": "1.18.0", "features": ["service-definitions.v3", "component-install-jobs.v1"] }
+        },
+        "content": { "pack": "pack.json" },
+        "contributions": { "flowNodes": ["flow-nodes/generate-image.json"] },
+        "requirements": { "services": [{ "slot": "imageGenerator", "required": true, "requiredActions": ["generate-image"] }] },
+        "serviceDistributions": [
+          {
+            "id": "com.acme.image-runtime",
+            "runtimeKind": "managed-service",
+            "satisfiesSlots": ["imageGenerator"],
+            "optionalCandidate": true,
+            "definition": "services/image-runtime.definition.json",
+            "artifact": { "artifactId": "artifact_com_acme_image_runtime", "version": "3.2.1", "sha256": "abababababababababababababababababababababababababababababababab" },
+            "installPolicy": "prompt",
+            "autoStart": "auto"
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid: every v1 dependency range form",
+      "kind": "package",
+      "valid": true,
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.app", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "App" },
+        "dependencies": {
+          "packages": [
+            { "id": "com.dep.exact", "version": "1.0.0" },
+            { "id": "com.dep.caret", "version": "^2.1.0" },
+            { "id": "com.dep.tilde", "version": "~3.0.1" },
+            { "id": "com.dep.floor", "version": ">=1.2.3" }
+          ]
+        },
+        "content": { "pack": { "formatVersion": 1, "packMeta": { "name": "Inline", "version": "1.0.0" }, "forms": [{ "packFormId": "f1", "title": "F1", "fields": [] }] } }
+      }
+    },
+    {
+      "name": "valid: invalid uiHints entries are dropped, never fatal (presentation-only)",
+      "kind": "package",
+      "valid": true,
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.hints", "kind": "node-library", "version": "1.0.0", "publisherId": "com.acme", "displayName": "Hints" },
+        "contributions": {
+          "flowNodes": [
+            {
+              "schemaVersion": 1,
+              "type": "com.acme.hints.preset",
+              "version": "1.0.0",
+              "display": { "label": "Preset" },
+              "uiHints": { "width": "not-an-object", "height": { "control": "teleport" } },
+              "handler": { "kind": "core-preset", "coreType": "condition" },
+              "sideEffects": "none"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid: a package with no content, contributions, requirements, or distributions",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "empty_package",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.empty", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "Empty" }
+      }
+    },
+    {
+      "name": "invalid: wrong formatVersion",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_format_version",
+      "value": {
+        "formatVersion": 1,
+        "package": { "id": "com.acme.v1", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "V1" },
+        "content": { "pack": "pack.json" }
+      }
+    },
+    {
+      "name": "invalid: root is not an object",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "not_object",
+      "value": ["not", "a", "package"]
+    },
+    {
+      "name": "invalid: unknown top-level field fails closed",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "unknown_field",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "content": { "pack": "pack.json" },
+        "surprise": true
+      }
+    },
+    {
+      "name": "invalid: package id must extend its publisherId",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "package_id_outside_publisher",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "org.other.tools", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "content": { "pack": "pack.json" }
+      }
+    },
+    {
+      "name": "invalid: package id must be namespaced (>=2 dot-segments)",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_package_id",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "mediatools", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "content": { "pack": "pack.json" }
+      }
+    },
+    {
+      "name": "invalid: unknown package kind",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_package_kind",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "plugin", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "content": { "pack": "pack.json" }
+      }
+    },
+    {
+      "name": "invalid: package version must be exact semver",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_semver",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.4", "publisherId": "com.acme", "displayName": "X" },
+        "content": { "pack": "pack.json" }
+      }
+    },
+    {
+      "name": "invalid: dependency range outside the v1 grammar",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_semver_range",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "dependencies": { "packages": [{ "id": "com.dep.x", "version": "1.x" }] },
+        "content": { "pack": "pack.json" }
+      }
+    },
+    {
+      "name": "invalid: content.pack entry path with traversal",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_content_ref",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "content": { "pack": "../../evil.json" }
+      }
+    },
+    {
+      "name": "invalid: requirement slot fails the slot grammar",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_slot",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "requirements": { "services": [{ "slot": "2bad" }] }
+      }
+    },
+    {
+      "name": "invalid: distribution satisfies a slot no requirement declares",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "unknown_binding_slot",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "serviceDistributions": [
+          {
+            "id": "com.acme.runtime",
+            "runtimeKind": "managed-service",
+            "satisfiesSlots": ["missingSlot"],
+            "definition": "services/def.json",
+            "artifact": { "artifactId": "a", "version": "1.0.0", "sha256": "abababababababababababababababababababababababababababababababab" },
+            "installPolicy": "prompt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid: artifact digest is not 64 lowercase hex chars",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_artifact_digest",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "requirements": { "services": [{ "slot": "gen" }] },
+        "serviceDistributions": [
+          {
+            "id": "com.acme.runtime",
+            "runtimeKind": "managed-service",
+            "satisfiesSlots": ["gen"],
+            "definition": "services/def.json",
+            "artifact": { "artifactId": "a", "version": "1.0.0", "sha256": "nothex" },
+            "installPolicy": "prompt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid: unknown runtimeKind (the installer route is a closed set)",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_runtime_kind",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "requirements": { "services": [{ "slot": "gen" }] },
+        "serviceDistributions": [
+          {
+            "id": "com.acme.runtime",
+            "runtimeKind": "native-exe",
+            "satisfiesSlots": ["gen"],
+            "definition": "services/def.json",
+            "artifact": { "artifactId": "a", "version": "1.0.0", "sha256": "abababababababababababababababababababababababababababababababab" },
+            "installPolicy": "prompt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid: installPolicy other than prompt (v1 requires native approval)",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "bad_install_policy",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "application", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "requirements": { "services": [{ "slot": "gen" }] },
+        "serviceDistributions": [
+          {
+            "id": "com.acme.runtime",
+            "runtimeKind": "managed-service",
+            "satisfiesSlots": ["gen"],
+            "definition": "services/def.json",
+            "artifact": { "artifactId": "a", "version": "1.0.0", "sha256": "abababababababababababababababababababababababababababababababab" },
+            "installPolicy": "silent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid: inline contribution type outside the package publisher namespace",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "contribution_outside_publisher",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "extension", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "contributions": {
+          "flowNodes": [
+            { "schemaVersion": 1, "type": "org.other.media.node", "version": "1.0.0", "display": { "label": "N" }, "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid: service-action handler references an undeclared binding slot",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "unknown_binding_slot",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "extension", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "contributions": {
+          "flowNodes": [
+            { "schemaVersion": 1, "type": "com.acme.voice.say", "version": "1.0.0", "display": { "label": "Say" }, "handler": { "kind": "service-action", "bindingSlot": "voiceGen", "requiredAction": "speak" }, "sideEffects": "external-write" }
+          ]
+        },
+        "requirements": { "services": [{ "slot": "imageGenerator" }] }
+      }
+    },
+    {
+      "name": "invalid: contribution count over the cap",
+      "kind": "package",
+      "valid": false,
+      "expectCode": "limit_exceeded",
+      "value": {
+        "formatVersion": 2,
+        "package": { "id": "com.acme.x", "kind": "node-library", "version": "1.0.0", "publisherId": "com.acme", "displayName": "X" },
+        "contributions": {
+          "flowNodes": ["a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json", "a.json"]
+        }
+      }
+    },
+    {
+      "name": "valid: standalone node definition (service-action, no aggregate context)",
+      "kind": "nodeDefinition",
+      "valid": true,
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.media.generate-image",
+        "version": "1.2.0",
+        "display": { "label": "Generate image" },
+        "ports": [
+          { "id": "prompt", "direction": "input", "kind": "data", "required": true, "schema": { "type": "string", "minLength": 1 } }
+        ],
+        "handler": { "kind": "service-action", "bindingSlot": "imageGenerator", "requiredAction": "generate-image" },
+        "sideEffects": "external-write"
+      }
+    },
+    {
+      "name": "valid: core-preset node definition",
+      "kind": "nodeDefinition",
+      "valid": true,
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.flow.notify-team",
+        "version": "1.0.0",
+        "display": { "label": "Notify team", "category": "Presets" },
+        "handler": { "kind": "core-preset", "coreType": "condition", "defaults": { "note": "preset" } },
+        "availability": ["desktop", "paired-browser", "cloud"],
+        "sideEffects": "none"
+      }
+    },
+    {
+      "name": "invalid: unknown schemaVersion",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_schema_version",
+      "value": { "schemaVersion": 2, "type": "com.acme.a.b", "version": "1.0.0", "display": { "label": "X" }, "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: dot-free type (core shadow attempt)",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_node_type",
+      "value": { "schemaVersion": 1, "type": "service_action", "version": "1.0.0", "display": { "label": "X" }, "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: type with only two segments",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_node_type",
+      "value": { "schemaVersion": 1, "type": "com.acme", "version": "1.0.0", "display": { "label": "X" }, "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: known-but-later handler kind is rejected distinctly",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "handler_kind_not_enabled",
+      "value": { "schemaVersion": 1, "type": "com.acme.code.transform", "version": "1.0.0", "display": { "label": "X" }, "handler": { "kind": "quickjs", "source": "x" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: unknown handler kind",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_handler",
+      "value": { "schemaVersion": 1, "type": "com.acme.code.wasm", "version": "1.0.0", "display": { "label": "X" }, "handler": { "kind": "wasm" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: duplicate port ids (case-insensitive)",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "duplicate_port",
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.a.b",
+        "version": "1.0.0",
+        "display": { "label": "X" },
+        "ports": [
+          { "id": "Prompt", "direction": "input", "kind": "data" },
+          { "id": "prompt", "direction": "input", "kind": "data" }
+        ],
+        "handler": { "kind": "core-preset", "coreType": "condition" },
+        "sideEffects": "none"
+      }
+    },
+    {
+      "name": "invalid: port schema uses a keyword outside the declaration subset",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_port_schema",
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.a.b",
+        "version": "1.0.0",
+        "display": { "label": "X" },
+        "ports": [{ "id": "p", "direction": "input", "kind": "data", "schema": { "type": "string", "pattern": "^a" } }],
+        "handler": { "kind": "core-preset", "coreType": "condition" },
+        "sideEffects": "none"
+      }
+    },
+    {
+      "name": "invalid: remote $ref is rejected",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "remote_ref",
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.a.b",
+        "version": "1.0.0",
+        "display": { "label": "X" },
+        "ports": [{ "id": "p", "direction": "output", "kind": "data", "schema": { "$ref": "https://evil.example/schema.json" } }],
+        "handler": { "kind": "core-preset", "coreType": "condition" },
+        "sideEffects": "none"
+      }
+    },
+    {
+      "name": "invalid: formlogic $ref outside the allowlist",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "ref_not_allowlisted",
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.a.b",
+        "version": "1.0.0",
+        "display": { "label": "X" },
+        "ports": [{ "id": "p", "direction": "output", "kind": "data", "schema": { "$ref": "formlogic://schemas/other.json" } }],
+        "handler": { "kind": "core-preset", "coreType": "condition" },
+        "sideEffects": "none"
+      }
+    },
+    {
+      "name": "invalid: declaration schema deeper than the cap",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "schema_too_deep",
+      "value": {
+        "schemaVersion": 1,
+        "type": "com.acme.a.b",
+        "version": "1.0.0",
+        "display": { "label": "X" },
+        "ports": [{ "id": "p", "direction": "input", "kind": "data", "schema": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } } } } } } } } }],
+        "handler": { "kind": "core-preset", "coreType": "condition" },
+        "sideEffects": "none"
+      }
+    },
+    {
+      "name": "invalid: missing sideEffects",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_side_effects",
+      "value": { "schemaVersion": 1, "type": "com.acme.a.b", "version": "1.0.0", "display": { "label": "X" }, "handler": { "kind": "core-preset", "coreType": "condition" } }
+    },
+    {
+      "name": "invalid: availability outside the closed host set",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_availability",
+      "value": { "schemaVersion": 1, "type": "com.acme.a.b", "version": "1.0.0", "display": { "label": "X" }, "availability": ["server"], "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: unknown field on a node definition fails closed",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "unknown_field",
+      "value": { "schemaVersion": 1, "type": "com.acme.a.b", "version": "1.0.0", "display": { "label": "X" }, "runtime": "js", "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: display without a label",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_display",
+      "value": { "schemaVersion": 1, "type": "com.acme.a.b", "version": "1.0.0", "display": { "category": "Misc" }, "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    },
+    {
+      "name": "invalid: configurationSchema must declare an object type",
+      "kind": "nodeDefinition",
+      "valid": false,
+      "expectCode": "bad_config_schema",
+      "value": { "schemaVersion": 1, "type": "com.acme.a.b", "version": "1.0.0", "display": { "label": "X" }, "configurationSchema": { "type": "string" }, "handler": { "kind": "core-preset", "coreType": "condition" }, "sideEffects": "none" }
+    }
+  ]
+}

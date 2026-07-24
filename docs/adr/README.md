@@ -17,6 +17,7 @@ mid-implementation. Statuses: **accepted** (locked for implementation), **provis
 | [ADR-007](ADR-007-settings-ownership.md) | Settings ownership split | accepted |
 | [ADR-008](ADR-008-ai-provider-gateway.md) | AI provider profiles + gateway authentication | accepted |
 | [ADR-009](ADR-009-service-platform.md) | One service contract, one credential boundary, many consumers | accepted for first slice |
+| [ADR-010](ADR-010-application-package-v2.md) | Application Package v2, declarative flow-node contributions, service distributions | accepted |
 
 Supporting Phase −1 artifacts:
 

@@ -235,6 +235,19 @@ class PackTrustAndMetadataTest extends TestCase
         $this->assertSame([], $r['body']['warnings'] ?? []);
     }
 
+    // ── BASE-001 characterization: Pack v1 requires at least one form ───────────────────────────────
+    // ADR-010 pins this: a node-only distribution is expressed as an Application Package v2
+    // that OMITS content.pack — the Pack v1 form requirement itself is never relaxed.
+
+    public function testPackV1RequiresAtLeastOneForm(): void
+    {
+        $pack = $this->minimalPack();
+        $pack['forms'] = [];
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('at least one form');
+        self::$packs->importPack($pack, $this->userId, null, null, null, []);
+    }
+
     // ── SAFE-001: every HTTP import lane fails closed without an explicit grant review ──────────────
 
     /** @return array{status:int, body:array} Drives the flat POST /api/packs/import controller path. */

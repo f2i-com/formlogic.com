@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formlogic:application-package.v2",
+  "title": "Application Package v2 — aggregate distribution/dependency unit (ADR-010)",
+  "description": "The installable AGGREGATE: any non-empty combination of Pack v1 content, flow-node contributions, portable service requirements, and references to separately signed service distributions. This is the CONTENT layer — delivery/signing stays with the ADR-003 envelope. A node-only package omits content.pack (Pack v1's own >=1-form rule is never relaxed). Unknown fields fail closed at every level. Entry-path strings reference archive members (safe zip paths); inline objects are permitted for JSON delivery. The operative cross-language gates are the TypeScript and PHP validators pinned by docs/contracts/fixtures/application-package-v2-cases.json; this schema documents the shape.",
+  "type": "object",
+  "required": ["formatVersion", "package"],
+  "properties": {
+    "formatVersion": { "const": 2 },
+    "package": {
+      "type": "object",
+      "required": ["id", "kind", "version", "publisherId", "displayName"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable namespaced package id (>=2 dot-segments) that MUST extend publisherId (com.acme -> com.acme.media-tools).",
+          "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$",
+          "maxLength": 128
+        },
+        "kind": { "enum": ["application", "extension", "node-library", "bundle"] },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$", "maxLength": 64 },
+        "publisherId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$", "maxLength": 96 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 2000 }
+      },
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "type": "object",
+      "properties": {
+        "packages": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["id", "version"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$", "maxLength": 128 },
+              "version": {
+                "type": "string",
+                "description": "v1 range grammar: X.Y.Z | ^X.Y.Z | ~X.Y.Z | >=X.Y.Z (syntax only here; resolver semantics are separate).",
+                "pattern": "^(\\^|~|>=)?\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$",
+                "maxLength": 64
+              },
+              "optional": { "type": "boolean", "default": false },
+              "reason": { "type": "string", "maxLength": 300 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "desktop": {
+          "type": "object",
+          "properties": {
+            "minimumVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$", "maxLength": 64 },
+            "features": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 128 } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "content": {
+      "type": "object",
+      "properties": {
+        "pack": {
+          "description": "Optional Pack v1 payload: an archive entry path or an inline Pack object (validated by the Pack v1 validator, unchanged). Omit for a node-only extension.",
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 200 },
+            { "type": "object" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "contributions": {
+      "type": "object",
+      "properties": {
+        "flowNodes": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "description": "An archive entry path or an inline Flow Node Definition v1.",
+            "oneOf": [
+              { "type": "string", "minLength": 1, "maxLength": 200 },
+              { "$ref": "formlogic:flow-node-definition.v1" }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "requirements": {
+      "type": "object",
+      "properties": {
+        "services": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["slot"],
+            "properties": {
+              "slot": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9]{0,63}$" },
+              "required": { "type": "boolean", "default": true },
+              "requiredActions": {
+                "type": "array",
+                "maxItems": 32,
+                "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" }
+              },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "artifactKinds": { "type": "array", "maxItems": 8, "items": { "enum": ["image", "audio", "video", "file"] } },
+                  "availability": { "type": "array", "maxItems": 3, "uniqueItems": true, "items": { "enum": ["desktop", "paired-browser", "cloud"] } }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceDistributions": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["id", "runtimeKind", "satisfiesSlots", "definition", "artifact", "installPolicy"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$", "maxLength": 128 },
+          "runtimeKind": {
+            "description": "Selects the trusted installer; immutable after review. A desktop-plugin artifact never routes through the managed-service installer or vice versa.",
+            "enum": ["managed-service", "desktop-plugin"]
+          },
+          "satisfiesSlots": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9]{0,63}$" }
+          },
+          "optionalCandidate": { "type": "boolean", "default": false },
+          "definition": {
+            "description": "Archive entry path or inline ServiceDefinition v3 (validated by the service-definition.v3 contract).",
+            "oneOf": [
+              { "type": "string", "minLength": 1, "maxLength": 200 },
+              { "type": "object" }
+            ]
+          },
+          "artifact": {
+            "type": "object",
+            "required": ["artifactId", "version", "sha256"],
+            "properties": {
+              "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$", "maxLength": 64 },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            },
+            "additionalProperties": false
+          },
+          "installPolicy": { "const": "prompt" },
+          "autoStart": { "enum": ["auto", "manual"] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
