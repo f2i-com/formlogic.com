@@ -19,6 +19,7 @@ import { PanelHeader } from './PanelHeader';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import { executeFlow, type FlowRunOutcome } from '../../client-runtime/flows/flowExecutor';
+import { resolveExecutableGraph } from '../../client-runtime/flows/compiledGraph';
 import { buildWorkspaceExecutorDeps } from '../../client-runtime/flows/flowDispatcher';
 import { runFlowOnDesktop, type DesktopFlowRunState } from '../../client-runtime/desktop/desktopFlowRun';
 import { getNodeSpec } from './editor/nodeCatalog';
@@ -134,7 +135,12 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
     resetRunState();
     onRunStart?.();
     try {
-      const result = await executeFlow(flow.flowJson ?? { nodes: [], edges: [] }, {
+      // RUN-301: a graph with contributed nodes executes the server-compiled canonical IR —
+      // Test Runs use the exact same lowering contract as cloud runs (plan §9.3).
+      const resolved = await resolveExecutableGraph(flow.id, flow.flowJson ?? { nodes: [], edges: [] });
+      const result = !resolved.ok
+        ? { status: 'error' as const, error: resolved.error, nodesExecuted: 0 }
+        : await executeFlow(resolved.graph, {
         inputs,
         deps: buildWorkspaceExecutorDeps(),
         // No explicit deadline: the executor's adaptive default applies (30s for plain

@@ -99,17 +99,23 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   }
 
   const provenance = packageName ? `Contributed by "${packageName}".` : 'Contributed by an installed package.';
+  // RUN-301: core-preset contributions are RUNNABLE — every run path executes the
+  // server-compiled canonical IR (cloud at version mint; browser via /compile before
+  // execution), so inserting one produces a node that genuinely runs. service-action
+  // contributions stay display-only until service bindings (SRV-405) exist.
+  const runnable = def.handler?.kind === 'core-preset';
+  const runNote = runnable
+    ? 'Runs in browser and cloud flows — lowered to a built-in node by the server compiler. FormLogic Desktop support arrives in a later update.'
+    : 'Not yet runnable — service bindings for extension nodes arrive in a later update.';
   return {
     type: def.type,
     label: def.display?.label || def.type,
     category: 'installed',
     description: def.display?.description || def.display?.label || def.type,
-    doc: `${def.display?.description || def.display?.label || def.type}\n\n${provenance} Not yet runnable — flow compilation support for installed extensions arrives in a later update.`,
+    doc: `${def.display?.description || def.display?.label || def.type}\n\n${provenance} ${runNote}`,
     icon: (def.display?.iconId && ICON_BY_ID[def.display.iconId]) || Puzzle,
     accent: 'violet',
-    // NOT executable until the compiler lowers contributed nodes to canonical IR (RUN-301):
-    // the palette renders the entry disabled, and no insertion path accepts it.
-    executable: false,
+    executable: runnable,
     inputs,
     outputs,
     properties,

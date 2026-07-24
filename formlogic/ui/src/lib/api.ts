@@ -3738,6 +3738,15 @@ class ApiClient {
     return this.request('/flow-node-definitions');
   }
 
+  /**
+   * RUN-301: server-authoritative flow compilation — diagnostics, canonical IR, and definition
+   * locks for an OWNED flow. The browser executes the returned IR for flows with contributed
+   * nodes (the compiler is the ONLY lowering authority; there is no client-side compile path).
+   */
+  async compileFlow(flowId: string): Promise<ApiResponse<FlowCompileResult>> {
+    return this.request(`/flows/${flowId}/compile`, { method: 'POST' });
+  }
+
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
     return this.request(`/apps/${appId}/export`);
@@ -4677,6 +4686,25 @@ interface PackCapabilitySummary {
   /** ADR-010: present when describing an Application Package v2 aggregate (the Pack v1
    *  fields above are zeros/empty for those). */
   packageV2?: PackageV2Summary;
+}
+
+/** RUN-301: one compile diagnostic (error severity blocks execution). */
+export interface FlowCompileDiagnostic {
+  severity: string;
+  code: string;
+  nodeId: string | null;
+  message: string;
+}
+
+/** RUN-301: POST /api/flows/{id}/compile — the server-authoritative lowering result. */
+export interface FlowCompileResult {
+  ok: boolean;
+  irVersion: number;
+  irDigest: string | null;
+  /** Canonical IR (contributed nodes lowered to core types); null when compilation blocked. */
+  ir: { irVersion: number; compiler: string; nodes: unknown[]; edges: unknown[] } | null;
+  locks: Array<Record<string, unknown>>;
+  diagnostics: FlowCompileDiagnostic[];
 }
 
 /** ADR-010: one installed contributed flow-node definition, with its provenance. */

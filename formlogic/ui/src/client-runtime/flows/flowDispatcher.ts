@@ -45,6 +45,7 @@ import {
   type AiSourceListing,
 } from './desktopService';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
+import { resolveExecutableGraph } from './compiledGraph';
 import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
 import type { FlowExecutorDeps } from './nodes';
 import {
@@ -965,24 +966,32 @@ async function executeRun(opts: {
     error: { code: 'runner_unavailable', message: 'Flow was never executed' },
     nodesExecuted: 0,
   };
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    outcome = await executeFlow(flow.flowJson, {
-      inputs,
-      event,
-      app: opts.app,
-      timeoutMs: opts.timeoutMs ?? binding?.timeoutMs,
-      deps: opts.executorDeps,
-      capabilities: flow.nodeCapabilities,
-      flowSlug: flow.slug,
-      // flow_call ancestry seed (plan §8.8) — absent id (older runtime payloads) leaves
-      // flow_call refusing typed rather than running unguarded.
-      callStack: flow.id ? [flow.id] : undefined,
-      runId: opts.runId,
-    });
-    if (outcome.status === 'done') break;
-    if (attempt < maxAttempts) {
-      const wait = retryDelayMs(binding?.retryPolicy, attempt);
-      if (wait > 0) await d.delay(wait);
+  // RUN-301: contributed nodes execute the SERVER-compiled canonical IR (the compiler is the
+  // only lowering authority). Resolution is deterministic, so it happens ONCE outside the
+  // retry loop; a blocked compile is a typed run error, never an unknown-node crash mid-run.
+  const resolved = await resolveExecutableGraph(flow.id, flow.flowJson);
+  if (!resolved.ok) {
+    outcome = { status: 'error', error: resolved.error, nodesExecuted: 0 };
+  } else {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      outcome = await executeFlow(resolved.graph, {
+        inputs,
+        event,
+        app: opts.app,
+        timeoutMs: opts.timeoutMs ?? binding?.timeoutMs,
+        deps: opts.executorDeps,
+        capabilities: flow.nodeCapabilities,
+        flowSlug: flow.slug,
+        // flow_call ancestry seed (plan §8.8) — absent id (older runtime payloads) leaves
+        // flow_call refusing typed rather than running unguarded.
+        callStack: flow.id ? [flow.id] : undefined,
+        runId: opts.runId,
+      });
+      if (outcome.status === 'done') break;
+      if (attempt < maxAttempts) {
+        const wait = retryDelayMs(binding?.retryPolicy, attempt);
+        if (wait > 0) await d.delay(wait);
+      }
     }
   }
 
@@ -1188,17 +1197,22 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
   if ('error' in reservation) throw new Error(reservation.error);
 
   const run = async (): Promise<unknown> => {
-    const outcome = await executeFlow(flow.flowJson, {
-      inputs: options.input ?? {},
-      app: d.getAppContext(),
-      // Undefined → the executor's adaptive default (longer for AI/service flows).
-      timeoutMs: options.timeoutMs,
-      deps: d.executorDeps,
-      capabilities: flow.nodeCapabilities,
-      flowSlug: flow.slug,
-      callStack: flow.id ? [flow.id] : undefined,
-      runId: reservation.runId,
-    });
+    // RUN-301: contributed nodes execute the server-compiled canonical IR; a blocked
+    // compile completes the reserved run with the typed error below.
+    const resolved = await resolveExecutableGraph(flow.id, flow.flowJson);
+    const outcome: FlowRunOutcome = resolved.ok
+      ? await executeFlow(resolved.graph, {
+        inputs: options.input ?? {},
+        app: d.getAppContext(),
+        // Undefined → the executor's adaptive default (longer for AI/service flows).
+        timeoutMs: options.timeoutMs,
+        deps: d.executorDeps,
+        capabilities: flow.nodeCapabilities,
+        flowSlug: flow.slug,
+        callStack: flow.id ? [flow.id] : undefined,
+        runId: reservation.runId,
+      })
+      : { status: 'error', error: resolved.error, nodesExecuted: 0 };
     try {
       if (outcome.status === 'done') {
         await d.completeRun(slug, reservation.runId, { status: 'done', result: normalizeResult(outcome.result) ?? {} });

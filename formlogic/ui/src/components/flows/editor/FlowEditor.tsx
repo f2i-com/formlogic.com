@@ -29,7 +29,8 @@ import { NodeProperties, type FlowFormOption } from './NodeProperties';
 import { ExecutionLocationNotice, ExecutionLocationSelect } from './ExecutionLocationSelect';
 import { flowExecutionLocation, type FlowExecutionLocation } from './executionLocation';
 import { declaredInputNames } from './nodeSummary';
-import { getNodeSpec, initialNodeData, EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './nodeCatalog';
+import { initialNodeData, EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './nodeCatalog';
+import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
 import { assignEdgeIds, graphToReactFlow, reactFlowToGraph, type FlowRFEdge, type FlowRFNode } from './flowGraph';
 import {
   computeCapabilitiesFromGraph,
@@ -202,8 +203,9 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   }, [setEdges, pushHistory]);
 
   const addNodeAt = useCallback((type: string, position: { x: number; y: number }) => {
-    const spec = getNodeSpec(type);
-    if (!spec || !spec.executable) return; // display-only nodes are never insertable
+    // Registry-resolved (FLOW-203): contributed extension nodes insert like core nodes.
+    const spec = flowNodeRegistry.resolveNodeSpec(type);
+    if (spec.missing || !spec.executable) return; // display-only nodes are never insertable
     pushHistory();
     setNodes((nds) => {
       const id = nextNodeId(type, nds);
@@ -318,8 +320,8 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   // Quick-connect: an edge dragged into empty canvas creates a node at the drop point + wires it.
   const quickConnect = useCallback(
     (type: string, position: { x: number; y: number }, source: { nodeId: string; handleId: string | null }) => {
-      const spec = getNodeSpec(type);
-      if (!spec || !spec.executable) return;
+      const spec = flowNodeRegistry.resolveNodeSpec(type);
+      if (spec.missing || !spec.executable) return;
       const id = nextNodeId(type, nodes);
       pushHistory();
       setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), { id, type, position, data: initialNodeData(spec), selected: true }]);
@@ -756,7 +758,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
         />
       </BottomSheet>
       {selectedNode && editorLayout.properties === 'sheet' && (
-        <BottomSheet title={`${getNodeSpec(String(selectedNode.type))?.label ?? String(selectedNode.type)} settings`} open onClose={() => setSelectedId(null)}>
+        <BottomSheet title={`${flowNodeRegistry.resolveNodeSpec(String(selectedNode.type)).label} settings`} open onClose={() => setSelectedId(null)}>
           <NodeProperties
             nodeId={selectedNode.id}
             type={String(selectedNode.type)}

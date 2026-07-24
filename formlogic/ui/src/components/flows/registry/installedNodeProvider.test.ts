@@ -75,9 +75,23 @@ describe('adaptInstalledDefinition (FLOW-201)', () => {
     expect(byKey.style.options).toEqual([{ value: 'photo', label: 'photo' }, { value: 'sketch', label: 'sketch' }]);
     expect(byKey.metadata.type).toBe('code');
     expect(byKey.metadata.language).toBe('json');
-    // Provenance is surfaced; execution is NOT enabled until the compiler lands.
+    // Provenance is surfaced; a service-action contribution stays display-only until
+    // service bindings exist.
     expect(spec.doc).toContain('Acme Media Tools');
     expect(spec.executable).toBe(false);
+  });
+
+  it('RUN-301: core-preset contributions are executable (runs ride the server-compiled IR)', () => {
+    const preset = adaptInstalledDefinition({
+      schemaVersion: 1,
+      type: 'com.acme.presets.notify',
+      version: '1.0.0',
+      display: { label: 'Notify' },
+      handler: { kind: 'core-preset', coreType: 'template', defaults: { template: 'hi' } },
+      sideEffects: 'none',
+    });
+    expect(preset.executable).toBe(true);
+    expect(preset.doc).toContain('lowered to a built-in node');
   });
 
   it('never serializes React: unknown icon ids fall back to the host default', () => {

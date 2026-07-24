@@ -10,6 +10,7 @@
 // `recursion_detected:` / `root_budget_exceeded:` / `transport_failed:`) — the flow_call
 // node wraps them into its FlowExecError.
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
+import { resolveExecutableGraph } from './compiledGraph';
 import type { FlowExecutorDeps } from './nodes';
 import type { WorkflowGraph } from '../../types/flows';
 
@@ -89,17 +90,23 @@ export async function invokeChildFlowWith(
     throw new Error(`transport_failed: child run reservation failed: ${reservation.error}`);
   }
 
-  const outcome = await executeFlow(flow.flowJson, {
-    inputs: req.inputs,
-    app: backend.appContext(),
-    timeoutMs: req.timeoutMs,
-    deps: backend.executorDeps(),
-    capabilities: flow.nodeCapabilities,
-    flowSlug: flow.slug,
-    signal: req.signal,
-    callStack: [...req.callStack, req.targetFlowId],
-    runId: reservation.runId,
-  });
+  // RUN-301: children execute the server-compiled canonical IR by the same rule as roots;
+  // a blocked compile is the child's typed failure envelope, not an unknown-node crash.
+  // (The child was resolved BY stable id, so the request's target id IS the flow id.)
+  const resolved = await resolveExecutableGraph(req.targetFlowId, flow.flowJson);
+  const outcome: FlowRunOutcome = resolved.ok
+    ? await executeFlow(resolved.graph, {
+      inputs: req.inputs,
+      app: backend.appContext(),
+      timeoutMs: req.timeoutMs,
+      deps: backend.executorDeps(),
+      capabilities: flow.nodeCapabilities,
+      flowSlug: flow.slug,
+      signal: req.signal,
+      callStack: [...req.callStack, req.targetFlowId],
+      runId: reservation.runId,
+    })
+    : { status: 'error', error: resolved.error, nodesExecuted: 0 };
   try {
     await backend.completeRun(reservation.runId, outcome);
   } catch {

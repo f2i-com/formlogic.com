@@ -6,7 +6,8 @@
 // True and False handle somewhere. Used by the starter-template + pack-flow tests so a shipped
 // flow reads correctly AND can actually run. The executor semantics are unchanged.
 import type { WorkflowGraph } from '../../types/flows';
-import { effectiveNodeData, evalShowIf, getNodeSpec } from './editor/nodeCatalog';
+import { effectiveNodeData, evalShowIf } from './editor/nodeCatalog';
+import { flowNodeRegistry } from './registry/FlowNodeRegistry';
 
 /** The named inputs a Trigger (input) node declares in `data.inputs` (each { name, example? }). */
 export function triggerInputNames(graph: WorkflowGraph): string[] {
@@ -139,10 +140,11 @@ export function lintNodeIssues(graph: WorkflowGraph): Record<string, string[]> {
     if (!hasFalse) push(node.id, 'No False branch connected');
   }
 
-  // Missing required (currently-visible) properties.
+  // Missing required (currently-visible) properties. Registry-resolved (FLOW-203) so
+  // installed contributed nodes lint their schema-declared required fields too; a truly
+  // unknown type resolves to the missing placeholder (no properties → no issues).
   for (const node of nodes) {
-    const spec = getNodeSpec(node.type);
-    if (!spec) continue;
+    const spec = flowNodeRegistry.resolveNodeSpec(node.type);
     const data = (node.data ?? {}) as Record<string, unknown>;
     const effective = effectiveNodeData(spec, data);
     for (const p of spec.properties) {
