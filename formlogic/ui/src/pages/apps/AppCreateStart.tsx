@@ -4,11 +4,11 @@
 // AI availability routes the entry: with a usable default AI the name card
 // mentions the copilot; with none, the "Connect your AI" doors appear FIRST as
 // a precursor (never a tollgate — "Continue without AI" is always one click).
-// The advanced flows (build over existing forms / companion app) stay reachable
-// at /apps/new/advanced.
+// Deliberately minimal: attaching existing forms happens in the studio's Data
+// step, companion apps are created from an app's Forms manager.
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Boxes, Layers, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Boxes, RefreshCw, Sparkles } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -174,20 +174,9 @@ export function AppCreateStart() {
               </div>
             </section>
 
-            <button
-              type="button"
-              onClick={() => navigate('/apps/new/advanced')}
-              className="mt-5 inline-flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-gray-300 px-4 py-3 text-left text-sm text-gray-600 transition hover:border-primary-400 hover:text-primary-700 dark:border-white/15 dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
-            >
-              <Layers className="h-4 w-4 shrink-0" />
-              <span className="min-w-0 flex-1">
-                <span className="block font-semibold">Advanced starts</span>
-                <span className="mt-0.5 block text-xs text-gray-400 dark:text-slate-500">
-                  Build over forms you already have, or create a companion app for an existing one.
-                </span>
-              </span>
-              <ArrowRight className="h-4 w-4 shrink-0" />
-            </button>
+            <p className="mt-4 text-center text-xs text-gray-400 dark:text-slate-500">
+              Already have forms? Attach them in the studio's Data step once the app exists.
+            </p>
           </>
         )}
       </main>

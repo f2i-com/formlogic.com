@@ -1,5 +1,5 @@
 export { AppsDashboard } from './AppsDashboard';
-export { AppCreateWizard } from './AppCreateWizard';
+export { AppCreateStart } from './AppCreateStart';
 export { AppSettings } from './AppSettings';
 export { AppFormManager } from './AppFormManager';
 export { AppUserManager } from './AppUserManager';
