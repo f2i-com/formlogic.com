@@ -659,6 +659,30 @@ foreach ([
     }
 }
 
+// 20. Package install plans (ADR-010 / PKG-106): owner-bound, expiring, single-use,
+//     digest-bound review units — propose stores the exact reviewed aggregate bytes;
+//     confirm claims the plan and installs those stored bytes after fresh re-resolution.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `package_install_plans` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `state` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'proposed',
+  `trust` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'json',
+  `aggregate_json` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `plan_digest` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `summary_json` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `error_text` text COLLATE utf8mb4_unicode_ci,
+  `installation_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` datetime NOT NULL,
+  `confirmed_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_pip_user` (`user_id`),
+  KEY `idx_pip_expiry` (`expires_at`),
+  CONSTRAINT `package_install_plans_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'package_install_plans table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

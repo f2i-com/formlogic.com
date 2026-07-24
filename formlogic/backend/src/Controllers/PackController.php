@@ -459,7 +459,7 @@ class PackController
             return $this->jsonResponse($response, [
                 'trust' => $trust,
                 'formatVersion' => 2,
-                'capabilities' => $this->describePackageV2($outer),
+                'capabilities' => PackCapabilities::describeV2($outer),
             ]);
         }
 
@@ -476,67 +476,6 @@ class PackController
             // review can show which screens carry verified vendor trust.
             'vendorSigning' => $this->packService->describeSigning($packData),
         ]);
-    }
-
-    /**
-     * Capability summary for a VALID Application Package v2 aggregate: the PackCapabilitySummary
-     * shape (zeros for the Pack v1 fields) plus the `packageV2` section the review UI renders —
-     * package meta, contributed nodes, requirement slots, and counts of the aggregate features
-     * the current install lane refuses (shown, never silently dropped).
-     *
-     * @param array<string,mixed> $aggregate
-     * @return array<string,mixed>
-     */
-    private function describePackageV2(array $aggregate): array
-    {
-        $nodes = [];
-        foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {
-            if (!is_array($node)) {
-                // An archive entry path — inline detail is unavailable until the archive lane lands.
-                $nodes[] = ['type' => (string) $node, 'inline' => false];
-                continue;
-            }
-            $nodes[] = [
-                'type' => (string) ($node['type'] ?? ''),
-                'label' => (string) ($node['display']['label'] ?? ($node['type'] ?? '')),
-                'version' => (string) ($node['version'] ?? ''),
-                'handlerKind' => (string) ($node['handler']['kind'] ?? ''),
-                'sideEffects' => (string) ($node['sideEffects'] ?? ''),
-                'inline' => true,
-            ];
-        }
-        $slots = [];
-        foreach (($aggregate['requirements']['services'] ?? []) as $svc) {
-            if (is_array($svc) && is_string($svc['slot'] ?? null)) {
-                $slots[] = $svc['slot'];
-            }
-        }
-        $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
-        return [
-            'forms' => 0,
-            'apps' => 0,
-            'hasScreens' => false,
-            'hasCustomLogic' => false,
-            'logicScripts' => 0,
-            'flows' => 0,
-            'flowBindings' => 0,
-            'connectors' => [],
-            'permissions' => [],
-            'connectorGrants' => [],
-            'services' => [],
-            'packageV2' => [
-                'id' => (string) ($meta['id'] ?? ''),
-                'kind' => (string) ($meta['kind'] ?? ''),
-                'version' => (string) ($meta['version'] ?? ''),
-                'publisherId' => (string) ($meta['publisherId'] ?? ''),
-                'displayName' => (string) ($meta['displayName'] ?? ''),
-                'description' => (string) ($meta['description'] ?? ''),
-                'nodes' => $nodes,
-                'requirementSlots' => $slots,
-                'dependencyCount' => count($aggregate['dependencies']['packages'] ?? []),
-                'distributionCount' => count($aggregate['serviceDistributions'] ?? []),
-            ],
-        ];
     }
 
     /**

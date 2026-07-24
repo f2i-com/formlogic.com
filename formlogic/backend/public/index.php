@@ -493,6 +493,21 @@ $container->set(\FormLogic\Services\Packages\PackageV2InstallService::class, fun
     return new \FormLogic\Services\Packages\PackageV2InstallService($c->get(MySQLConnection::class));
 });
 
+// Package install plans (ADR-010 / PKG-106): owner-bound, expiring, single-use, digest-bound
+// review units for the v2 lane — propose stores the exact reviewed bytes; confirm installs them.
+$container->set(\FormLogic\Services\Packages\InstallPlanService::class, function (Container $c) {
+    return new \FormLogic\Services\Packages\InstallPlanService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class)
+    );
+});
+$container->set(\FormLogic\Controllers\PackageInstallPlanController::class, function (Container $c) {
+    return new \FormLogic\Controllers\PackageInstallPlanController(
+        $c->get(\FormLogic\Services\Packages\InstallPlanService::class),
+        $c->get(\FormLogic\Services\SigningService::class)
+    );
+});
+
 $container->set(PackController::class, function (Container $c) {
     return new PackController(
         $c->get(PackService::class),
@@ -1100,6 +1115,8 @@ $app->add(new BodySizeLimitMiddleware(
         // binary archive), so it needs the same cap as the archive import lane.
         ['path' => '#^/api/packs/describe$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/packs/(import|describe)$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        // PKG-106: install-plan propose carries the whole v2 aggregate (same cap as /packs/import).
+        ['path' => '#^/api/packages/install-plans$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/ai/generate-form-from-file$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/app/[^/]+/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => false],
@@ -2018,6 +2035,21 @@ $app->post('/api/application-packages/import', function ($request, $response) us
 // provider source. Read-only; execution stays refused until compilation support lands.
 $app->get('/api/flow-node-definitions', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->listFlowNodeDefinitions($request, $response);
+})->add($authRequired);
+
+// Package install plans (ADR-010 / PKG-106): propose is review-only (no mutations); confirm
+// commits the STORED reviewed bytes (digest-bound, single-use) and so rides the write gate.
+$app->post('/api/packages/install-plans', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\PackageInstallPlanController::class)->propose($request, $response);
+})->add($authRequired);
+$app->get('/api/packages/install-plans/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\PackageInstallPlanController::class)->get($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->post('/api/packages/install-plans/{id}/confirm', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\PackageInstallPlanController::class)->confirm($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($authRequired);
+$app->post('/api/packages/install-plans/{id}/cancel', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\PackageInstallPlanController::class)->cancel($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Bundled sample apps ("Try a sample app")

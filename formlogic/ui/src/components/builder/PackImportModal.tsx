@@ -74,6 +74,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState('');
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
+  // PKG-106: an Application Package v2 review IS a proposed install plan — Import confirms
+  // exactly the server-stored bytes it reviewed (digest-bound, single-use, expiring).
+  const [v2Plan, setV2Plan] = useState<{ planId: string; planDigest: string } | null>(null);
+  // Ref mirror so cleanup paths can cancel the current plan without a stale closure.
+  const v2PlanRef = useRef<{ planId: string; planDigest: string } | null>(null);
   // Guards a stale review response landing after a newer file was chosen + remembers what to Retry.
   const reviewSeqRef = useRef(0);
   const reviewSourceRef = useRef<ReviewSource | null>(null);
@@ -320,6 +325,8 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     const seq = ++reviewSeqRef.current;
     reviewSourceRef.current = source;
     setPackageReview(null);
+    v2PlanRef.current = null;
+    setV2Plan(null);
     setReviewError('');
     setReviewLoading(true);
     let result: { data?: PackDescribeResult; error?: string };
@@ -328,15 +335,32 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
         result = await api.describePackArchive(source.file);
       } else if (source.kind === 'envelope') {
         const env = source.envelope;
-        // ADR-010: a v2 aggregate has no `.pack` to extract — send it as `package` so the
-        // server's v2 describe branch reviews the aggregate itself.
         const inner = (env.package && typeof env.package === 'object') ? env.package as Record<string, unknown> : env;
         const isV2 = inner.formatVersion === 2 && !!inner.package && typeof inner.package === 'object';
+        if (isV2) {
+          // PKG-106: v2 aggregates ride the install-plan lane — propose stores the EXACT
+          // reviewed bytes server-side; Import then confirms THAT plan (digest-bound,
+          // single-use), so what you review is what installs.
+          const proposal = await api.proposePackageInstallPlan(
+            env.signature
+              ? { package: inner, signature: env.signature, alg: env.alg }
+              : { package: inner },
+          );
+          if (seq !== reviewSeqRef.current) return;
+          setReviewLoading(false);
+          if (proposal.data) {
+            v2PlanRef.current = { planId: proposal.data.planId, planDigest: proposal.data.planDigest };
+            setV2Plan(v2PlanRef.current);
+            setPackageReview({ trust: proposal.data.trust, formatVersion: 2, capabilities: proposal.data.capabilities });
+            setApprovedGrants(new Set(reviewableConnectorGrants(proposal.data.capabilities)));
+          } else {
+            setReviewError(typeof proposal.error === 'string' && proposal.error !== '' ? proposal.error : 'The install-plan review failed.');
+          }
+          return;
+        }
         const body = env.signature
           ? { package: (env.package ?? env), signature: env.signature as string, alg: env.alg as string | undefined }
-          : isV2
-            ? { package: inner }
-            : { pack: extractPack(env) ?? undefined };
+          : { pack: extractPack(env) ?? undefined };
         result = await api.describePack(body);
       } else {
         result = await api.describePack({ pack: source.pack });
@@ -376,6 +400,12 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     setReviewError('');
     setReviewLoading(false);
     setApprovedGrants(new Set());
+    // A discarded v2 review discards its proposed plan too (fire-and-forget; plans expire anyway).
+    if (v2PlanRef.current) {
+      void api.cancelPackageInstallPlan(v2PlanRef.current.planId).catch(() => undefined);
+      v2PlanRef.current = null;
+    }
+    setV2Plan(null);
   }, []);
 
   // Route a parsed JSON blob: a v2 aggregate, a signed/application-package envelope, or a flat pack.
@@ -523,16 +553,24 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     const approved = [...approvedGrants];
     setImporting(true);
     try {
-      // Three import shapes, all landing at the same result overlay:
-      //  1. a .formlogic ARCHIVE → server verifies + extracts the ZIP
-      //  2. a signed/application-package ENVELOPE → server verifies the signature
-      //  3. a flat pack → the classic import path (back-compat)
+      // Import shapes, all landing at the same result overlay:
+      //  1. a v2 install PLAN (PKG-106) → confirm the server-stored reviewed bytes
+      //     (digest-bound, single-use — what you reviewed is what installs)
+      //  2. a .formlogic ARCHIVE → server verifies + extracts the ZIP
+      //  3. a signed/application-package ENVELOPE → server verifies the signature
+      //  4. a flat pack → the classic import path (back-compat)
       // Every shape sends the reviewed grant array — the server fails closed without it.
-      const response = pendingArchiveFile
-        ? await api.importApplicationPackage(pendingArchiveFile, approved)
-        : signedEnvelope
-          ? await api.importSignedPackage(signedEnvelope, approved)
-          : await api.importPack(uploadedPack as PackData, { approvedConnectorGrants: approved });
+      const response = v2Plan
+        ? await api.confirmPackageInstallPlan(v2Plan.planId, { planDigest: v2Plan.planDigest, approvedConnectorGrants: approved })
+        : pendingArchiveFile
+          ? await api.importApplicationPackage(pendingArchiveFile, approved)
+          : signedEnvelope
+            ? await api.importSignedPackage(signedEnvelope, approved)
+            : await api.importPack(uploadedPack as PackData, { approvedConnectorGrants: approved });
+      if (v2Plan && response.data) {
+        // The plan is spent — a re-import needs a fresh proposal.
+        v2PlanRef.current = null;
+      }
       if (response.data) {
         // Application-package imports return a warnings array (envelope launch/native/assets
         // metadata with no runtime target yet). The flat pack import returns none — read defensively.
@@ -574,7 +612,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       toast.error('Import failed', err instanceof Error ? err.message : 'Unknown error');
     }
     setImporting(false);
-  }, [uploadedPack, pendingArchiveFile, signedEnvelope, importing, packageReview, approvedGrants, refreshForms, fetchApps, loadInstallations, handleClose]);
+  }, [uploadedPack, pendingArchiveFile, signedEnvelope, v2Plan, importing, packageReview, approvedGrants, refreshForms, fetchApps, loadInstallations, handleClose]);
 
   const handleUninstall = useCallback(async (installationId: string) => {
     setUninstallingId(installationId);

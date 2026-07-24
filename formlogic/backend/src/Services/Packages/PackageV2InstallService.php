@@ -42,30 +42,9 @@ class PackageV2InstallService
      */
     public function install(array $aggregate, string $userId, array $approvedConnectorGrants, string $source = 'json', string $trust = 'community'): array
     {
-        $issues = ApplicationPackageV2Validator::validatePackage($aggregate);
-        if ($issues !== []) {
-            $first = $issues[0];
-            throw new \RuntimeException('Invalid application package: ' . $first['message'] . ' [' . $first['code'] . ' at ' . $first['path'] . ']');
-        }
-
-        // Fail closed on the aggregate features this slice cannot yet install (typed, honest).
-        if (isset($aggregate['content']['pack'])) {
-            throw new \RuntimeException('unsupported_content: v2 packages carrying Pack content are not installable yet — this lane installs node-only extensions (deliver app content as a Pack v1 for now)');
-        }
-        if (!empty($aggregate['serviceDistributions'])) {
-            throw new \RuntimeException('unsupported_distributions: signed service distributions need the desktop distribution pipeline, which is not enabled yet');
-        }
-
-        $contributions = [];
-        foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {
-            if (is_string($node)) {
-                throw new \RuntimeException('unsupported_entry_path: JSON-delivered packages must inline their flow-node definitions (archive entry paths need the archive lane)');
-            }
-            $contributions[] = $node;
-        }
-        if ($contributions === []) {
-            throw new \RuntimeException('nothing_installable: this lane installs node-only extensions — the package declares no inline flow-node contributions');
-        }
+        // Shared preflight (PKG-106: the install-plan propose step runs the SAME checks, so a
+        // reviewable plan and a committable install can never diverge on what is acceptable).
+        $contributions = $this->assertNodeOnlyInstallable($aggregate);
 
         $meta = $aggregate['package'];
         $packageId = (string) $meta['id'];
@@ -81,27 +60,13 @@ class PackageV2InstallService
         // catalog fetch in this slice, so a missing/incompatible REQUIRED dependency is a typed
         // refusal naming exactly what to install first — never a silent skip. Satisfied edges are
         // recorded so the depended-upon package cannot be uninstalled out from under this one.
-        $resolvedDeps = [];
-        $missingOptional = [];
-        $declaredDeps = $aggregate['dependencies']['packages'] ?? [];
-        if (!empty($declaredDeps)) {
-            $stmt = $this->mysql->prepare('SELECT id, package_id, version FROM package_installations WHERE user_id = ?');
-            $stmt->execute([$userId]);
-            $installedMap = [];
-            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $installedMap[(string) $row['package_id']] = [
-                    'version' => (string) $row['version'],
-                    'installationId' => (string) $row['id'],
-                ];
-            }
-            $resolution = DependencyResolver::resolve($declaredDeps, $installedMap, $packageId);
-            if (!$resolution['ok']) {
-                $lines = array_map(static fn (array $p): string => $p['message'], $resolution['problems']);
-                throw new \RuntimeException('unresolved_dependencies: ' . implode('; ', $lines));
-            }
-            $resolvedDeps = $resolution['resolved'];
-            $missingOptional = $resolution['missingOptional'];
+        $resolution = $this->resolveDependencies($aggregate, $userId);
+        if (!$resolution['ok']) {
+            $lines = array_map(static fn (array $p): string => $p['message'], $resolution['problems']);
+            throw new \RuntimeException('unresolved_dependencies: ' . implode('; ', $lines));
         }
+        $resolvedDeps = $resolution['resolved'];
+        $missingOptional = $resolution['missingOptional'];
 
         // A contributed type is owned by exactly one installed package (plan §8.2: a duplicate
         // type is an install error, never silent first-provider-wins).
@@ -196,6 +161,66 @@ class PackageV2InstallService
             'displayName' => (string) $meta['displayName'],
             'nodeTypes' => array_map(static fn (array $r): string => $r['type'], $definitionRows),
         ];
+    }
+
+    /**
+     * PKG-106 shared preflight: validate the aggregate and refuse (typed) everything this
+     * slice cannot install — the SAME checks the install commits under, so a proposed plan
+     * can never accept what confirm would refuse. Returns the inline contributions.
+     *
+     * @param array<string,mixed> $aggregate
+     * @return list<array<string,mixed>>
+     */
+    public function assertNodeOnlyInstallable(array $aggregate): array
+    {
+        $issues = ApplicationPackageV2Validator::validatePackage($aggregate);
+        if ($issues !== []) {
+            $first = $issues[0];
+            throw new \RuntimeException('Invalid application package: ' . $first['message'] . ' [' . $first['code'] . ' at ' . $first['path'] . ']');
+        }
+        if (isset($aggregate['content']['pack'])) {
+            throw new \RuntimeException('unsupported_content: v2 packages carrying Pack content are not installable yet — this lane installs node-only extensions (deliver app content as a Pack v1 for now)');
+        }
+        if (!empty($aggregate['serviceDistributions'])) {
+            throw new \RuntimeException('unsupported_distributions: signed service distributions need the desktop distribution pipeline, which is not enabled yet');
+        }
+        $contributions = [];
+        foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {
+            if (is_string($node)) {
+                throw new \RuntimeException('unsupported_entry_path: JSON-delivered packages must inline their flow-node definitions (archive entry paths need the archive lane)');
+            }
+            $contributions[] = $node;
+        }
+        if ($contributions === []) {
+            throw new \RuntimeException('nothing_installable: this lane installs node-only extensions — the package declares no inline flow-node contributions');
+        }
+        return $contributions;
+    }
+
+    /**
+     * PKG-105/106: the dependency resolution snapshot against the owner's CURRENT installed
+     * graph (report shape from DependencyResolver::resolve). Used by install (refuses on
+     * problems) and by install-plan propose (shows the resolution without mutating).
+     *
+     * @param array<string,mixed> $aggregate
+     * @return array{ok:bool,resolved:list<array<string,mixed>>,missingOptional:list<array<string,mixed>>,problems:list<array<string,mixed>>}
+     */
+    public function resolveDependencies(array $aggregate, string $userId): array
+    {
+        $declaredDeps = $aggregate['dependencies']['packages'] ?? [];
+        if (empty($declaredDeps)) {
+            return ['ok' => true, 'resolved' => [], 'missingOptional' => [], 'problems' => []];
+        }
+        $stmt = $this->mysql->prepare('SELECT id, package_id, version FROM package_installations WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        $installedMap = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $installedMap[(string) $row['package_id']] = [
+                'version' => (string) $row['version'],
+                'installationId' => (string) $row['id'],
+            ];
+        }
+        return DependencyResolver::resolve($declaredDeps, $installedMap, (string) ($aggregate['package']['id'] ?? ''));
     }
 
     /**

@@ -435,6 +435,123 @@ class PackageV2InstallTest extends TestCase
         self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([(string) $flow['id']]);
     }
 
+    // ── PKG-106: install plans — owner-bound, expiring, single-use, digest-bound ────────────
+
+    private function planService(): \FormLogic\Services\Packages\InstallPlanService
+    {
+        return new \FormLogic\Services\Packages\InstallPlanService(self::$mysql, self::$pkgV2);
+    }
+
+    public function testInstallPlanProposeConfirmRoundTrip(): void
+    {
+        $plans = $this->planService();
+        $aggregate = $this->nodeOnlyAggregate();
+
+        // Propose: no mutations — nothing installs yet.
+        $plan = $plans->propose($aggregate, $this->userId, 'community', 'json', \FormLogic\Helpers\PackCapabilities::describeV2($aggregate));
+        $this->assertSame(64, strlen($plan['planDigest']));
+        $this->assertSame('com.acme.media-tools', $plan['capabilities']['packageV2']['id']);
+        $this->assertTrue($plan['resolution']['ok']);
+        $count = self::$pdo->prepare('SELECT COUNT(*) FROM package_installations WHERE user_id = ?');
+        $count->execute([$this->userId]);
+        $this->assertSame(0, (int) $count->fetchColumn(), 'propose never mutates installed state');
+
+        // Confirm with the reviewed digest: installs the STORED bytes, marks the plan used.
+        $result = $plans->confirm($plan['planId'], $this->userId, $plan['planDigest'], []);
+        $this->assertSame('com.acme.media-tools', $result['packageId']);
+        $stored = $plans->get($plan['planId'], $this->userId);
+        $this->assertSame('confirmed', $stored['state']);
+        $this->assertSame($result['installationId'], $stored['installationId']);
+
+        // Single-use: a second confirm refuses typed.
+        try {
+            $plans->confirm($plan['planId'], $this->userId, $plan['planDigest'], []);
+            $this->fail('a used plan must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('plan_not_confirmable', $e->getMessage());
+        }
+    }
+
+    public function testInstallPlanRefusesWrongDigestCancelAndStaleWorld(): void
+    {
+        $plans = $this->planService();
+        $aggregate = $this->nodeOnlyAggregate();
+        $plan = $plans->propose($aggregate, $this->userId, 'community', 'json', \FormLogic\Helpers\PackCapabilities::describeV2($aggregate));
+
+        // A wrong digest is proof the caller did NOT review this plan.
+        try {
+            $plans->confirm($plan['planId'], $this->userId, str_repeat('0', 64), []);
+            $this->fail('a digest mismatch must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('plan_digest_mismatch', $e->getMessage());
+        }
+
+        // Cancel discards it; a cancelled plan cannot confirm.
+        $this->assertTrue($plans->cancel($plan['planId'], $this->userId));
+        try {
+            $plans->confirm($plan['planId'], $this->userId, $plan['planDigest'], []);
+            $this->fail('a cancelled plan must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('plan_not_confirmable', $e->getMessage());
+        }
+
+        // §7.3.10: the world is re-checked at confirm. Propose, then install the same package
+        // directly — the stale plan fails cleanly and is terminally 'failed'.
+        $plan2 = $plans->propose($aggregate, $this->userId, 'community', 'json', \FormLogic\Helpers\PackCapabilities::describeV2($aggregate));
+        self::$pkgV2->install($aggregate, $this->userId, []);
+        try {
+            $plans->confirm($plan2['planId'], $this->userId, $plan2['planDigest'], []);
+            $this->fail('a stale plan must fail at fresh resolution');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('already installed', $e->getMessage());
+        }
+        $this->assertSame('failed', $plans->get($plan2['planId'], $this->userId)['state']);
+
+        // Foreign/missing plan ids are identical refusals (no plan-id oracle).
+        $this->assertNull($plans->get('nope', $this->userId));
+        $this->assertFalse($plans->cancel('nope', $this->userId));
+    }
+
+    public function testInstallPlanHttpLaneRequiresGrantsAndDigest(): void
+    {
+        $controller = new \FormLogic\Controllers\PackageInstallPlanController($this->planService(), self::$signing);
+
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $req->method('getParsedBody')->willReturn(['package' => $this->nodeOnlyAggregate()]);
+        $out = $controller->propose($req, new SlimResponse());
+        $body = json_decode((string) $out->getBody(), true);
+        $this->assertSame(201, $out->getStatusCode(), json_encode($body));
+        $this->assertSame('community', $body['trust']);
+        $this->assertNotEmpty($body['planDigest']);
+
+        // Confirm without the SAFE-001 grant array fails closed.
+        $req2 = $this->createMock(ServerRequestInterface::class);
+        $req2->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $req2->method('getParsedBody')->willReturn(['planDigest' => $body['planDigest']]);
+        $out2 = $controller->confirm($req2, new SlimResponse(), ['id' => $body['planId']]);
+        $this->assertSame(400, $out2->getStatusCode());
+        $this->assertSame('grant_review_required', json_decode((string) $out2->getBody(), true)['code']);
+
+        // Confirm without the digest fails closed too.
+        $req3 = $this->createMock(ServerRequestInterface::class);
+        $req3->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $req3->method('getParsedBody')->willReturn(['approvedConnectorGrants' => []]);
+        $out3 = $controller->confirm($req3, new SlimResponse(), ['id' => $body['planId']]);
+        $this->assertSame(400, $out3->getStatusCode());
+        $this->assertSame('plan_digest_required', json_decode((string) $out3->getBody(), true)['code']);
+
+        // A complete confirm installs and returns the import-lane result shape.
+        $req4 = $this->createMock(ServerRequestInterface::class);
+        $req4->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $req4->method('getParsedBody')->willReturn(['planDigest' => $body['planDigest'], 'approvedConnectorGrants' => []]);
+        $out4 = $controller->confirm($req4, new SlimResponse(), ['id' => $body['planId']]);
+        $confirmed = json_decode((string) $out4->getBody(), true);
+        $this->assertSame(201, $out4->getStatusCode(), json_encode($confirmed));
+        $this->assertSame(['com.acme.mediatools.generate-image'], $confirmed['nodeTypes']);
+        $this->assertSame([], $confirmed['forms']);
+    }
+
     public function testFlatImportLaneRedirectsV2Aggregates(): void
     {
         $req = $this->createMock(ServerRequestInterface::class);

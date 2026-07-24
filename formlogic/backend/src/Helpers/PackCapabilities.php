@@ -172,14 +172,81 @@ class PackCapabilities
 
         $grantList = array_keys($connectorGrants);
         sort($grantList, SORT_STRING);
+        return self::composeSummary(count($forms), count($apps), $hasScreens, $logicScripts, count($flows), count($flowBindings), $connectors, $permissions, $grantList, $services);
+    }
+
+    /**
+     * Capability summary for a VALID Application Package v2 aggregate (ADR-010): the Pack v1
+     * summary shape (zeros) plus the `packageV2` section review UIs render — package meta,
+     * contributed nodes, requirement slots, and counts of aggregate features the current
+     * install lane refuses (shown, never silently dropped). Defensive: never throws on a
+     * malformed aggregate (the validator is the gate; this is presentation).
+     *
+     * @param array<string,mixed> $aggregate
+     * @return array<string,mixed>
+     */
+    public static function describeV2(array $aggregate): array
+    {
+        $nodes = [];
+        $flowNodes = $aggregate['contributions']['flowNodes'] ?? [];
+        foreach ((is_array($flowNodes) ? $flowNodes : []) as $node) {
+            if (!is_array($node)) {
+                // An archive entry path — inline detail is unavailable until the archive lane lands.
+                $nodes[] = ['type' => (string) $node, 'inline' => false];
+                continue;
+            }
+            $nodes[] = [
+                'type' => (string) ($node['type'] ?? ''),
+                'label' => (string) ($node['display']['label'] ?? ($node['type'] ?? '')),
+                'version' => (string) ($node['version'] ?? ''),
+                'handlerKind' => (string) ($node['handler']['kind'] ?? ''),
+                'sideEffects' => (string) ($node['sideEffects'] ?? ''),
+                'inline' => true,
+            ];
+        }
+        $slots = [];
+        $svcReqs = $aggregate['requirements']['services'] ?? [];
+        foreach ((is_array($svcReqs) ? $svcReqs : []) as $svc) {
+            if (is_array($svc) && is_string($svc['slot'] ?? null)) {
+                $slots[] = $svc['slot'];
+            }
+        }
+        $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
+        $deps = $aggregate['dependencies']['packages'] ?? [];
+        $dists = $aggregate['serviceDistributions'] ?? [];
+        $summary = self::composeSummary(0, 0, false, 0, 0, 0, [], [], [], []);
+        $summary['packageV2'] = [
+            'id' => (string) ($meta['id'] ?? ''),
+            'kind' => (string) ($meta['kind'] ?? ''),
+            'version' => (string) ($meta['version'] ?? ''),
+            'publisherId' => (string) ($meta['publisherId'] ?? ''),
+            'displayName' => (string) ($meta['displayName'] ?? ''),
+            'description' => (string) ($meta['description'] ?? ''),
+            'nodes' => $nodes,
+            'requirementSlots' => $slots,
+            'dependencyCount' => is_array($deps) ? count($deps) : 0,
+            'distributionCount' => is_array($dists) ? count($dists) : 0,
+        ];
+        return $summary;
+    }
+
+    /**
+     * @param array<string,bool> $connectors
+     * @param array<string,bool> $permissions
+     * @param list<string> $grantList
+     * @param list<array<string,mixed>> $services
+     * @return array<string,mixed>
+     */
+    private static function composeSummary(int $forms, int $apps, bool $hasScreens, int $logicScripts, int $flows, int $flowBindings, array $connectors, array $permissions, array $grantList, array $services): array
+    {
         return [
-            'forms' => count($forms),
-            'apps' => count($apps),
+            'forms' => $forms,
+            'apps' => $apps,
             'hasScreens' => $hasScreens,
             'hasCustomLogic' => $logicScripts > 0,
             'logicScripts' => $logicScripts,
-            'flows' => count($flows),
-            'flowBindings' => count($flowBindings),
+            'flows' => $flows,
+            'flowBindings' => $flowBindings,
             'connectors' => array_values(array_keys($connectors)),
             'permissions' => array_values(array_keys($permissions)),
             // APP-502: the connector grants the install review may approve/deny.

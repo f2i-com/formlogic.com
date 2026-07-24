@@ -3747,6 +3747,25 @@ class ApiClient {
     return this.request(`/flows/${flowId}/compile`, { method: 'POST' });
   }
 
+  /**
+   * PKG-106: propose an install plan for an Application Package v2 aggregate — the server
+   * stores the EXACT reviewed bytes and returns the review (trust, capabilities, dependency
+   * resolution) plus a digest the confirm must echo. Review-only: nothing installs.
+   */
+  async proposePackageInstallPlan(envelope: Record<string, unknown>): Promise<ApiResponse<PackageInstallPlan>> {
+    return this.request('/packages/install-plans', { method: 'POST', body: JSON.stringify(envelope) });
+  }
+
+  /** PKG-106: confirm (commit) a proposed plan — digest-bound, single-use, grants required. */
+  async confirmPackageInstallPlan(planId: string, opts: { planDigest: string; approvedConnectorGrants: string[] }): Promise<ApiResponse<ApplicationPackageImportResult>> {
+    return this.request(`/packages/install-plans/${planId}/confirm`, { method: 'POST', body: JSON.stringify(opts) });
+  }
+
+  /** PKG-106: discard a proposed plan (fire-and-forget from review UIs). */
+  async cancelPackageInstallPlan(planId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/packages/install-plans/${planId}/cancel`, { method: 'POST' });
+  }
+
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
     return this.request(`/apps/${appId}/export`);
@@ -4705,6 +4724,22 @@ export interface FlowCompileResult {
   ir: { irVersion: number; compiler: string; nodes: unknown[]; edges: unknown[] } | null;
   locks: Array<Record<string, unknown>>;
   diagnostics: FlowCompileDiagnostic[];
+}
+
+/** PKG-106: a proposed package install plan — the owner-bound, expiring, digest-bound review. */
+export interface PackageInstallPlan {
+  planId: string;
+  planDigest: string;
+  expiresInSeconds: number;
+  trust: string;
+  formatVersion?: number;
+  capabilities: PackCapabilitySummary;
+  resolution: {
+    ok: boolean;
+    resolved: Array<Record<string, unknown>>;
+    missingOptional: Array<Record<string, unknown>>;
+    problems: Array<{ code: string; id: string; message: string }>;
+  };
 }
 
 /** ADR-010: one installed contributed flow-node definition, with its provenance. */

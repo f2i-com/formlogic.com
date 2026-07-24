@@ -550,6 +550,31 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Package install plans (ADR-010 / PKG-106): the owner-bound, EXPIRING, SINGLE-USE
+        // review unit — propose stores the exact reviewed aggregate bytes + a digest; confirm
+        // claims the plan (guarded state flip), re-validates + re-resolves against CURRENT
+        // installed state, and installs the STORED bytes (what you reviewed is what installs).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS package_install_plans (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                state VARCHAR(16) NOT NULL DEFAULT 'proposed',
+                trust VARCHAR(20) NOT NULL,
+                source VARCHAR(20) NOT NULL DEFAULT 'json',
+                aggregate_json MEDIUMTEXT NOT NULL,
+                plan_digest CHAR(64) NOT NULL,
+                summary_json MEDIUMTEXT NOT NULL,
+                error_text TEXT NULL,
+                installation_id VARCHAR(36) NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                confirmed_at DATETIME NULL,
+                INDEX idx_pip_user (user_id),
+                INDEX idx_pip_expiry (expires_at),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pack catalog — marketplace registry
         // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
         // an 'application_package' with server-derived trust; the other item types are reserved (no runtime
