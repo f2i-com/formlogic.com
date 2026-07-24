@@ -238,11 +238,19 @@ export function DataStep({
         encryptionSchema = signed.encryptionSchema;
       }
       const res = await trackStudioSave(
-        `Field "${label}" added`,
-        api.updateForm(selected.form.id, {
-          fields: nextFields,
-          ...(encryptionSchema ? { encryptionSchema } : {}),
-        }),
+        `${formNameById[selected.form.id]} fields`,
+        async () => {
+          const result = await api.updateForm(selected.form.id, {
+            fields: nextFields,
+            ...(encryptionSchema ? { encryptionSchema } : {}),
+          });
+          if (!result.error) {
+            setNewFieldLabel('');
+            setAddingField(false);
+            await onReloadForms();
+          }
+          return result;
+        },
         (r) => !r.error
       );
       if (res.error) {
@@ -250,9 +258,6 @@ export function DataStep({
         return;
       }
       toast.success('Field added', `"${label}" was added to ${formNameById[selected.form.id]}.`);
-      setNewFieldLabel('');
-      setAddingField(false);
-      await onReloadForms();
     } catch (e) {
       toast.error('Could not add the field', e instanceof Error ? e.message : undefined);
     } finally {

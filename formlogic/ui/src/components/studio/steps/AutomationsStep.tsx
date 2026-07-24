@@ -70,18 +70,25 @@ export function AutomationsStep({
     return appForms.find((af) => af.formId === formId)?.displayName || formsById[formId]?.title || null;
   };
 
-  const toggleFlow = async (flow: FlowDefinition, enabled: boolean) => {
+  const toggleFlow = async (flow: FlowDefinition, enabled: boolean, opts: { silent?: boolean } = {}) => {
     const res = await trackStudioSave(
-      enabled ? `${flow.name} enabled` : `${flow.name} paused`,
-      api.updateFlow(app.id, flow.id, { enabled }),
+      `${flow.name} automation`,
+      async () => {
+        const result = await api.updateFlow(app.id, flow.id, { enabled });
+        if (!result.error) await onReloadFlows();
+        return result;
+      },
       (r) => !r.error
     );
     if (res.error) {
       toast.error('Could not update the automation', typeof res.error === 'string' ? res.error : undefined);
       return;
     }
-    toast.success(enabled ? 'Automation enabled' : 'Automation paused');
-    await onReloadFlows();
+    if (!opts.silent) {
+      toast.undo(enabled ? 'Automation enabled' : 'Automation paused', () => {
+        void toggleFlow(flow, !enabled, { silent: true });
+      });
+    }
   };
 
   const testFlow = async (flow: FlowDefinition) => {

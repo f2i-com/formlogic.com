@@ -33,6 +33,13 @@ import type { Form } from '../../../types/form';
 
 type AccessTab = 'roles' | 'people' | 'signup';
 type RolePermission = { formId: string | null; permission: PermissionAction };
+type RolePermissionsState = {
+  roleId: string;
+  permissions: RolePermission[];
+  /** Last complete server snapshot — permission undo restores this whole set. */
+  savedPermissions: RolePermission[];
+  dirty: boolean;
+};
 
 // Stable fallbacks for store selectors: `s.users[id] ?? []` would mint a NEW
 // array every snapshot while the slice is unset, which useSyncExternalStore
@@ -121,7 +128,7 @@ function RolesView({
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   // Loaded permissions are keyed by role so switching roles derives a fresh
   // "loading" state instead of resetting it inside the effect.
-  const [permsState, setPermsState] = useState<{ roleId: string; permissions: RolePermission[]; dirty: boolean } | null>(null);
+  const [permsState, setPermsState] = useState<RolePermissionsState | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showNewRole, setShowNewRole] = useState(false);
@@ -145,9 +152,12 @@ function RolesView({
     let cancelled = false;
     api.getAppRolePermissions(app.id, roleId).then((res) => {
       if (cancelled) return;
+      const loaded = ((res.data?.permissions ?? []) as RolePermission[])
+        .map((p) => ({ formId: p.formId, permission: p.permission }));
       setPermsState({
         roleId,
-        permissions: ((res.data?.permissions ?? []) as RolePermission[]).map((p) => ({ formId: p.formId, permission: p.permission })),
+        permissions: loaded,
+        savedPermissions: loaded.map((permission) => ({ ...permission })),
         dirty: false,
       });
     });
@@ -161,10 +171,24 @@ function RolesView({
 
   const savePermissions = async () => {
     if (!selected || saving || !permsLoaded) return;
+    const previous = permsState.savedPermissions.map((permission) => ({ ...permission }));
+    const next = permissions.map((permission) => ({ ...permission }));
+    const applySnapshot = async (snapshot: RolePermission[]) => {
+      const result = await api.setAppRolePermissions(app.id, selected.id, snapshot);
+      if (!result.error) {
+        const saved = snapshot.map((permission) => ({ ...permission }));
+        setPermsState((state) => (
+          state && state.roleId === selected.id
+            ? { ...state, permissions: saved, savedPermissions: saved.map((permission) => ({ ...permission })), dirty: false }
+            : state
+        ));
+      }
+      return result;
+    };
     setSaving(true);
     const res = await trackStudioSave(
-      `${selected.name} permissions saved`,
-      api.setAppRolePermissions(app.id, selected.id, permissions),
+      `${selected.name} permissions`,
+      () => applySnapshot(next),
       (r) => !r.error
     );
     setSaving(false);
@@ -172,8 +196,13 @@ function RolesView({
       toast.error('Could not save permissions', typeof res.error === 'string' ? res.error : undefined);
       return;
     }
-    setPermsState((s) => (s && s.roleId === selected.id ? { ...s, dirty: false } : s));
-    toast.success('Permissions saved', `${selected.name} was updated.`);
+    toast.undo(`${selected.name} permissions saved`, () => {
+      void trackStudioSave(
+        `${selected.name} permissions`,
+        () => applySnapshot(previous),
+        (result) => !result.error
+      );
+    });
   };
 
   const addRole = async () => {
@@ -315,7 +344,13 @@ function RolesView({
                           forms={matrixForms}
                           onChange={(next) => {
                             const roleId = selected?.id;
-                            if (roleId) setPermsState({ roleId, permissions: next, dirty: true });
+                            if (roleId) {
+                              setPermsState((state) => (
+                                state && state.roleId === roleId
+                                  ? { ...state, permissions: next, dirty: true }
+                                  : state
+                              ));
+                            }
                           }}
                         />
                         <div className="mt-3 flex justify-end">
@@ -549,10 +584,32 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
   const appUrl = `${window.location.origin}/app/${app.slug}`;
 
   const saveSettings = async (patch: Partial<App['settings']>) => {
+    const previousSettings = { ...app.settings };
+    const nextSettings = { ...app.settings, ...patch };
     setSaving(true);
-    const ok = await trackStudioSave('Sign-up settings saved', updateApp(app.id, { settings: { ...app.settings, ...patch } }), (saved) => !!saved);
-    if (ok) await onReloadApp();
+    const ok = await trackStudioSave(
+      'Sign-up settings',
+      async () => {
+        const saved = await updateApp(app.id, { settings: nextSettings });
+        if (saved) await onReloadApp();
+        return saved;
+      },
+      (saved) => !!saved
+    );
     setSaving(false);
+    if (ok) {
+      toast.undo('Sign-up settings saved', () => {
+        void trackStudioSave(
+          'Sign-up settings',
+          async () => {
+            const restored = await updateApp(app.id, { settings: previousSettings });
+            if (restored) await onReloadApp();
+            return restored;
+          },
+          (saved) => !!saved
+        );
+      });
+    }
   };
 
   const copyLink = async () => {

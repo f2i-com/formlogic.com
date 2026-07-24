@@ -111,6 +111,53 @@ export function PublishStep({
   }, [app.settings, app.customScreen, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, browserOnlyDemo]);
   const warnings = checks.filter((c) => c.state === 'warning');
   const blocking = warnings.filter((c) => c.severity === 'blocking');
+  const releaseSummary = useMemo(() => {
+    if (changes.everPublished) {
+      return changes.changed.map((item) => ({
+        id: `${item.kind}-${item.id}`,
+        kind: item.kind,
+        text:
+          item.kind === 'app'
+            ? 'Updated app settings, navigation or screens'
+            : item.kind === 'form'
+              ? `Updated the ${item.label} form`
+              : `Updated the ${item.label} automation`,
+      }));
+    }
+
+    const dataTypeNames = appForms
+      .map((attachment) => attachment.displayName || formsById[attachment.formId]?.title || 'Untitled')
+      .slice(0, 4);
+    const activeFlows = flows.filter((flow) => flow.enabled);
+    return [
+      {
+        id: 'first-app',
+        kind: 'app' as const,
+        text: `Created ${app.name}'s app shell, home and navigation`,
+      },
+      ...(dataTypeNames.length > 0
+        ? [{
+            id: 'first-forms',
+            kind: 'form' as const,
+            text: `Included ${appForms.length} data ${appForms.length === 1 ? 'type' : 'types'}${dataTypeNames.length <= 3 ? `: ${dataTypeNames.join(', ')}` : ''}`,
+          }]
+        : []),
+      ...(flows.length > 0
+        ? [{
+            id: 'first-flows',
+            kind: 'flow' as const,
+            text: `Included ${flows.length} ${flows.length === 1 ? 'automation' : 'automations'} · ${activeFlows.length} active`,
+          }]
+        : []),
+      ...(roles.length > 0
+        ? [{
+            id: 'first-roles',
+            kind: 'app' as const,
+            text: `Configured ${roles.length} ${roles.length === 1 ? 'role' : 'roles'} and their access`,
+          }]
+        : []),
+    ];
+  }, [app.name, appForms, changes, flows, formsById, roles.length]);
 
   const doPublish = async (label: string) => {
     if (publishing) return;
@@ -278,7 +325,11 @@ export function PublishStep({
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
             <div className="border-b border-gray-200/80 dark:border-white/[0.06] p-4">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-                {legacyPublished ? 'Current release' : changes.everPublished ? 'Changed since the last publish' : 'First release'}
+                {legacyPublished
+                  ? 'Current release'
+                  : changes.everPublished && changes.count === 0
+                    ? `Live version ${currentVersion}`
+                    : `Changes in version ${nextVersion}`}
               </h3>
               <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
                 {legacyPublished
@@ -292,19 +343,14 @@ export function PublishStep({
                   : 'Everything in the draft goes live with the first publish.'}
               </p>
             </div>
-            {changes.everPublished && changes.count > 0 && (
+            {releaseSummary.length > 0 && (
               <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
-                {changes.changed.map((item) => (
-                  <div key={`${item.kind}-${item.id}`} className="flex items-center gap-3 px-4 py-3">
+                {releaseSummary.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400">
                       {item.kind === 'form' ? <FileText className="h-4 w-4" /> : item.kind === 'flow' ? <Workflow className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold text-gray-800 dark:text-slate-200">{item.label}</span>
-                      <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500 capitalize">
-                        {item.kind === 'app' ? 'App configuration' : item.kind} · updated {formatRelativeTime(item.updatedAt)}
-                      </span>
-                    </span>
+                    <span className="min-w-0 flex-1 text-xs font-semibold text-gray-800 dark:text-slate-200">{item.text}</span>
                   </div>
                 ))}
               </div>
@@ -465,7 +511,7 @@ export function PublishStep({
         open={dialogOpen}
         appName={app.name}
         nextVersion={nextVersion}
-        changes={changes}
+        releaseSummary={releaseSummary}
         publishing={publishing}
         browserOnly={browserOnlyDemo}
         onClose={() => setDialogOpen(false)}
@@ -489,7 +535,7 @@ function PublishDialog({
   open,
   appName,
   nextVersion,
-  changes,
+  releaseSummary,
   publishing,
   browserOnly,
   onClose,
@@ -498,13 +544,14 @@ function PublishDialog({
   open: boolean;
   appName: string;
   nextVersion: number;
-  changes: UnpublishedChanges;
+  releaseSummary: Array<{ id: string; kind: 'app' | 'form' | 'flow'; text: string }>;
   publishing: boolean;
   browserOnly: boolean;
   onClose: () => void;
   onConfirm: (label: string) => void;
 }) {
   const [label, setLabel] = useState('');
+  const suggestedLabel = releaseSummary.map((item) => item.text).join('; ').slice(0, 160);
   return (
     <Modal isOpen={open} onClose={onClose} title={`Publish version ${nextVersion}?`} size="sm">
       <div className="p-4 sm:p-5 space-y-4">
@@ -516,10 +563,10 @@ function PublishDialog({
         <div className="rounded-xl bg-gray-50 dark:bg-white/[0.04] p-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Included in this release</p>
           <ul className="mt-2 space-y-1.5 text-xs text-gray-600 dark:text-slate-300">
-            {changes.everPublished && changes.count > 0 ? (
-              changes.changed.slice(0, 5).map((item) => (
-                <li key={`${item.kind}-${item.id}`} className="flex items-center gap-2">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" /> {item.label}
+            {releaseSummary.length > 0 ? (
+              releaseSummary.slice(0, 5).map((item) => (
+                <li key={item.id} className="flex items-center gap-2">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" /> {item.text}
                 </li>
               ))
             ) : (
@@ -527,17 +574,28 @@ function PublishDialog({
                 <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" /> Everything currently saved in the draft
               </li>
             )}
-            {changes.everPublished && changes.count > 5 && (
+            {releaseSummary.length > 5 && (
               <li className="flex items-center gap-2 text-gray-400">
-                <GitBranch className="h-3.5 w-3.5 shrink-0" /> …and {changes.count - 5} more
+                <GitBranch className="h-3.5 w-3.5 shrink-0" /> …and {releaseSummary.length - 5} more
               </li>
             )}
           </ul>
         </div>
         <div>
-          <label htmlFor="publish-label" className="block text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1.5">
-            Release note <span className="font-normal text-gray-400">(optional)</span>
-          </label>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <label htmlFor="publish-label" className="block text-xs font-semibold text-gray-600 dark:text-slate-300">
+              Release note <span className="font-normal text-gray-400">(optional)</span>
+            </label>
+            {suggestedLabel && !label && (
+              <button
+                type="button"
+                onClick={() => setLabel(suggestedLabel)}
+                className="cursor-pointer text-[10px] font-bold text-primary-600 hover:underline dark:text-primary-300"
+              >
+                Use summary
+              </button>
+            )}
+          </div>
           <Input
             id="publish-label"
             value={label}

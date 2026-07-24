@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Loader2, Play, Rocket, Settings, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Play, Rocket, RotateCcw, Search, Settings, Sparkles } from 'lucide-react';
 import { AppTile } from '../apps/AppTile';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -28,12 +28,14 @@ export function StudioTopBar({
   changes,
   aiAvailable = false,
   onOpenPublish,
+  onOpenCommandPalette,
 }: {
   app: App;
   changes: UnpublishedChanges;
   /** A usable default AI exists (audit FL-23 readiness) — shows the Ask AI shortcut. */
   aiAvailable?: boolean;
   onOpenPublish: () => void;
+  onOpenCommandPalette: () => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -56,6 +58,9 @@ export function StudioTopBar({
   const lastSavedAt = useStudioSaveState((s) => s.lastSavedAt);
   const lastLabel = useStudioSaveState((s) => s.lastLabel);
   const saveError = useStudioSaveState((s) => s.lastError);
+  const failedLabel = useStudioSaveState((s) => s.failedLabel);
+  const retry = useStudioSaveState((s) => s.retry);
+  const retryLast = useStudioSaveState((s) => s.retryLast);
   const openChat = () => {
     setChatMinimized(false);
     setChatOpen(true);
@@ -93,7 +98,19 @@ export function StudioTopBar({
             ) : saveError ? (
               <>
                 <AlertTriangle className="h-3 w-3 shrink-0 text-red-500" aria-hidden="true" />
-                <span className="shrink-0 text-red-500 dark:text-red-400" title={saveError}>Couldn't save — try again</span>
+                <span className="max-w-52 truncate text-red-500 dark:text-red-400" title={saveError}>
+                  Couldn't save {failedLabel ?? 'this change'}
+                </span>
+                {retry && (
+                  <button
+                    type="button"
+                    onClick={() => void retryLast()}
+                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 font-bold text-red-600 hover:underline dark:text-red-300"
+                  >
+                    <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                    Retry
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -129,6 +146,16 @@ export function StudioTopBar({
             )}
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          aria-label="Search App Studio"
+          title="Search App Studio (Ctrl+K)"
+          className="hidden h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-400 dark:hover:border-primary-500/30 dark:hover:bg-primary-500/10 dark:hover:text-primary-300 sm:flex"
+        >
+          <Search className="h-4 w-4" aria-hidden="true" />
+        </button>
 
         {/* Use app / Edit app switch (the studio is always the "Edit" side) */}
         <div className="hidden md:flex items-center gap-1 rounded-xl bg-gray-100 dark:bg-white/[0.06] p-1" role="group" aria-label="App mode">

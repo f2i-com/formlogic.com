@@ -73,6 +73,7 @@ vi.mock('../../lib/api', () => ({
     getAppInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
     getAppsFormUsage: vi.fn(async () => ({ data: { apps: [] } })),
     getAppRolePermissions: vi.fn(async () => ({ data: { permissions: [] } })),
+    getResponses: vi.fn(async () => ({ data: { responses: [], count: 0 } })),
     isAdminActing: () => false,
     isDemoMode: () => false,
   },
@@ -160,6 +161,39 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Version history');
     expect(container.textContent).toContain('First release');
     expect(container.textContent).toContain('Publish version 3');
+    expect(container.textContent).toContain('Changes in version 3');
+    expect(container.textContent).toContain('Updated the Repair request form');
+  });
+
+  it('makes draft preview state explicit and compares it with the live release', async () => {
+    await renderStudio('/apps/a1/studio/screens');
+
+    expect(container.textContent).toContain('Previewing unpublished changes');
+    expect(container.textContent).toContain('The public app still serves v2');
+    expect(container.textContent).toContain('Open draft');
+    expect(container.querySelector('button[aria-label="Tablet preview"]')).toBeTruthy();
+    expect(container.querySelector('select[aria-label="Preview data"]')).toBeTruthy();
+
+    const compare = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Compare with live')!;
+    expect(compare).toBeTruthy();
+    await act(async () => { compare.click(); });
+    expect(document.body.textContent).toContain('Compare draft with live');
+    expect(document.body.textContent).toContain('Live v2');
+    expect(document.body.textContent).toContain('Repair request');
+  });
+
+  it('opens the command palette with Ctrl/Cmd+K and exposes app resources', async () => {
+    await renderStudio('/apps/a1/studio/data');
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain('Search App Studio');
+    expect(document.body.textContent).toContain('Preview app');
+    expect(document.body.textContent).toContain('Repair request');
+    expect(document.body.textContent).toContain('Notify dispatch');
+    expect(document.body.querySelector('input[aria-label="Search App Studio commands"]')).toBeTruthy();
   });
 
   it('describes legacy published apps as live without inventing release history', async () => {

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Compass, Sparkles } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { StudioTopBar } from '../../components/studio/StudioTopBar';
 import { StudioRail } from '../../components/studio/StudioRail';
+import { StudioCommandPalette } from '../../components/studio/StudioCommandPalette';
 import { useStudioData } from '../../components/studio/useStudioData';
 import {
   STUDIO_STEPS,
@@ -25,6 +26,7 @@ import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { cn } from '../../lib/utils';
 import { isDemoLocalId } from '../../lib/demoLocal';
+import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyboardShortcuts';
 
 /** Per-step chat seeds (recommendation #8) — shown only when a default AI can run. */
 const STEP_PROMPTS: Record<StudioStepId, string[]> = {
@@ -53,6 +55,7 @@ export function AppStudio() {
   const setChatSeed = useUIStore((s) => s.setChatSeed);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   const askAi = (prompt: string) => {
     setChatSeed(prompt);
@@ -122,9 +125,66 @@ export function AppStudio() {
     );
   }, [data.app, data.appForms, data.formsById, data.flows]);
 
-  const setStep = (step: StudioStepId) => {
+  const setStep = useCallback((step: StudioStepId) => {
     if (appId) navigate(`/apps/${appId}/studio/${step}`);
-  };
+  }, [appId, navigate]);
+
+  const activeIndex = STUDIO_STEPS.findIndex((s) => s.id === activeStep);
+  const previous = STUDIO_STEPS[activeIndex - 1]?.id;
+  const next = STUDIO_STEPS[activeIndex + 1]?.id;
+  const openPreview = useCallback(() => {
+    if (!data.app) return;
+    navigate(`/app/${data.app.slug}`, {
+      state: returnToState(`/apps/${appId}/studio/${activeStep}`, 'App Studio'),
+    });
+  }, [activeStep, appId, data.app, navigate]);
+  const openContextualChat = useCallback(() => {
+    setChatMinimized(false);
+    setChatOpen(true);
+  }, [setChatMinimized, setChatOpen]);
+
+  const shortcuts = useMemo<KeyboardShortcut[]>(() => [
+    {
+      key: 'k',
+      ctrl: true,
+      description: 'Search App Studio',
+      action: () => setCommandPaletteOpen(true),
+    },
+    {
+      key: 'Enter',
+      ctrl: true,
+      description: 'Continue to the next Studio step',
+      action: () => {
+        if (next) setStep(next);
+        else openPreview();
+      },
+    },
+    {
+      key: 'p',
+      ctrl: true,
+      shift: true,
+      description: 'Open Review & publish',
+      action: () => setStep('publish'),
+    },
+    {
+      key: 'p',
+      ctrl: true,
+      description: 'Preview app',
+      action: openPreview,
+    },
+    {
+      key: '/',
+      description: 'Search App Studio',
+      action: () => setCommandPaletteOpen(true),
+    },
+    ...STUDIO_STEPS.map<KeyboardShortcut>((step, index) => ({
+      key: String(index + 1),
+      alt: true,
+      description: `Open ${step.label}`,
+      action: () => setStep(step.id),
+    })),
+  ], [next, openPreview, setStep]);
+  useKeyboardShortcuts({ shortcuts, enabled: !!data.app });
 
   // ONE recommended next action (recommendation #1) — where the rail says
   // "you are here", this says "this matters next". Null = the app is in good
@@ -171,15 +231,35 @@ export function AppStudio() {
     return <Navigate to={`/app/${data.app.slug}`} replace />;
   }
 
-  const activeIndex = STUDIO_STEPS.findIndex((s) => s.id === activeStep);
   const active = STUDIO_STEPS[activeIndex];
-  const previous = STUDIO_STEPS[activeIndex - 1]?.id;
-  const next = STUDIO_STEPS[activeIndex + 1]?.id;
 
   return (
     <div className="min-h-screen">
-      <StudioTopBar app={data.app} changes={changes} aiAvailable={aiAvailable} onOpenPublish={() => setStep('publish')} />
+      <StudioTopBar
+        app={data.app}
+        changes={changes}
+        aiAvailable={aiAvailable}
+        onOpenPublish={() => setStep('publish')}
+        onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+      />
       <StudioRail activeStep={activeStep} completedSteps={completedSteps} onStepChange={setStep} />
+
+      {commandPaletteOpen && (
+        <StudioCommandPalette
+          app={data.app}
+          appForms={data.appForms}
+          formsById={data.formsById}
+          flows={data.flows}
+          roles={data.roles}
+          activeStep={activeStep}
+          aiAvailable={aiAvailable}
+          onClose={() => setCommandPaletteOpen(false)}
+          onStepChange={setStep}
+          onPreview={openPreview}
+          onPublish={() => setStep('publish')}
+          onAskAi={openContextualChat}
+        />
+      )}
 
       <main className="mx-auto max-w-[1540px] p-4 pb-28 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
         <div className="mb-5 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
@@ -251,8 +331,10 @@ export function AppStudio() {
             appForms={data.appForms}
             formsById={data.formsById}
             roles={data.roles}
+            changes={changes}
             onReloadApp={data.reloadApp}
             onReloadForms={data.reloadForms}
+            onOpenPublish={() => setStep('publish')}
           />
         )}
         {activeStep === 'automations' && (
@@ -325,7 +407,7 @@ export function AppStudio() {
           ) : (
             <Button
               variant="secondary"
-              onClick={() => navigate(`/app/${data.app!.slug}`, { state: returnToState(`/apps/${appId}/studio/${activeStep}`, 'App Studio') })}
+              onClick={openPreview}
               leftIcon={<Check className="h-4 w-4" />}
             >
               Open the app

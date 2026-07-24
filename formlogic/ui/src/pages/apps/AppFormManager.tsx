@@ -263,13 +263,24 @@ export function AppFormManager() {
     if (!appId) return;
     const target = index + dir;
     if (target < 0 || target >= appForms.length) return;
+    const previous = [...appForms];
     const reordered = [...appForms];
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
     setAppForms(reordered);
     // The store resolves (never throws) and returns false on failure, so check
     // the result and reload to the true server order on failure.
     const ok = await reorderAppForms(appId, reordered.map((f) => f.formId));
-    if (!ok) await loadForms();
+    if (!ok) {
+      await loadForms();
+      return;
+    }
+    toast.undo('Navigation order updated', () => {
+      void (async () => {
+        setAppForms(previous);
+        const restored = await reorderAppForms(appId, previous.map((form) => form.formId));
+        if (!restored) await loadForms();
+      })();
+    });
   };
 
   // Companion app: a second app (e.g. an admin console) over these same forms + data.

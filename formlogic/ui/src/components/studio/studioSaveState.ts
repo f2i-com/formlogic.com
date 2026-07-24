@@ -13,8 +13,13 @@ interface StudioSaveState {
   lastLabel: string | null;
   /** Message of the last FAILED write; cleared by the next success. */
   lastError: string | null;
+  /** Human label for the resource/action that failed. */
+  failedLabel: string | null;
+  /** Safe replay for the last failed idempotent write (null for one-shot creates). */
+  retry: (() => Promise<unknown>) | null;
   begin: () => void;
-  end: (ok: boolean, label?: string, error?: string) => void;
+  end: (ok: boolean, label?: string, error?: string, retry?: (() => Promise<unknown>) | null) => void;
+  retryLast: () => Promise<void>;
   reset: () => void;
 }
 
@@ -23,15 +28,45 @@ export const useStudioSaveState = create<StudioSaveState>((set) => ({
   lastSavedAt: null,
   lastLabel: null,
   lastError: null,
+  failedLabel: null,
+  retry: null,
   begin: () => set((s) => ({ pending: s.pending + 1 })),
-  end: (ok, label, error) =>
+  end: (ok, label, error, retry) =>
     set((s) => ({
       pending: Math.max(0, s.pending - 1),
       ...(ok
-        ? { lastSavedAt: Date.now(), lastLabel: label ?? null, lastError: null }
-        : { lastError: error ?? 'The change could not be saved.' }),
+        ? {
+            lastSavedAt: Date.now(),
+            lastLabel: label ?? null,
+            lastError: null,
+            failedLabel: null,
+            retry: null,
+          }
+        : {
+            lastError: error ?? 'The change could not be saved.',
+            failedLabel: label ?? 'this change',
+            retry: retry ?? null,
+          }),
     })),
-  reset: () => set({ pending: 0, lastSavedAt: null, lastLabel: null, lastError: null }),
+  retryLast: async () => {
+    const retry = useStudioSaveState.getState().retry;
+    if (!retry) return;
+    // The replay tracks its own pending/success/failure state. Swallow a thrown
+    // transport error here so Retry never creates an unhandled rejection.
+    try {
+      await retry();
+    } catch {
+      // The tracker has already recorded the fresh error.
+    }
+  },
+  reset: () => set({
+    pending: 0,
+    lastSavedAt: null,
+    lastLabel: null,
+    lastError: null,
+    failedLabel: null,
+    retry: null,
+  }),
 }));
 
 /**
@@ -41,18 +76,22 @@ export const useStudioSaveState = create<StudioSaveState>((set) => ({
  */
 export async function trackStudioSave<T>(
   label: string,
-  promise: Promise<T>,
+  operation: Promise<T> | (() => Promise<T>),
   ok?: (result: T) => boolean
 ): Promise<T> {
   const { begin, end } = useStudioSaveState.getState();
+  const retry = typeof operation === 'function'
+    ? () => trackStudioSave(label, operation, ok)
+    : null;
   begin();
   try {
+    const promise = typeof operation === 'function' ? operation() : operation;
     const result = await promise;
     const succeeded = ok ? ok(result) : true;
-    end(succeeded, label, succeeded ? undefined : 'The change could not be saved.');
+    end(succeeded, label, succeeded ? undefined : 'The change could not be saved.', succeeded ? null : retry);
     return result;
   } catch (error) {
-    end(false, undefined, error instanceof Error ? error.message : 'The change could not be saved.');
+    end(false, label, error instanceof Error ? error.message : 'The change could not be saved.', retry);
     throw error;
   }
 }

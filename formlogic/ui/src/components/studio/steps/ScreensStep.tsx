@@ -6,26 +6,33 @@ import {
   Code2,
   ExternalLink,
   FileText,
+  GitBranch,
+  GitCompareArrows,
   Home,
   LayoutDashboard,
   List,
+  Loader2,
+  LockKeyhole,
   Monitor,
   PencilRuler,
   Plus,
   Settings2,
   Smartphone,
+  Tablet,
   Table2,
   WandSparkles,
 } from 'lucide-react';
 import { Badge } from '../../ui/Badge';
 import { Button } from '../../ui/Button';
+import { Modal } from '../../ui/Modal';
 import { Switch } from '../../ui/Switch';
 import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
-import { cn } from '../../../lib/utils';
+import { cn, formatRelativeTime } from '../../../lib/utils';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
+import type { UnpublishedChanges } from '../studioSteps';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
 
@@ -43,25 +50,35 @@ export function ScreensStep({
   appForms,
   formsById,
   roles,
+  changes,
   onReloadApp,
   onReloadForms,
+  onOpenPublish,
 }: {
   app: App;
   appForms: AppForm[];
   formsById: Record<string, Form>;
   roles: AppRole[];
+  changes: UnpublishedChanges;
   onReloadApp: () => Promise<void>;
   onReloadForms: () => Promise<void>;
+  onOpenPublish: () => void;
 }) {
   const navigate = useNavigate();
   // The builder / screen studios return here when opened from this step.
   const studioReturn = returnToState(`/apps/${app.id}/studio/screens`, 'App Studio');
-  const updateAppForm = useAppStore((s) => s.updateAppForm);
   const updateApp = useAppStore((s) => s.updateApp);
   const [selection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
-  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
+  const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  const [previewData, setPreviewData] = useState<'sample' | 'real'>('sample');
   const [roleId, setRoleId] = useState<string | null>(null);
   const [fetchedPerms, setFetchedPerms] = useState<{ roleId: string; perms: Array<{ formId: string | null; permission: PermissionAction }> } | null>(null);
+  const [recordState, setRecordState] = useState<{
+    formId: string;
+    records: Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>;
+    error: string | null;
+  } | null>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const selectedRole = roles.find((r) => r.id === roleId) ?? roles.find((r) => r.name === 'Owner') ?? roles[0] ?? null;
@@ -130,6 +147,41 @@ export function ScreensStep({
 
   const selectedForm = selection.kind === 'form' ? formsById[selection.formId] ?? null : null;
   const selectedAttachment = selection.kind === 'form' ? appForms.find((af) => af.formId === selection.formId) ?? null : null;
+  const selectedFormId = selection.kind === 'form' ? selection.formId : null;
+  const selectedRoleCanView = selection.kind !== 'form'
+    || ownerLike
+    || (rolePerms !== null && rolePerms.some(
+      (p) => (p.formId === selection.formId || p.formId === null) && VIEW_PERMISSIONS.includes(p.permission)
+    ));
+
+  useEffect(() => {
+    if (previewData !== 'real' || !selectedFormId) return;
+    let cancelled = false;
+    api.getResponses(selectedFormId, { limit: 3 }).then(
+      (res) => {
+        if (cancelled) return;
+        setRecordState({
+          formId: selectedFormId,
+          records: (res.data?.responses ?? []).map((record) => ({
+            id: record.id,
+            answers: record.answers,
+            submittedAt: record.submittedAt,
+          })),
+          error: res.error ? (typeof res.error === 'string' ? res.error : 'Could not load records.') : null,
+        });
+      },
+      () => {
+        if (!cancelled) setRecordState({ formId: selectedFormId, records: [], error: 'Could not load records.' });
+      }
+    );
+    return () => { cancelled = true; };
+  }, [previewData, selectedFormId]);
+
+  const previewRecordsLoading = previewData === 'real'
+    && !!selectedFormId
+    && recordState?.formId !== selectedFormId;
+  const previewRecords = recordState?.formId === selectedFormId ? recordState.records : [];
+  const previewRecordsError = recordState?.formId === selectedFormId ? recordState.error : null;
 
   const screenStatus = (formId?: string): 'Custom' | 'Generated' => {
     if (!formId) return app.customScreen && homeKind !== 'default' ? 'Custom' : 'Generated';
@@ -144,12 +196,20 @@ export function ScreensStep({
     delete settings.hidden;
     if (!visible) settings.menuHidden = true;
     const name = af.displayName || formsById[af.formId]?.title || 'Screen';
-    await trackStudioSave(
-      visible ? `${name} shown in the menu` : `${name} hidden from the menu`,
-      updateAppForm(app.id, af.formId, { isVisible: true, settings })
+    const res = await trackStudioSave(
+      `${name} menu visibility`,
+      async () => {
+        const result = await api.updateAppForm(app.id, af.formId, { isVisible: true, settings });
+        if (!result.error) await onReloadForms();
+        return result;
+      },
+      (result) => !result.error
     );
-    await onReloadForms();
     setBusy(false);
+    if (res.error) {
+      toast.error('Could not update the menu', typeof res.error === 'string' ? res.error : undefined);
+      return;
+    }
     // Hiding a nav item is easy to fat-finger — offer a one-tap way back.
     if (!visible && !opts.silent) {
       toast.undo(`${name} hidden from the menu`, () => { void setMenuVisible(af, true, { silent: true }); });
@@ -160,17 +220,27 @@ export function ScreensStep({
     const previous = (app.settings as { landingPage?: string } | undefined)?.landingPage ?? 'dashboard';
     setBusy(true);
     const ok = await trackStudioSave(
-      'Landing screen updated',
-      updateApp(app.id, { settings: { ...app.settings, landingPage } }),
+      'Landing screen',
+      async () => {
+        const saved = await updateApp(app.id, { settings: { ...app.settings, landingPage } });
+        if (saved) await onReloadApp();
+        return saved;
+      },
       (saved) => !!saved
     );
     if (ok) {
-      await onReloadApp();
       if (previous !== landingPage) {
         toast.undo('Landing screen updated', () => {
           void (async () => {
-            await trackStudioSave('Landing screen restored', updateApp(app.id, { settings: { ...app.settings, landingPage: previous } }), (saved) => !!saved);
-            await onReloadApp();
+            await trackStudioSave(
+              'Landing screen',
+              async () => {
+                const saved = await updateApp(app.id, { settings: { ...app.settings, landingPage: previous } });
+                if (saved) await onReloadApp();
+                return saved;
+              },
+              (saved) => !!saved
+            );
           })();
         });
       }
@@ -188,7 +258,7 @@ export function ScreensStep({
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_280px]">
+    <div className="grid gap-4 xl:grid-cols-[230px_minmax(0,1fr)] 2xl:grid-cols-[240px_minmax(0,1fr)_270px]">
       {/* Screen list */}
       <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm h-fit">
         <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-white/[0.06] p-4">
@@ -244,16 +314,28 @@ export function ScreensStep({
 
       {/* Preview */}
       <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-gray-200/80 dark:border-white/[0.06] p-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xs font-semibold text-gray-800 dark:text-slate-200 truncate">
+        <div className="space-y-3 border-b border-gray-200/80 p-3 dark:border-white/[0.06]">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-xs font-semibold text-gray-800 dark:text-slate-200">
               {selection.kind === 'home' ? 'App home' : selectedAttachment?.displayName || selectedForm?.title || 'Screen'}
+              </span>
+              <Badge variant={screenStatus(selection.kind === 'form' ? selection.formId : undefined) === 'Custom' ? 'primary' : 'default'} size="sm">
+                {screenStatus(selection.kind === 'form' ? selection.formId : undefined)}
+              </Badge>
             </span>
-            <Badge variant={screenStatus(selection.kind === 'form' ? selection.formId : undefined) === 'Custom' ? 'primary' : 'default'} size="sm">
-              {screenStatus(selection.kind === 'form' ? selection.formId : undefined)}
-            </Badge>
+            {changes.everPublished && changes.count > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setCompareOpen(true)}
+                leftIcon={<GitCompareArrows className="h-3.5 w-3.5" />}
+              >
+                Compare with live
+              </Button>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <select
               value={selectedRole?.id ?? ''}
               onChange={(e) => setRoleId(e.target.value)}
@@ -264,8 +346,18 @@ export function ScreensStep({
                 <option key={role.id} value={role.id}>Preview as {role.name}</option>
               ))}
             </select>
+            <select
+              value={previewData}
+              onChange={(e) => setPreviewData(e.target.value as 'sample' | 'real')}
+              aria-label="Preview data"
+              className="h-9 cursor-pointer rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-semibold text-gray-600 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-300"
+            >
+              <option value="sample">Sample content</option>
+              <option value="real">Real records</option>
+            </select>
             <div className="flex rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.04] p-0.5">
               <DeviceButton active={device === 'desktop'} label="Desktop preview" icon={Monitor} onClick={() => setDevice('desktop')} />
+              <DeviceButton active={device === 'tablet'} label="Tablet preview" icon={Tablet} onClick={() => setDevice('tablet')} />
               <DeviceButton active={device === 'mobile'} label="Mobile preview" icon={Smartphone} onClick={() => setDevice('mobile')} />
             </div>
             <Button
@@ -273,12 +365,27 @@ export function ScreensStep({
               size="sm"
               onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener,noreferrer')}
               leftIcon={<ExternalLink className="h-3.5 w-3.5" />}
-              title="Open the real app in a new tab"
+              title={changes.count > 0 || app.status !== 'published' ? 'Open the current draft in a new tab' : 'Open the app in a new tab'}
             >
-              Open live
+              {changes.count > 0 || app.status !== 'published' ? 'Open draft' : 'Open app'}
             </Button>
           </div>
         </div>
+        {changes.everPublished && changes.count > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/70 bg-amber-50/75 px-4 py-2.5 text-[11px] text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/[0.07] dark:text-amber-200">
+            <span>
+              <strong>Previewing unpublished changes.</strong> The public app still serves v{app.publishedVersion ?? 1}.
+            </span>
+            <button type="button" onClick={() => setCompareOpen(true)} className="cursor-pointer font-bold hover:underline">
+              See what differs
+            </button>
+          </div>
+        )}
+        {!changes.everPublished && app.status !== 'published' && (
+          <div className="border-b border-primary-200/70 bg-primary-50/70 px-4 py-2.5 text-[11px] text-primary-800 dark:border-primary-500/20 dark:bg-primary-500/[0.07] dark:text-primary-200">
+            <strong>Draft preview.</strong> Only you can use this version until the first publish.
+          </div>
+        )}
         <div className="flex min-h-[480px] items-center justify-center overflow-hidden bg-gray-50/80 dark:bg-slate-950/40 p-4 sm:p-6">
           <AppPreview
             app={app}
@@ -289,6 +396,12 @@ export function ScreensStep({
             totalRecords={totalRecords}
             selection={selection}
             selectedForm={selectedForm}
+            previewData={previewData}
+            records={previewRecords}
+            recordsLoading={previewRecordsLoading}
+            recordsError={previewRecordsError}
+            canViewSelected={selectedRoleCanView}
+            onUseSample={() => setPreviewData('sample')}
           />
         </div>
         {/* Cross-check: menu entries the previewed role holds no permission on. */}
@@ -301,12 +414,12 @@ export function ScreensStep({
           </div>
         )}
         <p className="border-t border-gray-200/70 dark:border-white/[0.06] px-4 py-2 text-[10px] text-gray-400 dark:text-slate-500">
-          Live preview from this app's real navigation, theme and role permissions. Open the live app to interact with real records.
+          Preview uses this draft's navigation, theme and role permissions. Choose real records only when you need to verify populated states.
         </p>
       </section>
 
       {/* Screen settings */}
-      <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
+      <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm xl:col-span-2 2xl:col-span-1">
         <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-white/[0.06] p-4">
           <div>
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Screen settings</h3>
@@ -396,6 +509,79 @@ export function ScreensStep({
           )}
         </div>
       </section>
+
+      <Modal
+        isOpen={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        title="Compare draft with live"
+        description={`The public app stays on v${app.publishedVersion ?? 1} until you publish again.`}
+        size="lg"
+      >
+        <div className="space-y-4 p-4 sm:p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-400/20 dark:bg-emerald-400/[0.06]">
+              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-white">
+                  <Monitor className="h-4 w-4" />
+                </span>
+                <span>
+                  <span className="block text-[10px] font-bold uppercase tracking-wider">Published</span>
+                  <span className="block text-sm font-semibold">Live v{app.publishedVersion ?? 1}</span>
+                </span>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-emerald-800/80 dark:text-emerald-200/80">
+                This is what members keep using while you review the draft. No saved Studio change replaces it until Publish.
+              </p>
+            </section>
+            <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-400/20 dark:bg-amber-400/[0.06]">
+              <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500 text-white">
+                  <PencilRuler className="h-4 w-4" />
+                </span>
+                <span>
+                  <span className="block text-[10px] font-bold uppercase tracking-wider">Draft</span>
+                  <span className="block text-sm font-semibold">
+                    {changes.count} unpublished {changes.count === 1 ? 'change' : 'changes'}
+                  </span>
+                </span>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-amber-800/80 dark:text-amber-200/80">
+                The preview on this step renders these saved changes as the app owner, before they reach members.
+              </p>
+            </section>
+          </div>
+
+          <section className="overflow-hidden rounded-xl border border-gray-200 dark:border-white/10">
+            <div className="border-b border-gray-100 bg-gray-50 px-3 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Draft resources that differ</p>
+            </div>
+            <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
+              {changes.changed.map((item) => (
+                <div key={`${item.kind}-${item.id}`} className="flex items-center gap-3 px-3 py-2.5">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
+                    {item.kind === 'form' ? <FileText className="h-3.5 w-3.5" /> : item.kind === 'flow' ? <GitBranch className="h-3.5 w-3.5" /> : <Settings2 className="h-3.5 w-3.5" />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-700 dark:text-slate-200">{item.label}</span>
+                  <Badge size="sm">{item.kind === 'app' ? 'App setup' : item.kind === 'flow' ? 'Automation' : 'Form'}</Badge>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setCompareOpen(false)}>Keep testing</Button>
+            <Button
+              onClick={() => {
+                setCompareOpen(false);
+                onOpenPublish();
+              }}
+              leftIcon={<GitCompareArrows className="h-4 w-4" />}
+            >
+              Review this release
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -472,6 +658,21 @@ function DeviceButton({ active, label, icon: Icon, onClick }: { active: boolean;
   );
 }
 
+function previewAnswer(value: unknown): string {
+  if (value == null || value === '') return '—';
+  if (Array.isArray(value)) return value.map(String).join(', ') || '—';
+  if (typeof value === 'object') return 'Attached value';
+  return String(value);
+}
+
+function previewRecordTitle(form: Form, answers: Record<string, unknown>): string {
+  for (const field of form.fields) {
+    const value = previewAnswer(answers[field.id]);
+    if (value !== '—' && value !== 'Attached value') return value;
+  }
+  return 'Untitled record';
+}
+
 /** Faithful mini-render of the runtime shell from REAL app data (nav, theme, counts). */
 function AppPreview({
   app,
@@ -482,15 +683,27 @@ function AppPreview({
   totalRecords,
   selection,
   selectedForm,
+  previewData,
+  records,
+  recordsLoading,
+  recordsError,
+  canViewSelected,
+  onUseSample,
 }: {
   app: App;
-  device: 'desktop' | 'mobile';
+  device: 'desktop' | 'tablet' | 'mobile';
   roleName: string;
   navForms: AppForm[];
   formsById: Record<string, Form>;
   totalRecords: number;
   selection: ScreenSelection;
   selectedForm: Form | null;
+  previewData: 'sample' | 'real';
+  records: Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>;
+  recordsLoading: boolean;
+  recordsError: string | null;
+  canViewSelected: boolean;
+  onUseSample: () => void;
 }) {
   const accent = app.theme?.primaryColor || '#6366f1';
   const initial = (app.name?.trim().charAt(0) || '?').toUpperCase();
@@ -508,7 +721,11 @@ function AppPreview({
     <div
       className={cn(
         'overflow-hidden rounded-[18px] border border-gray-300 dark:border-white/15 bg-white dark:bg-slate-950 shadow-2xl shadow-gray-950/15 transition-all duration-300',
-        device === 'desktop' ? 'w-full max-w-[760px]' : 'w-[300px]'
+        device === 'desktop'
+          ? 'w-full max-w-[760px]'
+          : device === 'tablet'
+            ? 'w-full max-w-[560px]'
+            : 'w-[300px]'
       )}
     >
       <div className="flex h-8 items-center gap-1.5 border-b border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-slate-900 px-3">
@@ -518,8 +735,11 @@ function AppPreview({
         <span className="mx-auto h-4 w-32 rounded bg-gray-200 dark:bg-white/[0.08]" />
       </div>
       <div className="flex min-h-[380px]">
-        {device === 'desktop' && (
-          <div className="w-40 shrink-0 border-r border-gray-200 dark:border-white/[0.08] bg-gray-900 p-3 text-white">
+        {device !== 'mobile' && (
+          <div className={cn(
+            'shrink-0 border-r border-gray-200 bg-gray-900 p-3 text-white dark:border-white/[0.08]',
+            device === 'desktop' ? 'w-40' : 'w-32'
+          )}>
             <div className="mb-4 flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg text-[9px] font-bold" style={{ backgroundColor: accent }}>
                 {initial}
@@ -544,7 +764,7 @@ function AppPreview({
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[8px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">
-                Preview as {roleName}
+                Preview as {roleName} · {previewData === 'real' ? 'Real records' : 'Sample content'}
               </p>
               <h4 className="mt-1 truncate text-sm font-bold text-gray-900 dark:text-white">
                 {selection.kind === 'home' ? app.name : selectedForm?.title ?? 'Screen'}
@@ -558,7 +778,7 @@ function AppPreview({
           {selection.kind === 'home' ? (
             <>
               <div className={cn('mt-4 grid gap-2', device === 'desktop' ? 'grid-cols-3' : 'grid-cols-2')}>
-                <PreviewMetric label="Records" value={String(totalRecords)} />
+                <PreviewMetric label={previewData === 'real' ? 'Records' : 'Sample records'} value={String(previewData === 'real' ? totalRecords : 12)} />
                 <PreviewMetric label="Data types" value={String(navForms.length)} />
                 {device === 'desktop' && <PreviewMetric label="Screens" value={String(navForms.length + 1)} />}
               </div>
@@ -580,6 +800,58 @@ function AppPreview({
                 )}
               </div>
             </>
+          ) : selectedForm && !canViewSelected ? (
+            <div className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-amber-200 bg-amber-50/60 p-4 text-center dark:border-amber-400/20 dark:bg-amber-400/[0.06]">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200">
+                <LockKeyhole className="h-4 w-4" />
+              </span>
+              <p className="mt-2 text-[9px] font-bold text-amber-900 dark:text-amber-100">No access for {roleName}</p>
+              <p className="mt-1 max-w-48 text-[8px] leading-4 text-amber-700 dark:text-amber-300">
+                This role cannot view or submit records on {selectedForm.title}.
+              </p>
+            </div>
+          ) : selectedForm && previewData === 'real' ? (
+            <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-slate-950/70">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[9px] font-bold text-gray-800 dark:text-slate-200">Recent {selectedForm.title} records</p>
+                <span className="text-[7px] font-semibold text-gray-400">{records.length} shown</span>
+              </div>
+              {recordsLoading ? (
+                <div className="flex min-h-36 items-center justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary-500" aria-label="Loading real records" />
+                </div>
+              ) : recordsError ? (
+                <div className="flex min-h-36 flex-col items-center justify-center text-center">
+                  <p className="text-[8px] font-semibold text-rose-600 dark:text-rose-300">Couldn’t load real records.</p>
+                  <button type="button" onClick={onUseSample} className="mt-2 cursor-pointer text-[8px] font-bold text-primary-600 hover:underline dark:text-primary-300">
+                    Use sample content
+                  </button>
+                </div>
+              ) : records.length === 0 ? (
+                <div className="flex min-h-36 flex-col items-center justify-center text-center">
+                  <p className="text-[8px] font-semibold text-gray-500 dark:text-slate-400">No real records yet.</p>
+                  <button type="button" onClick={onUseSample} className="mt-2 cursor-pointer text-[8px] font-bold text-primary-600 hover:underline dark:text-primary-300">
+                    Preview with sample content
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 space-y-1.5">
+                  {records.map((record) => (
+                    <div key={record.id} className="rounded-lg border border-gray-100 bg-gray-50/70 px-2.5 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-[8px] font-bold text-gray-800 dark:text-slate-200">
+                          {previewRecordTitle(selectedForm, record.answers)}
+                        </span>
+                        <span className="shrink-0 text-[6px] text-gray-400">{formatRelativeTime(record.submittedAt)}</span>
+                      </div>
+                      <p className="mt-1 truncate text-[7px] text-gray-400 dark:text-slate-500">
+                        {selectedForm.fields.slice(0, 2).map((field) => `${field.label}: ${previewAnswer(record.answers[field.id])}`).join(' · ')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : selectedForm ? (
             <div className="mt-4 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-slate-950/70 p-3">
               <p className="text-[9px] font-bold text-gray-800 dark:text-slate-200">{selectedForm.title}</p>
