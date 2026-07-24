@@ -20,13 +20,11 @@ import {
   Clock,
   ArrowRight,
   Inbox,
-  Map as MapIcon,
   Sparkles,
   BookOpen,
   Package,
   Boxes,
   ChevronRight,
-  Plug,
   Search,
   ShieldCheck,
   X,
@@ -51,7 +49,6 @@ import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '.
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
-import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import { CreateBand } from '../components/chat/CreateBand';
 import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 import type { FormTemplate } from '../data/formTemplates';
@@ -711,7 +708,6 @@ export function Dashboard() {
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
-  const [showHandToAi, setShowHandToAi] = useState(false);
 
   // Apps panel (cloud mode only — apps live on the server). Reuses the app store, which
   // persists across visits, so the section renders instantly on revisit.
@@ -1133,32 +1129,13 @@ export function Dashboard() {
           <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
             {headline}
           </h1>
-          {/* The three ways to START (§11A): a form, a diagram of the app, or a description
-              the AI turns into one — then the secondary actions. */}
+          {/* Deliberately minimal (owner direction): the sidebar's Create app owns the
+              whole app journey (studio covers diagrams, AI and the rest) — the dashboard
+              keeps just the form quick-start and pack import. */}
           <div className="mt-4 flex flex-wrap gap-3">
             <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
               Start with a form
             </Button>
-            {storageMode === 'api' && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={() => navigate('/diagrams/new')}
-                  leftIcon={<MapIcon className="h-4 w-4" />}
-                >
-                  Start with a diagram
-                </Button>
-                <Button variant="outline" onClick={() => navigate('/diagrams/all')} leftIcon={<MapIcon className="h-4 w-4" />}>
-                  My diagrams
-                </Button>
-                <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Boxes className="h-4 w-4" />}>
-                  Create app
-                </Button>
-                <Button variant="outline" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />}>
-                  Connect an AI
-                </Button>
-              </>
-            )}
             <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
               Import pack
             </Button>
@@ -1591,7 +1568,6 @@ export function Dashboard() {
         onClose={() => setShowPackImport(false)}
       />
 
-      <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
 
       {/* Delete Confirmation */}
       <ConfirmDialog
