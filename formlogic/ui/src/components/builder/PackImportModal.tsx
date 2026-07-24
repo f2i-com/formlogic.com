@@ -20,6 +20,7 @@ import {
   Plus,
   Pencil,
   Archive,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -76,9 +77,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
   // PKG-106: an Application Package v2 review IS a proposed install plan — Import confirms
   // exactly the server-stored bytes it reviewed (digest-bound, single-use, expiring).
-  const [v2Plan, setV2Plan] = useState<{ planId: string; planDigest: string } | null>(null);
+  const [v2Plan, setV2Plan] = useState<{ planId: string; planDigest: string; action: 'install' | 'update'; installedVersion: string | null; version: string } | null>(null);
   // Ref mirror so cleanup paths can cancel the current plan without a stale closure.
-  const v2PlanRef = useRef<{ planId: string; planDigest: string } | null>(null);
+  const v2PlanRef = useRef<{ planId: string; planDigest: string; action: 'install' | 'update'; installedVersion: string | null; version: string } | null>(null);
   // Guards a stale review response landing after a newer file was chosen + remembers what to Retry.
   const reviewSeqRef = useRef(0);
   const reviewSourceRef = useRef<ReviewSource | null>(null);
@@ -349,7 +350,14 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           if (seq !== reviewSeqRef.current) return;
           setReviewLoading(false);
           if (proposal.data) {
-            v2PlanRef.current = { planId: proposal.data.planId, planDigest: proposal.data.planDigest };
+            const pkgMeta = (inner.package && typeof inner.package === 'object') ? inner.package as Record<string, unknown> : {};
+            v2PlanRef.current = {
+              planId: proposal.data.planId,
+              planDigest: proposal.data.planDigest,
+              action: proposal.data.action === 'update' ? 'update' : 'install',
+              installedVersion: typeof proposal.data.installedVersion === 'string' ? proposal.data.installedVersion : null,
+              version: typeof pkgMeta.version === 'string' ? pkgMeta.version : '',
+            };
             setV2Plan(v2PlanRef.current);
             setPackageReview({ trust: proposal.data.trust, formatVersion: 2, capabilities: proposal.data.capabilities });
             setApprovedGrants(new Set(reviewableConnectorGrants(proposal.data.capabilities)));
@@ -1186,6 +1194,15 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   <Button variant="outline" size="sm" onClick={retryReview}>Retry</Button>
                 </div>
               )}
+              {packageReview && v2Plan?.action === 'update' && (
+                <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
+                  <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <p>
+                    This package is already installed at v{v2Plan.installedVersion}. Importing updates it to v{v2Plan.version} —
+                    existing flows keep the versions they were published with.
+                  </p>
+                </div>
+              )}
               {packageReview && (
                 <CapabilityReview
                   caps={packageReview.capabilities}
@@ -1331,7 +1348,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   isLoading={importing}
                   leftIcon={importing ? undefined : <Download className="h-4 w-4" />}
                 >
-                  {importing ? 'Importing...' : 'Import to My Forms'}
+                  {importing ? 'Importing...' : v2Plan?.action === 'update' ? 'Update extension' : 'Import to My Forms'}
                 </Button>
               </div>
             </div>

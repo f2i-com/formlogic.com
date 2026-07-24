@@ -81,7 +81,7 @@ What happens on install:
 | Versions | Exact semver everywhere; dependency **ranges** use the small v1 grammar: `X.Y.Z` \| `^X.Y.Z` \| `~X.Y.Z` \| `>=X.Y.Z` (npm-style caret-zero rule; prereleases match only an identical exact). |
 | Non-empty | A package must carry at least one content item, contribution, requirement, or distribution. |
 | Fail closed | Unknown fields are rejected at every level. The one exception: invalid `uiHints` entries (presentation-only) are dropped, never fatal. |
-| One active version | Per package id, per owner. Reinstalling requires uninstalling first (updates land in a later release). |
+| One active version | Per package id, per owner. Re-importing a **different** version proposes an update (see below); re-importing the same version refuses. |
 | Contributed types | Owned by exactly one installed package — a second package contributing the same type refuses, never first-provider-wins. |
 | Dependencies | `dependencies.packages[]` resolve against your **installed** packages at install time; a missing or incompatible required dependency refuses with exactly what to install first. Satisfied dependencies are locked (exact version + edge), and a depended-upon package refuses to uninstall while required. Optional dependencies never block; an installed-but-incompatible optional still refuses. |
 | Not yet installable | `content.pack` inside v2, `serviceDistributions`, and archive entry-path contributions each refuse with a typed message (`unsupported_content`, `unsupported_distributions`, `unsupported_entry_path`). Deliver app content as Pack v1 for now. |
@@ -136,6 +136,29 @@ The Packs UI drives this flow automatically (upload a v2 JSON → the review *is
 proposed plan → Import confirms it). Pack **v1** sources currently use the direct
 describe→import lane with the same grant-review requirement.
 
+## Updating
+
+Importing a **different version of an already-installed package id** proposes an
+**update plan** — propose returns `action: "update"` plus `installedVersion`, and the
+UI labels the commit "Update extension". Confirm applies it atomically:
+
+- The installation keeps its **identity** (same installation id, dependency edges from
+  dependents stay attached) and its receipt records `updatedFrom`.
+- The **publisher cannot change** (`publisher_mismatch`) — a different publisher
+  shipping an installed package id is a hijack, not an update.
+- Every **dependent's declared range must still be satisfied** by the new version, or
+  the update refuses (`update_blocked`, dependents + ranges named). Satisfied
+  dependents re-lock their edges to the new version.
+- Contributed definitions are **replaced wholesale**: bumped nodes re-digest, removed
+  nodes leave stored flow nodes as read-only placeholders, added nodes must not
+  collide with another package's types.
+- A failed update **changes nothing** — the prior version stays fully active (one
+  transaction), and flow revisions published before the update keep the compiled IR
+  and definition locks they were pinned with, forever.
+
+Downgrades ride the same lane (any different version), gated by the same dependent-range
+checks.
+
 ## Uninstalling
 
 - Removes the package's contributed node definitions. Flows already using them keep
@@ -183,6 +206,8 @@ Notes for authors:
 | `unsupported_content` / `unsupported_distributions` / `unsupported_entry_path` | The aggregate uses a v2 feature this release cannot install yet. |
 | `handler_kind_not_enabled` | The definition uses a later handler kind — requires a newer FormLogic. |
 | `uninstall_blocked` | Another installed package requires this one; uninstall the named dependents first. |
+| `update_blocked` | The new version escapes a dependent's declared range — update or remove the named dependents first. |
+| `publisher_mismatch` | The update is signed by a different publisher than the installed package — refused. |
 | `plan_not_confirmable` / `plan_digest_mismatch` | The plan expired, was used/cancelled, or the digest is not the one you reviewed — re-propose. |
 | `missing_definition` (compile) | A flow uses a contributed type that is no longer installed/enabled. |
 | `binding_unresolved` (compile) | The node is a `service-action` — not runnable until service bindings ship. |

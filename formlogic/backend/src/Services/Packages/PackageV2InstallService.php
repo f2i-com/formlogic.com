@@ -168,6 +168,165 @@ class PackageV2InstallService
     }
 
     /**
+     * PKG-108: update an installed package to a different version of the SAME package id —
+     * atomically, in one transaction, so a failed update always leaves the prior active
+     * version fully intact (plan §7.3 / §9.4). Rules:
+     *   - the publisher cannot change (a different publisher adopting an installed id is a
+     *     hijack, not an update);
+     *   - every DEPENDENT's declared range must still be satisfied by the new version, or
+     *     the update refuses naming them (update_blocked) — dependents keep what they pinned;
+     *   - contributed definitions are REPLACED (removed types leave stored flow nodes as
+     *     placeholders; added types must not collide with another package's);
+     *   - the package's own dependencies re-resolve freshly; inbound edges keep their
+     *     installation id (consumers never dangle) with resolved_version bumped;
+     *   - old flow revisions are untouched — their compiled IR and locks are pinned.
+     *
+     * @param list<string> $approvedConnectorGrants
+     * @return array{installationId:string,packageId:string,version:string,previousVersion:string,kind:string,displayName:string,nodeTypes:list<string>}
+     */
+    public function update(array $aggregate, string $userId, array $approvedConnectorGrants, string $source = 'json', string $trust = 'community'): array
+    {
+        if (!PackagesFeature::v2Enabled()) {
+            throw new \RuntimeException('feature_disabled: Application Package v2 installs are disabled on this deployment');
+        }
+        $contributions = $this->assertNodeOnlyInstallable($aggregate);
+        $meta = $aggregate['package'];
+        $packageId = (string) $meta['id'];
+        $newVersion = (string) $meta['version'];
+
+        $stmt = $this->mysql->prepare('SELECT id, publisher_id, version FROM package_installations WHERE user_id = ? AND package_id = ?');
+        $stmt->execute([$userId, $packageId]);
+        $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$existing) {
+            throw new \RuntimeException('not_installed: nothing to update — install the package instead');
+        }
+        $installationId = (string) $existing['id'];
+        $previousVersion = (string) $existing['version'];
+        if ((string) $existing['publisher_id'] !== (string) $meta['publisherId']) {
+            throw new \RuntimeException('publisher_mismatch: the update is signed by a different publisher than the installed package — refusing');
+        }
+        if ($previousVersion === $newVersion) {
+            throw new \RuntimeException('This package is already installed at v' . $newVersion);
+        }
+
+        // Dependents pinned this package: the NEW version must still satisfy every inbound range.
+        $deps = $this->mysql->prepare('
+            SELECT e.id, e.requested_range, pi.display_name
+            FROM package_dependency_edges e
+            JOIN package_installations pi ON pi.id = e.parent_installation_id
+            WHERE e.child_installation_id = ?
+        ');
+        $deps->execute([$installationId]);
+        $inbound = $deps->fetchAll(PDO::FETCH_ASSOC);
+        $blocked = [];
+        foreach ($inbound as $edge) {
+            if (!DependencyResolver::satisfies($newVersion, (string) $edge['requested_range'])) {
+                $blocked[] = '"' . $edge['display_name'] . '" requires ' . $edge['requested_range'];
+            }
+        }
+        if ($blocked !== []) {
+            throw new \RuntimeException('update_blocked: v' . $newVersion . ' no longer satisfies ' . implode(', ', $blocked) . ' — update or remove those first');
+        }
+
+        // The package's own dependencies re-resolve against the CURRENT installed graph.
+        $resolution = $this->resolveDependencies($aggregate, $userId);
+        if (!$resolution['ok']) {
+            $lines = array_map(static fn (array $p): string => $p['message'], $resolution['problems']);
+            throw new \RuntimeException('unresolved_dependencies: ' . implode('; ', $lines));
+        }
+
+        // Added/changed types must not belong to ANOTHER package (this installation's own rows
+        // are being replaced, so they are excluded from the collision check).
+        $types = array_map(static fn (array $c): string => (string) $c['type'], $contributions);
+        $placeholders = implode(',', array_fill(0, count($types), '?'));
+        $stmt = $this->mysql->prepare("SELECT node_type FROM flow_node_definitions WHERE user_id = ? AND installation_id != ? AND node_type IN ($placeholders)");
+        $stmt->execute(array_merge([$userId, $installationId], $types));
+        $taken = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        if (!empty($taken)) {
+            throw new \RuntimeException('Contributed node type is already installed by another package: ' . implode(', ', $taken));
+        }
+
+        $definitionRows = [];
+        foreach ($contributions as $def) {
+            $json = (string) json_encode($def, JSON_UNESCAPED_SLASHES);
+            $definitionRows[] = [
+                'id' => $this->uuid(),
+                'type' => (string) $def['type'],
+                'version' => (string) $def['version'],
+                'digest' => hash('sha256', $json),
+                'json' => $json,
+            ];
+        }
+        $receipt = [
+            'formatVersion' => 2,
+            'package' => $meta,
+            'updatedFrom' => $previousVersion,
+            'contributions' => array_map(static fn (array $r): array => [
+                'type' => $r['type'],
+                'version' => $r['version'],
+                'digest' => $r['digest'],
+            ], $definitionRows),
+            'requirements' => $aggregate['requirements'] ?? new \stdClass(),
+            'dependencies' => array_map(static fn (array $d): array => [
+                'id' => $d['id'],
+                'range' => $d['range'],
+                'resolvedVersion' => $d['resolvedVersion'],
+                'required' => $d['required'],
+            ], $resolution['resolved']),
+            'missingOptionalDependencies' => $resolution['missingOptional'],
+            'approvedConnectorGrants' => array_values($approvedConnectorGrants),
+            'source' => $source,
+            'trust' => $trust,
+            'installedAt' => gmdate('c'),
+        ];
+
+        $this->mysql->beginTransaction();
+        try {
+            $this->mysql->prepare('
+                UPDATE package_installations SET kind = ?, version = ?, display_name = ?, source = ?, receipt_json = ? WHERE id = ?
+            ')->execute([(string) $meta['kind'], $newVersion, (string) $meta['displayName'], $source, (string) json_encode($receipt, JSON_UNESCAPED_SLASHES), $installationId]);
+
+            // Replace the contributed definitions wholesale (removed types → placeholders).
+            $this->mysql->prepare('DELETE FROM flow_node_definitions WHERE installation_id = ?')->execute([$installationId]);
+            $ins = $this->mysql->prepare('
+                INSERT INTO flow_node_definitions (id, user_id, installation_id, node_type, version, digest, definition_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ');
+            foreach ($definitionRows as $row) {
+                $ins->execute([$row['id'], $userId, $installationId, $row['type'], $row['version'], $row['digest'], $row['json']]);
+            }
+
+            // The package's own OUTBOUND edges re-record per the fresh resolution…
+            $this->mysql->prepare('DELETE FROM package_dependency_edges WHERE parent_installation_id = ?')->execute([$installationId]);
+            $edge = $this->mysql->prepare('
+                INSERT INTO package_dependency_edges (id, parent_installation_id, child_installation_id, child_package_id, requested_range, resolved_version, required)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ');
+            foreach ($resolution['resolved'] as $dep) {
+                $edge->execute([$this->uuid(), $installationId, $dep['installationId'], $dep['id'], $dep['range'], $dep['resolvedVersion'], $dep['required'] ? 1 : 0]);
+            }
+            // …and INBOUND edges (dependents) keep their rows — only the resolved version bumps.
+            $this->mysql->prepare('UPDATE package_dependency_edges SET resolved_version = ? WHERE child_installation_id = ?')
+                ->execute([$newVersion, $installationId]);
+
+            $this->mysql->commit();
+        } catch (\Exception $e) {
+            $this->mysql->rollBack();
+            throw $e;
+        }
+
+        return [
+            'installationId' => $installationId,
+            'packageId' => $packageId,
+            'version' => $newVersion,
+            'previousVersion' => $previousVersion,
+            'kind' => (string) $meta['kind'],
+            'displayName' => (string) $meta['displayName'],
+            'nodeTypes' => array_map(static fn (array $r): string => $r['type'], $definitionRows),
+        ];
+    }
+
+    /**
      * PKG-106 shared preflight: validate the aggregate and refuse (typed) everything this
      * slice cannot install — the SAME checks the install commits under, so a proposed plan
      * can never accept what confirm would refuse. Returns the inline contributions.

@@ -47,6 +47,23 @@ class InstallPlanService
         $this->installer->assertNodeOnlyInstallable($aggregate);
         $resolution = $this->installer->resolveDependencies($aggregate, $userId);
 
+        // PKG-108: the same package id installed at a DIFFERENT version proposes an UPDATE
+        // (confirm routes to update(), which enforces publisher identity and dependents'
+        // ranges); the SAME version refuses here exactly like the install would.
+        $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
+        $stmt = $this->mysql->prepare('SELECT version FROM package_installations WHERE user_id = ? AND package_id = ?');
+        $stmt->execute([$userId, (string) ($meta['id'] ?? '')]);
+        $installedVersion = $stmt->fetchColumn();
+        $action = 'install';
+        if (is_string($installedVersion) && $installedVersion !== '') {
+            if ($installedVersion === (string) ($meta['version'] ?? '')) {
+                throw new \RuntimeException('This package is already installed at v' . $installedVersion);
+            }
+            $action = 'update';
+        } else {
+            $installedVersion = null;
+        }
+
         // Housekeeping: expired proposals are worthless — drop the owner's stale rows.
         $this->mysql->prepare("DELETE FROM package_install_plans WHERE user_id = ? AND state = 'proposed' AND expires_at < NOW()")
             ->execute([$userId]);
@@ -54,6 +71,8 @@ class InstallPlanService
         $aggregateJson = (string) json_encode($aggregate, JSON_UNESCAPED_SLASHES);
         $planDigest = hash('sha256', $aggregateJson);
         $summary = [
+            'action' => $action,
+            'installedVersion' => $installedVersion,
             'capabilities' => $capabilities,
             'resolution' => $resolution,
         ];
@@ -70,6 +89,8 @@ class InstallPlanService
             'planDigest' => $planDigest,
             'expiresInSeconds' => self::TTL_SECONDS,
             'trust' => $trust,
+            'action' => $action,
+            'installedVersion' => $installedVersion,
             'capabilities' => $capabilities,
             'resolution' => $resolution,
         ];
@@ -91,6 +112,8 @@ class InstallPlanService
             'trust' => (string) $row['trust'],
             'planDigest' => (string) $row['plan_digest'],
             'expiresAt' => (string) $row['expires_at'],
+            'action' => is_array($summary) ? (string) ($summary['action'] ?? 'install') : 'install',
+            'installedVersion' => is_array($summary) && is_string($summary['installedVersion'] ?? null) ? $summary['installedVersion'] : null,
             'capabilities' => is_array($summary) ? ($summary['capabilities'] ?? null) : null,
             'resolution' => is_array($summary) ? ($summary['resolution'] ?? null) : null,
             'installationId' => $row['installation_id'] !== null ? (string) $row['installation_id'] : null,
@@ -108,7 +131,7 @@ class InstallPlanService
      */
     public function confirm(string $planId, string $userId, string $planDigest, array $approvedConnectorGrants): array
     {
-        $stmt = $this->mysql->prepare('SELECT plan_digest, trust, source, aggregate_json FROM package_install_plans WHERE id = ? AND user_id = ?');
+        $stmt = $this->mysql->prepare('SELECT plan_digest, trust, source, aggregate_json, summary_json FROM package_install_plans WHERE id = ? AND user_id = ?');
         $stmt->execute([$planId, $userId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
@@ -131,13 +154,19 @@ class InstallPlanService
         }
 
         $aggregate = json_decode((string) $row['aggregate_json'], true);
+        $summary = json_decode((string) $row['summary_json'], true);
+        $action = is_array($summary) ? (string) ($summary['action'] ?? 'install') : 'install';
         try {
             if (!is_array($aggregate)) {
                 throw new \RuntimeException('plan_not_confirmable: the stored plan payload is unreadable');
             }
-            // install() re-validates AND re-resolves against CURRENT installed state
-            // (plan §7.3.10) — the stored bytes are what installs, the world is re-checked.
-            $result = $this->installer->install($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust']);
+            // install()/update() re-validate AND re-resolve against CURRENT installed state
+            // (plan §7.3.10) — the stored bytes are what commits, the world is re-checked.
+            // An update plan whose target was uninstalled meanwhile fails typed (not_installed);
+            // an install plan whose package appeared meanwhile fails typed (already installed).
+            $result = $action === 'update'
+                ? $this->installer->update($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust'])
+                : $this->installer->install($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust']);
         } catch (\Exception $e) {
             // A failed confirm is terminal for the plan — stale plans never become retriable.
             $this->mysql->prepare("UPDATE package_install_plans SET state = 'failed', error_text = ? WHERE id = ?")

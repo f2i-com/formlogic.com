@@ -691,6 +691,160 @@ class PackageV2InstallTest extends TestCase
         }
     }
 
+    // ── PKG-108: updates — atomic, identity-preserving, dependent-protecting ────────────────
+
+    public function testUpdateReplacesDefinitionsAndKeepsInstallationIdentity(): void
+    {
+        $v1 = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []); // v1.4.0
+
+        // v1.5.0 bumps the existing node AND contributes a new one.
+        $next = $this->nodeOnlyAggregate();
+        $next['package']['version'] = '1.5.0';
+        $next['contributions']['flowNodes'][0]['version'] = '1.3.0';
+        $next['contributions']['flowNodes'][] = [
+            'schemaVersion' => 1,
+            'type' => 'com.acme.mediatools.upscale',
+            'version' => '1.0.0',
+            'display' => ['label' => 'Upscale'],
+            'handler' => ['kind' => 'core-preset', 'coreType' => 'condition', 'defaults' => ['expr' => 'true']],
+            'sideEffects' => 'none',
+        ];
+        $result = self::$pkgV2->update($next, $this->userId, ['connector.acme.media'], 'json', 'community');
+        $this->assertSame($v1['installationId'], $result['installationId'], 'an update keeps the installation identity');
+        $this->assertSame('1.4.0', $result['previousVersion']);
+        $this->assertSame('1.5.0', $result['version']);
+
+        $stmt = self::$pdo->prepare('SELECT version, receipt_json FROM package_installations WHERE id = ?');
+        $stmt->execute([$v1['installationId']]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('1.5.0', $row['version']);
+        $receipt = json_decode((string) $row['receipt_json'], true);
+        $this->assertSame('1.4.0', $receipt['updatedFrom'], 'the receipt records what it replaced');
+        $this->assertSame(['connector.acme.media'], $receipt['approvedConnectorGrants']);
+
+        $defs = self::$pdo->prepare('SELECT node_type, version FROM flow_node_definitions WHERE installation_id = ? ORDER BY node_type');
+        $defs->execute([$v1['installationId']]);
+        $this->assertSame([
+            ['node_type' => 'com.acme.mediatools.generate-image', 'version' => '1.3.0'],
+            ['node_type' => 'com.acme.mediatools.upscale', 'version' => '1.0.0'],
+        ], $defs->fetchAll(PDO::FETCH_ASSOC));
+
+        // v1.6.0 DROPS the original node — its definition row goes with it (stored graph
+        // nodes of that type degrade to the honest missing-definition placeholder).
+        $slim = $this->nodeOnlyAggregate();
+        $slim['package']['version'] = '1.6.0';
+        $slim['contributions']['flowNodes'] = [[
+            'schemaVersion' => 1,
+            'type' => 'com.acme.mediatools.upscale',
+            'version' => '1.1.0',
+            'display' => ['label' => 'Upscale'],
+            'handler' => ['kind' => 'core-preset', 'coreType' => 'condition', 'defaults' => ['expr' => 'true']],
+            'sideEffects' => 'none',
+        ]];
+        unset($slim['requirements']);
+        $result2 = self::$pkgV2->update($slim, $this->userId, []);
+        $this->assertSame($v1['installationId'], $result2['installationId']);
+        $this->assertSame('1.5.0', $result2['previousVersion']);
+        $defs->execute([$v1['installationId']]);
+        $this->assertSame([
+            ['node_type' => 'com.acme.mediatools.upscale', 'version' => '1.1.0'],
+        ], $defs->fetchAll(PDO::FETCH_ASSOC), 'removed contributions are removed, never orphaned');
+    }
+
+    public function testUpdateRefusesSameVersionNotInstalledAndForeignPublisher(): void
+    {
+        try {
+            self::$pkgV2->update($this->nodeOnlyAggregate(), $this->userId, []);
+            $this->fail('updating a package that is not installed must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('not_installed', $e->getMessage());
+        }
+
+        self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        try {
+            self::$pkgV2->update($this->nodeOnlyAggregate(), $this->userId, []);
+            $this->fail('re-applying the installed version must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('already installed at v1.4.0', $e->getMessage());
+        }
+
+        // A DIFFERENT publisher shipping the same package id is a hijack, not an update.
+        // (Needs a >=3-segment id so two distinct valid publisher prefixes exist.)
+        $deep = $this->nodeOnlyAggregate();
+        $deep['package']['id'] = 'com.acme.deep.pkg';
+        $deep['contributions']['flowNodes'][0]['type'] = 'com.acme.deep.node';
+        self::$pkgV2->install($deep, $this->userId, []);
+        $hijack = $deep;
+        $hijack['package']['version'] = '9.9.9';
+        $hijack['package']['publisherId'] = 'com.acme.deep';
+        try {
+            self::$pkgV2->update($hijack, $this->userId, []);
+            $this->fail('a publisher change must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('publisher_mismatch', $e->getMessage());
+        }
+    }
+
+    public function testUpdateBlockedByDependentRangeAndAllowedWithinIt(): void
+    {
+        // media-tools v1.4.0 with a dependent pinning ^1.2.0.
+        self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $suite = $this->nodeOnlyAggregate('media-suite');
+        $suite['dependencies'] = ['packages' => [['id' => 'com.acme.media-tools', 'version' => '^1.2.0']]];
+        $suiteResult = self::$pkgV2->install($suite, $this->userId, []);
+
+        // v2.0.0 escapes ^1.2.0 → refused, naming the dependent; NOTHING changed.
+        $major = $this->nodeOnlyAggregate();
+        $major['package']['version'] = '2.0.0';
+        try {
+            self::$pkgV2->update($major, $this->userId, []);
+            $this->fail('an update escaping a dependent range must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('update_blocked', $e->getMessage());
+            $this->assertStringContainsString('Acme Media Tools', $e->getMessage());
+            $this->assertStringContainsString('^1.2.0', $e->getMessage());
+        }
+        $check = self::$pdo->prepare('SELECT version FROM package_installations WHERE user_id = ? AND package_id = ?');
+        $check->execute([$this->userId, 'com.acme.media-tools']);
+        $this->assertSame('1.4.0', $check->fetchColumn(), 'a refused update leaves the prior version fully active');
+
+        // v1.9.0 stays inside ^1.2.0 → allowed; the dependent's edge re-locks to it.
+        $minor = $this->nodeOnlyAggregate();
+        $minor['package']['version'] = '1.9.0';
+        self::$pkgV2->update($minor, $this->userId, []);
+        $edge = self::$pdo->prepare('SELECT resolved_version FROM package_dependency_edges WHERE parent_installation_id = ?');
+        $edge->execute([$suiteResult['installationId']]);
+        $this->assertSame('1.9.0', $edge->fetchColumn(), 'inbound edges re-lock to the updated version');
+    }
+
+    public function testInstallPlanProposesAndConfirmsAnUpdate(): void
+    {
+        self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []); // v1.4.0
+        $plans = $this->planService();
+
+        $next = $this->nodeOnlyAggregate();
+        $next['package']['version'] = '1.5.0';
+        $plan = $plans->propose($next, $this->userId, 'community', 'json', \FormLogic\Helpers\PackCapabilities::describeV2($next));
+        $this->assertSame('update', $plan['action'], 'a same-id different-version proposal is an update');
+        $this->assertSame('1.4.0', $plan['installedVersion']);
+        $this->assertSame('update', $plans->get($plan['planId'], $this->userId)['action']);
+
+        $result = $plans->confirm($plan['planId'], $this->userId, $plan['planDigest'], []);
+        $this->assertSame('1.4.0', $result['previousVersion']);
+        $this->assertSame('1.5.0', $result['version']);
+        $check = self::$pdo->prepare('SELECT version FROM package_installations WHERE user_id = ? AND package_id = ?');
+        $check->execute([$this->userId, 'com.acme.media-tools']);
+        $this->assertSame('1.5.0', $check->fetchColumn());
+
+        // Proposing the version that is ALREADY installed refuses at propose (like the install).
+        try {
+            $plans->propose($next, $this->userId, 'community', 'json', \FormLogic\Helpers\PackCapabilities::describeV2($next));
+            $this->fail('proposing the installed version must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('already installed at v1.5.0', $e->getMessage());
+        }
+    }
+
     public function testFlatImportLaneRedirectsV2Aggregates(): void
     {
         $req = $this->createMock(ServerRequestInterface::class);

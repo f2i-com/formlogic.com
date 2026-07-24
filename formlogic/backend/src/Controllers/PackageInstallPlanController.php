@@ -200,7 +200,7 @@ class PackageInstallPlanController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to confirm the install plan'], 500);
         }
 
-        return $this->jsonResponse($response, [
+        $payload = [
             'success' => true,
             'trust' => $plan['trust'],
             'formatVersion' => 2,
@@ -208,13 +208,19 @@ class PackageInstallPlanController
             'installationId' => $result['installationId'],
             'packageId' => $result['packageId'],
             'kind' => $result['kind'],
+            'version' => $result['version'],
             'nodeTypes' => $result['nodeTypes'],
             // Shape parity with the import lane so shared UI result views render.
             'forms' => [],
             'apps' => [],
             'withheldGrants' => [],
             'warnings' => [],
-        ], 201);
+        ];
+        // PKG-108: an update confirm names what it replaced.
+        if (isset($result['previousVersion'])) {
+            $payload['previousVersion'] = $result['previousVersion'];
+        }
+        return $this->jsonResponse($response, $payload, 201);
     }
 
     public function cancel(Request $request, Response $response, array $args): Response

@@ -4733,6 +4733,9 @@ export interface PackageInstallPlan {
   expiresInSeconds: number;
   trust: string;
   formatVersion?: number;
+  /** PKG-108: 'update' when the same package id is already installed at another version. */
+  action?: 'install' | 'update';
+  installedVersion?: string | null;
   capabilities: PackCapabilitySummary;
   resolution: {
     ok: boolean;
@@ -4805,6 +4808,8 @@ interface ApplicationPackageImportResult {
   packageId?: string;
   kind?: string;
   nodeTypes?: string[];
+  /** PKG-108: present when the confirm applied an UPDATE (same package, new version). */
+  previousVersion?: string;
 }
 
 export interface AccountBackupImportResult {
