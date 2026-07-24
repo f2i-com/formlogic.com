@@ -80,23 +80,32 @@ export function PublishStep({
   const nextVersion = currentVersion + 1;
   const hasChanges = !published || !changes.everPublished || changes.count > 0;
 
-  const checks = useMemo(
-    () =>
-      buildPreflightChecks({
-        formCount: appForms.length,
-        formsWithoutFields: appForms
-          .filter((af) => (formsById[af.formId]?.fields.length ?? 1) === 0)
-          .map((af) => af.displayName || formsById[af.formId]?.title || 'Untitled'),
-        flowCount: flows.length,
-        activeFlowCount: flows.filter((f) => f.enabled).length,
-        roleCount: roles.length,
-        hasHomeScreen: !!(app.customScreen as { kind?: string } | undefined)?.kind,
-        hasCustomDomain: domains.some((d) => d.status === 'active'),
-        memberCount,
-      }),
-    [app.customScreen, appForms, formsById, flows, roles, domains, memberCount]
-  );
+  const checks = useMemo(() => {
+    // Landing pages that target a FORM must still point at an attached form —
+    // 'dashboard' (and other non-form values) are always valid.
+    const landing = (app.settings as { landingPage?: string } | undefined)?.landingPage;
+    const landingPageMissing =
+      !!landing && landing !== 'dashboard' && landing !== 'records' && !appForms.some((af) => af.formId === landing);
+    const settings = app.settings as { allowSelfRegistration?: boolean; defaultRoleId?: string } | undefined;
+    return buildPreflightChecks({
+      formCount: appForms.length,
+      formsWithoutFields: appForms
+        .filter((af) => (formsById[af.formId]?.fields.length ?? 1) === 0)
+        .map((af) => af.displayName || formsById[af.formId]?.title || 'Untitled'),
+      flowCount: flows.length,
+      activeFlowCount: flows.filter((f) => f.enabled).length,
+      roleCount: roles.length,
+      hasHomeScreen: !!(app.customScreen as { kind?: string } | undefined)?.kind,
+      hasCustomDomain: domains.some((d) => d.status === 'active'),
+      memberCount,
+      landingPageMissing,
+      signupWithoutDefaultRole: settings?.allowSelfRegistration === true && !settings?.defaultRoleId,
+      // Identity = a curated icon (settings.icon) or an uploaded logo (theme.logoUrl).
+      hasIcon: !!(app.settings?.icon || app.theme?.logoUrl),
+    });
+  }, [app.settings, app.customScreen, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount]);
   const warnings = checks.filter((c) => c.state === 'warning');
+  const blocking = warnings.filter((c) => c.severity === 'blocking');
 
   const doPublish = async (label: string) => {
     if (publishing) return;
@@ -162,42 +171,67 @@ export function PublishStep({
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {warnings.length === 0 ? 'Ready to publish' : 'Almost ready'}
+                    {blocking.length > 0 ? 'A few things need fixing' : warnings.length === 0 ? 'Ready to publish' : 'Almost ready'}
                   </h3>
-                  <Badge variant={warnings.length === 0 ? 'success' : 'warning'} size="sm">
+                  <Badge variant={blocking.length > 0 ? 'error' : warnings.length === 0 ? 'success' : 'warning'} size="sm">
                     <CheckCircle2 className="h-3 w-3 mr-1 inline" />
                     {checks.length - warnings.length}/{checks.length} checks
                   </Badge>
                 </div>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Everything below is read from the app's real state. Warnings can be finished later.
+                  {blocking.length > 0
+                    ? 'Blocking issues would break the app for members — everything else is advice, not homework.'
+                    : 'Everything below is read from the app\'s real state. Recommendations can be finished later.'}
                 </p>
               </div>
             </div>
             <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
-              {checks.map((check) => (
+              {checks.map((check) => {
+                const isBlocking = check.state === 'warning' && check.severity === 'blocking';
+                return (
                 <div key={check.id} className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
                   <span
                     className={cn(
                       'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl',
                       check.state === 'complete'
                         ? 'bg-emerald-50 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-300'
-                        : 'bg-amber-50 dark:bg-amber-400/10 text-amber-600 dark:text-amber-300'
+                        : isBlocking
+                          ? 'bg-red-50 dark:bg-red-400/10 text-red-600 dark:text-red-300'
+                          : 'bg-amber-50 dark:bg-amber-400/10 text-amber-600 dark:text-amber-300'
                     )}
                   >
                     {check.state === 'complete' ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-bold text-gray-800 dark:text-slate-200">{check.title}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="block text-xs font-bold text-gray-800 dark:text-slate-200">{check.title}</span>
+                      {check.state === 'warning' && check.severity && (
+                        <span
+                          className={cn(
+                            'rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
+                            isBlocking
+                              ? 'bg-red-100 text-red-700 dark:bg-red-400/15 dark:text-red-300'
+                              : check.severity === 'recommended'
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300'
+                                : 'bg-gray-100 text-gray-500 dark:bg-white/[0.08] dark:text-slate-400'
+                          )}
+                        >
+                          {isBlocking ? 'Blocking' : check.severity === 'recommended' ? 'Recommended' : 'Optional'}
+                        </span>
+                      )}
+                    </span>
                     <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500">{check.detail}</span>
                   </span>
                   {check.state === 'warning' && check.step && (
                     <button
                       type="button"
                       onClick={() => onStepChange(check.step!)}
-                      className="cursor-pointer text-xs font-bold text-amber-600 dark:text-amber-300 hover:underline"
+                      className={cn(
+                        'cursor-pointer text-xs font-bold hover:underline',
+                        isBlocking ? 'text-red-600 dark:text-red-300' : 'text-amber-600 dark:text-amber-300'
+                      )}
                     >
-                      Set up
+                      {isBlocking ? 'Fix' : 'Set up'}
                     </button>
                   )}
                   {check.state === 'warning' && check.id === 'domain' && (
@@ -210,7 +244,8 @@ export function PublishStep({
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
@@ -276,11 +311,19 @@ export function PublishStep({
             <Button
               className="mt-5 w-full"
               onClick={() => setDialogOpen(true)}
-              disabled={(published && changes.everPublished && changes.count === 0) || isDemo}
+              disabled={(published && changes.everPublished && changes.count === 0) || isDemo || blocking.length > 0}
               leftIcon={hasChanges ? <Rocket className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-              title={isDemo ? 'Publishing is disabled in the shared demo' : undefined}
+              title={
+                isDemo
+                  ? 'Publishing is disabled in the shared demo'
+                  : blocking.length > 0
+                    ? 'Fix the blocking issues in the checklist first'
+                    : undefined
+              }
             >
-              {!published ? 'Publish app' : changes.count > 0 ? 'Publish changes' : 'No changes to publish'}
+              {blocking.length > 0
+                ? `Fix ${blocking.length} blocking ${blocking.length === 1 ? 'issue' : 'issues'} first`
+                : !published ? 'Publish app' : changes.count > 0 ? 'Publish changes' : 'No changes to publish'}
             </Button>
             {published && (
               <Button variant="secondary" className="mt-2 w-full" onClick={() => setShowUnpublish(true)} disabled={isDemo}>

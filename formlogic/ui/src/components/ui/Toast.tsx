@@ -89,6 +89,21 @@ function ToastItem({ toast }: { toast: ToastType }) {
         {toast.message && (
           <p className={cn('text-sm mt-0.5 leading-relaxed', style.message)}>{toast.message}</p>
         )}
+        {toast.action && (
+          <button
+            type="button"
+            onClick={() => {
+              toast.action?.onClick();
+              handleClose();
+            }}
+            className={cn(
+              'mt-1.5 inline-flex min-h-8 cursor-pointer items-center rounded-lg border border-current/25 px-2.5 text-xs font-bold transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08]',
+              style.title
+            )}
+          >
+            {toast.action.label}
+          </button>
+        )}
       </div>
       <button
         onClick={handleClose}

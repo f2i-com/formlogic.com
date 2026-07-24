@@ -114,9 +114,15 @@ export function computeUnpublishedChanges(
 
 export type PreflightState = 'complete' | 'warning';
 
+/** How much a non-complete finding matters (recommendation #4: quality assistant,
+ *  not pass/fail): blocking prevents publish, the rest is advice. */
+export type PreflightSeverity = 'blocking' | 'recommended' | 'optional';
+
 export interface PreflightCheck {
   id: string;
   state: PreflightState;
+  /** Present on 'warning' checks only. */
+  severity?: PreflightSeverity;
   title: string;
   detail: string;
   /** Studio step that fixes a warning (drives the "Set up" link). */
@@ -133,6 +139,11 @@ export function buildPreflightChecks(input: {
   hasHomeScreen: boolean;
   hasCustomDomain: boolean;
   memberCount: number;
+  /** settings.landingPage when it targets a form: does that form still exist? */
+  landingPageMissing?: boolean;
+  /** settings.allowSelfRegistration without a defaultRoleId = joiners with no role. */
+  signupWithoutDefaultRole?: boolean;
+  hasIcon?: boolean;
 }): PreflightCheck[] {
   const checks: PreflightCheck[] = [];
 
@@ -141,6 +152,7 @@ export function buildPreflightChecks(input: {
       ? {
           id: 'forms',
           state: input.formsWithoutFields.length === 0 ? 'complete' : 'warning',
+          ...(input.formsWithoutFields.length === 0 ? {} : { severity: 'recommended' as const }),
           title: `${input.formCount} data ${input.formCount === 1 ? 'type' : 'types'} configured`,
           detail:
             input.formsWithoutFields.length === 0
@@ -148,12 +160,42 @@ export function buildPreflightChecks(input: {
               : `No fields yet: ${input.formsWithoutFields.join(', ')}`,
           step: 'data',
         }
-      : { id: 'forms', state: 'warning', title: 'No data types yet', detail: 'Add at least one form so the app has something to collect', step: 'data' }
+      : {
+          id: 'forms',
+          state: 'warning',
+          severity: 'blocking',
+          title: 'No data types yet',
+          detail: 'Add at least one form so the published app has something to collect',
+          step: 'data',
+        }
   );
+
+  if (input.landingPageMissing) {
+    checks.push({
+      id: 'landing',
+      state: 'warning',
+      severity: 'blocking',
+      title: 'Landing screen references a removed form',
+      detail: 'Members would land on a screen that no longer exists — pick a new landing screen',
+      step: 'screens',
+    });
+  }
+
+  if (input.signupWithoutDefaultRole) {
+    checks.push({
+      id: 'signup-role',
+      state: 'warning',
+      severity: 'blocking',
+      title: 'Sign-up is open but has no default role',
+      detail: 'People who join would have no permissions — pick a default role in Users & roles',
+      step: 'access',
+    });
+  }
 
   checks.push({
     id: 'screens',
     state: input.formCount > 0 || input.hasHomeScreen ? 'complete' : 'warning',
+    ...(input.formCount > 0 || input.hasHomeScreen ? {} : { severity: 'recommended' as const }),
     title: input.hasHomeScreen ? 'Custom home screen configured' : 'Generated screens ready',
     detail:
       input.formCount > 0 || input.hasHomeScreen
@@ -176,6 +218,7 @@ export function buildPreflightChecks(input: {
   checks.push({
     id: 'roles',
     state: input.roleCount > 0 ? 'complete' : 'warning',
+    ...(input.roleCount > 0 ? {} : { severity: 'recommended' as const }),
     title: `${input.roleCount} ${input.roleCount === 1 ? 'role' : 'roles'} configured`,
     detail: input.roleCount > 0 ? 'Access is controlled per role and per form' : 'Roles are created with the app — reload to retry',
     step: 'access',
@@ -189,14 +232,98 @@ export function buildPreflightChecks(input: {
     step: 'access',
   });
 
+  if (input.hasIcon === false) {
+    checks.push({
+      id: 'icon',
+      state: 'warning',
+      severity: 'optional',
+      title: 'Add an app icon',
+      detail: 'A logo makes the app recognisable in the sidebar and on installed home screens',
+    });
+  }
+
   checks.push({
     id: 'domain',
     state: input.hasCustomDomain ? 'complete' : 'warning',
+    ...(input.hasCustomDomain ? {} : { severity: 'optional' as const }),
     title: input.hasCustomDomain ? 'Custom domain connected' : 'Custom domain',
     detail: input.hasCustomDomain ? 'Your app answers on its own domain' : 'Using the FormLogic URL for now',
   });
 
   return checks;
+}
+
+// ── Recommended next action (recommendation #1) ─────────────────────────────
+
+export interface NextAction {
+  step: StudioStepId;
+  title: string;
+  detail: string;
+  cta: string;
+}
+
+/**
+ * ONE recommended next action from real app state — the rail says where you
+ * are, this says what matters next. Returns null when the app is in good shape
+ * (published, no pending changes) so the card disappears instead of nagging.
+ */
+export function deriveNextAction(s: {
+  formCount: number;
+  fieldlessFormNames: string[];
+  flowCount: number;
+  memberCount: number;
+  published: boolean;
+  unpublishedCount: number;
+}): NextAction | null {
+  if (s.formCount === 0) {
+    return {
+      step: 'data',
+      title: 'Add your first data type',
+      detail: 'Every app is built on forms — create one so the app has something to collect.',
+      cta: 'Go to Data & forms',
+    };
+  }
+  if (s.fieldlessFormNames.length > 0) {
+    return {
+      step: 'data',
+      title: `Finish ${s.fieldlessFormNames[0]}`,
+      detail: `${s.fieldlessFormNames.length === 1 ? 'It has' : `${s.fieldlessFormNames.length} data types have`} no fields yet — add the fields people will fill in.`,
+      cta: 'Add fields',
+    };
+  }
+  if (!s.published) {
+    return {
+      step: 'publish',
+      title: 'Publish your app',
+      detail: 'Only you can see it right now — run the checks and make it live for members.',
+      cta: 'Review & publish',
+    };
+  }
+  if (s.unpublishedCount > 0) {
+    return {
+      step: 'publish',
+      title: `Publish ${s.unpublishedCount} pending ${s.unpublishedCount === 1 ? 'change' : 'changes'}`,
+      detail: 'The live app still serves the previous version until you publish again.',
+      cta: 'Review changes',
+    };
+  }
+  if (s.flowCount === 0) {
+    return {
+      step: 'automations',
+      title: 'Connect an automation',
+      detail: 'React when records arrive — a notification, an approval, or a data update.',
+      cta: 'Add automation',
+    };
+  }
+  if (s.memberCount <= 1) {
+    return {
+      step: 'access',
+      title: 'Invite your first member',
+      detail: 'Try the app as a member, or bring in the people who will use it.',
+      cta: 'Invite people',
+    };
+  }
+  return null;
 }
 
 /** "v3"-style display for the app's live version; drafts that never published show DRAFT. */

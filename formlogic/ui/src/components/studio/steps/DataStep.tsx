@@ -22,6 +22,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { useFormStore } from '../../../stores/formStore';
 import { cn } from '../../../lib/utils';
 import { returnToState } from '../../../hooks/useReturnTo';
+import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm } from '../../../types/app';
 import type { FieldType, Form, FormField } from '../../../types/form';
 
@@ -128,12 +129,12 @@ export function DataStep({
     try {
       // The store's createForm applies the user's default form settings and the
       // demo-local path; addFormToApp then syncs + attaches it to this app.
-      const form = await useFormStore.getState().createForm(name);
+      const form = await trackStudioSave(`${name} created`, useFormStore.getState().createForm(name), (f) => !!f);
       if (!form) {
         toast.error('Could not create the data type');
         return;
       }
-      const attached = await addFormToApp(app.id, form.id, name);
+      const attached = await trackStudioSave(`${name} attached`, addFormToApp(app.id, form.id, name), (ok) => !!ok);
       if (!attached) return;
       toast.success('Data type created', `"${name}" was added to ${app.name}.`);
       setShowAddType(false);
@@ -160,7 +161,11 @@ export function DataStep({
         properties: {},
         order: selected.form.fields.length,
       };
-      const res = await api.updateForm(selected.form.id, { fields: [...selected.form.fields, field] });
+      const res = await trackStudioSave(
+        `Field "${label}" added`,
+        api.updateForm(selected.form.id, { fields: [...selected.form.fields, field] }),
+        (r) => !r.error
+      );
       if (res.error) {
         toast.error('Could not add the field', typeof res.error === 'string' ? res.error : undefined);
         return;

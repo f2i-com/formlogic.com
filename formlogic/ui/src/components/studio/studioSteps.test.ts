@@ -4,6 +4,7 @@ import {
   buildPreflightChecks,
   computeUnpublishedChanges,
   deriveCompletedSteps,
+  deriveNextAction,
   isStudioStep,
   parseApiDate,
   versionLabel,
@@ -139,6 +140,56 @@ describe('studioSteps', () => {
     it('automations never block publishing', () => {
       const checks = buildPreflightChecks({ ...base, flowCount: 0, activeFlowCount: 0 });
       expect(checks.find((c) => c.id === 'automations')?.state).toBe('complete');
+    });
+
+    it('tiers findings: real breakage blocks, advice recommends, polish stays optional', () => {
+      const checks = buildPreflightChecks({
+        ...base,
+        formCount: 0,
+        formsWithoutFields: [],
+        landingPageMissing: true,
+        signupWithoutDefaultRole: true,
+        hasIcon: false,
+      });
+      expect(checks.find((c) => c.id === 'forms')?.severity).toBe('blocking');
+      expect(checks.find((c) => c.id === 'landing')?.severity).toBe('blocking');
+      expect(checks.find((c) => c.id === 'landing')?.step).toBe('screens');
+      expect(checks.find((c) => c.id === 'signup-role')?.severity).toBe('blocking');
+      expect(checks.find((c) => c.id === 'signup-role')?.step).toBe('access');
+      expect(checks.find((c) => c.id === 'icon')?.severity).toBe('optional');
+      expect(checks.find((c) => c.id === 'domain')?.severity).toBe('optional');
+      // Fieldless forms are advice, never a wall.
+      const fieldless = buildPreflightChecks({ ...base, formsWithoutFields: ['Invoices'] });
+      expect(fieldless.find((c) => c.id === 'forms')?.severity).toBe('recommended');
+      // Healthy inputs surface none of the conditional checks.
+      const healthy = buildPreflightChecks({ ...base, hasIcon: true });
+      expect(healthy.some((c) => c.id === 'landing' || c.id === 'signup-role' || c.id === 'icon')).toBe(false);
+      expect(healthy.filter((c) => c.state === 'complete').every((c) => c.severity === undefined)).toBe(true);
+    });
+  });
+
+  describe('deriveNextAction', () => {
+    const base = {
+      formCount: 2,
+      fieldlessFormNames: [] as string[],
+      flowCount: 1,
+      memberCount: 3,
+      published: true,
+      unpublishedCount: 0,
+    };
+
+    it('recommends exactly one action in priority order', () => {
+      expect(deriveNextAction({ ...base, formCount: 0 })?.step).toBe('data');
+      expect(deriveNextAction({ ...base, fieldlessFormNames: ['Jobs'] })).toMatchObject({ step: 'data', title: 'Finish Jobs' });
+      expect(deriveNextAction({ ...base, published: false })?.step).toBe('publish');
+      expect(deriveNextAction({ ...base, unpublishedCount: 2 })?.title).toBe('Publish 2 pending changes');
+      expect(deriveNextAction({ ...base, flowCount: 0 })?.step).toBe('automations');
+      expect(deriveNextAction({ ...base, memberCount: 1 })?.step).toBe('access');
+    });
+
+    it('unfinished data outranks publishing; a healthy app gets no nag', () => {
+      expect(deriveNextAction({ ...base, formCount: 0, published: false })?.step).toBe('data');
+      expect(deriveNextAction(base)).toBeNull();
     });
   });
 

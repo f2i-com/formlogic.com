@@ -8,6 +8,8 @@ export interface Toast {
   title: string;
   message?: string;
   duration?: number;
+  /** Optional inline action (e.g. Undo) — clicking it dismisses the toast. */
+  action?: { label: string; onClick: () => void };
 }
 
 interface ToastState {
@@ -84,5 +86,15 @@ export const toast = {
   },
   info: (title: string, message?: string) => {
     useToastStore.getState().addToast({ type: 'info', title, message });
+  },
+  /** Success toast with an Undo action — a slightly longer window to react. */
+  undo: (title: string, onUndo: () => void, message?: string) => {
+    useToastStore.getState().addToast({
+      type: 'success',
+      title,
+      message,
+      duration: 8000,
+      action: { label: 'Undo', onClick: onUndo },
+    });
   },
 };

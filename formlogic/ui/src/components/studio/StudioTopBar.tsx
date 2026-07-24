@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Check, Play, Rocket, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
 import { AppTile } from '../apps/AppTile';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -12,6 +12,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { cn } from '../../lib/utils';
 import { versionLabel, type UnpublishedChanges } from './studioSteps';
+import { useStudioSaveState } from './studioSaveState';
 import { returnToState } from '../../hooks/useReturnTo';
 import type { App } from '../../types/app';
 
@@ -46,6 +47,10 @@ export function StudioTopBar({
 
   const liveVersion = versionLabel(app);
   const published = app.status === 'published';
+  const saving = useStudioSaveState((s) => s.pending > 0);
+  const lastSavedAt = useStudioSaveState((s) => s.lastSavedAt);
+  const lastLabel = useStudioSaveState((s) => s.lastLabel);
+  const saveError = useStudioSaveState((s) => s.lastError);
   const openChat = () => {
     setChatMinimized(false);
     setChatOpen(true);
@@ -70,8 +75,24 @@ export function StudioTopBar({
             </Badge>
           </div>
           <div className="mt-0.5 hidden items-center gap-1.5 text-[11px] text-gray-400 dark:text-slate-500 sm:flex min-w-0">
-            <Check className="h-3 w-3 text-emerald-500 shrink-0" aria-hidden="true" />
-            <span className="shrink-0">All changes saved</span>
+            {saving ? (
+              <>
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary-500" aria-hidden="true" />
+                <span className="shrink-0">Saving…</span>
+              </>
+            ) : saveError ? (
+              <>
+                <AlertTriangle className="h-3 w-3 shrink-0 text-red-500" aria-hidden="true" />
+                <span className="shrink-0 text-red-500 dark:text-red-400" title={saveError}>Couldn't save — try again</span>
+              </>
+            ) : (
+              <>
+                <Check className="h-3 w-3 text-emerald-500 shrink-0" aria-hidden="true" />
+                <span className="shrink-0" title={lastLabel ?? undefined}>
+                  {lastSavedAt ? (lastLabel ? `Saved — ${lastLabel}` : 'Saved just now') : 'All changes saved'}
+                </span>
+              </>
+            )}
             {changes.everPublished && changes.count > 0 && (
               <>
                 <span aria-hidden="true">·</span>

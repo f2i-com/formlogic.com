@@ -25,6 +25,7 @@ import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { cn } from '../../../lib/utils';
 import { returnToState } from '../../../hooks/useReturnTo';
+import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
 
@@ -110,6 +111,23 @@ export function ScreensStep({
     [appForms, formsById]
   );
 
+  // Permission cross-check (recommendation #3): menu items the previewed role
+  // can SEE but cannot actually use — visible nav entries whose forms the role
+  // holds no view/submit permission on. Makes the matrix tangible right where
+  // the navigation is designed.
+  const inaccessibleNavNames = useMemo(() => {
+    if (ownerLike || rolePerms === null) return [];
+    return appForms
+      .filter((af) => {
+        const settings = (af.settings ?? {}) as { hidden?: boolean; menuHidden?: boolean };
+        if (settings.hidden === true || settings.menuHidden === true || af.isVisible === false) return false;
+        return !rolePerms.some(
+          (p) => (p.formId === af.formId || p.formId === null) && VIEW_PERMISSIONS.includes(p.permission)
+        );
+      })
+      .map((af) => af.displayName || formsById[af.formId]?.title || 'Untitled');
+  }, [appForms, ownerLike, rolePerms, formsById]);
+
   const selectedForm = selection.kind === 'form' ? formsById[selection.formId] ?? null : null;
   const selectedAttachment = selection.kind === 'form' ? appForms.find((af) => af.formId === selection.formId) ?? null : null;
 
@@ -119,23 +137,43 @@ export function ScreensStep({
     return kind ? 'Custom' : 'Generated';
   };
 
-  const setMenuVisible = async (af: AppForm, visible: boolean) => {
+  const setMenuVisible = async (af: AppForm, visible: boolean, opts: { silent?: boolean } = {}) => {
     setBusy(true);
     const settings = { ...(af.settings ?? {}) } as Record<string, unknown>;
     delete settings.menuHidden;
     delete settings.hidden;
     if (!visible) settings.menuHidden = true;
-    await updateAppForm(app.id, af.formId, { isVisible: true, settings });
+    const name = af.displayName || formsById[af.formId]?.title || 'Screen';
+    await trackStudioSave(
+      visible ? `${name} shown in the menu` : `${name} hidden from the menu`,
+      updateAppForm(app.id, af.formId, { isVisible: true, settings })
+    );
     await onReloadForms();
     setBusy(false);
+    // Hiding a nav item is easy to fat-finger — offer a one-tap way back.
+    if (!visible && !opts.silent) {
+      toast.undo(`${name} hidden from the menu`, () => { void setMenuVisible(af, true, { silent: true }); });
+    }
   };
 
   const setLanding = async (landingPage: string) => {
+    const previous = (app.settings as { landingPage?: string } | undefined)?.landingPage ?? 'dashboard';
     setBusy(true);
-    const ok = await updateApp(app.id, { settings: { ...app.settings, landingPage } });
+    const ok = await trackStudioSave(
+      'Landing screen updated',
+      updateApp(app.id, { settings: { ...app.settings, landingPage } }),
+      (saved) => !!saved
+    );
     if (ok) {
-      toast.success('Landing screen updated');
       await onReloadApp();
+      if (previous !== landingPage) {
+        toast.undo('Landing screen updated', () => {
+          void (async () => {
+            await trackStudioSave('Landing screen restored', updateApp(app.id, { settings: { ...app.settings, landingPage: previous } }), (saved) => !!saved);
+            await onReloadApp();
+          })();
+        });
+      }
     }
     setBusy(false);
   };
@@ -253,6 +291,15 @@ export function ScreensStep({
             selectedForm={selectedForm}
           />
         </div>
+        {/* Cross-check: menu entries the previewed role holds no permission on. */}
+        {inaccessibleNavNames.length > 0 && selectedRole && (
+          <div className="border-t border-amber-200/70 dark:border-amber-400/20 bg-amber-50/70 dark:bg-amber-400/[0.07] px-4 py-2.5 text-[11px] leading-4 text-amber-800 dark:text-amber-200">
+            <span className="font-bold">{selectedRole.name} can't open {inaccessibleNavNames.length === 1 ? 'a menu item' : `${inaccessibleNavNames.length} menu items`}:</span>{' '}
+            {inaccessibleNavNames.join(', ')} {inaccessibleNavNames.length === 1 ? 'is' : 'are'} in the menu but this role has no
+            permission on {inaccessibleNavNames.length === 1 ? 'it' : 'them'}, so {inaccessibleNavNames.length === 1 ? 'it stays' : 'they stay'} hidden
+            for these members — grant access in Users &amp; roles, or hide {inaccessibleNavNames.length === 1 ? 'it' : 'them'} here.
+          </div>
+        )}
         <p className="border-t border-gray-200/70 dark:border-white/[0.06] px-4 py-2 text-[10px] text-gray-400 dark:text-slate-500">
           Live preview from this app's real navigation, theme and role permissions. Open the live app to interact with real records.
         </p>

@@ -18,6 +18,7 @@ import { FLOW_EVENT_CATALOG } from '../../flows/flowEventCatalog';
 import { getNodeSpec } from '../../flows/editor/nodeCatalog';
 import { FLOW_STARTER_TEMPLATES } from '../../flows/starterTemplates';
 import { returnToState } from '../../../hooks/useReturnTo';
+import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm } from '../../../types/app';
 import type { Form } from '../../../types/form';
 import type { FlowBinding, FlowDefinition } from '../../../types/flows';
@@ -70,7 +71,11 @@ export function AutomationsStep({
   };
 
   const toggleFlow = async (flow: FlowDefinition, enabled: boolean) => {
-    const res = await api.updateFlow(app.id, flow.id, { enabled });
+    const res = await trackStudioSave(
+      enabled ? `${flow.name} enabled` : `${flow.name} paused`,
+      api.updateFlow(app.id, flow.id, { enabled }),
+      (r) => !r.error
+    );
     if (res.error) {
       toast.error('Could not update the automation', typeof res.error === 'string' ? res.error : undefined);
       return;

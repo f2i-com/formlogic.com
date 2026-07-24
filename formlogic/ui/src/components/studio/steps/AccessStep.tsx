@@ -25,6 +25,7 @@ import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { useAppUserStore } from '../../../stores/appUserStore';
+import { trackStudioSave } from '../studioSaveState';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
@@ -157,7 +158,11 @@ function RolesView({
   const savePermissions = async () => {
     if (!selected || saving || !permsLoaded) return;
     setSaving(true);
-    const res = await api.setAppRolePermissions(app.id, selected.id, permissions);
+    const res = await trackStudioSave(
+      `${selected.name} permissions saved`,
+      api.setAppRolePermissions(app.id, selected.id, permissions),
+      (r) => !r.error
+    );
     setSaving(false);
     if (res.error) {
       toast.error('Could not save permissions', typeof res.error === 'string' ? res.error : undefined);
@@ -171,7 +176,7 @@ function RolesView({
     const name = newRoleName.trim();
     if (!name || creatingRole) return;
     setCreatingRole(true);
-    const role = await createRole(app.id, { name });
+    const role = await trackStudioSave(`Role "${name}" created`, createRole(app.id, { name }), (r) => !!r);
     setCreatingRole(false);
     if (role) {
       toast.success('Role created', `"${name}" is ready — grant it permissions below.`);
@@ -534,7 +539,7 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
 
   const saveSettings = async (patch: Partial<App['settings']>) => {
     setSaving(true);
-    const ok = await updateApp(app.id, { settings: { ...app.settings, ...patch } });
+    const ok = await trackStudioSave('Sign-up settings saved', updateApp(app.id, { settings: { ...app.settings, ...patch } }), (saved) => !!saved);
     if (ok) await onReloadApp();
     setSaving(false);
   };
