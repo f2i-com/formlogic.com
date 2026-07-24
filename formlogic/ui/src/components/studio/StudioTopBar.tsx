@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Loader2, Play, Rocket, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Play, Rocket, Settings, Sparkles } from 'lucide-react';
 import { AppTile } from '../apps/AppTile';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -45,6 +45,9 @@ export function StudioTopBar({
   // "Use app" carries the current studio step so the runtime's draft-preview
   // Back button returns exactly here.
   const openRuntime = () => navigate(`/app/${app.slug}`, { state: returnToState(location.pathname, 'App Studio') });
+  const openManage = () => navigate(`/apps/${app.id}/settings?tab=manage`, {
+    state: returnToState(location.pathname, 'App Studio'),
+  });
 
   const liveVersion = versionLabel(app);
   const published = app.status === 'published';
@@ -151,6 +154,15 @@ export function StudioTopBar({
           </Button>
         )}
         <Button
+          variant="ghost"
+          size="sm"
+          onClick={openManage}
+          leftIcon={<Settings className="h-4 w-4" />}
+          className="hidden lg:inline-flex"
+        >
+          Manage
+        </Button>
+        <Button
           variant={!published || changes.count > 0 ? 'primary' : 'outline'}
           size="sm"
           onClick={onOpenPublish}
@@ -172,6 +184,16 @@ export function StudioTopBar({
             <Sparkles className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
+
+        <button
+          type="button"
+          onClick={openManage}
+          aria-label="Manage app"
+          title="Manage app"
+          className="lg:hidden flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
+        >
+          <Settings className="h-4 w-4" aria-hidden="true" />
+        </button>
 
         {/* Mobile: jump into the live app */}
         <button

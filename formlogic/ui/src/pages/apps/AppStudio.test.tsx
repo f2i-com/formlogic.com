@@ -4,7 +4,7 @@
 // rail + footer routes between steps.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppStudio } from './AppStudio';
 import { useAuthStore } from '../../stores/authStore';
@@ -93,9 +93,19 @@ vi.mock('../../components/vault/VaultChip', () => ({ VaultChip: () => null }));
 
 let container: HTMLDivElement;
 let root: Root;
+const pathRef = { current: '' };
+
+function PathProbe() {
+  const location = useLocation();
+  React.useEffect(() => {
+    pathRef.current = `${location.pathname}${location.search}`;
+  });
+  return null;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  pathRef.current = '';
   useAuthStore.setState({ user: { id: 'u1', email: 'o@example.com', name: 'Owner' } as unknown as AuthUser });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -112,9 +122,11 @@ async function renderStudio(path: string) {
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
+        <PathProbe />
         <Routes>
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
+          <Route path="/apps/:appId/settings" element={<div />} />
         </Routes>
       </MemoryRouter>
     );
@@ -196,5 +208,13 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Users & roles');
     expect(container.textContent).toContain('App roles');
     expect(container.textContent).toContain('Owner');
+  });
+
+  it('links directly from the Studio to the Manage app page', async () => {
+    await renderStudio('/apps/a1/studio/data');
+    const manage = container.querySelector<HTMLButtonElement>('button[aria-label="Manage app"]')!;
+    expect(manage).toBeTruthy();
+    await act(async () => { manage.click(); });
+    expect(pathRef.current).toBe('/apps/a1/settings?tab=manage');
   });
 });

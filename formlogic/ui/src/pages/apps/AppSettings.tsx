@@ -1,7 +1,7 @@
 import { useState, useEffect, type CSSProperties } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, Save, Check, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table } from 'lucide-react';
+import { ArrowLeft, Save, Check, ChevronRight, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table, PencilRuler } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -194,11 +194,18 @@ export function AppSettings() {
   return (
     <div className="min-h-screen">
       <Header
-        title={app.name}
+        title="Manage"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navGuarded(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-              {backTo.label ? `Back to ${backTo.label}` : 'Back'}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navGuarded(backTo.path)}
+              leftIcon={<ArrowLeft className="h-4 w-4" />}
+              aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back'}
+              title={backTo.label ? `Back to ${backTo.label}` : 'Back'}
+            >
+              <span className="hidden sm:inline">{backTo.label ? `Back to ${backTo.label}` : 'Back'}</span>
             </Button>
             {/* Nothing on the Manage tab is savable — hide the Save action there. */}
             {activeTab !== 'manage' && (
@@ -245,12 +252,24 @@ export function AppSettings() {
           </div>
           <p className="truncate font-mono text-xs text-gray-400 dark:text-slate-500">/app/{app.slug}</p>
         </div>
-        <div className="flex flex-none items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-none">
+          {!acting && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<PencilRuler className="h-4 w-4" />}
+              onClick={() => navGuarded(paths.appSub(`${appId}`, 'studio'))}
+              className="flex-1 sm:flex-none"
+            >
+              App Studio
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
             leftIcon={<Rocket className="h-4 w-4" />}
             onClick={() => navGuarded(paths.appSub(`${appId}`, 'deploy'))}
+            className="flex-1 sm:flex-none"
           >
             Deploy
           </Button>
@@ -262,6 +281,7 @@ export function AppSettings() {
               ? 'The live app shows record data, which is not visible to platform admins'
               : app.status === 'published' ? 'Open the app in a new tab' : 'Publish the app (Deploy) to open it'}
             onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener')}
+            className="flex-1 sm:flex-none"
           >
             Open app
           </Button>
@@ -270,12 +290,17 @@ export function AppSettings() {
 
       {/* Tab navigation */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList variant="underline" aria-label="App settings sections" className="mb-6">
+        <TabsList variant="underline" aria-label="App settings sections" className="mb-6 w-full">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
-              <TabsTrigger key={tab.value} value={tab.value} variant="underline">
-                <span className="flex items-center gap-2"><Icon className="h-4 w-4" />{tab.label}</span>
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                variant="underline"
+                className="w-1/4 justify-center px-0.5 text-xs sm:w-auto sm:px-4 sm:text-sm"
+              >
+                <span className="flex items-center gap-1 sm:gap-2"><Icon className="h-4 w-4" />{tab.label}</span>
               </TabsTrigger>
             );
           })}
@@ -490,7 +515,7 @@ export function AppSettings() {
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-red-200/80 dark:border-red-500/20 bg-red-50/50 dark:bg-red-500/5 p-4">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 dark:text-white">Delete this app</p>
-                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">Permanently removes the app with all its forms, members, roles, and data. This cannot be undone.</p>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">Moves the app, its roles and memberships to the recycle bin for 30 days. Forms and their records stay in your workspace.</p>
                 </div>
                 <Button variant="danger" size="sm" className="flex-shrink-0 self-start sm:self-auto" onClick={() => setShowDelete(true)} leftIcon={<Trash2 className="h-4 w-4" />}>
                   Delete app
@@ -691,68 +716,75 @@ export function AppSettings() {
           </TabsContent>
 
           <TabsContent value="manage">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {[
-              acting
-                ? { label: 'Record counts', desc: 'Totals per form — record data itself is not visible to platform admins', icon: Table, path: 'records' }
-                : { label: 'Records', desc: 'Browse the data in every form of this app', icon: Table, path: 'records' },
-              { label: 'Forms', desc: 'Add, remove, and reorder forms', icon: LayoutGrid, path: 'forms' },
-              { label: 'Companion app', desc: 'A second app — e.g. an admin console — over these same forms and data', icon: Layers, path: 'forms' },
-              { label: 'Users', desc: 'Manage users and invitations', icon: Users, path: 'users' },
-              { label: 'Roles', desc: 'Configure roles and permissions', icon: Shield, path: 'roles' },
-              { label: 'Relations', desc: 'Define links between forms', icon: Link2, path: 'relations' },
-              { label: 'Custom', desc: 'Build a full custom frontend (HTML/CSS/TypeScript) over your forms (Beta)', icon: MonitorPlay, path: 'home/edit' },
-              { label: 'Deploy', desc: 'Share link and PWA settings', icon: Rocket, path: 'deploy' },
-            ].map((item) => (
-              <button
-                key={item.label}
-                onClick={() => navGuarded(paths.appSub(`${appId}`, item.path))}
-                className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
-              >
-                <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
-                  <item.icon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-900 dark:text-white">{item.label}</span>
-                  <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">{item.desc}</span>
-                </div>
-              </button>
-            ))}
-            {/* Identity-bound / export surfaces are the owner's, not an acting admin's:
-                MCP tokens would mint under the admin, and app exports can embed records. */}
-            {!acting && <button
-              onClick={() => setShowMcp(true)}
-              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
-            >
-              <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
-                <Plug className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+          <div className="space-y-7">
+            <div className="flex flex-col gap-3 rounded-2xl border border-primary-200/70 bg-primary-50/60 p-4 dark:border-primary-500/20 dark:bg-primary-500/[0.07] sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">Manage {app.name}</h2>
+                <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-slate-400">
+                  Jump directly to the app’s data, people, permissions, delivery and advanced tools.
+                </p>
               </div>
-              <div>
-                <span className="block text-sm font-medium text-gray-900 dark:text-white">Connect an AI</span>
-                <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Let an external AI build via MCP (Beta)</span>
-              </div>
-            </button>}
-            {!acting && <button
-              onClick={handleExport}
-              disabled={exporting}
-              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
-            >
-              <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
-                <Download className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-              </div>
-              <div>
-                <span className="block text-sm font-medium text-gray-900 dark:text-white">{exporting ? 'Exporting…' : 'Export app'}</span>
-                <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Portable .json: forms, screens, scripts &amp; roles. Not responses, members, or secrets.</span>
-              </div>
-            </button>}
+              {!acting && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<PencilRuler className="h-4 w-4" />}
+                  onClick={() => navGuarded(paths.appSub(`${appId}`, 'studio'))}
+                  className="w-full shrink-0 sm:w-auto"
+                >
+                  Open App Studio
+                </Button>
+              )}
+            </div>
+
+            <ManageAppGroup
+              title="Content & data"
+              description="Work with the forms, records and relationships that power this app."
+              items={[
+                acting
+                  ? { label: 'Record counts', desc: 'View totals per form without exposing record data', icon: Table, onClick: () => navGuarded(paths.appSub(`${appId}`, 'records')) }
+                  : { label: 'Records', desc: 'Browse and export collected app data', icon: Table, onClick: () => navGuarded(paths.appSub(`${appId}`, 'records')) },
+                { label: 'Forms', desc: 'Attach, remove, rename and reorder forms', icon: LayoutGrid, meta: `${appForms.length}`, onClick: () => navGuarded(paths.appSub(`${appId}`, 'forms')) },
+                { label: 'Relations', desc: 'Connect records across the app’s forms', icon: Link2, onClick: () => navGuarded(paths.appSub(`${appId}`, 'relations')) },
+              ]}
+            />
+
+            <ManageAppGroup
+              title="People & access"
+              description="Control who can use the app and what each role is allowed to do."
+              items={[
+                { label: 'Users', desc: 'Invite members and manage existing access', icon: Users, onClick: () => navGuarded(paths.appSub(`${appId}`, 'users')) },
+                { label: 'Roles', desc: 'Configure permissions and default access', icon: Shield, meta: `${roles.length}`, onClick: () => navGuarded(paths.appSub(`${appId}`, 'roles')) },
+              ]}
+            />
+
+            <ManageAppGroup
+              title="Experience & delivery"
+              description="Shape the frontend, create another view over the same data, and publish it."
+              items={[
+                { label: 'Custom frontend', desc: 'Build a custom HTML, CSS and TypeScript experience (Beta)', icon: MonitorPlay, onClick: () => navGuarded(paths.appSub(`${appId}`, 'home/edit')) },
+                { label: 'Companion app', desc: 'Create another app over these same forms and records', icon: Layers, onClick: () => navGuarded(paths.appSub(`${appId}`, 'forms')) },
+                { label: 'Deploy', desc: 'Manage publishing, share links and PWA settings', icon: Rocket, onClick: () => navGuarded(paths.appSub(`${appId}`, 'deploy')) },
+              ]}
+            />
+
+            {!acting && (
+              <ManageAppGroup
+                title="Tools & portability"
+                description="Connect external builders or move the app’s structure between workspaces."
+                items={[
+                  { label: 'Connect an AI', desc: 'Let an external AI build this app through MCP (Beta)', icon: Plug, onClick: () => setShowMcp(true) },
+                  { label: exporting ? 'Exporting…' : 'Export app', desc: 'Download forms, screens, scripts and roles as portable JSON', icon: Download, disabled: exporting, onClick: handleExport },
+                ]}
+              />
+            )}
           </div>
-          <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
+          {!acting && <p className="mt-5 rounded-xl bg-gray-50 px-3.5 py-3 text-xs leading-5 text-gray-500 dark:bg-white/[0.035] dark:text-slate-400">
             <strong className="font-medium text-gray-700 dark:text-slate-300">Export app is a structure bundle, not a data backup.</strong>{' '}
-            It re-creates the app's forms, dashboards, scripts and roles in another account, but does
-            <em> not</em> include your collected responses or uploaded files. For the data itself, use{' '}
+            It does not include collected responses or uploaded files. For app data, use{' '}
             <strong className="font-medium text-gray-700 dark:text-slate-300">Records → Export data</strong> (SQLite bundle, or a
             MySQL / SQL Server dump with one table per form); for a restorable full-workspace backup, use Settings → Backup &amp; restore.
-          </p>
+          </p>}
           </TabsContent>
         </div>
       </Tabs>
@@ -779,5 +811,65 @@ export function AppSettings() {
       />
       <ConnectAiModal isOpen={showMcp} onClose={() => setShowMcp(false)} appId={appId} appName={app?.name} />
     </div>
+  );
+}
+
+interface ManageAppItem {
+  label: string;
+  desc: string;
+  icon: typeof Settings;
+  onClick: () => void;
+  meta?: string;
+  disabled?: boolean;
+}
+
+function ManageAppGroup({
+  title,
+  description,
+  items,
+}: {
+  title: string;
+  description: string;
+  items: ManageAppItem[];
+}) {
+  return (
+    <section aria-labelledby={`manage-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+      <div className="mb-3">
+        <h3
+          id={`manage-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+          className="text-sm font-semibold text-gray-900 dark:text-white"
+        >
+          {title}
+        </h3>
+        <p className="mt-0.5 text-xs leading-5 text-gray-500 dark:text-slate-400">{description}</p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={item.onClick}
+            disabled={item.disabled}
+            className="group flex min-h-24 cursor-pointer items-center gap-3.5 rounded-xl border border-gray-200/80 bg-white p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md hover:shadow-gray-900/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700/60 dark:bg-white/[0.02] dark:hover:border-primary-500/40 dark:hover:bg-primary-500/[0.04] dark:hover:shadow-black/20 dark:focus-visible:ring-offset-slate-950"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:group-hover:bg-primary-500/20">
+              <item.icon className="h-5 w-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">{item.label}</span>
+                {item.meta !== undefined && (
+                  <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-gray-500 dark:bg-white/[0.06] dark:text-slate-400">
+                    {item.meta}
+                  </span>
+                )}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">{item.desc}</span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-300 transition-transform group-hover:translate-x-0.5 group-hover:text-primary-500 dark:text-slate-600 dark:group-hover:text-primary-400" />
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }

@@ -179,6 +179,7 @@ export function AppsDashboard() {
                     app={app}
                     packName={appPackMap[app.id] ?? null}
                     onClick={() => navigate(`/apps/${app.id}/studio`)}
+                    onManage={() => navigate(`/apps/${app.id}/settings?tab=manage`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
@@ -193,7 +194,7 @@ export function AppsDashboard() {
                     app={app}
                     packName={appPackMap[app.id] ?? null}
                     onManage={() => navigate(`/apps/${app.id}/studio`)}
-                    onSettings={() => navigate(`/apps/${app.id}/settings`)}
+                    onSettings={() => navigate(`/apps/${app.id}/settings?tab=manage`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
@@ -277,8 +278,8 @@ function AppRow({ app, packName, onManage, onSettings, onDelete }: { app: App; p
         <button
           type="button"
           onClick={onSettings}
-          title="App settings"
-          aria-label={`Settings for ${app.name}`}
+          title="Manage app"
+          aria-label={`Manage ${app.name}`}
           className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
         >
           <Settings className="h-4 w-4" />
@@ -297,7 +298,7 @@ function AppRow({ app, packName, onManage, onSettings, onDelete }: { app: App; p
   );
 }
 
-function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: string | null; onClick: () => void; onDelete: () => void }) {
+function AppCard({ app, packName, onClick, onManage, onDelete }: { app: App; packName: string | null; onClick: () => void; onManage: () => void; onDelete: () => void }) {
   // Real count from the list endpoint; navConfig is only a stale-cache fallback (it can be empty
   // on pack-provisioned apps — the "0 forms" bug).
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
@@ -379,6 +380,16 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
             </button>
           )}
           <button
+            type="button"
+            onClick={onManage}
+            title="Manage app"
+            aria-label={`Manage ${app.name}`}
+            className="p-2.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors cursor-pointer"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
             onClick={onDelete}
             className="p-2.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
             aria-label="Delete app"
