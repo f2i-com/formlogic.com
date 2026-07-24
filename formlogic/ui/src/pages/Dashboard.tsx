@@ -44,6 +44,7 @@ import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
+import { isDemoLocalId } from '../lib/demoLocal';
 import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '../components/builder';
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
@@ -69,6 +70,14 @@ interface DashboardStatsCache {
   recent: Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>;
   /** formId → epoch-ms of the most recent submission (drives the Last-activity sort). */
   lastActivity?: Record<string, number>;
+}
+
+interface BrowserResponseStats {
+  totalResponses: number;
+  responseCounts: Record<string, number>;
+  pulses: Record<string, PulseDay[]>;
+  recent: Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>;
+  lastActivity: Record<string, number>;
 }
 
 /** Dashboard "My forms" sort modes — Last activity is the default (last USED, not last added). */
@@ -701,6 +710,14 @@ export function Dashboard() {
   // Per-form 14-day activity, for the pulse strip (api mode; local mode derives its own below).
   const [apiPulses, setApiPulses] = useState<Record<string, PulseDay[]>>({});
   const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
+  const [browserStats, setBrowserStats] = useState<BrowserResponseStats>({
+    totalResponses: 0,
+    responseCounts: {},
+    pulses: {},
+    recent: [],
+    lastActivity: {},
+  });
+  const [browserStatsReady, setBrowserStatsReady] = useState(true);
   // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is
   // part of (badge only — preview routing does its own fresh per-click context lookup).
   const [appOfForm, setAppOfForm] = useState<Record<string, string>>({});
@@ -811,7 +828,80 @@ export function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId]);
 
-  const pulseByForm = storageMode === 'api' ? apiPulses : localPulses;
+  const pulseByForm = useMemo(
+    () => storageMode === 'api' ? { ...apiPulses, ...browserStats.pulses } : localPulses,
+    [apiPulses, browserStats.pulses, localPulses, storageMode],
+  );
+
+  // Browser-created demo forms keep their records in IndexedDB, even while the
+  // shared demo workspace otherwise uses cloud/API mode. Read that small local
+  // overlay separately so the workspace dashboard agrees with the published app.
+  useEffect(() => {
+    let cancelled = false;
+    const browserForms = storageMode === 'api'
+      ? forms.filter((form) => isDemoLocalId(form.id))
+      : [];
+    if (browserForms.length === 0) {
+      setBrowserStats({
+        totalResponses: 0,
+        responseCounts: {},
+        pulses: {},
+        recent: [],
+        lastActivity: {},
+      });
+      setBrowserStatsReady(true);
+      return () => { cancelled = true; };
+    }
+
+    setBrowserStatsReady(false);
+    void Promise.all(
+      browserForms.map(async (form) => {
+        const result = await api.getResponses(form.id, { limit: 1000 });
+        return { form, responses: result.data?.responses ?? [] };
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const responseCounts: Record<string, number> = {};
+      const pulses: Record<string, PulseDay[]> = {};
+      const lastActivity: Record<string, number> = {};
+      const recent: BrowserResponseStats['recent'] = [];
+      let totalResponses = 0;
+
+      for (const { form, responses: formResponses } of results) {
+        responseCounts[form.id] = formResponses.length;
+        totalResponses += formResponses.length;
+        pulses[form.id] = buildPulseFromTimestamps(formResponses.map((response) => response.submittedAt));
+        for (const response of formResponses) {
+          const submitted = parseServerDate(response.submittedAt).getTime();
+          if (Number.isFinite(submitted) && submitted > (lastActivity[form.id] ?? 0)) {
+            lastActivity[form.id] = submitted;
+          }
+          recent.push({
+            id: response.id,
+            formId: form.id,
+            formTitle: form.title,
+            submittedAt: response.submittedAt,
+          });
+        }
+      }
+
+      recent.sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime());
+      setBrowserStats({
+        totalResponses,
+        responseCounts,
+        pulses,
+        recent: recent.slice(0, 5),
+        lastActivity,
+      });
+      setBrowserStatsReady(true);
+    }).catch((error) => {
+      if (cancelled) return;
+      logger.warn('Failed to read browser-local dashboard responses:', error);
+      setBrowserStatsReady(true);
+    });
+
+    return () => { cancelled = true; };
+  }, [forms, storageMode]);
 
   // Which user's data is currently on screen (cache hydration or a landed fetch).
   // Lets the fetch effect refresh silently instead of dropping back to skeletons.
@@ -850,12 +940,13 @@ export function Dashboard() {
         }
         try {
           let totalResponses = 0;
+          const serverForms = forms.filter((form) => !isDemoLocalId(form.id));
           // getTimezoneOffset() returns minutes BEHIND UTC (JS convention); the API wants
           // minutes AHEAD — negate it (see api.getFormAnalytics doc) so responsesByDate (and
           // therefore the pulse strip) buckets by the viewer's local calendar day.
           const tzOffsetMinutes = -new Date().getTimezoneOffset();
           const analyticsResults = await Promise.all(
-            forms.map((form) => api.getFormAnalytics(form.id, tzOffsetMinutes))
+            serverForms.map((form) => api.getFormAnalytics(form.id, tzOffsetMinutes))
           );
           if (cancelled) return;
           for (const result of analyticsResults) {
@@ -875,19 +966,19 @@ export function Dashboard() {
           const lastActivity: Record<string, number> = {};
           analyticsResults.forEach((result, i) => {
             if (result.data?.analytics) {
-              counts[forms[i].id] = result.data.analytics.totalResponses;
-              pulses[forms[i].id] = buildPulseFromSparse(result.data.analytics.responsesByDate);
+              counts[serverForms[i].id] = result.data.analytics.totalResponses;
+              pulses[serverForms[i].id] = buildPulseFromSparse(result.data.analytics.responsesByDate);
               // Prefer the exact last-submission timestamp: responsesByDate is DAY-granular
               // (a 22:28 call ranked as midnight and lost to any same-day form EDIT, which
               // carries full precision). Fall back to the by-date max on older payloads.
               const lastAt = result.data.analytics.lastResponseAt;
               if (lastAt) {
                 const t = parseServerDate(lastAt).getTime();
-                if (Number.isFinite(t)) lastActivity[forms[i].id] = t;
+                if (Number.isFinite(t)) lastActivity[serverForms[i].id] = t;
               } else {
                 const dated = (result.data.analytics.responsesByDate || []).filter((d) => d.count > 0);
                 if (dated.length) {
-                  lastActivity[forms[i].id] = Math.max(...dated.map((d) => parseServerDate(d.date).getTime()));
+                  lastActivity[serverForms[i].id] = Math.max(...dated.map((d) => parseServerDate(d.date).getTime()));
                 }
               }
             }
@@ -898,7 +989,7 @@ export function Dashboard() {
           setApiPulses(pulses);
 
           // Recent Activity: pull a few recent rows from the forms that have responses.
-          const formsWithResponses = forms
+          const formsWithResponses = serverForms
             .filter((f) => (counts[f.id] ?? 0) > 0)
             .sort((a, b) => {
               // Rank by most-recent submission; fall back to updatedAt when a form has
@@ -958,7 +1049,11 @@ export function Dashboard() {
     return () => { cancelled = true; };
   }, [forms, storageMode, user, localStats, formsLoading]);
 
-  const totalResponses = stats.totalResponses;
+  const totalResponses = stats.totalResponses + (storageMode === 'api' ? browserStats.totalResponses : 0);
+  const displayedResponseCounts = useMemo(
+    () => storageMode === 'api' ? { ...responseCounts, ...browserStats.responseCounts } : responseCounts,
+    [browserStats.responseCounts, responseCounts, storageMode],
+  );
 
   // "This week" = the most recent 7 of the 14 days each form's pulse already covers —
   // no extra fetch, and it keeps the headline and the pulse strips reading the same window.
@@ -1013,7 +1108,10 @@ export function Dashboard() {
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId, storageMode]);
-  const activityOf = storageMode === 'api' ? apiLastActivity : localLastActivity;
+  const activityOf = useMemo(
+    () => storageMode === 'api' ? { ...apiLastActivity, ...browserStats.lastActivity } : localLastActivity,
+    [apiLastActivity, browserStats.lastActivity, localLastActivity, storageMode],
+  );
 
   // "My forms", sorted by the chosen mode. Default = Last activity (most recent submission,
   // falling back to the edit time for forms with no responses yet) so the list surfaces the
@@ -1022,7 +1120,7 @@ export function Dashboard() {
     const editedMs = (f: Form) => parseServerDate(f.updatedAt).getTime();
     const activityMs = (f: Form) => activityOf[f.id] ?? editedMs(f);
     const countOf = (f: Form) =>
-      storageMode === 'api' ? (responseCounts[f.id] ?? f.responseCount ?? 0) : getResponsesByFormId(f.id).length;
+      storageMode === 'api' ? (displayedResponseCounts[f.id] ?? f.responseCount ?? 0) : getResponsesByFormId(f.id).length;
     return [...forms].sort((a, b) => {
       switch (formsSort) {
         case 'edited':
@@ -1036,7 +1134,7 @@ export function Dashboard() {
           return activityMs(b) - activityMs(a);
       }
     });
-  }, [forms, formsSort, activityOf, responseCounts, storageMode, getResponsesByFormId]);
+  }, [forms, formsSort, activityOf, displayedResponseCounts, storageMode, getResponsesByFormId]);
   const recentForms = sortedForms.slice(0, formsShown);
 
   // Get recent responses across all forms (local store — cloud mode uses apiRecent)
@@ -1054,8 +1152,15 @@ export function Dashboard() {
       .slice(0, 5);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId]);
-  const recentResponses = storageMode === 'api' ? apiRecent : localRecentResponses;
-  const statsLoading = storageMode === 'api' && !statsReady;
+  const recentResponses = useMemo(
+    () => storageMode === 'api'
+      ? [...apiRecent, ...browserStats.recent]
+        .sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime())
+        .slice(0, 5)
+      : localRecentResponses,
+    [apiRecent, browserStats.recent, localRecentResponses, storageMode],
+  );
+  const statsLoading = storageMode === 'api' && (!statsReady || !browserStatsReady);
 
   // Show getting started only for genuinely-new users — not during the initial
   // cloud-data load (which would briefly flash the onboarding hero + zeroed stats).
@@ -1063,17 +1168,22 @@ export function Dashboard() {
   const showWelcome = showGettingStarted && !welcomeDismissed;
 
   // The headline band — one prose sentence, data figures set in primary color.
-  // A stable order (dash discipline) while forms/stats are still loading; otherwise
-  // the sentence reports either the empty-account state or the real weekly figures.
+  // While data is loading, say what is happening instead of rendering em-dash
+  // placeholders as if they were real metrics. Once ready, the sentence reports
+  // either the empty-account state or the real weekly figures.
   // The old "completion rate" stat (which meant two different things in local vs api
   // mode) is retired here rather than carried forward under a new name.
-  const headlineReady = !formsLoading && statsReady;
+  const headlineReady = !formsLoading && statsReady && browserStatsReady;
   let headline: React.ReactNode;
   const num = (n: number | string) => (
     <span className="tabular-nums text-primary-600 dark:text-primary-400">{n}</span>
   );
   if (!headlineReady) {
-    headline = <>{num('—')} responses arrived across {num('—')} forms this week.</>;
+    headline = (
+      <span className="text-gray-500 dark:text-slate-400">
+        Getting your workspace ready…
+      </span>
+    );
   } else if (totalForms === 0) {
     headline = <>Create your first form to start collecting responses.</>;
   } else if (totalResponses === 0) {
@@ -1146,7 +1256,7 @@ export function Dashboard() {
         {forms.length > 0 && (
           <QuickFind
             forms={forms}
-            countOf={(f) => (storageMode === 'api' ? (responseCounts[f.id] ?? f.responseCount ?? 0) : getResponsesByFormId(f.id).length)}
+            countOf={(f) => (storageMode === 'api' ? (displayedResponseCounts[f.id] ?? f.responseCount ?? 0) : getResponsesByFormId(f.id).length)}
             appOfForm={appOfForm}
           />
         )}
@@ -1249,7 +1359,7 @@ export function Dashboard() {
                 {recentForms.map((form) => {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
-                  const n = storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length;
+                  const n = storageMode === 'api' ? (displayedResponseCounts[form.id] ?? 0) : formResponses.length;
                   const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
                   const countTitle = statsLoading ? 'Loading responses' : String(n);
                   return (

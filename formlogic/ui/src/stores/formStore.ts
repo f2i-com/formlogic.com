@@ -19,6 +19,15 @@ import { toast } from './toastStore';
 const DEMO_LOCAL_FORM_PREFIX = 'demolocal_';
 const isDemoLocalFormId = (id: string): boolean => id.startsWith(DEMO_LOCAL_FORM_PREFIX);
 
+function dedupeFormsById(forms: Form[]): Form[] {
+  const seen = new Set<string>();
+  return forms.filter((form) => {
+    if (seen.has(form.id)) return false;
+    seen.add(form.id);
+    return true;
+  });
+}
+
 async function fetchAllForms(): Promise<Form[] | null> {
   const PAGE = 200;
   const all: Form[] = [];
@@ -33,7 +42,7 @@ async function fetchAllForms(): Promise<Form[] | null> {
     all.push(...batch);
     if (batch.length < PAGE) break;
   }
-  return all;
+  return dedupeFormsById(all);
 }
 
 // Field-id slugs must not collide with the FormLogic expression prelude's global
@@ -480,7 +489,7 @@ export const useFormStore = create<FormState>()(
               // Keep any demo-created (browser-only) forms alongside the server's seeded forms.
               const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
               set({
-                forms: [...forms, ...localDemo],
+                forms: dedupeFormsById([...forms, ...localDemo]),
                 isLoading: false,
                 isInitialized: true,
               });
@@ -525,7 +534,7 @@ export const useFormStore = create<FormState>()(
               ? forms.map((f) => ({ ...f, _adminForeign: true } as Form))
               : forms;
             const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
-            set({ forms: [...fetched, ...localDemo], isLoading: false });
+            set({ forms: dedupeFormsById([...fetched, ...localDemo]), isLoading: false });
           } else {
             set({ error: 'Failed to load forms', isLoading: false });
           }
@@ -1416,8 +1425,11 @@ export const useFormStore = create<FormState>()(
           // Restore storage mode from localStorage without triggering initialize()
           // (initialization is handled by AppInitializer after auth is ready)
           const savedMode = localStorage.getItem('formlogic_storage_mode');
-          if (state && (savedMode === 'api' || savedMode === 'local')) {
-            useFormStore.setState({ storageMode: savedMode });
+          if (state) {
+            useFormStore.setState({
+              forms: dedupeFormsById(state.forms ?? []),
+              ...(savedMode === 'api' || savedMode === 'local' ? { storageMode: savedMode } : {}),
+            });
           }
         };
       },
@@ -1434,7 +1446,9 @@ export const useFormStore = create<FormState>()(
 // importable — the bridge is production wiring, not something every mock must model.
 if (typeof api.registerDemoLocalForms === 'function') {
   api.registerDemoLocalForms({
-    list: () => useFormStore.getState().forms.filter((form) => isDemoLocalFormId(form.id)),
+    list: () => dedupeFormsById(
+      useFormStore.getState().forms.filter((form) => isDemoLocalFormId(form.id)),
+    ),
     get: (id) => useFormStore.getState().forms.find((f) => f.id === id),
     update: async (id, updates) => {
       const store = useFormStore.getState();

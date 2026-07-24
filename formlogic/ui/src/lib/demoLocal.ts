@@ -184,11 +184,16 @@ export async function getDemoRecord(formId: string, id: string): Promise<DemoRec
   return arr.find((r) => r.id === id) ?? null;
 }
 
-export async function updateDemoRecord(formId: string, id: string, answers: Record<string, unknown>): Promise<DemoRecord | null> {
+export async function updateDemoRecord(
+  formId: string,
+  id: string,
+  answers: Record<string, unknown>,
+  status?: string,
+): Promise<DemoRecord | null> {
   const arr = await read(formId);
   const i = arr.findIndex((r) => r.id === id);
   if (i === -1) return null;
-  arr[i] = { ...arr[i], answers };
+  arr[i] = { ...arr[i], answers, ...(status ? { status } : {}) };
   await write(formId, arr);
   return arr[i];
 }

@@ -1210,17 +1210,26 @@ class ApiClient {
     const query = params.toString();
     const server = await this.request<{ forms: Form[]; count: number }>(`/forms${query ? `?${query}` : ''}`);
     if (!this._demoMode || !this._demoLocalForms) return server;
-    const local = this._demoLocalForms.list()
-      .filter((form) => !options?.status || form.status === options.status);
+    const local = Array.from(
+      new Map(
+        this._demoLocalForms.list()
+          .filter((form) => !options?.status || form.status === options.status)
+          .map((form) => [form.id, form]),
+      ).values(),
+    );
+    // Local demo forms are a prefix of the combined catalogue, so expose them
+    // only on the first page. Repeating the overlay on every server page made a
+    // single browser-created form appear once per page on larger demo accounts.
+    const localForPage = (options?.offset ?? 0) === 0 ? local : [];
     return {
       ...server,
       // A browser-created demo form is a complete, usable local result. Do not
       // surface the shared API's transient error as a failed load when that
       // fallback succeeded—the caller would otherwise show a scary error toast
       // while rendering the local form correctly.
-      error: local.length > 0 ? undefined : server.error,
+      error: localForPage.length > 0 ? undefined : server.error,
       data: {
-        forms: [...local, ...(server.data?.forms ?? [])],
+        forms: [...localForPage, ...(server.data?.forms ?? [])],
         count: local.length + (server.data?.count ?? server.data?.forms.length ?? 0),
       },
     };
@@ -1361,6 +1370,12 @@ class ApiClient {
   }
 
   async getResponse(formId: string, responseId: string): Promise<ApiResponse<{ response: FormResponse }>> {
+    if (this._demoMode && isDemoLocalId(formId)) {
+      const response = await getDemoRecord(formId, responseId);
+      return response
+        ? { data: { response: response as unknown as FormResponse } }
+        : { error: 'Record not found', status: 404 };
+    }
     return this.request(`/forms/${formId}/responses/${responseId}`);
   }
 
@@ -1403,6 +1418,19 @@ class ApiClient {
   }
 
   async updateResponse(formId: string, responseId: string, data: Partial<FormResponse>): Promise<ApiResponse<{ response: FormResponse }>> {
+    if (this._demoMode && isDemoLocalId(formId)) {
+      const existing = await getDemoRecord(formId, responseId);
+      if (!existing) return { error: 'Record not found', status: 404 };
+      const response = await updateDemoRecord(
+        formId,
+        responseId,
+        data.answers ?? existing.answers,
+        data.status,
+      );
+      return response
+        ? { data: { response: response as unknown as FormResponse } }
+        : { error: 'Record not found', status: 404 };
+    }
     return this.request(`/forms/${formId}/responses/${responseId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -1410,6 +1438,12 @@ class ApiClient {
   }
 
   async deleteResponse(formId: string, responseId: string): Promise<ApiResponse<{ success: boolean }>> {
+    if (this._demoMode && isDemoLocalId(formId)) {
+      const response = await getDemoRecord(formId, responseId);
+      if (!response) return { error: 'Record not found', status: 404 };
+      await deleteDemoRecord(formId, responseId);
+      return { data: { success: true } };
+    }
     return this.request(`/forms/${formId}/responses/${responseId}`, {
       method: 'DELETE',
     });

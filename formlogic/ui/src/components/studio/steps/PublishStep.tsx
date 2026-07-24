@@ -187,8 +187,8 @@ export function PublishStep({
           {/* Preflight */}
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
             <div className="flex flex-col gap-3 border-b border-gray-200/80 dark:border-white/[0.06] p-5 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                     {blocking.length > 0
                       ? 'A few things need fixing'

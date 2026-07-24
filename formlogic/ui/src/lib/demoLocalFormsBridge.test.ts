@@ -59,6 +59,26 @@ describe('demo-local forms through the api bridge', () => {
     expect(res.data?.forms.some((form) => form.id === created!.id)).toBe(true);
   });
 
+  it('adds each local demo form only to the first page of the shared catalogue', async () => {
+    const created = await useFormStore.getState().createForm('Paged browser form', '');
+    expect(created).not.toBeNull();
+    // Reproduce a previously-corrupted persisted snapshot too: the overlay must
+    // collapse duplicate local ids before combining them with server results.
+    useFormStore.setState({ forms: [created!, created!] });
+    vi.spyOn(
+      api as unknown as { request: (...args: unknown[]) => Promise<unknown> },
+      'request',
+    ).mockResolvedValue({ data: { forms: [], count: 216 } });
+
+    const first = await api.getForms({ limit: 200, offset: 0 });
+    const second = await api.getForms({ limit: 200, offset: 200 });
+
+    expect(first.data?.forms.filter((form) => form.id === created!.id)).toHaveLength(1);
+    expect(first.data?.count).toBe(217);
+    expect(second.data?.forms.some((form) => form.id === created!.id)).toBe(false);
+    expect(second.data?.count).toBe(217);
+  });
+
   it('outside demo mode the bridge never engages (real ids go to the server path)', async () => {
     api.setDemoMode(false);
     // A demolocal id without demo mode falls through to request(); jsdom has no server,

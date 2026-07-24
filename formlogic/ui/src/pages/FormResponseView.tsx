@@ -25,6 +25,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
+import { isDemoLocalId } from '../lib/demoLocal';
 import { toast } from '../stores/toastStore';
 import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
@@ -434,7 +435,7 @@ function FormResponseView() {
 
                 {/* Related records (owner-scoped) — hidden while editing so a stale grid
                     never sits under half-changed answers. */}
-                {formId && responseId && storageMode === 'api' && !editing && (
+                {formId && responseId && storageMode === 'api' && !isDemoLocalId(formId) && !editing && (
                   <RelatedRecordsPanel
                     appSlug=""
                     formId={formId}

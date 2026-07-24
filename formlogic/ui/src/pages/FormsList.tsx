@@ -1067,7 +1067,7 @@ export function FormsList() {
             leftIcon={<Search className="h-4 w-4" />}
             className="w-full sm:max-w-md"
           />
-          <div className="flex gap-3 sm:ml-auto">
+          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-3 sm:ml-auto sm:flex sm:w-auto">
             {/* Grid / list view toggle */}
             <div className="flex flex-none rounded-lg border border-gray-300 dark:border-slate-700 overflow-hidden" role="group" aria-label="View mode">
               <button
@@ -1099,7 +1099,7 @@ export function FormsList() {
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
               aria-label="Sort forms by"
-              className="min-w-0 flex-1 sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
+              className="min-w-0 w-full flex-1 sm:w-auto sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
             >
               <option value="modified">Last Modified</option>
               <option value="name">Name A-Z</option>
@@ -1110,7 +1110,7 @@ export function FormsList() {
                 value={packFilter}
                 onChange={(e) => setPackFilter(e.target.value)}
                 aria-label="Filter forms by pack"
-                className="min-w-0 flex-1 sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
+                className="col-span-2 min-w-0 w-full flex-1 sm:col-auto sm:w-auto sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
               >
                 <option value="all">All packs</option>
                 {packOptions.map((p) => (
