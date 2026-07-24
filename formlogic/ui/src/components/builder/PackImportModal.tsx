@@ -32,6 +32,7 @@ import { CapabilityReview } from './TrustBadge';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
+import { useInstalledNodeStore } from '../../stores/installedNodeStore';
 import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
 
@@ -548,6 +549,8 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           apps: response.data.apps,
         });
         await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
+        // A v2 extension may have contributed flow nodes — refresh the editor's registry source.
+        void useInstalledNodeStore.getState().refresh();
         if (warnings.length > 0) {
           // Surface the count + first warning as a toast; the full list stays readable in the
           // modal's result view, so DON'T auto-close it (the user closes it when done).
@@ -580,6 +583,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       if (response.data?.success) {
         toast.success('Pack uninstalled', response.data.message);
         await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
+        // A removed v2 extension takes its contributed flow nodes with it — refresh the registry
+        // source (stored graph nodes fall back to the missing-definition placeholder).
+        void useInstalledNodeStore.getState().refresh();
       } else {
         toast.error('Uninstall failed', response.error || 'Could not uninstall.');
       }

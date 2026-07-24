@@ -861,6 +861,28 @@ class PackController
     }
 
     /**
+     * GET /api/flow-node-definitions
+     * The owner's installed contributed flow-node definitions (ADR-010 / FLOW-204) — the flow
+     * editor's installed-package provider fetches this to render palette entries and stored
+     * nodes. Presentation source only: execution stays refused until compilation support lands.
+     */
+    public function listFlowNodeDefinitions(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if ($this->packageV2 === null) {
+            return $this->jsonResponse($response, ['definitions' => []]);
+        }
+        try {
+            return $this->jsonResponse($response, ['definitions' => $this->packageV2->listDefinitions($userId)]);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to fetch flow-node definitions'], 500);
+        }
+    }
+
+    /**
      * DELETE /api/packs/{installationId}
      * Uninstall a pack — deletes all forms and apps it created
      */

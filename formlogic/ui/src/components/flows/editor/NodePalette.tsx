@@ -10,12 +10,13 @@ import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import {
   NODE_CATEGORIES,
-  NODE_SPECS,
   EMPTY_FLOW_EDITOR_CONTEXT,
   isNodeAvailableInContext,
   type FlowEditorContext,
   type NodeSpec,
 } from './nodeCatalog';
+import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
+import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
 import { ACCENT_CHIP } from './accents';
 import { FlowDesktopPresenceContext } from './flowNodeContext';
 
@@ -171,6 +172,10 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
     if (!collapsed && resultsRef.current) resultsRef.current.scrollTop = resultsScrollTop.current;
   }, [collapsed]);
 
+  // FLOW-203/204: the palette lists through the REGISTRY (core + installed-package providers),
+  // not the static catalog — installed extensions appear without a rebuild. `installedVersion`
+  // re-runs the memo when definitions arrive/refresh (the registry itself is not reactive).
+  const installedVersion = useInstalledNodeStore((s) => s.version);
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (s: NodeSpec) =>
@@ -178,11 +183,13 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
       s.label.toLowerCase().includes(q) ||
       s.type.toLowerCase().includes(q) ||
       s.description.toLowerCase().includes(q);
+    const specs = flowNodeRegistry.listNodeSpecs(context);
     return NODE_CATEGORIES.map((cat) => ({
       cat,
-      specs: NODE_SPECS.filter((s) => s.category === cat.id && match(s) && isNodeAvailableInContext(s, context)),
+      specs: specs.filter((s) => s.category === cat.id && match(s) && isNodeAvailableInContext(s, context)),
     })).filter((g) => g.specs.length > 0);
-  }, [query, context]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- installedVersion is the registry's change signal
+  }, [query, context, installedVersion]);
 
   if (collapsed) {
     return (

@@ -30,6 +30,8 @@ import { cn } from '../../../lib/utils';
 import { FlowNode } from './FlowNode';
 import { FlowEdge } from './FlowEdge';
 import { NODE_SPECS, EMPTY_FLOW_EDITOR_CONTEXT, isNodeAvailableInContext, type FlowEditorContext, type NodeSpec } from './nodeCatalog';
+import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
+import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
 import type { FlowRFEdge, FlowRFNode } from './flowGraph';
 import { PALETTE_DND_MIME } from './NodePalette';
 import { FlowNodeSignalsContext } from './flowNodeContext';
@@ -207,9 +209,13 @@ export function FlowCanvas({
   }, []);
 
   // Nodes offered by quick-connect: executable + available here, minus the Trigger (no target).
+  // Listed through the REGISTRY (FLOW-203) so installed extensions join automatically once they
+  // become executable; the executable filter keeps not-yet-runnable contributed nodes out.
+  const installedVersion = useInstalledNodeStore((s) => s.version);
   const quickTargets = useMemo(
-    () => NODE_SPECS.filter((s) => s.executable && s.type !== 'input' && isNodeAvailableInContext(s, context)),
-    [context],
+    () => flowNodeRegistry.listNodeSpecs(context).filter((s) => s.executable && s.type !== 'input' && isNodeAvailableInContext(s, context)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- installedVersion is the registry's change signal
+    [context, installedVersion],
   );
 
   const fitView = useCallback(() => instanceRef.current?.fitView({ padding: 0.2, duration: 300 }), []);

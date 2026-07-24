@@ -273,6 +273,30 @@ class PackageV2InstallTest extends TestCase
         $this->assertSame(1, $del['nodesRemoved']);
     }
 
+    public function testListDefinitionsServesTheEditorProviderSource(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $defs = self::$pkgV2->listDefinitions($this->userId);
+        $this->assertCount(1, $defs);
+        $this->assertSame('com.acme.mediatools.generate-image', $defs[0]['type']);
+        $this->assertSame('com.acme.media-tools', $defs[0]['packageId']);
+        $this->assertSame('Acme Media Tools', $defs[0]['packageName']);
+        $this->assertTrue($defs[0]['enabled']);
+        $this->assertSame('Generate image', $defs[0]['definition']['display']['label'] ?? null, 'the decoded definition rides along');
+
+        // GET /api/flow-node-definitions returns the same rows; another user sees none.
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $out = $this->controller()->listFlowNodeDefinitions($req, new SlimResponse());
+        $body = json_decode((string) $out->getBody(), true);
+        $this->assertSame(200, $out->getStatusCode());
+        $this->assertCount(1, $body['definitions']);
+        $this->assertSame($defs[0]['digest'], $body['definitions'][0]['digest']);
+
+        self::$pkgV2->uninstall($installed['installationId'], $this->userId);
+        $this->assertSame([], self::$pkgV2->listDefinitions($this->userId), 'uninstall removes the definitions');
+    }
+
     public function testImportSignedV2RequiresGrantReview(): void
     {
         $r = $this->callImportSigned(['package' => $this->nodeOnlyAggregate()]);

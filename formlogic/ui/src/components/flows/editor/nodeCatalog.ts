@@ -47,7 +47,7 @@ import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
  * unknown-type placeholder specs (registry/FlowNodeRegistry.ts), which never enter the
  * palette — a missing definition stays visible on the canvas, never insertable.
  */
-export type NodeCategory = 'io' | 'logic' | 'ai' | 'formlogic' | 'connector' | 'storage' | 'desktop' | 'missing';
+export type NodeCategory = 'io' | 'logic' | 'ai' | 'formlogic' | 'connector' | 'storage' | 'desktop' | 'installed' | 'missing';
 
 export interface NodeCategoryMeta {
   id: NodeCategory;
@@ -64,6 +64,9 @@ export const NODE_CATEGORIES: NodeCategoryMeta[] = [
   { id: 'connector', label: 'Connectors' },
   { id: 'storage', label: 'Flow storage' },
   { id: 'desktop', label: 'Requires FormLogic Desktop', hint: 'Runs on a local FormLogic Desktop service' },
+  // ADR-010: contributed nodes from installed Application Package v2 extensions. Visible in the
+  // palette (with provenance) but not insertable until flow-compilation support lands.
+  { id: 'installed', label: 'Installed extensions', hint: 'Contributed by installed packages' },
 ];
 
 /** A property editor field kind (drives the widget in NodeProperties). */

@@ -2006,6 +2006,12 @@ $app->post('/api/application-packages/import', function ($request, $response) us
     return $container->get(PackController::class)->importSigned($request, $response);
 })->add($cloudWriteGate)->add($authRequired);
 
+// Installed contributed flow-node definitions (ADR-010) — the flow editor's installed-package
+// provider source. Read-only; execution stays refused until compilation support lands.
+$app->get('/api/flow-node-definitions', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->listFlowNodeDefinitions($request, $response);
+})->add($authRequired);
+
 // Bundled sample apps ("Try a sample app")
 $app->get('/api/sample-apps', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->listSampleApps($request, $response);

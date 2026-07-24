@@ -3730,6 +3730,14 @@ class ApiClient {
     });
   }
 
+  /**
+   * ADR-010 / FLOW-204: the owner's installed contributed flow-node definitions — the flow
+   * editor's installed-package provider source. Presentation only until compilation lands.
+   */
+  async listFlowNodeDefinitions(): Promise<ApiResponse<{ definitions: InstalledFlowNodeDefinition[] }>> {
+    return this.request('/flow-node-definitions');
+  }
+
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
     return this.request(`/apps/${appId}/export`);
@@ -4669,6 +4677,19 @@ interface PackCapabilitySummary {
   /** ADR-010: present when describing an Application Package v2 aggregate (the Pack v1
    *  fields above are zeros/empty for those). */
   packageV2?: PackageV2Summary;
+}
+
+/** ADR-010: one installed contributed flow-node definition, with its provenance. */
+export interface InstalledFlowNodeDefinition {
+  type: string;
+  version: string;
+  digest: string;
+  enabled: boolean;
+  installationId: string;
+  packageId: string;
+  packageName: string;
+  /** The stored Flow Node Definition v1 (validated at install; adapt defensively anyway). */
+  definition: unknown;
 }
 
 /** ADR-010: server-derived review summary for an Application Package v2 aggregate. */

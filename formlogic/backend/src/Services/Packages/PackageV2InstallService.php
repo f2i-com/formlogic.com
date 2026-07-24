@@ -234,6 +234,44 @@ class PackageV2InstallService
         return $out;
     }
 
+    /**
+     * The owner's installed flow-node definitions (FLOW-204: the editor's installed-package
+     * provider source). Decoded definitions plus their provenance — the editor renders from
+     * this; execution stays refused until the compiler phase lands.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function listDefinitions(string $userId): array
+    {
+        $stmt = $this->mysql->prepare('
+            SELECT fnd.node_type, fnd.version, fnd.digest, fnd.definition_json, fnd.enabled,
+                   fnd.installation_id, pi.package_id, pi.display_name
+            FROM flow_node_definitions fnd
+            JOIN package_installations pi ON pi.id = fnd.installation_id
+            WHERE fnd.user_id = ?
+            ORDER BY fnd.node_type ASC
+        ');
+        $stmt->execute([$userId]);
+        $out = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $definition = json_decode((string) $row['definition_json'], true);
+            if (!is_array($definition)) {
+                continue; // corrupt row — never ship an unparseable definition to the editor
+            }
+            $out[] = [
+                'type' => (string) $row['node_type'],
+                'version' => (string) $row['version'],
+                'digest' => (string) $row['digest'],
+                'enabled' => (bool) $row['enabled'],
+                'installationId' => (string) $row['installation_id'],
+                'packageId' => (string) $row['package_id'],
+                'packageName' => (string) $row['display_name'],
+                'definition' => $definition,
+            ];
+        }
+        return $out;
+    }
+
     private function uuid(): string
     {
         $b = random_bytes(16);

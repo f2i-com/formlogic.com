@@ -40,6 +40,10 @@ import {
   type PatchHistoryBurst,
 } from './flowEditorLogic';
 import { cloneSelection, dagreLayout } from './canvasOps';
+// ADR-010 / FLOW-204: registers the installed-package node provider with the FlowNodeRegistry
+// (side effect) so contributed definitions resolve in the palette, canvas, and properties panel.
+import '../registry/installedNodeProvider';
+import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
 import { lintNodeIssues } from '../flowGraphLint';
 import type { NodeStatusMap } from '../runStatus';
 import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../../types/flows';
@@ -104,6 +108,16 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   const [saving, setSaving] = useState(false);
   const [failedSaveGraph, setFailedSaveGraph] = useState<string | null>(null);
   const reactFlow = useReactFlow<FlowRFNode, FlowRFEdge>();
+
+  // FLOW-204: fetch the owner's installed contributed node definitions once per session so the
+  // registry's installed-package provider can serve them (palette entries + stored-node specs).
+  // A fetch failure just leaves core nodes only; unknown stored types keep their placeholders.
+  useEffect(() => {
+    if (!useInstalledNodeStore.getState().loaded) {
+      void useInstalledNodeStore.getState().refresh();
+    }
+  }, []);
+
   const editorRootRef = useRef<HTMLDivElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const editorWidthRef = useRef<number | null>(null);
