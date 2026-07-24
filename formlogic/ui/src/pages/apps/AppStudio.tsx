@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
@@ -19,6 +19,8 @@ import { AutomationsStep } from '../../components/studio/steps/AutomationsStep';
 import { AccessStep } from '../../components/studio/steps/AccessStep';
 import { PublishStep } from '../../components/studio/steps/PublishStep';
 import { useUIStore } from '../../stores/uiStore';
+import { returnToState } from '../../hooks/useReturnTo';
+import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { cn } from '../../lib/utils';
 
 /**
@@ -34,8 +36,29 @@ export function AppStudio() {
   const data = useStudioData(appId);
   const { isMobile, sidebarCollapsed } = useUIStore();
   const chatDockedVisible = useUIStore((s) => s.chatDocked && s.chatOpen && !s.chatMinimized);
+  const setFixedBottomBar = useUIStore((s) => s.setFixedBottomBar);
 
   const activeStep: StudioStepId = isStudioStep(stepParam) ? stepParam : 'data';
+
+  // The footer step navigator is fixed — float the chat bubble / desktop chip
+  // above it while the studio is mounted.
+  useEffect(() => {
+    setFixedBottomBar(true);
+    return () => setFixedBottomBar(false);
+  }, [setFixedBottomBar]);
+
+  // With no usable default AI, the studio drops its AI affordances ("Ask AI",
+  // "Plan with AI") — building manually shouldn't advertise a copilot that
+  // would refuse on first use (audit FL-23 readiness, same as CreateBand).
+  const [aiAvailable, setAiAvailable] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void getAiReadiness().then(
+      (res) => { if (!cancelled) setAiAvailable(res.ready); },
+      () => { if (!cancelled) setAiAvailable(false); }
+    );
+    return () => { cancelled = true; };
+  }, []);
 
   // /studio (no step) → the natural entry: brand-new apps start at Plan,
   // existing apps at Data.
@@ -107,7 +130,7 @@ export function AppStudio() {
 
   return (
     <div className="min-h-screen">
-      <StudioTopBar app={data.app} changes={changes} onOpenPublish={() => setStep('publish')} />
+      <StudioTopBar app={data.app} changes={changes} aiAvailable={aiAvailable} onOpenPublish={() => setStep('publish')} />
       <StudioRail activeStep={activeStep} completedSteps={completedSteps} onStepChange={setStep} />
 
       <main className="mx-auto max-w-[1540px] p-4 pb-28 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
@@ -134,6 +157,7 @@ export function AppStudio() {
             appForms={data.appForms}
             formsById={data.formsById}
             roles={data.roles}
+            aiAvailable={aiAvailable}
             onSkip={() => setStep('data')}
           />
         )}
@@ -218,7 +242,11 @@ export function AppStudio() {
               <ArrowRight className="h-4 w-4 ml-1.5" />
             </Button>
           ) : (
-            <Button variant="secondary" onClick={() => navigate(`/app/${data.app!.slug}`)} leftIcon={<Check className="h-4 w-4" />}>
+            <Button
+              variant="secondary"
+              onClick={() => navigate(`/app/${data.app!.slug}`, { state: returnToState(`/apps/${appId}/studio/${activeStep}`, 'App Studio') })}
+              leftIcon={<Check className="h-4 w-4" />}
+            >
               Open the app
             </Button>
           )}

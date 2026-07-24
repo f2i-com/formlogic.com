@@ -32,6 +32,12 @@ import type { Form } from '../../../types/form';
 type AccessTab = 'roles' | 'people' | 'signup';
 type RolePermission = { formId: string | null; permission: PermissionAction };
 
+// Stable fallbacks for store selectors: `s.users[id] ?? []` would mint a NEW
+// array every snapshot while the slice is unset, which useSyncExternalStore
+// treats as an endless store change (React #185 update-depth crash).
+const NO_USERS: never[] = [];
+const NO_INVITATIONS: never[] = [];
+
 /**
  * Studio step 5 — Users & roles: real roles with a live permission matrix,
  * members + invitations, and portal sign-up settings. Everything writes
@@ -119,12 +125,14 @@ function RolesView({
 
   const selected = roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null;
   const isOwnerRole = selected?.isSystem === true && selected?.name === 'Owner';
-  const permsLoaded = permsState?.roleId === selected?.id;
+  // Both sides can be null/undefined while roles + permissions load — the match
+  // must require a real permsState (undefined === undefined would read as loaded).
+  const permsLoaded = permsState !== null && selected !== null && permsState.roleId === selected.id;
   const permissions = useMemo<RolePermission[]>(
     () => (permsState && permsState.roleId === selected?.id ? permsState.permissions : []),
     [permsState, selected?.id]
   );
-  const dirty = permsLoaded ? permsState!.dirty : false;
+  const dirty = permsLoaded ? permsState.dirty : false;
 
   useEffect(() => {
     const roleId = selected?.id;
@@ -317,7 +325,7 @@ function RolesView({
       )}
 
       <Modal isOpen={showNewRole} onClose={() => setShowNewRole(false)} title="Add a role" size="sm">
-        <div className="space-y-4">
+        <div className="p-4 sm:p-5 space-y-4">
           <Input
             value={newRoleName}
             onChange={(e) => setNewRoleName(e.target.value)}
@@ -371,17 +379,22 @@ function PermissionCard({
 
 function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
   const { fetchUsers, fetchInvitations, inviteUser, revokeInvitation, removeUser } = useAppUserStore();
-  // Store slices are keyed by appId.
-  const users = useAppUserStore((s) => s.users[app.id] ?? []);
-  const invitations = useAppUserStore((s) => s.invitations[app.id] ?? []);
+  // Store slices are keyed by appId; fall back to STABLE empties (see NO_USERS).
+  const users = useAppUserStore((s) => s.users[app.id] ?? NO_USERS);
+  const invitations = useAppUserStore((s) => s.invitations[app.id] ?? NO_INVITATIONS);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [inviting, setInviting] = useState(false);
 
   useEffect(() => {
-    void fetchUsers(app.id);
-    void fetchInvitations(app.id);
+    // The store methods throw on API failure (for Promise.allSettled consumers) —
+    // surface that as a toast here instead of an unhandled rejection.
+    Promise.allSettled([fetchUsers(app.id), fetchInvitations(app.id)]).then((results) => {
+      if (results.some((r) => r.status === 'rejected')) {
+        toast.error('Some member data could not be loaded');
+      }
+    });
   }, [app.id, fetchUsers, fetchInvitations]);
 
   const pendingInvites = invitations.filter((i) => i.status === 'pending');
@@ -477,7 +490,7 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
       </div>
 
       <Modal isOpen={showInvite} onClose={() => setShowInvite(false)} title="Invite people" size="sm">
-        <div className="space-y-4">
+        <div className="p-4 sm:p-5 space-y-4">
           <Input
             type="email"
             value={inviteEmail}

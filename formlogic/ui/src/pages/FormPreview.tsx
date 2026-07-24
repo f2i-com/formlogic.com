@@ -14,6 +14,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
 import { useAdminActing, useResourcePaths } from '../components/admin/AdminActingContext';
+import { useReturnTo } from '../hooks/useReturnTo';
 import { api } from '../lib/api';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { cn } from '../lib/utils';
@@ -30,6 +31,9 @@ export default function FormPreview() {
   // screens render live record data, which is hidden from admins).
   const acting = useAdminActing();
   const paths = useResourcePaths();
+  // Origin-relative exit: opened from the App Studio, "Exit Preview" returns to
+  // the studio step instead of the builder.
+  const backTo = useReturnTo(formId ? paths.builder(formId) : paths.formsHome());
   const [searchParams] = useSearchParams();
   // ?form=1 previews the fillable FORM even when the form has a custom screen/dashboard — the "Preview"
   // eye on a standalone form shows the form itself (the screen has its own /forms/:id/screen preview).
@@ -138,7 +142,7 @@ export default function FormPreview() {
   // widget mounts here too so the conversation follows the viewer onto the result.
   const previewBar = (
     <div className="flex h-11 flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 dark:border-slate-800 dark:bg-slate-900">
-      <Button variant="ghost" size="sm" onClick={() => navigate(paths.builder(form.id))}>
+      <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)}>
         <ArrowLeft className="h-4 w-4 sm:mr-2" />
         <span className="hidden sm:inline">Exit Preview</span>
       </Button>
@@ -227,7 +231,7 @@ export default function FormPreview() {
       {/* Header */}
       <header className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 flex-shrink-0 transition-colors duration-300">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate(paths.builder(form.id))}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)}>
             <ArrowLeft className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Exit Preview</span>
           </Button>

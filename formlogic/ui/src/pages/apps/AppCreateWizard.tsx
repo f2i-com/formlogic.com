@@ -66,6 +66,13 @@ export function AppCreateWizard() {
   // shell's <main> (ml-16/ml-64) — the fixed wizard nav mirrors it so its content
   // column stays aligned with the page column in both sidebar states.
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const setFixedBottomBar = useUIStore((s) => s.setFixedBottomBar);
+
+  // The wizard nav below is fixed — float the chat bubble / desktop chip above it.
+  useEffect(() => {
+    setFixedBottomBar(true);
+    return () => setFixedBottomBar(false);
+  }, [setFixedBottomBar]);
 
   // Refresh from the server so the selectable forms reflect reality (the
   // persisted store can be stale — missing forms made on another device, or

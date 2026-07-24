@@ -24,6 +24,7 @@ import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { cn } from '../../../lib/utils';
+import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
 
@@ -52,6 +53,8 @@ export function ScreensStep({
   onReloadForms: () => Promise<void>;
 }) {
   const navigate = useNavigate();
+  // The builder / screen studios return here when opened from this step.
+  const studioReturn = returnToState(`/apps/${app.id}/studio/screens`, 'App Studio');
   const updateAppForm = useAppStore((s) => s.updateAppForm);
   const updateApp = useAppStore((s) => s.updateApp);
   const [selection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
@@ -142,7 +145,7 @@ export function ScreensStep({
       // Widget dashboards are edited in the live app (owner "Edit dashboard").
       window.open(`/app/${app.slug}`, '_blank', 'noopener,noreferrer');
     } else {
-      navigate(`/apps/${app.id}/home/edit`);
+      navigate(`/apps/${app.id}/home/edit`, { state: studioReturn });
     }
   };
 
@@ -156,7 +159,7 @@ export function ScreensStep({
             <p className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500">Navigation and experiences</p>
           </div>
         </div>
-        <div className="max-h-[600px] space-y-3 overflow-y-auto p-2.5">
+        <div className="scrollbar-thin max-h-[600px] space-y-3 overflow-y-auto p-2.5">
           <div>
             <p className="px-2 py-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-gray-400 dark:text-slate-500">App home</p>
             <ScreenItem
@@ -296,7 +299,7 @@ export function ScreensStep({
                 {homeKind === 'dashboard' ? 'Edit dashboard in live app' : 'Customise home screen'}
               </Button>
               {homeKind !== 'code' && (
-                <Button variant="secondary" className="w-full" onClick={() => navigate(`/apps/${app.id}/home/edit`)} leftIcon={<Code2 className="h-4 w-4" />}>
+                <Button variant="secondary" className="w-full" onClick={() => navigate(`/apps/${app.id}/home/edit`, { state: studioReturn })} leftIcon={<Code2 className="h-4 w-4" />}>
                   Open home studio
                 </Button>
               )}
@@ -334,10 +337,10 @@ export function ScreensStep({
                   <li className="flex items-center gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary-500" /> Analytics</li>
                 </ul>
               </div>
-              <Button className="w-full" onClick={() => navigate(`/forms/${selectedForm.id}/screen/edit`)} leftIcon={<WandSparkles className="h-4 w-4" />}>
+              <Button className="w-full" onClick={() => navigate(`/forms/${selectedForm.id}/screen/edit`, { state: studioReturn })} leftIcon={<WandSparkles className="h-4 w-4" />}>
                 Customise this screen
               </Button>
-              <Button variant="secondary" className="w-full" onClick={() => navigate(`/builder/${selectedForm.id}`)} leftIcon={<PencilRuler className="h-4 w-4" />}>
+              <Button variant="secondary" className="w-full" onClick={() => navigate(`/builder/${selectedForm.id}`, { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
                 Open form builder
               </Button>
             </>

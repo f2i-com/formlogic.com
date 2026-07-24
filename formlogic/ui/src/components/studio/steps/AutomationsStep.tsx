@@ -17,6 +17,7 @@ import { cn, formatRelativeTime } from '../../../lib/utils';
 import { FLOW_EVENT_CATALOG } from '../../flows/flowEventCatalog';
 import { getNodeSpec } from '../../flows/editor/nodeCatalog';
 import { FLOW_STARTER_TEMPLATES } from '../../flows/starterTemplates';
+import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm } from '../../../types/app';
 import type { Form } from '../../../types/form';
 import type { FlowBinding, FlowDefinition } from '../../../types/flows';
@@ -51,6 +52,8 @@ export function AutomationsStep({
   onReloadFlows: () => Promise<void>;
 }) {
   const navigate = useNavigate();
+  // The flow editor's back link returns here when opened from this step.
+  const studioReturn = returnToState(`/apps/${app.id}/studio/automations`, 'App Studio');
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -116,7 +119,7 @@ export function AutomationsStep({
         return;
       }
       // Build it on the full canvas — the studio list will show it on return.
-      navigate(`/flows?flow=${flow.id}`);
+      navigate(`/flows?flow=${flow.id}`, { state: studioReturn });
     } finally {
       setCreating(false);
     }
@@ -158,7 +161,7 @@ export function AutomationsStep({
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Automations</h3>
               <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">Plain-language rules behind this app.</p>
             </div>
-            <div className="max-h-[560px] space-y-2 overflow-y-auto p-2.5">
+            <div className="scrollbar-thin max-h-[560px] space-y-2 overflow-y-auto p-2.5">
               {flows.map((flow) => {
                 const isSelected = selected?.id === flow.id;
                 const flowBindings = bindings.filter((b) => b.flowDefinitionId === flow.id || b.flow === flow.slug);
@@ -244,7 +247,7 @@ export function AutomationsStep({
                   >
                     Test
                   </Button>
-                  <Button size="sm" onClick={() => navigate(`/flows?flow=${selected.id}`)} leftIcon={<Workflow className="h-4 w-4" />}>
+                  <Button size="sm" onClick={() => navigate(`/flows?flow=${selected.id}`, { state: studioReturn })} leftIcon={<Workflow className="h-4 w-4" />}>
                     Advanced canvas
                   </Button>
                 </div>
@@ -295,7 +298,7 @@ export function AutomationsStep({
 
                 <button
                   type="button"
-                  onClick={() => navigate(`/flows?flow=${selected.id}`)}
+                  onClick={() => navigate(`/flows?flow=${selected.id}`, { state: studioReturn })}
                   className="flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 dark:border-white/15 text-xs font-bold text-gray-500 dark:text-slate-400 transition hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/[0.05] dark:hover:text-primary-300"
                 >
                   <Plus className="h-4 w-4" /> Add steps or triggers on the canvas
@@ -306,7 +309,7 @@ export function AutomationsStep({
                 <span>Runs {selected.executionLocation === 'desktop' ? 'on your Desktop' : selected.executionLocation === 'cloud' ? 'in FormLogic Cloud' : 'automatically (Cloud or Desktop)'}</span>
                 <button
                   type="button"
-                  onClick={() => navigate(`/flows?flow=${selected.id}`)}
+                  onClick={() => navigate(`/flows?flow=${selected.id}`, { state: studioReturn })}
                   className="cursor-pointer font-bold text-primary-600 dark:text-primary-400"
                 >
                   View run history <ChevronRight className="inline h-3 w-3" />

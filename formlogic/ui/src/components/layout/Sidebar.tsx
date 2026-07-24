@@ -140,7 +140,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-1 space-y-1" aria-label="Workspace">
+      <nav className="scrollbar-thin flex-1 overflow-y-auto px-3 py-1 space-y-1" aria-label="Workspace">
         <SidebarNavLink
           to={homePath}
           end

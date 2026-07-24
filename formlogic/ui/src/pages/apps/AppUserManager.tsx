@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { ArrowLeft, UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
@@ -25,6 +26,8 @@ export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const paths = useResourcePaths();
+  // Origin-relative Back: opened from the App Studio this returns to its step.
+  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=manage'));
   const [loading, setLoading] = useState(true);
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
   const { fetchRoles } = useAppStore();
@@ -203,8 +206,8 @@ export function AppUserManager() {
         title="Users & access"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-              Back
+            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+              {backTo.label ? `Back to ${backTo.label}` : 'Back'}
             </Button>
             <Button size="sm" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}>Invite user</Button>
           </>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, Package, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
@@ -19,6 +20,8 @@ export function AppDeploySettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const paths = useResourcePaths();
+  // Origin-relative Back: opened from the App Studio this returns to its step.
+  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=manage'));
   const acting = useAdminActing();
   const { fetchApps, updateApp } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
@@ -159,8 +162,8 @@ export function AppDeploySettings() {
       <Header
         title="Deploy & share"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-            Back
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            {backTo.label ? `Back to ${backTo.label}` : 'Back'}
           </Button>
         }
       />

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { ArrowLeft, Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
@@ -17,6 +18,8 @@ export function AppRoleEditor() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const paths = useResourcePaths();
+  // Origin-relative Back: opened from the App Studio this returns to its step.
+  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=manage'));
   const { fetchRoles, createRole, deleteRole, updateRole, fetchAppForms, getApp } = useAppStore();
   const userId = useAuthStore((s) => s.user?.id);
   const [roles, setRoles] = useState<AppRole[]>([]);
@@ -162,8 +165,8 @@ export function AppRoleEditor() {
       <Header
         title="Roles & permissions"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navGuarded(paths.appSub(`${appId}`, 'settings?tab=manage'))} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-            Back
+          <Button variant="ghost" size="sm" onClick={() => navGuarded(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            {backTo.label ? `Back to ${backTo.label}` : 'Back'}
           </Button>
         }
       />

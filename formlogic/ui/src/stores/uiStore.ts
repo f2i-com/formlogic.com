@@ -78,6 +78,13 @@ interface UIState {
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
   setChatPosition: (position: ChatPanelPosition | null) => void;
+
+  /** Pages with a FIXED bottom action bar (App Studio footer, App Create wizard
+   *  nav) register here so floating bottom controls (chat bubble, desktop
+   *  connection chip) lift above the bar instead of overlapping its buttons.
+   *  Never persisted — it mirrors what is currently mounted. */
+  fixedBottomBar: boolean;
+  setFixedBottomBar: (present: boolean) => void;
 }
 
 import { persist } from 'zustand/middleware';
@@ -134,6 +141,10 @@ export const useUIStore = create<UIState>()(
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
       setChatPosition: (position) => set({ chatPosition: position }),
+
+      // Fixed bottom action bar (not persisted — reflects the mounted page)
+      fixedBottomBar: false,
+      setFixedBottomBar: (fixedBottomBar) => set({ fixedBottomBar }),
     }),
     {
       name: 'formlogic-ui-storage',

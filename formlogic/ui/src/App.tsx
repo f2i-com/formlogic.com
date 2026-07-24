@@ -95,6 +95,7 @@ const AppsDashboard = lazyWithRetry(() => import('./pages/apps/AppsDashboard').t
 // App Studio: the app-first workspace — six prefilled, skippable steps per app.
 const AppStudio = lazyWithRetry(() => import('./pages/apps/AppStudio').then(m => ({ default: m.AppStudio })));
 const AppCreateWizard = lazyWithRetry(() => import('./pages/apps/AppCreateWizard').then(m => ({ default: m.AppCreateWizard })));
+const AppCreateStart = lazyWithRetry(() => import('./pages/apps/AppCreateStart').then(m => ({ default: m.AppCreateStart })));
 const AppSettingsPage = lazyWithRetry(() => import('./pages/apps/AppSettings').then(m => ({ default: m.AppSettings })));
 const AppFormManager = lazyWithRetry(() => import('./pages/apps/AppFormManager').then(m => ({ default: m.AppFormManager })));
 const AppUserManager = lazyWithRetry(() => import('./pages/apps/AppUserManager').then(m => ({ default: m.AppUserManager })));
@@ -349,7 +350,10 @@ function AppRoutes() {
           <Route path="/responses/:formId" element={<FormResponses />} />
           <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
           <Route path="/apps" element={<AppsDashboard />} />
-          <Route path="/apps/new" element={<AppCreateWizard />} />
+          {/* Create = name it, then straight into the App Studio (one surface for
+              creating AND editing); the multi-step wizard stays as the advanced path. */}
+          <Route path="/apps/new" element={<AppCreateStart />} />
+          <Route path="/apps/new/advanced" element={<AppCreateWizard />} />
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
@@ -423,7 +427,10 @@ function AppRoutes() {
         <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
         {/* App admin routes */}
         <Route path="/apps" element={<AppsDashboard />} />
-        <Route path="/apps/new" element={<AppCreateWizard />} />
+        {/* Create = name it, then straight into the App Studio (one surface for
+            creating AND editing); the multi-step wizard stays as the advanced path. */}
+        <Route path="/apps/new" element={<AppCreateStart />} />
+        <Route path="/apps/new/advanced" element={<AppCreateWizard />} />
         {/* App Studio — the app-first workspace (Plan/Data/Screens/Automations/Access/Publish) */}
         <Route path="/apps/:appId/studio" element={<AppStudio />} />
         <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />

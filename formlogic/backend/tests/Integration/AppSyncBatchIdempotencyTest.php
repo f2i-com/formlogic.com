@@ -68,6 +68,9 @@ class AppSyncBatchIdempotencyTest extends TestCase
         // service deps are never touched. Build the controller WITHOUT its constructor and inject the three.
         $appService = $this->createMock(AppService::class);
         $appService->method('getAppBySlug')->willReturn(['id' => $this->appId, 'status' => 'published', 'name' => 'Batch']);
+        // The stubbed app is published, so the runtime-visibility gate passes for
+        // everyone (real semantics covered by AppDraftPreviewTest).
+        $appService->method('isRuntimeVisible')->willReturn(true);
         $appService->method('formBelongsToApp')->willReturn(true);
 
         $appUsers = $this->createMock(AppUserService::class);

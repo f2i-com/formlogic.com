@@ -93,6 +93,7 @@ export function DesktopConnectionPopover() {
   const view = deriveConnectionView(presence, isDemo);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const isMobile = useUIStore((s) => s.isMobile);
+  const fixedBottomBar = useUIStore((s) => s.fixedBottomBar);
   const addToast = useToastStore((s) => s.addToast);
   const navigate = useNavigate();
 
@@ -238,11 +239,16 @@ export function DesktopConnectionPopover() {
           'fixed z-40 flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur',
           'border-gray-200 bg-white/95 text-gray-700 transition-colors hover:bg-gray-50',
           'dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200 dark:hover:bg-slate-800',
+          // A page-level fixed bottom bar (studio footer / wizard nav, ~4.25rem tall)
+          // lifts the chip above the bar so it never sits on its buttons.
           isMobile
-            ? 'left-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]'
-            : sidebarCollapsed
-              ? 'bottom-4 left-[4.75rem]'
-              : 'bottom-4 left-[16.75rem]'
+            ? fixedBottomBar
+              ? 'left-4 bottom-[calc(8.25rem+env(safe-area-inset-bottom)+0.75rem)]'
+              : 'left-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]'
+            : cn(
+                fixedBottomBar ? 'bottom-[5.25rem]' : 'bottom-4',
+                sidebarCollapsed ? 'left-[4.75rem]' : 'left-[16.75rem]'
+              )
         )}
       >
         <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', connectionDotClass(view.kind))} aria-hidden="true" />

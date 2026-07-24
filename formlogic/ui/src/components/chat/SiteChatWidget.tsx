@@ -195,6 +195,7 @@ export function SiteChatWidget() {
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const setChatPosition = useUIStore((s) => s.setChatPosition);
+  const fixedBottomBar = useUIStore((s) => s.fixedBottomBar);
   const navigate = useNavigate();
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
@@ -1122,7 +1123,15 @@ export function SiteChatWidget() {
           }}
           className={cn(
             'fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary-600 text-primary-foreground shadow-lg transition-colors hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
-            isMobile ? 'right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]' : 'bottom-4 right-4'
+            // A page-level fixed bottom bar (studio footer / wizard nav, ~4.25rem tall)
+            // pushes the bubble up so it never covers the bar's Previous/Next buttons.
+            isMobile
+              ? fixedBottomBar
+                ? 'right-4 bottom-[calc(8.25rem+env(safe-area-inset-bottom)+0.75rem)]'
+                : 'right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]'
+              : fixedBottomBar
+                ? 'bottom-[5.25rem] right-4'
+                : 'bottom-4 right-4'
           )}
         >
           <MessageCircle className="h-5 w-5" aria-hidden="true" />

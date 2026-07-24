@@ -71,7 +71,8 @@ class FlowController
             return [null, null, $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404)];
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        // Drafts stay reachable for the OWNER (studio "Use app" preview).
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return [null, null, $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404)];
         }
         $userId = $request->getAttribute('userId');

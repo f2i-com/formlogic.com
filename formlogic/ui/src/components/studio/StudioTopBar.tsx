@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Check, Play, Rocket, Sparkles } from 'lucide-react';
 import { AppTile } from '../apps/AppTile';
 import { Badge } from '../ui/Badge';
@@ -12,6 +12,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { cn } from '../../lib/utils';
 import { versionLabel, type UnpublishedChanges } from './studioSteps';
+import { returnToState } from '../../hooks/useReturnTo';
 import type { App } from '../../types/app';
 
 /**
@@ -23,17 +24,25 @@ import type { App } from '../../types/app';
 export function StudioTopBar({
   app,
   changes,
+  aiAvailable = false,
   onOpenPublish,
 }: {
   app: App;
   changes: UnpublishedChanges;
+  /** A usable default AI exists (audit FL-23 readiness) — shows the Ask AI shortcut. */
+  aiAvailable?: boolean;
   onOpenPublish: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const isOnline = useOnlineStatus();
   const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // "Use app" carries the current studio step so the runtime's draft-preview
+  // Back button returns exactly here.
+  const openRuntime = () => navigate(`/app/${app.slug}`, { state: returnToState(location.pathname, 'App Studio') });
 
   const liveVersion = versionLabel(app);
   const published = app.status === 'published';
@@ -88,7 +97,7 @@ export function StudioTopBar({
         <div className="hidden md:flex items-center gap-1 rounded-xl bg-gray-100 dark:bg-white/[0.06] p-1" role="group" aria-label="App mode">
           <button
             type="button"
-            onClick={() => navigate(`/app/${app.slug}`)}
+            onClick={openRuntime}
             className="h-8 cursor-pointer rounded-lg px-3 text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-all"
           >
             Use app
@@ -102,9 +111,11 @@ export function StudioTopBar({
           </button>
         </div>
 
-        <Button variant="secondary" size="sm" onClick={openChat} leftIcon={<Sparkles className="h-4 w-4" />} className="hidden sm:inline-flex">
-          Ask AI
-        </Button>
+        {aiAvailable && (
+          <Button variant="secondary" size="sm" onClick={openChat} leftIcon={<Sparkles className="h-4 w-4" />} className="hidden sm:inline-flex">
+            Ask AI
+          </Button>
+        )}
         <Button
           variant={!published || changes.count > 0 ? 'primary' : 'outline'}
           size="sm"
@@ -118,7 +129,7 @@ export function StudioTopBar({
         {/* Mobile: jump into the live app */}
         <button
           type="button"
-          onClick={() => navigate(`/app/${app.slug}`)}
+          onClick={openRuntime}
           className="md:hidden flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.05] px-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200"
         >
           <Play className="h-3.5 w-3.5" />

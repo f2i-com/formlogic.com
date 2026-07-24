@@ -93,7 +93,7 @@ class AppPublicController
         }
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -298,7 +298,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $userId = $request->getAttribute('userId');
@@ -328,7 +328,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $userId = $request->getAttribute('userId');
@@ -362,7 +362,7 @@ class AppPublicController
         }
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -397,7 +397,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $userId = $request->getAttribute('userId');
@@ -489,7 +489,7 @@ class AppPublicController
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -543,7 +543,7 @@ class AppPublicController
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -781,7 +781,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $userId = $request->getAttribute('userId');
@@ -876,7 +876,7 @@ class AppPublicController
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -1027,7 +1027,7 @@ class AppPublicController
         }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
@@ -1075,7 +1075,7 @@ class AppPublicController
         }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
@@ -1106,7 +1106,7 @@ class AppPublicController
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -1157,7 +1157,7 @@ class AppPublicController
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -1270,7 +1270,7 @@ class AppPublicController
         }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
@@ -1300,7 +1300,7 @@ class AppPublicController
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -1344,7 +1344,7 @@ class AppPublicController
         }
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -1495,7 +1495,7 @@ class AppPublicController
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
@@ -1654,7 +1654,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $userId = $request->getAttribute('userId');
@@ -1682,7 +1682,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $app = $this->appService->getAppBySlug($slug);
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
         $userId = $request->getAttribute('userId');
@@ -1803,7 +1803,7 @@ class AppPublicController
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app || $app['status'] !== 'published') {
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 

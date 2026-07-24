@@ -26,6 +26,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import { buildPreflightChecks, type StudioStepId, type UnpublishedChanges } from '../studioSteps';
+import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm, AppRole, AppVersion } from '../../../types/app';
 import type { AppDomain } from '../../../lib/api';
 import type { Form } from '../../../types/form';
@@ -62,6 +63,8 @@ export function PublishStep({
   onPublished: () => Promise<void>;
 }) {
   const navigate = useNavigate();
+  // Deploy/domain settings return here via their Back buttons.
+  const studioReturn = returnToState(`/apps/${app.id}/studio/publish`, 'App Studio');
   const updateApp = useAppStore((s) => s.updateApp);
   const fetchApps = useAppStore((s) => s.fetchApps);
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
@@ -200,7 +203,7 @@ export function PublishStep({
                   {check.state === 'warning' && check.id === 'domain' && (
                     <button
                       type="button"
-                      onClick={() => navigate(`/apps/${app.id}/deploy`)}
+                      onClick={() => navigate(`/apps/${app.id}/deploy`, { state: studioReturn })}
                       className="cursor-pointer text-xs font-bold text-amber-600 dark:text-amber-300 hover:underline"
                     >
                       Set up
@@ -319,7 +322,7 @@ export function PublishStep({
               <Button variant="secondary" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
                 Open app
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => navigate(`/apps/${app.id}/deploy`)} leftIcon={<Eye className="h-4 w-4" />}>
+              <Button variant="secondary" size="sm" onClick={() => navigate(`/apps/${app.id}/deploy`, { state: studioReturn })} leftIcon={<Eye className="h-4 w-4" />}>
                 Deploy & share
               </Button>
             </div>
@@ -409,7 +412,7 @@ function PublishDialog({
   const [label, setLabel] = useState('');
   return (
     <Modal isOpen={open} onClose={onClose} title={`Publish version ${nextVersion}?`} size="sm">
-      <div className="space-y-4">
+      <div className="p-4 sm:p-5 space-y-4">
         <p className="text-sm leading-6 text-gray-500 dark:text-slate-400">
           Version {nextVersion} replaces the live app for everyone using {appName}. Existing records are unchanged.
         </p>

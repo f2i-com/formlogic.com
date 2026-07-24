@@ -7,6 +7,7 @@ import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useUIStore } from '../../../stores/uiStore';
 import { formatRelativeTime } from '../../../lib/utils';
+import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm, AppRole } from '../../../types/app';
 import type { Form } from '../../../types/form';
 import type { Blueprint } from '../../../types/blueprints';
@@ -23,6 +24,7 @@ export function PlanStep({
   appForms,
   formsById,
   roles,
+  aiAvailable = false,
   onSkip,
 }: {
   app: App;
@@ -30,9 +32,14 @@ export function PlanStep({
   appForms: AppForm[];
   formsById: Record<string, Form>;
   roles: AppRole[];
+  /** A usable default AI exists — without one the "Plan with AI" card is dropped
+   *  (manual building shouldn't advertise a copilot that would refuse). */
+  aiAvailable?: boolean;
   onSkip: () => void;
 }) {
   const navigate = useNavigate();
+  // The diagram canvas returns here via its back link.
+  const studioReturn = returnToState(`/apps/${app.id}/studio/plan`, 'App Studio');
   const setChatSeed = useUIStore((s) => s.setChatSeed);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
@@ -59,7 +66,7 @@ export function PlanStep({
       toast.error('Could not start a diagram', typeof res.error === 'string' ? res.error : undefined);
       return;
     }
-    navigate(`/diagrams/${id}`);
+    navigate(`/diagrams/${id}`, { state: studioReturn });
   };
 
   const askAi = () => {
@@ -110,7 +117,7 @@ export function PlanStep({
               </div>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button onClick={() => navigate(`/diagrams/${blueprint.id}`)} leftIcon={<PencilRuler className="h-4 w-4" />}>
+              <Button onClick={() => navigate(`/diagrams/${blueprint.id}`, { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
                 Open diagram
               </Button>
               <Button variant="secondary" onClick={() => navigate('/diagrams/all')}>
@@ -136,7 +143,8 @@ export function PlanStep({
       </section>
 
       <div className="space-y-5">
-        {/* Plan with AI */}
+        {/* Plan with AI — only when a default AI can actually execute */}
+        {aiAvailable && (
         <section className="rounded-xl border border-primary-200/80 dark:border-primary-500/20 bg-gradient-to-br from-primary-50 to-white dark:from-primary-500/[0.09] dark:to-slate-900/60 p-5 shadow-sm">
           <div className="flex items-center gap-2 text-primary-700 dark:text-primary-300">
             <Sparkles className="h-4.5 w-4.5" />
@@ -158,6 +166,7 @@ export function PlanStep({
             Ask the AI to plan this
           </Button>
         </section>
+        )}
 
         {/* What this app already has */}
         <section className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm">

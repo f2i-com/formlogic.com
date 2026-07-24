@@ -6,7 +6,7 @@
 // in its toolbar, plus measured-width inline panels or the shared slide-over drawer for
 // triggers/history/test-run. Deep-linked by ?flow=<id> from the app-level Flows panel.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Plus, RefreshCw, Sparkles, Workflow, X } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -28,6 +28,7 @@ import { TriggersPanel } from '../../components/flows/TriggersPanel';
 import { TestRunDrawer } from '../../components/flows/TestRunDrawer';
 import { reduceNodeStatus, type NodeStatusMap } from '../../components/flows/runStatus';
 import { NewFlowDialog } from '../../components/flows/NewFlowDialog';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { FlowsOverview, type FlowGroup } from '../../components/flows/FlowsOverview';
 import { useFlowsDesktopPresence } from '../../components/flows/useFlowsDesktopPresence';
 import type { FlowStarterTemplate } from '../../components/flows/starterTemplates';
@@ -49,6 +50,13 @@ function bindingReferencesFlow(binding: FlowBinding, flow: FlowDefinition): bool
 
 export function FlowsWorkspace() {
   const [, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // Origin-relative Back: opened as /flows?flow=X FROM another surface (App
+  // Studio Automations), the editor's back link returns there; otherwise it
+  // falls back to the flows start page (deselect). Internal navigation within
+  // the workspace replaces the history entry without state, so the origin only
+  // applies to the entry the user arrived on.
+  const backTo = useReturnTo('');
   const desktopPresence = useFlowsDesktopPresence();
   const [groups, setGroups] = useState<FlowGroup[]>([]);
   const [apps, setApps] = useState<AppListItem[]>([]);
@@ -521,7 +529,10 @@ export function FlowsWorkspace() {
             <FlowEditor
               key={selectedFlow.id}
               flow={selectedFlow}
-              onBack={() => selectFlow(null)}
+              onBack={() => {
+                if (backTo.fromState) navigate(backTo.path);
+                else selectFlow(null);
+              }}
               onSave={onSaveGraph}
               onOpenTestRun={() => setRightPanel((p) => (p === 'test' ? null : 'test'))}
               onToggleTriggers={() => setRightPanel((p) => (p === 'triggers' ? null : 'triggers'))}

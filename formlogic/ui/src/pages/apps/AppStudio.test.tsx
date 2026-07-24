@@ -69,11 +69,18 @@ vi.mock('../../lib/api', () => ({
     })),
     getAppDomains: vi.fn(async () => ({ data: { domains: [] } })),
     getAppUsers: vi.fn(async () => ({ data: { users: [{ id: 'au1', status: 'active' }], count: 1 } })),
+    getAppInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
     getAppsFormUsage: vi.fn(async () => ({ data: { apps: [] } })),
     getAppRolePermissions: vi.fn(async () => ({ data: { permissions: [] } })),
     isAdminActing: () => false,
     isDemoMode: () => false,
   },
+}));
+
+// AI readiness (FL-23) resolves out-of-band — pin it "ready" so the AI
+// affordances render deterministically.
+vi.mock('../../client-runtime/flows/aiDefault', () => ({
+  getAiReadiness: vi.fn(async () => ({ ready: true })),
 }));
 
 // Chrome pieces with their own data dependencies — not under test here.
@@ -155,5 +162,12 @@ describe('AppStudio', () => {
   it('an invalid step falls back to Data', async () => {
     await renderStudio('/apps/a1/studio/bogus');
     expect(container.textContent).toContain('Data & forms');
+  });
+
+  it('renders the Access step with the app roles', async () => {
+    await renderStudio('/apps/a1/studio/access');
+    expect(container.textContent).toContain('Users & roles');
+    expect(container.textContent).toContain('App roles');
+    expect(container.textContent).toContain('Owner');
   });
 });

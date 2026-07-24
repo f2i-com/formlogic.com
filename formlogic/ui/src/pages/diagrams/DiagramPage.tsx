@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { ArrowLeft, History, Loader2, Map as MapIcon, Sparkles, User as UserIcon, Wand2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { formatDateTimeInZone, useAccountTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import type { Blueprint } from '../../types/blueprints';
@@ -30,6 +31,8 @@ function draftBlueprint(): Blueprint {
 export default function DiagramPage() {
   const { diagramId } = useParams<{ diagramId: string }>();
   const navigate = useNavigate();
+  // Origin-relative Back: opened from the App Studio Plan step this returns there.
+  const backTo = useReturnTo('/diagrams/all');
   // /diagrams/new = a DEFERRED canvas: nothing persists until the first real
   // change (owner direction: never save an empty canvas). The row is created
   // lazily by ensureId() when the canvas commits its first operation; the URL
@@ -123,11 +126,11 @@ export default function DiagramPage() {
     <div className="flex h-[calc(100dvh-4rem)] min-h-0 flex-col">
       <div className="flex flex-none items-center gap-3 border-b border-gray-200 bg-white px-4 py-2.5 dark:border-slate-700/60 dark:bg-slate-900">
         <Link
-          to="/diagrams/all"
+          to={backTo.path}
           className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Diagrams
+          {backTo.label ?? 'Diagrams'}
         </Link>
         <button
           type="button"

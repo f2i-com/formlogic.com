@@ -270,6 +270,23 @@ class AppService
         return App::fromArray($row)->toArray();
     }
 
+    /**
+     * Whether the app's member runtime (/api/app/{slug}/*) may be served to this
+     * requester: published apps for everyone (membership is still enforced by each
+     * endpoint), and a DRAFT only for its owner — so "Use app" works as a real
+     * preview before the first publish. Archived apps never resolve. Anonymous /
+     * public surfaces (manifest, custom domains, sign-up, capability minting) keep
+     * their own publish-only gates and must NOT use this.
+     */
+    public function isRuntimeVisible(array $app, ?string $userId): bool
+    {
+        $status = $app['status'] ?? '';
+        if ($status === 'published') {
+            return true;
+        }
+        return $status === 'draft' && $userId !== null && $userId !== '' && $userId === ($app['ownerId'] ?? null);
+    }
+
     public function createApp(array $data, string $ownerId): array
     {
         // Optional atomic attach list (POST /api/apps { formIds }): validate shape +

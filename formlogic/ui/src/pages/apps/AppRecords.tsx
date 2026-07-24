@@ -3,6 +3,7 @@
 // screen, and analytics. Reached from App settings → Manage → Records.
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { ArrowLeft, BarChart3, ExternalLink, Inbox, Search, Table } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -20,6 +21,8 @@ import type { AppForm } from '../../types/app';
 export function AppRecords() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  // Origin-relative Back: opened from the App Studio this returns to its step.
+  const backTo = useReturnTo(`/apps/${appId}/settings?tab=manage`);
   // Acting admins see record COUNTS only — no data export.
   const acting = useAdminActing();
   const { getApp, fetchApps, fetchAppForms } = useAppStore();
@@ -72,10 +75,10 @@ export function AppRecords() {
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
         <button
           type="button"
-          onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)}
+          onClick={() => navigate(backTo.path)}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
         >
-          <ArrowLeft className="h-4 w-4" /> {app?.name ?? 'App'} settings
+          <ArrowLeft className="h-4 w-4" /> {backTo.label ?? `${app?.name ?? 'App'} settings`}
         </button>
 
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">

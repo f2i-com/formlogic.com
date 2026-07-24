@@ -21,6 +21,7 @@ import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { useFormStore } from '../../../stores/formStore';
 import { cn } from '../../../lib/utils';
+import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm } from '../../../types/app';
 import type { FieldType, Form, FormField } from '../../../types/form';
 
@@ -90,6 +91,8 @@ export function DataStep({
   onReloadForms: () => Promise<void>;
 }) {
   const navigate = useNavigate();
+  // Deep surfaces opened from this step return here via their Back buttons.
+  const studioReturn = returnToState(`/apps/${app.id}/studio/data`, 'App Studio');
   const fetchFormAppUsage = useAppStore((s) => s.fetchFormAppUsage);
   const addFormToApp = useAppStore((s) => s.addFormToApp);
   const [selectedFormId, setSelectedFormId] = useState<string | null>(null);
@@ -181,12 +184,12 @@ export function DataStep({
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Data types</h3>
               <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">Forms behind this app</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${app.id}/forms`)} title="Attach existing forms, reorder and set visibility">
+            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${app.id}/forms`, { state: studioReturn })} title="Attach existing forms, reorder and set visibility">
               Manage
             </Button>
           </div>
         </div>
-        <div className="max-h-[560px] space-y-1 overflow-y-auto p-2">
+        <div className="scrollbar-thin max-h-[560px] space-y-1 overflow-y-auto p-2">
           {appForms.map((af) => {
             const form = formsById[af.formId];
             const isSelected = selected?.id === af.formId;
@@ -269,7 +272,7 @@ export function DataStep({
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <Badge size="sm">{selected.form.responseCount ?? 0} records</Badge>
-              <Button variant="secondary" size="sm" onClick={() => navigate(`/builder/${selected.form!.id}`)} leftIcon={<PencilRuler className="h-4 w-4" />}>
+              <Button variant="secondary" size="sm" onClick={() => navigate(`/builder/${selected.form!.id}`, { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
                 Open builder
               </Button>
             </div>
@@ -298,7 +301,7 @@ export function DataStep({
               <span className="flex-1" />
               <button
                 type="button"
-                onClick={() => navigate(`/responses/${selected.form!.id}`)}
+                onClick={() => navigate(`/responses/${selected.form!.id}`, { state: studioReturn })}
                 className="min-h-11 cursor-pointer text-xs font-semibold text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 inline-flex items-center gap-1"
               >
                 <Table2 className="h-3.5 w-3.5" /> Records
@@ -363,7 +366,7 @@ export function DataStep({
                       <button
                         key={field.id}
                         type="button"
-                        onClick={() => navigate(`/builder/${selected.form!.id}`)}
+                        onClick={() => navigate(`/builder/${selected.form!.id}`, { state: studioReturn })}
                         title="Open in the form builder"
                         className="grid min-h-12 w-full cursor-pointer grid-cols-[minmax(0,1fr)_32px] items-center gap-2 px-3 text-left transition hover:bg-gray-50 dark:hover:bg-white/[0.025] sm:grid-cols-[minmax(160px,1fr)_150px_90px_40px] sm:gap-0"
                       >
@@ -407,7 +410,7 @@ export function DataStep({
                   icon={ExternalLink}
                   label="Preview form"
                   detail="Open the live form"
-                  onClick={() => navigate(`/preview/${selected.form!.id}`)}
+                  onClick={() => navigate(`/preview/${selected.form!.id}`, { state: studioReturn })}
                 />
               </div>
             </div>
@@ -422,7 +425,7 @@ export function DataStep({
                     Linked-record fields connect this data type to others in the app.
                   </p>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => navigate(`/apps/${app.id}/relations`)} leftIcon={<GitFork className="h-4 w-4" />}>
+                <Button variant="secondary" size="sm" onClick={() => navigate(`/apps/${app.id}/relations`, { state: studioReturn })} leftIcon={<GitFork className="h-4 w-4" />}>
                   Manage relations
                 </Button>
               </div>
@@ -464,7 +467,7 @@ export function DataStep({
       )}
 
       <Modal isOpen={showAddType} onClose={() => setShowAddType(false)} title="Add a data type" size="sm">
-        <div className="space-y-4">
+        <div className="p-4 sm:p-5 space-y-4">
           <p className="text-sm text-gray-500 dark:text-slate-400">
             A data type is a form: it defines the fields, powers the generated screens, and stores the records.
           </p>
@@ -477,7 +480,7 @@ export function DataStep({
             autoFocus
           />
           <div className="flex items-center justify-between gap-2">
-            <Button variant="ghost" size="sm" onClick={() => { setShowAddType(false); navigate(`/apps/${app.id}/forms`); }}>
+            <Button variant="ghost" size="sm" onClick={() => { setShowAddType(false); navigate(`/apps/${app.id}/forms`, { state: studioReturn }); }}>
               Attach an existing form instead
             </Button>
             <Button onClick={createDataType} isLoading={creatingType} disabled={!newTypeName.trim()}>

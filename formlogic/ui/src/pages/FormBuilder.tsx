@@ -52,6 +52,7 @@ import { BottomSheet } from '../components/ui/BottomSheet';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, FormFlowsPanel, useFormPreview } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { useAdminActing, useResourcePaths } from '../components/admin/AdminActingContext';
+import { useReturnTo } from '../hooks/useReturnTo';
 import { ScreenModal } from '../components/custom-screen/ScreenModal';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
@@ -299,6 +300,9 @@ export default function FormBuilder() {
   // /admin/..., and owner-identity surfaces (publish-as-pack) are hidden.
   const acting = useAdminActing();
   const paths = useResourcePaths();
+  // Origin-relative Back: opened from the App Studio (or another surface that
+  // passed returnTo) the header's back arrow returns there, not to /forms.
+  const backTo = useReturnTo(paths.formsHome());
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   // Snapshot of the form serialized to a pack, captured when "Publish as pack" opens (so
@@ -1162,7 +1166,7 @@ export default function FormBuilder() {
       {/* Header */}
       <header ref={observeHeader} className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-          <Button variant="ghost" size="sm" onClick={() => navigate(paths.formsHome())}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} title={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'} aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {/* Hidden on phones so the title input keeps usable width (the header is

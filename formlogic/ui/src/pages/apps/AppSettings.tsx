@@ -1,5 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useReturnTo } from '../../hooks/useReturnTo';
 import { ArrowLeft, Save, Check, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
@@ -38,6 +39,8 @@ export function AppSettings() {
   // /admin/..., and data-showing/identity-bound actions are hidden or disabled.
   const acting = useAdminActing();
   const paths = useResourcePaths();
+  // Origin-relative Back: opened from the App Studio this returns to its step.
+  const backTo = useReturnTo(paths.appsHome());
   const [searchParams, setSearchParams] = useSearchParams();
   const { updateApp, deleteApp, fetchApps, fetchRoles, fetchAppForms } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
@@ -194,8 +197,8 @@ export function AppSettings() {
         title={app.name}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navGuarded(paths.appsHome())} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-              Back
+            <Button variant="ghost" size="sm" onClick={() => navGuarded(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+              {backTo.label ? `Back to ${backTo.label}` : 'Back'}
             </Button>
             {/* Nothing on the Manage tab is savable — hide the Save action there. */}
             {activeTab !== 'manage' && (
