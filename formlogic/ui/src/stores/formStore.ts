@@ -1395,11 +1395,17 @@ export const useFormStore = create<FormState>()(
       // account — the owner's forms must never land in the admin's snapshot.
       storage: frozenWhileActing(),
       partialize: (state) => ({
-        // Only persist forms in local mode — API mode data is server-backed
-        // Local mode persists everything; otherwise persist only demo-created (browser-only) forms
-        // so they survive reload and merge back alongside the server's forms on the next load.
+        // The shared demo catalogue is server-backed even when the wider session
+        // uses local mode. Persist only forms this browser actually created there;
+        // caching every seeded demo form can exceed localStorage's small quota.
+        // Outside the demo, local mode persists everything and API mode keeps only
+        // demo-created forms so they survive reload alongside server data.
         // _adminForeign forms (another owner's, loaded while acting) never persist in either mode.
-        forms: (state.storageMode === 'local' ? state.forms : state.forms.filter((f) => isDemoLocalFormId(f.id)))
+        forms: (
+          api.isDemoMode() || state.storageMode !== 'local'
+            ? state.forms.filter((f) => isDemoLocalFormId(f.id))
+            : state.forms
+        )
           .filter((f) => !(f as Form & { _adminForeign?: boolean })._adminForeign),
         storageMode: state.storageMode,
         // Persist offline deletions so they survive a refresh until the next sync propagates them.
@@ -1428,6 +1434,7 @@ export const useFormStore = create<FormState>()(
 // importable — the bridge is production wiring, not something every mock must model.
 if (typeof api.registerDemoLocalForms === 'function') {
   api.registerDemoLocalForms({
+    list: () => useFormStore.getState().forms.filter((form) => isDemoLocalFormId(form.id)),
     get: (id) => useFormStore.getState().forms.find((f) => f.id === id),
     update: async (id, updates) => {
       const store = useFormStore.getState();

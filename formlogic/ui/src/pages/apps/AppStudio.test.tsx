@@ -8,6 +8,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppStudio } from './AppStudio';
 import { useAuthStore } from '../../stores/authStore';
+import { api } from '../../lib/api';
 
 type AuthUser = NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
 
@@ -147,6 +148,32 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Version history');
     expect(container.textContent).toContain('First release');
     expect(container.textContent).toContain('Publish version 3');
+  });
+
+  it('describes legacy published apps as live without inventing release history', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({
+      data: {
+        app: {
+          ...h.app,
+          publishedVersion: undefined,
+          publishedAt: null,
+        },
+      },
+    } as never);
+    vi.mocked(api.listAppVersions).mockResolvedValueOnce({ data: { versions: [] } } as never);
+
+    await renderStudio('/apps/a1/studio/publish');
+
+    expect(container.textContent).not.toContain('Not published yet');
+    expect(container.textContent).toContain('Current release');
+    expect(container.textContent).toContain('Live app is up to date');
+    expect(container.textContent).toContain('No recorded releases yet');
+  });
+
+  it('uses the fixed footer as the single continue action on Plan', async () => {
+    await renderStudio('/apps/a1/studio/plan');
+    expect(container.textContent).not.toContain('Continue to Data & forms');
+    expect(container.textContent).toContain('Continue to Data');
   });
 
   it('the rail marks configured steps and navigates between them', async () => {

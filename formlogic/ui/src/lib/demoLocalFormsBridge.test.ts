@@ -2,7 +2,7 @@
 // Studio (/forms/:id/screen/edit) and Play (/forms/:id/screen) read + save through
 // api.getForm/updateForm — these tests pin that in demo mode those api calls serve and
 // mutate the store's copy (browser-only) instead of 404ing/403ing against the server.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
 import { useFormStore } from '../stores/formStore';
 
@@ -13,6 +13,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   api.setDemoMode(false);
   useFormStore.setState({ forms: initialForms });
 });
@@ -42,6 +43,20 @@ describe('demo-local forms through the api bridge', () => {
     expect(String(missing.error)).toContain('demo form');
     const missingUpdate = await api.updateForm('demolocal_does-not-exist', { title: 'x' });
     expect(missingUpdate.status).toBe(404);
+  });
+
+  it('treats local demo forms as a successful fallback when the shared API is unavailable', async () => {
+    const created = await useFormStore.getState().createForm('Offline browser form', '');
+    expect(created).not.toBeNull();
+    vi.spyOn(
+      api as unknown as { request: (...args: unknown[]) => Promise<unknown> },
+      'request',
+    ).mockResolvedValue({ error: 'offline', status: 503 });
+
+    const res = await api.getForms();
+
+    expect(res.error).toBeUndefined();
+    expect(res.data?.forms.some((form) => form.id === created!.id)).toBe(true);
   });
 
   it('outside demo mode the bridge never engages (real ids go to the server path)', async () => {

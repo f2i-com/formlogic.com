@@ -19,7 +19,7 @@ export const STUDIO_STEPS: StudioStep[] = [
   { id: 'plan', label: 'Plan', shortLabel: 'Plan', description: 'Describe or diagram the app', optional: true },
   { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'Fields, forms and relationships' },
   { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Home, navigation and record views' },
-  { id: 'automations', label: 'Automations', shortLabel: 'Flows', description: 'Triggers, actions and advanced flows' },
+  { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'Triggers, actions and advanced flows' },
   { id: 'access', label: 'Users & roles', shortLabel: 'Access', description: 'People, roles and permissions' },
   { id: 'publish', label: 'Review & publish', shortLabel: 'Publish', description: 'Test, publish and manage versions' },
 ];

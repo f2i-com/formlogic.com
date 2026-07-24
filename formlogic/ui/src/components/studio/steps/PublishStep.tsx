@@ -24,6 +24,7 @@ import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { useAuthStore } from '../../../stores/authStore';
+import { isDemoLocalId } from '../../../lib/demoLocal';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import { buildPreflightChecks, type StudioStepId, type UnpublishedChanges } from '../studioSteps';
 import { returnToState } from '../../../hooks/useReturnTo';
@@ -68,6 +69,8 @@ export function PublishStep({
   const updateApp = useAppStore((s) => s.updateApp);
   const fetchApps = useAppStore((s) => s.fetchApps);
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
+  const browserOnlyDemo = isDemo && isDemoLocalId(app.id);
+  const seededDemoReadOnly = isDemo && !browserOnlyDemo;
   const [dialogOpen, setDialogOpen] = useState(false);
   const [showUnpublish, setShowUnpublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -78,7 +81,8 @@ export function PublishStep({
   const published = app.status === 'published';
   const currentVersion = app.publishedVersion ?? 0;
   const nextVersion = currentVersion + 1;
-  const hasChanges = !published || !changes.everPublished || changes.count > 0;
+  const legacyPublished = published && !changes.everPublished;
+  const hasChanges = !published || (changes.everPublished && changes.count > 0);
 
   const checks = useMemo(() => {
     // Landing pages that target a FORM must still point at an attached form —
@@ -87,7 +91,7 @@ export function PublishStep({
     const landingPageMissing =
       !!landing && landing !== 'dashboard' && landing !== 'records' && !appForms.some((af) => af.formId === landing);
     const settings = app.settings as { allowSelfRegistration?: boolean; defaultRoleId?: string } | undefined;
-    return buildPreflightChecks({
+    const preflight = buildPreflightChecks({
       formCount: appForms.length,
       formsWithoutFields: appForms
         .filter((af) => (formsById[af.formId]?.fields.length ?? 1) === 0)
@@ -103,7 +107,8 @@ export function PublishStep({
       // Identity = a curated icon (settings.icon) or an uploaded logo (theme.logoUrl).
       hasIcon: !!(app.settings?.icon || app.theme?.logoUrl),
     });
-  }, [app.settings, app.customScreen, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount]);
+    return browserOnlyDemo ? preflight.filter((check) => check.id !== 'members') : preflight;
+  }, [app.settings, app.customScreen, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, browserOnlyDemo]);
   const warnings = checks.filter((c) => c.state === 'warning');
   const blocking = warnings.filter((c) => c.severity === 'blocking');
 
@@ -119,7 +124,12 @@ export function PublishStep({
     setDialogOpen(false);
     setJustPublished(res.data.version);
     window.setTimeout(() => setJustPublished(null), 5000);
-    toast.success(`Version ${res.data.version} is live`, 'The published app now serves your latest changes.');
+    toast.success(
+      `Version ${res.data.version} is live`,
+      browserOnlyDemo
+        ? 'This browser-only preview now serves your latest changes.'
+        : 'The published app now serves your latest changes.',
+    );
     await Promise.all([onPublished(), fetchApps()]);
   };
 
@@ -127,7 +137,12 @@ export function PublishStep({
     setShowUnpublish(false);
     const ok = await updateApp(app.id, { status: 'draft' });
     if (ok) {
-      toast.success('App unpublished', 'Members lose access until you publish again.');
+      toast.success(
+        'App unpublished',
+        browserOnlyDemo
+          ? 'The preview is offline in this browser until you publish again.'
+          : 'Members lose access until you publish again.',
+      );
       await Promise.all([onPublished(), fetchApps()]);
     }
   };
@@ -151,9 +166,13 @@ export function PublishStep({
               <Check className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">{app.name} is live</p>
+              <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                {browserOnlyDemo ? `${app.name} is live in this browser` : `${app.name} is live`}
+              </p>
               <p className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-                Version {justPublished} is published and available to your users.
+                {browserOnlyDemo
+                  ? `Version ${justPublished} is ready to preview on this device.`
+                  : `Version ${justPublished} is published and available to your users.`}
               </p>
             </div>
             <Button variant="secondary" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
@@ -171,7 +190,11 @@ export function PublishStep({
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {blocking.length > 0 ? 'A few things need fixing' : warnings.length === 0 ? 'Ready to publish' : 'Almost ready'}
+                    {blocking.length > 0
+                      ? 'A few things need fixing'
+                      : published
+                        ? warnings.length === 0 ? 'Live and ready' : 'Live with recommendations'
+                        : warnings.length === 0 ? 'Ready to publish' : 'Almost ready'}
                   </h3>
                   <Badge variant={blocking.length > 0 ? 'error' : warnings.length === 0 ? 'success' : 'warning'} size="sm">
                     <CheckCircle2 className="h-3 w-3 mr-1 inline" />
@@ -181,7 +204,9 @@ export function PublishStep({
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
                   {blocking.length > 0
                     ? 'Blocking issues would break the app for members — everything else is advice, not homework.'
-                    : 'Everything below is read from the app\'s real state. Recommendations can be finished later.'}
+                    : published
+                      ? 'The live app passes every blocking check. Recommendations can be finished whenever they are useful.'
+                      : 'Everything below is read from the app\'s real state. Recommendations can be finished later.'}
                 </p>
               </div>
             </div>
@@ -253,13 +278,17 @@ export function PublishStep({
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
             <div className="border-b border-gray-200/80 dark:border-white/[0.06] p-4">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-                {changes.everPublished ? 'Changed since the last publish' : 'First release'}
+                {legacyPublished ? 'Current release' : changes.everPublished ? 'Changed since the last publish' : 'First release'}
               </h3>
               <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
-                {changes.everPublished
+                {legacyPublished
+                  ? 'This app is live but predates release history. Future publishes will record versions here.'
+                  : changes.everPublished
                   ? changes.count === 0
                     ? 'Nothing has changed — the live app is up to date.'
-                    : `${changes.count} ${changes.count === 1 ? 'resource' : 'resources'} updated since version ${currentVersion}.`
+                    : currentVersion > 0
+                      ? `${changes.count} ${changes.count === 1 ? 'resource' : 'resources'} updated since version ${currentVersion}.`
+                      : `${changes.count} ${changes.count === 1 ? 'resource' : 'resources'} updated since the last publish.`
                   : 'Everything in the draft goes live with the first publish.'}
               </p>
             </div>
@@ -299,7 +328,9 @@ export function PublishStep({
                 ? `Publish version ${nextVersion}`
                 : changes.count > 0
                   ? `Publish version ${nextVersion}`
-                  : `Live version ${currentVersion || 1} is up to date`}
+                  : currentVersion > 0
+                    ? `Live version ${currentVersion} is up to date`
+                    : 'Live app is up to date'}
             </h3>
             <p className="mt-1 text-sm leading-6 text-gray-500 dark:text-slate-400">
               {!published
@@ -311,10 +342,10 @@ export function PublishStep({
             <Button
               className="mt-5 w-full"
               onClick={() => setDialogOpen(true)}
-              disabled={(published && changes.everPublished && changes.count === 0) || isDemo || blocking.length > 0}
+              disabled={(published && !hasChanges) || seededDemoReadOnly || blocking.length > 0}
               leftIcon={hasChanges ? <Rocket className="h-4 w-4" /> : <Check className="h-4 w-4" />}
               title={
-                isDemo
+                seededDemoReadOnly
                   ? 'Publishing is disabled in the shared demo'
                   : blocking.length > 0
                     ? 'Fix the blocking issues in the checklist first'
@@ -325,8 +356,13 @@ export function PublishStep({
                 ? `Fix ${blocking.length} blocking ${blocking.length === 1 ? 'issue' : 'issues'} first`
                 : !published ? 'Publish app' : changes.count > 0 ? 'Publish changes' : 'No changes to publish'}
             </Button>
+            {browserOnlyDemo && (
+              <p className="mt-3 text-center text-[10px] leading-4 text-primary-700 dark:text-primary-300">
+                Demo releases stay in this browser and never touch the shared cloud data.
+              </p>
+            )}
             {published && (
-              <Button variant="secondary" className="mt-2 w-full" onClick={() => setShowUnpublish(true)} disabled={isDemo}>
+              <Button variant="secondary" className="mt-2 w-full" onClick={() => setShowUnpublish(true)} disabled={seededDemoReadOnly}>
                 Unpublish
               </Button>
             )}
@@ -346,7 +382,7 @@ export function PublishStep({
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">{published ? 'Live app' : 'App link'}</p>
                 <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
-                  {published ? `Published · version ${currentVersion || 1}` : 'Goes live when you publish'}
+                  {published ? (currentVersion > 0 ? `Published · version ${currentVersion}` : 'Published') : 'Goes live when you publish'}
                 </p>
               </div>
             </div>
@@ -365,12 +401,21 @@ export function PublishStep({
               <Button variant="secondary" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
                 Open app
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => navigate(`/apps/${app.id}/deploy`, { state: studioReturn })} leftIcon={<Eye className="h-4 w-4" />}>
-                Deploy & share
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate(`/apps/${app.id}/deploy`, { state: studioReturn })}
+                leftIcon={<Eye className="h-4 w-4" />}
+                disabled={browserOnlyDemo}
+                title={browserOnlyDemo ? 'Cloud deployment is not available for a browser-only demo app' : undefined}
+              >
+                {browserOnlyDemo ? 'Browser only' : 'Deploy & share'}
               </Button>
             </div>
             <p className="mt-3 text-[10px] text-gray-400 dark:text-slate-500">
-              QR code, install-as-app (PWA), custom domains and signed package exports live in Deploy & share.
+              {browserOnlyDemo
+                ? 'This preview is private to this browser. Sign up free when you are ready for sharing, PWA installs and custom domains.'
+                : 'QR code, install-as-app (PWA), custom domains and signed package exports live in Deploy & share.'}
             </p>
           </section>
 
@@ -385,7 +430,11 @@ export function PublishStep({
             </div>
             <div className="mt-4 space-y-3">
               {versions.length === 0 && (
-                <p className="text-xs text-gray-400 dark:text-slate-500">No versions yet — the first publish starts the history.</p>
+                <p className="text-xs text-gray-400 dark:text-slate-500">
+                  {published
+                    ? 'No recorded releases yet — future publishes will appear here.'
+                    : 'No versions yet — the first publish starts the history.'}
+                </p>
               )}
               {versions.slice(0, 6).map((version, index) => (
                 <div key={version.id} className="flex items-start gap-3">
@@ -418,6 +467,7 @@ export function PublishStep({
         nextVersion={nextVersion}
         changes={changes}
         publishing={publishing}
+        browserOnly={browserOnlyDemo}
         onClose={() => setDialogOpen(false)}
         onConfirm={doPublish}
       />
@@ -441,6 +491,7 @@ function PublishDialog({
   nextVersion,
   changes,
   publishing,
+  browserOnly,
   onClose,
   onConfirm,
 }: {
@@ -449,6 +500,7 @@ function PublishDialog({
   nextVersion: number;
   changes: UnpublishedChanges;
   publishing: boolean;
+  browserOnly: boolean;
   onClose: () => void;
   onConfirm: (label: string) => void;
 }) {
@@ -457,7 +509,9 @@ function PublishDialog({
     <Modal isOpen={open} onClose={onClose} title={`Publish version ${nextVersion}?`} size="sm">
       <div className="p-4 sm:p-5 space-y-4">
         <p className="text-sm leading-6 text-gray-500 dark:text-slate-400">
-          Version {nextVersion} replaces the live app for everyone using {appName}. Existing records are unchanged.
+          {browserOnly
+            ? `Version ${nextVersion} becomes the preview served from this browser for ${appName}. Existing records are unchanged.`
+            : `Version ${nextVersion} replaces the live app for everyone using ${appName}. Existing records are unchanged.`}
         </p>
         <div className="rounded-xl bg-gray-50 dark:bg-white/[0.04] p-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Included in this release</p>

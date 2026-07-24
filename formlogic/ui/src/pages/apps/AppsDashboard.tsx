@@ -14,6 +14,7 @@ import { PackImportModal } from '../../components/builder/PackImportModal';
 import { ShowMore } from '../../components/ui/ShowMore';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
+import { isDemoLocalId } from '../../lib/demoLocal';
 import type { PackInstallation } from '../../lib/api';
 import { cn, formatRelativeTime } from '../../lib/utils';
 import { KIND_LABELS } from '../../types/app';
@@ -246,6 +247,7 @@ function AppRow({ app, packName, onManage, onSettings, onDelete }: { app: App; p
               <Package className="h-3 w-3 mr-1 inline shrink-0" /><span className="truncate">{packName}</span>
             </Badge>
           )}
+          {isDemoLocalId(app.id) && <Badge variant="primary" size="sm">Browser only</Badge>}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 min-w-0">
           <span className="font-mono truncate max-w-[45%]">/{app.slug}</span>
@@ -315,8 +317,8 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
         'transition-all duration-200 cursor-pointer group'
       )}
     >
-      <div className="flex items-start justify-between gap-2 mb-4">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-2">
+        <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1">
           <AppTile app={app} />
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors truncate">
@@ -333,7 +335,12 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="ml-[52px] flex flex-shrink-0 items-center gap-1.5 sm:ml-0">
+          {isDemoLocalId(app.id) && (
+            <Badge variant="primary" size="sm" className="whitespace-nowrap">
+              Browser only
+            </Badge>
+          )}
           {kindLabel && (
             <Badge variant="default" size="sm" className="whitespace-nowrap" title="App type">
               {kindLabel}

@@ -22,6 +22,7 @@ import { Modal } from '../../ui/Modal';
 import { Switch } from '../../ui/Switch';
 import { PermissionMatrix } from '../../ui/PermissionMatrix';
 import { api } from '../../../lib/api';
+import { isDemoLocalId } from '../../../lib/demoLocal';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { useAppUserStore } from '../../../stores/appUserStore';
@@ -74,6 +75,8 @@ export function AccessStep({
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
+              aria-label={item.label}
+              aria-pressed={tab === item.id}
               className={cn(
                 'flex h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-xs font-bold transition',
                 tab === item.id
@@ -391,6 +394,7 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [inviting, setInviting] = useState(false);
+  const browserOnlyDemo = isDemoLocalId(app.id);
 
   useEffect(() => {
     // The store methods throw on API failure (for Promise.allSettled consumers) —
@@ -430,9 +434,13 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
             {pendingInvites.length > 0 ? ` · ${pendingInvites.length} pending ${pendingInvites.length === 1 ? 'invite' : 'invites'}` : ''}
           </p>
         </div>
-        <Button size="sm" onClick={() => { setInviteRoleId(defaultInviteRole?.id ?? ''); setShowInvite(true); }} leftIcon={<UserPlus className="h-4 w-4" />}>
-          Invite people
-        </Button>
+        {browserOnlyDemo ? (
+          <Badge variant="primary" size="sm">Browser-only demo</Badge>
+        ) : (
+          <Button size="sm" onClick={() => { setInviteRoleId(defaultInviteRole?.id ?? ''); setShowInvite(true); }} leftIcon={<UserPlus className="h-4 w-4" />}>
+            Invite people
+          </Button>
+        )}
       </div>
       <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
         {users.map((member) => (
@@ -489,7 +497,9 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
         ))}
         {users.length === 0 && pendingInvites.length === 0 && (
           <p className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
-            No members yet — invite people or share the app link.
+            {browserOnlyDemo
+              ? 'This app is private to this browser. Sign up free when you are ready to invite real people.'
+              : 'No members yet — invite people or share the app link.'}
           </p>
         )}
       </div>

@@ -140,9 +140,11 @@ export function AutomationsStep({
           <Button variant="secondary" size="sm" onClick={() => navigate('/flows')} leftIcon={<Workflow className="h-4 w-4" />}>
             Flows workspace
           </Button>
-          <Button size="sm" onClick={newAutomation} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
-            New automation
-          </Button>
+          {flows.length > 0 && (
+            <Button size="sm" onClick={newAutomation} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
+              New automation
+            </Button>
+          )}
         </div>
       </div>
 

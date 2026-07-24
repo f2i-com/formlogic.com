@@ -338,12 +338,12 @@ export async function getDemoBlueprint(id: string): Promise<DemoBlueprintStored 
   return readBlueprintKey(id);
 }
 
-export async function createDemoBlueprint(name: string): Promise<DemoBlueprintStored> {
+export async function createDemoBlueprint(name: string, appId: string | null = null): Promise<DemoBlueprintStored> {
   const now = new Date().toISOString();
   const stored: DemoBlueprintStored = {
     row: {
       id: 'demolocal_' + uuid(),
-      appId: null,
+      appId,
       name: name.trim() === '' ? 'Untitled diagram' : name.trim(),
       status: 'draft',
       semanticRevision: 0,
@@ -433,8 +433,11 @@ export function mergeFlowOverlay(
   overlay: { created: FlowDefinition[]; edits: FlowEdits; deleted: string[] },
 ): FlowDefinition[] {
   const deletedSet = new Set(overlay.deleted);
+  const createdIds = new Set(overlay.created.map((flow) => flow.id));
   const merged = serverFlows
-    .filter((f) => !deletedSet.has(f.id))
+    // Some demo-aware callers already received local flows from the API bridge.
+    // Never duplicate those rows when the shared overlay is applied again.
+    .filter((f) => !deletedSet.has(f.id) && !createdIds.has(f.id))
     .map((f) => (overlay.edits[f.id] ? { ...f, ...overlay.edits[f.id] } : f));
   const localForScope = overlay.created.filter((f) => (f.appId ?? null) === (appId ?? null) && !deletedSet.has(f.id));
   return [...localForScope, ...merged];

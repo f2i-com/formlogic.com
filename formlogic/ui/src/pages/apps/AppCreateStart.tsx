@@ -8,7 +8,7 @@
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Boxes, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Boxes, HardDrive, RefreshCw, Sparkles } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -16,6 +16,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { ConnectAiDoors } from '../../components/ai/ConnectAiDoors';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { useAppStore } from '../../stores/appStore';
+import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 
 type Phase = 'checking' | 'connect' | 'name';
@@ -23,6 +24,7 @@ type Phase = 'checking' | 'connect' | 'name';
 export function AppCreateStart() {
   const navigate = useNavigate();
   const createApp = useAppStore((s) => s.createApp);
+  const isDemo = useAuthStore((s) => !!s.user?.isDemo);
   const [phase, setPhase] = useState<Phase>('checking');
   const [aiReady, setAiReady] = useState(false);
   const [rechecking, setRechecking] = useState(false);
@@ -95,7 +97,7 @@ export function AppCreateStart() {
           </Button>
         }
       />
-      <main className="mx-auto max-w-3xl px-4 pb-16 pt-6 sm:pt-8">
+      <main className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:pb-16 sm:pt-8">
         {phase === 'checking' && (
           <div className="flex items-center justify-center py-24" role="status" aria-label="Checking your AI setup">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
@@ -140,6 +142,14 @@ export function AppCreateStart() {
             </p>
 
             <section className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
+              {isDemo && (
+                <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 text-primary-800 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-200">
+                  <HardDrive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <p className="text-xs leading-5">
+                    <span className="font-semibold">Private demo project.</span> This app is saved in this browser&apos;s IndexedDB and never uploaded to the shared server.
+                  </p>
+                </div>
+              )}
               <div className="space-y-4">
                 <div>
                   <label htmlFor="new-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
@@ -163,7 +173,8 @@ export function AppCreateStart() {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="One or two sentences — shown to members and used by the AI when planning."
-                    rows={2}
+                    rows={3}
+                    className="min-h-24 resize-none"
                   />
                 </div>
                 <div className="flex items-center justify-end">

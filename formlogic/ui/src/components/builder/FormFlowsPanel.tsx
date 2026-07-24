@@ -11,7 +11,7 @@ import { Switch } from '../ui/Switch';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
-import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding } from '../../lib/demoLocal';
+import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding, isDemoLocalId } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
 import type { FormAppContext } from '../../types/app';
 import type { FormField } from '../../types/form';
@@ -162,7 +162,7 @@ export function FormFlowsPanel({
         kind: 'app' as const,
         appId: context.appId,
         label: context.appName,
-        note: demoMode
+        note: demoMode && !isDemoLocalId(context.appId)
           ? 'App-scoped bindings are read-only in the demo.'
           : context.isPublished ? 'Attached app flow.' : 'Attached app flow in a draft app.',
         flows: appFlows,
@@ -210,10 +210,10 @@ export function FormFlowsPanel({
   const saveBinding = useCallback(async (target: EditingTarget, binding: FlowBinding | null, payload: Record<string, unknown>) => {
     const section = sectionByKey(sections, target.sectionKey);
     if (!section) return { ok: false, error: 'Flow scope was not found.' };
-    if (demoMode && section.kind === 'app') {
+    if (demoMode && section.kind === 'app' && !isDemoLocalId(section.appId)) {
       return { ok: false, error: 'App-scoped bindings are read-only in the demo.' };
     }
-    if (demoMode) {
+    if (demoMode && section.kind === 'workspace') {
       const demoPayload = payloadWithFlowId(section, payload, binding);
       if (binding) await demoUpdateFormBinding(formId, binding.id, demoPayload);
       else await demoCreateFormBinding(formId, demoPayload);
@@ -236,11 +236,11 @@ export function FormFlowsPanel({
 
   const toggleBinding = useCallback(async (section: FlowSection, binding: FlowBinding, enabled: boolean) => {
     const payload = { ...bindingToPayload(binding), enabled };
-    if (demoMode && section.kind === 'app') {
+    if (demoMode && section.kind === 'app' && !isDemoLocalId(section.appId)) {
       toast.info('Demo read-only', 'App-scoped bindings are read-only in the demo.');
       return;
     }
-    if (demoMode) {
+    if (demoMode && section.kind === 'workspace') {
       await demoUpdateFormBinding(formId, binding.id, payloadWithFlowId(section, payload, binding));
       refresh();
       return;
@@ -259,12 +259,12 @@ export function FormFlowsPanel({
     if (!deleteTarget) return;
     const section = sectionByKey(sections, deleteTarget.sectionKey);
     if (!section) return;
-    if (demoMode && section.kind === 'app') {
+    if (demoMode && section.kind === 'app' && !isDemoLocalId(section.appId)) {
       toast.info('Demo read-only', 'App-scoped bindings are read-only in the demo.');
       setDeleteTarget(null);
       return;
     }
-    if (demoMode) {
+    if (demoMode && section.kind === 'workspace') {
       await demoDeleteFormBinding(formId, deleteTarget.binding.id);
       toast.success('Binding removed');
       setDeleteTarget(null);
@@ -285,7 +285,7 @@ export function FormFlowsPanel({
 
   const createFlowForForm = useCallback(async () => {
     if (!createScope) return;
-    if (demoMode && createScope.kind === 'app') {
+    if (demoMode && createScope.kind === 'app' && !isDemoLocalId(createScope.appId)) {
       toast.info('Demo read-only', 'App-scoped bindings are read-only in the demo.');
       return;
     }
@@ -303,7 +303,7 @@ export function FormFlowsPanel({
       enabled: true,
       nodeCapabilities: seed.nodeCapabilities,
     };
-    const flow = demoMode
+    const flow = demoMode && createScope.kind === 'workspace'
       ? await demoCreateFlow({ ...flowBody, appId: null })
       : createScope.kind === 'workspace'
         ? (await api.createWorkspaceFlow(flowBody)).data?.flow
@@ -320,7 +320,7 @@ export function FormFlowsPanel({
       inputMap: seed.inputMap,
       enabled: true,
     };
-    const bindingRes = demoMode
+    const bindingRes = demoMode && createScope.kind === 'workspace'
       ? { error: null, data: { binding: await demoCreateFormBinding(formId, { ...bindingPayload, flowDefinitionId: flow.id }) } }
       : createScope.kind === 'workspace'
         ? await api.createFormFlowBinding(formId, bindingPayload)
@@ -415,7 +415,7 @@ export function FormFlowsPanel({
           <p className="text-sm text-gray-400 dark:text-slate-500">Loading flows...</p>
         ) : (
           sections.map((section) => {
-            const readOnly = demoMode && section.kind === 'app';
+            const readOnly = demoMode && section.kind === 'app' && !isDemoLocalId(section.appId);
             return (
             <section key={section.key} className="space-y-2">
               <div>

@@ -111,7 +111,7 @@ beforeEach(() => {
   h.presence = { kind: 'local' };
   h.lastLocation = '';
   useAuthStore.setState({ user: { id: 'u1', email: 'u1@example.com' }, isLoading: false, isInitialized: true, error: null });
-  useUIStore.setState({ isMobile: false, sidebarCollapsed: false });
+  useUIStore.setState({ isMobile: false, sidebarCollapsed: false, fixedBottomBar: false });
   useToastStore.getState().clearToasts();
   h.desktopClient.services.list.mockResolvedValue({ ok: true, data: SERVICES });
   h.desktopClient.plugins.list.mockResolvedValue({ ok: true, data: PLUGINS });
@@ -175,6 +175,12 @@ describe('extractListResult', () => {
 });
 
 describe('DesktopConnectionPopover — local presence', () => {
+  it('stays out of compact fixed-footer workspaces', async () => {
+    useUIStore.setState({ isMobile: true, fixedBottomBar: true });
+    await renderPopover();
+    expect(container.querySelector('button[aria-haspopup="dialog"]')).toBeNull();
+  });
+
   it('shows the local label and lists services + plugins from the loopback client', async () => {
     await renderPopover();
     expect(trigger().textContent).toContain('Desktop — this device');

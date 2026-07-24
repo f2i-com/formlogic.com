@@ -24,6 +24,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { cn } from '../../lib/utils';
+import { isDemoLocalId } from '../../lib/demoLocal';
 
 /** Per-step chat seeds (recommendation #8) — shown only when a default AI can run. */
 const STEP_PROMPTS: Record<StudioStepId, string[]> = {
@@ -136,7 +137,9 @@ export function AppStudio() {
         .filter((af) => (data.formsById[af.formId]?.fields.length ?? 1) === 0)
         .map((af) => af.displayName || data.formsById[af.formId]?.title || 'Untitled'),
       flowCount: data.flows.length,
-      memberCount: data.memberCount,
+      // Browser-only demo apps cannot send real invitations, so do not point
+      // their next-action card at an unavailable cloud operation.
+      memberCount: isDemoLocalId(data.app.id) ? 2 : data.memberCount,
       published: data.app.status === 'published',
       unpublishedCount: changes.everPublished ? changes.count : 0,
     });
@@ -211,21 +214,19 @@ export function AppStudio() {
           </div>
 
           {/* ONE recommended next action (recommendation #1). */}
-          {nextAction && (
-            <div className="flex w-full flex-none items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/20 bg-primary-50/60 dark:bg-primary-500/[0.07] px-3.5 py-2.5 lg:w-auto lg:max-w-md">
+          {nextAction && nextAction.step !== activeStep && (
+            <div className="grid w-full flex-none grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/20 bg-primary-50/60 dark:bg-primary-500/[0.07] px-3.5 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] lg:w-auto lg:max-w-md">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-primary-foreground">
                 <Compass className="h-4.5 w-4.5" />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-primary-600/80 dark:text-primary-300/80">Next recommended step</p>
-                <p className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={nextAction.detail}>{nextAction.title}</p>
+                <p className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={nextAction.title}>{nextAction.title}</p>
                 <p className="mt-0.5 hidden text-[11px] leading-4 text-gray-500 dark:text-slate-400 sm:line-clamp-1">{nextAction.detail}</p>
               </div>
-              {nextAction.step !== activeStep && (
-                <Button size="sm" variant="secondary" className="shrink-0" onClick={() => setStep(nextAction.step)}>
-                  {nextAction.cta}
-                </Button>
-              )}
+              <Button size="sm" variant="secondary" className="col-span-2 w-full shrink-0 sm:col-span-1 sm:w-auto" onClick={() => setStep(nextAction.step)}>
+                {nextAction.cta}
+              </Button>
             </div>
           )}
         </div>

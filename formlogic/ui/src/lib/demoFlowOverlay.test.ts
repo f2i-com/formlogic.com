@@ -65,6 +65,15 @@ describe('mergeFlowOverlay', () => {
     expect(out).toEqual([]);
   });
 
+  it('does not duplicate a local flow when a demo-aware API result is overlaid again', () => {
+    const local = flow('demolocal_app', { appId: 'app1', name: 'Browser flow' });
+    const out = mergeFlowOverlay('app1', [local], {
+      ...empty,
+      created: [local],
+    });
+    expect(out.map((item) => item.id)).toEqual(['demolocal_app']);
+  });
+
   it('edit + delete of the same seeded id: delete wins', () => {
     const server = [flow('a')];
     const out = mergeFlowOverlay(null, server, { ...empty, edits: { a: { name: 'X' } }, deleted: ['a'] });

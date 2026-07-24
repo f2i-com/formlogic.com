@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, FileText, Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { api } from '../../lib/api';
-import { demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding } from '../../lib/demoLocal';
+import { demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding, isDemoLocalId } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
@@ -65,7 +65,7 @@ export function TriggersPanel({
   const [pendingDelete, setPendingDelete] = useState<FlowBinding | null>(null);
   const [savedHint, setSavedHint] = useState(false);
   const isWorkspaceFlow = flow.appId === null;
-  const appReadOnly = api.isDemoMode() && !isWorkspaceFlow;
+  const appReadOnly = api.isDemoMode() && !isWorkspaceFlow && !isDemoLocalId(flow.appId);
   const editorFlows = useMemo(() => [flow], [flow]);
   const editorContext = isWorkspaceFlow ? EMPTY_FLOW_EDITOR_CONTEXT : context;
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, Database, GitFork, LayoutPanelTop, Map, PencilRuler, Share2, Sparkles } from 'lucide-react';
+import { Check, Database, GitFork, LayoutPanelTop, Map, PencilRuler, Share2, Sparkles } from 'lucide-react';
 import { Badge } from '../../ui/Badge';
 import { Button } from '../../ui/Button';
 import { api } from '../../../lib/api';
@@ -160,7 +160,7 @@ export function PlanStep({
             rows={5}
             aria-label="Describe the app"
             placeholder={`e.g. Customers submit requests, staff assign a technician, and customers get updates until the job is invoiced.`}
-            className="mt-4 w-full resize-none rounded-xl border border-primary-200 dark:border-white/10 bg-white dark:bg-slate-950/60 p-3 text-sm leading-6 text-gray-700 dark:text-slate-200 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-500/15"
+            className="scrollbar-thin mt-4 w-full resize-none rounded-xl border border-primary-200 dark:border-white/10 bg-white dark:bg-slate-950/60 p-3 text-sm leading-6 text-gray-700 dark:text-slate-200 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-500/15"
           />
           <Button className="mt-3 w-full" onClick={askAi} leftIcon={<Sparkles className="h-4 w-4" />}>
             Ask the AI to plan this
@@ -184,9 +184,6 @@ export function PlanStep({
             <MappingLine icon={LayoutPanelTop} label="Generated screens" detail="Home, lists and record views" done={appForms.length > 0} />
             <MappingLine icon={Share2} label={`${roles.length} ${roles.length === 1 ? 'role' : 'roles'}`} detail={roles.map((r) => r.name).slice(0, 3).join(', ') || 'Created with the app'} done={roles.length > 0} />
           </div>
-          <Button variant="secondary" className="mt-4 w-full" onClick={onSkip}>
-            Continue to Data & forms <ArrowRight className="h-4 w-4 ml-1.5" />
-          </Button>
         </section>
       </div>
     </div>

@@ -172,7 +172,7 @@ beforeEach(() => {
   __setChatStoreIndexedDbForTests(null); // memory-backed history for every test
   vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
   useAuthStore.setState({ user: { id: 'u1', email: 'u1@example.com' }, isLoading: false, isInitialized: true, error: null });
-  useUIStore.setState({ isMobile: false, chatOpen: false, chatMinimized: false, chatPosition: null });
+  useUIStore.setState({ isMobile: false, chatOpen: false, chatMinimized: false, chatPosition: null, fixedBottomBar: false });
   h.getAiPreferences.mockResolvedValue({ ok: true, data: { ...PREFS } });
   h.answerToolProposal.mockResolvedValue({ ok: true });
   h.sendChatTurn.mockImplementation(async (opts: SendChatTurnOptions): Promise<ChatTurnOutcome> => {
@@ -238,6 +238,12 @@ describe('mounting', () => {
     expect(launcher()).toBeNull(); // the launcher yields to the open panel
     expect(h.getAiPreferences).toHaveBeenCalledTimes(1);
     expect(panel()!.querySelector('[data-testid="chat-privacy-badge"]')!.textContent).toContain('Hosted — processed by FormLogic Cloud');
+  });
+
+  it('yields the floating launcher to pages with their own fixed action bar', async () => {
+    useUIStore.setState({ fixedBottomBar: true });
+    await renderWidget();
+    expect(launcher()).toBeNull();
   });
 
   it('minimize brings the launcher back; close resets open state', async () => {

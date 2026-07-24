@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils';
 import { versionLabel, type UnpublishedChanges } from './studioSteps';
 import { useStudioSaveState } from './studioSaveState';
 import { returnToState } from '../../hooks/useReturnTo';
+import { isDemoLocalId } from '../../lib/demoLocal';
 import type { App } from '../../types/app';
 
 /**
@@ -47,6 +48,7 @@ export function StudioTopBar({
 
   const liveVersion = versionLabel(app);
   const published = app.status === 'published';
+  const browserOnly = isDemoLocalId(app.id);
   const saving = useStudioSaveState((s) => s.pending > 0);
   const lastSavedAt = useStudioSaveState((s) => s.lastSavedAt);
   const lastLabel = useStudioSaveState((s) => s.lastLabel);
@@ -73,6 +75,11 @@ export function StudioTopBar({
             <Badge variant={published ? 'success' : 'warning'} size="sm" className="hidden sm:inline-flex whitespace-nowrap">
               {published ? `Live${liveVersion ? ` ${liveVersion}` : ''}` : 'Draft'}
             </Badge>
+            {browserOnly && (
+              <Badge variant="primary" size="sm" className="hidden lg:inline-flex whitespace-nowrap">
+                Saved in browser
+              </Badge>
+            )}
           </div>
           <div className="mt-0.5 hidden items-center gap-1.5 text-[11px] text-gray-400 dark:text-slate-500 sm:flex min-w-0">
             {saving ? (
@@ -105,10 +112,16 @@ export function StudioTopBar({
                 </button>
               </>
             )}
-            {!changes.everPublished && (
+            {!published && !changes.everPublished && (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="truncate">Not published yet</span>
+              </>
+            )}
+            {browserOnly && (
+              <>
+                <span aria-hidden="true">&middot;</span>
+                <span className="truncate">Private to this browser</span>
               </>
             )}
           </div>
@@ -146,6 +159,19 @@ export function StudioTopBar({
         >
           {!published ? 'Publish' : changes.count > 0 ? 'Review changes' : 'Up to date'}
         </Button>
+
+        {/* Compact studio layouts use this top-bar shortcut instead of a
+            floating launcher that can cover step content above the footer. */}
+        {aiAvailable && (
+          <button
+            type="button"
+            onClick={openChat}
+            aria-label="Ask AI"
+            className="sm:hidden flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-primary-600 transition-colors hover:bg-primary-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-primary-300 dark:hover:bg-primary-500/10"
+          >
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
 
         {/* Mobile: jump into the live app */}
         <button

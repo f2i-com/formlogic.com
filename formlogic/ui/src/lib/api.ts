@@ -4,6 +4,7 @@
 
 import type { Form } from '../types/form';
 import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
+import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import type {
   ClaimResult,
   ConnectorCommand,
@@ -24,7 +25,36 @@ import { logger } from './logger';
 import {
   addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords,
   listDemoBlueprints, getDemoBlueprint, createDemoBlueprint, renameDemoBlueprint, deleteDemoBlueprint, commitDemoBlueprintOperations,
+  demoApplyFlowOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow,
 } from './demoLocal';
+import {
+  addDemoAppForm,
+  clearDemoApps,
+  createDemoApp,
+  createDemoAppBinding,
+  createDemoAppRole,
+  deleteDemoApp,
+  deleteDemoAppBinding,
+  deleteDemoAppRole,
+  getDemoApp,
+  getDemoAppBySlug,
+  getDemoAppRolePermissions,
+  listDemoAppBindings,
+  listDemoAppRoles,
+  listDemoApps,
+  listDemoAppsFormUsage,
+  listDemoAppVersions,
+  listDemoBindingsForFlow,
+  listDemoFormAppContexts,
+  publishDemoApp,
+  removeDemoAppForm,
+  reorderDemoAppForms,
+  setDemoAppRolePermissions,
+  updateDemoApp,
+  updateDemoAppBinding,
+  updateDemoAppForm,
+  updateDemoAppRole,
+} from './demoLocalApps';
 import { API_BASE_URL } from './apiBase';
 import type { ResponseEnvelope } from './crypto/envelope';
 import type {
@@ -1051,7 +1081,7 @@ class ApiClient {
     try {
       const prev = localStorage.getItem(KEY);
       if (prev !== null && prev !== epoch) {
-        await clearDemoRecords();
+        await Promise.all([clearDemoRecords(), clearDemoApps()]);
       }
       localStorage.setItem(KEY, epoch);
     } catch { /* storage unavailable — skip */ }
@@ -1178,7 +1208,22 @@ class ApiClient {
     if (options?.offset) params.set('offset', String(options.offset));
 
     const query = params.toString();
-    return this.request(`/forms${query ? `?${query}` : ''}`);
+    const server = await this.request<{ forms: Form[]; count: number }>(`/forms${query ? `?${query}` : ''}`);
+    if (!this._demoMode || !this._demoLocalForms) return server;
+    const local = this._demoLocalForms.list()
+      .filter((form) => !options?.status || form.status === options.status);
+    return {
+      ...server,
+      // A browser-created demo form is a complete, usable local result. Do not
+      // surface the shared API's transient error as a failed load when that
+      // fallback succeeded—the caller would otherwise show a scary error toast
+      // while rendering the local form correctly.
+      error: local.length > 0 ? undefined : server.error,
+      data: {
+        forms: [...local, ...(server.data?.forms ?? [])],
+        count: local.length + (server.data?.count ?? server.data?.forms.length ?? 0),
+      },
+    };
   }
 
   // Demo-local FORM access, registered by formStore at module init (a direct import
@@ -1188,11 +1233,13 @@ class ApiClient {
   // view AND edit them in the demo instead of 404ing against a server that has
   // never heard of the form.
   private _demoLocalForms: {
+    list: () => Form[];
     get: (id: string) => Form | undefined;
     update: (id: string, updates: Partial<Form>) => Promise<Form | undefined>;
   } | null = null;
 
   registerDemoLocalForms(resolver: {
+    list: () => Form[];
     get: (id: string) => Form | undefined;
     update: (id: string, updates: Partial<Form>) => Promise<Form | undefined>;
   }): void {
@@ -1210,6 +1257,12 @@ class ApiClient {
   }
 
   async createForm(data: Partial<Form>): Promise<ApiResponse<{ form: Form }>> {
+    if (this._demoMode && isDemoLocalId(data.id) && this._demoLocalForms) {
+      const form = this._demoLocalForms.get(data.id as string);
+      return form
+        ? { data: { form } }
+        : { error: 'This demo form was not found in this browser.', status: 404 };
+    }
     return this.request('/forms', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -1726,7 +1779,16 @@ class ApiClient {
 
   // App Admin endpoints
   async getApps(): Promise<ApiResponse<{ apps: AppListItem[]; count: number }>> {
-    return this.request('/apps');
+    const server = await this.request<{ apps: AppListItem[]; count: number }>('/apps');
+    if (!this._demoMode) return server;
+    const local = (await listDemoApps()).map((stored) => stored.app as AppListItem);
+    return {
+      ...server,
+      data: {
+        apps: [...local, ...(server.data?.apps ?? [])],
+        count: local.length + (server.data?.count ?? server.data?.apps.length ?? 0),
+      },
+    };
   }
 
   /**
@@ -1735,7 +1797,10 @@ class ApiClient {
    * powers "in <app>" share badges and the companion picker's form lists.
    */
   async getAppsFormUsage(): Promise<ApiResponse<{ apps: AppFormUsageApp[] }>> {
-    return this.request('/apps/form-usage');
+    const server = await this.request<{ apps: AppFormUsageApp[] }>('/apps/form-usage');
+    if (!this._demoMode) return server;
+    const local = await listDemoAppsFormUsage();
+    return { ...server, data: { apps: [...local, ...(server.data?.apps ?? [])] } };
   }
 
   /**
@@ -1745,7 +1810,7 @@ class ApiClient {
   async getFormAppContexts(formId: string): Promise<ApiResponse<{ contexts: FormAppContext[] }>> {
     // Demo-local forms never exist server-side — asking would just 404 in the console.
     if (this._demoMode && isDemoLocalId(formId)) {
-      return { data: { contexts: [] } };
+      return { data: { contexts: await listDemoFormAppContexts(formId) } };
     }
     return this.request(`/forms/${formId}/app-contexts`);
   }
@@ -1766,6 +1831,10 @@ class ApiClient {
       rolePreset?: AppRolePreset;
     }
   ): Promise<ApiResponse<{ app: App }>> {
+    if (this._demoMode) {
+      const stored = await createDemoApp(data as Partial<App> & { formIds?: string[] });
+      return { data: { app: stored.app } };
+    }
     return this.request('/apps', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -1773,10 +1842,22 @@ class ApiClient {
   }
 
   async getApp(id: string): Promise<ApiResponse<{ app: unknown }>> {
+    if (this._demoMode && isDemoLocalId(id)) {
+      const stored = await getDemoApp(id);
+      return stored
+        ? { data: { app: stored.app } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${id}`);
   }
 
   async updateApp(id: string, data: Record<string, unknown>): Promise<ApiResponse<{ app: unknown }>> {
+    if (this._demoMode && isDemoLocalId(id)) {
+      const stored = await updateDemoApp(id, data as Partial<App>);
+      return stored
+        ? { data: { app: stored.app } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -1784,6 +1865,10 @@ class ApiClient {
   }
 
   async deleteApp(id: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
+    if (this._demoMode && isDemoLocalId(id)) {
+      await deleteDemoApp(id);
+      return { data: { success: true } };
+    }
     return this.request(`/apps/${id}`, {
       method: 'DELETE',
     });
@@ -1794,6 +1879,12 @@ class ApiClient {
    * recorded server-side (owner-only). `label` is an optional release note (≤160 chars).
    */
   async publishApp(id: string, label?: string): Promise<ApiResponse<{ app: App; version: number }>> {
+    if (this._demoMode && isDemoLocalId(id)) {
+      const published = await publishDemoApp(id, label);
+      return published
+        ? { data: { app: published.app, version: published.version.version } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${id}/publish`, {
       method: 'POST',
       body: JSON.stringify(label ? { label } : {}),
@@ -1802,6 +1893,9 @@ class ApiClient {
 
   /** Publish history for an app, newest first (owner or member). */
   async listAppVersions(id: string): Promise<ApiResponse<{ versions: AppVersion[] }>> {
+    if (this._demoMode && isDemoLocalId(id)) {
+      return { data: { versions: await listDemoAppVersions(id) } };
+    }
     return this.request(`/apps/${id}/versions`);
   }
 
@@ -1843,6 +1937,7 @@ class ApiClient {
 
   // Custom domains (owner-gated)
   async getAppDomains(appId: string): Promise<ApiResponse<{ domains: AppDomain[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) return { data: { domains: [] } };
     return this.request(`/apps/${appId}/domains`);
   }
   async createAppDomain(appId: string, data: { domain: string; mode?: string }): Promise<ApiResponse<{ domain: AppDomain }>> {
@@ -1921,6 +2016,12 @@ class ApiClient {
 
   // App Form management
   async getAppForms(appId: string): Promise<ApiResponse<{ forms: AppForm[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const stored = await getDemoApp(appId);
+      return stored
+        ? { data: { forms: stored.forms } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/forms`);
   }
 
@@ -2001,6 +2102,12 @@ class ApiClient {
   }
 
   async addAppForm(appId: string, formId: string, displayName?: string): Promise<ApiResponse<{ forms: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const forms = await addDemoAppForm(appId, formId, displayName);
+      return forms
+        ? { data: { forms } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/forms`, {
       method: 'POST',
       body: JSON.stringify({ formId, displayName }),
@@ -2008,6 +2115,12 @@ class ApiClient {
   }
 
   async updateAppForm(appId: string, formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ forms: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const forms = await updateDemoAppForm(appId, formId, data as Partial<AppForm>);
+      return forms
+        ? { data: { forms } }
+        : { error: 'This form is not attached to the browser-only demo app.', status: 404 };
+    }
     return this.request(`/apps/${appId}/forms/${formId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -2015,12 +2128,23 @@ class ApiClient {
   }
 
   async removeAppForm(appId: string, formId: string): Promise<ApiResponse<{ success: boolean }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return await removeDemoAppForm(appId, formId)
+        ? { data: { success: true } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/forms/${formId}`, {
       method: 'DELETE',
     });
   }
 
   async reorderAppForms(appId: string, formIds: string[]): Promise<ApiResponse<{ forms: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const forms = await reorderDemoAppForms(appId, formIds);
+      return forms
+        ? { data: { forms } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/forms/reorder`, {
       method: 'PUT',
       body: JSON.stringify({ formIds }),
@@ -2029,10 +2153,19 @@ class ApiClient {
 
   // App Role management
   async getAppRoles(appId: string): Promise<ApiResponse<{ roles: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { data: { roles: await listDemoAppRoles(appId) } };
+    }
     return this.request(`/apps/${appId}/roles`);
   }
 
   async createAppRole(appId: string, data: { name: string; description?: string }): Promise<ApiResponse<{ role: unknown }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const role = await createDemoAppRole(appId, data.name, data.description);
+      return role
+        ? { data: { role } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/roles`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -2040,6 +2173,12 @@ class ApiClient {
   }
 
   async updateAppRole(appId: string, roleId: string, data: Record<string, unknown>): Promise<ApiResponse<{ roles: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const roles = await updateDemoAppRole(appId, roleId, data as Partial<import('../types/app').AppRole>);
+      return roles
+        ? { data: { roles } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/roles/${roleId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -2047,6 +2186,11 @@ class ApiClient {
   }
 
   async deleteAppRole(appId: string, roleId: string): Promise<ApiResponse<{ success: boolean }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return await deleteDemoAppRole(appId, roleId)
+        ? { data: { success: true } }
+        : { error: 'System roles cannot be deleted from a demo app.' };
+    }
     return this.request(`/apps/${appId}/roles/${roleId}`, {
       method: 'DELETE',
     });
@@ -2054,10 +2198,23 @@ class ApiClient {
 
   // App Role Permissions
   async getAppRolePermissions(appId: string, roleId: string): Promise<ApiResponse<{ permissions: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { data: { permissions: await getDemoAppRolePermissions(appId, roleId) } };
+    }
     return this.request(`/apps/${appId}/roles/${roleId}/permissions`);
   }
 
   async setAppRolePermissions(appId: string, roleId: string, permissions: unknown[]): Promise<ApiResponse<{ permissions: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const saved = await setDemoAppRolePermissions(
+        appId,
+        roleId,
+        permissions as Array<{ formId?: string | null; permission?: unknown }>,
+      );
+      return saved
+        ? { data: { permissions: saved } }
+        : { error: 'This browser-only demo role was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/roles/${roleId}/permissions`, {
       method: 'PUT',
       body: JSON.stringify({ permissions }),
@@ -2066,6 +2223,12 @@ class ApiClient {
 
   // App User management
   async getAppUsers(appId: string): Promise<ApiResponse<{ users: unknown[]; count: number }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const stored = await getDemoApp(appId);
+      return stored
+        ? { data: { users: stored.users, count: stored.users.length } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/users`);
   }
 
@@ -2084,10 +2247,14 @@ class ApiClient {
 
   // App Invitations
   async getAppInvitations(appId: string): Promise<ApiResponse<{ invitations: unknown[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) return { data: { invitations: [] } };
     return this.request(`/apps/${appId}/invitations`);
   }
 
   async createAppInvitation(appId: string, email: string, roleId: string): Promise<ApiResponse<{ invitation: unknown }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { error: 'Browser-only demo apps cannot send email invitations. Sign up free to invite real people.' };
+    }
     return this.request(`/apps/${appId}/invitations`, {
       method: 'POST',
       body: JSON.stringify({ email, roleId }),
@@ -2095,6 +2262,7 @@ class ApiClient {
   }
 
   async revokeAppInvitation(appId: string, invitationId: string): Promise<ApiResponse<{ success: boolean }>> {
+    if (this._demoMode && isDemoLocalId(appId)) return { data: { success: true } };
     return this.request(`/apps/${appId}/invitations/${invitationId}`, {
       method: 'DELETE',
     });
@@ -2150,10 +2318,47 @@ class ApiClient {
 
   // App Runtime endpoints (end-user facing)
   async getAppRuntime(slug: string): Promise<ApiResponse<{ app: unknown; forms: unknown[]; user: unknown; permissions: unknown }>> {
+    if (this._demoMode) {
+      const stored = await getDemoAppBySlug(slug);
+      if (stored) {
+        const forms = (await Promise.all(stored.forms.map(async (attachment) => {
+          const result = await this.getForm(attachment.formId);
+          const form = result.data?.form;
+          if (!form) return null;
+          return {
+            formId: form.id,
+            displayName: attachment.displayName || form.title,
+            hidden: attachment.settings?.hidden === true,
+            menuHidden: attachment.settings?.menuHidden === true,
+            icon: form.icon,
+            description: form.description ?? null,
+            fields: form.fields ?? [],
+            settings: { ...(form.settings ?? {}), ...(attachment.settings ?? {}) },
+            customScreen: form.customScreen ?? null,
+            customLogic: form.customLogic ?? null,
+          };
+        }))).filter((form): form is NonNullable<typeof form> => form !== null);
+        const formLevel = Object.fromEntries(
+          stored.forms.map((attachment) => [attachment.formId, [...FORM_LEVEL_PERMISSIONS]])
+        );
+        const permissions = { appLevel: [...APP_LEVEL_PERMISSIONS], formLevel };
+        return {
+          data: {
+            app: stored.app,
+            forms,
+            user: { id: 'demo', name: 'Demo visitor', roleName: 'Owner', timezone: null },
+            permissions,
+          },
+        };
+      }
+    }
     return this.request(`/app/${slug}`);
   }
 
   async getAppMyPermissions(slug: string): Promise<ApiResponse<{ permissions: unknown }>> {
+    if (this._demoMode && await getDemoAppBySlug(slug)) {
+      return { data: { permissions: { appLevel: [...APP_LEVEL_PERMISSIONS], formLevel: {} } } };
+    }
     return this.request(`/app/${slug}/my-permissions`);
   }
 
@@ -2301,10 +2506,24 @@ class ApiClient {
    * `limit` is clamped 1..25 server-side (default 8).
    */
   async getAppActivity(slug: string, limit?: number): Promise<ApiResponse<{ activity: AppActivityItem[] }>> {
+    if (this._demoMode && await getDemoAppBySlug(slug)) return { data: { activity: [] } };
     return this.request(`/app/${slug}/activity${limit ? `?limit=${limit}` : ''}`);
   }
 
   async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean }>> {
+    if (this._demoMode) {
+      const stored = await getDemoAppBySlug(slug);
+      if (stored) {
+        return {
+          data: {
+            appName: stored.app.name,
+            status: 'active',
+            isMember: true,
+            canSelfRegister: stored.app.settings.allowSelfRegistration === true,
+          },
+        };
+      }
+    }
     return this.request(`/app/${slug}/membership`);
   }
 
@@ -2313,6 +2532,7 @@ class ApiClient {
   }
 
   async getAppForm(slug: string, formId: string): Promise<ApiResponse<{ form: unknown }>> {
+    if (this._demoMode && await getDemoAppBySlug(slug)) return this.getForm(formId);
     return this.request(`/app/${slug}/forms/${formId}`);
   }
 
@@ -2413,6 +2633,11 @@ class ApiClient {
 
   /** Bulk clear of one app form's records (Device Setup 'start fresh'). */
   async clearAppFormResponses(slug: string, formId: string): Promise<ApiResponse<{ success: boolean; deleted: number }>> {
+    if (this._demoMode && await getDemoAppBySlug(slug)) {
+      const records = await getDemoRecords(formId);
+      await Promise.all(records.map((record) => deleteDemoRecord(formId, record.id)));
+      return { data: { success: true, deleted: records.length } };
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses`, { method: 'DELETE' });
   }
 
@@ -2435,6 +2660,26 @@ class ApiClient {
     for (const [field, value] of Object.entries(options?.answersLte ?? {})) {
       params.set(`answersLte.${field}`, value);
     }
+    if (this._demoMode && await getDemoAppBySlug(slug)) {
+      let records = await getDemoRecords(formId);
+      for (const [field, value] of Object.entries(options?.answersEq ?? {})) {
+        records = records.filter((record) => String(record.answers[field] ?? '') === value);
+      }
+      for (const [field, value] of Object.entries(options?.answersPhoneEq ?? {})) {
+        const wanted = value.replace(/\D/g, '');
+        records = records.filter((record) => String(record.answers[field] ?? '').replace(/\D/g, '').endsWith(wanted));
+      }
+      for (const [field, value] of Object.entries(options?.answersGte ?? {})) {
+        records = records.filter((record) => String(record.answers[field] ?? '') >= value);
+      }
+      for (const [field, value] of Object.entries(options?.answersLte ?? {})) {
+        records = records.filter((record) => String(record.answers[field] ?? '') <= value);
+      }
+      const count = records.length;
+      const offset = options?.offset ?? 0;
+      const page = records.slice(offset, options?.limit ? offset + options.limit : undefined);
+      return { data: { responses: page, count, scope: 'all' } };
+    }
     const query = params.toString();
     const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);
     return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
@@ -2445,6 +2690,24 @@ class ApiClient {
    * Used by the records grid for fast, large-dataset browsing. Non-demo only (no browser overlay).
    */
   async getAppResponsesPage(slug: string, formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean; sort?: string; sortDir?: 'asc' | 'desc' }): Promise<ApiResponse<{ responses: unknown[]; count: number; total: number; scope: string }>> {
+    if (this._demoMode && await getDemoAppBySlug(slug)) {
+      let records = await getDemoRecords(formId);
+      const search = options.search?.trim().toLowerCase();
+      if (search) {
+        records = records.filter((record) =>
+          Object.values(record.answers).some((value) => String(value ?? '').toLowerCase().includes(search))
+        );
+      }
+      if (options.sort) {
+        const direction = options.sortDir === 'asc' ? 1 : -1;
+        records.sort((a, b) =>
+          String(a.answers[options.sort!] ?? '').localeCompare(String(b.answers[options.sort!] ?? '')) * direction
+        );
+      }
+      const total = records.length;
+      const responses = records.slice(options.offset, options.offset + options.limit);
+      return { data: { responses, count: responses.length, total, scope: 'all' } };
+    }
     const params = new URLSearchParams();
     params.set('limit', String(options.limit));
     params.set('offset', String(options.offset));
@@ -2508,7 +2771,10 @@ class ApiClient {
     if (options.limit) params.set('limit', String(options.limit));
     if (options.offset) params.set('offset', String(options.offset));
     if (options.ids?.length) params.set('ids', options.ids.join(','));
-    const serverResult = await this.request<{ records: LinkedRecord[]; count: number }>(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
+    const localApp = this._demoMode ? await getDemoAppBySlug(slug) : null;
+    const serverResult = localApp
+      ? { data: { records: [] as LinkedRecord[], count: 0 } }
+      : await this.request<{ records: LinkedRecord[]; count: number }>(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
     // Demo: records created in this browser live only in the IndexedDB overlay — merge them into
     // the picker so a locally-added client is selectable on a new appointment (local first).
     if (this._demoMode) {
@@ -2580,6 +2846,9 @@ class ApiClient {
   // Owner CRUD under /apps/{id}; runtime (browser runner) under /app/{slug}.
 
   async listFlows(appId: string): Promise<ApiResponse<{ flows: FlowDefinition[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { data: { flows: await demoApplyFlowOverlay(appId, []) } };
+    }
     return this.request(`/apps/${appId}/flows`);
   }
 
@@ -2587,6 +2856,28 @@ class ApiClient {
     appId: string,
     data: { name: string; slug?: string; description?: string; flowJson?: WorkflowGraph; enabled?: boolean; nodeCapabilities?: string[] }
   ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const existing = await demoApplyFlowOverlay(appId, []);
+      const base = (data.slug || data.name || 'new-automation')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'new-automation';
+      const taken = new Set(existing.map((flow) => flow.slug));
+      let slug = base;
+      let suffix = 2;
+      while (taken.has(slug)) {
+        slug = `${base}-${suffix}`;
+        suffix += 1;
+      }
+      const flow = await demoCreateFlow({
+        appId,
+        name: data.name,
+        slug,
+        description: data.description ?? null,
+        flowJson: data.flowJson ?? { nodes: [], edges: [] },
+        enabled: data.enabled,
+        nodeCapabilities: data.nodeCapabilities ?? null,
+      });
+      return { data: { flow } };
+    }
     return this.request(`/apps/${appId}/flows`, { method: 'POST', body: JSON.stringify(data) });
   }
 
@@ -2595,31 +2886,97 @@ class ApiClient {
     flowId: string,
     data: Partial<{ name: string; slug: string; description: string | null; flowJson: WorkflowGraph; enabled: boolean; nodeCapabilities: string[] | null }>
   ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const flow = (await demoApplyFlowOverlay(appId, [])).find((candidate) => candidate.id === flowId);
+      if (!flow) return { error: 'This browser-only automation was not found.', status: 404 };
+      return { data: { flow: await demoUpdateFlow(flow, data) } };
+    }
     return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
   async deleteFlow(appId: string, flowId: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const flow = (await demoApplyFlowOverlay(appId, [])).find((candidate) => candidate.id === flowId);
+      if (!flow) return { error: 'This browser-only automation was not found.', status: 404 };
+      await demoDeleteFlow(flow);
+      return { data: { success: true } };
+    }
     return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'DELETE' });
   }
 
   /** Records a 'running' run log with trigger_event 'test'; the builder executes locally and PATCHes the result in. */
   async testRunFlow(appId: string, flowId: string): Promise<ApiResponse<{ run: FlowRunLog }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const flow = (await demoApplyFlowOverlay(appId, [])).find((candidate) => candidate.id === flowId);
+      if (!flow) return { error: 'This browser-only automation was not found.', status: 404 };
+      const now = new Date().toISOString();
+      return {
+        data: {
+          run: {
+            runId: 'demolocal_' + newIdempotencyKey(),
+            appId,
+            formId: null,
+            responseId: null,
+            bindingId: null,
+            flowDefinitionId: flow.id,
+            parentRunId: null,
+            rootRunId: null,
+            callNodeId: null,
+            depth: 0,
+            flow: flow.slug,
+            triggerEvent: 'test',
+            correlationId: 'demo',
+            idempotencyKey: newIdempotencyKey(),
+            status: 'done',
+            runtime: 'browser',
+            claimedBy: null,
+            inputSnapshot: {},
+            result: { demo: true },
+            outputActions: null,
+            error: null,
+            startedAt: now,
+            finishedAt: now,
+            createdAt: now,
+          },
+        },
+      };
+    }
     return this.request(`/apps/${appId}/flows/${flowId}/test-run`, { method: 'POST', body: JSON.stringify({}) });
   }
 
   async listFlowBindings(appId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { data: { bindings: await listDemoAppBindings(appId) } };
+    }
     return this.request(`/apps/${appId}/flow-bindings`);
   }
 
   async createFlowBinding(appId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const binding = await createDemoAppBinding(appId, data);
+      return binding
+        ? { data: { binding } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/flow-bindings`, { method: 'POST', body: JSON.stringify(data) });
   }
 
   async updateFlowBinding(appId: string, bindingId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      const binding = await updateDemoAppBinding(appId, bindingId, data);
+      return binding
+        ? { data: { binding } }
+        : { error: 'This browser-only trigger was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/flow-bindings/${bindingId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
   async deleteFlowBinding(appId: string, bindingId: string): Promise<ApiResponse<{ success: boolean }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return await deleteDemoAppBinding(appId, bindingId)
+        ? { data: { success: true } }
+        : { error: 'This browser-only demo app was not found.', status: 404 };
+    }
     return this.request(`/apps/${appId}/flow-bindings/${bindingId}`, { method: 'DELETE' });
   }
 
@@ -2628,6 +2985,9 @@ class ApiClient {
     appId: string,
     options?: { flowId?: string; bindingId?: string; status?: string; page?: number; limit?: number }
   ): Promise<ApiResponse<{ runs: FlowRunLog[]; page: number; limit: number; total: number }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { data: { runs: [], page: options?.page ?? 1, limit: options?.limit ?? 25, total: 0 } };
+    }
     const params = new URLSearchParams();
     if (options?.flowId) params.set('flowId', options.flowId);
     if (options?.bindingId) params.set('bindingId', options.bindingId);
@@ -2640,6 +3000,30 @@ class ApiClient {
 
   /** Enabled flow definitions + bindings for the app runtime's browser runner (member-gated). */
   async getAppFlows(slug: string): Promise<ApiResponse<RuntimeFlows>> {
+    if (this._demoMode) {
+      const stored = await getDemoAppBySlug(slug);
+      if (stored) {
+        const flows = (await demoApplyFlowOverlay(stored.app.id, []))
+          .filter((flow) => flow.enabled)
+          .map((flow) => ({
+            id: flow.id,
+            slug: flow.slug,
+            name: flow.name,
+            engine: flow.engine,
+            flowJson: flow.flowJson,
+            inputSchema: flow.inputSchema,
+            outputSchema: flow.outputSchema,
+            nodeCapabilities: flow.nodeCapabilities,
+            version: flow.version,
+          }));
+        const bindings = stored.bindings
+          .filter((binding) => binding.enabled)
+          .map(({ id, flow, formId, connectorId, event, mode, condition, inputMap, outputActions, timeoutMs, retryPolicy, fallbackPolicy, sortOrder }) => ({
+            id, flow, formId, connectorId, event, mode, condition, inputMap, outputActions, timeoutMs, retryPolicy, fallbackPolicy, sortOrder,
+          }));
+        return { data: { flows, bindings } };
+      }
+    }
     return this.request(`/app/${encodeURIComponent(slug)}/flows`);
   }
 
@@ -2756,6 +3140,9 @@ class ApiClient {
   }
 
   async listFlowBindingsForFlow(flowId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
+    if (this._demoMode && isDemoLocalId(flowId)) {
+      return { data: { bindings: await listDemoBindingsForFlow(flowId) } };
+    }
     return this.request(`/flows/${encodeURIComponent(flowId)}/bindings`);
   }
 
@@ -2837,7 +3224,7 @@ class ApiClient {
 
   async createBlueprint(payload: { name: string; appId?: string }): Promise<ApiResponse<{ blueprint: import('../types/blueprints').Blueprint }>> {
     if (this._demoMode) {
-      const stored = await createDemoBlueprint(payload.name);
+      const stored = await createDemoBlueprint(payload.name, payload.appId ?? null);
       return { data: { blueprint: stored.row } };
     }
     return this.request('/blueprints', { method: 'POST', body: JSON.stringify(payload) });
@@ -3121,6 +3508,9 @@ class ApiClient {
 
   // Get app responses with resolve option
   async getAppResponsesResolved(slug: string, formId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
+    if (this._demoMode && await getDemoAppBySlug(slug)) {
+      return this.getAppResponses(slug, formId, options);
+    }
     const params = new URLSearchParams();
     params.set('resolve', 'linked');
     if (options?.limit) params.set('limit', String(options.limit));

@@ -236,13 +236,15 @@ export function DataStep({
               </button>
             );
           })}
-          <button
-            type="button"
-            onClick={() => setShowAddType(true)}
-            className="mt-1 flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 dark:border-white/15 text-xs font-semibold text-gray-500 dark:text-slate-400 transition hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/[0.06] dark:hover:text-primary-300"
-          >
-            <Plus className="h-4 w-4" /> Add data type
-          </button>
+          {appForms.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAddType(true)}
+              className="mt-1 flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 dark:border-white/15 text-xs font-semibold text-gray-500 dark:text-slate-400 transition hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/[0.06] dark:hover:text-primary-300"
+            >
+              <Plus className="h-4 w-4" /> Add data type
+            </button>
+          )}
         </div>
       </section>
 

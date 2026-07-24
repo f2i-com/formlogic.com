@@ -226,6 +226,12 @@ export function DesktopConnectionPopover() {
 
   const showControls = view.kind === 'local' || view.kind === 'remote';
 
+  // App Studio already dedicates the compact screen's bottom edge to its
+  // persistent step navigator. Removing this non-essential floating chip there
+  // keeps form and planning actions fully tappable; the Desktop surfaces remain
+  // available from Flows and Settings.
+  if (isMobile && fixedBottomBar) return null;
+
   return (
     <>
       <button
