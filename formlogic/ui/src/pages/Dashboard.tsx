@@ -194,20 +194,22 @@ function PulseStrip({ days, className, loading = false }: { days: PulseDay[]; cl
   // separate — the floor is a rendering detail, not a fact to report in the aria-label.
   const realMax = Math.max(...days.map((d) => d.count));
   const scaleMax = Math.max(1, realMax);
-  const barW = 5;
-  const gap = 3;
   const barCount = days.length || PULSE_DAYS;
-  const w = barCount * barW + (barCount - 1) * gap;
-  const h = 28;
+  const viewWidth = 168;
+  const height = 42;
+  const barWidth = 7;
+  const gap = barCount > 1 ? (viewWidth - barCount * barWidth) / (barCount - 1) : 0;
+  const chartBottom = height - 3;
+  const chartHeight = 32;
 
   if (loading) {
     return (
-      <div className={cn('inline-flex items-end gap-[3px]', className)} style={{ width: w, height: h }} aria-hidden="true">
+      <div className={cn('flex h-[42px] w-full min-w-[7rem] items-end gap-1', className)} aria-hidden="true">
         {Array.from({ length: barCount }).map((_, i) => (
           <span
             key={i}
-            className="w-[5px] animate-pulse rounded-sm bg-primary-200/70 dark:bg-primary-500/20"
-            style={{ height: `${8 + ((i * 7) % 18)}px`, opacity: i === barCount - 1 ? 0.65 : 0.35 }}
+            className="min-w-0 flex-1 animate-pulse rounded-t-[3px] bg-primary-200/70 dark:bg-primary-500/20"
+            style={{ height: `${8 + ((i * 7) % 28)}px`, opacity: i === barCount - 1 ? 0.7 : 0.4 }}
           />
         ))}
       </div>
@@ -215,30 +217,44 @@ function PulseStrip({ days, className, loading = false }: { days: PulseDay[]; cl
   }
 
   return (
-    <div className={cn('relative inline-block', className)} style={{ width: w, height: h }}>
+    <div className={cn('relative h-[42px] w-full min-w-[7rem]', className)}>
       <svg
-        width={w}
-        height={h}
-        viewBox={`0 0 ${w} ${h}`}
+        width="100%"
+        height={height}
+        viewBox={`0 0 ${viewWidth} ${height}`}
+        preserveAspectRatio="none"
         role="img"
         aria-label={`Responses over the last ${days.length} days: ${days.reduce((s, d) => s + d.count, 0)} total, busiest day ${realMax}`}
       >
+        {[chartBottom - chartHeight, chartBottom - chartHeight / 2, chartBottom].map((y) => (
+          <line
+            key={y}
+            x1={0}
+            x2={viewWidth}
+            y1={y}
+            y2={y}
+            stroke="currentColor"
+            className="text-gray-200/80 dark:text-white/[0.07]"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
         {days.map((d, i) => {
-          const barH = Math.max(EMPTY_PULSE_BAR_H, Math.round((d.count / scaleMax) * (h - EMPTY_PULSE_BAR_H)));
-          const x = i * (barW + gap);
-          const y = h - barH;
-          // Opacity is graded by count (min 0.15 so a quiet day still registers);
-          // today is always full-opacity — the live edge of the ledger.
-          const opacity = d.isToday ? 1 : 0.15 + (d.count / scaleMax) * 0.85;
+          const barHeight = Math.max(EMPTY_PULSE_BAR_H + 1, Math.round((d.count / scaleMax) * chartHeight));
+          const x = i * (barWidth + gap);
+          const y = chartBottom - barHeight;
+          // Quiet days remain visible against the guides; today is slightly stronger so
+          // the live edge is obvious without pretending a zero-response day has activity.
+          const opacity = d.count === 0 ? (d.isToday ? 0.32 : 0.12) : 0.45 + (d.count / scaleMax) * 0.55;
           return (
             <g key={d.key}>
               {/* Full-height, gap-inclusive hit area — the visible bar can be as
                   short as 2px, too small a target to hover reliably on its own. */}
               <rect
-                x={x - gap / 2}
+                x={Math.max(0, x - gap / 2)}
                 y={0}
-                width={barW + gap}
-                height={h}
+                width={barWidth + gap}
+                height={height}
                 fill="transparent"
                 onMouseEnter={() => setHoverIndex(i)}
                 onMouseLeave={() => setHoverIndex((cur) => (cur === i ? null : cur))}
@@ -248,9 +264,9 @@ function PulseStrip({ days, className, loading = false }: { days: PulseDay[]; cl
               <rect
                 x={x}
                 y={y}
-                width={barW}
-                height={barH}
-                rx={1}
+                width={barWidth}
+                height={barHeight}
+                rx={2}
                 fill="rgb(var(--primary-600))"
                 style={{ opacity }}
                 pointerEvents="none"
@@ -261,8 +277,17 @@ function PulseStrip({ days, className, loading = false }: { days: PulseDay[]; cl
       </svg>
       {hoverIndex !== null && (
         <div
-          className="pointer-events-none absolute -top-7 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-gray-700 dark:text-slate-200 shadow-md motion-safe:transition-opacity"
-          style={{ left: `${((hoverIndex + 0.5) / days.length) * 100}%` }}
+          className={cn(
+            'pointer-events-none absolute -top-7 z-10 whitespace-nowrap rounded-md border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-700 shadow-md motion-safe:transition-opacity dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200',
+            hoverIndex > 0 && hoverIndex < days.length - 1 && '-translate-x-1/2'
+          )}
+          style={
+            hoverIndex === 0
+              ? { left: 0 }
+              : hoverIndex === days.length - 1
+                ? { right: 0 }
+                : { left: `${((hoverIndex + 0.5) / days.length) * 100}%` }
+          }
         >
           {weekdayLabel(days[hoverIndex].key)} · {days[hoverIndex].count} response{days[hoverIndex].count === 1 ? '' : 's'}
         </div>
@@ -1307,15 +1332,27 @@ export function Dashboard() {
               min-width:auto, so one long nowrap form title would otherwise blow the
               track past the viewport and shove the pulse strips over/under the text. */}
           <div className="min-w-0 lg:col-span-2">
-            <div className="flex items-center justify-between gap-2 mb-4">
-              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">My forms</h2>
+            <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">My forms</h2>
+                  {forms.length > 0 && (
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-500 dark:bg-white/[0.06] dark:text-slate-400">
+                      {forms.length} total
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
+                  Open a form or review its latest response activity.
+                </p>
+              </div>
               {forms.length > 0 && (
-                <div className="flex items-center gap-1.5">
+                <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 xl:flex xl:w-auto">
                   <select
                     value={formsSort}
                     onChange={(e) => changeFormsSort(e.target.value as DashFormsSort)}
                     aria-label="Sort my forms by"
-                    className="cursor-pointer rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-600 transition-colors hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-slate-600"
+                    className="h-10 w-full cursor-pointer rounded-xl border border-gray-200 bg-white px-3 text-xs font-medium text-gray-600 shadow-sm shadow-gray-900/[0.02] transition-colors hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-slate-600 sm:h-9 sm:w-auto"
                   >
                     <option value="activity">Last activity</option>
                     <option value="edited">Last edited</option>
@@ -1328,7 +1365,7 @@ export function Dashboard() {
                     onClick={() => navigate('/forms')}
                     className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                   >
-                    View all
+                    View all <span className="hidden sm:inline">forms</span>
                     <ArrowRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
@@ -1361,7 +1398,7 @@ export function Dashboard() {
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
                   const n = storageMode === 'api' ? (displayedResponseCounts[form.id] ?? 0) : formResponses.length;
                   const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
-                  const countTitle = statsLoading ? 'Loading responses' : String(n);
+                  const periodResponses = days.reduce((sum, day) => sum + day.count, 0);
                   return (
                     <Card
                       key={form.id}
@@ -1377,36 +1414,89 @@ export function Dashboard() {
                           navigate(`/builder/${form.id}`);
                         }
                       }}
-                      className="group cursor-pointer hover:shadow-md hover:shadow-gray-900/[0.04] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+                      className="group cursor-pointer overflow-hidden transition-all duration-300 hover:border-primary-300/80 hover:shadow-md hover:shadow-gray-900/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:hover:border-primary-500/30 dark:hover:shadow-black/20 dark:focus-visible:ring-offset-slate-950"
                     >
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              {/* min-w-0: as a flex item the title must be allowed to shrink,
-                                  else a long name can't truncate and spills under the pulse strip. */}
-                              <h4 className="min-w-0 max-w-full font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors" title={form.title || 'Untitled Form'}>
-                                {form.title || 'Untitled Form'}
-                              </h4>
-                              <Badge
-                                variant={form.status === 'published' ? 'success' : 'default'}
-                                size="sm"
-                                className="capitalize"
-                              >
-                                {form.status}
-                              </Badge>
-                              {form.isPrivate && <PrivateLockBadge />}
+                      <CardContent className="p-0">
+                        <div className="p-4 sm:p-5">
+                          <div className="flex items-start gap-3">
+                            <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-inset ring-primary-100/80 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/15 dark:group-hover:bg-primary-500/15">
+                              <FileText className="h-4.5 w-4.5" aria-hidden="true" />
+                            </span>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <h4 className="min-w-0 max-w-full truncate font-semibold text-gray-900 motion-safe:transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-400" title={form.title || 'Untitled Form'}>
+                                  {form.title || 'Untitled Form'}
+                                </h4>
+                                <Badge
+                                  variant={form.status === 'published' ? 'success' : 'default'}
+                                  size="sm"
+                                  className="capitalize"
+                                >
+                                  {form.status}
+                                </Badge>
+                                {form.isPrivate && <PrivateLockBadge />}
+                              </div>
                               {appOfForm[form.id] && (
-                                <Badge variant="info" size="sm" className="inline-flex items-center gap-1 max-w-[10rem]" title={`In the ${appOfForm[form.id]} app`}>
+                                <Badge variant="info" size="sm" className="mt-1.5 inline-flex max-w-full items-center gap-1" title={`In the ${appOfForm[form.id]} app`}>
                                   <Boxes className="h-3 w-3 flex-shrink-0" />
                                   <span className="truncate">{appOfForm[form.id]}</span>
                                 </Badge>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400 tabular-nums">
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-3.5 w-3.5" />
-                                <span className="font-mono text-xs">
+
+                            {/* The card itself is the Edit action. Keep only useful secondary
+                                shortcuts at wide widths; compact/tablet layouts get the full
+                                action set from the overflow menu instead of a cramped icon rail. */}
+                            <div className="flex flex-shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => previewForm(form.id)}
+                                title="Preview form"
+                                aria-label="Preview form"
+                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white xl:flex"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => navigate(`/analytics/${form.id}`)}
+                                title="View analytics"
+                                aria-label="View analytics"
+                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white xl:flex"
+                              >
+                                <BarChart3 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => navigate(`/responses/${form.id}`)}
+                                title="View data"
+                                aria-label="View data"
+                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white xl:flex"
+                              >
+                                <Table className="h-4 w-4" />
+                              </Button>
+                              <FormActionsDropdown
+                                formId={form.id}
+                                formTitle={form.title}
+                                onDelete={() => setDeleteTarget({ id: form.id, title: form.title })}
+                                onEdit={() => navigate(`/builder/${form.id}`)}
+                                onPreview={() => previewForm(form.id)}
+                                onAnalytics={() => navigate(`/analytics/${form.id}`)}
+                                onViewData={() => navigate(`/responses/${form.id}`)}
+                                onShare={() => setEmbedModalForm({ id: form.id, title: form.title, status: form.status })}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,16rem)] sm:items-end">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 dark:text-slate-400">
+                              <span className="flex items-center gap-1.5 tabular-nums">
+                                <Clock className="h-3.5 w-3.5 flex-none" />
+                                <span className="font-mono">
                                   {formsSort === 'created'
                                     ? `created ${formatRelativeTime(form.createdAt)}`
                                     : formsSort === 'edited'
@@ -1416,88 +1506,40 @@ export function Dashboard() {
                                         : `edited ${formatRelativeTime(form.updatedAt)}`}
                                 </span>
                               </span>
-                              <span className="hidden sm:inline">•</span>
-                              <span className="hidden sm:inline">{fieldCount} field{fieldCount === 1 ? '' : 's'}</span>
-                              <span className="sm:hidden">•</span>
+                              <span className="flex items-center gap-1.5 tabular-nums">
+                                <FileText className="h-3.5 w-3.5 flex-none" />
+                                {fieldCount} field{fieldCount === 1 ? '' : 's'}
+                              </span>
                               {statsLoading ? (
-                                <Skeleton className="h-3 w-20 sm:hidden" />
+                                <Skeleton className="h-3 w-20" />
                               ) : (
-                                <span className="sm:hidden">{n} response{n === 1 ? '' : 's'}</span>
+                                <span className="flex items-center gap-1.5 tabular-nums">
+                                  <Inbox className="h-3.5 w-3.5 flex-none" />
+                                  {n} total response{n === 1 ? '' : 's'}
+                                </span>
                               )}
                             </div>
-                          </div>
 
-                          {/* Right rail: the 14-day pulse strip + the response count as a data figure —
-                              this replaces the meta-line response count on ≥sm (kept above, for mobile,
-                              where the strip is hidden to avoid crowding the row). */}
-                          <div className="hidden sm:flex items-center gap-3 flex-none">
-                            <PulseStrip days={days} loading={statsLoading} />
-                            {statsLoading ? (
-                              <Skeleton className="h-6 w-10 flex-none" />
-                            ) : (
-                              <span
-                                className="w-10 flex-none truncate text-right text-lg font-semibold tabular-nums text-gray-900 dark:text-white"
-                                title={countTitle}
-                              >
-                                {n}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* stopPropagation: the whole row navigates to the builder — inner
-                              actions (and the portal menu, which bubbles through the React
-                              tree to here) must not double-fire that navigation. */}
-                          <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/builder/${form.id}`)}
-                              title="Edit form"
-                              aria-label="Edit form"
-                              className="hidden sm:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => previewForm(form.id)}
-                              title="Preview form"
-                              aria-label="Preview form"
-                              className="hidden sm:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/analytics/${form.id}`)}
-                              title="View analytics"
-                              aria-label="View analytics"
-                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
-                            >
-                              <BarChart3 className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/responses/${form.id}`)}
-                              title="View data"
-                              aria-label="View data"
-                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
-                            >
-                              <Table className="h-4 w-4" />
-                            </Button>
-                            <FormActionsDropdown
-                              formId={form.id}
-                              formTitle={form.title}
-                              onDelete={() => setDeleteTarget({ id: form.id, title: form.title })}
-                              onEdit={() => navigate(`/builder/${form.id}`)}
-                              onPreview={() => previewForm(form.id)}
-                              onAnalytics={() => navigate(`/analytics/${form.id}`)}
-                              onViewData={() => navigate(`/responses/${form.id}`)}
-                              onShare={() => setEmbedModalForm({ id: form.id, title: form.title, status: form.status })}
-                            />
+                            <div className="min-w-0 rounded-xl border border-gray-200/80 bg-gray-50/80 px-3 pb-2 pt-2.5 dark:border-white/[0.06] dark:bg-white/[0.025]">
+                              <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <span className="flex min-w-0 items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                                  <BarChart3 className="h-3.5 w-3.5 flex-none text-primary-500" />
+                                  Last 14 days
+                                </span>
+                                {statsLoading ? (
+                                  <Skeleton className="h-3 w-10" />
+                                ) : (
+                                  <span className="flex-none text-[10px] font-semibold tabular-nums text-gray-500 dark:text-slate-400">
+                                    {periodResponses} new
+                                  </span>
+                                )}
+                              </div>
+                              <PulseStrip days={days} loading={statsLoading} />
+                              <div className="mt-0.5 flex justify-between text-[9px] font-medium uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                                <span>14 days ago</span>
+                                <span>Today</span>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </CardContent>
