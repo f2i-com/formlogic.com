@@ -7,7 +7,7 @@ import { cn } from '../../../lib/utils';
 import { EXECUTION_LOCATION_DESCRIPTIONS, type FlowExecutionLocation } from './executionLocation';
 
 const SELECT_CLS =
-  'cursor-pointer rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300';
+  'min-h-9 min-w-[5.75rem] max-w-full flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 sm:min-h-0 sm:min-w-0 sm:px-2 sm:py-1 sm:text-xs';
 
 export function ExecutionLocationSelect({
   value,

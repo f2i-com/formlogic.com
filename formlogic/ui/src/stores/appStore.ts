@@ -5,7 +5,12 @@ import { frozenWhileActing } from '../lib/adminFrozenStorage';
 import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { useFormStore } from './formStore';
 import { toast } from './toastStore';
-import type { App, AppForm, AppListItem, AppRole } from '../types/app';
+import type { App, AppForm, AppListItem, AppRole, AppSettings } from '../types/app';
+
+type CreateAppInput = Omit<Partial<App>, 'settings'> & {
+  settings?: Partial<AppSettings>;
+  formIds?: string[];
+};
 
 interface AppState {
   apps: AppListItem[];
@@ -18,7 +23,7 @@ interface AppState {
   fetchApps: () => Promise<void>;
   /** Optional `formIds` attach forms ATOMICALLY with the create (one request, one server
    *  transaction) — an invalid form fails the whole create; no partially-built app. */
-  createApp: (data: Partial<App> & { formIds?: string[] }) => Promise<App | null>;
+  createApp: (data: CreateAppInput) => Promise<App | null>;
   updateApp: (id: string, data: Partial<App>) => Promise<boolean>;
   deleteApp: (id: string) => Promise<void>;
   getApp: (id: string) => App | undefined;

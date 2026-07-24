@@ -394,6 +394,34 @@ class AppActivityRelationsTest extends TestCase
         $this->assertSame('admin', $comp3['settings']['appKind'] ?? null);
     }
 
+    public function testDefaultFormPrivacyIsSanitizedOnCreateAndUpdate(): void
+    {
+        $owner = $this->makeUser();
+
+        $private = $this->makeApp([
+            'name' => 'Private by default',
+            'settings' => ['defaultFormPrivacy' => 'private'],
+        ], $owner);
+        $this->assertSame('private', $private['settings']['defaultFormPrivacy'] ?? null);
+
+        $invalid = $this->makeApp([
+            'name' => 'Invalid privacy',
+            'settings' => ['defaultFormPrivacy' => 'secret-ish', 'showBranding' => true],
+        ], $owner);
+        $this->assertArrayNotHasKey('defaultFormPrivacy', $invalid['settings']);
+        $this->assertTrue($invalid['settings']['showBranding']);
+
+        $updated = self::$appService->updateApp($private['id'], [
+            'settings' => ['defaultFormPrivacy' => 'plain'],
+        ]);
+        $this->assertSame('plain', $updated['settings']['defaultFormPrivacy'] ?? null);
+
+        $updated = self::$appService->updateApp($private['id'], [
+            'settings' => ['defaultFormPrivacy' => 'maybe'],
+        ]);
+        $this->assertArrayNotHasKey('defaultFormPrivacy', $updated['settings']);
+    }
+
     // ---- T9: rolePreset ------------------------------------------------------------------
 
     public function testRolePresetsTuneNonOwnerSystemRoles(): void

@@ -60,6 +60,7 @@ const makeApp = (overrides: Partial<AppListItem>): AppListItem =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   h.apps = [];
   pathRef.current = '/';
   useAuthStore.setState({ user: { id: 'u1', email: 'o@example.com', name: 'Owner' } as unknown as AuthUser });
@@ -96,7 +97,7 @@ describe('Sidebar (app-first)', () => {
       makeApp({ id: 'a2', name: 'Customer Portal', slug: 'portal', status: 'draft' }),
     ];
     await renderSidebar();
-    expect(container.textContent).toContain('Your apps');
+    expect(container.textContent).toContain('Apps');
     expect(container.textContent).toContain('Plumbing Operations');
     expect(container.textContent).toContain('Published · v3');
     expect(container.textContent).toContain('Customer Portal');
@@ -136,6 +137,22 @@ describe('Sidebar (app-first)', () => {
     });
     expect(container.textContent).toContain('Plumbing');
     expect(container.textContent).not.toContain('Portal');
+  });
+
+  it('collapses the app list, persists the preference, and links to the apps page', async () => {
+    h.apps = [makeApp({ id: 'a1', name: 'Plumbing' })];
+    await renderSidebar();
+    const toggle = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Apps'))!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(container.textContent).not.toContain('Plumbing');
+    expect(localStorage.getItem('formlogic.sidebar.appsOpen')).toBe('0');
+
+    const viewAll = container.querySelector<HTMLAnchorElement>('a[aria-label="View all apps"]')!;
+    await act(async () => { viewAll.click(); });
+    expect(pathRef.current).toBe('/apps');
   });
 
   it('keeps the shared building blocks under Advanced tools', async () => {

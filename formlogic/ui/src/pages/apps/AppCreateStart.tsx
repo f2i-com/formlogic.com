@@ -8,16 +8,21 @@
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Boxes, HardDrive, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Boxes, Check, HardDrive, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { ConnectAiDoors } from '../../components/ai/ConnectAiDoors';
+import { VaultSetupWizard } from '../../components/vault/VaultSetupWizard';
+import { VaultUnlockDialog } from '../../components/vault/VaultUnlockDialog';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
+import { useVaultStore } from '../../stores/vaultStore';
+import { cn } from '../../lib/utils';
+import type { AppFormPrivacyDefault } from '../../types/app';
 
 type Phase = 'checking' | 'connect' | 'name';
 
@@ -30,7 +35,10 @@ export function AppCreateStart() {
   const [rechecking, setRechecking] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [formPrivacy, setFormPrivacy] = useState<AppFormPrivacyDefault>('plain');
   const [creating, setCreating] = useState(false);
+  const [showVaultSetup, setShowVaultSetup] = useState(false);
+  const [showVaultUnlock, setShowVaultUnlock] = useState(false);
 
   // Source-specific readiness (audit FL-23): only a default AI that can actually
   // EXECUTE counts — otherwise the connect doors come first.
@@ -71,9 +79,37 @@ export function AppCreateStart() {
   const create = async () => {
     const trimmed = name.trim();
     if (!trimmed || creating) return;
+
+    // A private default is fail-closed: pause app creation until the vault is
+    // ready. The selection must never create a plaintext app that merely looks
+    // encrypted.
+    if (formPrivacy === 'private') {
+      if (isDemo) {
+        toast.info('Already private to this browser', 'Demo projects stay in IndexedDB and are never uploaded. Sign up to use end-to-end encrypted forms.');
+        return;
+      }
+      let vaultStatus = useVaultStore.getState().status;
+      if (vaultStatus === 'unknown') {
+        await useVaultStore.getState().refreshStatus();
+        vaultStatus = useVaultStore.getState().status;
+      }
+      if (vaultStatus === 'none') {
+        setShowVaultSetup(true);
+        return;
+      }
+      if (vaultStatus !== 'unlocked') {
+        setShowVaultUnlock(true);
+        return;
+      }
+    }
+
     setCreating(true);
     try {
-      const app = await createApp({ name: trimmed, description: description.trim() || undefined });
+      const app = await createApp({
+        name: trimmed,
+        description: description.trim() || undefined,
+        settings: { defaultFormPrivacy: formPrivacy },
+      });
       if (app) {
         // Brand-new apps land on the studio's Plan step (the /studio redirect).
         navigate(`/apps/${app.id}/studio`);
@@ -177,8 +213,87 @@ export function AppCreateStart() {
                     className="min-h-24 resize-none"
                   />
                 </div>
+                <fieldset>
+                  <legend className="mb-2 block text-xs font-semibold text-gray-600 dark:text-slate-300">
+                    How should client data be protected?
+                  </legend>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label
+                      className={cn(
+                        'relative flex cursor-pointer gap-3 rounded-xl border p-4 transition',
+                        formPrivacy === 'plain'
+                          ? 'border-primary-400 bg-primary-50/70 ring-2 ring-primary-500/10 dark:border-primary-500/60 dark:bg-primary-500/[0.08]'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[0.03]'
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="new-app-privacy"
+                        value="plain"
+                        checked={formPrivacy === 'plain'}
+                        onChange={() => setFormPrivacy('plain')}
+                        className="sr-only"
+                      />
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-gray-500 shadow-sm ring-1 ring-gray-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-white/10">
+                        {isDemo ? <HardDrive className="h-4 w-4" /> : <Boxes className="h-4 w-4" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+                          {isDemo ? 'Browser-local' : 'Standard'}
+                          {formPrivacy === 'plain' && <Check className="h-4 w-4 text-primary-600 dark:text-primary-300" />}
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                          {isDemo
+                            ? 'Saved only in this browser. Nothing is uploaded to the shared demo.'
+                            : 'Full feature support with normal workspace data storage and access controls.'}
+                        </span>
+                      </span>
+                    </label>
+
+                    <label
+                      aria-disabled={isDemo}
+                      className={cn(
+                        'relative flex gap-3 rounded-xl border p-4 transition',
+                        isDemo ? 'cursor-not-allowed border-gray-200 bg-gray-50/70 opacity-65 dark:border-white/10 dark:bg-white/[0.02]' : 'cursor-pointer',
+                        !isDemo && formPrivacy === 'private'
+                          ? 'border-emerald-400 bg-emerald-50/70 ring-2 ring-emerald-500/10 dark:border-emerald-500/60 dark:bg-emerald-500/[0.08]'
+                          : !isDemo && 'border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/40 dark:border-white/10 dark:hover:border-emerald-500/30 dark:hover:bg-emerald-500/[0.04]'
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="new-app-privacy"
+                        value="private"
+                        checked={formPrivacy === 'private'}
+                        onChange={() => setFormPrivacy('private')}
+                        disabled={isDemo}
+                        className="sr-only"
+                      />
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200 dark:bg-slate-800 dark:text-emerald-300 dark:ring-emerald-500/20">
+                        <ShieldCheck className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+                          End-to-end encrypted
+                          <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">Beta</span>
+                          {formPrivacy === 'private' && <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />}
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                          {isDemo
+                            ? 'Available after sign-up. Demo data is already kept on this device.'
+                            : 'New Studio data types start as private forms. FormLogic stores ciphertext and cannot read client responses.'}
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                  {formPrivacy === 'private' && !isDemo && (
+                    <p className="mt-2 text-[11px] leading-5 text-gray-400 dark:text-slate-500">
+                      Existing forms you attach are unchanged. File uploads, camera and linked-record fields are not yet available on private forms.
+                    </p>
+                  )}
+                </fieldset>
                 <div className="flex items-center justify-end">
-                  <Button onClick={create} isLoading={creating} disabled={!name.trim()} rightIcon={<ArrowRight className="h-4 w-4" />}>
+                  <Button onClick={() => void create()} isLoading={creating} disabled={!name.trim()} rightIcon={<ArrowRight className="h-4 w-4" />}>
                     Create and open the studio
                   </Button>
                 </div>
@@ -191,6 +306,17 @@ export function AppCreateStart() {
           </>
         )}
       </main>
+      <VaultSetupWizard
+        isOpen={showVaultSetup}
+        onClose={() => setShowVaultSetup(false)}
+        onComplete={() => void create()}
+      />
+      <VaultUnlockDialog
+        isOpen={showVaultUnlock}
+        onClose={() => setShowVaultUnlock(false)}
+        onUnlocked={() => void create()}
+        title="Unlock your vault to create this app"
+      />
     </div>
   );
 }

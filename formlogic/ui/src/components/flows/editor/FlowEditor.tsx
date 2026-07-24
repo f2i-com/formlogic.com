@@ -460,6 +460,106 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
     <FlowNodeSignalsContext.Provider value={nodeSignals}>
     <div ref={editorRootRef} className="flex h-full min-h-0 flex-col">
       {/* Toolbar */}
+      {belowMd ? (
+        <div className="border-b border-gray-200/80 bg-white/90 dark:border-slate-700/60 dark:bg-slate-900/80">
+          <div className="flex min-h-12 items-center gap-2 px-2 py-1.5">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back to flows"
+                title="Back to flows"
+                className="flex h-10 w-10 flex-none items-center justify-center rounded-xl text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
+              <p className="truncate text-[10px] text-gray-400 dark:text-slate-500">
+                {nodes.length} node{nodes.length === 1 ? '' : 's'} · {scopeLabel ?? (flow.appId ? 'App flow' : 'Workspace flow')}
+              </p>
+            </div>
+            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact />
+            <Button
+              size="sm"
+              onClick={() => void save()}
+              isLoading={saving}
+              disabled={!dirty && !saving}
+              aria-label="Save flow"
+              title="Save flow"
+              className="h-9 w-9 flex-none px-0"
+            >
+              <Save className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div
+            className="scrollbar-thin flex min-h-12 items-center gap-1.5 overflow-x-auto overscroll-x-contain border-t border-gray-100 px-2 py-1.5 dark:border-white/[0.06]"
+            aria-label="Flow editor actions"
+          >
+            {onExecutionLocationChange && (
+              <ExecutionLocationSelect
+                value={flowExecutionLocation(flow)}
+                onChange={onExecutionLocationChange}
+                cloudDisabledReason={cloudDisabledReason}
+                compact
+              />
+            )}
+            <ToolbarDivider />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setMobilePaletteOpen(true)}
+              leftIcon={<Plus className="h-4 w-4" />}
+              className="min-h-9 flex-none whitespace-nowrap"
+              aria-label="Add node"
+            >
+              Add node
+            </Button>
+            <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo" className="min-h-9 flex-none px-2.5">
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo" className="min-h-9 flex-none px-2.5">
+              <Redo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={triggersOpen ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={onToggleTriggers}
+              disabled={!onToggleTriggers}
+              leftIcon={<Zap className="h-4 w-4" />}
+              aria-pressed={triggersOpen}
+              className="min-h-9 flex-none whitespace-nowrap"
+            >
+              Triggers
+              <span className="ml-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
+                {triggerCount}
+              </span>
+            </Button>
+            <Button
+              variant={historyOpen ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={onToggleHistory}
+              leftIcon={<History className="h-4 w-4" />}
+              aria-pressed={historyOpen}
+              className="min-h-9 flex-none whitespace-nowrap"
+            >
+              History
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenTestRun}
+              leftIcon={<PlayCircle className="h-4 w-4" />}
+              className="min-h-9 flex-none whitespace-nowrap"
+              aria-label="Test run"
+            >
+              Test run
+            </Button>
+          </div>
+        </div>
+      ) : (
       <div className="flex items-center gap-2 overflow-hidden border-b border-gray-200/80 bg-white/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/50">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           {onBack && (
@@ -551,6 +651,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
           </Button>
         </div>
       </div>
+      )}
 
       {/* "Run on" feedback (cloud unsupported nodes / cloud unavailable) — plan §5.7. */}
       <ExecutionLocationNotice

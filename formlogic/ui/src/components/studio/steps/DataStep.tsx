@@ -9,6 +9,7 @@ import {
   Link2,
   PencilRuler,
   Plus,
+  ShieldCheck,
   Share2,
   Table2,
 } from 'lucide-react';
@@ -19,11 +20,16 @@ import { Modal } from '../../ui/Modal';
 import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
+import { useAuthStore } from '../../../stores/authStore';
 import { useFormStore } from '../../../stores/formStore';
+import { useVaultStore } from '../../../stores/vaultStore';
 import { cn } from '../../../lib/utils';
 import { returnToState } from '../../../hooks/useReturnTo';
+import { VaultSetupWizard } from '../../vault/VaultSetupWizard';
+import { VaultUnlockDialog } from '../../vault/VaultUnlockDialog';
 import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm } from '../../../types/app';
+import type { PublishSchemaPayload } from '../../../types/e2ee';
 import type { FieldType, Form, FormField } from '../../../types/form';
 
 const FIELD_TYPE_LABELS: Record<string, string> = {
@@ -96,6 +102,8 @@ export function DataStep({
   const studioReturn = returnToState(`/apps/${app.id}/studio/data`, 'App Studio');
   const fetchFormAppUsage = useAppStore((s) => s.fetchFormAppUsage);
   const addFormToApp = useAppStore((s) => s.addFormToApp);
+  const isDemo = useAuthStore((s) => !!s.user?.isDemo);
+  const isPrivateDefault = app.settings?.defaultFormPrivacy === 'private';
   const [selectedFormId, setSelectedFormId] = useState<string | null>(null);
   const [sharedWith, setSharedWith] = useState<Record<string, string[]>>({});
   const [tab, setTab] = useState<'fields' | 'relationships'>('fields');
@@ -106,6 +114,9 @@ export function DataStep({
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [newFieldType, setNewFieldType] = useState<FieldType>('short_text');
   const [savingField, setSavingField] = useState(false);
+  const [vaultAction, setVaultAction] = useState<'create-type' | 'add-field' | null>(null);
+  const [showVaultSetup, setShowVaultSetup] = useState(false);
+  const [showVaultUnlock, setShowVaultUnlock] = useState(false);
 
   useEffect(() => {
     fetchFormAppUsage(app.id).then(setSharedWith);
@@ -116,15 +127,39 @@ export function DataStep({
     return id ? { attachment: appForms.find((af) => af.formId === id) ?? null, form: formsById[id] ?? null, id } : null;
   }, [selectedFormId, appForms, formsById]);
 
+  useEffect(() => {
+    if (selected?.form?.isPrivate && newFieldType === 'file_upload') {
+      setNewFieldType('short_text');
+    }
+  }, [selected?.form?.isPrivate, newFieldType]);
+
   const formNameById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const af of appForms) map[af.formId] = af.displayName || formsById[af.formId]?.title || 'Untitled';
     return map;
   }, [appForms, formsById]);
 
+  const ensurePrivateReady = async (action: 'create-type' | 'add-field'): Promise<boolean> => {
+    if (isDemo) {
+      toast.info('Private forms need a workspace', 'This demo app stays in IndexedDB. Sign up to create end-to-end encrypted forms.');
+      return false;
+    }
+    let status = useVaultStore.getState().status;
+    if (status === 'unknown') {
+      await useVaultStore.getState().refreshStatus();
+      status = useVaultStore.getState().status;
+    }
+    if (status === 'unlocked') return true;
+    setVaultAction(action);
+    if (status === 'none') setShowVaultSetup(true);
+    else setShowVaultUnlock(true);
+    return false;
+  };
+
   const createDataType = async () => {
     const name = newTypeName.trim();
     if (!name || creatingType) return;
+    if (isPrivateDefault && !(await ensurePrivateReady('create-type'))) return;
     setCreatingType(true);
     try {
       // The store's createForm applies the user's default form settings and the
@@ -134,9 +169,37 @@ export function DataStep({
         toast.error('Could not create the data type');
         return;
       }
+      if (isPrivateDefault) {
+        try {
+          const { enableFormEncryption, markFormPrivate } = await import('../../../lib/crypto/formCrypto');
+          await enableFormEncryption(form.id, JSON.stringify(form.fields ?? []));
+          markFormPrivate(form.id);
+        } catch (e) {
+          // Never leave a form behind that the user believes is private.
+          let removed = true;
+          try {
+            await useFormStore.getState().deleteForm(form.id);
+          } catch {
+            removed = false;
+          }
+          const message = e instanceof Error ? e.message : 'Encryption setup failed.';
+          toast.error(
+            removed ? 'Private data type was not created' : 'Encryption failed — delete this form',
+            removed
+              ? `${message} The draft was removed rather than left unencrypted.`
+              : `${message} The draft could not be removed automatically and is NOT encrypted.`
+          );
+          return;
+        }
+      }
       const attached = await trackStudioSave(`${name} attached`, addFormToApp(app.id, form.id, name), (ok) => !!ok);
       if (!attached) return;
-      toast.success('Data type created', `"${name}" was added to ${app.name}.`);
+      toast.success(
+        isPrivateDefault ? 'Private data type created' : 'Data type created',
+        isPrivateDefault
+          ? `"${name}" was added with end-to-end encryption enabled.`
+          : `"${name}" was added to ${app.name}.`
+      );
       setShowAddType(false);
       setNewTypeName('');
       await onReloadForms();
@@ -150,6 +213,11 @@ export function DataStep({
     if (!selected?.form || savingField) return;
     const label = newFieldLabel.trim();
     if (!label) return;
+    if (selected.form.isPrivate && !(await ensurePrivateReady('add-field'))) return;
+    if (selected.form.isPrivate && newFieldType === 'file_upload') {
+      toast.warning('Not supported on private forms', 'File uploads are not yet available on end-to-end encrypted forms.');
+      return;
+    }
     setSavingField(true);
     try {
       const existingIds = selected.form.fields.map((f) => f.id);
@@ -161,9 +229,20 @@ export function DataStep({
         properties: {},
         order: selected.form.fields.length,
       };
+      const nextFields = [...selected.form.fields, field];
+      let encryptionSchema: PublishSchemaPayload | undefined;
+      if (selected.form.isPrivate) {
+        const { signPrivateFormSchema } = await import('../../../lib/crypto/formCrypto');
+        const signed = await signPrivateFormSchema(selected.form.id, JSON.stringify(nextFields));
+        if (!signed) throw new Error('The private form schema could not be updated.');
+        encryptionSchema = signed.encryptionSchema;
+      }
       const res = await trackStudioSave(
         `Field "${label}" added`,
-        api.updateForm(selected.form.id, { fields: [...selected.form.fields, field] }),
+        api.updateForm(selected.form.id, {
+          fields: nextFields,
+          ...(encryptionSchema ? { encryptionSchema } : {}),
+        }),
         (r) => !r.error
       );
       if (res.error) {
@@ -174,9 +253,18 @@ export function DataStep({
       setNewFieldLabel('');
       setAddingField(false);
       await onReloadForms();
+    } catch (e) {
+      toast.error('Could not add the field', e instanceof Error ? e.message : undefined);
     } finally {
       setSavingField(false);
     }
+  };
+
+  const resumeVaultAction = () => {
+    const action = vaultAction;
+    setVaultAction(null);
+    if (action === 'create-type') void createDataType();
+    if (action === 'add-field') void addField();
   };
 
   return (
@@ -266,6 +354,11 @@ export function DataStep({
                       <Share2 className="h-3 w-3 mr-1 inline" /> Shared
                     </Badge>
                   )}
+                  {selected.form.isPrivate && (
+                    <Badge variant="success" size="sm">
+                      <ShieldCheck className="mr-1 inline h-3 w-3" /> E2EE
+                    </Badge>
+                  )}
                 </div>
                 {selected.form.description && (
                   <p className="mt-1 text-sm text-gray-500 dark:text-slate-400 line-clamp-2">{selected.form.description}</p>
@@ -346,7 +439,7 @@ export function DataStep({
                     aria-label="New field type"
                     className="h-10 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 outline-none"
                   >
-                    {QUICK_ADD_TYPES.map((t) => (
+                    {QUICK_ADD_TYPES.filter((t) => !selected.form.isPrivate || t.type !== 'file_upload').map((t) => (
                       <option key={t.type} value={t.type}>{t.label}</option>
                     ))}
                   </select>
@@ -478,6 +571,15 @@ export function DataStep({
           <p className="text-sm text-gray-500 dark:text-slate-400">
             A data type is a form: it defines the fields, powers the generated screens, and stores the records.
           </p>
+          {isPrivateDefault && (
+            <div className="flex gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs leading-5 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/[0.08] dark:text-emerald-200">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                <span className="font-semibold">End-to-end encrypted by default.</span>{' '}
+                This data type will be made private before it is attached to the app.
+              </p>
+            </div>
+          )}
           <Input
             value={newTypeName}
             onChange={(e) => setNewTypeName(e.target.value)}
@@ -496,6 +598,17 @@ export function DataStep({
           </div>
         </div>
       </Modal>
+      <VaultSetupWizard
+        isOpen={showVaultSetup}
+        onClose={() => setShowVaultSetup(false)}
+        onComplete={resumeVaultAction}
+      />
+      <VaultUnlockDialog
+        isOpen={showVaultUnlock}
+        onClose={() => setShowVaultUnlock(false)}
+        onUnlocked={resumeVaultAction}
+        title="Unlock your vault to continue"
+      />
     </div>
   );
 }

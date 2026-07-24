@@ -16,6 +16,7 @@ export interface AppTheme {
 /** OPTIONAL portal-type metadata stored at settings.appKind. Server-validated on save
  *  (createApp/updateApp/companion drop invalid values); absent = untyped (treat as custom in UI). */
 export type AppKind = 'admin' | 'client' | 'staff' | 'public' | 'internal' | 'custom';
+export type AppFormPrivacyDefault = 'plain' | 'private';
 
 /** Human labels for each app kind (shared by the wizard, app cards and dashboard templates). */
 export const KIND_LABELS: Record<AppKind, string> = {
@@ -43,6 +44,12 @@ export interface AppSettings {
   hideNav?: boolean;
   /** Optional portal type ('admin console' / 'client portal' / …) — see AppKind. */
   appKind?: AppKind;
+  /**
+   * Privacy used for data types created from this app's Studio. `private` is a
+   * fail-closed preference: the Studio enables E2EE before attaching a new form.
+   * Existing forms attached to an app are never changed.
+   */
+  defaultFormPrivacy?: AppFormPrivacyDefault;
   /** IANA timezone record times are displayed in for members without their own
    *  account timezone. Defaulted from the creator's account on app creation;
    *  also drives report date bucketing. Empty/absent → UTC. */

@@ -9,7 +9,9 @@ import {
   ChevronRight,
   ChevronDown,
   Blocks,
+  Boxes,
   Cloud,
+  ExternalLink,
   HardDrive,
   Map,
   Package,
@@ -29,6 +31,7 @@ import { AppTile } from '../apps/AppTile';
 import type { AppListItem } from '../../types/app';
 
 const TOOLS_OPEN_KEY = 'formlogic.sidebar.toolsOpen';
+const APPS_OPEN_KEY = 'formlogic.sidebar.appsOpen';
 
 /**
  * App-first sidebar (App Studio redesign): the user's apps — published and draft —
@@ -45,6 +48,20 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [query, setQuery] = useState('');
+  const [appsOpen, setAppsOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(APPS_OPEN_KEY);
+      if (stored !== null) return stored === '1';
+    } catch { /* private browsing */ }
+    return true;
+  });
+  // Searching always reveals matches even if the section was collapsed.
+  const appsExpanded = appsOpen || query.trim().length > 0;
+  const toggleApps = () => {
+    const next = !appsOpen;
+    setAppsOpen(next);
+    try { localStorage.setItem(APPS_OPEN_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+  };
 
   // Advanced tools start expanded when you're ON one of them (deep links stay
   // oriented); the explicit toggle persists across sessions.
@@ -151,16 +168,36 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
 
         {/* Your apps — published and draft */}
         {!sidebarCollapsed && (
-          <p className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400 dark:text-slate-500">
-            Your apps
-          </p>
+          <div className="flex items-center gap-1 px-1 pt-2 pb-1">
+            <button
+              type="button"
+              onClick={toggleApps}
+              aria-expanded={appsExpanded}
+              className="flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              <Boxes className="h-4 w-4 shrink-0 text-primary-500 dark:text-primary-400" />
+              <span className="truncate">Apps</span>
+              <span className="ml-0.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/[0.06] dark:text-slate-400">
+                {visibleApps.length}
+              </span>
+              <ChevronDown className={cn('ml-auto h-4 w-4 shrink-0 text-gray-400 transition-transform', appsExpanded && 'rotate-180')} />
+            </button>
+            <NavLink
+              to="/apps"
+              aria-label="View all apps"
+              title="View all apps"
+              className="flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-primary-300"
+            >
+              View all <ExternalLink className="h-3.5 w-3.5" />
+            </NavLink>
+          </div>
         )}
-        {visibleApps.length === 0 && !sidebarCollapsed && (
+        {appsExpanded && visibleApps.length === 0 && !sidebarCollapsed && (
           <p className="px-3 py-1.5 text-xs text-gray-400 dark:text-slate-500">
             {query.trim() ? 'No apps match your search.' : 'No apps yet — create one to get started.'}
           </p>
         )}
-        {visibleApps.map((app) => {
+        {appsExpanded && visibleApps.map((app) => {
           const active = app.id === activeAppId;
           return (
             <button

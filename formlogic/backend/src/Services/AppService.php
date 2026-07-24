@@ -99,14 +99,20 @@ class AppService
     }
 
     /**
-     * Sanitize an app settings payload before persisting: settings.appKind must be one of
-     * APP_KINDS or it is dropped (server-authoritative; an invalid value never persists).
+     * Sanitize enumerated app settings before persisting. Invalid values are
+     * dropped so another client never has to guess how to interpret them.
      * Applied on every settings write — createApp, updateApp, companion creation.
      */
     private function sanitizeAppSettings(array $settings): array
     {
         if (array_key_exists('appKind', $settings) && !in_array($settings['appKind'], self::APP_KINDS, true)) {
             unset($settings['appKind']);
+        }
+        if (
+            array_key_exists('defaultFormPrivacy', $settings)
+            && !in_array($settings['defaultFormPrivacy'], ['plain', 'private'], true)
+        ) {
+            unset($settings['defaultFormPrivacy']);
         }
         return $settings;
     }
