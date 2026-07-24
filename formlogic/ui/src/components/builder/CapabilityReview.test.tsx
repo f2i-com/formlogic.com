@@ -120,4 +120,36 @@ describe('CapabilityReview', () => {
     expect(html).not.toContain('trigger');
     expect(html).not.toContain('App features');
   });
+
+  it('ADR-010: an Application Package v2 summary renders package meta, nodes, and slots instead of Pack counts', () => {
+    const v2: PackCapabilitySummary = {
+      forms: 0,
+      apps: 0,
+      hasScreens: false,
+      hasCustomLogic: false,
+      logicScripts: 0,
+      connectors: [],
+      permissions: [],
+      connectorGrants: [],
+      packageV2: {
+        id: 'com.acme.media-tools',
+        kind: 'extension',
+        version: '1.4.0',
+        publisherId: 'com.acme',
+        displayName: 'Acme Media Tools',
+        description: '',
+        nodes: [{ type: 'com.acme.media.generate-image', label: 'Generate image', version: '1.2.0', handlerKind: 'service-action', sideEffects: 'external-write', inline: true }],
+        requirementSlots: ['imageGenerator'],
+        dependencyCount: 0,
+        distributionCount: 0,
+      },
+    };
+    const html = renderToStaticMarkup(<CapabilityReview caps={v2} trust="official" />);
+    expect(html).toContain('Acme Media Tools');
+    expect(html).toContain('extension');
+    expect(html).toContain('Generate image v1.2.0');
+    expect(html).toContain('imageGenerator');
+    // The zero Pack v1 counts are hidden for a v2 aggregate.
+    expect(html).not.toContain('0 forms');
+  });
 });

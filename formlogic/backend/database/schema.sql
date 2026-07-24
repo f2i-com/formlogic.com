@@ -1397,6 +1397,44 @@ CREATE TABLE `pack_installations` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `package_installations` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `package_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `publisher_id` varchar(96) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `display_name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `state` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'ready',
+  `source` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'json',
+  `receipt_json` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_pkgi_active` (`user_id`,`package_id`),
+  KEY `idx_pkgi_user` (`user_id`),
+  CONSTRAINT `package_installations_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `flow_node_definitions` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `node_type` varchar(160) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `digest` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `definition_json` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_fnd_type` (`user_id`,`node_type`),
+  KEY `idx_fnd_install` (`installation_id`),
+  CONSTRAINT `flow_node_definitions_ibfk_1` FOREIGN KEY (`installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `pack_ratings` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `catalog_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,

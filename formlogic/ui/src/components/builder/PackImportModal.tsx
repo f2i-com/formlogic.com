@@ -327,9 +327,15 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
         result = await api.describePackArchive(source.file);
       } else if (source.kind === 'envelope') {
         const env = source.envelope;
+        // ADR-010: a v2 aggregate has no `.pack` to extract — send it as `package` so the
+        // server's v2 describe branch reviews the aggregate itself.
+        const inner = (env.package && typeof env.package === 'object') ? env.package as Record<string, unknown> : env;
+        const isV2 = inner.formatVersion === 2 && !!inner.package && typeof inner.package === 'object';
         const body = env.signature
           ? { package: (env.package ?? env), signature: env.signature as string, alg: env.alg as string | undefined }
-          : { pack: extractPack(env) ?? undefined };
+          : isV2
+            ? { package: inner }
+            : { pack: extractPack(env) ?? undefined };
         result = await api.describePack(body);
       } else {
         result = await api.describePack({ pack: source.pack });
@@ -371,9 +377,24 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     setApprovedGrants(new Set());
   }, []);
 
-  // Route a parsed JSON blob: a signed/application-package envelope, or a flat pack.
+  // Route a parsed JSON blob: a v2 aggregate, a signed/application-package envelope, or a flat pack.
   const routeParsedJson = useCallback((parsed: unknown, fileName: string) => {
     const o = (parsed && typeof parsed === 'object') ? parsed as Record<string, unknown> : null;
+    // ADR-010: Application Package v2 — a bare aggregate {formatVersion:2, package:{…}} or a
+    // signed envelope wrapping one. Held as the envelope (the application-packages lane owns v2);
+    // no client-side preview pack exists — the mandatory server review carries the detail.
+    if (o) {
+      const innerPkg = (o.package && typeof o.package === 'object') ? o.package as Record<string, unknown> : null;
+      const bareV2 = o.formatVersion === 2 && innerPkg !== null && !('signature' in o);
+      const signedV2 = innerPkg !== null && innerPkg.formatVersion === 2 && !!innerPkg.package && typeof innerPkg.package === 'object';
+      if (bareV2 || signedV2) {
+        const envelope = bareV2 ? { package: o } : o;
+        setSignedEnvelope(envelope);
+        setUploadFileName(fileName);
+        void loadPackageReview({ kind: 'envelope', envelope });
+        return;
+      }
+    }
     const isEnvelope = !!o && (('signature' in o && ('package' in o || 'pack' in o)) || ('manifest' in o && 'pack' in o));
     if (isEnvelope && o) {
       // Validate the envelope shape when it carries a manifest (the signed bare-pack shape has none).
@@ -495,7 +516,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   const handleImport = useCallback(async () => {
     if (importing) return;
-    if (!uploadedPack && !pendingArchiveFile) return;
+    if (!uploadedPack && !pendingArchiveFile && !signedEnvelope) return;
     // SAFE-001: no server review → no install (the button is disabled too; this is the backstop).
     if (!packageReview) return;
     const approved = [...approvedGrants];
@@ -1014,11 +1035,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 onDrop={handleDrop}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
-                onClick={() => !uploadedPack && !pendingArchiveFile && !uploading && fileInputRef.current?.click()}
+                onClick={() => !uploadedPack && !pendingArchiveFile && !signedEnvelope && !uploading && fileInputRef.current?.click()}
                 className={`relative rounded-xl transition-all ${
                   isDragging
                     ? 'border-2 border-dashed border-primary-500 bg-primary-50/60 dark:bg-primary-500/10 dark:border-primary-400 shadow-lg shadow-primary-500/10'
-                    : (uploadedPack || pendingArchiveFile)
+                    : (uploadedPack || pendingArchiveFile || signedEnvelope)
                       ? 'border border-green-300 bg-green-50/50 dark:bg-green-500/5 dark:border-green-500/40'
                       : 'border-2 border-dashed border-gray-300 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500/50 bg-gray-50/50 dark:bg-slate-800/30 cursor-pointer group'
                 }`}
@@ -1030,7 +1051,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ''; }}
                   className="hidden"
                 />
-                {(uploadedPack || pendingArchiveFile) ? (
+                {(uploadedPack || pendingArchiveFile || signedEnvelope) ? (
                   <div className="flex items-center gap-4 p-4">
                     <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center">
                       <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
@@ -1040,7 +1061,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
                         {uploadedPack
                           ? `${uploadedPack.packMeta.name} · v${uploadedPack.packMeta.version}`
-                          : 'Application package archive · verified on import'}
+                          : pendingArchiveFile
+                            ? 'Application package archive · verified on import'
+                            : 'Application Package v2 · reviewed below'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -1252,7 +1275,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 <Button
                   variant="primary"
                   onClick={handleImport}
-                  disabled={(!uploadedPack && !pendingArchiveFile) || !packageReview || reviewLoading}
+                  disabled={(!uploadedPack && !pendingArchiveFile && !signedEnvelope) || !packageReview || reviewLoading}
                   isLoading={importing}
                   leftIcon={importing ? undefined : <Download className="h-4 w-4" />}
                 >

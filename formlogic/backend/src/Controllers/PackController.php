@@ -24,7 +24,7 @@ class PackController
     private ?SigningService $signingService;
     private IpResolver $ipResolver;
 
-    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null, private ?\FormLogic\Services\TrashService $trashService = null)
+    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\Packages\PackageV2InstallService $packageV2 = null)
     {
         $this->packService = $packService;
         $this->auditService = $auditService;
@@ -277,6 +277,50 @@ class PackController
             ], 403);
         }
 
+        // ── Application Package v2 (ADR-010 / PKG-103): the node-only aggregate lane. Rides the
+        // same signature/trust/policy/grant gates above; installs contributed flow-node definitions
+        // WITHOUT creating forms/apps. Not-yet-supported aggregate features refuse typed inside.
+        if (($package['formatVersion'] ?? null) === 2) {
+            if ($this->packageV2 === null) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Application Package v2 support is not available'], 503);
+            }
+            try {
+                $result = $this->packageV2->install(
+                    $package,
+                    $userId,
+                    $approvedConnectorGrants,
+                    isset($body['signature']) ? 'signed-json' : 'json',
+                    $trust
+                );
+                if ($this->auditService) {
+                    $this->auditService->log('package.install', 'package', $result['packageId'], $userId, $this->ipResolver->getClientIp($request), [
+                        'installationId' => $result['installationId'],
+                        'kind' => $result['kind'],
+                        'nodes' => count($result['nodeTypes']),
+                        'trust' => $trust,
+                    ]);
+                }
+                return $this->jsonResponse($response, [
+                    'success' => true,
+                    'trust' => $trust,
+                    'formatVersion' => 2,
+                    'installationId' => $result['installationId'],
+                    'packageId' => $result['packageId'],
+                    'kind' => $result['kind'],
+                    'nodeTypes' => $result['nodeTypes'],
+                    // Shape parity with the Pack v1 result so shared UI result views render.
+                    'forms' => [],
+                    'apps' => [],
+                    'withheldGrants' => [],
+                    'warnings' => [],
+                ], 201);
+            } catch (\RuntimeException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            } catch (\Exception $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to install the application package'], 500);
+            }
+        }
+
         // Unwrap: an ApplicationPackage carries the Pack under `.pack`; a bare Pack IS the payload.
         $packData = is_array($package['pack'] ?? null) ? $package['pack'] : $package;
         if (!is_array($packData) || !isset($packData['forms'])) {
@@ -399,6 +443,26 @@ class PackController
                 && $this->signingService->verify(['payload' => $outer, 'signature' => $body['signature'], 'alg' => $alg]);
             $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
         }
+        // ── Application Package v2 (ADR-010): describe the aggregate — package meta, contributed
+        // nodes, requirement slots — with the same trust stamp. An invalid aggregate BLOCKS with
+        // its validation issues (no capability summary → no install, SAFE-001 discipline).
+        if (($outer['formatVersion'] ?? null) === 2) {
+            $issues = \FormLogic\Helpers\ApplicationPackageV2Validator::validatePackage($outer);
+            if ($issues !== []) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'invalid_package',
+                    'message' => 'Invalid application package: ' . $issues[0]['message'] . ' [' . $issues[0]['code'] . ' at ' . $issues[0]['path'] . ']',
+                    'issues' => $issues,
+                ], 400);
+            }
+            return $this->jsonResponse($response, [
+                'trust' => $trust,
+                'formatVersion' => 2,
+                'capabilities' => $this->describePackageV2($outer),
+            ]);
+        }
+
         // SAFE-001: an ApplicationPackage envelope carries the Pack under `.pack` — unwrap EXACTLY like
         // the import path does, or a signed envelope describes as an empty pack (0 forms, no permissions)
         // while its import activates everything. Envelope-level customLogic (applied to the created app
@@ -412,6 +476,67 @@ class PackController
             // review can show which screens carry verified vendor trust.
             'vendorSigning' => $this->packService->describeSigning($packData),
         ]);
+    }
+
+    /**
+     * Capability summary for a VALID Application Package v2 aggregate: the PackCapabilitySummary
+     * shape (zeros for the Pack v1 fields) plus the `packageV2` section the review UI renders —
+     * package meta, contributed nodes, requirement slots, and counts of the aggregate features
+     * the current install lane refuses (shown, never silently dropped).
+     *
+     * @param array<string,mixed> $aggregate
+     * @return array<string,mixed>
+     */
+    private function describePackageV2(array $aggregate): array
+    {
+        $nodes = [];
+        foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {
+            if (!is_array($node)) {
+                // An archive entry path — inline detail is unavailable until the archive lane lands.
+                $nodes[] = ['type' => (string) $node, 'inline' => false];
+                continue;
+            }
+            $nodes[] = [
+                'type' => (string) ($node['type'] ?? ''),
+                'label' => (string) ($node['display']['label'] ?? ($node['type'] ?? '')),
+                'version' => (string) ($node['version'] ?? ''),
+                'handlerKind' => (string) ($node['handler']['kind'] ?? ''),
+                'sideEffects' => (string) ($node['sideEffects'] ?? ''),
+                'inline' => true,
+            ];
+        }
+        $slots = [];
+        foreach (($aggregate['requirements']['services'] ?? []) as $svc) {
+            if (is_array($svc) && is_string($svc['slot'] ?? null)) {
+                $slots[] = $svc['slot'];
+            }
+        }
+        $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
+        return [
+            'forms' => 0,
+            'apps' => 0,
+            'hasScreens' => false,
+            'hasCustomLogic' => false,
+            'logicScripts' => 0,
+            'flows' => 0,
+            'flowBindings' => 0,
+            'connectors' => [],
+            'permissions' => [],
+            'connectorGrants' => [],
+            'services' => [],
+            'packageV2' => [
+                'id' => (string) ($meta['id'] ?? ''),
+                'kind' => (string) ($meta['kind'] ?? ''),
+                'version' => (string) ($meta['version'] ?? ''),
+                'publisherId' => (string) ($meta['publisherId'] ?? ''),
+                'displayName' => (string) ($meta['displayName'] ?? ''),
+                'description' => (string) ($meta['description'] ?? ''),
+                'nodes' => $nodes,
+                'requirementSlots' => $slots,
+                'dependencyCount' => count($aggregate['dependencies']['packages'] ?? []),
+                'distributionCount' => count($aggregate['serviceDistributions'] ?? []),
+            ],
+        ];
     }
 
     /**
@@ -439,6 +564,14 @@ class PackController
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+        // Application Package v2 aggregates ride the application-packages lane, never this one.
+        if (($packData['formatVersion'] ?? null) === 2 && isset($packData['package'])) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'use_application_package_lane',
+                'message' => 'This is an Application Package v2 — import it via /api/application-packages/import.',
+            ], 400);
         }
         if ($approvedConnectorGrants === null) {
             return $this->grantReviewRequired($response);
@@ -716,6 +849,11 @@ class PackController
 
         try {
             $installations = $this->packService->getInstalledPacks($userId);
+            // Application Package v2 installations (node-only extensions) join the same list —
+            // their rows are a superset of the Pack v1 shape with formatVersion/packageKind markers.
+            if ($this->packageV2 !== null) {
+                $installations = array_merge($this->packageV2->listInstalled($userId), $installations);
+            }
             return $this->jsonResponse($response, ['installations' => $installations]);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to fetch installations'], 500);
@@ -736,6 +874,31 @@ class PackController
         $installationId = $args['installationId'] ?? '';
         if (!$installationId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation ID is required'], 400);
+        }
+
+        // Application Package v2 installations (node-only extensions) carry no record-bearing
+        // forms — try that lane first; null means "not a v2 installation", fall through to v1.
+        if ($this->packageV2 !== null) {
+            try {
+                $v2 = $this->packageV2->uninstall($installationId, $userId);
+            } catch (\Exception $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to uninstall the package'], 500);
+            }
+            if ($v2 !== null) {
+                if ($this->auditService) {
+                    $this->auditService->log('package.uninstall', 'package', $v2['packageId'], $userId, $this->ipResolver->getClientIp($request), [
+                        'installationId' => $installationId,
+                        'nodesRemoved' => $v2['nodesRemoved'],
+                    ]);
+                }
+                return $this->jsonResponse($response, [
+                    'success' => true,
+                    'message' => sprintf('Uninstalled %s (%d contributed node definition(s) removed)', $v2['displayName'], $v2['nodesRemoved']),
+                    'formsDeleted' => 0,
+                    'appsDeleted' => 0,
+                    'nodesRemoved' => $v2['nodesRemoved'],
+                ]);
+            }
         }
 
         // Recycle bin: uninstallPack hard-deletes record-bearing forms, so their

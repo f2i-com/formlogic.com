@@ -86,14 +86,48 @@ export function CapabilityReview({
           )}
         </div>
       )}
-      <div className="flex flex-wrap gap-1.5">
-        {chip(<LayoutGrid className="h-3 w-3" />, `${caps.forms} form${caps.forms === 1 ? '' : 's'}`)}
-        {chip(<LayoutGrid className="h-3 w-3" />, `${caps.apps} app${caps.apps === 1 ? '' : 's'}`)}
-        {(caps.flows ?? 0) > 0 && chip(<Workflow className="h-3 w-3" />, `${caps.flows} flow${caps.flows === 1 ? '' : 's'}`)}
-        {(caps.flowBindings ?? 0) > 0 && chip(<Workflow className="h-3 w-3" />, `${caps.flowBindings} trigger${caps.flowBindings === 1 ? '' : 's'}`)}
-        {caps.hasScreens && chip(<Code2 className="h-3 w-3" />, 'Custom screens')}
-        {caps.hasCustomLogic && chip(<Cpu className="h-3 w-3" />, `${caps.logicScripts} logic script${caps.logicScripts === 1 ? '' : 's'}`)}
-      </div>
+      {/* ADR-010: an Application Package v2 aggregate — package meta + contributed nodes replace
+          the Pack v1 form/app counts (which are zeros for a node-only extension). */}
+      {caps.packageV2 && (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="info" size="sm">{caps.packageV2.kind}</Badge>
+            <span className="text-xs font-medium text-gray-700 dark:text-slate-300">{caps.packageV2.displayName}</span>
+            <span className="text-[11px] text-gray-500 dark:text-slate-400 font-mono">{caps.packageV2.id} · v{caps.packageV2.version}</span>
+          </div>
+          {caps.packageV2.nodes.length > 0 && (
+            <div className="space-y-0.5">
+              <span className="text-xs text-gray-500 dark:text-slate-400 inline-flex items-center gap-1"><Workflow className="h-3 w-3" />Contributed flow nodes:</span>
+              <div className="flex flex-wrap gap-1.5">
+                {caps.packageV2.nodes.map((n) => (
+                  <span key={n.type} title={n.type} className="rounded bg-primary-50 dark:bg-primary-500/10 px-1.5 py-0.5 text-[11px] font-medium text-primary-700 dark:text-primary-300">
+                    {n.label || n.type}{n.version ? ` v${n.version}` : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {caps.packageV2.requirementSlots.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-gray-500 dark:text-slate-400 inline-flex items-center gap-1"><Plug className="h-3 w-3" />Needs a service for:</span>
+              {caps.packageV2.requirementSlots.map((s) => (
+                <span key={s} className="rounded bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-mono font-medium text-amber-700 dark:text-amber-300">{s}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {/* Pack v1 content counts (all zeros for a v2 node-only extension — hidden there). */}
+      {!caps.packageV2 && (
+        <div className="flex flex-wrap gap-1.5">
+          {chip(<LayoutGrid className="h-3 w-3" />, `${caps.forms} form${caps.forms === 1 ? '' : 's'}`)}
+          {chip(<LayoutGrid className="h-3 w-3" />, `${caps.apps} app${caps.apps === 1 ? '' : 's'}`)}
+          {(caps.flows ?? 0) > 0 && chip(<Workflow className="h-3 w-3" />, `${caps.flows} flow${caps.flows === 1 ? '' : 's'}`)}
+          {(caps.flowBindings ?? 0) > 0 && chip(<Workflow className="h-3 w-3" />, `${caps.flowBindings} trigger${caps.flowBindings === 1 ? '' : 's'}`)}
+          {caps.hasScreens && chip(<Code2 className="h-3 w-3" />, 'Custom screens')}
+          {caps.hasCustomLogic && chip(<Cpu className="h-3 w-3" />, `${caps.logicScripts} logic script${caps.logicScripts === 1 ? '' : 's'}`)}
+        </div>
+      )}
       {/* SAFE-002: App Features bundled with the pack's apps (the apps[].services toggle — NOT
           Desktop services; those arrive with Package v2). Informational — toggled post-install. */}
       {(caps.services?.length ?? 0) > 0 && (

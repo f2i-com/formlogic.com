@@ -4666,6 +4666,23 @@ interface PackCapabilitySummary {
   /** SAFE-002: App Features shipped with the pack's apps (owner-toggleable post-install;
    *  informational at review time). These are NOT Desktop services. */
   services?: PackAppFeatureSummary[];
+  /** ADR-010: present when describing an Application Package v2 aggregate (the Pack v1
+   *  fields above are zeros/empty for those). */
+  packageV2?: PackageV2Summary;
+}
+
+/** ADR-010: server-derived review summary for an Application Package v2 aggregate. */
+export interface PackageV2Summary {
+  id: string;
+  kind: string;
+  version: string;
+  publisherId: string;
+  displayName: string;
+  description: string;
+  nodes: Array<{ type: string; label?: string; version?: string; handlerKind?: string; sideEffects?: string; inline: boolean }>;
+  requirementSlots: string[];
+  dependencyCount: number;
+  distributionCount: number;
 }
 
 /** APP-502: the embedded vendor-signing verdict, for the install review. */
@@ -4682,6 +4699,8 @@ export interface PackVendorSigning {
 interface PackDescribeResult {
   /** official | verified | local-only | community | unverified — computed server-side, never trusted from a client. */
   trust: string;
+  /** ADR-010: 2 when the described payload is an Application Package v2 aggregate. */
+  formatVersion?: number;
   capabilities: PackCapabilitySummary;
   /** APP-502: embedded vendor-signing verdict (absent from older servers). */
   vendorSigning?: PackVendorSigning;
@@ -4697,6 +4716,11 @@ interface ApplicationPackageImportResult {
   /** SAFE-001: connector grants the package requested that the review did not approve
    *  (pack carriers AND envelope customLogic). */
   withheldGrants?: string[];
+  /** ADR-010: present on Application Package v2 installs (node-only extensions). */
+  formatVersion?: number;
+  packageId?: string;
+  kind?: string;
+  nodeTypes?: string[];
 }
 
 export interface AccountBackupImportResult {
@@ -4760,6 +4784,12 @@ interface PackInstallation {
   appIds: string[];
   installedAt: string;
   updateAvailable?: { version: string; changelog: string | null } | null;
+  /** ADR-010: present on Application Package v2 installations (node-only extensions). */
+  formatVersion?: number;
+  packageKind?: string;
+  publisherId?: string;
+  state?: string;
+  nodesInstalled?: number;
 }
 
 interface CatalogPack {

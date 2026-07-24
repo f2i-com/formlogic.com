@@ -489,6 +489,10 @@ $container->set(PackService::class, function (Container $c) {
     );
 });
 
+$container->set(\FormLogic\Services\Packages\PackageV2InstallService::class, function (Container $c) {
+    return new \FormLogic\Services\Packages\PackageV2InstallService($c->get(MySQLConnection::class));
+});
+
 $container->set(PackController::class, function (Container $c) {
     return new PackController(
         $c->get(PackService::class),
@@ -496,7 +500,9 @@ $container->set(PackController::class, function (Container $c) {
         $c->get(\FormLogic\Services\PlanService::class),
         $c->get(\FormLogic\Services\SigningService::class),
         // Uninstall pre-captures record-bearing pack forms into the recycle bin.
-        $c->get(\FormLogic\Services\TrashService::class)
+        $c->get(\FormLogic\Services\TrashService::class),
+        // Application Package v2 (ADR-010): node-only aggregate install lane.
+        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class)
     );
 });
 

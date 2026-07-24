@@ -488,6 +488,48 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Application Package v2 installations (ADR-010 / PKG-104 subset): the aggregate unit —
+        // node-only extensions install here WITHOUT creating forms/apps. One active version per
+        // package per owner (uniq_pkgi_active); receipt_json is the immutable install receipt.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS package_installations (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                package_id VARCHAR(128) NOT NULL,
+                publisher_id VARCHAR(96) NOT NULL,
+                kind VARCHAR(20) NOT NULL,
+                version VARCHAR(64) NOT NULL,
+                display_name VARCHAR(120) NOT NULL,
+                state VARCHAR(20) NOT NULL DEFAULT 'ready',
+                source VARCHAR(20) NOT NULL DEFAULT 'json',
+                receipt_json MEDIUMTEXT NOT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_pkgi_active (user_id, package_id),
+                INDEX idx_pkgi_user (user_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Contributed flow-node definitions (ADR-010): portable, digest-tracked declarative
+        // metadata a v2 package contributes. Unique active contributed TYPE per owner; rows
+        // cascade with their installation. digest = sha256 over the stored definition_json bytes.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_node_definitions (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                installation_id VARCHAR(36) NOT NULL,
+                node_type VARCHAR(160) NOT NULL,
+                version VARCHAR(64) NOT NULL,
+                digest CHAR(64) NOT NULL,
+                definition_json MEDIUMTEXT NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_fnd_type (user_id, node_type),
+                INDEX idx_fnd_install (installation_id),
+                FOREIGN KEY (installation_id) REFERENCES package_installations(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pack catalog — marketplace registry
         // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
         // an 'application_package' with server-derived trust; the other item types are reserved (no runtime
