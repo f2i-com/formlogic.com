@@ -89,7 +89,13 @@ test.describe('aokie receptionist (mock desktop path)', () => {
     }
 
     // Install the pack (fresh app + 10 forms owned by the test user).
-    const imp = await apiFetch(page, 'POST', '/api/packs/import', { pack });
+    // SAFE-001: the import API requires the reviewed grant array — mirror the UI flow (describe,
+    // then approve exactly what the pack requests; this spec exercises the full receptionist app,
+    // which needs its connector grants active).
+    const desc = await apiFetch(page, 'POST', '/api/packs/describe', { pack });
+    expect(desc.status, JSON.stringify(desc.body)).toBe(200);
+    const approvedConnectorGrants: string[] = desc.body?.capabilities?.connectorGrants ?? [];
+    const imp = await apiFetch(page, 'POST', '/api/packs/import', { pack, approvedConnectorGrants });
     expect(imp.status, JSON.stringify(imp.body)).toBeLessThan(300);
     const installationId: string = imp.body?.installationId;
     const appId: string = imp.body?.apps?.[0]?.id;

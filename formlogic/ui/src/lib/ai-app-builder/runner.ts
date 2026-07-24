@@ -46,8 +46,11 @@ export async function buildAppFromPlan(
   if (packErrors.length) throw new Error(`Generated app failed validation: ${packErrors[0]}`);
 
   // 3. Import atomically — creates app + forms + linked-record links + roles in one transaction.
+  // SAFE-001: the server requires an explicit reviewed-grant array. The builder's assemblePack
+  // emits only form-level role permissions (never connector grants), so [] is exact — and if a
+  // future generator ever emitted one, failing closed here is the correct outcome.
   onProgress({ stage: 'importing', message: 'Creating forms, links, and the app…' });
-  const imp = await api.importPack(pack as unknown as PackData);
+  const imp = await api.importPack(pack as unknown as PackData, { approvedConnectorGrants: [] });
   if (imp.error || !imp.data) throw new Error(`Couldn't create the app${imp.error ? `: ${imp.error}` : ''}`);
   const appId = imp.data.apps?.[0]?.id || '';
   const appName = imp.data.apps?.[0]?.name || plan.app.name;

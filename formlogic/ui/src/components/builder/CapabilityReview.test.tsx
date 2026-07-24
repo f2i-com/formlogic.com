@@ -75,11 +75,49 @@ describe('CapabilityReview', () => {
     };
     const html = renderToStaticMarkup(<CapabilityReview caps={caps} vendorSigning={vendorSigning} />);
     expect(html).toContain('2 screens verified');
-    expect(html).toContain('1 modified');
+    expect(html).toContain('1 screen modified after signing');
+  });
+
+  it('SAFE-002: a fully-modified package still warns when the verified count is zero', () => {
+    // The worst case — EVERY signed screen edited after signing — must stay visible.
+    // The old render skipped the whole verdict line unless something verified.
+    const vendorSigning: PackVendorSigning = {
+      signed: true,
+      keyId: 'fl-packs-2026a',
+      verified: [],
+      modified: ['form:tampered', 'app:tampered'],
+    };
+    const html = renderToStaticMarkup(<CapabilityReview caps={caps} vendorSigning={vendorSigning} />);
+    expect(html).toContain('2 screens modified after signing');
   });
 
   it('an unsigned pack shows no vendor-verified line', () => {
     const html = renderToStaticMarkup(<CapabilityReview caps={caps} vendorSigning={{ signed: false }} />);
     expect(html).not.toContain('verified from the vendor');
+  });
+
+  it('SAFE-002: flows, triggers, and App Features render from the restored summary fields', () => {
+    const withRestored: PackCapabilitySummary = {
+      ...caps,
+      flows: 3,
+      flowBindings: 1,
+      services: [
+        { id: 'aokie.receptionist', title: 'Receptionist', description: 'Answers calls', defaultEnabled: true },
+        { id: 'aokie.sms', title: 'SMS follow-ups', description: '', defaultEnabled: false },
+      ],
+    };
+    const html = renderToStaticMarkup(<CapabilityReview caps={withRestored} trust="community" />);
+    expect(html).toContain('3 flows');
+    expect(html).toContain('1 trigger');
+    // App Features are labelled as such — NOT as Desktop services (reserved for Package v2).
+    expect(html).toContain('App features');
+    expect(html).toContain('Receptionist');
+    expect(html).toContain('SMS follow-ups (off by default)');
+  });
+
+  it('a summary without the restored fields renders no flow/feature chips', () => {
+    const html = renderToStaticMarkup(<CapabilityReview caps={caps} trust="community" />);
+    expect(html).not.toContain('trigger');
+    expect(html).not.toContain('App features');
   });
 });

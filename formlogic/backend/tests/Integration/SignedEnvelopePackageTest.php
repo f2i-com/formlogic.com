@@ -401,6 +401,7 @@ class SignedEnvelopePackageTest extends TestCase
                 'package' => $tampered,
                 'signature' => $signed['signature'],
                 'alg' => $signed['alg'],
+                'approvedConnectorGrants' => [],
             ]);
             $this->assertSame(400, $r['status'], 'a present-but-invalid signature is rejected by default');
             $this->assertSame('signature_invalid', $r['body']['code'] ?? null);
@@ -411,6 +412,7 @@ class SignedEnvelopePackageTest extends TestCase
                 'signature' => $signed['signature'],
                 'alg' => $signed['alg'],
                 'allowUnverified' => true,
+                'approvedConnectorGrants' => [],
             ]);
             $this->assertSame(201, $r2['status'], 'allowUnverified lets a user knowingly proceed');
             $this->assertSame('unverified', $r2['body']['trust'] ?? null);
@@ -432,7 +434,7 @@ class SignedEnvelopePackageTest extends TestCase
             $pack = $this->jsonPack();
 
             // (a) unsigned (community) → 403.
-            $r = $this->callImportSigned($this->userId, ['package' => $pack]);
+            $r = $this->callImportSigned($this->userId, ['package' => $pack, 'approvedConnectorGrants' => []]);
             $this->assertSame(403, $r['status'], 'unsigned package blocked when verified-only policy is on');
             $this->assertSame('unverified_package', $r['body']['code'] ?? null);
 
@@ -445,6 +447,7 @@ class SignedEnvelopePackageTest extends TestCase
                 'signature' => $signed['signature'],
                 'alg' => $signed['alg'],
                 'allowUnverified' => true,
+                'approvedConnectorGrants' => [],
             ]);
             $this->assertSame(403, $r2['status'], 'allowUnverified cannot bypass the workspace verified-only policy');
             $this->assertSame('unverified_package', $r2['body']['code'] ?? null);
@@ -459,9 +462,66 @@ class SignedEnvelopePackageTest extends TestCase
 
     public function testUnsignedJsonStillImportsCommunity(): void
     {
-        $r = $this->callImportSigned($this->userId, ['pack' => $this->jsonPack()]);
+        $r = $this->callImportSigned($this->userId, ['pack' => $this->jsonPack(), 'approvedConnectorGrants' => []]);
         $this->assertSame(201, $r['status']);
         $this->assertSame('community', $r['body']['trust'] ?? null);
         $this->assertSame([], $r['body']['warnings'] ?? []);
+    }
+
+    // ── SAFE-001: the archive lane honors the reviewed grant allow-list end to end ─────────────────
+
+    public function testArchiveImportStripsUnapprovedEnvelopeGrants(): void
+    {
+        // A signed archive whose quickjs/customLogic.json requests connector grants: importing with an
+        // explicit empty review must strip them from the applied bundle (the archive envelope is the
+        // third grant carrier) while keeping the scripts and non-connector permissions.
+        $logic = (string) json_encode([
+            'version' => 1,
+            'runtime' => 'quickjs',
+            'permissions' => ['connector.aokie.sms.send', 'ui.toast'],
+            'scripts' => [
+                ['id' => 'boot', 'hook' => 'onAppStart', 'source' => 'function run(ctx){ return {}; }'],
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        $zipPath = $this->signedArchive([
+            'pack.json' => $this->packJson(),
+            'quickjs/customLogic.json' => $logic,
+        ]);
+        try {
+            $result = self::$packs->importApplicationPackage($zipPath, $this->userId, self::$signing, null, null, []);
+            $this->assertCount(1, $result['apps']);
+            $app = self::$apps->getApp($result['apps'][0]['id']);
+            $stored = $app['customLogic'] ?? [];
+            $this->assertNotEmpty($stored['scripts'] ?? [], 'scripts still apply after the grant review');
+            $this->assertNotContains('connector.aokie.sms.send', $stored['permissions'] ?? [], 'unapproved connector grant is stripped');
+            $this->assertContains('ui.toast', $stored['permissions'] ?? [], 'non-connector permissions always pass');
+            $this->assertContains('connector.aokie.sms.send', $result['withheldGrants'] ?? [], 'withheld envelope grants are reported');
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    public function testArchiveParseForDescribeMatchesImport(): void
+    {
+        // parseApplicationPackageArchive (the describe/review seam) must surface the same pack, trust,
+        // and envelope the import path consumes — and must reject tampering identically.
+        $zipPath = $this->signedArchive([
+            'pack.json' => $this->packJson(),
+            'quickjs/customLogic.json' => $this->customLogicJson(),
+        ]);
+        try {
+            $parsed = self::$packs->parseApplicationPackageArchive($zipPath, self::$signing);
+            $this->assertContains($parsed['trust'], ['official', 'local-only']);
+            $this->assertSame('Sig App', $parsed['pack']['packMeta']['name'] ?? null);
+            $this->assertNotEmpty($parsed['envelope']['customLogic'] ?? [], 'envelope customLogic is surfaced for review');
+
+            // Tampering after signing must fail the parse exactly like the import path.
+            $this->replaceEntry($zipPath, 'pack.json', str_replace('Sig App', 'Hijacked', $this->packJson()));
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessage('signature verification failed');
+            self::$packs->parseApplicationPackageArchive($zipPath, self::$signing);
+        } finally {
+            @unlink($zipPath);
+        }
     }
 }

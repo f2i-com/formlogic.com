@@ -27,7 +27,7 @@ import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
 import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack, type PackDescribeResult } from '../../lib/api';
 import { validateApplicationPackage } from '../../application-package/packageValidator';
-import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
+import { packHasCodeScreen, packHasLogicScript, reviewableConnectorGrants } from '../../lib/packTrust';
 import { CapabilityReview } from './TrustBadge';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
@@ -36,6 +36,12 @@ import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
 
 type Tab = 'marketplace' | 'installed' | 'mypacks' | 'upload';
+
+/** What the mandatory pre-install capability review is looking at (SAFE-001). */
+type ReviewSource =
+  | { kind: 'envelope'; envelope: Record<string, unknown> }
+  | { kind: 'pack'; pack: PackData }
+  | { kind: 'archive'; file: File };
 
 interface PackImportModalProps {
   isOpen: boolean;
@@ -61,7 +67,15 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   // A parsed signed/application-package ENVELOPE (JSON) — the whole thing is sent so the server verifies it.
   const [signedEnvelope, setSignedEnvelope] = useState<Record<string, unknown> | null>(null);
   // Server-computed capability review + trust for a package (shown before Install).
+  // SAFE-001: the review is MANDATORY for every source — import stays disabled until it loads,
+  // a failure blocks with Retry, and its approve/deny checklist is what the import sends.
   const [packageReview, setPackageReview] = useState<PackDescribeResult | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
+  // Guards a stale review response landing after a newer file was chosen + remembers what to Retry.
+  const reviewSeqRef = useRef(0);
+  const reviewSourceRef = useRef<ReviewSource | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadFileName, setUploadFileName] = useState('');
   const [uploadError, setUploadError] = useState('');
@@ -255,7 +269,12 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     setUploadedPack(null);
     setPendingArchiveFile(null);
     setSignedEnvelope(null);
+    reviewSeqRef.current++;
+    reviewSourceRef.current = null;
     setPackageReview(null);
+    setReviewError('');
+    setReviewLoading(false);
+    setApprovedGrants(new Set());
     setUploadFileName('');
     setUploadError('');
     setImporting(false);
@@ -292,18 +311,65 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     return null;
   }, []);
 
-  // Capability review + trust from the server (never trust a client-side claim).
-  const loadPackageReview = useCallback(async (envelope: Record<string, unknown>) => {
-    const body = envelope.signature
-      ? { package: (envelope.package ?? envelope), signature: envelope.signature as string, alg: envelope.alg as string | undefined }
-      : { pack: extractPack(envelope) ?? undefined };
+  // Capability review + trust from the server (never trust a client-side claim). SAFE-001: this
+  // runs for EVERY source (flat pack, legacy zip, signed envelope, binary archive) and is blocking —
+  // the previous version was best-effort and only ran for signed envelopes, so a failed or skipped
+  // review still allowed an import that activated every requested connector grant.
+  const loadPackageReview = useCallback(async (source: ReviewSource) => {
+    const seq = ++reviewSeqRef.current;
+    reviewSourceRef.current = source;
+    setPackageReview(null);
+    setReviewError('');
+    setReviewLoading(true);
+    let result: { data?: PackDescribeResult; error?: string };
     try {
-      const res = await api.describePack(body);
-      if (res.data) setPackageReview(res.data);
-    } catch {
-      // review is best-effort; the server still verifies at import time
+      if (source.kind === 'archive') {
+        result = await api.describePackArchive(source.file);
+      } else if (source.kind === 'envelope') {
+        const env = source.envelope;
+        const body = env.signature
+          ? { package: (env.package ?? env), signature: env.signature as string, alg: env.alg as string | undefined }
+          : { pack: extractPack(env) ?? undefined };
+        result = await api.describePack(body);
+      } else {
+        result = await api.describePack({ pack: source.pack });
+      }
+    } catch (err) {
+      result = { error: err instanceof Error ? err.message : 'Network error' };
+    }
+    if (seq !== reviewSeqRef.current) return; // a newer file replaced this review
+    setReviewLoading(false);
+    if (result.data) {
+      setPackageReview(result.data);
+      // Default: every reviewable connector grant pre-approved; the user unticks to reduce
+      // (same default as the marketplace install panel).
+      setApprovedGrants(new Set(reviewableConnectorGrants(result.data.capabilities)));
+    } else {
+      setReviewError(typeof result.error === 'string' && result.error !== '' ? result.error : 'The capability review failed.');
     }
   }, [extractPack]);
+
+  const retryReview = useCallback(() => {
+    if (reviewSourceRef.current) void loadPackageReview(reviewSourceRef.current);
+  }, [loadPackageReview]);
+
+  const toggleGrant = useCallback((grant: string, next: boolean) => {
+    setApprovedGrants((prev) => {
+      const s = new Set(prev);
+      if (next) s.add(grant); else s.delete(grant);
+      return s;
+    });
+  }, []);
+
+  // Reset every review artifact (a new/cleared file invalidates any in-flight review).
+  const clearReview = useCallback(() => {
+    reviewSeqRef.current++;
+    reviewSourceRef.current = null;
+    setPackageReview(null);
+    setReviewError('');
+    setReviewLoading(false);
+    setApprovedGrants(new Set());
+  }, []);
 
   // Route a parsed JSON blob: a signed/application-package envelope, or a flat pack.
   const routeParsedJson = useCallback((parsed: unknown, fileName: string) => {
@@ -327,12 +393,15 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       setUploadedPack(pack);
       setSignedEnvelope(o);
       setUploadFileName(fileName);
-      void loadPackageReview(o);
+      void loadPackageReview({ kind: 'envelope', envelope: o });
       return;
     }
     if (o && o.formatVersion && o.packMeta && Array.isArray(o.forms)) {
-      setUploadedPack(o as unknown as PackData);
+      const pack = o as unknown as PackData;
+      setUploadedPack(pack);
       setUploadFileName(fileName);
+      // SAFE-001: flat packs get the same mandatory review as envelopes.
+      void loadPackageReview({ kind: 'pack', pack });
       return;
     }
     setUploadError('Invalid pack format. Expected formatVersion, packMeta, and forms fields.');
@@ -343,7 +412,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     setUploadedPack(null);
     setPendingArchiveFile(null);
     setSignedEnvelope(null);
-    setPackageReview(null);
+    clearReview();
     setUploadFileName('');
 
     const lower = file.name.toLowerCase();
@@ -357,6 +426,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           if (result.data?.pack) {
             setUploadedPack(result.data.pack);
             setUploadFileName(file.name);
+            void loadPackageReview({ kind: 'pack', pack: result.data.pack });
           } else {
             setUploadError(result.error || 'Failed to parse zip file');
           }
@@ -371,7 +441,8 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
     // A .formlogic (or legacy .formlogic-app) that is NOT a .json is the new ARCHIVE (binary ZIP) —
     // held for direct import (the server verifies + extracts it). If it turns out to be JSON text,
-    // route it as an envelope.
+    // route it as an envelope. SAFE-001: the binary archive is reviewed server-side BEFORE import
+    // (describePackArchive parses + signature-verifies without importing).
     if (lower.endsWith('.formlogic') || lower.endsWith('.formlogic-app')) {
       (async () => {
         try {
@@ -381,11 +452,13 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           } else {
             setPendingArchiveFile(file);
             setUploadFileName(file.name);
+            void loadPackageReview({ kind: 'archive', file });
           }
         } catch {
           // Not JSON text → treat as a binary archive to import directly.
           setPendingArchiveFile(file);
           setUploadFileName(file.name);
+          void loadPackageReview({ kind: 'archive', file });
         }
       })();
       return;
@@ -410,7 +483,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       }
     };
     reader.readAsText(file);
-  }, [routeParsedJson]);
+  }, [routeParsedJson, clearReview, loadPackageReview]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -423,17 +496,21 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const handleImport = useCallback(async () => {
     if (importing) return;
     if (!uploadedPack && !pendingArchiveFile) return;
+    // SAFE-001: no server review → no install (the button is disabled too; this is the backstop).
+    if (!packageReview) return;
+    const approved = [...approvedGrants];
     setImporting(true);
     try {
       // Three import shapes, all landing at the same result overlay:
       //  1. a .formlogic ARCHIVE → server verifies + extracts the ZIP
       //  2. a signed/application-package ENVELOPE → server verifies the signature
       //  3. a flat pack → the classic import path (back-compat)
+      // Every shape sends the reviewed grant array — the server fails closed without it.
       const response = pendingArchiveFile
-        ? await api.importApplicationPackage(pendingArchiveFile)
+        ? await api.importApplicationPackage(pendingArchiveFile, approved)
         : signedEnvelope
-          ? await api.importSignedPackage(signedEnvelope)
-          : await api.importPack(uploadedPack as PackData);
+          ? await api.importSignedPackage(signedEnvelope, approved)
+          : await api.importPack(uploadedPack as PackData, { approvedConnectorGrants: approved });
       if (response.data) {
         // Application-package imports return a warnings array (envelope launch/native/assets
         // metadata with no runtime target yet). The flat pack import returns none — read defensively.
@@ -473,7 +550,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       toast.error('Import failed', err instanceof Error ? err.message : 'Unknown error');
     }
     setImporting(false);
-  }, [uploadedPack, pendingArchiveFile, signedEnvelope, importing, refreshForms, fetchApps, loadInstallations, handleClose]);
+  }, [uploadedPack, pendingArchiveFile, signedEnvelope, importing, packageReview, approvedGrants, refreshForms, fetchApps, loadInstallations, handleClose]);
 
   const handleUninstall = useCallback(async (installationId: string) => {
     setUninstallingId(installationId);
@@ -976,7 +1053,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setUploadedPack(null); setPendingArchiveFile(null); setSignedEnvelope(null); setPackageReview(null); setUploadFileName(''); setUploadError(''); }}
+                        onClick={(e) => { e.stopPropagation(); setUploadedPack(null); setPendingArchiveFile(null); setSignedEnvelope(null); clearReview(); setUploadFileName(''); setUploadError(''); }}
                         className="p-1 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
                       >
                         <X className="h-4 w-4" />
@@ -1016,9 +1093,32 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 </div>
               )}
 
-              {/* Capability review + server-computed trust (application-package envelope) — shown BEFORE install */}
+              {/* Capability review + server-computed trust — MANDATORY before install (SAFE-001):
+                  import stays disabled until the server review loads; a failure blocks with Retry. */}
+              {reviewLoading && (
+                <div className="flex items-center gap-2.5 text-sm text-gray-600 dark:text-slate-300 bg-gray-50 dark:bg-slate-800/50 p-3 rounded-lg border border-gray-200 dark:border-slate-800" role="status">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary-500" />
+                  <span>Reviewing capabilities…</span>
+                </div>
+              )}
+              {reviewError && !reviewLoading && (
+                <div className="flex items-start gap-2.5 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-500/10 p-3 rounded-lg border border-red-200 dark:border-red-500/20">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-red-500" />
+                  <div className="flex-1 min-w-0">
+                    <p>The capability review failed — the pack can’t be installed without it.</p>
+                    <p className="mt-0.5 text-xs opacity-80 break-words">{reviewError}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={retryReview}>Retry</Button>
+                </div>
+              )}
               {packageReview && (
-                <CapabilityReview caps={packageReview.capabilities} trust={packageReview.trust} />
+                <CapabilityReview
+                  caps={packageReview.capabilities}
+                  trust={packageReview.trust}
+                  vendorSigning={packageReview.vendorSigning}
+                  selectedGrants={approvedGrants}
+                  onToggleGrant={toggleGrant}
+                />
               )}
 
               {/* Pack preview */}
@@ -1152,7 +1252,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 <Button
                   variant="primary"
                   onClick={handleImport}
-                  disabled={!uploadedPack && !pendingArchiveFile}
+                  disabled={(!uploadedPack && !pendingArchiveFile) || !packageReview || reviewLoading}
                   isLoading={importing}
                   leftIcon={importing ? undefined : <Download className="h-4 w-4" />}
                 >

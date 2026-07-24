@@ -40,6 +40,44 @@ class PackController
     }
 
     /**
+     * SAFE-001: read the reviewed connector-grant allow-list from a request body. EVERY HTTP import
+     * lane requires an explicit array (even []) — omission no longer means "activate everything".
+     * Multipart bodies carry it as a JSON-encoded string field. Returns null when absent or
+     * malformed so the caller can fail closed with grantReviewRequired().
+     *
+     * @param array<string,mixed> $body
+     * @return list<string>|null
+     */
+    private function readApprovedGrants(array $body): ?array
+    {
+        $raw = $body['approvedConnectorGrants'] ?? null;
+        if (is_string($raw)) {
+            // Multipart form field: a JSON-encoded array.
+            $raw = json_decode($raw, true);
+        }
+        if (!is_array($raw)) {
+            return null;
+        }
+        $out = [];
+        foreach ($raw as $g) {
+            if (is_string($g) && $g !== '') {
+                $out[] = $g;
+            }
+        }
+        return array_values($out);
+    }
+
+    /** SAFE-001: shared 400 for an import request that skipped the grant review (fail closed). */
+    private function grantReviewRequired(Response $response): Response
+    {
+        return $this->jsonResponse($response, [
+            'error' => true,
+            'code' => 'grant_review_required',
+            'message' => 'approvedConnectorGrants is required: send the reviewed connector-grant array (an empty array approves none).',
+        ], 400);
+    }
+
+    /**
      * GET /api/apps/{id}/export/signed
      * Export an app as a SIGNED application package (spec §29.6): the pack payload plus a
      * detached signature so importers can verify it came from this server unmodified.
@@ -147,11 +185,19 @@ class PackController
             if ($uploaded->getError() !== UPLOAD_ERR_OK) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Upload error'], 400);
             }
+            // SAFE-001: the reviewed grant array rides as a JSON-encoded multipart field. Required —
+            // archives are describable BEFORE import (POST /api/packs/describe multipart), so a
+            // client always has a review to send. Omission fails closed.
+            $multipartBody = $request->getParsedBody();
+            $approvedConnectorGrants = $this->readApprovedGrants(is_array($multipartBody) ? $multipartBody : []);
+            if ($approvedConnectorGrants === null) {
+                return $this->grantReviewRequired($response);
+            }
             $tmpPath = null;
             try {
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappimp_');
                 $uploaded->moveTo($tmpPath);
-                $result = $this->packService->importApplicationPackage($tmpPath, $userId, $this->signingService);
+                $result = $this->packService->importApplicationPackage($tmpPath, $userId, $this->signingService, null, null, $approvedConnectorGrants);
                 $this->auditImport($request, $userId, $result, ['package' => true, 'trust' => $result['trust'] ?? null]);
                 return $this->jsonResponse($response, [
                     'success' => true,
@@ -159,6 +205,7 @@ class PackController
                     'installationId' => $result['installationId'],
                     'forms' => $result['forms'],
                     'apps' => $result['apps'],
+                    'withheldGrants' => $result['withheldGrants'] ?? [],
                     // Envelope metadata (quickjs/launch/native/assets) that could not be applied to a runtime
                     // target surfaces here rather than being silently dropped (applied inside the service).
                     'warnings' => $result['warnings'] ?? [],
@@ -183,6 +230,12 @@ class PackController
         }
         if (!is_array($package)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Package data is required'], 400);
+        }
+        // SAFE-001: this path previously never passed a grant review at all — every requested
+        // connector grant activated. Now the reviewed array is required like every other lane.
+        $approvedConnectorGrants = $this->readApprovedGrants(is_array($body) ? $body : []);
+        if ($approvedConnectorGrants === null) {
+            return $this->grantReviewRequired($response);
         }
 
         // Verify the signature over EXACTLY what was signed (the `package` field). Trust is server-derived
@@ -241,15 +294,19 @@ class PackController
         }
 
         try {
-            $result = $this->packService->importPack($packData, $userId);
+            $result = $this->packService->importPack($packData, $userId, null, null, null, $approvedConnectorGrants);
             // Apply the ENVELOPE-level metadata (customLogic/launch/native/logo that live OUTSIDE pack.json)
             // to the created app(s) — but ONLY when the package isn't a present-but-FAILING signature. A
             // tampered ('unverified') envelope must not touch the created app; an unsigned 'community'
             // package still applies (it makes no verification claim). Anything without a runtime target
-            // today comes back as a warning rather than being silently dropped.
+            // today comes back as a warning rather than being silently dropped. The approved grant set
+            // applies to the envelope customLogic too (SAFE-001: third grant carrier).
+            $envelopeWithheld = [];
             $warnings = $trust === 'unverified'
                 ? ['Envelope metadata was skipped because the package signature did not verify.']
-                : $this->packService->applyPackageMetadata($package, $result['apps'], $userId);
+                : $this->packService->applyPackageMetadata($package, $result['apps'], $userId, $approvedConnectorGrants, $envelopeWithheld);
+            $withheld = array_values(array_unique(array_merge($result['withheldGrants'] ?? [], $envelopeWithheld)));
+            sort($withheld, SORT_STRING);
             $this->auditImport($request, $userId, $result, ['package' => true, 'signed' => isset($body['signature']), 'trust' => $trust]);
             return $this->jsonResponse($response, [
                 'success' => true,
@@ -257,6 +314,7 @@ class PackController
                 'installationId' => $result['installationId'],
                 'forms' => $result['forms'],
                 'apps' => $result['apps'],
+                'withheldGrants' => $withheld,
                 'warnings' => $warnings,
             ], 201);
         } catch (\RuntimeException $e) {
@@ -293,9 +351,39 @@ class PackController
      */
     public function describe(Request $request, Response $response): Response
     {
+        // ── Archive branch (SAFE-001): multipart .formlogic upload → parse + verify WITHOUT
+        // importing, so a binary archive gets the same pre-install review as JSON sources. Shares
+        // parseApplicationPackageArchive() with the import path so review and import cannot diverge.
+        $uploaded = $request->getUploadedFiles()['file'] ?? null;
+        if ($uploaded !== null) {
+            if ($uploaded->getError() !== UPLOAD_ERR_OK) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Upload error'], 400);
+            }
+            $tmpPath = null;
+            try {
+                $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappdesc_');
+                $uploaded->moveTo($tmpPath);
+                $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
+                $envelopeLogic = is_array($parsed['envelope']['customLogic'] ?? null) ? $parsed['envelope']['customLogic'] : null;
+                return $this->jsonResponse($response, [
+                    'trust' => $parsed['trust'],
+                    'capabilities' => PackCapabilities::describe($parsed['pack'], $envelopeLogic),
+                    'vendorSigning' => $this->packService->describeSigning($parsed['pack']),
+                ]);
+            } catch (\RuntimeException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            } catch (\Exception $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to describe the application package'], 500);
+            } finally {
+                if ($tmpPath !== null && file_exists($tmpPath)) {
+                    @unlink($tmpPath);
+                }
+            }
+        }
+
         $body = $request->getParsedBody() ?? [];
-        $pack = is_array($body['pack'] ?? null) ? $body['pack'] : (is_array($body['package'] ?? null) ? $body['package'] : null);
-        if (!is_array($pack)) {
+        $outer = is_array($body['pack'] ?? null) ? $body['pack'] : (is_array($body['package'] ?? null) ? $body['package'] : null);
+        if (!is_array($outer)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
         }
         // Trust is ALGORITHM-AWARE: a verifying Ed25519 signature is publicly/native-verifiable
@@ -303,19 +391,26 @@ class PackController
         // a present-but-failing signature is 'unverified'; no signature is 'community'. Same single
         // source of truth as the import paths (PackService::classifyTrust) — a blanket 'official' for
         // any verifying signature would over-trust the symmetric fallback no third party can verify.
+        // The signature is verified over the OUTER signed object, exactly as importSigned() does.
         $trust = 'community';
         if (isset($body['signature'])) {
             $alg = (string) ($body['alg'] ?? '');
             $ok = $this->signingService
-                && $this->signingService->verify(['payload' => $pack, 'signature' => $body['signature'], 'alg' => $alg]);
+                && $this->signingService->verify(['payload' => $outer, 'signature' => $body['signature'], 'alg' => $alg]);
             $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
         }
+        // SAFE-001: an ApplicationPackage envelope carries the Pack under `.pack` — unwrap EXACTLY like
+        // the import path does, or a signed envelope describes as an empty pack (0 forms, no permissions)
+        // while its import activates everything. Envelope-level customLogic (applied to the created app
+        // post-import) is the third grant carrier and is included in the capability summary.
+        $packData = is_array($outer['pack'] ?? null) ? $outer['pack'] : $outer;
+        $envelopeLogic = ($packData !== $outer && is_array($outer['customLogic'] ?? null)) ? $outer['customLogic'] : null;
         return $this->jsonResponse($response, [
             'trust' => $trust,
-            'capabilities' => PackCapabilities::describe($pack),
+            'capabilities' => PackCapabilities::describe($packData, $envelopeLogic),
             // APP-502: the embedded vendor-signing verdict so the install
             // review can show which screens carry verified vendor trust.
-            'vendorSigning' => $this->packService->describeSigning($pack),
+            'vendorSigning' => $this->packService->describeSigning($packData),
         ]);
     }
 
@@ -337,20 +432,16 @@ class PackController
         // state and update checks).
         $catalogId = isset($body['catalogId']) && is_string($body['catalogId']) ? $body['catalogId'] : null;
         $versionId = isset($body['versionId']) && is_string($body['versionId']) ? $body['versionId'] : null;
-        // APP-502: the connector grants the importer approved in the review. An
-        // ARRAY (even empty) means a review was performed → only these connector
-        // grants activate; absent/non-array = no review = every requested grant
-        // activates (backward compatible with older clients).
-        $approvedConnectorGrants = null;
-        if (isset($body['approvedConnectorGrants']) && is_array($body['approvedConnectorGrants'])) {
-            $approvedConnectorGrants = array_values(array_filter(
-                $body['approvedConnectorGrants'],
-                'is_string'
-            ));
-        }
+        // SAFE-001 (supersedes the APP-502 fail-open default): the connector grants the importer
+        // approved in the review. An ARRAY (even empty) proves a review was performed → only these
+        // connector grants activate. Omission used to activate EVERY requested grant; now it is a 400.
+        $approvedConnectorGrants = $this->readApprovedGrants(is_array($body) ? $body : []);
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+        if ($approvedConnectorGrants === null) {
+            return $this->grantReviewRequired($response);
         }
 
         // Workspace policy: a flat (unsigned) pack is inherently 'community' — reject it when the workspace
@@ -509,7 +600,11 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'code' => 'form_limit', 'message' => 'This sample would exceed your plan\'s form limit. Free up space or upgrade first.'], 402);
         }
         try {
-            $result = $this->packService->importPack($pack, $userId);
+            // SAFE-001: bundled samples are first-party, CI-validated fixtures — the platform
+            // pre-approves exactly the grants each sample declares, as an EXPLICIT array (the
+            // fail-open null lane is reserved for internal callers and never derived from a request).
+            $approved = PackCapabilities::describe($pack)['connectorGrants'];
+            $result = $this->packService->importPack($pack, $userId, null, null, null, $approved);
             // Samples are "try it now" — publish the imported app(s) so they open running immediately.
             foreach ($result['apps'] as $a) {
                 $this->packService->publishApp($a['id'], $userId);

@@ -168,8 +168,9 @@ export default function PackDetailPage() {
   }, [pack, checkInstalled]);
 
   // Import an already-downloaded pack (shared by the direct + consent-confirmed paths).
-  // `approvedConnectorGrants` is set ONLY from the review panel (undefined = no review = all grants).
-  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants?: string[]) => {
+  // SAFE-001: `approvedConnectorGrants` is ALWAYS explicit — the reviewed set from the consent
+  // panel, or [] when the server review showed nothing to approve. The server fails closed without it.
+  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants: string[]) => {
     setInstalling(true);
     try {
       const importResult = await api.importPack(dl, { catalogId, versionId, approvedConnectorGrants });
@@ -206,19 +207,31 @@ export default function PackDetailPage() {
       }
       const dl = dlResult.data.pack;
       // Capability review before installing: ask the server what this pack can do + its trust level.
-      const review = (await api.describePack({ pack: dl })).data ?? null;
-      const caps = review?.capabilities;
+      // SAFE-001: the review is MANDATORY — a failed describe blocks the install (previously it fell
+      // through and installed with every requested grant active).
+      const reviewResult = await api.describePack({ pack: dl });
+      const review = reviewResult.data ?? null;
+      if (!review) {
+        toast.error(
+          'Install blocked',
+          `The capability review failed${typeof reviewResult.error === 'string' && reviewResult.error ? ` (${reviewResult.error})` : ''} — try again.`
+        );
+        setInstalling(false);
+        return;
+      }
+      const caps = review.capabilities;
       const needsReview = packHasCodeScreen(dl) || packHasLogicScript(dl)
-        || (!!caps && (caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic));
+        || caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic;
       if (needsReview) {
         // Default: every REVIEWABLE connector grant pre-approved (the user
         // unticks to reduce) — the same set import can actually strip.
-        setApprovedGrants(new Set(caps ? reviewableConnectorGrants(caps) : []));
+        setApprovedGrants(new Set(reviewableConnectorGrants(caps)));
         setConsent({ dl, catalogId: dlResult.data.catalogId, versionId: dlResult.data.versionId, review });
         setInstalling(false);
         return;
       }
-      await doImport(dl, dlResult.data.catalogId, dlResult.data.versionId);
+      // Nothing reviewable → an explicit empty approval (the server still requires the array).
+      await doImport(dl, dlResult.data.catalogId, dlResult.data.versionId, []);
     } catch (err) {
       toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
       setInstalling(false);
@@ -459,6 +472,8 @@ export default function PackDetailPage() {
                 variant="primary"
                 size="sm"
                 onClick={() => {
+                  // SAFE-001: always an explicit array — the ticked set when grants were reviewable,
+                  // [] otherwise. The server rejects an install without it.
                   const connectorGrants = consent.review
                     ? reviewableConnectorGrants(consent.review.capabilities)
                     : [];
@@ -466,7 +481,7 @@ export default function PackDetailPage() {
                     consent.dl,
                     consent.catalogId,
                     consent.versionId,
-                    connectorGrants.length > 0 ? [...approvedGrants] : undefined,
+                    connectorGrants.length > 0 ? [...approvedGrants] : [],
                   );
                 }}
                 isLoading={installing}

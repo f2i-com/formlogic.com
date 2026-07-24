@@ -150,7 +150,9 @@ export function createApiClient() {
     aiStatus: () => request('GET', '/api/ai/status'),
     generateForm: (prompt) => request('POST', '/api/ai/generate-form', { prompt }),
     generateScript: (prompt, fields) => request('POST', '/api/ai/generate-script', { prompt, fields }),
-    importPack: (pack) => request('POST', '/api/packs/import', { pack }),
+    // SAFE-001: the import API requires the reviewed grant array. Builder-generated packs carry
+    // no connector grants, so an explicit empty approval is exact (and fails closed if that changes).
+    importPack: (pack) => request('POST', '/api/packs/import', { pack, approvedConnectorGrants: [] }),
     publishForm: (id) => request('PUT', `/api/forms/${id}`, { status: 'published' }),
     publishApp: (id) => request('PUT', `/api/apps/${id}`, { status: 'published' }),
     request,

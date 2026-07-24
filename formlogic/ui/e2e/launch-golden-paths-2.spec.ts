@@ -75,7 +75,8 @@ test.describe('launch golden paths 2', () => {
       expect(pack?.forms?.length ?? 0).toBeGreaterThan(0);
 
       // …and import it back: a NEW app with the same shape must appear.
-      const imported = await call(page, 'POST', '/api/packs/import', { pack });
+      // SAFE-001: the import API requires the reviewed grant array (this plain export has none).
+      const imported = await call(page, 'POST', '/api/packs/import', { pack, approvedConnectorGrants: [] });
       expect(imported.status, JSON.stringify(imported.body)).toBeLessThan(300);
       importedId =
         imported.body?.app?.id ?? imported.body?.apps?.[0]?.id ?? imported.body?.appId ?? '';

@@ -13,8 +13,14 @@ namespace FormLogic\Helpers;
  */
 class PackCapabilities
 {
-    /** @param array<string,mixed> $packData */
-    public static function describe(array $packData): array
+    /**
+     * @param array<string,mixed>      $packData
+     * @param array<string,mixed>|null $envelopeCustomLogic An ApplicationPackage's envelope-level
+     *   customLogic (quickjs/customLogic.json or the JSON envelope's `customLogic` key) — applied to
+     *   the created app post-import, so it is the THIRD grant carrier and must be part of the review
+     *   (SAFE-001). null for a bare pack.
+     */
+    public static function describe(array $packData, ?array $envelopeCustomLogic = null): array
     {
         $forms = is_array($packData['forms'] ?? null) ? $packData['forms'] : [];
         $apps = is_array($packData['apps'] ?? null) ? $packData['apps'] : [];
@@ -111,6 +117,13 @@ class PackCapabilities
                     }
                 }
             }
+        }
+
+        // Envelope-level customLogic (applied to the created app after import) carries the same
+        // permissions/scripts shape as an in-pack bundle — collect it so the review covers every
+        // grant carrier the import can activate (SAFE-001).
+        if (is_array($envelopeCustomLogic) && !empty($envelopeCustomLogic)) {
+            $collect($envelopeCustomLogic);
         }
 
         // FormLogic Flows: surface every node capability a packaged flow declares (they gate what

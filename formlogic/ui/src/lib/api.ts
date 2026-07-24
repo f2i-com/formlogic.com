@@ -3593,19 +3593,19 @@ class ApiClient {
 
   // Pack management. catalogId/versionId (from downloadPack) link the install to
   // its marketplace entry so "Installed" state and update checks work.
+  // SAFE-001: approvedConnectorGrants is REQUIRED — the server fails closed (400
+  // grant_review_required) without it. Send the reviewed set; [] approves none.
   async importPack(
     pack: PackData,
-    opts?: { catalogId?: string; versionId?: string; approvedConnectorGrants?: string[] },
+    opts: { catalogId?: string; versionId?: string; approvedConnectorGrants: string[] },
   ): Promise<ApiResponse<PackImportResult>> {
     return this.request('/packs/import', {
       method: 'POST',
       body: JSON.stringify({
         pack,
-        catalogId: opts?.catalogId,
-        versionId: opts?.versionId,
-        // Only send when a review was performed (an array — even empty — means
-        // "only these connector grants"; omitted = no review = all grants).
-        ...(opts?.approvedConnectorGrants ? { approvedConnectorGrants: opts.approvedConnectorGrants } : {}),
+        catalogId: opts.catalogId,
+        versionId: opts.versionId,
+        approvedConnectorGrants: opts.approvedConnectorGrants,
       }),
     });
   }
@@ -3613,6 +3613,34 @@ class ApiClient {
   /** Preview a pack's capabilities + server-computed trust BEFORE installing (capability review). */
   async describePack(body: { pack?: unknown; package?: unknown; signature?: string; alg?: string }): Promise<ApiResponse<PackDescribeResult>> {
     return this.request('/packs/describe', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  /**
+   * SAFE-001: preview a binary .formlogic ARCHIVE's capabilities + trust BEFORE installing — the server
+   * parses + signature-verifies it without importing, so an archive gets the same review as JSON sources.
+   */
+  async describePackArchive(file: File): Promise<ApiResponse<PackDescribeResult>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) fetchHeaders['X-CSRF-Token'] = csrfToken;
+      const response = await fetch(`${this.baseUrl}/packs/describe`, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to review the application package' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
   }
 
   /** Download a whole app as a full .formlogic ARCHIVE (ZIP: manifest + pack + quickjs + signature). */
@@ -3663,10 +3691,12 @@ class ApiClient {
     window.URL.revokeObjectURL(downloadUrl);
   }
 
-  /** Import a .formlogic ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust. */
-  async importApplicationPackage(file: File): Promise<ApiResponse<ApplicationPackageImportResult>> {
+  /** Import a .formlogic ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust.
+   *  SAFE-001: the reviewed connector-grant array is required (rides as a JSON multipart field). */
+  async importApplicationPackage(file: File, approvedConnectorGrants: string[]): Promise<ApiResponse<ApplicationPackageImportResult>> {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('approvedConnectorGrants', JSON.stringify(approvedConnectorGrants));
     try {
       const fetchHeaders: Record<string, string> = {};
       const csrfToken = this.getCsrfToken();
@@ -3691,9 +3721,13 @@ class ApiClient {
   /**
    * Import a signed Application Package ENVELOPE (JSON). The whole envelope is sent so the SERVER verifies
    * the signature and stamps trust — a client-side trust claim is never trusted.
+   * SAFE-001: the reviewed connector-grant array is required (the server fails closed without it).
    */
-  async importSignedPackage(envelope: Record<string, unknown>): Promise<ApiResponse<ApplicationPackageImportResult>> {
-    return this.request('/application-packages/import', { method: 'POST', body: JSON.stringify(envelope) });
+  async importSignedPackage(envelope: Record<string, unknown>, approvedConnectorGrants: string[]): Promise<ApiResponse<ApplicationPackageImportResult>> {
+    return this.request('/application-packages/import', {
+      method: 'POST',
+      body: JSON.stringify({ ...envelope, approvedConnectorGrants }),
+    });
   }
 
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
@@ -4604,6 +4638,14 @@ interface PackImportResult {
   withheldGrants?: string[];
 }
 
+/** An App Feature bundled with a pack's app (the `apps[].services` toggle — NOT a Desktop service). */
+export interface PackAppFeatureSummary {
+  id: string;
+  title: string;
+  description: string;
+  defaultEnabled: boolean;
+}
+
 /** Server-derived capability summary for a pack / application package (capability review, spec §30.1). */
 interface PackCapabilitySummary {
   forms: number;
@@ -4611,6 +4653,9 @@ interface PackCapabilitySummary {
   hasScreens: boolean;
   hasCustomLogic: boolean;
   logicScripts: number;
+  /** SAFE-002: packaged flows / bindings — the server always sent these; the type dropped them. */
+  flows?: number;
+  flowBindings?: number;
   connectors: string[];
   permissions: string[];
   /** APP-502: the connector grants the install review may approve/deny — the
@@ -4618,6 +4663,9 @@ interface PackCapabilitySummary {
    *  flow-declared connector access is structural and not listed here).
    *  Absent from older servers. */
   connectorGrants?: string[];
+  /** SAFE-002: App Features shipped with the pack's apps (owner-toggleable post-install;
+   *  informational at review time). These are NOT Desktop services. */
+  services?: PackAppFeatureSummary[];
 }
 
 /** APP-502: the embedded vendor-signing verdict, for the install review. */
@@ -4646,6 +4694,9 @@ interface ApplicationPackageImportResult {
   installationId: string;
   forms: Array<{ id: string; title: string }>;
   apps: Array<{ id: string; name: string }>;
+  /** SAFE-001: connector grants the package requested that the review did not approve
+   *  (pack carriers AND envelope customLogic). */
+  withheldGrants?: string[];
 }
 
 export interface AccountBackupImportResult {

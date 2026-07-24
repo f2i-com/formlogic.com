@@ -129,8 +129,9 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   }, [slug]);
 
   // Import the already-downloaded pack (shared by the direct + consent-confirmed paths).
-  // `approvedConnectorGrants` is set ONLY from the review panel (undefined = no review = all grants).
-  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants?: string[]) => {
+  // SAFE-001: `approvedConnectorGrants` is ALWAYS explicit — the reviewed set from the consent
+  // panel, or [] when the server review showed nothing to approve. The server fails closed without it.
+  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants: string[]) => {
     setInstalling(true);
     try {
       const importResult = await api.importPack(dl, { catalogId, versionId, approvedConnectorGrants });
@@ -167,22 +168,35 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
       }
       const dl = dlResult.data.pack;
       // Capability review: ask the server what this pack can do + its trust level (spec §30.1).
-      const review = (await api.describePack({ pack: dl })).data ?? null;
-      const caps = review?.capabilities;
+      // SAFE-001: the review is MANDATORY — if it fails there is no reviewed grant set to send,
+      // so the install is blocked (previously a failed describe fell through and installed with
+      // every requested grant active).
+      const reviewResult = await api.describePack({ pack: dl });
+      const review = reviewResult.data ?? null;
+      if (!review) {
+        toast.error(
+          'Install blocked',
+          `The capability review failed${typeof reviewResult.error === 'string' && reviewResult.error ? ` (${reviewResult.error})` : ''} — try again.`
+        );
+        setInstalling(false);
+        return;
+      }
+      const caps = review.capabilities;
       // Show the consent panel when the pack carries code OR declares connectors/permissions —
       // so the reviewer sees the full capability surface BEFORE committing. Plain no-code packs install directly.
       const needsReview = packHasCodeScreen(dl) || packHasLogicScript(dl)
-        || (!!caps && (caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic));
+        || caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic;
       if (needsReview) {
         // Default: every REVIEWABLE connector grant pre-approved (the user
         // unticks to reduce). The reviewable set is the server's connectorGrants
         // — exactly what import can strip — not flow-declared connector access.
-        setApprovedGrants(new Set(caps ? reviewableConnectorGrants(caps) : []));
+        setApprovedGrants(new Set(reviewableConnectorGrants(caps)));
         setConsent({ dl, catalogId: dlResult.data.catalogId, versionId: dlResult.data.versionId, review });
         setInstalling(false); // wait for the user to confirm from the panel
         return;
       }
-      await doImport(dl, dlResult.data.catalogId, dlResult.data.versionId);
+      // Nothing reviewable → an explicit empty approval (the server still requires the array).
+      await doImport(dl, dlResult.data.catalogId, dlResult.data.versionId, []);
     } catch (err) {
       toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
       setInstalling(false);
@@ -335,6 +349,8 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
               variant="primary"
               size="sm"
               onClick={() => {
+                // SAFE-001: always an explicit array — the ticked set when grants were reviewable,
+                // [] otherwise. The server rejects an install without it.
                 const connectorGrants = consent.review
                   ? reviewableConnectorGrants(consent.review.capabilities)
                   : [];
@@ -342,7 +358,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                   consent.dl,
                   consent.catalogId,
                   consent.versionId,
-                  connectorGrants.length > 0 ? [...approvedGrants] : undefined,
+                  connectorGrants.length > 0 ? [...approvedGrants] : [],
                 );
               }}
               isLoading={installing}

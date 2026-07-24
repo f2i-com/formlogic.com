@@ -41,8 +41,12 @@ class PackService
      *   the ONLY connector.<id>.<command> grants that may become active — every
      *   requested connector grant not in this set is stripped from BOTH carriers
      *   (app customLogic permissions AND role connector grants) before persist.
-     *   null = no review (every requested grant is activated — backward compat).
      *   Non-connector permissions always pass through.
+     *   ⚠ SAFE-001: null (= no review, every requested grant activates) is
+     *   reserved for TRUSTED INTERNAL callers only (bundled sample fixtures,
+     *   CLI provisioning). Every HTTP import boundary MUST pass an explicit
+     *   array — PackController fails closed with 400 grant_review_required
+     *   when a request omits it.
      */
     public function importPack(
         array $packData,
@@ -62,15 +66,7 @@ class PackService
         // APP-502 grant review: normalize the approved-grant allow-list (null =
         // no review). $withheldGrants accumulates every connector grant the pack
         // requested but the importer did NOT approve, surfaced in the result.
-        $approvedSet = null;
-        if (is_array($approvedConnectorGrants)) {
-            $approvedSet = [];
-            foreach ($approvedConnectorGrants as $g) {
-                if (is_string($g) && $g !== '') {
-                    $approvedSet[$g] = true;
-                }
-            }
-        }
+        $approvedSet = $this->normalizeApprovedGrants($approvedConnectorGrants);
         $withheldGrants = [];
 
         // Prevent duplicate imports of the same pack. A plain SELECT does not lock a
@@ -1040,24 +1036,20 @@ class PackService
     }
 
     /**
-     * Import a .formlogic ARCHIVE (the inverse of exportApplicationPackage). Opens the ZIP, validates
+     * Parse + verify a .formlogic ARCHIVE without importing anything. Shared by the describe/review
+     * path (SAFE-001: an archive must be reviewable BEFORE install) and importApplicationPackage(),
+     * so review and import can never diverge on what an archive contains. Opens the ZIP, validates
      * EVERY entry with the shared PackFileService zip-slip + zip-bomb guard, then — when signature.json is
      * present — verifies the detached signature over the CANONICAL manifest.json and enforces the manifest's
      * per-entry sha256 hashes for pack.json AND every envelope file the importer will consume (quickjs/
      * customLogic.json, launch.json, native.json, assets/*). A tampered file, or an applicable envelope file
-     * that is PRESENT but NOT listed in the signed manifest (an unsigned extra), is rejected. Only after the
-     * covered entries verify does it delegate to the ATOMIC importPack() (remapping / rollback / quota
-     * unchanged) and apply the (now signature-covered) envelope metadata.
+     * that is PRESENT but NOT listed in the signed manifest (an unsigned extra), is rejected.
+     * READ-ONLY: no import, no workspace policy (the import path owns policy enforcement).
      *
-     * @return array importPack() result plus 'trust' (official|local-only|community).
+     * @return array{pack: array<string,mixed>, trust: string, envelope: array<string,mixed>}
      */
-    public function importApplicationPackage(
-        string $zipPath,
-        string $userId,
-        ?SigningService $signing = null,
-        ?string $catalogId = null,
-        ?string $versionId = null
-    ): array {
+    public function parseApplicationPackageArchive(string $zipPath, ?SigningService $signing = null): array
+    {
         $zip = new \ZipArchive();
         if ($zip->open($zipPath) !== true) {
             throw new \RuntimeException('Failed to open the application package');
@@ -1127,6 +1119,33 @@ class PackService
             $zip->close();
         }
 
+        return ['pack' => $pack, 'trust' => $trust, 'envelope' => $envelope];
+    }
+
+    /**
+     * Import a .formlogic ARCHIVE (the inverse of exportApplicationPackage). Parses + verifies via
+     * parseApplicationPackageArchive() (zip-slip/zip-bomb guard, detached-signature + per-entry hash
+     * enforcement), then delegates to the ATOMIC importPack() (remapping / rollback / quota unchanged)
+     * and applies the (signature-covered) envelope metadata.
+     *
+     * @param list<string>|null $approvedConnectorGrants SAFE-001: the reviewed connector-grant
+     *   allow-list (see importPack()). HTTP callers must always pass an array; null is reserved for
+     *   trusted internal callers.
+     * @return array importPack() result plus 'trust' (official|local-only|community).
+     */
+    public function importApplicationPackage(
+        string $zipPath,
+        string $userId,
+        ?SigningService $signing = null,
+        ?string $catalogId = null,
+        ?string $versionId = null,
+        ?array $approvedConnectorGrants = null
+    ): array {
+        $parsed = $this->parseApplicationPackageArchive($zipPath, $signing);
+        $pack = $parsed['pack'];
+        $trust = $parsed['trust'];
+        $envelope = $parsed['envelope'];
+
         // Workspace policy (pre-commit): reject an unverified/community archive BEFORE the atomic import, so
         // a failed policy check never leaves a committed import behind. Positively-verified (signed) only.
         if ((($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true')
@@ -1136,12 +1155,19 @@ class PackService
 
         // 5. Delegate to the existing atomic importer (customLogic embedded in pack.json is applied there).
         $screenTrust = in_array($trust, ['official', 'local-only'], true) ? 'verified' : 'untrusted';
-        $result = $this->importPack($pack, $userId, $catalogId, $versionId, $screenTrust);
+        $result = $this->importPack($pack, $userId, $catalogId, $versionId, $screenTrust, $approvedConnectorGrants);
         $result['trust'] = $trust;
 
         // 6. Apply the envelope metadata (quickjs/customLogic.json, launch.json, native.json, assets/logo)
-        //    to the created app(s); anything without a runtime target comes back as a warning.
-        $warnings = $this->applyPackageMetadata($envelope, $result['apps'], $userId);
+        //    to the created app(s); anything without a runtime target comes back as a warning. The approved
+        //    grant set applies here too — the envelope is the third grant carrier (SAFE-001).
+        $envelopeWithheld = [];
+        $warnings = $this->applyPackageMetadata($envelope, $result['apps'], $userId, $approvedConnectorGrants, $envelopeWithheld);
+        if (!empty($envelopeWithheld)) {
+            $merged = array_values(array_unique(array_merge($result['withheldGrants'] ?? [], $envelopeWithheld)));
+            sort($merged, SORT_STRING);
+            $result['withheldGrants'] = $merged;
+        }
         if (!empty($warnings)) {
             $result['warnings'] = $warnings;
         }
@@ -1285,16 +1311,30 @@ class PackService
      * @param string $userId   Owner of every app importPack() created.
      * @return string[]        Warnings for metadata that has no runtime target (empty when all applied).
      */
-    public function applyPackageMetadata(array $envelope, array $apps, string $userId): array
+    public function applyPackageMetadata(array $envelope, array $apps, string $userId, ?array $approvedConnectorGrants = null, array &$withheldGrants = []): array
     {
         $warnings = [];
 
-        // customLogic living outside pack.json — sanitize to the known-safe shape + size before storing.
+        // customLogic living outside pack.json — sanitize to the known-safe shape + size before storing,
+        // then run the SAME APP-502 grant review as the in-pack carriers (SAFE-001: the envelope is the
+        // third grant carrier — without this, a grant stripped from pack.json's app customLogic would
+        // ride back in untouched through quickjs/customLogic.json).
         $customLogic = null;
         if (is_array($envelope['customLogic'] ?? null) && !empty($envelope['customLogic'])) {
             $sanitized = CustomLogicSanitizer::sanitize($envelope['customLogic']);
             if (!empty($sanitized['scripts']) && CustomLogicSanitizer::withinSizeCap($sanitized)) {
-                $customLogic = $sanitized;
+                $withheld = [];
+                $customLogic = $this->reviewCustomLogicGrants(
+                    $sanitized,
+                    $this->normalizeApprovedGrants($approvedConnectorGrants),
+                    $withheld
+                );
+                if (!empty($withheld)) {
+                    $keys = array_keys($withheld);
+                    sort($keys, SORT_STRING);
+                    $withheldGrants = $keys;
+                    $warnings[] = 'Package-level custom logic requested connector grants that were not approved and were removed: ' . implode(', ', $keys) . '.';
+                }
             } else {
                 $warnings[] = 'Package-level custom logic was empty or over the size cap and was not applied.';
             }
@@ -2446,6 +2486,27 @@ class PackService
             'keyId' => $signing['keyId'],
             'component' => $componentKey,
         ]];
+    }
+
+    /**
+     * Normalize a reviewed connector-grant allow-list into a lookup set.
+     * null (no review — trusted internal callers only) stays null.
+     *
+     * @param list<string>|null $grants
+     * @return array<string,bool>|null perm-string => true
+     */
+    private function normalizeApprovedGrants(?array $grants): ?array
+    {
+        if ($grants === null) {
+            return null;
+        }
+        $set = [];
+        foreach ($grants as $g) {
+            if (is_string($g) && $g !== '') {
+                $set[$g] = true;
+            }
+        }
+        return $set;
     }
 
     /**

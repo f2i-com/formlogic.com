@@ -203,6 +203,7 @@ class PackTrustAndMetadataTest extends TestCase
             'package' => $envelope,
             'signature' => $signed['signature'],
             'alg' => $signed['alg'],
+            'approvedConnectorGrants' => [],
         ]);
 
         $this->assertSame(201, $r['status'], 'signed envelope import succeeds');
@@ -228,9 +229,112 @@ class PackTrustAndMetadataTest extends TestCase
     public function testUnsignedBarePackImportsWithoutEnvelopeWarnings(): void
     {
         // A bare Pack (no envelope) applies no metadata and produces no warnings.
-        $r = $this->callImportSigned($this->userId, ['pack' => $this->minimalPack()]);
+        $r = $this->callImportSigned($this->userId, ['pack' => $this->minimalPack(), 'approvedConnectorGrants' => []]);
         $this->assertSame(201, $r['status']);
         $this->assertSame('community', $r['body']['trust']);
         $this->assertSame([], $r['body']['warnings'] ?? []);
+    }
+
+    // ── SAFE-001: every HTTP import lane fails closed without an explicit grant review ──────────────
+
+    /** @return array{status:int, body:array} Drives the flat POST /api/packs/import controller path. */
+    private function callImport(string $userId, array $body): array
+    {
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $userId : null);
+        $req->method('getParsedBody')->willReturn($body);
+        $out = $this->controller()->import($req, new SlimResponse());
+        return ['status' => $out->getStatusCode(), 'body' => json_decode((string) $out->getBody(), true) ?: []];
+    }
+
+    public function testFlatImportWithoutGrantReviewFailsClosed(): void
+    {
+        // Omitting approvedConnectorGrants used to mean "activate every requested grant" — now a 400.
+        $r = $this->callImport($this->userId, ['pack' => $this->minimalPack()]);
+        $this->assertSame(400, $r['status']);
+        $this->assertSame('grant_review_required', $r['body']['code'] ?? null);
+
+        // A malformed (non-array) value is equally a missing review.
+        $r2 = $this->callImport($this->userId, ['pack' => $this->minimalPack(), 'approvedConnectorGrants' => 'all']);
+        $this->assertSame(400, $r2['status']);
+        $this->assertSame('grant_review_required', $r2['body']['code'] ?? null);
+
+        // With an explicit (empty) review the same request imports.
+        $r3 = $this->callImport($this->userId, ['pack' => $this->minimalPack(), 'approvedConnectorGrants' => []]);
+        $this->assertSame(201, $r3['status']);
+    }
+
+    public function testImportSignedWithoutGrantReviewFailsClosed(): void
+    {
+        $r = $this->callImportSigned($this->userId, ['pack' => $this->minimalPack()]);
+        $this->assertSame(400, $r['status']);
+        $this->assertSame('grant_review_required', $r['body']['code'] ?? null);
+    }
+
+    public function testDescribeUnwrapsApplicationPackageEnvelope(): void
+    {
+        // An ApplicationPackage envelope carries the Pack under `.pack` plus envelope-level customLogic.
+        // describe() must review the INNER pack (not report an empty 0-form summary) and must include
+        // the envelope customLogic grants — the import path applies them to the created app.
+        $envelope = [
+            'pack' => $this->minimalPack(),
+            'customLogic' => [
+                'version' => 1,
+                'runtime' => 'quickjs',
+                'permissions' => ['connector.aokie.sms.send', 'ui.toast'],
+                'scripts' => [
+                    ['id' => 'boot', 'hook' => 'onAppStart', 'source' => 'function run(ctx){ return {}; }'],
+                ],
+            ],
+        ];
+        $r = $this->callDescribe(['pack' => $envelope]);
+        $this->assertSame(200, $r['status']);
+        $caps = $r['body']['capabilities'] ?? [];
+        $this->assertSame(1, $caps['forms'] ?? null, 'inner pack is described, not the envelope wrapper');
+        $this->assertSame(1, $caps['apps'] ?? null);
+        $this->assertContains('connector.aokie.sms.send', $caps['permissions'] ?? [], 'envelope customLogic grants are reviewable');
+        $this->assertContains('connector.aokie.sms.send', $caps['connectorGrants'] ?? [], 'envelope grants are in the strippable set');
+        $this->assertContains('ui.toast', $caps['permissions'] ?? []);
+    }
+
+    public function testEnvelopeCustomLogicGrantsAreStrippedByReview(): void
+    {
+        // The envelope customLogic is the THIRD grant carrier: an unapproved connector grant must be
+        // stripped from what gets persisted to the created app, surfaced in withheldGrants + warnings.
+        $envelope = [
+            'pack' => $this->minimalPack(),
+            'customLogic' => [
+                'version' => 1,
+                'runtime' => 'quickjs',
+                'permissions' => ['connector.aokie.sms.send', 'ui.toast'],
+                'scripts' => [
+                    [
+                        'id' => 'boot',
+                        'hook' => 'onAppStart',
+                        'source' => 'function run(ctx){ return {}; }',
+                        'permissions' => ['connector.aokie.call.hangup'],
+                    ],
+                ],
+            ],
+        ];
+        $signed = self::$signing->sign($envelope);
+        $r = $this->callImportSigned($this->userId, [
+            'package' => $envelope,
+            'signature' => $signed['signature'],
+            'alg' => $signed['alg'],
+            'approvedConnectorGrants' => ['connector.aokie.sms.send'],
+        ]);
+        $this->assertSame(201, $r['status']);
+
+        $appId = $r['body']['apps'][0]['id'];
+        $app = self::$apps->getApp($appId);
+        $stored = $app['customLogic'] ?? [];
+        $this->assertContains('connector.aokie.sms.send', $stored['permissions'] ?? [], 'approved grant survives');
+        $this->assertContains('ui.toast', $stored['permissions'] ?? [], 'non-connector permissions always pass');
+        $this->assertNotContains('connector.aokie.call.hangup', $stored['scripts'][0]['permissions'] ?? [], 'unapproved script grant is stripped');
+
+        $this->assertContains('connector.aokie.call.hangup', $r['body']['withheldGrants'] ?? [], 'envelope-withheld grants are reported');
+        $blob = strtolower(implode(' | ', $r['body']['warnings'] ?? []));
+        $this->assertStringContainsString('not approved', $blob, 'the removal is surfaced as a warning');
     }
 }
