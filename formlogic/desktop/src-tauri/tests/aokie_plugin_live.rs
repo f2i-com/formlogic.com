@@ -438,6 +438,7 @@ async fn aokie_speak_node_reaches_the_real_plugin_process() {
         "edges": [ { "source": "in", "target": "reply" }, { "source": "reply", "target": "say" } ],
     });
     let deps = RunDeps {
+        instance_id: "test-desktop".into(),
         client: None,
         host: Some(host.clone()),
         app_id: None,

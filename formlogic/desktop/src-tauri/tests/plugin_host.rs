@@ -726,6 +726,7 @@ async fn operator_speak_request_id_is_stable_across_retry_and_text_is_unchanged(
         "edges": []
     });
     let deps = RunDeps {
+        instance_id: "test-desktop".into(),
         client: None,
         host: Some(host.clone()),
         app_id: None,

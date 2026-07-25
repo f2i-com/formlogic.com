@@ -2269,6 +2269,7 @@ impl FlowRuntime {
 
     fn build_deps(self: &Arc<Self>, app_id: Option<String>, client: Option<Arc<FormLogicClient>>) -> RunDeps {
         RunDeps {
+            instance_id: self.instance_id.clone(),
             client: client.or_else(|| self.client()),
             host: Some(self.host.clone()),
             app_id,

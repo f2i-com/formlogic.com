@@ -70,6 +70,7 @@ fn test_executor() -> FlowExecutor {
                 }
             };
             let deps = RunDeps {
+                instance_id: "test-desktop".into(),
                 client: None,
                 host: None,
                 app_id: None,

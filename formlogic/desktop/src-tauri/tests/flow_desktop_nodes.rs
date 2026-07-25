@@ -105,6 +105,7 @@ fn deps_with_services(base: &str, ids: &[&str]) -> RunDeps {
         service_bases.insert((*id).to_string(), base.to_string());
     }
     RunDeps {
+        instance_id: "test-desktop".into(),
         client: None,
         host: None,
         app_id: None,

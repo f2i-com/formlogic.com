@@ -126,6 +126,9 @@ impl FlowOutcome {
 /// point `client` at a stub server and pass a real/absent plugin host.
 #[derive(Clone)]
 pub struct RunDeps {
+    /// This desktop's stable instance id — the DEVICE a locally-produced artifact is bound to
+    /// (SRV-404). Empty in tests that never produce one.
+    pub instance_id: String,
     /// Authenticated cloud client for formlogic_* + KV. None ⇒ those nodes fail.
     pub client: Option<Arc<FormLogicClient>>,
     /// Local plugin gateway for connector_request / aokie_speak.
@@ -1488,6 +1491,49 @@ async fn run_service_action(
         )
     };
     let action = crate::services::invocation::resolve_action(&definition_id, &action_id).map_err(node_err)?;
+
+    // SRV-407/409: the three transports get their target from completely different places — a
+    // provider profile, a supervised process, or the plugin that contributed the definition —
+    // so the lane is chosen here. Sending one down another's path would silently address a
+    // different service, and the browser route (http.rs) makes the same choice: a flow node and
+    // a paired browser must not be able to reach different sets of actions.
+    if action.is_plugin_command() {
+        let Some(host) = deps.host.as_ref() else {
+            return Err(FlowError::new(
+                FlowErrorCode::NodeFailed,
+                format!(
+                    "Node '{}': service_unavailable: this action is served by a plugin, and the plugin host is not available",
+                    node.id
+                ),
+                Some(node.id.clone()),
+            ));
+        };
+        return crate::services::invocation::invoke_plugin_command(host, &action, &input, timeout_override)
+            .await
+            .map_err(node_err);
+    }
+    if action.is_managed_process() {
+        let Some(registry) = deps.registry.as_ref() else {
+            return Err(FlowError::new(
+                FlowErrorCode::NodeFailed,
+                format!(
+                    "Node '{}': service_unavailable: this action is served by a local process, and the service registry is not available",
+                    node.id
+                ),
+                Some(node.id.clone()),
+            ));
+        };
+        return crate::services::invocation::invoke_managed(
+            &deps.http,
+            registry,
+            &action,
+            &input,
+            timeout_override,
+            &deps.instance_id,
+        )
+        .await
+        .map_err(node_err);
+    }
     crate::services::invocation::invoke(&deps.http, &action, &connection, &input, timeout_override)
         .await
         .map_err(node_err)
@@ -2334,6 +2380,7 @@ mod tests {
 
     fn deps() -> RunDeps {
         RunDeps {
+            instance_id: "test-desktop".into(),
             client: None,
             host: None,
             app_id: None,
@@ -2409,6 +2456,69 @@ mod tests {
             host: Some(host),
             ..deps()
         }
+    }
+
+    /// SRV-407/409: a `service_action` node must run on the transport its ACTION declares.
+    ///
+    /// The runner only ever called the gateway lane, so a plugin-command or managed-process
+    /// action failed there while the same action worked from a paired browser. A flow node and a
+    /// browser must not be able to reach different sets of actions — the whole point of the
+    /// catalog is that there is one answer to "what can this account invoke".
+    #[tokio::test]
+    async fn a_service_action_runs_on_the_lane_its_transport_declares() {
+        let _guard = crate::services::definitions::test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::services::definitions::reset_for_tests();
+        crate::services::definitions::reconcile_plugin(
+            "lanecheck",
+            vec![json!({
+                "schemaVersion": 3,
+                "id": "lanecheck.tools",
+                "name": "Lane Check",
+                "version": "1.0.0",
+                "actions": [{
+                    "id": "run",
+                    "title": "Run",
+                    "sideEffects": "none",
+                    "transport": { "kind": "plugin-command", "command": "tools.run" },
+                    "inputSchema": { "type": "object" },
+                    "outputSchema": { "type": "object" }
+                }]
+            })],
+        );
+
+        let node = GraphNode {
+            id: "svc".into(),
+            node_type: "service_action".into(),
+            data: json!({
+                "definitionId": "lanecheck.tools",
+                "actionId": "run",
+                "connection": "openai",
+                "input": {}
+            }),
+        };
+        let scope = SelectorScope {
+            inputs: None,
+            event: None,
+            app: None,
+            nodes: None,
+            upstream: None,
+            data: None,
+            result: None,
+        };
+
+        // No plugin host wired: the node must say the PLUGIN is unavailable, which proves it
+        // took the plugin-command lane. Routing to the gateway would have complained about the
+        // connection or the gateway credential instead.
+        let err = run_service_action(&node, &scope, &deps()).await.unwrap_err();
+        assert!(
+            err.message.contains("served by a plugin"),
+            "expected the plugin lane, got: {}",
+            err.message
+        );
+
+        crate::services::definitions::reset_for_tests();
     }
 
     // ── Phase 4 (plan §5.6): llm_chat "Default (from Settings)" resolution ────
