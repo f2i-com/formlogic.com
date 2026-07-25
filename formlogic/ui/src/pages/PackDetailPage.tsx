@@ -57,7 +57,7 @@ export default function PackDetailPage() {
   const [installed, setInstalled] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
   // Pre-install capability review (spec §30.1): the downloaded pack + server-computed trust/capabilities.
-  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null } | null>(null);
+  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null; planId?: string; planDigest?: string } | null>(null);
   // APP-502: the connector grants the user has ticked to approve in the review.
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
 
@@ -170,10 +170,16 @@ export default function PackDetailPage() {
   // Import an already-downloaded pack (shared by the direct + consent-confirmed paths).
   // SAFE-001: `approvedConnectorGrants` is ALWAYS explicit — the reviewed set from the consent
   // panel, or [] when the server review showed nothing to approve. The server fails closed without it.
-  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants: string[]) => {
+  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants: string[], planId?: string, planDigest?: string) => {
     setInstalling(true);
     try {
-      const importResult = await api.importPack(dl, { catalogId, versionId, approvedConnectorGrants });
+      // MKT-601: an Application Package v2 aggregate installs through the install-plan lane,
+      // exactly as it does in the Packs modal. This page used to call importPack for
+      // everything, which a v2 aggregate refuses outright — the two surfaces had drifted, and
+      // whichever one you happened to use decided whether a package could be installed.
+      const importResult = planId && planDigest
+        ? await api.confirmPackageInstallPlan(planId, { planDigest, approvedConnectorGrants })
+        : await api.importPack(dl, { catalogId, versionId, approvedConnectorGrants });
       if (importResult.data) {
         setInstalled(true);
         setConsent(null);
@@ -206,6 +212,33 @@ export default function PackDetailPage() {
         return;
       }
       const dl = dlResult.data.pack;
+
+      // MKT-601: a v2 aggregate's review IS a proposed install plan (the server stores the
+      // exact reviewed bytes and the confirm is digest-bound), so the review and the install
+      // cannot diverge. Same lane the Packs modal uses.
+      if ((dl as unknown as { formatVersion?: number }).formatVersion === 2) {
+        const proposal = await api.proposePackageInstallPlan({ package: dl as unknown as Record<string, unknown> });
+        if (!proposal.data) {
+          toast.error(
+            'Install blocked',
+            typeof proposal.error === 'string' && proposal.error ? proposal.error : 'The install review failed — try again.'
+          );
+          setInstalling(false);
+          return;
+        }
+        setApprovedGrants(new Set(reviewableConnectorGrants(proposal.data.capabilities)));
+        setConsent({
+          dl,
+          catalogId: dlResult.data.catalogId,
+          versionId: dlResult.data.versionId,
+          review: { trust: proposal.data.trust, capabilities: proposal.data.capabilities } as PackDescribeResult,
+          planId: proposal.data.planId,
+          planDigest: proposal.data.planDigest,
+        });
+        setInstalling(false);
+        return;
+      }
+
       // Capability review before installing: ask the server what this pack can do + its trust level.
       // SAFE-001: the review is MANDATORY — a failed describe blocks the install (previously it fell
       // through and installed with every requested grant active).
@@ -482,6 +515,8 @@ export default function PackDetailPage() {
                     consent.catalogId,
                     consent.versionId,
                     connectorGrants.length > 0 ? [...approvedGrants] : [],
+                    consent.planId,
+                    consent.planDigest,
                   );
                 }}
                 isLoading={installing}
